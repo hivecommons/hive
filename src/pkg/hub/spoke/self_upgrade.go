@@ -18,8 +18,23 @@ import (
 
 const (
 	selfUpgradeDeployName = "hive"
-	selfUpgradeTimeout    = 10 * time.Second
+	// selfUpgradePatchTimeout bounds a Deployment PATCH. Patches pass through
+	// the cluster's validating admission webhooks, whose own default timeout
+	// is 10s each; an apiserver waiting on a slow or restart-looping webhook
+	// (Kyverno, observed live on vllm-d) does not return the webhook's error
+	// until AFTER that, so the previous 10s client deadline cut every patch
+	// off with "context deadline exceeded" and hid the real cause.
+	selfUpgradePatchTimeout = 45 * time.Second
+	// selfUpgradePatchAttempts is the total number of PATCH tries (first
+	// attempt plus one retry) before the caller falls back.
+	selfUpgradePatchAttempts = 2
+	// selfUpgradePatchRetryBackoff is the pause before the single retry.
+	selfUpgradePatchRetryBackoff = 3 * time.Second
 )
+
+// selfUpgradePatchSleep is the pause between PATCH attempts; a var so tests
+// can make the retry path instantaneous.
+var selfUpgradePatchSleep = time.Sleep
 
 // k8sNamespacePath is a var (not a const) so tests can redirect the
 // service-account namespace file at a temp path. Production never reassigns it.
@@ -48,7 +63,7 @@ func RolloutRestartSelf(logger *slog.Logger) error {
 	)
 
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
-	if err := k8sAPIPatch(path, []byte(restartAnnotation)); err != nil {
+	if err := k8sUpgradePatch(path, []byte(restartAnnotation)); err != nil {
 		return fmt.Errorf("patching deployment %s/%s: %w", namespace, selfUpgradeDeployName, err)
 	}
 
@@ -89,7 +104,11 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 	}
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
 
-	names, err := k8sDeploymentContainerNames(path)
+	current, err := k8sAPIGet(path)
+	if err != nil {
+		return fmt.Errorf("reading deployment before image switch: %w", err)
+	}
+	names, err := deploymentContainerNamesFromJSON(current)
 	if err != nil {
 		return fmt.Errorf("listing deployment containers: %w", err)
 	}
@@ -108,8 +127,12 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 	// ReplicaSets in 8 minutes for one hive, none reaching Ready, while a
 	// neighbour with the image already cached on its node won the race in
 	// 31s). When every container already carries the target image, the
-	// rollout is in flight — say so and leave the template alone.
+	// rollout is in flight — only backfill a stale startup probe, without
+	// re-stamping the restart annotation. Subsequent calls leave it alone.
 	if names.allAt(image) {
+		if err := k8sUpgradePatchWithDeployment(path, nil, current); err != nil {
+			return fmt.Errorf("backfilling deployment startup probe: %w", err)
+		}
 		rememberSelfImage(image)
 		logger.Info("deployment already at target image — rollout in flight, not re-stamping",
 			"namespace", namespace, "deployment", selfUpgradeDeployName, "image", image)
@@ -127,7 +150,7 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 		`{"spec":{"template":{"spec":{"containers":[%s],"initContainers":[%s]},"metadata":{"annotations":{"hive.hivecommons.dev/restart-at":%q}}}}}`,
 		strings.Join(cs, ","), strings.Join(ics, ","), time.Now().UTC().Format(time.RFC3339),
 	)
-	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
+	if err := k8sUpgradePatchWithDeployment(path, []byte(patch), current); err != nil {
 		return fmt.Errorf("patching deployment image: %w", err)
 	}
 	rememberSelfImage(image)
@@ -342,7 +365,7 @@ func upgradeSelfMutableToSHA(logger *slog.Logger, current, targetSHA string) (ne
 		time.Now().UTC().Format(time.RFC3339),
 	)
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
-	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
+	if err := k8sUpgradePatch(path, []byte(patch)); err != nil {
 		// Report the failure rather than swallowing it: the caller turns a
 		// non-nil error into a recorded, hub-visible upgrade failure instead of
 		// a permanent spinner.
@@ -364,37 +387,48 @@ func upgradeSelfMutableToSHA(logger *slog.Logger, current, targetSHA string) (ne
 // selfDeploymentImage returns the image of this pod's own Deployment's first
 // container, via the in-cluster API.
 func selfDeploymentImage() (string, error) {
+	image, _, err := selfDeploymentImageInfo()
+	return image, err
+}
+
+// selfDeploymentImageInfo returns the image and imagePullPolicy of this pod's
+// own Deployment's first container. The pull policy is returned as written in
+// the spec (possibly empty: Kubernetes defaults it at admission and the
+// stored spec usually carries the defaulted value, but not always).
+func selfDeploymentImageInfo() (image, pullPolicy string, err error) {
 	ns, err := os.ReadFile(k8sNamespacePath)
 	if err != nil {
-		return "", fmt.Errorf("reading namespace: %w", err)
+		return "", "", fmt.Errorf("reading namespace: %w", err)
 	}
 	namespace := strings.TrimSpace(string(ns))
 	if namespace == "" {
-		return "", fmt.Errorf("empty namespace from %s", k8sNamespacePath)
+		return "", "", fmt.Errorf("empty namespace from %s", k8sNamespacePath)
 	}
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
 	body, err := k8sAPIGet(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var dep struct {
 		Spec struct {
 			Template struct {
 				Spec struct {
 					Containers []struct {
-						Image string `json:"image"`
+						Image           string `json:"image"`
+						ImagePullPolicy string `json:"imagePullPolicy"`
 					} `json:"containers"`
 				} `json:"spec"`
 			} `json:"template"`
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal(body, &dep); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(dep.Spec.Template.Spec.Containers) == 0 {
-		return "", fmt.Errorf("deployment %s/%s has no containers", namespace, selfUpgradeDeployName)
+		return "", "", fmt.Errorf("deployment %s/%s has no containers", namespace, selfUpgradeDeployName)
 	}
-	return dep.Spec.Template.Spec.Containers[0].Image, nil
+	c := dep.Spec.Template.Spec.Containers[0]
+	return c.Image, c.ImagePullPolicy, nil
 }
 
 type deploymentContainerNames struct {
@@ -424,11 +458,15 @@ func (d deploymentContainerNames) allAt(image string) bool {
 // k8sDeploymentContainerNames GETs the deployment and returns its container +
 // init-container names, so a strategic-merge image patch targets them by name.
 func k8sDeploymentContainerNames(path string) (deploymentContainerNames, error) {
-	var out deploymentContainerNames
 	body, err := k8sAPIGet(path)
 	if err != nil {
-		return out, err
+		return deploymentContainerNames{}, err
 	}
+	return deploymentContainerNamesFromJSON(body)
+}
+
+func deploymentContainerNamesFromJSON(body []byte) (deploymentContainerNames, error) {
+	var out deploymentContainerNames
 	var dep struct {
 		Spec struct {
 			Template struct {
@@ -460,7 +498,182 @@ func k8sDeploymentContainerNames(path string) (deploymentContainerNames, error) 
 	return out, nil
 }
 
+// k8sAPIPatch issues a strategic-merge PATCH, retrying once on a failure that
+// looks transient (a timeout, an admission webhook that did not answer, or a
+// 5xx) so a single slow webhook round does not by itself fail an upgrade.
 func k8sAPIPatch(path string, body []byte) error {
+	return patchWithRetry(selfUpgradePatchAttempts, selfUpgradePatchRetryBackoff, selfUpgradePatchSleep,
+		func() error { return k8sAPIPatchOnce(path, body) })
+}
+
+// patchWithRetry runs patch up to attempts times, sleeping backoff between
+// tries, and stops early on success or on a failure that a retry cannot fix
+// (RBAC denial, a malformed patch, a 4xx that is not an admission rejection).
+func patchWithRetry(attempts int, backoff time.Duration, sleep func(time.Duration), patch func() error) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var err error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			sleep(backoff)
+		}
+		err = patch()
+		if err == nil {
+			return nil
+		}
+		if !patchFailureRetryable(err) {
+			return err
+		}
+	}
+	return err
+}
+
+// patchFailureRetryable reports whether a PATCH error is worth one more try.
+func patchFailureRetryable(err error) bool {
+	switch ClassifyPatchFailure(err) {
+	case PatchFailureAdmission, PatchFailureTimeout, PatchFailureServer:
+		return true
+	}
+	return false
+}
+
+// PatchFailureKind classifies why a Deployment PATCH against the in-cluster
+// API failed, so the caller can pick the right fallback and the hub can show
+// an accurate hint instead of guessing.
+type PatchFailureKind string
+
+const (
+	// PatchFailureNone: no error.
+	PatchFailureNone PatchFailureKind = ""
+	// PatchFailureAdmission: a validating/mutating admission webhook rejected
+	// the patch or did not answer in time ("failed calling webhook", "admission
+	// webhook ... denied"). Nothing the spoke does fixes this; a cluster admin
+	// must repair or exempt the webhook.
+	PatchFailureAdmission PatchFailureKind = "admission"
+	// PatchFailureTimeout: the request itself hit the client deadline before the
+	// apiserver answered. Observed when a webhook with failurePolicy Fail is
+	// stuck: the apiserver waits on it past our timeout.
+	PatchFailureTimeout PatchFailureKind = "timeout"
+	// PatchFailureForbidden: HTTP 401/403 — the spoke's ServiceAccount lacks
+	// patch on deployments/hive (hive-self-upgrade Role/RoleBinding).
+	PatchFailureForbidden PatchFailureKind = "forbidden"
+	// PatchFailureServer: a 5xx that was not identifiably a webhook failure.
+	PatchFailureServer PatchFailureKind = "server"
+	// PatchFailureOther: anything else (bad patch, missing token, no network).
+	PatchFailureOther PatchFailureKind = "other"
+)
+
+// ClassifyPatchFailure inspects a PATCH error's text — the apiserver reports
+// admission failures as `Internal error occurred: failed calling webhook
+// "<name>": ... context deadline exceeded` inside a 500 body, and a stuck
+// webhook surfaces client-side as a plain context deadline — and maps it to a
+// PatchFailureKind. Admission wins over timeout and server so the hint names
+// the webhook when the body does.
+func ClassifyPatchFailure(err error) PatchFailureKind {
+	if err == nil {
+		return PatchFailureNone
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "failed calling webhook"),
+		strings.Contains(msg, "admission webhook"),
+		strings.Contains(msg, "admission"):
+		return PatchFailureAdmission
+	case strings.Contains(msg, "context deadline exceeded"),
+		strings.Contains(msg, "client.timeout exceeded"),
+		strings.Contains(msg, "timeout awaiting response headers"):
+		return PatchFailureTimeout
+	case strings.Contains(msg, "http 401"), strings.Contains(msg, "http 403"):
+		return PatchFailureForbidden
+	case strings.Contains(msg, "http 5"):
+		return PatchFailureServer
+	}
+	return PatchFailureOther
+}
+
+// PatchFailureHint renders the operator-facing explanation for a kind. The
+// admission and timeout hints both name the webhook: on the observed cluster a
+// Kyverno webhook (failurePolicy Fail, restart-looping controller) timed out
+// EVERY Deployment patch, and the old "Deployment tracks a floating tag" hint
+// sent the operator to the wrong place for 46 minutes.
+func PatchFailureHint(kind PatchFailureKind) string {
+	switch kind {
+	case PatchFailureAdmission, PatchFailureTimeout:
+		return "cluster admission webhook (e.g. Kyverno) is rejecting or timing out Deployment patches — " +
+			"a cluster admin must fix or exempt the webhook; falling back to a process restart"
+	case PatchFailureForbidden:
+		return "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)"
+	case PatchFailureServer:
+		return "the Kubernetes API server returned a server error for the Deployment patch; falling back to a process restart"
+	case PatchFailureNone:
+		return ""
+	}
+	return "the Deployment patch failed; falling back to a process restart"
+}
+
+// RestartFallback is the decision taken when the Deployment PATCH that was
+// supposed to roll the pod has failed.
+type RestartFallback struct {
+	// Kind is the PATCH failure classification.
+	Kind PatchFailureKind
+	// RestartLands is true when exiting the process (kubelet restarts the
+	// container) is expected to deliver the upgrade anyway: the Deployment
+	// tracks a floating tag and re-pulls it on every container start. The
+	// caller then records the attempt as pending-restart, not failed.
+	RestartLands bool
+	// Hint is the operator-facing explanation for the hub.
+	Hint string
+}
+
+// restartFallbackFor decides whether a container restart will land the
+// upgrade after a failed PATCH. It lands when the image tracks a mutable tag
+// and the pull policy re-pulls on start (Always, or unset — which Kubernetes
+// defaults to Always for :latest and we cannot distinguish without the
+// defaulted spec). It cannot land on a digest/SHA pin, or when the kubelet
+// would reuse the cached image (IfNotPresent/Never). When the image could
+// not be read or classified at all, fall through to the restart: it is the
+// only lever left and is never harmful.
+func restartFallbackFor(patchErr error, image, pullPolicy string, imageErr error) RestartFallback {
+	fb := RestartFallback{Kind: ClassifyPatchFailure(patchErr)}
+	fb.Hint = PatchFailureHint(fb.Kind)
+	switch {
+	case imageErr != nil || strings.TrimSpace(image) == "":
+		fb.RestartLands = true
+	case imageref.IsPinned(image):
+		fb.RestartLands = false
+	case !imageTagIsMutable(image):
+		// Unknown tracking (untagged ref, malformed): no proof it is a pin,
+		// so take the restart — it is the only lever and never harmful.
+		fb.RestartLands = true
+	default:
+		switch strings.TrimSpace(pullPolicy) {
+		case "", "Always":
+			fb.RestartLands = true
+		default:
+			fb.RestartLands = false
+		}
+	}
+	if !fb.RestartLands && fb.Hint != "" {
+		fb.Hint = strings.TrimSuffix(fb.Hint, "; falling back to a process restart") +
+			"; a restart cannot land the target because the Deployment image does not re-pull a floating tag"
+	}
+	return fb
+}
+
+// RestartFallbackForPatchFailure reads this pod's own Deployment image and pull
+// policy and decides whether a process-exit restart will still deliver the
+// upgrade whose PATCH just failed with patchErr.
+func RestartFallbackForPatchFailure(logger *slog.Logger, patchErr error) RestartFallback {
+	image, pullPolicy, err := selfDeploymentImageInfo()
+	if err != nil {
+		logger.Warn("could not read own deployment image after a failed patch; assuming a restart re-pulls it",
+			"error", err)
+	}
+	return restartFallbackFor(patchErr, image, pullPolicy, err)
+}
+
+func k8sAPIPatchOnce(path string, body []byte) error {
 	token, err := os.ReadFile(k8sTokenPath)
 	if err != nil {
 		return fmt.Errorf("reading service account token: %w", err)
@@ -472,11 +685,11 @@ func k8sAPIPatch(path string, body []byte) error {
 	}
 
 	client := &http.Client{
-		Timeout:   selfUpgradeTimeout,
+		Timeout:   selfUpgradePatchTimeout,
 		Transport: &http.Transport{TLSClientConfig: tlsConfig},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), selfUpgradeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), selfUpgradePatchTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, k8sAPIServer+path, bytes.NewReader(body))

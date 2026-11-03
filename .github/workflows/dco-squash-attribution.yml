@@ -15,7 +15,11 @@ name: DCO squash attribution
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # labeled/unlabeled: the hive's `merge-method/merge` label changes the
+    # verdict (see PR_MERGE_METHOD below), so the check re-runs when it moves.
+    # The job runs in full on every event — a skipped job would read as a
+    # pass on a required check.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 
 concurrency:
@@ -28,6 +32,8 @@ permissions:
 jobs:
   squash-attribution:
     name: Sign-off survives the squash
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
@@ -50,8 +56,9 @@ jobs:
           # (see the script). Without this ref a sync PR re-flags every commit
           # it carries forward, so fetch it explicitly rather than relying on
           # checkout having populated remote-tracking refs.
-          git fetch --no-tags --depth=0 origin \
-            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" || true
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          git rev-parse --verify "refs/remotes/origin/${DEFAULT_BRANCH}^{commit}" >/dev/null
 
       - name: Check sign-off attribution across the PR's commits
         env:
@@ -59,6 +66,13 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
           LANDED_REFS: origin/${{ github.event.repository.default_branch }}
+          # The hive labels a role/trusted PR whose head mixes the
+          # contributor's commits with its own self-signed ones and merges it
+          # with a merge commit; the script then accepts a bot-authored,
+          # bot-self-signed commit (and nothing else) because nothing is
+          # squashed. Labels need triage on the repo, so a contributor cannot
+          # set this themselves.
+          PR_MERGE_METHOD: ${{ contains(github.event.pull_request.labels.*.name, 'merge-method/merge') && 'merge' || '' }}
         run: |
           set -euo pipefail
           bash src/scripts/check-squash-signoff-attribution.sh \

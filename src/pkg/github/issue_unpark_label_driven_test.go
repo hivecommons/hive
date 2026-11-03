@@ -95,7 +95,7 @@ func TestSweepIssueUnparkCommandsNotLabelDrivenUnchanged(t *testing.T) {
 	}
 	removed := strings.Join(rec.removed[21], ",")
 	if !strings.Contains(removed, "needs-human") || !strings.Contains(removed, "needs-decision") {
-		t.Fatalf("expected parking labels removed, got %v", rec.removed[21])
+		t.Fatalf("expected the decision park label and needs-human removed on a default repo, got %v", rec.removed[21])
 	}
 	var notice bool
 	for _, body := range rec.posted[21] {
@@ -110,7 +110,7 @@ func TestSweepIssueUnparkCommandsNotLabelDrivenUnchanged(t *testing.T) {
 
 // An already-answered command on a label-driven repo is not answered again.
 func TestSweepIssueUnparkCommandsLabelDrivenAnswersOnce(t *testing.T) {
-	answered := humanComment(92, "hive[bot]", unparkReplyMarkerPrefix+"91 -->\n"+unparkLabelDrivenReply)
+	answered := humanComment(92, "hive[bot]", unparkReplyMarkerPrefix+"91 -->\n"+renderUnparkLabelDrivenReply(nil))
 	issues := []unparkWireIssue{parkedIssue(22, humanComment(91, "maintainer", "/hive approve"), answered)}
 	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
 	c := newTestClient(t, server, "org", []string{"repo"})

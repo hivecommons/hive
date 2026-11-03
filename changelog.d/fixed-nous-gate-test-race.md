@@ -1,0 +1,1 @@
+- Fixed a `-race` data race and intermittent assertion failure in `TestRunNousGateWatch`: the test now reads watcher logs through a mutex-guarded buffer and waits for each tick to be processed before asserting.

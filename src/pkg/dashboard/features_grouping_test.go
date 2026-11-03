@@ -7,6 +7,8 @@ import (
 )
 
 // The Features tab groups settings by drawing a rule between sections. The
+// rule is the `.settings-subsection` wrapper (border-top), one per feature,
+// nested inside the headed `.config-section.features-section` groups. The
 // Review Gate section had grown to eleven controls spanning three unrelated
 // concerns, which read as one undifferentiated list. These tests pin the
 // grouping that fixed it, because the failure mode is silent: a new control
@@ -19,6 +21,11 @@ func featuresMarkup(t *testing.T) string {
 	}
 	return string(b)
 }
+
+// featuresRule is the marker of one feature's wrapper on the Features tab:
+// `class="settings-subsection"` or `class="config-field settings-subsection"`.
+// Its `-title` sibling does not end with a quote, so this never matches it.
+const featuresRule = `settings-subsection"`
 
 // Sub-groups must group with whitespace and a quiet label, never a rule. The
 // rule is what separates one feature from the next; spending it inside a
@@ -54,21 +61,21 @@ func TestReviewGateKeepsItsSubgroups(t *testing.T) {
 	}
 	// The section ends where the next bordered section begins.
 	rest := html[gate:]
-	next := strings.Index(rest, "border-top:1px solid var(--border)")
+	next := strings.Index(rest, featuresRule)
 	if next < 0 {
 		t.Fatal("no section boundary after Review Gate")
 	}
 	section := rest[:next]
 
-	for _, want := range []string{`<div class="config-subgroup">Merge gate</div>`, `<div class="config-subgroup">Reviewers</div>`} {
+	for _, want := range []string{`<div class="config-subgroup">Merge queue</div>`, `<div class="config-subgroup">Reviewers</div>`} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Review Gate section is missing %s — its controls read as one flat list again", want)
 		}
 	}
 
 	// Ordering matters: the gate controls come before the reviewer controls.
-	if strings.Index(section, "Merge gate") > strings.Index(section, ">Reviewers<") {
-		t.Error("the Merge gate sub-group must precede Reviewers")
+	if strings.Index(section, "Merge queue") > strings.Index(section, ">Reviewers<") {
+		t.Error("the Merge queue sub-group must precede Reviewers")
 	}
 }
 
@@ -102,7 +109,7 @@ func TestRecommendationsIsItsOwnSection(t *testing.T) {
 
 	// It must be a real section, i.e. preceded by the section rule.
 	head := html[:rec]
-	lastRule := strings.LastIndex(head, "border-top:1px solid var(--border)")
+	lastRule := strings.LastIndex(head, featuresRule)
 	if lastRule < gate {
 		t.Error("Merge Recommendations is not preceded by a section rule, so it will not read as a separate feature")
 	}

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/forgestate"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -23,7 +24,30 @@ const (
 	metricsCacheFile       = "/data/metrics/agent-metrics-cache.json"
 	mttrCacheFile          = "/data/metrics/issue-to-merge.json"
 	prIssueCountsCacheFile = "/data/metrics/pr-issue-counts.json"
+
+	// forgeCountCacheTTLEnv overrides forgeCountCacheTTLDefault (Go duration,
+	// e.g. "30m"): how long the Search-API count queries (hive-attributed
+	// merged PRs / closed issues per repo, outreach PR counts) are reused
+	// before being re-asked. They move slowly, and every refresh is two
+	// Search calls per repo against a ~30 req/min secondary limit shared
+	// with everything else the hive does; re-asking on every collect tripped
+	// that limit on the hosted hive (2026-10-21) and darkened the sweeps.
+	forgeCountCacheTTLEnv     = "HIVE_FORGE_COUNT_CACHE_TTL"
+	forgeCountCacheTTLDefault = 20 * time.Minute
+	// forgeCountRetryBackoff is how long a FAILED count refresh waits before
+	// the next attempt; the last-good value is served meanwhile. Shorter than
+	// the TTL so a brief refusal recovers within a couple of collects, long
+	// enough not to hammer a tripped secondary limit.
+	forgeCountRetryBackoff = 10 * time.Minute
+	// forgeCountErrorLogInterval bounds the WARN for a failing count refresh;
+	// repeats inside the window log at DEBUG.
+	forgeCountErrorLogInterval = 15 * time.Minute
 )
+
+// forgeCountCacheTTL is the configured reuse window for Search-API counts.
+func forgeCountCacheTTL() time.Duration {
+	return durationFromEnv(forgeCountCacheTTLEnv, forgeCountCacheTTLDefault)
+}
 
 type MetricsCollector struct {
 	ghClient *ghpkg.Client
@@ -46,13 +70,40 @@ type MetricsCollector struct {
 	mttr          *ghpkg.MTTRResult
 	prIssueMu     sync.RWMutex
 	prIssueCounts *ghpkg.PRIssueCounts
+	// prIssueErr is why the last hive-attributed count refresh failed (or
+	// was partial), kept even when there are no counts to mark stale so
+	// /api/cost can say why the tile has no attributed figure.
+	prIssueErr string
+	// prIssueRefresh gates how often the PR/issue count searches run and
+	// rate-limits the failure log; see forgeCountCacheTTL.
+	prIssueRefresh forgeCountRefreshGate
+	// outreachCounts caches the two outreach PR searches the same way.
+	outreachMu         sync.Mutex
+	outreachOpen       int
+	outreachMerged     int
+	outreachHaveCounts bool
+	outreachRefresh    forgeCountRefreshGate
+	forgeCountTTL      func() time.Duration
+	rateLimitCautious  func() bool
+	now                func() time.Time
+	// forgeCounts, when set, replaces the per-collect Search-API count
+	// queries: merged / closed counters move on webhook events and the
+	// search path only runs as the hourly reconcile (hivecommons/hive#13376).
+	forgeCounts *forgestate.Counts
 
 	// coverageTargetFn supplies the configured coverage goal on every collect so
 	// an edit from the hub applies without a restart; nil means the default.
 	coverageTargetFn func() int
+	// reviewEvidenceVerifier supplies the dashboard's current evidence trust
+	// policy. It is loaded once per evidence collection, never per bundle.
+	reviewEvidenceVerifier func() (ghpkg.ReviewEvidenceVerifier, error)
 
 	// Optional override for isolated disk-cache tests; empty uses /data/metrics.
 	prIssueCachePath string
+	// issueActivityCachePath overrides issueActivityPath in tests.
+	issueActivityCachePath string
+	// ciRecoveryCachePath overrides ciRecoveryPath in tests.
+	ciRecoveryCachePath string
 	// prIssueWindowStart, when set, returns the first cost-history timestamp so
 	// cost-per-outcome divisors use the same persisted window as the numerator.
 	prIssueWindowStart func() time.Time
@@ -103,6 +154,15 @@ func (mc *MetricsCollector) SetCoverageTargetProvider(fn func() int) {
 	mc.coverageTargetFn = fn
 }
 
+// SetReviewEvidenceVerifierProvider makes evidence-derived metrics reject
+// bundles whose configured signature or unsigned-mode hash does not verify.
+func (mc *MetricsCollector) SetReviewEvidenceVerifierProvider(fn func() (ghpkg.ReviewEvidenceVerifier, error)) {
+	if mc == nil {
+		return
+	}
+	mc.reviewEvidenceVerifier = fn
+}
+
 // effectiveCoverageTarget is the configured goal, or the default when no
 // provider is installed or it reports a non-positive value.
 func (mc *MetricsCollector) effectiveCoverageTarget() int {
@@ -119,6 +179,66 @@ func (mc *MetricsCollector) SetPRIssueWindowStartProvider(fn func() time.Time) {
 		return
 	}
 	mc.prIssueWindowStart = fn
+}
+
+// EnableForgeCounts switches the merged-PR / closed-issue counts onto the
+// forgestate counters: webhook deliveries increment them (see
+// Server.noteForgeOutcome) and the Search API is asked only every
+// forgestate.CountsReconcileInterval. open, when non-nil, is the cache the
+// Overview's open issue / PR totals are read from (a *forgestate.Store).
+// Call after SetProjectScope and before Start.
+func (mc *MetricsCollector) EnableForgeCounts(open forgestate.OpenSource) *forgestate.Counts {
+	if mc == nil {
+		return nil
+	}
+	c := forgestate.NewCounts(forgestate.CountsOptions{
+		Repos:     mc.countReposQualified(),
+		Open:      open,
+		Reconcile: mc.reconcileOutcomeCounts,
+		Author:    mc.countAuthor(),
+	})
+	mc.prIssueMu.Lock()
+	mc.forgeCounts = c
+	mc.prIssueMu.Unlock()
+	return c
+}
+
+// ForgeCounts returns the forgestate counters, or nil when the collector
+// still asks the Search API on every collect.
+func (mc *MetricsCollector) ForgeCounts() *forgestate.Counts {
+	if mc == nil {
+		return nil
+	}
+	mc.prIssueMu.RLock()
+	defer mc.prIssueMu.RUnlock()
+	return mc.forgeCounts
+}
+
+// reconcileOutcomeCounts is the forgestate counters' hourly authoritative
+// check: the same two Search-API queries per repo the collector used to run
+// on every collect. A count GitHub could not produce (missing author,
+// incomplete result) is an error so it never overwrites the counters.
+func (mc *MetricsCollector) reconcileOutcomeCounts(ctx context.Context, repo string) (int, int, error) {
+	gh := mc.client()
+	if gh == nil {
+		return 0, 0, fmt.Errorf("github client not configured")
+	}
+	var since time.Time
+	if mc.prIssueWindowStart != nil {
+		since = mc.prIssueWindowStart()
+	}
+	result, err := gh.ComputePRIssueCountsSince(ctx, repo, mc.countAuthor(), since)
+	if err != nil {
+		return 0, 0, err
+	}
+	if result == nil || result.Status != "fresh" {
+		status := "no result"
+		if result != nil {
+			status = result.Status
+		}
+		return 0, 0, fmt.Errorf("counts %s", status)
+	}
+	return result.MergedPRs, result.ClosedIssues, nil
 }
 
 // client returns the GitHub client to use now: the provider's current client
@@ -199,6 +319,9 @@ func (mc *MetricsCollector) SetProjectScope(org, primaryRepo string, repos []str
 }
 
 func (mc *MetricsCollector) collect(ctx context.Context) {
+	// Dashboard metrics are housekeeping against the pacer: they stand down
+	// for the governor's enumeration while a caution window is engaged.
+	ctx = ghpkg.WithPacingClass(ctx, ghpkg.PacingLow)
 	metrics := make(map[string]any)
 
 	outreach := mc.collectOutreach(ctx)
@@ -215,6 +338,8 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 
 	mc.collectMTTR(ctx)
 	mc.collectPRIssueCounts(ctx)
+	mc.collectIssueActivity(ctx)
+	mc.collectCIRecovery(ctx)
 	mc.collectIssuesDisabled(ctx)
 
 	mc.mu.Lock()
@@ -260,9 +385,30 @@ func (mc *MetricsCollector) collectMTTR(ctx context.Context) {
 // memory. Used by the dashboard's Cost section to derive cost-per-PR /
 // cost-per-issue.
 func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
+	if fc := mc.ForgeCounts(); fc != nil {
+		mc.collectPRIssueCountsFromForge(ctx, fc)
+		return
+	}
 	gh := mc.client()
 	repos := mc.countRepos()
 	if gh == nil || len(repos) == 0 {
+		return
+	}
+
+	now := mc.clock()
+	mc.prIssueMu.Lock()
+	haveCached := prIssueCountsTotal(mc.prIssueCounts) > 0
+	due := mc.prIssueRefresh.due(now)
+	mc.prIssueMu.Unlock()
+	// Inside the TTL after a success, or the backoff after a failure, the
+	// cached counts (fresh or stale) keep serving without a Search call.
+	if !due {
+		return
+	}
+	// Optional housekeeping stands down while GitHub is pacing us after a
+	// rate-limit refusal, as long as there is something cached to serve.
+	if haveCached && mc.cautious() {
+		mc.logger.Debug("PR/issue count refresh deferred while rate-limit caution window is engaged")
 		return
 	}
 
@@ -272,15 +418,117 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 	}
 	result, err := gh.ComputePRIssueCountsForReposSince(ctx, repos, mc.countAuthor(), since)
 	if err != nil {
-		mc.logger.Warn("failed to compute PR/issue counts", "error", err)
+		mc.prIssueMu.Lock()
+		logNow := mc.prIssueRefresh.failed(now)
+		mc.prIssueMu.Unlock()
+		if logNow {
+			mc.logger.Warn("failed to compute PR/issue counts; serving last-good counts until the next retry",
+				"error", err, "retry_in", forgeCountRetryBackoff.String())
+		} else {
+			mc.logger.Debug("failed to compute PR/issue counts (repeat)", "error", err)
+		}
 		mc.markPRIssueCountsStale(err)
 		return
 	}
+	mc.storePRIssueCounts(result)
+}
 
+// collectPRIssueCountsFromForge publishes the forgestate counters as the
+// PR/issue counts. The Search API is asked only when the hourly reconcile is
+// due; between reconciles the counters are whatever the webhooks moved them
+// to. A failed reconcile keeps the last-good counts and carries stale_since.
+func (mc *MetricsCollector) collectPRIssueCountsFromForge(ctx context.Context, fc *forgestate.Counts) {
+	repos := mc.countReposQualified()
+	if len(repos) == 0 {
+		return
+	}
+	if fc.ReconcileDue() {
+		if err := fc.Reconcile(ctx); err != nil {
+			mc.logger.Warn("forgestate outcome count reconcile failed; serving last-good counts", "error", err)
+		}
+	}
+	out := fc.Outcomes(repos...)
+	if !out.Ready && !out.Partial {
+		// No baseline yet (first reconcile refused): the disk-loaded
+		// last-good counts, if any, stay up and are marked stale.
+		reason := out.StaleReason
+		if reason == "" {
+			reason = fmt.Sprintf("no repo has a hive-attributed baseline yet (%d pending)", fc.ReconcilePending())
+		}
+		mc.markPRIssueCountsStale(fmt.Errorf("%s", reason))
+		return
+	}
+	windowStart := ""
+	if mc.prIssueWindowStart != nil {
+		if since := mc.prIssueWindowStart(); !since.IsZero() {
+			windowStart = since.UTC().Format(time.RFC3339)
+		}
+	}
+	result := &ghpkg.PRIssueCounts{
+		MergedPRs:    out.MergedPRs,
+		ClosedIssues: out.ClosedIssues,
+		UpdatedAt:    mc.clock().UTC().Format(time.RFC3339),
+		Author:       mc.countAuthor(),
+		Basis:        "hive-attributed",
+		WindowStart:  windowStart,
+		Status:       "fresh",
+		Source:       "forgestate",
+	}
+	if out.Partial {
+		// Some repos are still waiting for their first reconcile pass; the
+		// total covers the rest and says so rather than showing "—".
+		result.Partial = true
+		result.Status = fmt.Sprintf("partial: %d of %d repos counted", out.ReposReady, out.ReposTotal)
+		result.Error = out.StaleReason
+	}
+	if out.Stale {
+		result.Stale = true
+		result.StaleSince = out.StaleSince.UTC().Format(time.RFC3339)
+		result.Status = "stale: GitHub unavailable"
+		if strings.Contains(strings.ToLower(out.StaleReason), "rate") {
+			result.Status = "stale: GitHub rate-limited"
+		}
+		if out.Partial {
+			result.Status += fmt.Sprintf(" (partial: %d of %d repos counted)", out.ReposReady, out.ReposTotal)
+		}
+		result.Error = out.StaleReason
+	}
+	mc.storePRIssueCounts(result)
+}
+
+// storePRIssueCounts installs result as the current counts and persists it,
+// unless it is an all-zero answer while last-good counts exist: that is far
+// more often a refused query than a hive with no outcomes. A partial result
+// (some repos' queries failed) likewise never replaces a complete last-good
+// count; the cached count is served stale with the partial refresh as the
+// reason. Partial beats nothing, so it is installed when there is no
+// complete count to keep.
+func (mc *MetricsCollector) storePRIssueCounts(result *ghpkg.PRIssueCounts) {
 	mc.prIssueMu.Lock()
+	mc.prIssueRefresh.succeeded(mc.clock(), mc.effectiveForgeCountTTL())
+	mc.prIssueErr = result.Error
+	if result.Partial && mc.prIssueCounts != nil && !mc.prIssueCounts.Partial && prIssueCountsTotal(mc.prIssueCounts) > 0 {
+		mc.prIssueCounts.Stale = true
+		mc.prIssueCounts.Status = "stale: " + result.Status
+		mc.prIssueCounts.Error = result.Error
+		if mc.prIssueCounts.StaleSince == "" {
+			mc.prIssueCounts.StaleSince = time.Now().UTC().Format(time.RFC3339)
+		}
+		mc.prIssueMu.Unlock()
+		mc.logger.Warn("partial PR/issue counts kept out of a complete last-good count",
+			"merged_prs", result.MergedPRs,
+			"closed_issues", result.ClosedIssues,
+			"status", result.Status,
+			"error", result.Error,
+		)
+		return
+	}
 	if prIssueCountsTotal(result) == 0 && prIssueCountsTotal(mc.prIssueCounts) > 0 {
 		mc.prIssueCounts.Stale = true
 		mc.prIssueCounts.Status = "stale: zero response ignored"
+		if mc.prIssueCounts.StaleSince == "" {
+			mc.prIssueCounts.StaleSince = time.Now().UTC().Format(time.RFC3339)
+		}
 		mc.prIssueMu.Unlock()
 		mc.logger.Warn("ignored zero PR/issue counts while last-good counts exist",
 			"merged_prs", result.MergedPRs,
@@ -288,7 +536,6 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 		)
 		return
 	}
-	result.Stale = false
 	if result.Status == "" {
 		result.Status = "fresh"
 	}
@@ -299,6 +546,8 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 	mc.logger.Info("PR/issue counts computed",
 		"merged_prs", result.MergedPRs,
 		"closed_issues", result.ClosedIssues,
+		"source", result.Source,
+		"stale", result.Stale,
 	)
 }
 
@@ -324,6 +573,24 @@ func (mc *MetricsCollector) countRepos() []string {
 			continue
 		}
 		seen[key] = true
+		out = append(out, repo)
+	}
+	return out
+}
+
+// countReposQualified is countRepos with bare names qualified by the
+// project org, the owner/name form webhook deliveries and the forgestate
+// cache key repos by.
+func (mc *MetricsCollector) countReposQualified() []string {
+	repos := mc.countRepos()
+	mc.scopeMu.RLock()
+	org := mc.org
+	mc.scopeMu.RUnlock()
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if !strings.Contains(repo, "/") && org != "" {
+			repo = org + "/" + repo
+		}
 		out = append(out, repo)
 	}
 	return out
@@ -363,9 +630,25 @@ func prIssueCountsTotal(c *ghpkg.PRIssueCounts) int {
 	return c.MergedPRs + c.ClosedIssues
 }
 
+// GetPRIssueCountError returns why the most recent hive-attributed count
+// refresh failed or was partial ("" when it succeeded). Unlike the counts
+// themselves it is recorded even when there is nothing cached, so the
+// dashboard can explain an empty tile.
+func (mc *MetricsCollector) GetPRIssueCountError() string {
+	if mc == nil {
+		return ""
+	}
+	mc.prIssueMu.RLock()
+	defer mc.prIssueMu.RUnlock()
+	return mc.prIssueErr
+}
+
 func (mc *MetricsCollector) markPRIssueCountsStale(err error) {
 	mc.prIssueMu.Lock()
 	defer mc.prIssueMu.Unlock()
+	if err != nil {
+		mc.prIssueErr = err.Error()
+	}
 	if prIssueCountsTotal(mc.prIssueCounts) == 0 {
 		return
 	}
@@ -375,6 +658,12 @@ func (mc *MetricsCollector) markPRIssueCountsStale(err error) {
 	}
 	mc.prIssueCounts.Stale = true
 	mc.prIssueCounts.Status = status
+	if err != nil {
+		mc.prIssueCounts.Error = err.Error()
+	}
+	if mc.prIssueCounts.StaleSince == "" {
+		mc.prIssueCounts.StaleSince = time.Now().UTC().Format(time.RFC3339)
+	}
 }
 
 func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any {
@@ -557,6 +846,10 @@ func (mc *MetricsCollector) countACMM(ctx context.Context, owner, repo string) i
 	return count
 }
 
+// countOutreachPRs returns the open and merged outreach PR counts. The two
+// Search queries behind them run at most once per forgeCountCacheTTL; a
+// failed refresh serves the last-good pair and logs at most once per
+// forgeCountErrorLogInterval.
 func (mc *MetricsCollector) countOutreachPRs(ctx context.Context) (open, merged int) {
 	gh := mc.client()
 	org, _, author := mc.projectScope()
@@ -564,17 +857,103 @@ func (mc *MetricsCollector) countOutreachPRs(ctx context.Context) (open, merged 
 		return 0, 0
 	}
 
-	openCount, err := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "open")
-	if err != nil {
-		mc.logger.Warn("failed to count open outreach PRs", "error", err)
+	now := mc.clock()
+	mc.outreachMu.Lock()
+	cachedOpen, cachedMerged, haveCached := mc.outreachOpen, mc.outreachMerged, mc.outreachHaveCounts
+	due := mc.outreachRefresh.due(now)
+	mc.outreachMu.Unlock()
+	// Inside the TTL, or the backoff after a failure, the cached pair (zero
+	// if nothing has ever succeeded) serves without a Search call.
+	if !due {
+		return cachedOpen, cachedMerged
+	}
+	if haveCached && mc.cautious() {
+		mc.logger.Debug("outreach PR count refresh deferred while rate-limit caution window is engaged")
+		return cachedOpen, cachedMerged
 	}
 
-	mergedCount, err := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "merged")
-	if err != nil {
-		mc.logger.Warn("failed to count merged outreach PRs", "error", err)
+	openCount, openErr := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "open")
+	var mergedCount int
+	var mergedErr error
+	if openErr == nil {
+		mergedCount, mergedErr = gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "merged")
+	}
+	if openErr != nil || mergedErr != nil {
+		which, err := "merged", mergedErr
+		if openErr != nil {
+			which, err = "open", openErr
+		}
+		mc.outreachMu.Lock()
+		logNow := mc.outreachRefresh.failed(now)
+		mc.outreachMu.Unlock()
+		if logNow {
+			mc.logger.Warn("failed to count "+which+" outreach PRs; serving last-good counts until the next retry",
+				"error", err, "retry_in", forgeCountRetryBackoff.String())
+		} else {
+			mc.logger.Debug("failed to count "+which+" outreach PRs (repeat)", "error", err)
+		}
+		return cachedOpen, cachedMerged
 	}
 
+	mc.outreachMu.Lock()
+	mc.outreachOpen, mc.outreachMerged, mc.outreachHaveCounts = openCount, mergedCount, true
+	mc.outreachRefresh.succeeded(now, mc.effectiveForgeCountTTL())
+	mc.outreachMu.Unlock()
 	return openCount, mergedCount
+}
+
+// clock is the collector's time source; tests inject one.
+func (mc *MetricsCollector) clock() time.Time {
+	if mc != nil && mc.now != nil {
+		return mc.now()
+	}
+	return time.Now()
+}
+
+// cautious reports whether the GitHub client is in its slow-start caution
+// window; tests inject the predicate.
+func (mc *MetricsCollector) cautious() bool {
+	if mc != nil && mc.rateLimitCautious != nil {
+		return mc.rateLimitCautious()
+	}
+	return ghpkg.RateLimitCautionEngaged()
+}
+
+func (mc *MetricsCollector) effectiveForgeCountTTL() time.Duration {
+	if mc != nil && mc.forgeCountTTL != nil {
+		if ttl := mc.forgeCountTTL(); ttl > 0 {
+			return ttl
+		}
+	}
+	return forgeCountCacheTTL()
+}
+
+// forgeCountRefreshGate decides when a cached Search-API count is re-asked
+// and when a failure is worth a WARN. Callers hold their own lock.
+type forgeCountRefreshGate struct {
+	nextRefresh time.Time
+	lastErrLog  time.Time
+}
+
+// due reports whether a refresh should be attempted at now. A zero gate
+// (nothing fetched yet) is always due.
+func (g *forgeCountRefreshGate) due(now time.Time) bool {
+	return g.nextRefresh.IsZero() || !now.Before(g.nextRefresh)
+}
+
+func (g *forgeCountRefreshGate) succeeded(now time.Time, ttl time.Duration) {
+	g.nextRefresh = now.Add(ttl)
+}
+
+// failed schedules the retry and reports whether this failure should be
+// logged at WARN (the first in each forgeCountErrorLogInterval).
+func (g *forgeCountRefreshGate) failed(now time.Time) (logNow bool) {
+	g.nextRefresh = now.Add(forgeCountRetryBackoff)
+	if g.lastErrLog.IsZero() || now.Sub(g.lastErrLog) >= forgeCountErrorLogInterval {
+		g.lastErrLog = now
+		return true
+	}
+	return false
 }
 
 func (mc *MetricsCollector) loadFromDisk() {

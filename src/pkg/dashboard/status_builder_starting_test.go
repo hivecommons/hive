@@ -3,7 +3,8 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -15,25 +16,27 @@ import (
 // agent that is actually running.
 func TestBuildAgents_StartingFlagOnlyWhileNotRunning(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Enabled: true},
-			"quality": {Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Enabled: true},
+				"quality": {Enabled: true},
+			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       cfg.Agents["scanner"],
-			State:        agent.StateStopped,
+			State:        crux.StateStopped,
 			Starting:     true,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"quality": {
 			Name:         "quality",
 			Config:       cfg.Agents["quality"],
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			Starting:     true,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 

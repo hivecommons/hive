@@ -135,3 +135,122 @@ func TestPRLists_AnnotateForkPRs(t *testing.T) {
 		}
 	}
 }
+
+// Stage 074 in-place adoption (hivecommons/hive#12527): a fork PR the hive
+// adopted IS listed — maintainer_can_modify lets the fixer push to the
+// contributor's branch — with a line saying so; other fork PRs stay withheld.
+func TestFormatRedPRFixData_AdoptedForkPRIsYours(t *testing.T) {
+	fixture := `{"ci_failing":[
+  {"number":12527,"repo":"o/r","title":"adopted","author":"karibhou","head_repo":"karibhou/r","from_fork":true,"adopted":true,"reachable_action":"push","agent":"scanner","conflict":true,"mergeable_state":"dirty"},
+  {"number":839,"repo":"o/r","title":"fork","author":"alice","head_repo":"alice/r","from_fork":true,"reachable_action":"comment-only","failing_checks":["build"]}
+]}`
+	out := formatRedPRFixData([]byte(fixture), "scanner")
+	if !strings.Contains(out, "#12527 ") || !strings.Contains(out, "ADOPTED contributor PR (stage 074, head repo karibhou/r)") {
+		t.Errorf("adopted fork PR must be listed with the adoption note:\n%s", out)
+	}
+	if strings.Contains(out, "#839 ") || !strings.Contains(out, "1 red PR(s) from forks are NOT listed") {
+		t.Errorf("non-adopted fork PR must stay withheld:\n%s", out)
+	}
+}
+
+// reachable_action describes token capability: since #12899 a fork that
+// allows maintainer edits (GitHub's default for contributor PRs) reports
+// push. The shared CI_FAILING queue must still gate on policy, like
+// FIX-BEFORE-NEW does: only an adopted (stage 074) fork PR is pushable; every
+// other fork row stays in the comment-only section with its head repo named,
+// whatever its reachable_action says.
+func TestBuildCIFailingList_NonAdoptedForkWithMaintainerEditsStaysCommentOnly(t *testing.T) {
+	dir := t.TempDir()
+	orig := ciFailingPath
+	ciFailingPath = filepath.Join(dir, "ci-failing.json")
+	t.Cleanup(func() { ciFailingPath = orig })
+	fixture := `{"ci_failing":[
+  {"number":841,"repo":"projectbluefin/testsuite","title":"contributor fork, maintainer edits on","author":"arteeh","head_sha":"f3",
+   "head_ref":"main","head_repo":"arteeh/testsuite","from_fork":true,"reachable_action":"push","failing_checks":["signoff"]},
+  {"number":12527,"repo":"projectbluefin/testsuite","title":"adopted","author":"karibhou","head_sha":"f5",
+   "head_ref":"fix","head_repo":"karibhou/testsuite","from_fork":true,"adopted":true,"reachable_action":"push","failing_checks":["build"]},
+  {"number":12528,"repo":"projectbluefin/testsuite","title":"adopted but fork edits off","author":"dana","head_sha":"f6",
+   "head_ref":"fix2","head_repo":"dana/testsuite","from_fork":true,"adopted":true,"reachable_action":"comment-only","failing_checks":["build"]},
+  {"number":840,"repo":"projectbluefin/testsuite","title":"hive fix","author":"hive[bot]","head_sha":"f2",
+   "head_ref":"hive/fix-840","head_repo":"projectbluefin/testsuite","reachable_action":"push","failing_checks":["build"]}
+]}`
+	if err := os.WriteFile(ciFailingPath, []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := newScheduler().buildCIFailingList()
+
+	forkIdx := strings.Index(out, "FORK PRs (2 — review/comment only")
+	if forkIdx < 0 {
+		t.Fatalf("fork section missing or wrong count:\n%s", out)
+	}
+	push, forks := out[:forkIdx], out[forkIdx:]
+	if strings.Contains(push, "#841 ") || strings.Contains(push, "#12528 ") {
+		t.Errorf("non-adopted or unreachable fork PR leaked into the push-repairable section:\n%s", push)
+	}
+	if !strings.Contains(forks, "#841 projectbluefin/testsuite by @arteeh [fork: arteeh/testsuite:main — comment/check-report only]") {
+		t.Errorf("non-adopted fork PR must be listed comment-only with its head repo:\n%s", forks)
+	}
+	if !strings.Contains(forks, "#12528 ") {
+		t.Errorf("adopted fork without maintainer edits is not pushable:\n%s", forks)
+	}
+	if !strings.Contains(push, "#840 ") {
+		t.Errorf("same-repo hive PR must stay pushable:\n%s", push)
+	}
+	if !strings.Contains(push, "#12527 projectbluefin/testsuite by @karibhou (sha:f5) [adopted fork: karibhou/testsuite:fix — push to the contributor's branch, never to a same-named base branch]") {
+		t.Errorf("adopted fork PR must be pushable and name the fork head:\n%s", push)
+	}
+	for _, want := range []string{"rebase onto the base", "preserve original authors and Signed-off-by", "--force-with-lease against the observed head", "never overwrite their new work"} {
+		if !strings.Contains(push, want) {
+			t.Errorf("adopted fork rebase instruction missing %q:\n%s", want, push)
+		}
+	}
+}
+
+// An adopted (stage 074) contributor PR is the hive's to repair: its row is
+// listed under FIX-BEFORE-NEW with push instructions to the PR's own branch,
+// and a still-present sentinel alert is named as a label to leave alone. A
+// contributor fork PR the hive did not adopt is never listed as push work.
+func TestFormatRedPRFixData_AdoptedPRListedNonAdoptedForkIsNot(t *testing.T) {
+	fixture := `{"ci_failing":[
+	 {"number":13251,"repo":"hivecommons/hive","title":"reviewer confidence","agent":"scanner","from_fork":true,"reachable_action":"push","adopted":true,"head_repo":"arteeh/hive","conflict":true,"mergeable_state":"dirty"},
+	 {"number":13252,"repo":"hivecommons/hive","title":"contribute-watch","agent":"scanner","from_fork":true,"reachable_action":"push","adopted":true,"sentinel_alert":true,"head_repo":"mendezr/hive","failing_checks":["test (rest 5/5)","coverage"]},
+	 {"number":13213,"repo":"hivecommons/hive","title":"not adopted","agent":"scanner","from_fork":true,"reachable_action":"comment-only","head_repo":"hanthor/hive","failing_checks":["test"]}
+	]}`
+	out := formatRedPRFixData([]byte(fixture), "scanner")
+	for _, want := range []string{
+		"#13251 hivecommons/hive",
+		"conflict: mergeable_state=dirty — merge the base branch or rebase the PR branch",
+		"#13252 hivecommons/hive",
+		"ADOPTED contributor PR (stage 074, head repo mendezr/hive)",
+		adoptedSentinelNote,
+		"failing: test (rest 5/5), coverage",
+		"(1 red PR(s) from forks are NOT listed here",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fix block missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "#13213") {
+		t.Errorf("non-adopted fork PR listed as push work:\n%s", out)
+	}
+}
+
+// hivecommons/hive#15103: the conflict kick tells the fixer how to
+// rebase-resolve, which attempt this is, and when the hive stops.
+func TestRebaseResolveInstructions(t *testing.T) {
+	first := rebaseResolveInstructions("v5", 1, 2, false)
+	for _, want := range []string{"attempt 1/2", "git rebase origin/v5", "--force-with-lease", "OWN branch", "Do not open a new PR"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("first attempt missing %q: %s", want, first)
+		}
+	}
+	if strings.Contains(first, "Last attempt") || strings.Contains(first, "trusted author") {
+		t.Fatalf("first attempt over-explains: %s", first)
+	}
+	last := rebaseResolveInstructions("", 2, 2, true)
+	for _, want := range []string{"attempt 2/2", "git rebase the base branch", "Last attempt", "trusted author's PR"} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("last attempt missing %q: %s", want, last)
+		}
+	}
+}

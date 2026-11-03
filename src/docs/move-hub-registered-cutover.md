@@ -69,7 +69,7 @@ move procedures in the other guides should regenerate:
   `cross-cluster-migration.md` documents for the hub-hosted case, generalized
   here to any runtime).
 - If a spoke has no `hub.dashboard_url` configured, it falls back to reading
-  its own Ingress/Route (`SpokeServedHost`, `src/pkg/hub/spoke/heartbeat.go:1990`)
+  its own Ingress/Route (`SpokeServedHost`, `src/pkg/hub/spoke/heartbeat.go:2251`)
   — which is why the in-namespace `hive-dashboard-route-reader` RBAC
   (`src/deploy/k8s/dashboard-route-rbac.yaml` on the self-hosted manifest;
   the hub-hosted equivalent is `hive-route-reader`,

@@ -1,0 +1,1 @@
+- The CI-poll guard no longer reports a merge sweep or CI-repair pass that reads each of several PRs' checks once as polling an owned PR; only command lines repeated within a kick count toward the nudge threshold and the `ci_poll_nudge` self-report ([#14016](https://github.com/hivecommons/hive/issues/14016)).

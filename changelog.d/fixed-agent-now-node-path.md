@@ -1,0 +1,1 @@
+- Dashboard agent "Now:" line tests report when their JavaScript fixture cannot run because Node.js is missing from PATH, instead of failing the test run ([#12924](https://github.com/hivecommons/hive/issues/12924)).

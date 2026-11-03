@@ -1,0 +1,1 @@
+- The opt-in `monitoring` Kustomize component now ships a `PrometheusRule` with `HiveMetricsDown`, `HiveCostBurnHigh` (operator-patchable threshold) and `HiveStageTransitionAnomalies` alerts, each with a summary, description and runbook link, validated in CI with `promtool check rules` and unit tests ([#15438](https://github.com/hivecommons/hive/issues/15438)).

@@ -1,0 +1,1 @@
+- Add a credential-free shared contribution tree read model and read-only `hivectl hives tree` inspection of saved consent, with explicit legacy, exclusion, and incomplete-discovery status; persisted hub discovery integration follows separately.

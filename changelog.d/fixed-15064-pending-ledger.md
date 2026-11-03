@@ -1,0 +1,1 @@
+- Fast delegated decisions now settle their operator-action ledger entries reliably instead of leaving the activity monitor badge pending forever ([#15064](https://github.com/hivecommons/hive/issues/15064)).

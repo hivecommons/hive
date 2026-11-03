@@ -19,8 +19,10 @@ import (
 func TestBuildKickMessagesDoesNotDoubleRenderWithDropStuffedContext(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", TaskMCP: &config.AgentTaskMCPConfig{DropStuffedContext: true}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", TaskMCP: &config.AgentTaskMCPConfig{DropStuffedContext: true}},
+			},
 		},
 	}
 	s := New(cfg, testLogger())

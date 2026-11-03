@@ -56,16 +56,18 @@ func TestEffectiveAdvisorOverride(t *testing.T) {
 			TimeoutS:             20,
 			MaxConsecutiveBlocks: 3,
 		},
-		Agents: map[string]AgentConfig{
-			"plain": {},
-			"tuned": {Advisor: &AdvisorOverride{
-				Model:                advStrPtr("better-model"),
-				TimeoutS:             intPtr(5),
-				DailyBudgetTokens:    intPtr(50),
-				Instructions:         advStrPtr("agent instructions"),
-				MaxConsecutiveBlocks: intPtr(1),
-			}},
-			"optout": {Advisor: &AdvisorOverride{Enabled: boolPtr(false)}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"plain": {},
+				"tuned": {Advisor: &AdvisorOverride{
+					Model:                advStrPtr("better-model"),
+					TimeoutS:             intPtr(5),
+					DailyBudgetTokens:    intPtr(50),
+					Instructions:         advStrPtr("agent instructions"),
+					MaxConsecutiveBlocks: intPtr(1),
+				}},
+				"optout": {Advisor: &AdvisorOverride{Enabled: boolPtr(false)}},
+			},
 		},
 	}
 
@@ -98,10 +100,12 @@ func TestEffectiveAdvisorOverride(t *testing.T) {
 func TestAdvisorActiveForAgent(t *testing.T) {
 	c := &Config{
 		Advisor: AdvisorConfig{Enabled: boolPtr(true)},
-		Agents: map[string]AgentConfig{
-			"claude-agent":  {Backend: "claude"},
-			"copilot-agent": {Backend: "copilot"},
-			"off-agent":     {Backend: "claude", Advisor: &AdvisorOverride{Enabled: boolPtr(false)}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"claude-agent":  {Backend: "claude"},
+				"copilot-agent": {Backend: "copilot"},
+				"off-agent":     {Backend: "claude", Advisor: &AdvisorOverride{Enabled: boolPtr(false)}},
+			},
 		},
 	}
 	if active, reason := c.AdvisorActiveForAgent("claude-agent"); !active || reason != "" {
@@ -230,8 +234,10 @@ func TestValidateAdvisorLane(t *testing.T) {
 	}
 
 	// Per-agent override with an unknown role is rejected too.
-	c5 := &Config{Agents: map[string]AgentConfig{
-		"a": {Advisor: &AdvisorOverride{Model: advStrPtr("@nope")}},
+	c5 := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Agents: map[string]AgentConfig{
+			"a": {Advisor: &AdvisorOverride{Model: advStrPtr("@nope")}},
+		},
 	}}
 	if err := c5.validateAdvisorLane(); err == nil || !strings.Contains(err.Error(), "agents.a.advisor.model") {
 		t.Fatalf("agent override with unknown role must be rejected naming the field: %v", err)
@@ -255,8 +261,10 @@ func TestValidateAdvisorBlockLimitNamesBackendBound(t *testing.T) {
 		t.Fatal("negative limit must be rejected")
 	}
 	// A per-agent override is held to the same bound.
-	c6 := &Config{Agents: map[string]AgentConfig{
-		"a": {Advisor: &AdvisorOverride{MaxConsecutiveBlocks: intPtr(9)}},
+	c6 := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Agents: map[string]AgentConfig{
+			"a": {Advisor: &AdvisorOverride{MaxConsecutiveBlocks: intPtr(9)}},
+		},
 	}}
 	if err := c6.validateAdvisorLane(); err == nil || !strings.Contains(err.Error(), "agents.a.advisor.max_consecutive_blocks") {
 		t.Fatalf("agent override above the bound must be rejected naming the field: %v", err)

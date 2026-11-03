@@ -14,11 +14,11 @@ type Watcher struct {
 	client     *github.Client
 	prAuthz    PRRequestAuthorizer
 	issueAuthz IssueRequestAuthorizer
-	holdLabel  func(agent string) bool
+	holdLabel  func(agent, repo string) bool
 	nowFn      func() time.Time
 }
 
-func New(client *github.Client, prAuthz PRRequestAuthorizer, issueAuthz IssueRequestAuthorizer, holdLabel func(agent string) bool, nowFn func() time.Time) *Watcher {
+func New(client *github.Client, prAuthz PRRequestAuthorizer, issueAuthz IssueRequestAuthorizer, holdLabel func(agent, repo string) bool, nowFn func() time.Time) *Watcher {
 	return &Watcher{client: client, prAuthz: prAuthz, issueAuthz: issueAuthz, holdLabel: holdLabel, nowFn: nowFn}
 }
 

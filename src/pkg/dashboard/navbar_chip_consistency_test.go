@@ -204,3 +204,25 @@ func TestNavbarRemovedChipSpecificMetricOverrides(t *testing.T) {
 		}
 	}
 }
+
+// The left zone clips overflow, so a negative start margin on anything inside
+// it cuts that chip off. #oc-drawer-toggle kept the -10px it had as a bare
+// glyph after #10140 made it a bordered chip, and phones showed the menu
+// button with its left edge missing.
+func TestNavbarLeftZoneChipsHaveNoNegativeStartMargin(t *testing.T) {
+	html := indexHTML(t)
+	if !strings.Contains(html, `.oc-topbar-left { justify-self: start;`) || !strings.Contains(html, `justify-content: flex-start; overflow: hidden; }`) {
+		t.Fatal("left topbar zone rule changed; recheck whether it still clips overflow")
+	}
+	ruleRE := regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`)
+	negRE := regexp.MustCompile(`margin(-left|-inline-start)?\s*:\s*-`)
+	leftZone := []string{"#oc-drawer-toggle", "#oc-project-name", ".oc-project-title", "#acmm-badge", "#background-activity", ".oc-topbar-left"}
+	for _, m := range ruleRE.FindAllStringSubmatch(html, -1) {
+		selector, body := m[1], m[2]
+		for _, id := range leftZone {
+			if strings.Contains(selector, id) && negRE.MatchString(body) {
+				t.Errorf("rule for %s pulls a left-zone chip outside the clipping box: %s{%s}", id, strings.TrimSpace(selector), body)
+			}
+		}
+	}
+}

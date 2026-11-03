@@ -1,0 +1,1 @@
+- Keep adopted contributor PRs with review-requested changes in the fixer's work list until a new head lands, and surface exhausted fix attempts instead of silently idling.

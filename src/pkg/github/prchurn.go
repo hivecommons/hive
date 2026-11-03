@@ -111,6 +111,11 @@ func (r IssuePRRecord) terminal() bool {
 type ClaimScan struct {
 	Claims  []IssueClaim
 	History []IssuePRRecord
+	// StartedAt is when the scan began listing. A claim the webhook path
+	// recorded at or after this instant describes a PR the listing may not
+	// have contained yet, so an authoritative reconcile must not treat its
+	// absence from Claims as evidence the PR is gone (hivecommons/hive#15559).
+	StartedAt time.Time
 }
 
 // PRTerminalObservation reports a terminal PR state seen by the regular PR
@@ -123,6 +128,13 @@ type PRTerminalObservation struct {
 	ObservedAt  time.Time
 	Actor       string
 	Attribution string
+	// CreatedAt, URL and Issues are set on merged observations: the PR's
+	// real open instant and the same-repo issues it closes (Fixes/Closes),
+	// so the lifecycle timeline can backfill pr_opened/merged onto those
+	// issues with the PR's own timestamps (hivecommons/hive#12007).
+	CreatedAt time.Time
+	URL       string
+	Issues    []int
 }
 
 type PRTerminalObservedHook func(PRTerminalObservation)
@@ -145,13 +157,17 @@ func (c *Client) emitPRTerminalObserved(obs PRTerminalObservation) {
 	(*hook)(obs)
 }
 
+// PRMergeAttributionHive is prTerminalMergeAttribution's "the hive merged
+// it" value; the dashboard's merged ledger records it as merged_by.
+const PRMergeAttributionHive = "hive"
+
 func prTerminalMergeAttribution(actor string, identity HiveIdentity, appBotLogin string) string {
 	login := strings.TrimSpace(actor)
 	if login == "" {
 		return "unknown"
 	}
 	if identity.Matches(login) || (appBotLogin != "" && strings.EqualFold(login, appBotLogin)) {
-		return "hive"
+		return PRMergeAttributionHive
 	}
 	if strings.HasSuffix(strings.ToLower(login), "[bot]") {
 		return "other_automation"

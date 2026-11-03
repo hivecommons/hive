@@ -6,7 +6,9 @@ set -euo pipefail
 NOUS_DIR="${NOUS_DIR:-/opt/nous}"
 NOUS_PYTHON="${NOUS_DIR}/venv/bin/python3"
 NOUS_RUN_DIR="${NOUS_RUN_DIR:-/var/run/nous}"
-NOUS_DATA_DIR="${NOUS_DATA_DIR:-/data/nous}"
+# Durable Nous root (#11694). HIVE_NOUS_DATA_DIR is the hive's own override
+# and wins so the gate bridge publishes where the dashboard is reading.
+NOUS_DATA_DIR="${HIVE_NOUS_DATA_DIR:-${NOUS_DATA_DIR:-/data/nous}}"
 CAMPAIGN_PATH="${NOUS_CAMPAIGN_PATH:-/etc/hive/nous-campaign.yaml}"
 HIVE_METRICS_DIR="${HIVE_METRICS_DIR:-/var/run/hive-metrics}"
 GOV_STATE_DIR="${GOV_STATE_DIR:-/var/run/kick-governor}"
@@ -149,20 +151,55 @@ elif [ "$EFFECTIVE_MODE" = "observe" ]; then
   AUTO_APPROVE="true"
 fi
 
-NOUS_AGENT="${NOUS_AGENT:-inline}"
+# Dispatcher (RFC #11585 part 5): the hive exports its resolved nous.dispatcher
+# as HIVE_NOUS_DISPATCHER (inline by default; sdk is the legacy agent-SDK
+# mode). A NOUS_AGENT already set in the environment wins so operators who
+# pinned a mode before the hive owned the setting keep it.
+NOUS_AGENT="${NOUS_AGENT:-${HIVE_NOUS_DISPATCHER:-inline}}"
 
 APPROVE_FLAG=""
 if [ "$AUTO_APPROVE" = "true" ]; then
   APPROVE_FLAG="--auto-approve"
 fi
 
+# Pinned dependencies (RFC #11585 part 7, #11700): before the engine starts,
+# `hive nous-setup` fetches the campaign's declared dependencies — repos by
+# commit, files by sha256 — from allowlisted hosts only (HIVE_NOUS_FETCH_ALLOWLIST,
+# exported by the hive from nous.fetch_allowlist), verifies every pin and
+# records the resolved versions in $NOUS_DATA_DIR/<run-id>/dependencies.json.
+# Any refusal or mismatch ends the campaign here, before compute is spent.
+# This is the ONLY place the runner fetches anything; do not add curl/pip/git
+# fetches elsewhere in this script (pkg/nousdeps guard_test.go enforces it).
+RUN_ID="$(basename "$WORK_DIR")"
+HIVE_BIN="${HIVE_BIN:-hive}"
+DEPS_ENV_FILE="$NOUS_DATA_DIR/$RUN_ID/dependencies.env"
+if command -v "$HIVE_BIN" >/dev/null 2>&1; then
+  if ! "$HIVE_BIN" nous-setup --campaign "$CAMPAIGN_CONFIG" --run-id "$RUN_ID" --root "$NOUS_DATA_DIR"; then
+    echo "[nous-runner] ERROR: dependency setup refused or failed — campaign not started"
+    exit 1
+  fi
+  if [ -f "$DEPS_ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$DEPS_ENV_FILE"
+    set +a
+  fi
+else
+  if [ -n "$(read_yaml_field "$CAMPAIGN_CONFIG" "campaign.dependencies")" ]; then
+    echo "[nous-runner] ERROR: campaign declares dependencies but '$HIVE_BIN' is not on PATH to fetch them — refusing to start"
+    exit 1
+  fi
+  echo "[nous-runner] WARN: '$HIVE_BIN' not found; no dependency record will be written for this run"
+fi
+
 echo "[nous-runner] invoking run_campaign.py (agent=$NOUS_AGENT, auto_approve=$AUTO_APPROVE, timeout=${TIMEOUT_SEC}s)"
 NOUS_HIVE_MODE="$EFFECTIVE_MODE" \
 NOUS_HIVE_SCOPE="$EFFECTIVE_SCOPE" \
 NOUS_GATE_SCRIPT="$GATE_SCRIPT" \
+NOUS_DATA_DIR="$NOUS_DATA_DIR" \
 "$NOUS_PYTHON" "$NOUS_DIR/run_campaign.py" \
   "$CAMPAIGN_CONFIG" \
-  --run-id "$(basename "$WORK_DIR")" \
+  --run-id "$RUN_ID" \
   --max-iterations 1 \
   --timeout "$TIMEOUT_SEC" \
   $APPROVE_FLAG \

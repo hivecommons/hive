@@ -28,6 +28,11 @@ const (
 	// filing pass that filed or updated at least one item, in any
 	// destination (GitHub issue, Projects, Linear, Jira). Target is the PR.
 	AuditActionReviewBacklogBatchRouted = "review_backlog_batch_routed"
+	// AuditActionReviewBacklogIssueClosed is recorded when the block sweep
+	// closes a backlog issue as completed because its source PR merged and
+	// the finding's file or symbol is gone from the base
+	// (review_backlog_selfcheck.go). Target is the backlog issue.
+	AuditActionReviewBacklogIssueClosed = "review_backlog_issue_closed"
 	// AuditActionHiveLabelApplied is recorded when the hive applies an
 	// existing repo label to a PR: the human-decision label and the review
 	// priority labels (human_decision_label.go).
@@ -47,6 +52,20 @@ const (
 	// one-time hold-label migration puts under the new hold label
 	// (hive_hold_migration.go).
 	AuditActionHoldMigrationLabelAdded = "hold_migration_label_added"
+	// AuditActionOriginLabelMigrated is recorded for each open item the
+	// one-time provenance-label reconciler moves from a retired name
+	// (from-review, origin/review, origin/reviewer) to agent/reviewer
+	// (origin_labels.go).
+	AuditActionOriginLabelMigrated = "origin_label_migrated"
+	// AuditActionHiveIDLabelRetired is recorded for each open item the
+	// boot-time self-heal sweep strips the retired hive/<hive-id> provenance
+	// label from (hive_id_label_retire.go, hivecommons/hive#12539).
+	AuditActionHiveIDLabelRetired = "hive_id_label_retired"
+	// AuditActionClaimedByLabelMigrated is recorded for each open item the
+	// one-shot sweep moves from the retired per-login
+	// `hive/claimed-by-<login>` to the generic `hive/claimed-by-human`
+	// (claimed_by_human_migration.go).
+	AuditActionClaimedByLabelMigrated = "claimed_by_label_migrated"
 	// AuditActionReporterTrustWaitNoticed is recorded when the core poller
 	// posts the one-shot reporter-trust wait explanation comment.
 	AuditActionReporterTrustWaitNoticed = "reporter_trust_wait_noticed"
@@ -77,11 +96,14 @@ func InternalWriteAuditActions() []string {
 		AuditActionReviewBacklogIssueFiled,
 		AuditActionReviewBacklogSummaryPosted,
 		AuditActionReviewBacklogBatchRouted,
+		AuditActionReviewBacklogIssueClosed,
 		AuditActionHiveLabelApplied,
 		AuditActionRecommendationsPosted,
 		AuditActionFleetReportPosted,
 		AuditActionFleetReportRecovered,
 		AuditActionHoldMigrationLabelAdded,
+		AuditActionOriginLabelMigrated,
+		AuditActionHiveIDLabelRetired,
 		AuditActionReporterTrustWaitNoticed,
 		AuditActionReporterTrustWaitCleared,
 	}

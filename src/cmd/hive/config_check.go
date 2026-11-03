@@ -52,6 +52,17 @@ func runConfigCheck(args []string, stdout, stderr io.Writer) int {
 		return configCheckExitCode
 	}
 
+	// The loader boots a degraded config rather than crash-looping, so a
+	// dropped base-config launch_cmd loads "successfully"; but this command
+	// answers whether the config boots as written, and it does not.
+	if len(cfg.LaunchCmdDegradations) > 0 {
+		fmt.Fprintf(stderr, "config INVALID: %s\nlaunch_cmd contradicts backend; the hive would boot without it:\n", *configPath)
+		for _, d := range cfg.LaunchCmdDegradations {
+			fmt.Fprintf(stderr, "  %s: backend %q, launch_cmd %q dropped: %s\n", d.Agent, d.Backend, d.LaunchCmd, d.Error)
+		}
+		return configCheckExitCode
+	}
+
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)

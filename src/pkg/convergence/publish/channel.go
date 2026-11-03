@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 )
 
@@ -77,7 +78,7 @@ func (c RepoChannel) Disclose(ctx context.Context, d Disclosure) (DisclosureRef,
 	if c.Issues == nil {
 		return DisclosureRef{}, fmt.Errorf("%w: private repo channel has no issue seam", ErrNoPrivateChannel)
 	}
-	ref, err := c.Issues.CreateIssue(ctx, c.Repo, d.Finding.Title, d.Body, []string{repoChannelLabel})
+	ref, err := c.Issues.CreateIssue(ctx, c.Repo, d.Finding.Title, d.Body, []string{repoChannelLabel, config.OriginLabel(config.OriginSourceConvergence)})
 	if err != nil {
 		return DisclosureRef{}, err
 	}

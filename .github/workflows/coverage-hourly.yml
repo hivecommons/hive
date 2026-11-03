@@ -91,7 +91,10 @@ jobs:
     # Hard cap so a hung runner / stuck -race build auto-fails instead of
     # blocking PR merges indefinitely (the go test -timeout only bounds the test
     # step, not checkout/setup/build/post-processing or a wedged runner). #3615.
-    timeout-minutes: 20
+    # Two sequential full go test passes now run ~18–20 min on shared runners, so
+    # 20 minutes was cancelling the second pass on green runs; 30 still auto-fails
+    # hung runners. #15266.
+    timeout-minutes: 30
     # Surfaced so create-issue-on-coverage-drop can report WHAT failed and on
     # WHICH commit (#3903). Without these the filed issue could only say
     # "packages below 90%" and quote github.sha — the SHA of the branch that
@@ -158,7 +161,7 @@ jobs:
             echo "::notice::go-cache-guard.sh not present on the measured ref; keeping default Go cache settings"
           fi
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - name: Guard shared node tool cache (repair a half-written entry)
@@ -190,7 +193,7 @@ jobs:
         id: cover
         continue-on-error: true
         run: |
-          go test ./pkg/... ./cmd/... ./internal/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
+          go test ./pkg/... ./cmd/... ./internal/... ./crux/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
             2>&1 | tee race-run.log
           exit "${PIPESTATUS[0]}"
 
@@ -217,7 +220,7 @@ jobs:
             [dashboard]=84   # 86.2% on 2026-09-01; residue is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
             [dashchat]=64     # initial browser transport seam (#8304); chat.Service command paths are covered in pkg/chat, surface tests pin guards
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4/v5 measure 87.6%.
-            [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
+            [crux/agent]=88  # 88.9% after the v5->v6 top-up (#14340); pre-existing shortfall inherited from #2350, NOT a new regression. See #2355. Keyed crux/<pkg> since the module cut (#13536)
             [adminmcp]=53     # 53.3% on PR #8807; phase-1 skeleton covers refusal/cap/scrub/core JSON-RPC paths while provider breadth lands in later phases
 
             # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
@@ -255,12 +258,13 @@ jobs:
             [retro]=82
             [github]=88      # 88.9% on 2026-10-05
             [hivectl]=88
+            [hivectl/commands]=89  # 89.9% after the v5→v6 forward-merge (#13896); the union of both branches' tests sits just under the 90 default
             [knowledge]=89
-            [proxy]=89
+            [crux/proxy]=89
             [ioscan]=96
-            [sandbox]=98
-            [pushbroker]=99
-            [kubejob]=90    # new in #6311; sandbox.Launcher over the in-cluster API, tested against httptest
+            [crux/sandbox]=98
+            [crux/pushbroker]=99
+            [crux/kubejob]=90    # new in #6311; sandbox.Launcher over the in-cluster API, tested against httptest
 
             # ── Stale module-path parser repaired on v5 (#6066) ─────────────
             # These packages were pre-existing below-default floors that became
@@ -318,6 +322,8 @@ jobs:
             # 90 default (#7407).
             [cmd/hivectl]=97  # 100.0% on 2026-09-17; was exempt as an untested main
             [cmd/flue-fixture]=75 # 80.0% on 2026-09-22 (#8361): main() is the single uncovered statement; run() and signalContext() are tested in-process and the binary is smoke-tested as a child process, which yields no profile
+            [cmd/crux]=75     # 80.0% on 2026-10-23 (#13536): same shape as flue-fixture; main() is the one uncovered statement, run() is tested in-process. floor_key maps BOTH ./cmd/crux (root host) and ./crux/cmd/crux (the module's own binary, #14138) here; the module one measured 80.0% on 2026-10-25
+            [crux/cli]=92     # 97.8% on 2026-10-23 (#13536): the crux CLI against a fake crux.Runtime plus a real unix control socket; the residue is Main() and write-error branches
           )
 
           # Thin flag-parsing mains with no test files, wrapping packages the
@@ -343,7 +349,7 @@ jobs:
           # Both were therefore incapable of failing the gate, so adding a
           # package with zero tests was the one guaranteed way to stay green.
           # They are now hard failures in their own right.
-          go test -cover ./pkg/... ./cmd/... ./internal/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
+          go test -cover ./pkg/... ./cmd/... ./internal/... ./crux/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
 
           # Floor-map key for a package import path: cmd packages are keyed
           # with a "cmd/" prefix so cmd/hivectl can never resolve to
@@ -356,11 +362,18 @@ jobs:
           # pkg/hub/spoke (90.7%), which both keyed to "spoke", so the [spoke]=95
           # floor #7146 set for pkg/spoke would have been enforced against
           # pkg/hub/spoke too and failed it. Keys are now "spoke" vs "hub/spoke".
+          #
+          # The nested Crux module (src/crux, #13536) is keyed "crux/<path>"
+          # with the module root package as "crux", so crux/config can never
+          # alias pkg/config and crux/agent keeps the floor pkg/agent carried
+          # before the module cut.
           floor_key() {
             case "$1" in
-              */cmd/*) echo "cmd/${1##*/}" ;;
-              */pkg/*) echo "${1##*/pkg/}" ;;
-              *)       echo "${1##*/}" ;;
+              */cmd/*)  echo "cmd/${1##*/}" ;;
+              */pkg/*)  echo "${1##*/pkg/}" ;;
+              */crux/*) echo "crux/${1##*/crux/}" ;;
+              */crux)   echo "crux" ;;
+              *)        echo "${1##*/}" ;;
             esac
           }
 
@@ -445,6 +458,14 @@ jobs:
             echo -e "${REPORT}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Written once the verdict is known and before either outcome (the
+          # `exit 1` shortfall below or success), so it means "measurement
+          # reached a verdict", not "gate passed". The profile artifact cannot
+          # serve as this signal: a hung run leaves a partial cover-run.log
+          # that the always() upload still ships during cancellation cleanup
+          # (#12951).
+          echo "$GITHUB_SHA" > coverage-measured.marker
+
           if [ -n "$BROKEN" ] || [ -n "$FAILED" ]; then
             echo "below_threshold=true" >> "$GITHUB_OUTPUT"
             {
@@ -480,6 +501,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Upload measurement-complete marker
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-measured-${{ github.run_id }}-${{ github.run_attempt }}
+          path: src/coverage-measured.marker
+          if-no-files-found: ignore
+          retention-days: 14
+
   create-issue-on-coverage-drop:
     # Scheduled runs only. The bare `failure()` here previously fired on ANY
     # job failure regardless of cause, which is why issue #2191 accumulated 41
@@ -487,12 +517,20 @@ jobs:
     # test failure aborting the run. Now that the gate also runs on
     # pull_request, an unscoped condition would additionally file an issue for
     # every contributor's red PR.
+    # A cancelled coverage job carries no outputs. If it was cancelled AFTER the
+    # measurement finished (timeout during post-step cleanup, #12944) the
+    # measurement-complete marker artifact exists and filing would only produce a false "measured unknown"
+    # alarm, so the script below exits early. If it was cancelled BEFORE the
+    # marker was written (a hung suite hitting the job timeout, #12951) the
+    # issue is still filed so a persistent hang does not go unreported.
     if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     needs: coverage
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       - name: Create or update coverage issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -512,6 +550,25 @@ jobs:
             const total = '${{ needs.coverage.outputs.total }}' || 'unavailable';
             const shortSha = measuredSha.substring(0, 7);
 
+            // Cancelled jobs propagate no outputs, so the marker artifact is the
+            // only evidence that the measurement completed (#12944, #12951). The
+            // profile artifact is unreliable here: partial logs from a hung run
+            // are still uploaded during cancellation cleanup.
+            const cancelled = '${{ needs.coverage.result }}' === 'cancelled';
+            if (cancelled) {
+              const markerName = 'coverage-measured-${{ github.run_id }}-${{ github.run_attempt }}';
+              const arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+                per_page: 100,
+              });
+              if (arts.some(a => a.name === markerName && !a.expired)) {
+                core.info('Coverage job was cancelled after the measurement completed; no issue (#12944).');
+                return;
+              }
+            }
+
             // The gate fails for two DIFFERENT reasons and they need different
             // fixes: a package under its floor, or a package that could not be
             // scored at all (tests failing / no test files). Conflating them is
@@ -524,7 +581,9 @@ jobs:
             // Calling that "below their coverage floor" sent #9632 to agents
             // that added tests for a workflow failure (#9645).
             const neverMeasured = !'${{ needs.coverage.outputs.measured_ref }}';
-            const cause = neverMeasured
+            const cause = cancelled
+              ? 'The coverage job was **cancelled before any coverage verdict reached this job** (for example a hung test suite hitting the job timeout, or a cancellation during setup). No verdict was recorded, so this is not evidence of a coverage shortfall - open the run log to see where it stopped.'
+              : neverMeasured
               ? 'The coverage job **failed before any package was measured** (workflow, setup, or runner failure). This is not a coverage shortfall and adding tests will not fix it - open the run log for the failing step.'
               : cannotScore
               ? 'One or more packages **could not be scored** (tests failing, or no test files). That is a broken-test problem, not a coverage shortfall — fix the tests first; the floor cannot be evaluated until they run.'
@@ -536,7 +595,9 @@ jobs:
             // The title must not claim a shortfall the body contradicts:
             // triage reads titles first (#9664 audit). Both keep the
             // [Coverage] prefix the dedupe below matches on.
-            const title = neverMeasured
+            const title = cancelled
+              ? `[Coverage] gate job cancelled before a coverage verdict`
+              : neverMeasured
               ? `[Coverage] gate job failed before measuring coverage`
               : `[Coverage] packages below 90% threshold`;
             const body = `## Coverage gate failed\n\n`

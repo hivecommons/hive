@@ -61,13 +61,33 @@ func TestCombinedDispatchSpendsOneSlotPerPR(t *testing.T) {
 	}
 	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
 		RequireApproval: true, FanOut: true, MaxParallelReviews: 2, CombinedPerspectives: true,
-		Agents: []AgentCapability{reviewer("r1")}, AIAuthor: "hive",
+		Agents: []AgentCapability{reviewer("r1"), reviewer("r2"), reviewer("r3")}, AIAuthor: "hive",
 	})
 	if len(plan.ReviewKicks) != 2 {
 		t.Fatalf("kicks = %d, want 2 (slot budget)", len(plan.ReviewKicks))
 	}
 	if plan.ReviewKicks[0].Number != 1 || plan.ReviewKicks[1].Number != 2 {
 		t.Fatalf("kicks did not go breadth-first: %+v", plan.ReviewKicks)
+	}
+}
+
+// A single reviewer takes one combined kick per cycle: a second PR's kick
+// would be typed into the session reviewing the first, so it waits.
+func TestCombinedDispatchNeverStacksOnABusyReviewer(t *testing.T) {
+	prs := []PullRequest{
+		{Repo: "acme/hive", Number: 1, HeadSHA: "a", Author: "hive-bot[bot]"},
+		{Repo: "acme/hive", Number: 2, HeadSHA: "b", Author: "hive-bot[bot]"},
+	}
+	opts := DispatchOptions{
+		RequireApproval: true, FanOut: true, MaxParallelReviews: 5, CombinedPerspectives: true,
+		Agents: []AgentCapability{reviewer("r1")}, AIAuthor: "hive",
+	}
+	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, opts)
+	if len(plan.ReviewKicks) != 1 || plan.ReviewKicks[0].Number != 1 {
+		t.Fatalf("kicks = %+v, want one kick for PR 1", plan.ReviewKicks)
+	}
+	if again := PlanDispatch(prs, Artifact{}, plan.State, opts); len(again.ReviewKicks) != 0 {
+		t.Fatalf("PR 2 stacked on the busy reviewer: %+v", again.ReviewKicks)
 	}
 }
 
@@ -150,7 +170,7 @@ func TestConfirmDeliveredReleasesEveryPerspectiveOfAnUndeliveredCombinedKick(t *
 	if len(got.Pending) != 0 {
 		t.Fatalf("undelivered combined kick left pending entries: %+v", got.Pending)
 	}
-	if missing := pendingMissingPerspectives(got, pr, kick.Perspectives); len(missing) != 3 {
+	if missing := pendingMissingPerspectives(got, pr, kick.Perspectives, nil); len(missing) != 3 {
 		t.Fatalf("next cycle should re-dispatch all three, got %v", missing)
 	}
 
@@ -185,5 +205,49 @@ func TestPromptsSpellOutFindingFields(t *testing.T) {
 				t.Errorf("%s prompt missing %q", name, want)
 			}
 		}
+	}
+}
+
+// Combined kicks spread across reviewers by load. Always taking the first
+// reviewer queued every PR on one agent, so replicas and extra reviewers sat
+// idle however high max_parallel_reviews was set.
+func TestCombinedDispatchSpreadsAcrossReviewers(t *testing.T) {
+	prs := []PullRequest{
+		{Repo: "acme/hive", Number: 1, HeadSHA: "a", Author: "hive-bot[bot]"},
+		{Repo: "acme/hive", Number: 2, HeadSHA: "b", Author: "hive-bot[bot]"},
+		{Repo: "acme/hive", Number: 3, HeadSHA: "c", Author: "hive-bot[bot]"},
+		{Repo: "acme/hive", Number: 4, HeadSHA: "d", Author: "hive-bot[bot]"},
+	}
+	opts := DispatchOptions{
+		RequireApproval: true, FanOut: true, MaxParallelReviews: 3, CombinedPerspectives: true,
+		Agents: []AgentCapability{reviewer("r1"), reviewer("r2"), reviewer("r3")}, AIAuthor: "hive",
+	}
+	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, opts)
+	got := map[string]int{}
+	for _, k := range plan.ReviewKicks {
+		got[k.Agent]++
+	}
+	if len(plan.ReviewKicks) != 3 || got["r1"] != 1 || got["r2"] != 1 || got["r3"] != 1 {
+		t.Fatalf("kicks by agent = %v (%d kicks), want one each for r1, r2, r3", got, len(plan.ReviewKicks))
+	}
+
+	// A later cycle: r1 and r3 are still on earlier PRs, r2 is free, so the
+	// new PR goes to r2 rather than queueing behind r1.
+	busy := []PullRequest{
+		{Repo: "acme/hive", Number: 10, HeadSHA: "x", Author: "hive-bot[bot]"},
+		{Repo: "acme/hive", Number: 11, HeadSHA: "y", Author: "hive-bot[bot]"},
+	}
+	state := DispatchState{Pending: []PendingReview{
+		{Repo: "acme/hive", Number: 10, HeadSHA: "x", Perspective: PerspectiveCorrectness, Agent: "r1", Dispatched: time.Now()},
+		{Repo: "acme/hive", Number: 11, HeadSHA: "y", Perspective: PerspectiveCorrectness, Agent: "r3", Dispatched: time.Now()},
+	}}
+	for _, p := range DefaultPerspectives[1:] {
+		state.Pending = append(state.Pending,
+			PendingReview{Repo: "acme/hive", Number: 10, HeadSHA: "x", Perspective: p, Agent: "r1", Dispatched: time.Now()},
+			PendingReview{Repo: "acme/hive", Number: 11, HeadSHA: "y", Perspective: p, Agent: "r3", Dispatched: time.Now()})
+	}
+	next := PlanDispatch(append(busy, prs[3]), Artifact{}, state, opts)
+	if len(next.ReviewKicks) != 1 || next.ReviewKicks[0].Number != 4 || next.ReviewKicks[0].Agent != "r2" {
+		t.Fatalf("next kicks = %+v, want PR 4 on the idle r2", next.ReviewKicks)
 	}
 }

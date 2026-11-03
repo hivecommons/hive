@@ -1,0 +1,1 @@
+- Activity monitor: a PR whose body says `Refs #N` (or `Related to`, `Part of`, `Towards`, `See` …), whose title ends in `(#N, part 1)`, or whose first paragraph mentions an open issue, now sits on that issue's row under a muted `refs` chip instead of showing "no linked issue"; closing links still win and are drawn unchanged.

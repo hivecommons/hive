@@ -6,8 +6,10 @@ import (
 )
 
 func TestExpandAgentReplicasMaterializesDerivedNames(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{
-		"scanner": {ID: "scanner", Backend: "copilot", Model: "auto", Enabled: true, Replicas: 3},
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Agents: map[string]AgentConfig{
+			"scanner": {ID: "scanner", Backend: "copilot", Model: "auto", Enabled: true, Replicas: 3},
+		},
 	}}
 	if err := cfg.ExpandAgentReplicas(); err != nil {
 		t.Fatalf("ExpandAgentReplicas() error = %v", err)
@@ -26,22 +28,24 @@ func TestExpandAgentReplicasMaterializesDerivedNames(t *testing.T) {
 }
 
 func TestExpandAgentReplicasRejectsCollisionsAndCap(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{
-		"scanner":   {Replicas: 2},
-		"scanner-2": {Replicas: 1},
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Agents: map[string]AgentConfig{
+			"scanner":   {Replicas: 2},
+			"scanner-2": {Replicas: 1},
+		},
 	}}
 	if err := cfg.ExpandAgentReplicas(); err == nil || !strings.Contains(err.Error(), "scanner-2") {
 		t.Fatalf("collision error = %v", err)
 	}
 
-	cfg = &Config{Agents: map[string]AgentConfig{"scanner": {Replicas: MaxAgentReplicas + 1}}}
+	cfg = &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {Replicas: MaxAgentReplicas + 1}}}}
 	if err := cfg.ExpandAgentReplicas(); err == nil || !strings.Contains(err.Error(), "replicas") {
 		t.Fatalf("cap error = %v", err)
 	}
 }
 
 func TestExpandAgentReplicasOneIsZeroMigration(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{"scanner": {Replicas: 1}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {Replicas: 1}}}}
 	if err := cfg.ExpandAgentReplicas(); err != nil {
 		t.Fatalf("ExpandAgentReplicas() error = %v", err)
 	}

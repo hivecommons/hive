@@ -84,7 +84,7 @@ func (s *Server) discoverOmpModels() cliModelResult {
 			}
 			lastErr = err
 			if s.logger != nil {
-				s.logger.Warn("omp model discovery found no models for this HOME", "home", home, "err", err.Error())
+				s.logger.Info("omp model discovery found no models for this HOME", "home", home, "err", err.Error())
 			}
 			continue
 		}
@@ -97,7 +97,7 @@ func (s *Server) discoverOmpModels() cliModelResult {
 	}
 	if len(models) == 0 {
 		if s.logger != nil {
-			s.logger.Warn("omp model discovery unavailable, serving static fallback", "homes", homes, "err", fmt.Sprint(lastErr))
+			s.logger.Info("omp model discovery unavailable, serving static fallback", "homes", homes, "err", fmt.Sprint(lastErr))
 		}
 		return cliModelResult{fallback: true, reasoningEfforts: cloneEffortMap(ompStaticReasoningEfforts)}
 	}

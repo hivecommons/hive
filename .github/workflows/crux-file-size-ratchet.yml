@@ -1,0 +1,48 @@
+name: crux file-size ratchet
+
+# src/crux is published to hivecommons/crux by the crux-sync workflow, and crux
+# main enforces a Go file-size ratchet that hive CI never ran, so a PR growing a
+# grandfathered src/crux file was green here and broke crux main on the next
+# sync (#15331). Pin the script and baseline together to a reviewed crux commit;
+# update the pin when adopting changes to the upstream ratchet.
+on:
+  pull_request:
+    paths:
+      - 'src/crux/**'
+      - '.github/workflows/crux-file-size-ratchet.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  crux-file-size-ratchet:
+    name: crux-file-size-ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: src/crux
+
+      - name: Check out the ratchet script and baseline from a pinned crux commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hivecommons/crux
+          ref: 13372ca72d161cc05e9f795ae4a1b3b352e55a73 # crux main, 2026-10-29
+          path: crux-ratchet
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/scripts/check-file-size-ratchet.sh
+            .github/go-file-size-ratchet.txt
+          sparse-checkout-cone-mode: false
+
+      - name: Check non-test Go file sizes in src/crux against crux's baseline
+        working-directory: src/crux
+        run: bash "$GITHUB_WORKSPACE/crux-ratchet/.github/scripts/check-file-size-ratchet.sh" "$GITHUB_WORKSPACE/crux-ratchet/.github/go-file-size-ratchet.txt"

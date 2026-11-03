@@ -1,0 +1,1 @@
+- Hive activity monitor: draft PRs (forge draft bit or prow `do-not-merge/work-in-progress`) now wear a muted `draft` pill with a tooltip explaining the review and merge lanes skip them, and their Open cell reads "Draft · since …" without the stale tint, instead of a bare "Open · since …" that looked stuck (#14572).

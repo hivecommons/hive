@@ -92,7 +92,7 @@ fi
 # 7. The Go permissions watcher never has /var/run/hive-metrics in its roots,
 #    so nothing running as dev after boot can re-open the hole (#6238 / #6277
 #    moved umask handling around; the watcher's roots are the only mode-fixer).
-if grep -q '"/var/run/hive-metrics' "${REPO_ROOT}/src/pkg/agent/permissions_watcher.go"; then
+if grep -q '"/var/run/hive-metrics' "${REPO_ROOT}/src/crux/agent/permissions_watcher.go"; then
   bad "the permissions watcher walks /var/run/hive-metrics and could loosen the audit log"
 else
   ok "the permissions watcher does not walk /var/run/hive-metrics"

@@ -1,0 +1,750 @@
+package hub
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
+)
+
+// Self-report relay (hivecommons/hive#11868). Spokes whose GitHub credential
+// cannot write to the report repo (self-hosted PATs scoped to their own
+// repos) POST their fleet self-report here; the hub files or joins the issue
+// under its App identity. Auth is the spoke heartbeat bearer, exactly like
+// /api/feedback/ingest. The hub performs the same fingerprint dedupe the
+// spoke would: one search for the marker, comment if found, create if not.
+
+const (
+	selfReportIngestPath       = "/api/selfreport/ingest"
+	selfReportMaxRequestBytes  = 256 << 10
+	selfReportDefaultRepo      = "hivecommons/hive"
+	selfReportRelayLabel       = "hive/selfreport"
+	selfReportRecoverAction    = "recover"
+	selfReportObservationClass = "observation"
+	selfReportObservationLabel = "hive-observation"
+	// selfReportCreateDeferredReason answers a join_only request that found no
+	// issue to join; cmd/hive mirrors this literal.
+	selfReportCreateDeferredReason = "create_deferred"
+)
+
+// selfReportRate reuses the feedback limiter shape (per-hive, 24h window,
+// feedbackHubMaxPerHivePerWindow creates) as its own instance so relayed
+// self-reports never eat the feedback budget or vice versa.
+var selfReportRate feedbackRateLimiter
+
+// selfReportRelayRequest mirrors cmd/hive's wire struct; Evidence is kept
+// opaque. Owners / OwnersHidden / InstanceID / Repos feed the affected block
+// the hub edits in place when it joins or files the issue.
+type selfReportRelayRequest struct {
+	Action      string   `json:"action,omitempty"`
+	HiveID      string   `json:"hive_id"`
+	Fingerprint string   `json:"fingerprint"`
+	Class       string   `json:"class,omitempty"`
+	Title       string   `json:"title,omitempty"`
+	Body        string   `json:"body"`
+	Labels      []string `json:"labels,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	Repo        string   `json:"repo,omitempty"`
+	InstanceID  string   `json:"instance_id,omitempty"`
+	Repos       []string `json:"repos,omitempty"`
+	Owners      []string `json:"owners,omitempty"`
+	// OwnersHidden is the spoke's include_owners opt-out; the hub then never
+	// substitutes its own owner record.
+	OwnersHidden bool `json:"owners_hidden,omitempty"`
+	// HiveName / SpokeURL are the spoke's own display name and dashboard
+	// URL (#13211); the hub overlays its authoritative project_name and
+	// vanity URL, and fills both for spokes that predate the fields.
+	HiveName    string          `json:"hive_name,omitempty"`
+	SpokeURL    string          `json:"spoke_url,omitempty"`
+	Evidence    json.RawMessage `json:"evidence,omitempty"`
+	Observation json.RawMessage `json:"observation,omitempty"`
+	HiveState   json.RawMessage `json:"hive_state,omitempty"`
+	// JoinOnly: join an existing issue only; never create (the spoke's
+	// per-hive new-filing cap/gap is exhausted).
+	JoinOnly bool `json:"join_only,omitempty"`
+}
+
+type selfReportRelayResponse struct {
+	OK     bool   `json:"ok"`
+	Number int    `json:"number,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Joined bool   `json:"joined,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// ClosedAt is set with Reason "closed_upstream" when the fingerprint's
+	// issue is closed inside selfReportClosedCooldown: the hub wrote
+	// nothing and the spoke records the close like a direct match (#14256).
+	ClosedAt time.Time `json:"closed_at,omitempty"`
+}
+
+// selfReportClosedCooldown mirrors fleetreport.DefaultFilingLimits.ClosedCooldown
+// on the hub side: a relayed fingerprint whose issue closed more recently
+// than this is not filed again. The hub never saw the spoke's state, so this
+// is the fleet-wide floor; the spoke's own ClosedSuppressed gate runs first.
+const selfReportClosedCooldown = 7 * 24 * time.Hour
+
+func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	req.HiveID = sanitizeHeartbeatField(req.HiveID)
+	req.Fingerprint = strings.TrimSpace(req.Fingerprint)
+	req.Class = strings.ToLower(strings.TrimSpace(req.Class))
+	req.Title = strings.TrimSpace(req.Title)
+	req.Repo = strings.TrimSpace(req.Repo)
+	if req.Fingerprint == "" || len(req.Fingerprint) > 128 || strings.ContainsAny(req.Fingerprint, " \t\n\"'<>") {
+		return fmt.Errorf("invalid fingerprint")
+	}
+	switch req.Action {
+	case "":
+		if req.Title == "" || len(req.Title) > 256 {
+			return fmt.Errorf("title must be 1-256 characters")
+		}
+	case selfReportRecoverAction:
+		if req.Class != selfReportObservationClass {
+			return fmt.Errorf("recover action requires class observation")
+		}
+	default:
+		return fmt.Errorf("unsupported self-report action")
+	}
+	if strings.TrimSpace(req.Body) == "" || len(req.Body) > selfReportMaxRequestBytes {
+		return fmt.Errorf("body is required")
+	}
+	if req.Action == selfReportRecoverAction || req.Repo == "" {
+		req.Repo = selfReportDefaultRepo
+	}
+	// Observation issues are always hub-owned. Do not trust a spoke-supplied
+	// project repo, even if an older spoke sends one by mistake.
+	if req.Class == selfReportObservationClass {
+		req.Repo = selfReportDefaultRepo
+	}
+	if _, _, err := splitHubRepo(req.Repo); err != nil {
+		return err
+	}
+	labels := req.Labels[:0]
+	for _, l := range req.Labels {
+		l = strings.TrimSpace(l)
+		if l == "" || len(l) > 50 {
+			continue
+		}
+		labels = append(labels, l)
+	}
+	req.Labels = labels
+	req.InstanceID = strings.TrimSpace(req.InstanceID)
+	req.Repos = fleetreport.NormalizeRepos(req.Repos)
+	req.Owners = fleetreport.NormalizeLogins(req.Owners)
+	if req.OwnersHidden {
+		req.Owners = nil
+	}
+	req.HiveName = fleetreport.NormalizeHiveName(req.HiveName)
+	req.SpokeURL = fleetreport.NormalizeSpokeURL(req.SpokeURL)
+	return nil
+}
+
+// selfReportAffectedEntry is the affected-block line the hub writes for the
+// relaying hive. Owners are the spoke's, falling back to the hub's own
+// record of the hive owner for spokes that predate the owners field, unless
+// the spoke opted out.
+func (s *HubServer) selfReportAffectedEntry(req selfReportRelayRequest, now time.Time) fleetreport.AffectedHive {
+	owners := req.Owners
+	hive := loadSaaSHive(req.HiveID)
+	if len(owners) == 0 && !req.OwnersHidden && hive != nil {
+		owners = fleetreport.NormalizeLogins([]string{hive.Owner})
+	}
+	name, spokeURL := s.selfReportHiveIdentity(req, hive)
+	return fleetreport.AffectedHive{Hive: req.HiveID, Name: name, URL: spokeURL, Instance: req.InstanceID, Owners: owners, OwnersHidden: req.OwnersHidden, Last: now}
+}
+
+// selfReportHiveIdentity resolves the display name and dashboard URL the
+// report shows for the relaying hive (#13211), with the same precedence the
+// hub's own hives listing uses: the operator-set project_name (renames land
+// here, never on the spoke) over the spoke's project.name, else the org or
+// primary repo the listing falls back to; the validated vanity URL over the
+// spoke's own public URL, else the heartbeat-reported dashboard URL, else
+// the placeholder host. Only name and URL leave the hub's record.
+func (s *HubServer) selfReportHiveIdentity(req selfReportRelayRequest, hive *SaaSHive) (string, string) {
+	name, spokeURL := req.HiveName, req.SpokeURL
+	if hive != nil {
+		if v := fleetreport.NormalizeHiveName(hive.ProjectName); v != "" {
+			name = v
+		}
+		if name == "" {
+			name = fleetreport.NormalizeHiveName(firstNonEmpty(hive.Org, hive.PrimaryRepo))
+		}
+		if v := fleetreport.NormalizeSpokeURL(claimedVanityURL(hive)); v != "" {
+			spokeURL = v
+		}
+	}
+	if spokeURL == "" && s != nil {
+		s.mu.RLock()
+		for i := range s.registry.Hives {
+			if s.registry.Hives[i].ID == req.HiveID {
+				spokeURL = fleetreport.NormalizeSpokeURL(s.registry.Hives[i].DashboardURL)
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if spokeURL == "" && hive != nil {
+			spokeURL = fleetreport.NormalizeSpokeURL(s.placeholderHostURL(req.HiveID))
+		}
+	}
+	return name, spokeURL
+}
+
+func firstNonEmpty(xs ...string) string {
+	for _, x := range xs {
+		if strings.TrimSpace(x) != "" {
+			return x
+		}
+	}
+	return ""
+}
+
+func splitHubRepo(full string) (string, string, error) {
+	owner, repo, ok := strings.Cut(full, "/")
+	if !ok || owner == "" || repo == "" || strings.Contains(repo, "/") || !isValidName(owner) || !isValidName(repo) {
+		return "", "", fmt.Errorf("invalid repo %q", full)
+	}
+	return owner, repo, nil
+}
+
+func selfReportNeedsDecisionLabel(hiveID string) string {
+	if hive := loadSaaSHive(hiveID); hive != nil && hive.IssueFilter != nil {
+		return strings.TrimSpace(hive.IssueFilter.NeedsDecisionLabel())
+	}
+	return config.DefaultNeedsDecisionLabel
+}
+
+func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Request) {
+	if s.hubSecret == "" {
+		npsJSONError(w, "self-report ingest requires a configured hub secret", http.StatusServiceUnavailable)
+		return
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		npsJSONError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	presented := strings.TrimPrefix(auth, "Bearer ")
+	body, err := io.ReadAll(io.LimitReader(r.Body, selfReportMaxRequestBytes+1))
+	if err != nil {
+		npsJSONError(w, "read error", http.StatusBadRequest)
+		return
+	}
+	if len(body) > selfReportMaxRequestBytes {
+		npsJSONError(w, "payload too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	var req selfReportRelayRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		npsJSONError(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	if err := validateSelfReportRelayRequest(&req); err != nil {
+		npsJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.HiveID == "" || !isValidName(req.HiveID) {
+		npsJSONError(w, "invalid hive_id", http.StatusBadRequest)
+		return
+	}
+	if !s.verifyHeartbeatBearer(presented, req.HiveID) {
+		npsJSONError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !s.npsHiveRegistered(req.HiveID) {
+		npsJSONError(w, "unknown hive - heartbeat first", http.StatusForbidden)
+		return
+	}
+	token, botLogin := mintHubFeedbackAppToken(r.Context(), s, req.HiveID)
+	if token == "" {
+		npsJSONError(w, "hub GitHub App token is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	_ = botLogin
+	client := hubFeedbackAuthoringHTTPClient()
+	owner, repo, _ := splitHubRepo(req.Repo)
+	if req.Action == selfReportRecoverAction {
+		existing, err := findSelfReportIssueByFingerprint(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Fingerprint)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Error("selfreport relay: recovery search failed", "hive", req.HiveID, "fingerprint", req.Fingerprint, "error", err)
+			}
+			npsJSONError(w, "failed to find observation issue", http.StatusBadGateway)
+			return
+		}
+		if existing.Number <= 0 {
+			// A closed or never-created issue is an idempotent no-op. The
+			// spoke must not turn this into an eval-cycle failure.
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "unknown_fingerprint"})
+			return
+		}
+		// Every hive-filed fleet issue (runtime errors, ACMM criteria,
+		// defects) carries the same fingerprint marker, and those
+		// fingerprints are deterministic and fleet-wide. Only an issue the
+		// hub itself filed as an observation may be closed by a spoke's
+		// recovery; the request's class is the caller's claim, the label is
+		// the issue's.
+		if !containsString(existing.Labels, selfReportObservationLabel) {
+			if s.logger != nil {
+				s.logger.Warn("selfreport relay: recovery target is not an observation issue; ignoring", "hive", req.HiveID, "fingerprint", req.Fingerprint, "issue", existing.Number)
+			}
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "not_observation"})
+			return
+		}
+		// Fingerprints may be supplied by detectors, so neither the request
+		// nor a fingerprint prefix proves ownership. Bind recovery to the
+		// hive identity recorded in the matched observation's evidence.
+		if !selfReportObservationBelongsToHive(existing.Body, req.HiveID) {
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "hive_mismatch"})
+			return
+		}
+		if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, req.Body); err != nil {
+			if s.logger != nil {
+				s.logger.Error("selfreport relay: recovery comment failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
+			}
+			npsJSONError(w, "failed to comment on observation issue", http.StatusBadGateway)
+			return
+		}
+		if err := closeHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number); err != nil {
+			if s.logger != nil {
+				s.logger.Error("selfreport relay: recovery close failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
+			}
+			npsJSONError(w, "failed to close observation issue", http.StatusBadGateway)
+			return
+		}
+		writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: existing.Number, URL: existing.URL})
+		return
+	}
+
+	existing, err := findSelfReportIssueByFingerprintAnyState(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Fingerprint)
+	if err != nil && s.logger != nil {
+		s.logger.Warn("selfreport relay: fingerprint search failed; will create", "hive", req.HiveID, "error", err)
+	}
+	if existing.Number > 0 && existing.Closed {
+		// The issue for this defect was closed (maintainer, scanner,
+		// close-on-merge). Before #14256 the search was open-only, so the
+		// next relayed report created a fresh issue right after every close
+		// — the daily re-file loop William's hive produced. Inside the
+		// cooldown: write nothing, tell the spoke. Past it: a fresh filing.
+		if time.Since(existing.ClosedAt) < selfReportClosedCooldown {
+			if s.logger != nil {
+				s.logger.Info("selfreport relay: fingerprint closed upstream; not re-filing", "hive", req.HiveID, "issue", existing.Number, "closed_at", existing.ClosedAt)
+			}
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: existing.Number, URL: existing.URL, Reason: "closed_upstream", ClosedAt: existing.ClosedAt})
+			return
+		}
+		existing = feedbackIssueResult{}
+	}
+	if existing.Number <= 0 && fleetreport.IsLegacyStandaloneTitle(req.Title) {
+		// A spoke still on a pre-#13470 build asking the hub to file a
+		// standalone "Fleet report:" issue (hivecommons/hive#13567 was one,
+		// from 5.186.4-22-g20cec0241). That format is retired: fold the
+		// payload onto the hive's open self-report tracker as a comment when
+		// it has one, otherwise refuse with 410 so the spoke logs and moves
+		// on. Either way no new issue is created.
+		s.handleLegacyStandaloneSelfReport(w, r, client, token, owner, repo, req)
+		return
+	}
+	if existing.Number > 0 {
+		comment := fmt.Sprintf("<!-- hive:selfreport-seen hive=%s fp=%s --> Also seen on **%s** (v%s) at %s — relayed via hub.",
+			req.HiveID, req.Fingerprint, req.HiveID, orUnknown(req.Version), time.Now().UTC().Format(time.RFC3339))
+		if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, comment); err != nil {
+			if s.logger != nil {
+				s.logger.Error("selfreport relay: comment failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
+			}
+			npsJSONError(w, "failed to update issue", http.StatusBadGateway)
+			return
+		}
+		// hive/selfreport only: the hive/<id> provenance label is retired
+		// (hivecommons/hive#12539); the seen marker above names the hive.
+		_ = postHubGitHubIssueLabels(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, []string{selfReportRelayLabel})
+		// Every hive-filed report (runtime-error and ACMM shortfall, #13470)
+		// carries the block; observation issues do not, and the hub never
+		// appends one to them.
+		if strings.Contains(existing.Body, fleetreport.AffectedBlockStart) {
+			if newBody, changed := fleetreport.UpdateAffected(existing.Body, s.selfReportAffectedEntry(req, time.Now()), req.Repos, true); changed {
+				if err := patchHubGitHubIssueBody(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, newBody); err != nil && s.logger != nil {
+					s.logger.Warn("selfreport relay: could not update affected-hives block", "hive", req.HiveID, "issue", existing.Number, "error", err)
+				}
+			}
+		}
+		if s.logger != nil {
+			s.logger.Info("selfreport relay: joined existing issue", "hive", req.HiveID, "issue", existing.Number, "class", req.Class)
+		}
+		writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: existing.Number, URL: existing.URL, Joined: true})
+		return
+	}
+
+	if req.JoinOnly {
+		if s.logger != nil {
+			s.logger.Info("selfreport relay: create deferred by spoke cap", "hive", req.HiveID, "class", req.Class)
+		}
+		writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: selfReportCreateDeferredReason})
+		return
+	}
+
+	release, err := selfReportRate.reserve(req.HiveID, time.Now())
+	if err != nil {
+		npsJSONError(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	labels := append([]string(nil), req.Labels...)
+	if req.Class == selfReportObservationClass {
+		if !containsString(labels, selfReportObservationLabel) {
+			labels = append(labels, selfReportObservationLabel)
+		}
+		if decision := selfReportNeedsDecisionLabel(req.HiveID); decision != "" && !containsString(labels, decision) {
+			labels = append(labels, decision)
+		}
+	}
+	if !containsString(labels, selfReportRelayLabel) {
+		labels = append(labels, selfReportRelayLabel)
+	}
+	if strings.Contains(req.Body, fleetreport.AffectedBlockStart) {
+		// A spoke that predates the owners field sends a block with only the
+		// hive name; fill the hive's line from what the hub knows.
+		entry := s.selfReportAffectedEntry(req, time.Now())
+		if newBody, changed := fleetreport.UpdateAffected(req.Body, entry, req.Repos, false); changed {
+			req.Body = newBody
+		}
+		// Likewise the evidence table's hive name / spoke rows (#13211): an
+		// older spoke has none, a current one carries its own view; the hub's
+		// project_name and vanity URL are the ones the hives listing shows.
+		if newBody, changed := fleetreport.UpsertHiveIdentity(req.Body, entry.Name, entry.URL); changed {
+			req.Body = newBody
+		}
+	}
+	res, status, err := postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, labels)
+	if err != nil && status == http.StatusUnprocessableEntity {
+		// Unknown labels: retry with the label set that is known to exist
+		// rather than lose the report — and never with none at all, which is
+		// how hivecommons/hive#13465 landed unlabelled (#13470).
+		res, status, err = postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, selfReportFallbackLabels(req.Class))
+		if err != nil && status == http.StatusUnprocessableEntity {
+			res, _, err = postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, []string{selfReportRelayLabel})
+		}
+	}
+	if err != nil {
+		release()
+		if s.logger != nil {
+			s.logger.Error("selfreport relay: create failed", "hive", req.HiveID, "error", err)
+		}
+		npsJSONError(w, "failed to create issue", http.StatusBadGateway)
+		return
+	}
+	if s.logger != nil {
+		s.logger.Info("selfreport relay: created issue", "hive", req.HiveID, "issue", res.Number, "class", req.Class)
+	}
+	writeSelfReportRelayResponse(w, http.StatusCreated, selfReportRelayResponse{OK: true, Number: res.Number, URL: res.URL})
+}
+
+// selfReportFallbackLabels is the create retry's label set when the spoke's
+// full set was rejected: the core self-report labels plus the observation
+// label for observation reports. All of them exist in the report repo.
+func selfReportFallbackLabels(class string) []string {
+	labels := fleetreport.CoreSelfReportLabels()
+	if class == selfReportObservationClass {
+		labels = append(labels, selfReportObservationLabel)
+	}
+	return labels
+}
+
+// selfReportLegacyRetiredReason is the 410 body an old spoke gets when its
+// standalone report has no tracker to fold onto.
+const selfReportLegacyRetiredReason = "legacy_standalone_retired"
+
+// handleLegacyStandaloneSelfReport converts a retired standalone "Fleet
+// report:" payload (#13470) into a comment on the relaying hive's open
+// `[selfreport]` tracker, or refuses it with 410 Gone. It never creates an
+// issue. The log line names the spoke's version so the operator can see
+// which hive is still on a pre-#13470 build.
+func (s *HubServer) handleLegacyStandaloneSelfReport(w http.ResponseWriter, r *http.Request, client *http.Client, token, owner, repo string, req selfReportRelayRequest) {
+	tracker, err := findSelfReportTrackerForHive(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.HiveID)
+	if err != nil && s.logger != nil {
+		s.logger.Warn("selfreport relay: tracker search failed for legacy standalone report", "hive", req.HiveID, "spoke_version", orUnknown(req.Version), "error", err)
+	}
+	if tracker.Number <= 0 {
+		if s.logger != nil {
+			s.logger.Warn("selfreport relay: refused legacy standalone fleet report; spoke predates #13470 and has no open self-report tracker",
+				"hive", req.HiveID, "spoke_version", orUnknown(req.Version), "fingerprint", req.Fingerprint, "title", req.Title)
+		}
+		writeSelfReportRelayResponse(w, http.StatusGone, selfReportRelayResponse{Reason: selfReportLegacyRetiredReason})
+		return
+	}
+	comment := fmt.Sprintf("%s\nLegacy standalone fleet report from **%s** (v%s) folded onto this self-report by the hub (hivecommons/hive#13470: standalone `Fleet report:` issues are retired; upgrade the spoke to stop seeing this).\n\n<details><summary>Original report: %s</summary>\n\n%s\n</details>",
+		fleetreport.SeenMarker(req.Fingerprint, req.HiveID), req.HiveID, orUnknown(req.Version), req.Title, req.Body)
+	if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, tracker.Number, comment); err != nil {
+		if s.logger != nil {
+			s.logger.Error("selfreport relay: legacy standalone fold-in comment failed", "hive", req.HiveID, "spoke_version", orUnknown(req.Version), "issue", tracker.Number, "error", err)
+		}
+		npsJSONError(w, "failed to update issue", http.StatusBadGateway)
+		return
+	}
+	if s.logger != nil {
+		s.logger.Info("selfreport relay: folded legacy standalone fleet report onto self-report tracker", "hive", req.HiveID, "spoke_version", orUnknown(req.Version), "issue", tracker.Number, "title", req.Title)
+	}
+	writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: tracker.Number, URL: tracker.URL, Joined: true})
+}
+
+// findSelfReportTrackerForHive finds the relaying hive's open `[selfreport]`
+// tracker: an open issue labelled hive/selfreport whose body carries the
+// hive's self-report marker (`<!-- hive:selfreport fp=… hive=<id> -->`).
+// Returns zero Number when it has none.
+func findSelfReportTrackerForHive(ctx context.Context, client *http.Client, apiBase, token, owner, repo, hiveID string) (feedbackIssueResult, error) {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_tracker_search")
+	needle := "hive=" + fleetreport.MarkerHive(hiveID) + " -->"
+	q := fmt.Sprintf("repo:%s/%s is:issue is:open label:%s in:body %q", owner, repo, selfReportRelayLabel, needle)
+	u := strings.TrimRight(apiBase, "/") + "/search/issues?per_page=10&sort=created&order=asc&q=" + url.QueryEscape(q)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return feedbackIssueResult{}, fmt.Errorf("github search: %d", resp.StatusCode)
+	}
+	var out struct {
+		Items []struct {
+			Number  int    `json:"number"`
+			HTMLURL string `json:"html_url"`
+			Title   string `json:"title"`
+			Body    string `json:"body"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return feedbackIssueResult{}, err
+	}
+	for _, it := range out.Items {
+		if fleetreport.IsLegacyStandaloneTitle(it.Title) || !strings.Contains(it.Body, fleetreport.SelfReportMarkerPrefix) || !strings.Contains(it.Body, needle) {
+			continue
+		}
+		return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body}, nil
+	}
+	return feedbackIssueResult{}, nil
+}
+
+// selfReportObservationBelongsToHive reads the evidence field emitted by
+// fleetreport.BuildObservationReport. Missing, malformed or duplicate ownership
+// fields fail closed, including when the fingerprint looks hive-scoped.
+func selfReportObservationBelongsToHive(body, hiveID string) bool {
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		cells := strings.Split(strings.TrimSpace(line), "|")
+		if len(cells) < 2 || strings.TrimSpace(cells[1]) != "hive id" {
+			continue
+		}
+		if found || len(cells) != 4 || strings.TrimSpace(cells[0]) != "" || strings.TrimSpace(cells[3]) != "" || strings.TrimSpace(cells[2]) != hiveID {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func writeSelfReportRelayResponse(w http.ResponseWriter, status int, resp selfReportRelayResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func orUnknown(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "unknown"
+	}
+	return s
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+// findSelfReportIssueByFingerprint searches open issues for the fingerprint
+// marker. Returns zero Number when nothing matches.
+func findSelfReportIssueByFingerprint(ctx context.Context, client *http.Client, apiBase, token, owner, repo, fingerprint string) (feedbackIssueResult, error) {
+	return findSelfReportIssueByFingerprintIn(ctx, client, apiBase, token, owner, repo, fingerprint, true)
+}
+
+// findSelfReportIssueByFingerprintAnyState is findSelfReportIssueByFingerprint
+// over open and closed issues: an open match wins; otherwise the most
+// recently closed one is returned with Closed/ClosedAt set.
+func findSelfReportIssueByFingerprintAnyState(ctx context.Context, client *http.Client, apiBase, token, owner, repo, fingerprint string) (feedbackIssueResult, error) {
+	return findSelfReportIssueByFingerprintIn(ctx, client, apiBase, token, owner, repo, fingerprint, false)
+}
+
+func findSelfReportIssueByFingerprintIn(ctx context.Context, client *http.Client, apiBase, token, owner, repo, fingerprint string, openOnly bool) (feedbackIssueResult, error) {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_search")
+	state := " is:open"
+	if !openOnly {
+		state = ""
+	}
+	q := fmt.Sprintf("repo:%s/%s is:issue%s in:body %q", owner, repo, state, "hive-fleet-fingerprint:"+fingerprint)
+	u := strings.TrimRight(apiBase, "/") + "/search/issues?per_page=10&sort=updated&order=desc&q=" + url.QueryEscape(q)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return feedbackIssueResult{}, fmt.Errorf("github search: %d", resp.StatusCode)
+	}
+	var out struct {
+		Items []struct {
+			Number   int        `json:"number"`
+			HTMLURL  string     `json:"html_url"`
+			Body     string     `json:"body"`
+			State    string     `json:"state"`
+			ClosedAt *time.Time `json:"closed_at"`
+			Labels   []struct {
+				Name string `json:"name"`
+			} `json:"labels"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return feedbackIssueResult{}, err
+	}
+	var closed feedbackIssueResult
+	for _, it := range out.Items {
+		if !strings.Contains(it.Body, "hive-fleet-fingerprint:"+fingerprint) {
+			continue
+		}
+		labels := make([]string, 0, len(it.Labels))
+		for _, l := range it.Labels {
+			labels = append(labels, l.Name)
+		}
+		res := feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body, Labels: labels}
+		if it.State == "closed" {
+			if openOnly {
+				continue
+			}
+			res.Closed = true
+			if it.ClosedAt != nil {
+				res.ClosedAt = it.ClosedAt.UTC()
+			} else {
+				res.ClosedAt = time.Now().UTC()
+			}
+			if closed.Number == 0 || res.ClosedAt.After(closed.ClosedAt) {
+				closed = res
+			}
+			continue
+		}
+		return res, nil
+	}
+	return closed, nil
+}
+
+func postHubGitHubIssueComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, body string) (int, error) {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_comment")
+	data, _ := json.Marshal(map[string]string{"body": body})
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", strings.TrimRight(apiBase, "/"), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(data))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, fmt.Errorf("github create comment: %d", resp.StatusCode)
+	}
+	return resp.StatusCode, nil
+}
+
+func patchHubGitHubIssueBody(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, body string) error {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_affected")
+	data, _ := json.Marshal(map[string]string{"body": body})
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d", strings.TrimRight(apiBase, "/"), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("github edit issue: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func closeHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int) error {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_recover")
+	data, _ := json.Marshal(map[string]string{"state": "closed", "state_reason": "completed"})
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d", strings.TrimRight(apiBase, "/"), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("github close issue: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func postHubGitHubIssueLabels(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, labels []string) error {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_labels")
+	data, _ := json.Marshal(map[string][]string{"labels": labels})
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/labels", strings.TrimRight(apiBase, "/"), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("github add labels: %d", resp.StatusCode)
+	}
+	return nil
+}

@@ -1,0 +1,1 @@
+- fix(dashboard): share the PR link → lineage → base-pill assembly between tracker row renderers; correct the tracker.css shrink-priority comment (#15447, #15451)

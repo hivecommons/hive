@@ -1,0 +1,1 @@
+- Review-pending expiry and human-decision-label failures are logged once per PR (then at debug) instead of every sweep cycle, so they no longer surface as repeated-error self-reports (#13677, #13687).

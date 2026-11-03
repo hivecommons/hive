@@ -44,6 +44,10 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	// relay into the admin view. Returns at once unless a relay URL and pull
 	// secret are configured.
 	start(s.StartNPSRelayPull)
+	// Fleet-alert bookkeeping persistence + hub-restart grace window (#11826).
+	start(s.startAlertStatePersistence)
+	// Live-vs-approved org reconciliation for assigned hives (#11847).
+	start(s.startPlaceholderOrgSweep)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed

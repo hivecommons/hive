@@ -10,9 +10,14 @@ This guide walks through preparation, a weekly routine, and recovery. Start with
 
 **How directions are given.** Every step says where to do it in the dashboard first and gives the config-file setting second. Nothing in this guide needs an API call. Where the dashboard has no control for something, the step says so.
 
+**Policy reconciliation, 2026-10-28:** the review-gate and issue/PR command
+sections were checked against the current v5 implementation for this pass.
+They supersede older scanner-only/PR-command summaries. The live-deployment
+limitations of the original validation baseline above still apply.
+
 ## Read this before enabling unattended merges
 
-**ACMM** is Hive's AI-native Capability Maturity Model: levels determine permitted automation. Level 6 (L6) is Fully Autonomous, not a release-branch name. An **agent** is a configured AI worker; a **pack** supplies a level's roster, modes and defaults. The **governor** schedules workers according to workload modes; a **cadence** is an agent's wake interval in one mode. These definitions and the shipped roster are grounded in the [Level 6 pack](../pkg/config/packs/level-6.yaml). Only `scanner` has `ISSUES_PRS_MERGE`; other delivery agents create PRs but the App can merge them independently.
+**ACMM** is the **AI Codebase Maturity Model**: levels determine permitted automation. Level 6 (L6) is Autonomous, not a release-branch name. An **agent** is a configured AI worker; a **pack** supplies a level's roster, modes and defaults. The **governor** schedules workers according to workload modes; a **cadence** is an agent's wake interval in one mode. These definitions and the shipped roster are grounded in the [Level 6 pack](../pkg/config/packs/level-6.yaml). Only `scanner` has `ISSUES_PRS_MERGE`; other delivery agents create PRs but the App can merge them independently.
 
 **Auto-merge** here means Hive initiating a merge without a person doing it, not GitHub's similarly named feature. A **hold** is a label-based exclusion from work/merging, including literal `hold` and the dashboard's `hive-pause/<hive-id>` item hold. See [labels and control signals](labels-and-control-signals.md); the enforcing predicates are `HasHoldLabel`, `IsHeldLabels` and `HasExemptLabel` in [GitHub client](../pkg/github/client.go).
 
@@ -24,7 +29,7 @@ All answers assume the repository participates in automatic merging, the PR is r
 | --- | --- |
 | Hive's agents | **Yes.** The App self-authored sweep needs no human queue approval. It checks author, labels, GitHub mergeability, CI, intent policy and the head again before merging. See `trySweepSelfAuthoredPR` in [sweep](../pkg/github/automerge/automerge_sweep.go). Outreach is an exception below. |
 | Dependency bot | **Yes**, for exact logins in `auto_merge.trusted_bot_authors` (unset means `dependabot[bot]`). This is the same sweep with the same gates. Others can enter the scanner/queued paths; removing a bot from this list is not a universal author denylist. See `TrustedBotAuthorSet` in [config](../pkg/config/config.go) and `sweepLaneForAuthor` in [sweep](../pkg/github/automerge/automerge_sweep.go). |
-| Contributor relay | **Yes.** ClankeR is the external contributor relay, not a separate merge exception. Its PRs can enter the scanner's current merge-eligible list, without a human `lgtm`. The human queue is another route, not a requirement at L6. See `classifyMergeEligibility`, `bindMergeAuthz` in [eligibility](../cmd/hive/merge_eligibility.go). |
+| Contributor relay | **Yes.** ClankeR is the external contributor relay, not a separate merge exception. Its PRs can enter the scanner's current merge-eligible list, without a human `lgtm`. The contributor-lane sweep can also merge green, reviewed PRs for operator-trusted contributors, or contributors auto-promoted by `auto_merge.contributor_tier.auto_promote_after_merged` after a clean merged-PR history. The human queue is another route, not a requirement at L6. See `classifyMergeEligibility`, `bindMergeAuthz` in [eligibility](../cmd/hive/merge_eligibility.go) and `trySweepContributorLanePR` in [contributor lane automerge](../pkg/github/automerge/automerge_contributor_lane.go). |
 | Person by hand, including an unknown person | **Yes.** The scanner eligibility classifier is not filtered by author. An unknown PR author is not itself a merge hold. Reporter trust concerns the issues motivating work, not a blanket PR-author restriction. See [eligibility](../cmd/hive/merge_eligibility.go) and [reporter-trust hold](../pkg/github/pr_reporter_trust.go). |
 
 The third route is the human-approved queue (normally `lgtm`): an authorized merger/owner queues **someone else's** PR; the sweep rechecks that authorization. See `handleQueuePRAutoMerge` in [dashboard API](../pkg/dashboard/api.go) and `trySweepQueuedPR` in [sweep](../pkg/github/automerge/automerge_sweep.go). A bare `lgtm` from an arbitrary account is not authorized queueing.
@@ -34,17 +39,88 @@ The third route is the human-approved queue (normally `lgtm`): an authorized mer
 | Item | Why it waits; release |
 | --- | --- |
 | Held PR or issue | Label-based hold. A human removes the hold after reviewing the actual current head/request, or resumes the dashboard item hold. Promotion does **not** release holds automatically, and the dashboard's level change has no option to release them. See [level hold](../pkg/github/pr_level_hold.go). |
-| Outreach PR | `shouldHoldAgentPR` always holds outreach, even at L6. Human review and removal of `hold` release it; no level switch removes this exception. See [eligibility](../cmd/hive/merge_eligibility.go). |
+| Outreach PR | `shouldHoldAgentPR` holds an outreach PR whose target repository the hive does not manage (`config.AgentOwnsRepo` false — an awesome-list, a partner's docs, another org), even at L6. Human review and removal of `hold` release it; no level switch removes this exception. An outreach PR into one of the hive's own repos is an ordinary agent PR and auto-merges on green CI. See [eligibility](../cmd/hive/merge_eligibility.go). |
 | PR motivated by an untrusted reporter's issue | When reporter-trust holding is enabled, an untrusted cited issue causes literal `hold`; a maintainer reviews and removes it. Triaging the issue alone does not release the PR. See [reporter-trust hold](../pkg/github/pr_reporter_trust.go). |
 | Draft | Excluded; author marks ready for review when finished. See [eligibility](../cmd/hive/merge_eligibility.go) and [sweep](../pkg/github/automerge/automerge_sweep.go). |
 | GitHub-blocked PR | Missing required checks/reviews, signatures, conflicts or branch rules still bind the merge. Satisfy the actual rule, not just the Hive pill. See [merge block reasons](../pkg/github/merge_block_reason.go) and [sweep](../pkg/github/automerge/automerge_sweep.go). |
-| PR escalated after failed fixes | The fix ledger parks exhausted repair work; `needs-human` is a triage signal, **not by itself a universal merge hold**. The scanner separates escalated rows; the App sweep does not consult that ledger. A green App PR may still merge. Add `hold` if the decision must prevent merging; repair/review, clear the escalation, then release the hold. See [escalation](../pkg/escalation/escalation.go), `writeMergeEligible` in [eligibility](../cmd/hive/merge_eligibility.go), and [sweep](../pkg/github/automerge/automerge_sweep.go). |
-| Behind/conflicting fork PR | A GitHub `behind` state triggers an update attempt in the sweep, not a guaranteed repair. The hive cannot assume write access to a contributor's fork. Author rebases/updates the fork, resolves conflicts and reruns CI; a fork merely older than base is not blocked unless GitHub requires freshness or reports a conflict. See [sweep](../pkg/github/automerge/automerge_sweep.go) and `UpdateBranch` in [pull requests](../pkg/github/pullrequest.go). |
-| Issue parked for a maintainer decision | A human with repository write/maintain/admin permission comments `/hive approve` or `/hive decision <direction>`; the un-park sweep removes decision labels, never `hold`. Plain "approved" is insufficient. See [maintainer commands](maintainer-commands.md) and [un-park implementation](../pkg/github/issue_unpark_command.go). |
+| PR escalated after failed fixes | The fix ledger parks exhausted repair work; `needs-human` is a triage signal, **not by itself a universal merge hold**. The scanner separates escalated rows; outside the self-authored review gate below, a green App PR may still merge. Add `hold` if the decision must prevent merging; repair/review, clear the escalation, then release the hold. See [escalation](../pkg/escalation/escalation.go), `writeMergeEligible` in [eligibility](../cmd/hive/merge_eligibility.go), and [sweep](../pkg/github/automerge/automerge_sweep.go). |
+| Behind/conflicting fork PR | A GitHub `behind` state triggers an update attempt in the sweep, not a guaranteed repair. The hive cannot assume write access to a contributor's fork. Author rebases/updates the fork, resolves conflicts and reruns CI; a fork merely older than base is not blocked unless GitHub requires freshness or reports a conflict. A relay's fork PR is adopted only when the hive can push to the fork's branch; otherwise it waits at 072 for its relay's `fix-pr` task and reaches you at 085 (`adoption-stalled:fork-rehome-refused`) only after the 24h 072 dwell. See [sweep](../pkg/github/automerge/automerge_sweep.go) and `UpdateBranch` in [pull requests](../pkg/github/pullrequest.go). |
+| Adopted PR with unsigned commits | `no-dco` cannot be fixed by adding a later empty signed commit. If all unsigned commits are hive-authored (GitHub-linked to the App bot; git author emails never count) and the adopted branch can be pushed, the hive rewrites just its own unsigned commits with sign-off in place. If any unsigned commit is contributor-authored/unknown, or the branch cannot be pushed, adoption re-homes the work onto a hive-owned branch from the base, cherry-picks or squashes with `-s` while preserving original authorship/credit, opens a superseding PR, and closes the original. See [stage 074 adoption](labels-and-control-signals/stage-labels.md#off-the-happy-path-072--nudge--074--takeover). |
+| Adopted PR with review changes requested | `stage/074-adopted-by-hive` means Hive owns the branch. A swarm `changes_requested` verdict must feed the fix dispatcher, not a human `/lgtm` request; for in-place adoptions the fixer may push signed commits to the contributor branch, and the PR stays in the fixer's work list every cycle until a new head lands. If the bounded attempts are exhausted, Hive parks it visibly at 085 with `fix-attempts-exhausted`. |
+| Issue parked for a maintainer decision | A human with repository write/maintain/admin permission comments `/hive approve`, `/hive decision <direction>`, or `/hive done` (the owner finished a step only they could do); the un-park sweep removes decision labels, never `hold`. Plain "approved" is insufficient. See [maintainer commands](maintainer-commands.md) and [un-park implementation](../pkg/github/issue_unpark_command.go). |
+| Issue parked on the target repo's own confirmation gate or a missing companion checkout | Not a maintainer decision. The hub reclassifies a `needs_decision` verdict whose reason is a repo-local gate ("AGENTS.md says offer a spec and wait for acceptance", "confirm scope before implementing", `repo_location_missing` for a registered sibling path) as idle, lifts `stage/045-needs-decision`, posts a `<!-- hive:needs-decision-released kind=repo-local-gate -->` comment explaining that the dispatch was the acceptance, and re-offers the issue once; a second such park on the same issue stays parked for a person. See [Needless parks](#needless-parks). | Usually none. If it parks twice, reply `/hive approve`, and if a sibling repo is involved add it to `project.repo_policies[].companion_repos`. |
+
+### Needless parks
+
+`stage/045-needs-decision` is for decisions only a person can make: security posture, data loss, irreversible or public actions, governance/licensing, spend, credentials, or a genuine A/B the issue body leaves open. Two park reasons observed on live hives are **not** decisions and the product now refuses them:
+
+- **Repo-local confirmation gates.** A target repository's `AGENTS.md` / `CLAUDE.md` may tell a coding agent to "offer a spec and wait for acceptance", "confirm scope before implementing", or similar. An issue the hive dispatched is already accepted (triaged, approved-direction, or chosen by the hive), so that gate is satisfied by the dispatch itself. Contributor task prompts, resident-agent kicks and every role policy say so; an agent that parks anyway has its verdict reclassified to idle by the hub (`src/pkg/dashboard/contribute_gate_park.go`, classifier in `src/pkg/decisionpolicy`), the label is lifted with a marked comment, and the issue is re-offered once. The second identical park on the same issue is left standing — that is the real escalation.
+- **Missing companion checkouts.** A target repository's tooling may register a sibling repository path under the agent workspace root (`<workspace>/<org>/<sibling>/…`) and say "stop and report" when it is absent. When that path's last two segments name a repository the installation can read, the agent clones it there (shallow is fine) and continues — the intended checkout, not a substitution. Operators can make this deterministic with `project.repo_policies[].companion_repos`, which puts the clone plan into every prompt for that repo (`src/pkg/config/repo_companion_checkouts.go`).
+
+Risk terms always win: a park whose reason mentions a deploy key, data loss, spend, or a public action stays parked even if it also cites the repo's gate.
 
 ### Does the Hive reviewer stop a merge?
 
-**Default: no automatic guarantee.** The reviewer is advisory. Its `requires_human` text is not read by the App sweep. With `review.require_approval: true`, the **scanner eligibility path** requires aggregate approval at the same head SHA; absent artifacts or a non-approved verdict stop that path. It does **not** add a review gate to the App sweep or replace GitHub branch rules. Dispatch fan-out also has its own enabling conditions. See `classifyMergeEligibility` in [eligibility](../cmd/hive/merge_eligibility.go), `PlanDispatch` in [review dispatch](../pkg/review/dispatch.go), and [sweep](../pkg/github/automerge/automerge_sweep.go).
+**Default: review observation is not a merge stop.** The reviewer role never
+merges. The separate review gate defaults to `shadow`: it records what it
+would hold but does not stop the App sweep.
+
+| Setting / action | Current effect |
+|---|---|
+| `review.require_approval: true` | Requires same-head aggregate approval in scanner eligibility and forces the App sweep's review gate to enforce |
+| `governor.review_gate.mode: enforce` | Enforces review on the App sweep's self-authored, trusted-bot and trusted-author paths; do not assume this switch alone configures scanner eligibility |
+| `governor.review_gate.mode: off` | Does not weaken `review.require_approval: true`; the strictest setting wins |
+| Trusted human merger's GitHub **Approve** review on the exact head | Can override **any** swarm outcome in the enforcing sweep gate, including `changes_requested` or `reject`; audit records the actor and overridden outcome |
+| `/hive decision approve <rationale>` by a trusted merger on a PR at 085 or 070, on a workflow-path PR whose fence it releases, or posted after the head on any other contributor-lane PR whose verdict asks for a person (no fence, no stage label needed) | Records approval for that head and can release `requires_human`; an edited comment never counts; not a universal override of every gate |
+| Bare `/hive approve` on a PR | Acknowledgement only; does not release or authorize a merge |
+
+In-place adopted PRs use the contributor lane's `RequireReviewerVerdict`, not
+the governor's `mergeReviewGate`: a reviewer must exist, and when
+`auto_merge.contributor_lane.require_reviewer_verdict` is enabled, the current
+head needs approval or the lane's trusted-human release. A superseding
+App-authored PR instead uses the normal self-authored `mergeReviewGate`.
+Merge trains never merge directly; their front passes the normal lane checks.
+
+Approval never bypasses author admission, holds, CI, diff/manual-merge fences,
+or GitHub branch rules. New commits require current-head evidence again.
+Other `/hive decision <instruction>` text on an eligible Hive-authored PR is
+sent verbatim to its author/fixer, not treated as approval. A bare `yes`
+counts as approval; `yes, but …` is an instruction. PR decisions require a
+human with repo write/maintain/admin access **and** configured merger trust.
+Issues instead park at 045 and use their issue un-park/label-approval flow.
+Command eligibility also requires a recent, unedited comment (the scan window
+is seven days); a stale or edited command is not fresh authorization.
+
+**Implementation evidence (v5 readability review):** `ReviewGate.effectiveMode`
+and `mergeReviewGate` in [review gate](../pkg/github/automerge/automerge_review_gate.go)
+implement the strictest mode and all-swarm-outcome GitHub-review override.
+`tryUnparkPullRequest` in [PR decisions](../pkg/github/pr_unpark_decision.go)
+and `unparkCommand.Approval` in [command parsing](../pkg/github/issue_unpark_command.go)
+implement the distinct comment paths. This supersedes older scanner-only and
+“changes-requested cannot be overridden” guidance, not the other merge limits.
+Dispatch fan-out has its own enabling conditions: see `classifyMergeEligibility`
+in [eligibility](../cmd/hive/merge_eligibility.go) and `PlanDispatch` in
+[review dispatch](../pkg/review/dispatch.go).
+
+On Hive-authored PRs the default `review.self_authored_decision_policy: resolve`
+keeps reviewer questions advisory unless they are a risk class: the test is a
+denylist (`review.DecisionRiskClasses` — permissions/credentials, security,
+sensitive paths, data loss/irreversible, merge/trust policy, external side
+effects, licensing/legal, unverifiable — or an explicit
+`<!-- hive-decision-risk: high -->` marker), so naming, sequencing, defaults,
+config-shape, scope and "land now vs later" calls are the hive's own decision
+and the aggregate approves while preserving the question in the audit reason
+(`decision resolved by policy: <topic> — not a risk question`). A
+non-risk incomplete-fix review that names concrete remediation is different:
+it is normalized from `requires_human` to `changes_requested` when verdicts are
+aggregated and loaded, even if the finding severity is high, so the review
+gate, every stage-label observer, human-entry comments, and fixer dispatch all
+see the fixer-lane verdict and the PR enters `stage/070-fixing` instead of
+parking for a person. Intent-alignment cleanup with an obvious fix, such as
+trimming a duplicate PR summary or changelog claim, follows the same route. Set the policy to `escalate` to restore the older behavior where every
+`needs-decision` marker parks the PR at `stage/085-needs-decision`. Risk-class
+questions still escalate either way; see
+[review-swarm.md](review-swarm.md#configuration) for the class table.
 
 The [policy matrix](acmm-policy-matrix.md) describes the same distinction: reviewer verdicts alone are not universal merge stops, and promotion does not automatically release level holds. Use GitHub rules or an actual hold for a safety guarantee.
 
@@ -58,7 +134,7 @@ Config keys to cross-check: `project.issue_filter.require_labels`, `project.issu
 | --- | --- | --- | --- |
 | `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` | Human, dashboard, Hive hold paths | Hard work/merge hold; held red PRs can still get CI repair without release. | Use when an item must not proceed; remove only after reviewing the current head/request. |
 | `do-not-merge*`; `governor.labels.exempt` defaults (`nightly-tests`, `LFX`, `meta-tracker`, `auto-qa-tuning-report`, `adopters`, `changes-requested`, `waiting-on-author`) | Human, repo automation, operator | Suppresses enumeration and merge sweeps. | Remove the label/config exclusion only when Hive should act again. |
-| Issue `needs-human`, `needs-decision`, `needs-direction`, `needs-spec` | Hive, relay, human | Suppresses issue kicks/offers. Un-park commands handle the first three, not `needs-spec`. | Use `/hive approve` or `/hive decision <text>` only for a repo using Hive's command flow; otherwise use its mapped label workflow. Commands never clear `hold`. |
+| Issue `needs-human`, `needs-decision`, `needs-direction`, `needs-spec` | Hive, relay, human | Suppresses issue kicks/offers. Un-park commands handle the first three, not `needs-spec`; however, a `needs-spec` applied by the clarity gate is lifted automatically by the resume sweep (see the `needs-spec` from the clarity gate row of the [reference table](labels-and-control-signals/reference.md#reference-table) in labels-and-control-signals.md). | Use `/hive approve`, `/hive decision <text>` or `/hive done` only for a repo using Hive's command flow; otherwise use its mapped label workflow. Commands never clear `hold`. |
 | PR `needs-human` | Hive escalation/reviewer | Stops automated fix dispatch, not every merge path. | Add `hold` if merging must stop; clear escalation after repair/decision. |
 | `approved-direction` | Maintainer command/label workflow | Acknowledges Hive-filed direction for the self-authorization gate and ranking. | Map it to your acceptance workflow; do not assume it releases existing PR holds. |
 | `triage/accepted`; configured untrusted-reporter ready labels | Human/operator | Admits untrusted reporter work when reporter trust is enabled, subject to other filters. | Match the actual reviewed-ready label; test accepted and unreviewed issues. |
@@ -69,14 +145,15 @@ Config keys to cross-check: `project.issue_filter.require_labels`, `project.issu
 | `lgtm`; `governor.labels.automerge` | Dashboard/authorized merger | Queues authorized human-approved merging; rechecks holds, CI and mergeability. | Do not substitute hand-labeling for authorization. |
 | `review.human_decision_label` | Hive, if configured label exists | Mirrors a verdict; text alone does not gate the App sweep. | Choose an actual hold label/GitHub rule when review must stop merging. |
 | `hive/advisory` | Hive | Standing advisory, never actionable. | Leave alone unless deliberately moving the digest. |
-| `hive/covered-by-pr`, `hive/likely-done`, `hive/verified-open` | Hive/agent outcomes | Progress display; verified-open suppresses stale likely-done state. | Confirm/close/remove based on real outcomes, not as a merge stop. |
+| `🐝 covered by PR`, `hive/likely-done`, `hive/verified-open` | Hive/agent outcomes | Progress display; verified-open suppresses stale likely-done state. | Confirm/close/remove based on real outcomes, not as a merge stop. |
 | `hive/already-done` | Contributor flow | Contributor skip/done display; not a universal agent gate. | Verify the outcome before clearing/closing. |
-| `claimed`, `preempted:<login>`, `hive/claimed-by-<agent>`, `<!-- hive-claim -->` | Claim flows | Ownership/display; the ledger/comments carry claim state. | Use `governor.claims.comment: false` for noisy comments; claim labels do not replace holds. |
+| `claimed`, `preempted:<login>`, `hive/claimed-by-human` / `hive/claimed-by-<agent>`, `<!-- hive-claim -->` | Claim flows | Ownership/display; the ledger/comments carry claim state. | Use `governor.claims.comment: false` for noisy comments; claim labels do not replace holds. |
 | `release-blocker` | Human/release workflow | Stable promotion script gate on open issues. | Clear after release blocker resolution, not to unblock ordinary L6 work. |
 | `ci-flake` | CI/Hive scripts | Flake tracking, not an L6 hold itself. | Fix/quarantine the flake while keeping required checks meaningful. |
 | `user-feedback` | Dashboard/hub | Feedback provenance. | Triage reporter input; apply trust/hold policy as needed. |
-| `dco-signoff: yes` / `dco-signoff: no` | DCO/Prow | Merge-eligibility display; branch rules enforce the gate. | Fix commit sign-offs rather than hand-editing labels. |
-| `conflicts-with-open-pr` | PR-overlap workflow | Overlap signal. | Resolve or close conflicting work before merging; same-file overlap alone may be harmless. |
+| `dco` / `no-dco` (Prow's `dco-signoff: yes|no` coexist on Prow-gated repos; the hive never adds or removes them) | Hive stage pass (commit check) | Merge-eligibility display on every managed repo. Where DCO is required (detected from required/head checks or configured via `governor.labels.stage.dco.required`), `no-dco` routes by author kind: `070` (hive/self-authored), `071` (human), or `072` (clanker); the 072 nudge includes the rebase command. On ungated repos it is informational only: the lane's stage is unchanged and no DCO rebase is requested. See [DCO routing](labels-and-control-signals/stage-labels.md#dco--no-dco--the-hive-owned-sign-off-signal). | Fix commit sign-offs (`git rebase --signoff`) rather than hand-editing labels. |
+| `conflicts-with-open-pr` | PR-overlap workflow | Overlap signal. | Resolve or close conflicting work before merging; same-file overlap alone may be harmless. Two open PRs that both `Fixes` one issue are resolved by the duplicate-fix sweep without a decision: the earlier green/pending PR stays, the later hive PR is closed as `duplicate-of:<keeper>`, a person's later PR is commented on and left open ([#14799](https://github.com/hivecommons/hive/issues/14799)). |
+| `has-open-pr` | Pre-dispatch guard | An open PR already links the issue with a closing keyword; the hive skipped the claim. | Nothing — the label is a tracker signal, not a park; see `scanner.skip_issues_with_open_pr` in [operator-reference.md](operator-reference.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner). |
 | `no-changelog` | Dependabot/maintainer | Repo changelog exception, not a Hive safety gate. | Apply only under repo policy. |
 | `human-only` remainder text (not a default label) | Agent/reviewer | Task-list sweep can park remaining issue work as `needs-human`. | Treat as a handoff; add PR `hold` if merging must stop. |
 
@@ -92,7 +169,7 @@ For hosted and self-hosted hives alike, GitHub repository/organization administr
 | --- | --- |
 | **G1. Restrict App installation scope.** GitHub organization/repository Settings → GitHub Apps → installed Hive App → Configure: select only intended repositories; match Hive's `project.repos` in runtime config. | Broad installation gives credentials reach beyond intended work. Verify the installation's repository list against the dashboard repo cards. See [App setup](github-app-setup.md) and `Repositories` in [client](../pkg/github/client.go). |
 | **G2. Grant the documented App permissions, not an assumed owner identity.** App administrators use App Settings → Permissions; installation administrators accept permission updates. Include the documented contents/PR/issues/checks/actions access and Workflows write if workflow edits are in scope. | Missing permission causes forbidden API calls or rejected workflow pushes, not useful automation. Verify a harmless PR and permitted workflow edit on a test repository; inspect App errors. See [App setup](github-app-setup.md) and [PR request watcher](../pkg/github/pr_request_watcher.go). |
-| **G3. Protect every destination branch.** Settings → Rules → Rulesets (or Branches → protection): require build, tests, coverage and security contexts, including release branches, with no App bypass for these checks. | Unprotected bases can merge; Hive no longer refuses solely for lack of protection. Verify an intentionally red and a missing-context test PR are blocked for the App identity. See [CI gate](../pkg/github/merge_ci_gate.go). A `hive-serialized` repository needs a known, non-empty required-check set (config, classic protection or rulesets) or its lane never merges; see [merge strategy](operator-reference.md#per-repo-merge-strategy-merge_strategy). **Path-filter pitfall (`v6` lane):** a required check produced by a workflow with path filters (for example `paths-ignore: docs/**`) never reports on PRs the filter skips, so the lane waits at the front for it until the 60-minute front timeout (`DefaultFrontTimeout` in [merge lane](../pkg/mergelane/lane.go)). Make required workflows run on every PR (or add an always-reporting aggregate job) before switching a repo to the lane. |
+| **G3. Protect every destination branch.** Settings → Rules → Rulesets (or Branches → protection): require build, tests, coverage and security contexts, including release branches, with no App bypass for these checks. | Unprotected bases can merge; Hive no longer refuses solely for lack of protection. Verify an intentionally red and a missing-context test PR are blocked for the App identity. See [CI gate](../pkg/github/merge_ci_gate.go). A `hive-serialized` repository needs a known, non-empty required-check set (config, classic protection or rulesets) or its lane never merges; see [merge strategy](operator-reference.md#per-repo-merge-strategy-merge_strategy). **Path-filter pitfall (`v6` lane):** a required check produced by a workflow with path filters (for example `paths-ignore: docs/**`) never reports on PRs the filter skips, so the lane waits at the front for it until the front timeout (`merge_front_timeout`, 60 minutes by default; see [Front timeout](operator-reference.md#front-timeout-merge_front_timeout)). Make required workflows run on every PR (or add an always-reporting aggregate job) before switching a repo to the lane. |
 | **G4. Decide whether humans approve.** In the same ruleset, require approving/code-owner reviews for branches where unattended merging is unacceptable; make that rule apply to the App. **JUDGMENT CALL:** retain it for high-impact branches. Maintain CODEOWNERS so those paths have real owners: required code-owner review protects only matched paths. Verify with an owned-path canary and an unowned-path canary. | A review rule without App bypass stops unattended merges; a bypass removes this protection. Verify GitHub reports awaiting review before any App merge. Hive's reviewer approval is not a GitHub approving review. See [block reasons](../pkg/github/merge_block_reason.go). **Note:** Intent tiers do not stop guardrail-tier App PRs at L6: the App self-merge contract (`EvaluateForAppSelfMerge`, #6258) authorizes them without a person. On a single-maintainer repo, GitHub code-owner review cannot help because the owner cannot approve their own PRs; use `auto_merge.human_merge_paths` there, a per-repo map of `owner/repo` to glob patterns that holds any matching PR, in every merge lane, for a person to merge (see [operator-reference.md](operator-reference.md)). |
 | **G5. Require an up-to-date base.** Enable strict required checks/"Require branches to be up to date before merging" on each protected branch. | Green on an older base does not establish green after integration. Verify a PR becomes blocked after a base push until updated/retested. The sweep attempts updates for `behind`; see [sweep](../pkg/github/automerge/automerge_sweep.go). On a personal-account repository without GitHub's merge queue, `merge_strategy: hive-serialized` serializes merges per branch; keep this rule on there too — the lane panel shows "server-enforced" when it is, and without it a one-API-call window remains that Hive only detects and alerts on after the merge. The rule costs one CI run per merge, since the lane updates only the front pull request. The lane panel shows no enforcement badge (server-enforced / Hive-checked / unknown) until a PR has entered the lane, so before the first merge confirm the up-to-date rule in the ruleset itself (Settings → Rules → Rulesets). If you keep the ruleset as code (for example `.github/rulesets/*.json` plus a note that the live rules match the file), update that file whenever you change the live ruleset here. See [merge strategy](operator-reference.md#per-repo-merge-strategy-merge_strategy). |
 | **G6. Allow the merge methods actually used.** Settings → General → Pull Requests: allow squash; also allow merge commits if managing release-line forward merges. | The ordinary method is squash; recognized forward merges use merge commits to preserve ancestry. Disallowed methods cause merge refusals. Verify landing method in a test PR and ancestry for a sync PR. See `mergeMethodFor` in [sweep](../pkg/github/automerge/automerge_sweep.go) and [pull requests](../pkg/github/pullrequest.go). |
@@ -129,27 +206,256 @@ A **bead** is an agent's persistent work-ledger entry. The default hourly bead s
 
 Both hosting types use the same spoke dashboard for owner-authorized changes. "Runtime YAML" below means the **effective persisted config**, not merely a seed ConfigMap; see [config layering](config-layering.md). Self-hosters manage that file and restart their service; hosted operators ask the hub operator for file/environment/restart changes they cannot perform. Never run repository tests in a live hive to verify configuration.
 
-Each row is a separate practice. Except where marked, the recommendations address the cited shipped behavior; they are not readiness checks that Hive automatically applies.
+Choose the task first: **merge scope and checks** (H1–H6a), **human decision
+boundaries** (H7–H10, H15), or **workload and coordination** (H11–H14, H16).
+These are recommended practices, not a readiness test Hive applies automatically.
+Each practice separates the action, its verification and its limits.
 
-| Practice: recommended value/rule and change location | Why at L6; verify; enforced versus recommended |
-| --- | --- |
-| **H1. Choose participating repos explicitly.** Repo-card Auto-merge → off for every unqualified repo; stored as `project.repo_policies[].auto_merge`. | The L6 level action enables all active repos. Inspect each card after changes; an off repo must reject a test merge. Hive enforces the switch, not your qualification rule. See [repo API](../pkg/dashboard/api_repo_pause.go), [repo policy](../pkg/config/repo_policy.go). |
-| **H2. Declare all critical checks by exact name.** **⚙ Settings → Features → Auto-Merge → Required CI checks** (`auto_merge.required_checks`); mirror branch rules, including coverage. Across heterogeneous repos choose contexts all participating repos produce, or standardize a single aggregate gate. On `v6` this list is also added to the ruleset checks of **every** `hive-serialized` repository, so a name one repo never produces stalls that repo's lane at the front until the front timeout (see the path-filter pitfall under G3). | This is a hive-wide list, not per-repo names; a missing name can block every PR. Config takes precedence over protection discovery. Check a red/missing context and a green test PR on each repo. Hive gates observed checks in the declared set, not its completeness; the sweep's missing-context gap above makes GitHub protection essential. See [config](../pkg/config/config.go), [commit CI](../pkg/github/commit_ci.go). |
-| **H2. Declare all critical checks by exact name.** Governor Config → Auto-merge → Required checks (`auto_merge.required_checks`) for a default and `auto_merge.repos.<repo>.required_checks` for heterogeneous repos; mirror branch rules, including coverage. | Required checks are per repo/branch. A default that only one repo produces can block every other repo; use per-repo overrides (bare repo or `owner/repo` keys). When GitHub reports a known actual set that disagrees with config, Hive warns once and uses the actual set; when the actual set is unknown, config remains fail-closed. Check a red/missing context and a green test PR on each repo. See [config](../pkg/config/config.go), [commit CI](../pkg/github/commit_ci.go). |
-| **H3. Leave no-CI exceptions empty.** `auto_merge.no_ci_ok: []` in runtime YAML, not a dashboard field. | Avoids turning absent evidence into passing evidence on the relay; does not fix the sweep's no-results behavior. Verify no-evidence merge requests refuse. Hive enforces this exception list; recommendation is to grant none. See [CI gate](../pkg/github/merge_ci_gate.go). |
-| **H4. Start with one merge per sweep pass.** **JUDGMENT CALL:** **⚙ Settings → Features → Auto-Merge → Max merges per sweep**, `auto_merge.max_merges: 1`, raising only after recovery drills. | Limits a burst's sweep blast radius; this is not a global parallel-merge cap on all paths. Verify in the dashboard's **Audit Log** that merges arrive at the pace you expect. Hive enforces this cap; unset uses 3. Sweep timing adapts to repositories/candidates, not an operator-set interval. See [sweep](../pkg/github/automerge/automerge_sweep.go). |
-| **H5. Keep the post-push quiet period.** Runtime YAML `auto_merge.min_head_age: 3m` (not a dashboard field); lengthen if slow check registration demands it. | Avoids trusting a fresh head before checks register. It may be bypassed when a config-declared required set is already successful. Verify fresh-head pending messages, not a guaranteed three-minute delay. Hive enforces this conditional rule. See [commit CI](../pkg/github/commit_ci.go) and defaults in [config](../pkg/config/config.go). |
-| **H6. Narrow the bot sweep list.** **⚙ Settings → Features → Auto-Merge** (trusted bot authors), `auto_merge.trusted_bot_authors`: keep only CI-qualified exact bot logins; use an explicit empty list to disable the bot lane. | Unset enables dependabot. Verify in **Audit Log** which bot PRs were merged, and remember scanner merging is separate. Hive enforces sweep membership only. See [config](../pkg/config/config.go), [sweep](../pkg/github/automerge/automerge_sweep.go). |
-| **H7. Enable reporter trust for public issues.** Settings → Labels → Reporter trust (`project.issue_filter.reporter_trust`); choose trusted associations/logins deliberately, not every historic contributor. Leave `github.reporter_trust_hold` inherited from that gate unless deliberately making it stricter. | Reporter trust is off by default. It controls whose issues lead to work/unattended merges, not PR authors. Verify an unknown reporter's issue is triage-only and a PR citing it is held. Hive enforces configured admission and PR hold. See [reporter hold](../pkg/github/pr_reporter_trust.go), [config](../pkg/config/config.go). |
-| **H8. Decide whether the hive approves its own proposals.** **JUDGMENT CALL:** enable the all-repos self-authorization hold in Governor Config → Repos (`github.self_authorization_hold: true`), checking per-repo overrides and any environment lock when a human must agree to hive-filed proposals; otherwise retain L6's off-by-level default. | Off permits the hive to propose and implement without human assent; on can create a large held backlog. Verify a hive-originated proposal's PR gets `hold` and the notice, or deliberately does not. Hive enforces the configured hold, not the wisdom of the proposal. See [self-authorization](../pkg/github/pr_self_authorization.go), [config](../pkg/config/config.go). |
-| **H9. Decide whether automatic large-plan approval is acceptable.** **JUDGMENT CALL:** if not, stay below L6 or hold the particular epic/children. `plan_auto_approve` belongs to the shipped pack, **not** the runtime governor config; there is no per-hive dashboard/YAML override for this boolean. | L6's pack enables it and the plan sink reads the level's pack directly, allowing child tasks without human plan approval. Verify the plan/child labels and admission. Hive enforces pack-derived approval policy, not design correctness. This differs from treating the pack key as a general operator knob. See `PlanAutoApproveForLevel` in [pack config](../pkg/config/acmm_packs.go), `planFromLabeledIssues` in [runtime wiring](../cmd/hive/main.go). |
-| **H10. Keep input scanning fail-closed.** Governor Config → Security → Input Defense → ioscan fail mode, `closed` (`ioscan.fail_mode`); retain the L6 inherited default. **ioscan** screens incoming/outgoing text for injection. | Critical suspect input blocks a kick rather than only being redacted; false positives need investigation. Verify in **Audit Log** that a blocked item shows an `ioscan_fail_closed` entry and received no kick. Hive enforces the fail mode, not perfect attack detection. See [kick input enforcement](../pkg/scheduler/ioscan_enforce.go), [pack](../pkg/config/packs/level-6.yaml). |
-| **H11. Begin with shipped cadences, not continuous issue generation.** Agent settings → Cadences; keep the [pack's per-mode matrix](../pkg/config/packs/level-6.yaml), slowing work creators when backlog grows. | The pack records the 2026-09 tuning lesson: 119 issues opened versus 31 closed in 24 hours. Verify creations versus merges and queue age fall after slowing. Hive enforces intervals; no throughput balance is enforced. See the pack comment and [governor](../pkg/governor/governor.go). |
-| **H12. Set a funded token budget.** **JUDGMENT CALL:** Governor Config → Budget, `governor.budget.total_tokens`, choose from measured recent use for the displayed `period_days` window; separately set a monetary cap at your inference provider. | Zero disables budgeting; tiny limits can suppress essentially every kick. Compare tokens used/remaining and provider dollars against the intended window. Hive enforces token kick suppression (subject to exemptions/ignore settings), not a dollar ceiling or a merge stop. See [governor](../pkg/governor/governor.go). |
-| **H13. Keep optional lanes paused until their output is wanted.** Agent controls/Cadences: retain shipped pauses for supervisor, strategist, outreach, telemetry and operations in all modes. | More issue-filers can worsen saturation; L6 does not mean every lane is active. Verify actual pause/cadence state in each mode. Hive enforces pauses; deciding which work is wanted remains yours. See [pack](../pkg/config/packs/level-6.yaml), [agent pause](../pkg/agent/manager_pause.go). |
-| **H14. Deliver alerts to someone who can act.** **JUDGMENT CALL:** Settings → Notifications: configure a documented ntfy/Slack/Discord destination and a responsible operator. The dashboard has no test-notification button. | A dashboard-only warning may go unseen while merges continue. Trigger a real, harmless alert or event that routes to the destination (for example pause and resume a non-critical agent) and verify receipt; Hive sends configured notifications, not an acknowledgement/SLA. See [notifications](notifications.md), [notifier](../pkg/notify/notify.go). |
-| **H15. Do not mistake review approval for a universal merge gate.** **JUDGMENT CALL:** if choosing `review.require_approval: true`, set it in Governor Config → Security → PR Review (Require review approval) and use GitHub rules or literal holds for changes that require human review. | The setting gates the scanner, not the App sweep. Verify both routes with test PRs; Hive enforces only the path-specific approval check. See [eligibility](../cmd/hive/merge_eligibility.go), [sweep](../pkg/github/automerge/automerge_sweep.go). |
-| **H16. Turn issue claims on so workers do not collide.** Governor Config → Features → **Issue claims** (`governor.claims.enabled: true`); set `governor.claims.{human_ttl_s,agent_ttl_s,contributor_ttl_s}` to match how long work actually takes, in YAML or from the claim-lifetime inputs under the same toggle (owner only, applied without a restart). Claim an item yourself with `hivectl claim o/r#N` before you start on it. | **Off by default.** With claims off, two of your own agents, a relay contributor, an outside bot and you can all start the same issue and open competing PRs; the duplicate-PR sweep only sees the collision after the PRs exist. With claims on, the hub records who is working an issue and ranks holders human > agent > contributor > external, so a lower rank backs off and a higher rank takes over with a `preempted:<login>` label. The record is a marker comment (`<!-- hive:claim … -->`) or the assignee on the GitHub issue itself, so it needs no organization: a single user's personal repos work, and any other hive or script reading the issue sees the hold. Claims lapse on their own (4h person, 2h agent kick, 30m relay task unless configured). Verify: claim a test issue, confirm `claimed` appears and that an agent kick on that issue is withheld; let the claim lapse or `hivectl unclaim`, confirm the issue is actionable again. Hive enforces the ledger and expiry, not the discipline of claiming before you start. See [claims](../pkg/claims/claims.go), [issue claims](../pkg/github/issue_claims.go), [claims config](../pkg/config/claims.go), [hivectl claim](hivectl.md#claim--unclaim--claims--issue-claims). |
+#### H1. Choose participating repos explicitly
+
+**Action:** repo-card Auto-merge → off for every unqualified repo
+(`project.repo_policies[].auto_merge`).
+
+**Verify:** inspect every card after changing level; an off repo must reject
+a test merge. The L6 action enables all active repos.
+
+**Limit:** Hive enforces the switch, not your qualification rule.
+Evidence: [repo API](../pkg/dashboard/api_repo_pause.go),
+[repo policy](../pkg/config/repo_policy.go).
+
+#### H2. Declare all critical checks by exact name
+
+**Action:** Governor Config → Auto-merge → Required checks.
+Use `auto_merge.required_checks` as a default and
+`auto_merge.repos.<repo>.required_checks` for heterogeneous repos. Mirror
+branch rules, including coverage; per-repo keys accept bare names or `owner/repo`.
+
+On v6, the hive-wide list is also added to the ruleset checks of every
+`hive-serialized` repository. A check that one repository never produces can
+stall its lane until `merge_front_timeout` (60 minutes by default). See G3's
+path-filter pitfall and [Front timeout](operator-reference.md#front-timeout-merge_front_timeout).
+
+**Verify:** test a red/missing context and a green PR on each repo/branch.
+A default produced by only one repo can block every other repo.
+
+**Limit:** when GitHub reports a known actual set that disagrees with config,
+Hive warns once and uses the actual set. If the set is unknown, config stays
+fail-closed. The [path-specific CI limits](#test-coverage-of-90-or-better)
+still apply. Evidence: [config](../pkg/config/config.go),
+[commit CI](../pkg/github/commit_ci.go).
+
+#### H3. Leave no-CI exceptions empty
+
+**Action — runtime YAML, no dashboard field:** `auto_merge.no_ci_ok: []`.
+
+**Verify:** merge requests with no CI evidence must refuse.
+
+**Limit:** Hive enforces the exception list; granting none is the
+recommendation. It prevents absent evidence passing on the relay, but does
+not fix the App sweep's no-results behavior.
+Evidence: [CI gate](../pkg/github/merge_ci_gate.go).
+
+#### H4. Start with one merge per sweep pass
+
+**Action — JUDGMENT CALL:** Governor Config → Auto-merge → Max merges,
+`auto_merge.max_merges: 1`; raise only after recovery drills.
+
+**Verify:** inspect the dashboard **Audit Log** for the expected merge pace.
+
+**Limit:** the cap bounds a sweep burst, not all parallel merge paths. Unset
+uses 3. Sweep timing adapts to repositories/candidates; there is no operator-set
+interval. Evidence: [sweep](../pkg/github/automerge/automerge_sweep.go).
+
+#### H5. Keep the post-push quiet period
+
+**Action — runtime YAML, no dashboard field:** `auto_merge.min_head_age: 3m`.
+Lengthen if checks register slowly.
+
+**Verify:** look for fresh-head pending messages, not an unconditional
+three-minute delay.
+
+**Limit:** Hive may bypass the quiet period when the config-declared required
+set is already successful. Evidence: [commit CI](../pkg/github/commit_ci.go)
+and [config defaults](../pkg/config/config.go).
+
+#### H6. Narrow the bot sweep list
+
+**Action:** Governor Config → Auto-merge bot toggles,
+`auto_merge.trusted_bot_authors`. Keep only CI-qualified exact logins.
+An explicit empty list disables this bot lane; unset enables dependabot.
+
+**Verify:** inspect **Audit Log** for which bot PRs merged.
+
+**Limit:** Hive enforces sweep membership only; scanner merging is separate.
+Evidence: [config](../pkg/config/config.go),
+[sweep](../pkg/github/automerge/automerge_sweep.go).
+
+#### H6a. Install the Hive `/ok-to-test` workflow
+
+**Action — repository maintainer:** commit
+`.github/workflows/hive-ok-to-test.yml`. Run `hivectl ok-to-test-template`
+to fill in the hive's App login, or copy `src/docs/templates/hive-ok-to-test.yml`.
+It is self-contained, with no `uses: hivecommons/hive/...` reference, so it
+works under restrictive Actions policies and on GHES.
+
+**Verify:** for a trusted same-repo bot/App/clanker PR with `action_required`
+runs, Hive posts `/ok-to-test` and the repo workflow approves the held runs.
+
+**Permissions and limits:** the App needs Actions **read**, not write.
+The workflow uses that repo's `GITHUB_TOKEN` with `actions: write`,
+`issues: write`, `pull-requests: read`, `contents: read`. Prow is not needed.
+If the workflow is absent, the item remains at 085 with
+`workflow-approval-required:missing-workflow:<ctx>` and the exact workflow
+rendered for that hive. A sentinel alert also requires human action.
+
+#### H7. Enable reporter trust for public issues
+
+**Action:** Settings → Labels → Reporter trust
+(`project.issue_filter.reporter_trust`). Choose trusted associations/logins
+deliberately, not every historic contributor. Leave `github.reporter_trust_hold`
+inherited unless deliberately making it stricter.
+
+**Verify:** an unknown reporter's issue is triage-only; a PR citing it is held.
+
+**Limit:** default off. This governs whose issues lead to work/unattended
+merges, not PR-author admission. Hive enforces configured admission and the PR
+hold. Evidence: [reporter hold](../pkg/github/pr_reporter_trust.go),
+[config](../pkg/config/config.go).
+
+#### H8. Decide whether the hive approves its own proposals
+
+**Action — JUDGMENT CALL:** when a human must agree to Hive-filed proposals,
+Governor Config → Repos → `github.self_authorization_hold: true`.
+Check per-repo overrides and any environment lock. Otherwise retain L6's
+off-by-level default.
+
+**Verify:** a Hive-originated proposal's PR gets `hold` and a notice, or
+deliberately does not.
+
+**Limit:** off permits proposal and implementation without human assent;
+on can create a large held backlog. Hive enforces the hold, not the proposal's
+wisdom. Evidence: [self-authorization](../pkg/github/pr_self_authorization.go),
+[config](../pkg/config/config.go).
+
+#### H9. Decide whether automatic large-plan approval is acceptable
+
+**Action — JUDGMENT CALL:** if not, stay below L6 or hold the epic/children.
+`plan_auto_approve` belongs to the shipped pack, **not runtime governor
+config**; no per-hive dashboard/YAML override exists.
+
+**Verify:** inspect plan/child labels and admission.
+
+**Limit:** the plan sink reads L6's pack directly and allows child tasks
+without human plan approval. Pack approval is not design correctness.
+Evidence: `PlanAutoApproveForLevel` in [pack config](../pkg/config/acmm_packs.go),
+`planFromLabeledIssues` in [runtime wiring](../cmd/hive/main_eval_cycle.go).
+
+#### H10. Keep input scanning fail-closed
+
+**Action:** Governor Config → Security → Input Defense → ioscan fail mode,
+`closed` (`ioscan.fail_mode`), retaining L6's inherited default.
+**ioscan** screens incoming/outgoing text for injection.
+
+**Verify:** **Audit Log** shows `ioscan_fail_closed` for a blocked item and
+no kick reached the agent.
+
+**Limit:** Critical suspect input blocks a kick instead of only being redacted;
+false positives need investigation. The fail mode is not perfect attack
+detection. Evidence: [kick enforcement](../pkg/scheduler/ioscan_enforce.go),
+[pack](../pkg/config/packs/level-6.yaml).
+
+#### H11. Begin with shipped cadences
+
+**Action:** Agent settings → Cadences; keep the
+[pack's per-mode matrix](../pkg/config/packs/level-6.yaml), slowing work
+creators when backlog grows rather than continuously generating issues.
+
+**Verify:** creations versus merges and queue age fall after slowing.
+
+**Limit:** Hive enforces intervals, not throughput balance. The pack's
+2026-09 tuning lesson was 119 issues opened versus 31 closed in 24 hours.
+Evidence: pack comment and [governor](../pkg/governor/governor.go).
+
+#### H12. Set a funded token budget
+
+**Action — JUDGMENT CALL:** Governor Config → Budget,
+`governor.budget.total_tokens`, based on measured use for the displayed
+`period_days` window. Set a separate monetary cap at the inference provider.
+
+**Verify:** compare tokens used/remaining and provider dollars against that window.
+
+**Limit:** zero disables budgeting; tiny limits can suppress almost every kick.
+Hive enforces token kick suppression subject to exemptions/ignore settings,
+not a dollar ceiling or merge stop.
+Evidence: [governor](../pkg/governor/governor.go).
+
+#### H13. Keep optional lanes paused until wanted
+
+**Action:** Agent controls/Cadences: retain shipped pauses for supervisor,
+strategist, outreach, telemetry and operations in all modes.
+
+**Verify:** inspect actual pause/cadence state in every mode.
+
+**Limit:** L6 does not mean every lane is active; more issue-filers can worsen
+saturation. Hive enforces pauses, while you decide which work is wanted.
+Evidence: [pack](../pkg/config/packs/level-6.yaml),
+[agent pause](../crux/agent/manager_pause.go).
+
+#### H14. Deliver alerts to someone who can act
+
+**Action — JUDGMENT CALL:** Settings → Notifications: configure a documented
+ntfy/Slack/Discord destination and name a responsible operator.
+
+**Verify:** send the documented test notification and confirm receipt.
+
+**Limit:** dashboard-only warnings may go unseen while merges continue.
+Hive sends notifications, not an acknowledgement or service-level guarantee.
+Evidence: [notifications](notifications.md), [notifier](../pkg/notify/notify.go).
+
+#### H15. Choose an enforcing review gate deliberately
+
+**Action — JUDGMENT CALL:** Governor Config → Security → PR Review → Require
+review approval (`review.require_approval: true`).
+
+**Verify:** test missing-review, rejected and approved heads on both scanner
+and App sweep paths.
+
+**Limit:** this gates scanner eligibility **and** enforces the sweep review
+gate. Trusted human exact-head overrides and other gates still apply; see
+[the current gate contract](#does-the-hive-reviewer-stop-a-merge).
+Use GitHub rules or literal holds for changes that must wait for human review.
+
+#### H16. Turn issue claims on so workers do not collide
+
+**Action — owner:** Governor Config → Features → **Issue claims**, or
+`governor.claims.enabled: true`. It is **off by default**. Set
+`governor.claims.{human_ttl_s,agent_ttl_s,contributor_ttl_s}` in YAML or the
+claim-lifetime inputs under the same toggle. Changes apply without a restart.
+Claim your own work with `hivectl claim o/r#N` before starting.
+
+**Verify:** claim a test issue; confirm `claimed` appears and the agent kick
+is withheld. Let the claim expire or run `hivectl unclaim`; confirm work becomes
+actionable again.
+
+**Limit:** Hive enforces the claim ledger and expiry, not your discipline of
+claiming before you start. Without claims, duplicate PR detection only sees
+collisions after workers have opened their PRs.
+
+<details>
+<summary>Claim ranking, defaults and implementation reference</summary>
+
+- Holders rank human > agent > contributor > external. Lower ranks back off;
+  higher ranks take over with `preempted:<login>`.
+- The record is a marker comment (`<!-- hive:claim … -->`) or the assignee on
+  the GitHub issue itself. No organization is required: personal repositories
+  work, and another hive/script can read the same claim.
+- Default lifetimes: 4h person, 2h agent kick, 30m relay task.
+- See [claims](../pkg/claims/claims.go),
+  [issue claims](../pkg/github/issue_claims.go),
+  [config](../pkg/config/claims.go) and
+  [CLI commands](hivectl.md#claim--unclaim--claims--issue-claims).
+
+</details>
 
 ### ClankeR settings
 
@@ -205,7 +511,7 @@ Verify a routine claim/review no longer floods unrelated maintainers, while a te
 
 First canary choice: in image repositories every lane merge to `main` publishes an image, so pick the first canary repo with that cost in mind.
 
-Front timeout and stuck lanes (`v6`): a front PR whose required checks never go green (missing context, path-filtered workflow, or red) holds the lane until the 60-minute front timeout; the lane panel shows it at the front and later PRs show `deferred: not at the front of the lane`. A held or red front PR can block the lane, and the current red-front behaviour is tracked in [#11023](https://github.com/hivecommons/hive/issues/11023).
+Front timeout and stuck lanes (`v6`): a front PR whose required checks never go green (missing context, path-filtered workflow, or red) holds the lane until the front timeout (`merge_front_timeout`, 60 minutes by default; see [Front timeout](operator-reference.md#front-timeout-merge_front_timeout)) runs out (a front whose required checks are still queued or in progress is extended by one more timeout, at most three times; that limit is fixed, not configurable); the lane panel shows it at the front and later PRs show `deferred: not at the front of the lane`. A red front PR holds the lane until that timeout. A held front PR does not: the next queued or self-authored sweep hands it to the lane front-only, the lane's own label policy refuses it, and it leaves so the next waiting PR is promoted ([#14934](https://github.com/hivecommons/hive/issues/14934)). That policy refuses only the hold family (`hold`, `on-hold`, `hold/review`, any label containing `hold`), the dashboard's `hive-pause/<hive-id>` label and `do-not-merge*` (`defaultBlocked` in [mergelane](../pkg/mergelane/lane.go)). A green front carrying only `needs-human` or `needs-rebase` is not refused by that policy; the front-only hand-off supplies no merge authorization, so it stays at the front and still waits for the front timeout. Add `hold` if such a PR must leave the lane now (see [label reference](labels-and-control-signals.md)).
 
 **R3. Confirm intent after every switch, restart and upgrade.** On the dashboard, check three things: the ACMM level badge in the top bar shows the level you intended; each agent's card shows the mode, cadence and paused state you expect; and each repository card shows the Auto-merge and paused state you set. Then open **Audit Log** and confirm that merges are appearing, or have stopped, as you intended. If you keep settings in the config file, compare it with what the dashboard shows. Use a harmless held test PR to confirm it stays held, then a qualified canary to confirm the intended path works. Without read-back, a saved level alone can hide reconciliation or persistence failure. Hive reports state and errors; this verification discipline is **JUDGMENT CALL**. Sources: [pack API](../pkg/dashboard/api_packs.go), [sweep startup](../pkg/github/automerge/automerge_sweep.go), [config layering](config-layering.md).
 
@@ -259,9 +565,9 @@ These are confirmations of the practices above, not additional product gates.
 | --- | --- | --- |
 | One PR or issue: literal `hold` or item Hold | That item's Hive work/merge eligibility; other items continue. Held PR cannot merge via Hive; an issue hold is not a retroactive hold on every existing linked PR, so hold those too. | GitHub label-capable maintainer; dashboard owner/repo-write permission. Remove label/resume item after review; confirm head unchanged or re-review. [Item API](../pkg/dashboard/api_repo_hold.go), [client](../pkg/github/client.go), [hold guard](../cmd/hive/main_helpers.go). |
 | One repo: Auto-merge off | All Hive merge paths for that repo; PR creation can continue. Existing PRs **cannot** merge through Hive. Repo Pause additionally removes repo work enumeration/sweep activity. | Owner or repo-write user may switch off/pause; **owner** required to restore auto-merge. Resume repo and separately restore chosen merge policy. Confirm card + refused test merge. [Repo API](../pkg/dashboard/api_repo_pause.go), [repo policy](../pkg/config/repo_policy.go). |
-| One agent: Pause | That worker's execution/scheduling; other workers and App sweep remain. Existing green PRs **can** still merge. | Dashboard owner; Resume reverses manual pause. Confirm agent paused state. [Agent control](../pkg/dashboard/api_agent_control.go), [pause implementation](../pkg/agent/manager_pause.go). |
-| Every agent: fleet breaker, plus explicitly pause any remaining on-demand workers | Breaker pauses currently running non-on-demand agents, preserving already-paused states; it is **not a merge brake**. Existing PRs **can** merge via sweep. | Owner, using the fleet breaker button in the dashboard's top bar. Release resumes only breaker-owned pauses; manually paused agents stay paused. Confirm captured set and each agent status. [Breaker API](../pkg/dashboard/api_breaker.go), [pause implementation](../pkg/agent/manager_pause.go). |
-| All automatic merging: disable Auto-merge on every repo, or step down below L6 | Repo gate blocks Hive merge authority on existing and new PRs. Workers can still create work according to the remaining level/modes. Disabling only `auto_merge.self_authored` stops **only the App sweep**, not the scanner lane; restarting relays may be necessary for startup-captured sweep flags. | Owner for level change; owner/repo-write for repo off. Restore selected repo switches as owner; re-applying L6 enables active repos again. Confirm each repository card and the **Audit Log**. [Repo policy](../pkg/config/repo_policy.go), [pack API](../pkg/dashboard/api_packs.go), [sweep wiring](../cmd/hive/main.go). |
+| One agent: Pause | That worker's execution/scheduling; other workers and App sweep remain. Existing green PRs **can** still merge. | Dashboard owner; Resume reverses manual pause. Confirm agent paused state. [Agent control](../pkg/dashboard/api_agent_control.go), [pause implementation](../crux/agent/manager_pause.go). |
+| Every agent: fleet breaker, plus explicitly pause any remaining on-demand workers | Breaker pauses currently running non-on-demand agents, preserving already-paused states; it is **not a merge brake**. Existing PRs **can** merge via sweep. | Owner, using the fleet breaker button in the dashboard's top bar. Release resumes only breaker-owned pauses; manually paused agents stay paused. Confirm captured set and each agent status. [Breaker API](../pkg/dashboard/api_breaker.go), [pause implementation](../crux/agent/manager_pause.go). |
+| All automatic merging: disable Auto-merge on every repo, or step down below L6 | Repo gate blocks Hive merge authority on existing and new PRs. Workers can still create work according to the remaining level/modes. Disabling only `auto_merge.self_authored` stops **only the App sweep**, not the scanner lane; restarting relays may be necessary for startup-captured sweep flags. | Owner for level change; owner/repo-write for repo off. Restore selected repo switches as owner; re-applying L6 enables active repos again. Confirm each repository card and the **Audit Log**. [Repo policy](../pkg/config/repo_policy.go), [pack API](../pkg/dashboard/api_packs.go), [sweep wiring](../cmd/hive/main_sweeps.go). |
 | Contributor work: Suspend contributions, revoke/stop active relays if necessary | Stops offering/admitting contribution work as configured, not Hive's other workers or automatic merges. Existing contributor PRs **can** merge; active work must be handled separately. | Owner in contribution admin; contributor can stop their own relay. Unsuspend/re-authorize only after triage; confirm queue paused and active leases/workers accounted for. [Contribution API](../pkg/dashboard/api_contribute.go), [relay reference](contributor-relay.md). |
 
 These controls stop **Hive**, not a separate GitHub bot or a maintainer manually merging. For an immediate repo-wide incident boundary, a GitHub administrator can also revoke/suspend the App installation's access; coordinate restoration and verify credential failures, rather than silently weakening branch rules. **JUDGMENT CALL:** use this larger boundary if Hive's runtime state cannot be trusted. No Hive setting enforces that incident policy.

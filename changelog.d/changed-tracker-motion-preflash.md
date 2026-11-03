@@ -1,0 +1,1 @@
+- Hive activity monitor: every movement animation now runs flash → move → land — the chevron an item is leaving pulses twice before the chosen effect travels and the new chevron lands lit (one soft flash then a crossfade under `prefers-reduced-motion`); flash timing is tokenised as `--ham-move-flash-*`.

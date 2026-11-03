@@ -41,9 +41,9 @@ const (
 	// been attempted, or an attempt is in flight.
 	StatusPlanned = "Planned"
 	// StatusApplied: authoritative external state (or an acknowledged
-	// current-epoch result) proves the effect took place. Terminal truth —
-	// a later duplicate, out-of-order, or stale-epoch result can never
-	// regress it.
+	// current-epoch result) proves the effect took place. A later duplicate,
+	// out-of-order, or stale-epoch result cannot regress it. The label replay
+	// path may reopen it after observing that the label state changed.
 	StatusApplied = "Applied"
 	// StatusNotApplied: authoritative external state proves the effect did
 	// NOT take place; the same logical operation may retry through a new
@@ -62,8 +62,8 @@ var (
 	// same logical operation before any retry is authorized. This is what
 	// makes retry-after-uncertainty reconcile rather than duplicate.
 	ErrNeedsReconciliation = errors.New("operation must be reconciled against authoritative external state before retry")
-	// ErrAlreadyApplied: the effect already took place; a new attempt can
-	// never be authorized for the same logical operation.
+	// ErrAlreadyApplied: the effect already took place. Label mutations may
+	// authorize a new attempt after re-observing changed external state.
 	ErrAlreadyApplied = errors.New("operation effect is already applied")
 	// ErrResultRegression: a result or acknowledgment arrived that would
 	// regress terminal journal truth or overwrite a newer attempt from an
@@ -93,6 +93,20 @@ const journalLockFileSuffix = ".lock"
 // DefaultJournalLockTimeout bounds how long one transition waits for the
 // cross-process lock before surfacing ErrJournalLocked.
 const DefaultJournalLockTimeout = 10 * time.Second
+
+// DefaultJournalRetention bounds how long a TERMINAL operation (Applied or
+// NotApplied) stays in the journal after its last transition. Every logical
+// ID embeds the outcome's desired generation and the authorizing claim key,
+// so a terminal entry this old can no longer be replayed by a live planner;
+// keeping it only grows the file every transition rewrites and reloads.
+// Planned and Unknown entries are never pruned: they still need
+// reconciliation against authoritative external state.
+const DefaultJournalRetention = 7 * 24 * time.Hour
+
+// DefaultJournalMaxEntries is the hard ceiling on journal entries. Past it the
+// oldest terminal entries are evicted first (never Planned/Unknown), so a
+// burst of transitions cannot outgrow the retention window's bound either.
+const DefaultJournalMaxEntries = 20000
 
 // journalLockPollInterval is the spacing between non-blocking flock attempts
 // while waiting out the bounded lock timeout.
@@ -209,10 +223,15 @@ type persistedJournal struct {
 // transition, serialized per logical-ID under the journal mutex and across
 // processes under the exclusive .lock flock (refreshed from disk before every
 // transition, exactly like the claim ledger). Process memory is never
-// authority.
+// authority. Because every transition reloads and rewrites the whole file,
+// the record is bounded: terminal entries age out after retention and the
+// oldest terminal entries are evicted past maxEntries (see pruneLocked).
 type Journal struct {
 	path        string
 	lockTimeout time.Duration
+	retention   time.Duration
+	maxEntries  int
+	now         func() time.Time
 	mu          sync.Mutex
 	ops         map[string]*Operation
 }
@@ -224,7 +243,14 @@ type Journal struct {
 // transition, exactly like the claim ledger, so a missing or unwritable data
 // directory defers persistence rather than refusing boot.
 func OpenJournal(path string) (*Journal, error) {
-	j := &Journal{path: path, lockTimeout: DefaultJournalLockTimeout, ops: make(map[string]*Operation)}
+	j := &Journal{
+		path:        path,
+		lockTimeout: DefaultJournalLockTimeout,
+		retention:   DefaultJournalRetention,
+		maxEntries:  DefaultJournalMaxEntries,
+		now:         time.Now,
+		ops:         make(map[string]*Operation),
+	}
 	if err := j.reloadLocked(); err != nil {
 		return nil, err
 	}
@@ -446,8 +472,8 @@ type ExternalState struct {
 //   - !Known         → StatusUnknown: no duplicate retry is authorized.
 //
 // Reconciliation may be performed by any current owner (adoption); it never
-// regresses an Applied entry to NotApplied — terminal truth stands, and a
-// disagreeing later observation is a refusal, not a rewrite.
+// regresses an Applied entry to NotApplied. A disagreeing observation is a
+// refusal here; label replay has a separate, claim-held reopen path.
 func (j *Journal) Reconcile(id string, state ExternalState, now time.Time) (Operation, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -502,6 +528,7 @@ func (j *Journal) commit(id string, work Operation) (Operation, error) {
 	prior, hadPrior := j.ops[id]
 	cp := work.clone()
 	j.ops[id] = &cp
+	j.pruneLocked(j.pruneClock(work.UpdatedAt))
 	if err := j.persistLocked(); err != nil {
 		if hadPrior {
 			j.ops[id] = prior
@@ -511,6 +538,60 @@ func (j *Journal) commit(id string, work Operation) (Operation, error) {
 		return Operation{}, err
 	}
 	return work.clone(), nil
+}
+
+// pruneClock picks the instant retention is measured from. The caller-supplied
+// instant is clamped to the journal's own clock so a skewed or forged future
+// timestamp cannot age out other entries early.
+func (j *Journal) pruneClock(supplied time.Time) time.Time {
+	if own := j.now(); supplied.After(own) {
+		return own
+	}
+	return supplied
+}
+
+// isTerminal reports whether an operation can never transition again on its
+// own: Applied is terminal truth and NotApplied only moves through a fresh
+// Begin, which re-derives the same logical ID from the effect.
+func isTerminal(status string) bool {
+	return status == StatusApplied || status == StatusNotApplied
+}
+
+// pruneLocked bounds the in-memory index (and so the next persisted
+// snapshot) before a commit: terminal entries past the retention window are
+// dropped, then the oldest terminal entries are evicted until the count fits
+// maxEntries. Planned and Unknown entries are always kept. Callers hold j.mu
+// and the cross-process lock.
+func (j *Journal) pruneLocked(now time.Time) {
+	if j.retention > 0 {
+		cutoff := now.Add(-j.retention)
+		for id, op := range j.ops {
+			if isTerminal(op.Status) && op.UpdatedAt.Before(cutoff) {
+				delete(j.ops, id)
+			}
+		}
+	}
+	if j.maxEntries <= 0 || len(j.ops) <= j.maxEntries {
+		return
+	}
+	terminal := make([]*Operation, 0, len(j.ops))
+	for _, op := range j.ops {
+		if isTerminal(op.Status) {
+			terminal = append(terminal, op)
+		}
+	}
+	sort.Slice(terminal, func(i, k int) bool {
+		if !terminal[i].UpdatedAt.Equal(terminal[k].UpdatedAt) {
+			return terminal[i].UpdatedAt.Before(terminal[k].UpdatedAt)
+		}
+		return terminal[i].LogicalID < terminal[k].LogicalID
+	})
+	for _, op := range terminal {
+		if len(j.ops) <= j.maxEntries {
+			break
+		}
+		delete(j.ops, op.LogicalID)
+	}
 }
 
 func (j *Journal) persistLocked() error {

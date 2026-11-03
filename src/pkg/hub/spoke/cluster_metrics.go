@@ -81,7 +81,9 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	if err != nil {
 		reason := nodeHealthErrorReason("nodes API failed", err)
 		logNodeHealthWarning(logger, reason)
-		return partialClusterHealthReport(reason)
+		report := partialClusterHealthReport(reason)
+		report.NodeRBAC = nodeRBACFromNodesError(err)
+		return report
 	}
 
 	// Parse node metadata from kubectl get nodes.
@@ -417,6 +419,7 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		},
 		CollectedAt:     time.Now().UTC().Format(time.RFC3339),
 		NodeHealthError: nodeHealthError,
+		NodeRBAC:        nodeRBACOK,
 	}
 
 	// Include GPU summary if the cluster has GPUs.
@@ -440,6 +443,21 @@ func partialClusterHealthReport(reason string) *HeartbeatClusterHealthReport {
 		CollectedAt:     time.Now().UTC().Format(time.RFC3339),
 		NodeHealthError: reason,
 	}
+}
+
+const (
+	nodeRBACOK        = "ok"
+	nodeRBACForbidden = "forbidden"
+)
+
+// nodeRBACFromNodesError classifies a failed /api/v1/nodes list: an HTTP 403
+// means the ServiceAccount lacks the one-time cluster-admin Node grant;
+// anything else (network, TLS, 5xx) says nothing about RBAC.
+func nodeRBACFromNodesError(err error) string {
+	if err != nil && strings.Contains(err.Error(), "HTTP 403") {
+		return nodeRBACForbidden
+	}
+	return ""
 }
 
 func nodeHealthErrorReason(prefix string, err error) string {

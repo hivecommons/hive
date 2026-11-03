@@ -174,7 +174,7 @@ var acmmLevels = map[int]acmmLevelInfo{
 	3: {"Quality-Gated", "the quality agent starts opening issues and hold-gated PRs about testing gaps, and ci-maintainer joins to watch build health — nothing merges without you"},
 	4: {"Security-Aware", "delivery agents file GitHub issues in their lanes and sec-check joins for vulnerabilities"},
 	5: {"Semi-Autonomous", "agents open hold-gated pull requests as well as issues; architect and strategist join, while telemetry and operations are available paused for deliberate opt-in"},
-	6: {"Fully Autonomous", "agents can auto-merge on green CI at the highest trust setting; outreach joins, while telemetry and operations remain paused until deliberately enabled"},
+	6: {"Autonomous", "agents can auto-merge on green CI at the highest trust setting; outreach joins, while telemetry and operations remain paused until deliberately enabled"},
 }
 
 // maxACMMLevel is the top of the 6-level model. A hive here has nowhere to

@@ -1,0 +1,659 @@
+# Current Settings dialog parity gaps.
+# Every entry must have a Settings control before it is removed.
+# TODO #11854
+agent_sandbox.job.env_from_secrets[] # TODO #11854
+agent_sandbox.job.node_selector.<key> # TODO #11854
+agent_sandbox.job.resources.limits.<key> # TODO #11854
+agent_sandbox.job.resources.requests.<key> # TODO #11854
+agent_sandbox.job.tolerations[].effect # TODO #11854
+agent_sandbox.job.tolerations[].key # TODO #11854
+agent_sandbox.job.tolerations[].operator # TODO #11854
+agent_sandbox.job.tolerations[].value # TODO #11854
+agent_sandbox.job.volumes[].claim # TODO #11854
+agent_sandbox.job.volumes[].mount_path # TODO #11854
+agent_sandbox.job.volumes[].name # TODO #11854
+agent_sandbox.job.volumes[].read_only # TODO #11854
+agent_sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
+agent_sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
+agents.<key>.acmm_levels[] # TODO #11854
+agents.<key>.agent_spec # TODO #11854
+agents.<key>.aliases[] # TODO #11854
+agents.<key>.backend # TODO #11854
+agents.<key>.backend_owner # TODO #11854
+agents.<key>.bead_role # TODO #11854
+agents.<key>.beads_dir # TODO #11854
+agents.<key>.bob.session_label # TODO #11854
+agents.<key>.bob_display_name # TODO #11854
+agents.<key>.busy_no_activity_threshold # TODO #11854
+agents.<key>.cadence_scope # TODO #11854
+agents.<key>.caveman_mode # TODO #11854
+agents.<key>.channels[].enabled # TODO #11854
+agents.<key>.channels[].type # TODO #11854
+agents.<key>.clear_on_kick # TODO #11854
+agents.<key>.cli_pinned # TODO #11854
+agents.<key>.color # TODO #11854
+agents.<key>.connections[].auth.env_var # TODO #11854
+agents.<key>.connections[].auth.file # TODO #11854
+agents.<key>.connections[].auth.type # TODO #11854
+agents.<key>.connections[].env_name # TODO #11854
+agents.<key>.connections[].name # TODO #11854
+agents.<key>.connections[].options.<key> # TODO #11854
+agents.<key>.connections[].type # TODO #11854
+agents.<key>.connections[].uri # TODO #11854
+agents.<key>.continuous # TODO #11854
+agents.<key>.continuous_budget_pct # TODO #11854
+agents.<key>.continuous_cooldown # TODO #11854
+agents.<key>.continuous_turn_ceiling # TODO #11854
+agents.<key>.converse # TODO #11854
+agents.<key>.definition_source.owner # TODO #11854
+agents.<key>.definition_source.path # TODO #11854
+agents.<key>.definition_source.ref # TODO #11854
+agents.<key>.definition_source.repo # TODO #11854
+agents.<key>.definition_source.type # TODO #11854
+agents.<key>.definition_source.url # TODO #11854
+agents.<key>.description # TODO #11854
+agents.<key>.detect_keywords[] # TODO #11854
+agents.<key>.display_name # TODO #11854
+agents.<key>.emoji # TODO #11854
+agents.<key>.enabled # TODO #11854
+agents.<key>.explain_mode # TODO #11854
+agents.<key>.github_api_hourly_cap # TODO #11854
+agents.<key>.id # TODO #11854
+agents.<key>.include_repos # TODO #11854
+agents.<key>.jev_mode # TODO #11854
+agents.<key>.kick_template # TODO #11854
+agents.<key>.lane_keywords[] # TODO #11854
+agents.<key>.launch_cmd # TODO #11854
+agents.<key>.max_turn_duration # TODO #11854
+agents.<key>.metrics_collector # TODO #11854
+agents.<key>.mode # TODO #11854
+agents.<key>.model # TODO #11854
+agents.<key>.model_owner # TODO #11854
+agents.<key>.on_demand # TODO #11854
+agents.<key>.on_demand_owner # TODO #11854
+agents.<key>.pause_owner # TODO #11854
+agents.<key>.paused # TODO #11854
+agents.<key>.prompt_source.owner # TODO #11854
+agents.<key>.prompt_source.path # TODO #11854
+agents.<key>.prompt_source.ref # TODO #11854
+agents.<key>.prompt_source.repo # TODO #11854
+agents.<key>.prompt_source.type # TODO #11854
+agents.<key>.reasoning_effort # TODO #11854
+agents.<key>.reentrant_turn # TODO #11854
+agents.<key>.replicas # TODO #11854
+agents.<key>.repos[] # TODO #11854
+agents.<key>.repos_owner # TODO #11854
+agents.<key>.restart_strategy # TODO #11854
+agents.<key>.review_models.exclude_author_family # TODO #11854
+agents.<key>.review_models.exclude_author_model # TODO #11854
+agents.<key>.review_models.fallback # TODO #11854
+agents.<key>.review_models.pool[].backend # TODO #11854
+agents.<key>.review_models.pool[].model # TODO #11854
+agents.<key>.review_heads[].alias # TODO #13542
+agents.<key>.review_heads[].backend # TODO #13542
+agents.<key>.review_heads[].model # TODO #13542
+agents.<key>.review_heads[].replicas # TODO #13542
+agents.<key>.role # TODO #11854
+agents.<key>.sandbox.enabled # TODO #11854
+agents.<key>.sandbox.env_allowlist[] # TODO #11854
+agents.<key>.sandbox.image # TODO #11854
+agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
+agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
+agents.<key>.sandbox.job.resources.limits.<key> # TODO #11854
+agents.<key>.sandbox.job.resources.requests.<key> # TODO #11854
+agents.<key>.sandbox.job.scheduler_name # TODO #11854
+agents.<key>.sandbox.job.service_account # TODO #11854
+agents.<key>.sandbox.job.tolerations[].effect # TODO #11854
+agents.<key>.sandbox.job.tolerations[].key # TODO #11854
+agents.<key>.sandbox.job.tolerations[].operator # TODO #11854
+agents.<key>.sandbox.job.tolerations[].value # TODO #11854
+agents.<key>.sandbox.job.ttl_seconds # TODO #11854
+agents.<key>.sandbox.job.volumes[].claim # TODO #11854
+agents.<key>.sandbox.job.volumes[].mount_path # TODO #11854
+agents.<key>.sandbox.job.volumes[].name # TODO #11854
+agents.<key>.sandbox.job.volumes[].read_only # TODO #11854
+agents.<key>.sandbox.job.workspace_claim # TODO #11854
+agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
+agents.<key>.sandbox.network_mode # TODO #11854
+agents.<key>.sandbox.runtime # TODO #11854
+agents.<key>.sandbox.timeout_s # TODO #11854
+agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
+agents.<key>.sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
+agents.<key>.session_recycle.enabled # TODO #11854
+agents.<key>.session_recycle.max_age # TODO #11854
+agents.<key>.session_recycle.max_rss_mb # TODO #11854
+agents.<key>.session_recycle.min_idle # TODO #11854
+agents.<key>.skills[] # TODO #11854
+agents.<key>.sort_order # TODO #11854
+agents.<key>.stale_timeout # TODO #11854
+agents.<key>.stats_display[].desc # TODO #11854
+agents.<key>.stats_display[].field # TODO #11854
+agents.<key>.stats_display[].icon # TODO #11854
+agents.<key>.stats_display[].key # TODO #11854
+agents.<key>.stats_display[].label # TODO #11854
+agents.<key>.stats_display[].source # TODO #11854
+agents.<key>.stats_display[].style # TODO #11854
+agents.<key>.stats_display[].target # TODO #11854
+agents.<key>.stats_display[].trend_field # TODO #11854
+agents.<key>.tools.preset # TODO #11854
+agents.<key>.tools.rules[].action # TODO #11854
+agents.<key>.tools.rules[].pattern # TODO #11854
+agents.<key>.tools.rules[].reason # TODO #11854
+agents.<key>.variables.<key>.command[] # TODO #11854
+agents.<key>.variables.<key>.default # TODO #11854
+agents.<key>.variables.<key>.env # TODO #11854
+agents.<key>.variables.<key>.headers.<key> # TODO #11854
+agents.<key>.variables.<key>.scope # TODO #11854
+agents.<key>.variables.<key>.type # TODO #11854
+agents.<key>.variables.<key>.url # TODO #11854
+agents.<key>.variables.<key>.value # TODO #11854
+agents.github_api_hourly_cap # TODO #11854
+agents.session_recycle.enabled # TODO #11854
+agents.session_recycle.max_age # TODO #11854
+agents.session_recycle.max_rss_mb # TODO #11854
+agents.session_recycle.min_idle # TODO #11854
+auto_merge.credit_issue_authors # merge-time Co-authored-by credit (#14581); yaml-only
+auto_merge.allow_unprotected_base[] # TODO #11854
+auto_merge.human_merge_title_prefixes[] # breaking-titled PRs wait for a human; yaml-only
+auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-only
+auto_merge.merge_forward_trusted_human[] # TODO #11854
+auto_merge.merge_train.enabled # conflict-aware merge train (#15117); yaml-only
+auto_merge.merge_train.max_rebase_attempts # merge train rebase loop guard (#15117); yaml-only
+auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#15198); yaml-only
+auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
+auto_merge.native_merge_queue.repos[] # native merge queue per-repo allow-list (#15198); yaml-only
+auto_merge.native_merge_queue.skip_current_base_gate # explicit current-base bypass on queue bases (#15198); yaml-only
+auto_merge.no_ci_ok[] # TODO #11854
+auto_merge.queue_on_approve_and_unhold[] # per-repo L5 opt-in; yaml-only (#13629)
+auto_merge.repos.<key>.required_checks[] # TODO #11854
+auto_merge.required_checks[] # TODO #11854
+auto_merge.skip_current_base[] # current-base gate per-repo "off" override, written by the Repos tab (#15335)
+auto_merge.trusted_authors.exclude_labels[] # TODO #11854
+auto_merge.trusted_authors.repos[] # TODO #11854
+auto_merge.trusted_bot_authors[] # TODO #11854
+chat.grounded_answers.model # TODO #14412
+classification.review_bots.logins[] # TODO #11854
+classification.review_bots.max_attempts_per_thread # TODO #11854
+classification.review_bots.resolve_after_fix # TODO #11854
+compliance.frameworks[] # TODO #11854
+data.nous_dir # TODO #11854
+contribute.token_idle_max # TODO #11854
+contribute.token_max_age # TODO #11854
+convergence.mutation.max_writers_per_target # boundary capacity tuning; yaml-only (#14645)
+debug.pprof_addr # loopback-only pprof bind address, operator/debug knob, not a Settings control (#14681)
+dedupe.advisory_autoclose # advisory-checklist sweep; yaml-only (#15754)
+deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
+duplicate_sweep.bot_authors[] # TODO #11854
+evidence.complexity.enabled # TODO #11854
+evidence.complexity.static_analysis # TODO #11854
+github.additional_bot_logins[] # TODO #11854
+github.shared_uid_read_token # shared-UID App read-token opt-in; yaml-only, restart required (#14778)
+good_first_issue.exclude_labels[] # advanced scorer tuning; yaml-only (#12185)
+good_first_issue.repos[] # advanced scorer tuning; yaml-only (#12185)
+governor.first_timer_welcome.enabled # first-time contributor welcome; yaml-only
+governor.first_timer_welcome.template_path # first-time contributor welcome; yaml-only
+governor.backup.key_env # TODO #11854
+governor.backup.key_file # TODO #11854
+governor.backup.key_name # TODO #11854
+governor.bob.api_key_env # TODO #11854
+governor.bob.key_name # TODO #11854
+governor.budget.coins.<key>.budget # TODO #11854
+governor.budget.coins.<key>.label # TODO #11854
+governor.budget.coins.<key>.tokens_per_coin # TODO #11854
+governor.budget.coins.<key>.usd_per_coin # TODO #11854
+governor.ci_failure_kick_cooldown_s # webhook CI-failure kick cooldown (#15291); yaml-only
+governor.ci_failure_webhook_kick # webhook CI-failure kick flag (#15291); yaml-only
+governor.claims.contributor_flap_threshold # contributor flap cool-off (#13579); yaml-only
+governor.claims.contributor_flap_window_s # contributor flap cool-off (#13579); yaml-only
+governor.claims.contributor_flap_cooloff_s # contributor flap cool-off (#13579); yaml-only
+governor.claims.contributor_starvation_s # contributor starvation guard (#13579); yaml-only
+governor.auto_close_superseded # superseded hive-PR auto-close; yaml-only
+governor.cadence_owners.<key> # TODO #11854
+governor.gateways[].api_key_env # TODO #11854
+governor.gateways[].api_key_file # TODO #11854
+governor.gateways[].ca_bundle # TODO #11854
+governor.gateways[].default_model # TODO #11854
+governor.gateways[].endpoint # TODO #11854
+governor.gateways[].key_name # TODO #11854
+governor.gateways[].kind # TODO #11854
+governor.gateways[].name # TODO #11854
+governor.gateways[].project_id # TODO #11854
+governor.gateways[].region # TODO #11854
+governor.health.healthcheck_interval # TODO #11854
+governor.labels.author.clanker # label-name override; yaml-only (#12581)
+governor.labels.author.hive # label-name override; yaml-only (#12581)
+governor.labels.author.human # label-name override; yaml-only (#12581)
+governor.labels.exempt[] # TODO #11854
+governor.labels.stage.dco.required.<key> # TODO #12542
+governor.litellm.api_key_env # TODO #11854
+governor.litellm.api_key_file # TODO #11854
+governor.litellm.ca_bundle # TODO #11854
+governor.litellm.default_model # TODO #11854
+governor.llm-d.api_key_env # TODO #11854
+governor.llm-d.api_key_file # TODO #11854
+governor.llm-d.api_key_header # TODO #11854
+governor.llm-d.endpoint # TODO #11854
+governor.modes.<key>.cadences.<key> # TODO #11854
+governor.modes.<key>.threshold # TODO #11854
+governor.review_gate.mode # TODO #11854
+governor.rotation.agents.<key> # TODO #11854
+governor.rotation.providers.<key>.backends[] # TODO #11854
+governor.rotation.providers.<key>.class # TODO #11854
+governor.rotation.providers.<key>.monthly_allowance # TODO #11854
+governor.sensing.cli_exclude_patterns[] # TODO #11854
+governor.sensing.gh_rate_patterns[] # TODO #11854
+governor.sensing.login_patterns[] # TODO #11854
+governor.trajectory.api_key_file # TODO #11854
+governor.trajectory.exempt_agents[] # TODO #11854
+governor.vllm.api_key_env # TODO #11854
+governor.vllm.api_key_file # TODO #11854
+governor.vllm.api_key_header # TODO #11854
+governor.vllm.endpoint # TODO #11854
+governor.work_source.github_projects.default_repo # TODO #11854
+governor.work_source.github_projects.iteration_field # TODO #11854
+governor.work_source.github_projects.org # TODO #11854
+governor.work_source.github_projects.priority_field # TODO #11854
+governor.work_source.github_projects.project_number # TODO #11854
+governor.work_source.github_projects.states[] # TODO #11854
+governor.work_source.jira.api_token # TODO #11854
+governor.work_source.jira.base_url # TODO #11854
+governor.work_source.jira.ca_bundle # TODO #11854
+governor.work_source.jira.client_cert # TODO #11854
+governor.work_source.jira.client_key # TODO #11854
+governor.work_source.jira.deployment # TODO #11854
+governor.work_source.jira.email # TODO #11854
+governor.work_source.jira.hold_labels[] # TODO #11854
+governor.work_source.jira.insecure_skip_verify # TODO #11854
+governor.work_source.jira.jql # TODO #11854
+governor.work_source.jira.password # TODO #11854
+governor.work_source.jira.project_keys[] # TODO #11854
+governor.work_source.jira.repo # TODO #11854
+governor.work_source.jira.username # TODO #11854
+governor.work_source.linear.api_key # TODO #11854
+governor.work_source.linear.assigned_only # TODO #11854
+governor.work_source.linear.hold_labels[] # TODO #11854
+governor.work_source.linear.session_agent # TODO #11854
+governor.work_source.linear.teams[].cycles # TODO #11854
+governor.work_source.linear.teams[].key # TODO #11854
+governor.work_source.linear.teams[].projects[].name # TODO #11854
+governor.work_source.linear.teams[].projects[].repo # TODO #11854
+governor.work_source.linear.teams[].repo # TODO #11854
+governor.work_source.linear.teams[].states[] # TODO #11854
+governor.work_source.run_stages # TODO #11854
+governor.work_source.wavefront.enabled # TODO #11854
+governor.work_source.wavefront.path # TODO #11854
+governor.work_source.wavefront.receipts_dir # TODO #11854
+governor.work_source.wavefront.repo # TODO #11854
+governor.work_source.wavefront.url # TODO #11854
+hooks[].action # TODO #11854
+hooks[].name # TODO #11854
+hooks[].on # TODO #11854
+hooks[].params.<key> # TODO #11854
+hooks[].rate_limit_per_minute # TODO #11854
+hooks[].when # TODO #11854
+hub.contribute_allow_labels[] # TODO #11854
+hub.contribute_allow_models[] # TODO #11854
+hub.contribute_delegatable_roles[] # TODO #11854
+hub.contribute_deny_authors[] # TODO #11854
+hub.contribute_deny_labels[] # TODO #11854
+hub.contribute_deny_titles[] # TODO #11854
+hub.contribute_queue_hold[] # TODO #11854
+hub.contribute_queue_hold_reasons.<key> # TODO #11854
+hub.contribute_queue_order[] # TODO #11854
+hub.contribute_repo_filters.<key>.allow_labels[] # TODO #11854
+hub.contribute_repo_filters.<key>.authors_mode # TODO #11854
+hub.contribute_repo_filters.<key>.deny_authors[] # TODO #11854
+hub.contribute_repo_filters.<key>.deny_labels[] # TODO #11854
+hub.contribute_repo_filters.<key>.deny_titles[] # TODO #11854
+hub.contribute_repo_filters.<key>.labels_mode # TODO #11854
+hub.contribute_repo_filters.<key>.titles_mode # TODO #11854
+hub.contribute_skip_labels[] # TODO #11854
+hub.disabled_repos[] # TODO #11854
+hub.disabled_tiers[] # TODO #11854
+hub.heartbeat_omit[] # TODO #11854
+hub.tier_limits.<key>.max_concurrent # TODO #11854
+hub.tier_limits.<key>.max_per_day # TODO #11854
+hub.tier_limits.<key>.max_per_hour # TODO #11854
+ioscan.block_at.<key> # per-surface block thresholds; yaml-only (#6685)
+issues.hard_suppress_reconcile_interval # TODO #11854
+issues.lift_hive_hard_suppress # TODO #11854
+issues.rfc_existing_check.enabled # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.labels[] # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.max_age # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.max_matches # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.post_when_nothing_found # triage existing-coverage check; yaml-only (#13575)
+issues.sha_hold_trusted_label # TODO #11854
+knowledge.agent_scopes.<key>.include_states[] # TODO #11854
+knowledge.agent_scopes.<key>.layers[] # TODO #11854
+knowledge.agent_scopes.<key>.repos[] # TODO #11854
+knowledge.agent_scopes.<key>.tags[] # TODO #11854
+knowledge.agent_scopes.<key>.types[] # TODO #11854
+knowledge.code_maps.repos[].branch # TODO #11854
+knowledge.code_maps.repos[].name # TODO #11854
+knowledge.code_maps.repos[].path # TODO #11854
+knowledge.code_maps.repos[].url # TODO #11854
+knowledge.connectors[].auth.env # TODO #11854
+knowledge.connectors[].auth.file # TODO #11854
+knowledge.connectors[].enabled # TODO #11854
+knowledge.connectors[].interval # TODO #11854
+knowledge.connectors[].layer # TODO #11854
+knowledge.connectors[].name # TODO #11854
+knowledge.connectors[].scope.<key> # TODO #11854
+knowledge.connectors[].type # TODO #11854
+knowledge.curator.extract_from[] # TODO #11854
+knowledge.documents[].file_path # TODO #11854
+knowledge.documents[].layer # TODO #11854
+knowledge.documents[].name # TODO #11854
+knowledge.documents[].url # TODO #11854
+knowledge.git_sources[].branch # TODO #11854
+knowledge.git_sources[].layer # TODO #11854
+knowledge.git_sources[].name # TODO #11854
+knowledge.git_sources[].subpath # TODO #11854
+knowledge.git_sources[].url # TODO #11854
+knowledge.layers[].path # TODO #11854
+knowledge.layers[].shared # TODO #11854
+knowledge.layers[].type # TODO #11854
+knowledge.layers[].url # TODO #11854
+knowledge.primer.priority[] # TODO #11854
+knowledge.public.tags[] # TODO #11854
+knowledge.publish.connector # TODO #11854
+knowledge.publish.dry_run # TODO #11854
+knowledge.publish.include_types[] # TODO #11854
+knowledge.publish.layers[] # TODO #11854
+knowledge.publish.propose_via # TODO #11854
+knowledge.publish.root # TODO #11854
+knowledge.vaults[].auto_index # TODO #11854
+knowledge.vaults[].git_sync # TODO #11854
+knowledge.vaults[].name # TODO #11854
+knowledge.vaults[].path # TODO #11854
+planning.design_labels[] # TODO #11854
+planning.plan_labels[] # TODO #11854
+project.agent_issue_decision_policy # TODO #12851
+project.agents_md_max_bytes # TODO #11854
+project.checkouts_dir # TODO #11854
+project.forge # TODO #11854
+project.style_max_bytes # TODO #14575
+project.issue_filter.hard_suppress_labels.needs_decision[] # TODO #11854
+project.issue_filter.hard_suppress_labels.needs_direction[] # TODO #11854
+project.issue_filter.hard_suppress_labels.needs_human[] # TODO #11854
+project.issue_filter.hard_suppress_labels.needs_spec[] # TODO #11854
+project.issue_filter.reporter_trust.awaiting_label # TODO #11854
+project.issue_filter.reporter_trust.clanker_requested # TODO #11854
+project.issue_filter.reporter_trust.clanker_requested_addendum # TODO #11854
+project.issue_filter.reporter_trust.clanker_requested_label # TODO #11854
+project.issue_filter.reporter_trust.comment # TODO #11854
+project.issue_filter.reporter_trust.enabled # TODO #11854
+project.issue_filter.reporter_trust.trusted_associations[] # TODO #11854
+project.issue_filter.reporter_trust.trusted_logins[] # TODO #11854
+project.issue_filter.reporter_trust.untrusted_require_labels[] # TODO #11854
+project.issue_filter.require_labels[] # TODO #11854
+project.label_driven_approval_labels[] # TODO #11854
+project.label_driven_supersede_park_actors[] # TODO #11854
+project.label_driven_trust_org_members # TODO #11854
+project.label_driven_trusted_bots[] # TODO #11854
+project.open_prs # TODO #11854
+project.paused_repos[].at # TODO #11854
+project.paused_repos[].by # TODO #11854
+project.paused_repos[].reason # TODO #11854
+project.paused_repos[].repo # TODO #11854
+project.primary_repo # TODO #11854
+project.repo_policies[].acmm_last_automatic.at # TODO #11854
+project.repo_policies[].acmm_last_automatic.direction # TODO #11854
+project.repo_policies[].acmm_last_automatic.evidence_ids[] # TODO #11854
+project.repo_policies[].acmm_last_automatic.from # TODO #11854
+project.repo_policies[].acmm_last_automatic.reason # TODO #11854
+project.repo_policies[].acmm_last_automatic.repo # TODO #11854
+project.repo_policies[].acmm_last_automatic.to # TODO #11854
+project.repo_policies[].acmm_level # TODO #11854
+project.repo_policies[].acmm_pinned # TODO #11854
+project.repo_policies[].auto_merge # TODO #11854
+project.repo_policies[].companion_repos[] # TODO #11854
+project.repo_policies[].forge # TODO #11854
+project.repo_policies[].forge_url # TODO #11854
+project.repo_policies[].label_driven # TODO #11854
+project.repo_policies[].label_driven_approval_labels[] # TODO #11854
+project.repo_policies[].release_on_approve # TODO #12635
+project.repo_policies[].release_version_source # TODO #12635
+project.repo_policies[].label_driven_supersede_park_actors[] # TODO #11854
+project.repo_policies[].repo # TODO #11854
+project.repo_policies[].reporter_trust_hold # TODO #11854
+project.repo_policies[].self_authorization_hold # TODO #11854
+project.repos[] # TODO #11854
+providers.status.enabled # TODO #11854
+removed_agents[] # TODO #11854
+repeat_failure.enabled # yaml-only until the check reaches the dashboard (#14550)
+repeat_failure.exclude[] # yaml-only until the check reaches the dashboard (#14550)
+repeat_failure.threshold # yaml-only until the check reaches the dashboard (#14550)
+repeat_failure.window_s # yaml-only until the check reaches the dashboard (#14550)
+retro.lesson_confidence_cap # TODO #11854
+retro.lesson_confidence_step # TODO #11854
+review.backlog.labels[] # TODO #11854
+review.bot_author_full_review_paths[] # TODO #14625
+review.bot_author_model # TODO #14625
+review.bot_authors[] # TODO #14625
+review.delta_max_age # TODO #14621
+review.delta_rereview # TODO #14621
+review.delta_trivial_lines # TODO #14621
+review.pending_fix_ttl # TODO #14643
+review.perspective_models.<key>.backend # TODO #13243
+review.perspective_models.<key>.model # TODO #13243
+review.perspective_prompts.<key> # TODO #11854
+review.perspectives[] # TODO #11854
+review.recommendations.labels[] # TODO #11854
+review.recommendations.repos[] # TODO #11854
+review.reviewer_agents[] # TODO #11854
+review.revise_repos[] # TODO #11854
+review.verdict_labels.approve # TODO #13833
+review.verdict_labels.changes_requested # TODO #13833
+review.verdict_labels.requires_human # TODO #13833
+review.verdict_labels.reviewing # TODO #13833
+runs.external.claude_managed_agents.agent_id # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.agent_version # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.api_key_env # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.api_key_file # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.daily_budget_cents # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.direct_github_write # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.enabled # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.endpoint # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.environment_id # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.environment_type # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.github_write_path # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.mode # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.model # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.network_policy # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.state_dir # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.toolset_version # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.workflow_version # prototype hosted backend; yaml-only (#14214)
+runs.spektacular.recheck.discovery.sources[].allow_prerelease # TODO #11854
+runs.spektacular.recheck.discovery.sources[].kind # TODO #11854
+runs.spektacular.recheck.discovery.sources[].max_items # TODO #11854
+runs.spektacular.recheck.discovery.sources[].name # TODO #11854
+runs.spektacular.recheck.discovery.sources[].url_or_repo # TODO #11854
+runs.spektacular.recheck.egress_allowlist[] # TODO #11854
+runs.spektacular.recheck.sources[].kind # TODO #11854
+runs.spektacular.recheck.sources[].name # TODO #11854
+runs.spektacular.recheck.sources[].url # TODO #11854
+runs.triage.fix_labels[] # TODO #11854
+runs.triage.spec_labels[] # TODO #11854
+forgestate.drift_threshold # yaml-only until readers migrate (#13373)
+forgestate.enabled # yaml-only until readers migrate (#13373)
+forgestate.freshness_bound_s # yaml-only until readers migrate (#13373)
+forgestate.reconcile_interval_s # yaml-only until readers migrate (#13373)
+forgestate.search_budget # yaml-only until readers migrate (#13373)
+search.enabled # portfolio search indexer (#14635); yaml-only
+search.health.security_doc_max_age # repo health score (#14638); yaml-only
+search.health.stale_after # repo health score (#14638); yaml-only
+search.health.weights.ci_pass_rate # repo health score (#14638); yaml-only
+search.health.weights.dependency_freshness # repo health score (#14638); yaml-only
+search.health.weights.review_verdict_mix # repo health score (#14638); yaml-only
+search.health.weights.revert_followup_rate # repo health score (#14638); yaml-only
+search.health.weights.security_doc_rot # repo health score (#14638); yaml-only
+search.health.weights.signoff_rate # repo health score (#14638); yaml-only
+search.health.weights.stale_issue_ratio # repo health score (#14638); yaml-only
+search.health.weights.time_to_merge # repo health score (#14638); yaml-only
+search.max_index_bytes_per_repo # portfolio search indexer (#14635); yaml-only
+search.max_memory_bytes # portfolio search indexer (#14635); yaml-only
+search.retention # portfolio search indexer (#14635); yaml-only
+scanner.skip_issues_with_open_pr # open-PR dispatch guard (#14799); yaml-only
+security.sensitive_paths[] # TODO #15640
+self_experiments.scheduler.enabled # TODO #11854
+self_experiments.scheduler.interval_s # TODO #11854
+self_experiments.scheduler.mode # TODO #11854
+shared_ci_rerun.enabled # TODO #11854
+swarm.themes.<key>.call_to_arms # TODO #11854
+swarm.themes.<key>.event_name # TODO #11854
+swarm.themes.<key>.leaderboard_title # TODO #11854
+tool_approval.rules[].action # TODO #11854
+tool_approval.rules[].expr # TODO #11854
+tool_approval.rules[].min_acmm_level # TODO #11854
+tool_approval.rules[].name # TODO #11854
+tool_approval.rules[].priority # TODO #11854
+tracing.enabled # TODO #11854
+tracing.endpoint # TODO #11854
+tracing.headers.<key> # TODO #11854
+tracing.insecure # TODO #11854
+tracing.sample_ratio # TODO #11854
+tracing.service_name # TODO #11854
+triggers[].agent # TODO #11854
+triggers[].expr # TODO #11854
+triggers[].name # TODO #11854
+triggers[].priority # TODO #11854
+upstream_watch.repos.<key>.label # TODO #11854
+upstream_watch.repos.<key>.max_issues_per_run # TODO #11854
+upstream_watch.repos.<key>.pr_labels[] # TODO #11854
+upstream_watch.repos.<key>.sources[] # TODO #11854
+upstream_watch.repos.<key>.upstream # TODO #11854
+variables.defs.<key>.command[] # TODO #11854
+variables.defs.<key>.default # TODO #11854
+variables.defs.<key>.env # TODO #11854
+variables.defs.<key>.headers.<key> # TODO #11854
+variables.defs.<key>.scope # TODO #11854
+variables.defs.<key>.type # TODO #11854
+variables.defs.<key>.url # TODO #11854
+variables.defs.<key>.value # TODO #11854
+variables.security.allow_github_prompt # TODO #11854
+variables.security.allow_http # TODO #11854
+variables.security.exec_timeout_s # TODO #11854
+variables.security.github_prompt_allowlist[] # TODO #11854
+variables.security.http_allowlist[] # TODO #11854
+variables.security.http_timeout_s # TODO #11854
+write_surface.allowlist.<key> # TODO #11854
+write_surface.enforce[] # TODO #11854
+write_surface.neutralize_mentions[] # TODO #11854
+
+# v5→v6 top-up: leaves added before Settings UI coverage.
+advisor.daily_budget_tokens # TODO #11854
+advisor.enabled # TODO #11854
+advisor.instructions # TODO #11854
+advisor.max_consecutive_blocks # TODO #11854
+advisor.model # TODO #11854
+advisor.timeout_s # TODO #11854
+agents.<key>.advisor.daily_budget_tokens # TODO #11854
+agents.<key>.advisor.enabled # TODO #11854
+agents.<key>.advisor.instructions # TODO #11854
+agents.<key>.advisor.max_consecutive_blocks # TODO #11854
+agents.<key>.advisor.model # TODO #11854
+agents.<key>.advisor.timeout_s # TODO #11854
+agents.<key>.mode_owner # TODO #11854
+agents.<key>.standby.auto_dispatch # TODO #11854
+agents.<key>.standby.daily_cap_per_contributor # TODO #11854
+agents.<key>.standby.enabled # TODO #11854
+agents.<key>.standby.min_model_capability # TODO #11854
+agents.<key>.task_mcp.drop_stuffed_context # TODO #11854
+classifier.backend # TODO #11854
+classifier.jev.api_key_env # TODO #11854
+classifier.jev.decisions[] # TODO #11854
+classifier.jev.endpoint # TODO #11854
+classifier.jev.min_confidence # TODO #11854
+classifier.jev.model # TODO #11854
+classifier.jev.provider # TODO #11854
+classifier.jev.timeout # TODO #11854
+classifier.mode # TODO #11854
+deployment.runtime # TODO #11854
+fleet.run_wait_amber_seconds # TODO #11854
+governor.work_source.external.auth_token # TODO #11854
+governor.work_source.external.base_url # TODO #11854
+governor.work_source.external.ca_bundle # TODO #11854
+governor.work_source.external.display_name # TODO #11854
+governor.work_source.external.hold_labels[] # TODO #11854
+governor.work_source.external.name # TODO #11854
+governor.work_source.external.repos[] # TODO #11854
+governor.work_source.external.timeout_seconds # TODO #11854
+governor.work_source.gitea.assignee # TODO #11854
+governor.work_source.gitea.base_url # TODO #11854
+governor.work_source.gitea.hold_labels[] # TODO #11854
+governor.work_source.gitea.labels[] # TODO #11854
+governor.work_source.gitea.org # TODO #11854
+governor.work_source.gitea.repos[].repo # TODO #11854
+governor.work_source.gitea.repos[].work_repo # TODO #11854
+governor.work_source.gitea.states[] # TODO #11854
+governor.work_source.gitea.token # TODO #11854
+governor.work_source.gitea.token_env # TODO #11854
+governor.work_source.gitlab.assignee # TODO #11854
+governor.work_source.gitlab.base_url # TODO #11854
+governor.work_source.gitlab.hold_labels[] # TODO #11854
+governor.work_source.gitlab.labels[] # TODO #11854
+governor.work_source.gitlab.org # TODO #11854
+governor.work_source.gitlab.repos[].repo # TODO #11854
+governor.work_source.gitlab.repos[].work_repo # TODO #11854
+governor.work_source.gitlab.states[] # TODO #11854
+governor.work_source.gitlab.token # TODO #11854
+governor.work_source.gitlab.token_env # TODO #11854
+governor.work_source.jira.transitions.<key> # TODO #11854
+governor.work_source.linear.transitions.<key> # TODO #11854
+hub.nps_detractor_issues.enabled # TODO #11854
+hub.nps_detractor_issues.repo # TODO #11854
+hub.nps_timing.dismiss_retry_days # TODO #11854
+hub.nps_timing.max_dismissals # TODO #11854
+hub.nps_timing.min_sessions # TODO #11854
+hub.nps_timing.reprompt_days # TODO #11854
+hub.nps_timing.returning_engagement_seconds # TODO #11854
+hub.nps_timing.second_session_engagement_seconds # TODO #11854
+hub.standby_allow_private_repos # TODO #11854
+hub.standby_contributors[] # TODO #11854
+hub.standby_item_tiers[].label # TODO #11854
+hub.standby_item_tiers[].repo # TODO #11854
+hub.standby_item_tiers[].signal # TODO #11854
+hub.standby_item_tiers[].tier # TODO #11854
+hub.standby_model_tiers[].advisor_model # TODO #11854
+hub.standby_model_tiers[].advisor_reasoning_effort # TODO #11854
+hub.standby_model_tiers[].backend # TODO #11854
+hub.standby_model_tiers[].model # TODO #11854
+hub.standby_model_tiers[].reasoning_effort # TODO #11854
+hub.standby_model_tiers[].tier # TODO #11854
+hub.task_mcp_dependencies_limit # TODO #11854
+hub.task_mcp_history_limit # TODO #11854
+hub.task_mcp_knowledge_limit # TODO #11854
+hub.task_mcp_related_work_recency_days # TODO #11854
+model_roles.<key>.backend # TODO #11854
+model_roles.<key>.model # TODO #11854
+model_roles.<key>.reasoning_effort # TODO #11854
+planning.design_approved_status # TODO #11854
+planning.design_requested_status # TODO #11854
+project.merge_front_timeout # TODO #11854
+project.red_main_threshold # TODO #11854
+project.repo_policies[].merge_strategy # TODO #11854
+project.repo_policies[].merge_front_timeout # TODO #11854
+project.repo_policies[].max_open_held_prs # per-repo opt-in; yaml-only (#13645)
+project.repo_policies[].red_main_threshold # TODO #11854
+project.repo_policies[].release_on_approve # TODO #11854
+runs.spektacular.hub_executor.backend # TODO #11854
+runs.spektacular.hub_executor.enabled # TODO #11854
+runs.spektacular.hub_executor.identity # TODO #11854
+runs.spektacular.hub_executor.max_concurrent # TODO #11854
+runs.spektacular.hub_executor.model # TODO #11854
+runs.spektacular.hub_executor.timeout_seconds # TODO #11854
+runs.spektacular.interview # TODO #11854
+task_mcp.launch_token_ttl # TODO #11854
+task_mcp.lease_rate_limit_per_minute # TODO #11854
+upstream_watch.repos.<key>.start_from # TODO #11854
+writeback.kinds.<key>.own_only # policy-file knob; the Settings matrix shows it read-only as the kind's scope
+writeback.kinds.<key>.unlabeled_min_level # policy-file knob; the Settings matrix shows it read-only in the kind's scope
+governor.hotspot_enabled # merge-hotspot advisor; yaml-only
+governor.hotspot_window_days # merge-hotspot advisor; yaml-only
+governor.hotspot_min_prs # merge-hotspot advisor; yaml-only
+governor.hotspot_min_overlaps # merge-hotspot advisor; yaml-only
+governor.hotspot_min_lines # merge-hotspot advisor; yaml-only
+governor.hotspot_refile_days # merge-hotspot advisor; yaml-only
+governor.hotspot_max_open # merge-hotspot advisor; yaml-only
+governor.hotspot_max_per_pass # merge-hotspot advisor; yaml-only

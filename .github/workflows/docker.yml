@@ -66,7 +66,7 @@ on:
 # during a merge burst or regressing when queued runs execute out of order.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -120,7 +120,10 @@ jobs:
   # commit status. Ordinary pull requests still need this job unchanged so
   # their head SHA receives the required `gate` check-run (#4965).
   gate:
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       push: ${{ steps.decide.outputs.push }}
       sha: ${{ steps.decide.outputs.sha }}
@@ -291,7 +294,7 @@ jobs:
 
       - name: Set up QEMU for arm64 emulation
         if: matrix.qemu
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
 
@@ -302,7 +305,7 @@ jobs:
 
       - name: Log in to GHCR
         if: needs.gate.outputs.push == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -336,6 +339,9 @@ jobs:
       # layers only). The main build then hits those layers locally and does
       # NO cache export at all. continue-on-error: pure optimization — if the
       # gha cache service hiccups, the main build just recompiles tmux.
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Warm tmux-builder layer cache
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -344,6 +350,8 @@ jobs:
           file: src/Dockerfile
           platforms: ${{ matrix.platform }}
           target: tmux-builder
+          build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           provenance: false
           sbom: false
           cache-from: type=gha,scope=tmux-${{ steps.slug.outputs.slug }}
@@ -357,6 +365,7 @@ jobs:
           file: src/Dockerfile
           platforms: ${{ matrix.platform }}
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ needs.gate.outputs.sha }}
             GIT_BRANCH=${{ needs.gate.outputs.ref_name }}
             VERSION=${{ needs.gate.outputs.release_version }}
@@ -431,6 +440,7 @@ jobs:
             IMG=hive-freshness-probe:local
             docker buildx build --load \
               -f src/Dockerfile \
+              --build-arg BASE_REGISTRY="$BASE_REGISTRY" \
               --build-arg GIT_HASH="$EXPECTED_SHA" \
               --build-arg GIT_BRANCH="$REF_NAME" \
               --build-arg VERSION="${{ needs.gate.outputs.release_version }}" \
@@ -440,7 +450,7 @@ jobs:
           echo "image reports: $ACTUAL"
           echo "expected commit: ${EXPECTED_SHA::7} (from $EXPECTED_SHA)"
           case "$ACTUAL" in
-            *"commit ${EXPECTED_SHA::7},"*)
+            *"commit ${EXPECTED_SHA::7}"*)
               echo "Freshness OK: embedded commit matches the built SHA"
               ;;
             *)
@@ -472,6 +482,21 @@ jobs:
           fi
           bash src/deploy/test_image_suid_inventory.sh --image "$IMG"
 
+      # The runtime stage distrusts two withdrawn Mozilla roots (see "Layer 1b"
+      # in src/Dockerfile). Prove the built image actually rejects chains that
+      # end in them, for every static-bundle client it ships: curl (system
+      # bundle), node (NODE_OPTIONS=--use-openssl-ca → system bundle) and the
+      # control that the bundle still trusts a normal public site.
+      - name: Assert distrusted CA roots are rejected
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
+            IMG="ghcr.io/${{ github.repository_owner }}/hive@${{ steps.build.outputs.digest }}"
+          else
+            IMG=hive-freshness-probe:local
+          fi
+          bash src/deploy/test_image_ca_distrust.sh --image "$IMG"
+
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
         run: |
@@ -495,6 +520,7 @@ jobs:
   merge:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build]
     steps:
       - name: Checkout tag publisher
@@ -515,7 +541,7 @@ jobs:
           driver-opts: network=host
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -577,7 +603,7 @@ jobs:
       # credential for public reads regardless of org.
       - name: Log in to GHCR as the cross-org publisher
         if: steps.crosspat.outputs.available == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -665,7 +691,7 @@ jobs:
 
       - name: Set up QEMU for arm64 emulation
         if: matrix.qemu
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
 
@@ -676,7 +702,7 @@ jobs:
 
       - name: Log in to GHCR
         if: needs.gate.outputs.push == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -688,6 +714,9 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build and push contributor image by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -695,6 +724,8 @@ jobs:
           context: .
           file: src/Dockerfile.contributor
           platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           labels: |
             io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
             org.opencontainers.image.revision=${{ needs.gate.outputs.sha }}
@@ -726,6 +757,7 @@ jobs:
   merge-contributor:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build-contributor]
     steps:
       - name: Checkout tag publisher
@@ -746,7 +778,7 @@ jobs:
           driver-opts: network=host
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -788,7 +820,7 @@ jobs:
 
       - name: Log in to GHCR as the cross-org publisher
         if: steps.crosspat.outputs.available == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -873,7 +905,7 @@ jobs:
 
       - name: Set up QEMU for arm64 emulation
         if: matrix.qemu
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
 
@@ -884,7 +916,7 @@ jobs:
 
       - name: Log in to GHCR
         if: needs.gate.outputs.push == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -896,6 +928,9 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build and push hub image by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -904,6 +939,7 @@ jobs:
           file: src/Dockerfile.hub
           platforms: ${{ matrix.platform }}
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ needs.gate.outputs.sha }}
             GIT_BRANCH=${{ needs.gate.outputs.ref_name }}
             VERSION=${{ needs.gate.outputs.release_version }}
@@ -944,6 +980,7 @@ jobs:
   merge-hub:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build-hub]
     steps:
       - name: Checkout tag publisher
@@ -964,7 +1001,7 @@ jobs:
           driver-opts: network=host
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1006,7 +1043,7 @@ jobs:
 
       - name: Log in to GHCR as the cross-org publisher
         if: steps.crosspat.outputs.available == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

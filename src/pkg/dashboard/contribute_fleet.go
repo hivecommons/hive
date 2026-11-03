@@ -19,6 +19,41 @@ func (h *ContributeWSHub) ActiveCount() int {
 	return len(seen)
 }
 
+// LastHeartbeats returns, per connected GitHub username (as the profile
+// spells it), the freshest pong across that contributor's live sockets.
+// It is the registry-wide form of the lookup Presence() does for one
+// author, so callers can apply the presence window themselves.
+func (h *ContributeWSHub) LastHeartbeats() map[string]time.Time {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make(map[string]time.Time)
+	for _, c := range h.connections {
+		c.mu.Lock()
+		user := ""
+		if c.profile != nil {
+			user = c.profile.GitHubUsername
+		}
+		pong := c.lastPong
+		c.mu.Unlock()
+		if user == "" {
+			continue
+		}
+		if pong.After(out[user]) {
+			out[user] = pong
+		}
+	}
+	return out
+}
+
+// relayConnectedSince reports whether a relay finished authenticating at or
+// after since. Only the timestamp counts: a relay that connected before the
+// window and merely stayed up wrote no relay_* row in it, so counting it
+// would make the relay_audit_coverage check fail for an idle connection.
+// Relays connected after a hub restart re-authenticate and refresh the stamp.
+func (h *ContributeWSHub) relayConnectedSince(since time.Time) bool {
+	return h.lastRelayConnectNanos.Load() >= since.UnixNano()
+}
+
 func (h *ContributeWSHub) ActiveSessionCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -175,6 +210,11 @@ type FleetClanker struct {
 	// not a fault. Derived per snapshot from Capabilities.RelayProtocolVersion;
 	// it stores nothing new and, like Capabilities, is never routed or gated on.
 	Protocol *ProtocolCompat `json:"protocol,omitempty"`
+	// FleetRework (hivecommons/hive#12502): the relay's parallel capacity,
+	// every item in flight (primary + fix-pr sub-sessions) tagged new/rework,
+	// the fix-queue depth and the contributor's stage-072 PRs not yet
+	// dispatched to them. See contribute_fleet_rework.go.
+	FleetRework
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -213,6 +253,7 @@ type FleetSnapshot struct {
 // last pong is older than wsHeartbeatTimeout is reported with Stale=true and its
 // in-flight task is treated as no longer active (matching LiveStates()).
 func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
+	openPRs := h.openPRIndex()
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	snap := FleetSnapshot{
@@ -312,6 +353,7 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 		if task == nil {
 			fc.IdleReason = c.lastIdleReason
 		}
+		fc.FleetRework = h.fleetReworkFor(c, fc.Stale, openPRs)
 		c.mu.Unlock()
 		fc.CurrentTask = task
 		fc.PromptPreview = promptPreview

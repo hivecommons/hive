@@ -74,14 +74,28 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 		Example: `  hivectl hives list
   hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
   hivectl hives reissue acme
+  hivectl hives preset adopt https://example.org/preset.yml
+  hivectl hives preset refresh
+  hivectl hives hub add commons --url https://hub.example.org
+  hivectl hives hub adopt commons --follow current
+  hivectl hives hub refresh commons
   hivectl hives use acme
   hivectl hives export acme --out acme.hive-profile
   hivectl hives import acme.hive-profile --name acme-laptop
   hivectl hives session acme --label review
+  hivectl hives activity
+  hivectl hives set acme --audit-level commands
+  hivectl hives audit --since 24h
   hivectl hives rename acme acme-prod
   hivectl hives remove acme`,
 	}
 	cmd.AddCommand(newHivesListCommand(env))
+	cmd.AddCommand(newHivesReposCommand(env))
+	cmd.AddCommand(newHivesActivityCommand(env))
+	cmd.AddCommand(newHivesAuditCommand(env))
+	cmd.AddCommand(newHivesTreeCommand(env))
+	cmd.AddCommand(newHivesPresetCommand(env))
+	cmd.AddCommand(newHivesHubCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
 	cmd.AddCommand(newHivesReissueCommand(env))
 	cmd.AddCommand(newHivesUseCommand(env))
@@ -90,6 +104,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesSessionCommand(env))
 	cmd.AddCommand(newHivesMoveCommand(env))
 	cmd.AddCommand(newHivesStrategyCommand(env))
+	cmd.AddCommand(newHivesSetCommand(env))
 	cmd.AddCommand(newHivesEnabledCommand(env, false))
 	cmd.AddCommand(newHivesEnabledCommand(env, true))
 	cmd.AddCommand(newHivesWebCommand(env))
@@ -153,13 +168,23 @@ func loadProfiles(cmd *cobra.Command, deps *hivesDeps, allowEmpty bool) (*hivect
 // commit saves the profiles and regenerates contributor.env from them. The
 // ordering rule it depends on lives with the store (ProfileStore.Commit), so
 // the TUI's pane cannot get it wrong differently.
+//
+// It commits against the revision the set was loaded at: if the TUI, the Web
+// UI or another hivectl changed profiles.yml in the meantime, nothing is
+// written and the operator is told to re-run against the current hives.
 func commit(deps *hivesDeps, set *hivectl.ProfileSet) error {
-	return deps.store.Commit(set)
+	err := deps.store.CommitExpecting(set, set.Revision())
+	if errors.Is(err, hivectl.ErrStaleRevision) {
+		return fmt.Errorf("%w — another hivectl, TUI or Commons web session changed %s while this command ran; nothing was written, re-run it to apply the change to the current hives", err, deps.store.Path())
+	}
+	return err
 }
 
 // ── list ────────────────────────────────────────────────────────────────────
 
 type hivesListRow struct {
+	Scope         string `json:"scope" yaml:"scope"`
+	ScopeStatus   string `json:"scope_status,omitempty" yaml:"scope_status,omitempty"`
 	Disabled      bool   `json:"disabled" yaml:"disabled"`
 	Name          string `json:"name" yaml:"name"`
 	Hub           string `json:"hub" yaml:"hub"`
@@ -203,13 +228,14 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 		return err
 	}
 	active := set.ActiveProfile()
-	lastSeen, err := deps.store.LoadHubsSeen()
+	observations, err := deps.store.LoadHubObservations()
 	if err != nil {
 		return err
 	}
 	rows := make([]hivesListRow, 0, len(set.Profiles))
 	for _, p := range set.Ordered() {
 		row := hivesListRow{
+			Scope:         set.SelectionSummary(p.Name),
 			Disabled:      p.Disabled,
 			Name:          p.Name,
 			Hub:           p.Hub,
@@ -220,8 +246,9 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 		if !p.AddedAt.IsZero() {
 			row.AddedAt = p.AddedAt.UTC().Format(time.RFC3339)
 		}
-		if seen, ok := lastSeen[p.Hub]; ok {
-			row.LastSeen = seen.UTC().Format(time.RFC3339)
+		if seen, ok := observations[p.Hub]; ok {
+			row.LastSeen = seen.LastSeen.UTC().Format(time.RFC3339)
+			row.ScopeStatus = seen.Subscriptions[p.ContributorID]
 		}
 		if check {
 			reachable := probeHub(cmd.Context(), p.Hub, e.options.timeout)
@@ -238,7 +265,7 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 }
 
 func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
-	header := " \tNAME\tHUB\tCONTRIBUTOR ID\tSESSION\tADDED\tLAST SEEN"
+	header := " \tNAME\tHUB\tCONTRIBUTOR ID\tSESSION\tADDED\tLAST SEEN\tSCOPE"
 	if check {
 		header += "\tREACHABLE"
 	}
@@ -253,7 +280,10 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 		if row.Disabled {
 			name += " (disabled)"
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", marker, name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt), dashIfEmpty(row.LastSeen))
+		if row.ScopeStatus != "" {
+			name += " (scope: " + row.ScopeStatus + ")"
+		}
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", marker, name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt), dashIfEmpty(row.LastSeen)) + "\t" + row.Scope
 		if check {
 			state := "-"
 			if row.Reachable != nil {
@@ -266,10 +296,11 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 		}
 		_, _ = fmt.Fprintln(&buf, line)
 	}
-	// printer's table renderer only understands maps and slices of maps; the
-	// hive list is a fixed set of columns with a leading active marker, so it
-	// is laid out here and handed over as preformatted text.
-	_ = printer{format: "table", out: out}.print(strings.TrimRight(buf.String(), "\n"))
+	// printer's table renderer only understands maps and slices of maps, and
+	// its string path compacts server-derived text into one line; the hive
+	// list is a fixed set of columns laid out here from the local profile
+	// store, so it is written as-is to keep its rows and tab stops.
+	_, _ = fmt.Fprintln(out, strings.TrimRight(buf.String(), "\n"))
 	_, _ = fmt.Fprintln(out, "\n* = active: the hub the relay solicits from first.")
 }
 
@@ -340,18 +371,8 @@ func newHivesAddCommand(env *commandEnv) *cobra.Command {
 }
 
 func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAddOptions) error {
-	if err := hivectl.ValidateProfileName(name); err != nil {
+	if err := validateHiveRegistration(name, opts); err != nil {
 		return &usageError{message: err.Error()}
-	}
-	hub := strings.TrimSpace(opts.hub)
-	if hub == "" {
-		return &usageError{message: "--hub is required: the contributor hub URL of the hive, e.g. wss://<hive>/contribute"}
-	}
-	if err := hivectl.ValidateHubURL(hub); err != nil {
-		return &usageError{message: err.Error()}
-	}
-	if opts.contributorID != "" && !opts.tokenStdin {
-		return &usageError{message: "--contributor-id applies only with --token-stdin; without it the hub assigns the id"}
 	}
 	deps, err := e.hivesDeps()
 	if err != nil {
@@ -366,47 +387,10 @@ func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAdd
 		return &usageError{message: fmt.Sprintf("a hive profile named %q already exists (%s); pick another name, or 'hivectl hives remove %s' first", existing.Name, existing.Hub, existing.Name)}
 	}
 
-	profile := hivectl.Profile{
-		Name:          name,
-		Hub:           hub,
-		Session:       strings.TrimSpace(opts.session),
-		Backend:       strings.TrimSpace(opts.backend),
-		Model:         strings.TrimSpace(opts.model),
-		ContributorID: strings.TrimSpace(opts.contributorID),
-		AddedAt:       deps.now().UTC().Truncate(time.Second),
+	profile, err := e.registerHive(cmd, deps, name, opts)
+	if err != nil {
+		return err
 	}
-
-	if opts.tokenStdin {
-		token, err := readTokenFrom(cmd.InOrStdin())
-		if err != nil {
-			return err
-		}
-		profile.RegistrationToken = token
-	} else {
-		user := strings.TrimSpace(opts.githubUser)
-		if user == "" {
-			user, err = deps.githubUser(cmd.Context())
-			if err != nil {
-				return err
-			}
-		}
-		base, err := hivectl.HubHTTPBase(hub)
-		if err != nil {
-			return &usageError{message: err.Error()}
-		}
-		reg, err := deps.registrar.Register(cmd.Context(), base, user)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(reg.RegistrationToken) == "" {
-			return alreadyRegisteredError(user, base, reg.Message, name, hub)
-		}
-		profile.RegistrationToken = strings.TrimSpace(reg.RegistrationToken)
-		if profile.ContributorID == "" {
-			profile.ContributorID = strings.TrimSpace(reg.ContributorID)
-		}
-	}
-
 	if err := set.Add(profile, opts.activate); err != nil {
 		return err
 	}
@@ -423,8 +407,78 @@ func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAdd
 		_, _ = fmt.Fprintln(out, "  active: yes — the relay will solicit from this hive first")
 	}
 	_, _ = fmt.Fprintf(out, "  saved to %s; %s regenerated\n", deps.store.Path(), deps.store.EnvPath())
-	_, _ = fmt.Fprintln(out, "  restart the relay ('just contribute-stop' then 'just contribute-hive') to pick this up")
+	return reloadHivesAfterEdit(cmd, deps)
+}
+
+func validateHiveRegistration(name string, opts *hivesAddOptions) error {
+	if err := hivectl.ValidateProfileName(name); err != nil {
+		return err
+	}
+	hub := strings.TrimSpace(opts.hub)
+	if hub == "" {
+		return errors.New("--hub is required: the contributor hub URL of the hive, e.g. wss://<hive>/contribute")
+	}
+	if err := hivectl.ValidateHubURL(hub); err != nil {
+		return err
+	}
+	if opts.contributorID != "" && !opts.tokenStdin {
+		return errors.New("--contributor-id applies only with --token-stdin; without it the hub assigns the id")
+	}
 	return nil
+}
+
+// registerHive contains the registration half of `hives add`, without
+// mutating profiles.yml. Hub adoption uses the same endpoint and response
+// handling, so a registry entry cannot accidentally get a more permissive
+// registration path than a directly supplied --hub URL.
+func (e *commandEnv) registerHive(cmd *cobra.Command, deps *hivesDeps, name string, opts *hivesAddOptions) (hivectl.Profile, error) {
+	if err := validateHiveRegistration(name, opts); err != nil {
+		return hivectl.Profile{}, err
+	}
+	hub := strings.TrimSpace(opts.hub)
+	profile := hivectl.Profile{
+		Name:          name,
+		Hub:           hub,
+		Session:       strings.TrimSpace(opts.session),
+		Backend:       strings.TrimSpace(opts.backend),
+		Model:         strings.TrimSpace(opts.model),
+		ContributorID: strings.TrimSpace(opts.contributorID),
+		AddedAt:       deps.now().UTC().Truncate(time.Second),
+	}
+
+	if opts.tokenStdin {
+		token, err := readTokenFrom(cmd.InOrStdin())
+		if err != nil {
+			return hivectl.Profile{}, err
+		}
+		profile.RegistrationToken = token
+		return profile, nil
+	}
+
+	user := strings.TrimSpace(opts.githubUser)
+	var err error
+	if user == "" {
+		user, err = deps.githubUser(cmd.Context())
+		if err != nil {
+			return hivectl.Profile{}, err
+		}
+	}
+	base, err := hivectl.HubHTTPBase(hub)
+	if err != nil {
+		return hivectl.Profile{}, &usageError{message: err.Error()}
+	}
+	reg, err := deps.registrar.Register(cmd.Context(), base, user)
+	if err != nil {
+		return hivectl.Profile{}, err
+	}
+	if strings.TrimSpace(reg.RegistrationToken) == "" {
+		return hivectl.Profile{}, alreadyRegisteredError(user, base, reg.Message, name, hub)
+	}
+	profile.RegistrationToken = strings.TrimSpace(reg.RegistrationToken)
+	if profile.ContributorID == "" {
+		profile.ContributorID = strings.TrimSpace(reg.ContributorID)
+	}
+	return profile, nil
 }
 
 // alreadyRegisteredError turns the hub's "already registered, no token for
@@ -1106,7 +1160,7 @@ func (e *commandEnv) runHivesRemove(cmd *cobra.Command, name string, yes bool) e
 	case wasActive:
 		_, _ = fmt.Fprintf(out, "  active hive is now %q\n", set.Active)
 	}
-	return nil
+	return reloadHivesAfterEdit(cmd, deps)
 }
 
 func confirmRemoval(cmd *cobra.Command, name, hub string) (bool, error) {

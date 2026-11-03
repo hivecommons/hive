@@ -1,0 +1,1 @@
+- Muse repeat-failure detection no longer replays old history from session logs that a scan cap left out of the first pass.

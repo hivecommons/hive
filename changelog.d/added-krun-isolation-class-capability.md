@@ -1,0 +1,1 @@
+- Contributors running in krun mode (`HIVE_CONTAINER_OCI_RUNTIME=krun`) now report the display-only capability `isolation_class: microvm-krun` to the hub, shown on the Operations tab and never used for task selection or admission, and keep reporting the host's kernel in team metadata.

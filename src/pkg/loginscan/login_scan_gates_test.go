@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -47,7 +48,7 @@ func TestScanForLoginRequiredStandsDownWithoutUsablePatterns(t *testing.T) {
 // invalid-pattern skip itself does not panic or short-circuit the whole
 // function, only the individual bad pattern.
 func TestScanForLoginRequiredMixedValidityPatternsReachesScanLoop(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, testLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, testLogger(), crux.ProjectContext{})
 	cfg := loginScanConfig([]string{"", "[unclosed", "please log in"})
 
 	// A nil dashSrv/notifier is safe here only because there are no running

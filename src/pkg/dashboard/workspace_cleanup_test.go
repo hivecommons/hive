@@ -1,11 +1,14 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -283,4 +286,46 @@ func TestWorkspaceCleanupEnvKnobs(t *testing.T) {
 	if got := workspaceMaxAge(); got != workspaceMaxAgeDefault {
 		t.Errorf("negative max-age: got %v, want default %v", got, workspaceMaxAgeDefault)
 	}
+}
+
+func TestSweepSkipsDotPrefixedAgentDir(t *testing.T) {
+	root := t.TempDir()
+	setAgentWorkspaceRootForTest(t, root)
+	stale := filepath.Join(root, ".gomodcache-scanner", "sigs.k8s.io")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	sweepWorkspaces(sweepTestLogger(), nil)
+
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("expected dot-prefixed agent dir contents to be kept: %v", err)
+	}
+}
+
+func TestLogRemoveFailureWarnsOncePerPermError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	path := filepath.Join(t.TempDir(), "locked")
+	permErr := errors.New("os.RemoveAll: " + os.ErrPermission.Error())
+	wrapped := fmtWrapPerm(permErr)
+
+	logRemoveFailure(logger, path, wrapped, "first")
+	logRemoveFailure(logger, path, wrapped, "second")
+
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN msg=first") {
+		t.Errorf("expected first failure at WARN, got: %s", out)
+	}
+	if !strings.Contains(out, "level=DEBUG msg=second") {
+		t.Errorf("expected repeat failure at DEBUG, got: %s", out)
+	}
+}
+
+func fmtWrapPerm(err error) error {
+	return errors.Join(err, os.ErrPermission)
 }

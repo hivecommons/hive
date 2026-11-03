@@ -1,0 +1,8 @@
+# kind ships a `standard` StorageClass (rancher local-path) as the default.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hive-data
+  namespace: hive
+spec:
+  storageClassName: standard

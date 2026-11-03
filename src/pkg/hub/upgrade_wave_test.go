@@ -34,7 +34,7 @@ func TestTriggerAutoUpgradesWaveBound(t *testing.T) {
 	const total = 8
 	for i := 0; i < total; i++ {
 		id := fmt.Sprintf("wave-h%d", i)
-		saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "wave-c1"})
+		saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant, Status: "running", ClusterID: "wave-c1"})
 		s.registry.Hives = append(s.registry.Hives, RegistryEntry{
 			ID: id, GitBranch: "v4", GitHash: "oldsha", LastHeartbeat: beat,
 		})

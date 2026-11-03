@@ -1,0 +1,17 @@
+{
+  "name": "Hive Dashboard",
+  "short_name": "Hive",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "154x154",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+- Show rolling 30-day issue reopen rates per repository and clarity-gate cohort in Evidence and Prometheus, with captured closure counts and explicit unknown/empty-cohort handling ([#13589](https://github.com/hivecommons/hive/issues/13589)).

@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // digestSnapshotDeps are the GitHub reads pinDigestSnapshot needs to pin a
@@ -43,6 +47,10 @@ func pinDigestSnapshot(
 	if opts == nil || deps.latestCommit == nil || org == "" || repoName == "" {
 		return false
 	}
+	// Digest pinning and its ref/path lookups are housekeeping: under a
+	// rate-limit caution window they yield their pacing slots to the
+	// governor's enumeration and the digest builds unpinned this cycle.
+	ctx = github.WithPacingClass(ctx, github.PacingLow)
 	if branch == "" && deps.defaultBranch != nil {
 		b, err := deps.defaultBranch(ctx, org, repoName)
 		if err != nil {
@@ -125,6 +133,18 @@ type advisoryPublishDeps struct {
 	onWriteForbidden func(ctx context.Context)
 	onAuthFailure    func(ctx context.Context)
 	onWriteProven    func(ctx context.Context)
+	// onRepoMoved runs INSTEAD of onWriteForbidden when the refused write was
+	// traced to a repository transferred to another owner (#11791): the
+	// write-forbidden banner's "tick the repo in this installation" remedy is
+	// wrong for that case, so the moved verdict gets its own hook.
+	onRepoMoved func(ctx context.Context, moved *github.RepoMovedError)
+	// recordWriteForbidden pauses further post attempts for repo after a
+	// non-transient 403, so the same refusal is not re-sent every eval cycle.
+	recordWriteForbidden func(repo string)
+	// recordRepoPaused advances the pacing gate after a repo-paused skip, so
+	// the skip is logged once per update interval rather than every cycle.
+	// It deliberately does NOT record a post: nothing reached GitHub.
+	recordRepoPaused func(repo string)
 }
 
 // advisoryPublishOutcome names how a cycle's digest publish ended, so the
@@ -152,6 +172,10 @@ func (o advisoryPublishOutcome) String() string {
 	}
 	return fmt.Sprintf("advisoryPublishOutcome(%d)", int(o))
 }
+
+// archivedAdvisoryRepos remembers repos whose digest write was refused as
+// archived, so later cycles skip them instead of retrying and self-reporting.
+var archivedAdvisoryRepos sync.Map
 
 // publishAdvisoryDigest writes an already-rendered digest comment to its
 // configured route and records the outcome (#1927, #2353, #2575, #4167).
@@ -222,26 +246,59 @@ func publishAdvisoryDigest(
 		recordError(advisoryIssueMissingError(route.primaryRepo, route.ensureErr))
 		return advisoryPublishFailed
 	}
+	if _, archived := archivedAdvisoryRepos.Load(route.primaryRepo); archived {
+		return advisoryPublishSkipped
+	}
 	err := deps.postGitHub(ctx, route.primaryRepo, route.issueNum, md)
+	var paused *github.RepoPausedError
+	if errors.As(err, &paused) {
+		// Operator pause (#6203): the poster wrote nothing and logged why.
+		// Not an error (the quiet is deliberate), not a post (nothing
+		// landed) — a skip that still paces the next attempt.
+		if deps.recordRepoPaused != nil {
+			deps.recordRepoPaused(route.primaryRepo)
+		}
+		return advisoryPublishSkipped
+	}
 	if err == nil {
 		logger.Info("posted advisory digest", "repo", route.primaryRepo, "issue", route.issueNum, "findings", digest.TotalCount, "via", "app")
 		recordPosted(digest.TotalCount, digest.OverflowCount)
+		fleetreport.Clear(fleetreport.ClassAdvisoryPostFailed, route.primaryRepo)
 		if deps.onWriteProven != nil {
 			deps.onWriteProven(ctx)
 		}
 		return advisoryPublishPosted
 	}
 
+	if classifyAdvisoryPostError(err) == advisoryPostRepoArchived {
+		archivedAdvisoryRepos.Store(route.primaryRepo, struct{}{})
+		logger.Warn("advisory repo is archived and read-only, skipping digest posts", "repo", route.primaryRepo)
+		return advisoryPublishSkipped
+	}
+
 	// err.Error() is the same string logged below — log-safe, never key material.
 	recordError(err.Error())
 	logger.Warn("failed to post advisory digest via app", "repo", route.primaryRepo, "issue", route.issueNum, "error", err)
 	switch classifyAdvisoryPostError(err) {
-	case advisoryPostWriteForbidden:
-		if deps.onWriteForbidden != nil {
-			deps.onWriteForbidden(ctx)
-		}
 	case advisoryPostRateLimited:
 		logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", route.primaryRepo)
+		return advisoryPublishFailed
+	default:
+	}
+	// Self-report (#11868): a refused advisory write (403, repo moved, auth)
+	// is hive-side plumbing; a rate limit is not (handled above).
+	fleetreport.ObserveItem(fleetreport.ClassAdvisoryPostFailed, route.primaryRepo, "advisory digest post failed: "+err.Error(), "", route.primaryRepo, "")
+	switch classifyAdvisoryPostError(err) {
+	case advisoryPostWriteForbidden:
+		if deps.recordWriteForbidden != nil {
+			deps.recordWriteForbidden(route.primaryRepo)
+		}
+		var moved *github.RepoMovedError
+		if errors.As(err, &moved) && deps.onRepoMoved != nil {
+			deps.onRepoMoved(ctx, moved)
+		} else if deps.onWriteForbidden != nil {
+			deps.onWriteForbidden(ctx)
+		}
 	default:
 		if deps.onAuthFailure != nil {
 			deps.onAuthFailure(ctx)

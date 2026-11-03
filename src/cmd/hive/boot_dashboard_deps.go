@@ -11,6 +11,7 @@ import (
 const (
 	dashboardSessionsPath = "/data/dashboard-sessions.json"
 	lifecycleTimelinePath = "/data/lifecycle-timeline.json"
+	slaHistoryPath        = "/data/sla-history.json"
 )
 
 // bootDashboardDeps are bootDashboard's effects (#7571, step 2): the server
@@ -18,15 +19,17 @@ const (
 // from disk. The scheduler/agent-manager hook wiring and the history seeds
 // run for real against the constructed server.
 type bootDashboardDeps struct {
-	newServer                  func(port int, authToken string, logger *slog.Logger) *dashboard.Server
-	enableSessionPersistence   func(srv *dashboard.Server, path string)
-	enableLifecyclePersistence func(srv *dashboard.Server, path string)
+	newServer                   func(port int, authToken string, logger *slog.Logger) *dashboard.Server
+	enableSessionPersistence    func(srv *dashboard.Server, path string)
+	enableLifecyclePersistence  func(srv *dashboard.Server, path string)
+	enableSLAHistoryPersistence func(srv *dashboard.Server, path string)
 }
 
 func defaultBootDashboardDeps() bootDashboardDeps {
 	return bootDashboardDeps{
-		newServer:                  dashboard.NewServerWithAuth,
-		enableSessionPersistence:   (*dashboard.Server).EnableSessionPersistence,
-		enableLifecyclePersistence: (*dashboard.Server).EnableLifecyclePersistence,
+		newServer:                   dashboard.NewServerWithAuth,
+		enableSessionPersistence:    (*dashboard.Server).EnableSessionPersistence,
+		enableLifecyclePersistence:  (*dashboard.Server).EnableLifecyclePersistence,
+		enableSLAHistoryPersistence: (*dashboard.Server).EnableSLAHistoryPersistence,
 	}
 }

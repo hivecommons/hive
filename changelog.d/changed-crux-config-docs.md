@@ -1,0 +1,1 @@
+- `docs/design/crux.md`: Stage 2 prerequisite 1 (the `pkg/crux/config` leaf) recorded as done with the final outbound edge table, and prerequisite 2 (the `effects` / `gitidentity` / `outputschema` / `jev` / `fleetreport` / `pushbroker` edges out of `pkg/agent`) scoped with per-edge symbol counts and the shape of each cut. Docs only.

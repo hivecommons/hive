@@ -53,8 +53,12 @@ func isDefiniteIssueWriteRefusal(err error) bool {
 // errored ambiguously) is reconciled from the issue's authoritative state via
 // observe and replayed once, mirroring reconcileMerge: a write already present
 // on GitHub replays as idempotent success, an absent one runs again. When the
-// issue cannot be read the original refusal stands (#11556).
+// issue cannot be read the original refusal stands (#11556). Label writes also
+// use observe to revalidate an already-applied entry before returning success.
 func (c *Client) executeIssueWrite(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error), observe func(context.Context) (effects.ExternalState, error)) error {
+	if claim.Kind == effects.KindLabelMutation {
+		claim.ObserveApplied = observe
+	}
 	boundary := c.mutationBoundary()
 	_, err := effects.Execute(ctx, boundary, claim, effect)
 	if !errors.Is(err, effects.ErrNeedsReconciliation) {
@@ -70,34 +74,14 @@ func (c *Client) executeIssueWrite(ctx context.Context, claim effects.Claim, eff
 	c.logger.Info("reconciled unresolved issue write against GitHub",
 		slog.String("repo", claim.Repo), slog.String("kind", claim.Kind),
 		slog.String("target", claim.Target), slog.Bool("applied", state.Applied))
+	if claim.ObserveApplied != nil {
+		// The replay revalidates against the state just read rather than
+		// reading the issue a second time.
+		observed := state
+		claim.ObserveApplied = func(context.Context) (effects.ExternalState, error) { return observed, nil }
+	}
 	_, err = effects.Execute(ctx, boundary, claim, effect)
 	return err
-}
-
-// observeIssueComment reports whether a comment with exactly body already
-// exists on the issue, carrying its URL as provenance.
-func (c *Client) observeIssueComment(ctx context.Context, owner, repo string, number int, body string) (effects.ExternalState, error) {
-	want := normalizeCommentBody(body)
-	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	for {
-		comments, resp, err := c.client.Issues.ListComments(WithRESTCaller(ctx, "hive:reconcile_issue_comment"), owner, repo, number, opts)
-		if err != nil {
-			return effects.ExternalState{}, err
-		}
-		for _, comment := range comments {
-			if normalizeCommentBody(comment.GetBody()) == want {
-				return effects.ExternalState{Applied: true, Provenance: comment.GetHTMLURL()}, nil
-			}
-		}
-		if resp == nil || resp.NextPage == 0 {
-			return effects.ExternalState{}, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-func normalizeCommentBody(body string) string {
-	return strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n"))
 }
 
 // observeIssueLabels reports whether the issue's labels already satisfy a

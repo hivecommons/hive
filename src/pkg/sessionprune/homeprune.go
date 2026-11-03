@@ -163,3 +163,51 @@ func pruneHomeTarget(path string, cutoff time.Time, res *Result, logger *slog.Lo
 	}
 	res.Removed++
 }
+
+// PruneAgentSessionTrees applies Prune to each per-agent Copilot session-state
+// tree (<root>/<agent>/.copilot/session-state) directly below root, with the
+// same age rule as the shared tree (hivecommons/hive#13488). A tree reached
+// through a symlink (the legacy bridge to the shared session-state) is skipped
+// so the shared directory is not pruned once per agent, and a missing root or
+// tree is not an error.
+func PruneAgentSessionTrees(root string, maxAge time.Duration, now time.Time, logger *slog.Logger) (Result, error) {
+	var res Result
+
+	if root == "" || maxAge <= 0 {
+		return res, nil
+	}
+
+	agents, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return res, nil
+		}
+		return res, err
+	}
+
+	for _, agent := range agents {
+		if !agent.IsDir() {
+			continue
+		}
+		copilot := filepath.Join(root, agent.Name(), ".copilot")
+		tree := filepath.Join(copilot, "session-state")
+		if isSymlink(copilot) || isSymlink(tree) {
+			continue
+		}
+		r, err := Prune(tree, maxAge, now, logger)
+		if err != nil {
+			logger.Debug("agent session prune: cannot read tree, skipping", "dir", tree, "err", err)
+			continue
+		}
+		res.Scanned += r.Scanned
+		res.Removed += r.Removed
+		res.Failed += r.Failed
+	}
+
+	return res, nil
+}
+
+func isSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&fs.ModeSymlink != 0
+}

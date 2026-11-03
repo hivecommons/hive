@@ -18,11 +18,14 @@ func TestSignalRunningRelay(t *testing.T) {
 		killErrs    []error
 		commandErr  error
 		commandOut  string
+		inspectOut  string
+		inspectErr  error
 		wantRunning bool
 		wantTarget  string
 		wantErr     string
 		wantCommand []string
 		wantSignals []syscall.Signal
+		wantInspect bool
 	}{
 		{
 			name:    "missing pid file means no relay running",
@@ -82,6 +85,7 @@ func TestSignalRunningRelay(t *testing.T) {
 			wantRunning: true,
 			wantTarget:  "podman container hive-contributor-abc",
 			wantCommand: []string{"podman", "kill", "--signal", "USR1", "hive-contributor-abc"},
+			wantInspect: true,
 		},
 		{
 			name:        "container relay defaults to docker runtime",
@@ -99,6 +103,32 @@ func TestSignalRunningRelay(t *testing.T) {
 			wantCommand: []string{
 				"podman", "kill", "--signal", "USR1", "hive-contributor-abc",
 			},
+			wantInspect: true,
+		},
+		{
+			name:        "podman relay under krun is refused without signaling",
+			pidFile:     `{"container_runtime":"podman","container_name":"hive-contributor-abc"}`,
+			inspectOut:  "krun\n",
+			wantErr:     "not supported under krun",
+			wantInspect: true,
+		},
+		{
+			name:        "podman relay under crun is signaled",
+			pidFile:     `{"container_runtime":"podman","container_name":"hive-contributor-abc"}`,
+			inspectOut:  "crun\n",
+			wantRunning: true,
+			wantTarget:  "podman container hive-contributor-abc",
+			wantCommand: []string{"podman", "kill", "--signal", "USR1", "hive-contributor-abc"},
+			wantInspect: true,
+		},
+		{
+			name:        "podman inspect failure still signals",
+			pidFile:     `{"container_runtime":"podman","container_name":"hive-contributor-abc"}`,
+			inspectErr:  errors.New("exit 125"),
+			wantRunning: true,
+			wantTarget:  "podman container hive-contributor-abc",
+			wantCommand: []string{"podman", "kill", "--signal", "USR1", "hive-contributor-abc"},
+			wantInspect: true,
 		},
 	}
 
@@ -117,8 +147,12 @@ func TestSignalRunningRelay(t *testing.T) {
 				return []byte(tt.pidFile), tt.readErr
 			}
 
-			var gotCommand []string
+			var gotCommand, gotInspect []string
 			runRelayCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if len(args) > 0 && args[0] == "inspect" {
+					gotInspect = append([]string{name}, args...)
+					return []byte(tt.inspectOut), tt.inspectErr
+				}
 				gotCommand = append([]string{name}, args...)
 				return []byte(tt.commandOut), tt.commandErr
 			}
@@ -137,6 +171,16 @@ func TestSignalRunningRelay(t *testing.T) {
 			}
 
 			got, err := SignalRunningRelay(context.Background(), store)
+			if fmt.Sprint(gotCommand) != fmt.Sprint(tt.wantCommand) {
+				t.Fatalf("command = %v, want %v", gotCommand, tt.wantCommand)
+			}
+			wantInspect := []string(nil)
+			if tt.wantInspect {
+				wantInspect = []string{"podman", "inspect", "--format", "{{.OCIRuntime}}", "hive-contributor-abc"}
+			}
+			if fmt.Sprint(gotInspect) != fmt.Sprint(wantInspect) {
+				t.Fatalf("inspect = %v, want %v", gotInspect, wantInspect)
+			}
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want containing %q", err, tt.wantErr)
@@ -148,9 +192,6 @@ func TestSignalRunningRelay(t *testing.T) {
 			}
 			if got.Running != tt.wantRunning || got.Target != tt.wantTarget {
 				t.Fatalf("result = %+v, want running=%v target=%q", got, tt.wantRunning, tt.wantTarget)
-			}
-			if fmt.Sprint(gotCommand) != fmt.Sprint(tt.wantCommand) {
-				t.Fatalf("command = %v, want %v", gotCommand, tt.wantCommand)
 			}
 			if fmt.Sprint(gotSignals) != fmt.Sprint(tt.wantSignals) {
 				t.Fatalf("signals = %v, want %v", gotSignals, tt.wantSignals)

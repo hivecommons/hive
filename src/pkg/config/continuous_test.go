@@ -22,7 +22,9 @@ func TestAgentContinuousCooldownDefaultAndValidation(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "acme"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents:  map[string]AgentConfig{"scanner": {Backend: "claude", Continuous: true, ContinuousCooldown: -time.Second}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude", Continuous: true, ContinuousCooldown: -time.Second}},
+		},
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "continuous_cooldown") {
 		t.Fatalf("Validate() err = %v, want continuous_cooldown rejection", err)

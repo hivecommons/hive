@@ -1,0 +1,1 @@
+- cost: price `claude-fable-5.1` at the Fable 5 list rate and prune per-agent `/data/home/agents/<agent>/.copilot/session-state` trees with the same retention as the shared tree (#13488, #13491)

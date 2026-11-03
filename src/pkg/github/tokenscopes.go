@@ -101,7 +101,7 @@ type scopeRequirement struct {
 // ACMM level boundaries at which new GitHub capabilities switch on. These
 // mirror the level packs in pkg/config/packs/: L1 Inception, L2 Advisory
 // (read + comment), L3 Quality-Gated, L4 Security-Aware (issue filing),
-// L5 Semi-Autonomous (PR creation), L6 Fully Autonomous (auto-merge).
+// L5 Semi-Autonomous (PR creation), L6 Autonomous (auto-merge).
 const (
 	// acmmLevelAdvisory (L2) is where agents first read repositories and post
 	// advisory comments — the lowest level that touches GitHub at all.
@@ -121,9 +121,9 @@ const (
 	// default here — L1 requires no scopes, so it would suppress everything.
 	ACMMLevelUnset = -1
 
-	// acmmLevelFullyAutonomous (L6) is the ceiling, and what ACMMLevelUnset
+	// acmmLevelAutonomous (L6) is the ceiling, and what ACMMLevelUnset
 	// resolves to.
-	acmmLevelFullyAutonomous = 6
+	acmmLevelAutonomous = 6
 )
 
 // scopeRequirements maps the GitHub REST surface this hive actually calls to
@@ -204,7 +204,7 @@ var scopeRequirements = []scopeRequirement{
 // capability is reported first.
 func requiredScopesForLevel(level int) []scopeRequirement {
 	if level == ACMMLevelUnset {
-		level = acmmLevelFullyAutonomous
+		level = acmmLevelAutonomous
 	}
 	var out []scopeRequirement
 	seen := make(map[string]bool)

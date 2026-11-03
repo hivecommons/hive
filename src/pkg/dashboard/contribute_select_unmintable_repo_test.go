@@ -128,7 +128,7 @@ func TestSelectTask_UnmintableRepoSkippedWithoutMint(t *testing.T) {
 func TestSelectTask_AllReposUnmintableReportsRepoUnmintable(t *testing.T) {
 	hub, s := covK2Hub(t)
 	oneActionableIssue(s)
-	auth, _ := newRepoRejectingAppAuth(t, "repo1")
+	auth, mints := newRepoRejectingAppAuth(t, "repo1")
 	s.deps.GHAppAuth = auth
 
 	conn := lockScopeConn(hub, "carol", "c-carol")
@@ -141,6 +141,57 @@ func TestSelectTask_AllReposUnmintableReportsRepoUnmintable(t *testing.T) {
 	conn.mu.Unlock()
 	if task != nil {
 		t.Fatalf("claim must be rolled back after a repo-scoped mint failure: %+v", task)
+	}
+	// #14003: later ready requests must retain the useful refusal instead of
+	// turning the recorded exclusion into an apparently empty queue.
+	before := mints.Load()
+	msg = hub.selectTask(lockScopeConn(hub, "alice", "c-alice"))
+	if msg == nil || msg.Type != "task_unavailable" || msg.Reason != taskUnavailableRepoUnmintable {
+		t.Fatalf("expected the cooldown to retain repo_unmintable, got %+v", msg)
+	}
+	if got := mints.Load(); got != before {
+		t.Fatalf("cooldown retry minted again: before %d, after %d", before, got)
+	}
+}
+
+func TestSelectTask_UnmintableRefusalRespectsRepositoryScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, selected, want string
+		disabled             bool
+	}{
+		{name: "selected excluded repo", selected: scopeIDReview, want: taskUnavailableRepoUnmintable},
+		{name: "excluded repo outside scope", selected: "github/github.com/myorg/elsewhere", want: taskUnavailableNoSelectedWork},
+		{name: "disabled repo", selected: scopeIDReview, disabled: true, want: taskUnavailableNoSelectedWork},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s := covK2Hub(t)
+			twoRepoStatus(s)
+			hub.markRepoUnmintable("myorg/review", time.Now())
+			if tc.disabled {
+				s.deps.Config.Hub.DisabledRepos = []string{"myorg/review"}
+			}
+			conn := lockScopeConn(hub, "alice", "c-alice")
+			ackScope(conn, 1, repoScopeModeSelected, tc.selected)
+			msg := hub.selectTask(conn)
+			if msg == nil || msg.Type != "task_unavailable" || msg.Reason != tc.want {
+				t.Fatalf("want refusal %s, got %+v", tc.want, msg)
+			}
+		})
+	}
+}
+
+func TestSelectTask_ExpiredMintExclusionOffersRepositoryAgain(t *testing.T) {
+	hub, s := covK2Hub(t)
+	oneActionableIssue(s)
+	auth, mints := newRepoRejectingAppAuth(t, "another-repo")
+	s.deps.GHAppAuth = auth
+	hub.markRepoUnmintable("myorg/repo1", time.Now().Add(-mintFailureRepoCooldown-time.Second))
+	msg := hub.selectTask(lockScopeConn(hub, "alice", "c-alice"))
+	if msg == nil || msg.Type != "task_assign" || msg.Repo != "myorg/repo1" {
+		t.Fatalf("expired exclusion must allow assignment again, got %+v", msg)
+	}
+	if got := mints.Load(); got != 1 {
+		t.Fatalf("want one mint for the recovered repository, got %d", got)
 	}
 }
 

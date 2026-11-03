@@ -43,7 +43,9 @@ func TestValidateBobSessionPrefixAndLabel(t *testing.T) {
 			cfg: Config{
 				Project: ProjectConfig{Org: "hivecommons"},
 				GitHub:  GitHubConfig{Token: "ghp_test"},
-				Agents:  map[string]AgentConfig{"scanner": {Backend: "claude"}},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+				},
 			},
 		},
 		{
@@ -51,8 +53,10 @@ func TestValidateBobSessionPrefixAndLabel(t *testing.T) {
 			cfg: Config{
 				Project:  ProjectConfig{Org: "hivecommons"},
 				GitHub:   GitHubConfig{Token: "ghp_test"},
-				Governor: GovernorConfig{Bob: BobConfig{SessionPrefix: "hive-"}},
-				Agents:   map[string]AgentConfig{"scanner": {Backend: "bob"}},
+				Governor: GovernorConfig{AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{Bob: BobConfig{SessionPrefix: "hive-"}}},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Backend: "bob"}},
+				},
 			},
 		},
 		{
@@ -60,7 +64,9 @@ func TestValidateBobSessionPrefixAndLabel(t *testing.T) {
 			cfg: Config{
 				Project: ProjectConfig{Org: "hivecommons"},
 				GitHub:  GitHubConfig{Token: "ghp_test"},
-				Agents:  map[string]AgentConfig{"scanner": {Backend: "bob", Bob: AgentBobConfig{SessionLabel: "hive-scanner"}}},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Backend: "bob", Bob: AgentBobConfig{SessionLabel: "hive-scanner"}}},
+				},
 			},
 		},
 		{
@@ -68,8 +74,10 @@ func TestValidateBobSessionPrefixAndLabel(t *testing.T) {
 			cfg: Config{
 				Project:  ProjectConfig{Org: "hivecommons"},
 				GitHub:   GitHubConfig{Token: "ghp_test"},
-				Governor: GovernorConfig{Bob: BobConfig{SessionPrefix: "hive/"}},
-				Agents:   map[string]AgentConfig{"scanner": {Backend: "bob"}},
+				Governor: GovernorConfig{AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{Bob: BobConfig{SessionPrefix: "hive/"}}},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Backend: "bob"}},
+				},
 			},
 			wantErr: "governor.bob.session_prefix",
 		},
@@ -78,7 +86,9 @@ func TestValidateBobSessionPrefixAndLabel(t *testing.T) {
 			cfg: Config{
 				Project: ProjectConfig{Org: "hivecommons"},
 				GitHub:  GitHubConfig{Token: "ghp_test"},
-				Agents:  map[string]AgentConfig{"scanner": {Backend: "bob", Bob: AgentBobConfig{SessionLabel: "hive scanner"}}},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Backend: "bob", Bob: AgentBobConfig{SessionLabel: "hive scanner"}}},
+				},
 			},
 			wantErr: "bob.session_label",
 		},
@@ -87,8 +97,10 @@ func TestValidateBobSessionPrefixAndLabel(t *testing.T) {
 			cfg: Config{
 				Project:  ProjectConfig{Org: "hivecommons"},
 				GitHub:   GitHubConfig{Token: "ghp_test"},
-				Governor: GovernorConfig{Bob: BobConfig{SessionPrefix: strings.Repeat("a", MaxBobSessionLabelLen)}},
-				Agents:   map[string]AgentConfig{"scanner": {Backend: "bob"}},
+				Governor: GovernorConfig{AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{Bob: BobConfig{SessionPrefix: strings.Repeat("a", MaxBobSessionLabelLen)}}},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Backend: "bob"}},
+				},
 			},
 			wantErr: "longer than",
 		},

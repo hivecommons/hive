@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 // statusCompleted is the workflow-run status GitHub reports once a run has a
@@ -61,7 +63,7 @@ type policyPattern struct {
 //   - billing / spending limit: an account setting.
 var policyPatterns = []policyPattern{
 	{regexp.MustCompile(`(?i)not permitted to create or approve pull requests`), "GitHub Actions is not permitted to create or approve pull requests (org/repo Actions setting)"},
-	{regexp.MustCompile("(?i)refusing to allow a github app to create or update workflow|without [`']?workflows[`']? permission"), "the GitHub App token lacks the workflows permission"},
+	{hgithub.WorkflowPermissionRefusalPattern, "the GitHub App token lacks the workflows permission"},
 	{regexp.MustCompile(`(?i)resource not accessible by integration`), "the workflow token lacks a required permission (Resource not accessible by integration)"},
 	{regexp.MustCompile(`(?i)\b403\b[^\n]*(permission|forbidden)|(permission|forbidden)[^\n]*\b403\b`), "403 permission denied"},
 	{regexp.MustCompile(`(?i)\bsecret\b[^\n]*\b(is not set|not found|missing)\b`), "a required repository or org secret is not set"},

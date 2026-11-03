@@ -1,8 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +53,20 @@ func validVerdictJSONWithHead(t *testing.T, repo string, number int, perspective
 	return string(raw)
 }
 
+func validVerdictJSONWithHeadAndBodyDigest(t *testing.T, repo string, number int, perspective, verdict, headSHA, bodyDigest string) string {
+	t.Helper()
+	var report map[string]any
+	if err := json.Unmarshal([]byte(validVerdictJSONWithHead(t, repo, number, perspective, verdict, headSHA)), &report); err != nil {
+		t.Fatalf("unmarshal verdict fixture: %v", err)
+	}
+	report["body_digest"] = bodyDigest
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(raw)
+}
+
 func withVerdictDispatchState(t *testing.T, state review.DispatchState) {
 	t.Helper()
 	dir := t.TempDir()
@@ -89,7 +106,7 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 		pending,
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix))
 	if len(matches) != 1 {
@@ -109,8 +126,189 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 	if got.HeadSHA != "abc123" {
 		t.Fatalf("dispatch head SHA was not bound into the recorded verdict: %q", got.HeadSHA)
 	}
-	if !got.RequiresHuman {
-		t.Fatalf("requires_human verdict did not survive into the aggregate: %+v", got)
+	// A bare correctness requires_human with no security finding is advisory
+	// on a contributor PR (hivecommons/hive#15640): the verdict is recorded
+	// and aggregated, but the PR keeps moving.
+	if got.RequiresHuman || got.Verdict != review.VerdictApprove {
+		t.Fatalf("non-security requires_human did not resolve to advisory approve: %+v", got)
+	}
+	if !reasonsContain(got.Reasons, "recorded as advisory:") {
+		t.Fatalf("Reasons = %v, want the requires_human recorded as advisory", got.Reasons)
+	}
+	if got.Perspectives[review.PerspectiveCorrectness] != review.VerdictApprove {
+		t.Fatalf("perspectives = %v, want the relayed verdict collected and resolved", got.Perspectives)
+	}
+}
+
+// The security perspective's requires_human is a security finding in its
+// own right and does survive into the aggregate with the finding named.
+func TestRecordReviewVerdictSecurityHoldSurvivesAggregate(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "projectbluefin/common", 1121, "security", "requires_human")
+	pending := pendingVerdict("projectbluefin/common", 1121, review.PerspectiveSecurity, "reviewer")
+	pending.HeadSHA = "abc123"
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{pending}})
+
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 {
+		t.Fatalf("want 1 aggregated item, got %d", len(artifact.Items))
+	}
+	got := artifact.Items[0]
+	if !got.RequiresHuman || got.Verdict != review.VerdictRequiresHuman {
+		t.Fatalf("security requires_human did not survive into the aggregate: %+v", got)
+	}
+	if !strings.Contains(got.DecisionFinding, "security review withheld approval") {
+		t.Fatalf("DecisionFinding = %q, want the security hold named", got.DecisionFinding)
+	}
+}
+
+func reasonsContain(reasons []string, needle string) bool {
+	for _, r := range reasons {
+		if strings.Contains(r, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123", "body-v1")
+	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		HeadSHA:     "abc123",
+		BodyDigest:  "body-v1",
+		Confirmed:   time.Now().UTC(),
+	}}})
+	body := "Looks correct, but this is a maintainer decision.\n\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: @clubanderson should decide whether this groundwork lands before its consumer. -->"
+
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+
+	if len(recorded) != 1 || recorded[0].Verdict != review.VerdictRequiresHuman || !recorded[0].DecisionRequested {
+		t.Fatalf("recorded = %+v, want promoted decision request", recorded)
+	}
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := artifact.Items[0]
+	// The marker is relayed, but a product question with no security
+	// finding behind it is advisory on a contributor PR
+	// (hivecommons/hive#15640): the aggregate approves and keeps the
+	// question in its reasons; a person meets the PR at the merge gate.
+	if got.Verdict != review.VerdictApprove || got.DecisionRequested || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want advisory approve", got)
+	}
+	if !reasonsContain(got.Reasons, "recorded as advisory: @clubanderson should decide whether this groundwork lands before its consumer.") {
+		t.Fatalf("Reasons = %v, want the question recorded as advisory", got.Reasons)
+	}
+	if got.BodyDigest != "body-v1" {
+		t.Fatalf("BodyDigest = %q, want dispatch digest", got.BodyDigest)
+	}
+}
+
+// A decision marker whose question is a security-class one (sensitive
+// paths) is a finding: it survives as a decision request with the finding
+// named, so the 085 comment can say what the review found.
+func TestRecordReviewVerdictPromotesSecurityDecisionMarker(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123", "body-v1")
+	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		HeadSHA:     "abc123",
+		BodyDigest:  "body-v1",
+		Confirmed:   time.Now().UTC(),
+	}}})
+	body := "No defects; trust surface.\n\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: @clubanderson should decide whether this workflow trigger change is acceptable. -->"
+
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+	if len(recorded) != 1 || recorded[0].Verdict != review.VerdictRequiresHuman || !recorded[0].DecisionRequested {
+		t.Fatalf("recorded = %+v, want promoted decision request", recorded)
+	}
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := artifact.Items[0]
+	if got.Verdict != review.VerdictRequiresHuman || !got.DecisionRequested ||
+		!strings.Contains(got.DecisionQuestion, "workflow trigger change") {
+		t.Fatalf("aggregate = %+v, want decision request", got)
+	}
+	if !strings.Contains(got.DecisionFinding, "sensitive-paths question") {
+		t.Fatalf("DecisionFinding = %q, want the sensitive-paths finding named", got.DecisionFinding)
+	}
+}
+
+func TestRecordReviewVerdictMarksConcreteRemediationFromBody(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "requires_human", "abc123", "body-v1")
+	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		AuthorAgent: "scanner",
+		HeadSHA:     "abc123",
+		BodyDigest:  "body-v1",
+		Confirmed:   time.Now().UTC(),
+	}}})
+	body := "The new LaneQueuedWork field is plumbed but never populated. Add the producer in AgentActivityFor or reword the changelog."
+
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+
+	if len(recorded) != 1 || !recorded[0].HiveAuthored || !recorded[0].ConcreteRemediation {
+		t.Fatalf("recorded = %+v, want hive-authored concrete remediation", recorded)
+	}
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := artifact.Items[0]
+	if got.Verdict != review.VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want fixer route", got)
+	}
+}
+
+func TestReviewDecisionRequestFallbackRequiresMaintainerCallLine(t *testing.T) {
+	got, question := reviewDecisionRequestFromBody("This is a maintainer call, not a code defect — @clubanderson should decide.")
+	if !got || !strings.Contains(question, "@clubanderson") {
+		t.Fatalf("fallback = %v, %q; want decision request with question", got, question)
+	}
+
+	got, question = reviewDecisionRequestFromBody("This is not a maintainer call for @clubanderson; approve.")
+	if got || question != "" {
+		t.Fatalf("negated fallback = %v, %q; want no decision request", got, question)
+	}
+}
+
+func TestReviewDecisionRiskHighMarker(t *testing.T) {
+	body := "**HUMAN DECISION NEEDED** — rename?\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: rename flag --foo to --bar? -->\n<!-- HIVE-DECISION-RISK: High -->"
+	if !reviewDecisionRiskHighFromBody(body) {
+		t.Fatalf("risk marker not detected in %q", body)
+	}
+	for _, benign := range []string{
+		"<!-- hive-decision-risk: low -->",
+		"<!-- hive-decision-question: should it be high or low? -->",
+		"hive-decision-risk: high",
+	} {
+		if reviewDecisionRiskHighFromBody(benign) {
+			t.Fatalf("risk marker falsely detected in %q", benign)
+		}
 	}
 }
 
@@ -122,7 +320,7 @@ func TestRecordReviewVerdictRejectsMismatchedTarget(t *testing.T) {
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSON(t, "projectbluefin/other", 9999, "correctness", "reject")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 0 {
@@ -142,7 +340,7 @@ func TestRecordReviewVerdictAcceptsRecentConfirmedDispatch(t *testing.T) {
 		Confirmed:   time.Now().UTC(),
 	}}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "sec-check", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "sec-check", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix)); len(matches) != 1 {
 		t.Fatalf("recent confirmed dispatch verdict was not recorded: %v", matches)
@@ -155,7 +353,7 @@ func TestRecordReviewVerdictRejectsNoDispatch(t *testing.T) {
 	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
 	withVerdictDispatchState(t, review.DispatchState{})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("verdict without dispatch was recorded: %v", matches)
@@ -174,7 +372,7 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWithoutDispatchState(t *testin
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSONWithHead(t, "o/r", 1, "correctness", "approve", "abc123")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
 
 	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
 	if err != nil {
@@ -194,7 +392,7 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWhenDispatchStateHasNoMatch(t 
 		pendingVerdict("o/r", 2, review.PerspectiveSecurity, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
 
 	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
 	if err != nil {
@@ -202,6 +400,49 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWhenDispatchStateHasNoMatch(t 
 	}
 	if len(artifact.Items) != 1 || artifact.Items[0].Repo != "o/r" || artifact.Items[0].Number != 1 || artifact.Items[0].HeadSHA != "abc123" {
 		t.Fatalf("advisory verdict with unrelated dispatch state was not collected: %+v", artifact.Items)
+	}
+}
+
+// A verdict from an agent that does hold dispatch rows for the PR, but binds to
+// none of them, logs what it was compared with before it falls back to
+// advisory, so a lost decision row can be traced (hivecommons/hive#15559).
+func TestRecordReviewVerdictLogsCandidatesOnAdvisoryFallback(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	var logBuf bytes.Buffer
+	c := &Client{logger: slog.New(slog.NewTextHandler(&logBuf, nil))}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")
+	row := pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "reviewer")
+	row.HeadSHA = "abc123"
+	row.Decision = true
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{row}})
+
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	out := logBuf.String()
+	for _, want := range []string{"falling back to advisory", "agent=reviewer", "perspective=security", "reported_head=abc123", "pending agent=reviewer perspective=correctness head=abc123 decision=true"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("advisory fallback log missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// An agent with no dispatch row for the PR is an ordinary advisory reviewer;
+// its fallback is not worth a diagnostic line.
+func TestRecordReviewVerdictAdvisoryFallbackQuietWithoutAgentRows(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	var logBuf bytes.Buffer
+	c := &Client{logger: slog.New(slog.NewTextHandler(&logBuf, nil))}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 1, review.PerspectiveSecurity, "other-reviewer"),
+	}})
+
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	if strings.Contains(logBuf.String(), "falling back to advisory") {
+		t.Fatalf("advisory fallback logged for an agent with no dispatch rows:\n%s", logBuf.String())
 	}
 }
 
@@ -218,7 +459,7 @@ func TestRecordReviewVerdictRejectsNonReviewerWithoutDispatchMatch(t *testing.T)
 		pendingVerdict("o/r", 1, review.PerspectiveSecurity, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
 
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("non-reviewer verdict without dispatch was recorded: %v", matches)
@@ -237,7 +478,7 @@ func TestRecordReviewVerdictRejectsNonReviewerWithoutDispatchState(t *testing.T)
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSONWithHead(t, "o/r", 1, "correctness", "reject", "abc123")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
 
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("non-reviewer verdict without dispatch state was recorded: %v", matches)
@@ -257,12 +498,12 @@ func TestRecordReviewVerdictHonoursConfiguredReviewerSet(t *testing.T) {
 	}}
 	withVerdictDispatchState(t, review.DispatchState{})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("lane outside reviewer_agents was recorded: %v", matches)
 	}
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "auditor", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "auditor", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
 	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -284,7 +525,7 @@ func TestRecordReviewVerdictRejectsAdvisoryVerdictWithoutHead(t *testing.T) {
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
 
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("headless advisory verdict was recorded: %v", matches)
@@ -299,7 +540,7 @@ func TestRecordReviewVerdictRejectsWrongPerspective(t *testing.T) {
 		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("wrong-perspective verdict was recorded: %v", matches)
@@ -314,7 +555,7 @@ func TestRecordReviewVerdictRejectsWrongAgent(t *testing.T) {
 		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "assigned-reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "other-reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "other-reviewer", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("wrong-agent verdict was recorded: %v", matches)
@@ -329,7 +570,7 @@ func TestRecordReviewVerdictRejectsAuthorSelfApproval(t *testing.T) {
 	pending.AuthorAgent = "author-agent"
 	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{pending}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("author self-approval verdict was recorded: %v", matches)
@@ -352,7 +593,7 @@ func TestRecordReviewVerdictRejectsAuthorSelfApprovalFromAuditTrail(t *testing.T
 		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "author-agent"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix))
 	if len(matches) != 0 {
@@ -427,7 +668,7 @@ func TestRecordReviewVerdictRejectsMalformed(t *testing.T) {
 		"bad verdict":    strings.Replace(validVerdictJSON(t, "o/r", 1, "correctness", "approve"), `"approve"`, `"merge_it"`, 1),
 		"bad perspectve": strings.Replace(validVerdictJSON(t, "o/r", 1, "correctness", "approve"), `"correctness"`, `"vibes"`, 1),
 	} {
-		c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Report: raw}, dir)
+		c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Report: raw}, dir)
 		if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 			t.Fatalf("%s: malformed verdict was written: %v", name, matches)
 		}
@@ -457,7 +698,7 @@ func TestRecordReviewVerdictDoesNotEscapeDir(t *testing.T) {
 		pendingVerdict(evil, 1, review.PerspectiveCorrectness, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: evil, Number: 1, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: evil, Number: 1, Agent: "reviewer", Report: raw}, dir)
 
 	// The only acceptable outcome is a plain file directly inside dir.
 	var stray []string
@@ -486,7 +727,7 @@ func TestRecordReviewVerdictDoesNotEscapeDir(t *testing.T) {
 func TestRecordReviewVerdictNoReportIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1}, dir)
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("no-op wrote files: %v", matches)
 	}
@@ -503,9 +744,9 @@ func TestRecordReviewVerdictIsIdempotentPerPerspective(t *testing.T) {
 	}})
 
 	req.Report = validVerdictJSON(t, "o/r", 7, "correctness", "changes_requested")
-	c.recordReviewVerdict(req, dir)
+	c.recordReviewVerdict(context.Background(), req, dir)
 	req.Report = validVerdictJSON(t, "o/r", 7, "correctness", "approve")
-	c.recordReviewVerdict(req, dir)
+	c.recordReviewVerdict(context.Background(), req, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 1 {
@@ -560,4 +801,42 @@ func TestRecordVerdictEventPassesShapeValidation(t *testing.T) {
 		os.Remove(path + ".bad")
 	}
 	reviewRequestDirForTest = ""
+}
+
+// A replica is review-capable when its base is a reviewer, so the
+// dispatch-less path must refuse a verdict from any lane of the authoring
+// family: alpha-2 may not approve a PR alpha opened (hivecommons/hive#13558).
+func TestAdvisoryVerdictRejectsSiblingReplicaOfAuthor(t *testing.T) {
+	dir := t.TempDir()
+	auditPath := filepath.Join(dir, "audit.jsonl")
+	oldAuditPath := reviewVerdictAuditPath
+	reviewVerdictAuditPath = auditPath
+	t.Cleanup(func() { reviewVerdictAuditPath = oldAuditPath })
+	line := `{"ts":"` + time.Now().UTC().Format(time.RFC3339) + `","action":"agent_pr_created","detail":"repo=o/r, number=1, author=hive[bot]","agent":"alpha"}` + "\n"
+	if err := os.WriteFile(auditPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write audit fixture: %v", err)
+	}
+	bases := map[string]string{"alpha-2": "alpha"}
+	c := &Client{logger: testLogger(), reviewerAgent: func(string) bool { return true }}
+	c.SetAgentBaseFunc(func(agent string) string {
+		if base, ok := bases[agent]; ok {
+			return base
+		}
+		return agent
+	})
+	report := review.PerspectiveReport{Repo: "o/r", Number: 1, Perspective: review.PerspectiveCorrectness, HeadSHA: "abc123"}
+
+	if auth := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "alpha-2"}); auth.OK || auth.Reason != "author_self_approval" {
+		t.Fatalf("alpha-2 on alpha-authored PR: ok=%v reason=%q, want rejected author_self_approval", auth.OK, auth.Reason)
+	}
+	if auth := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "beta"}); !auth.OK {
+		t.Fatalf("beta on alpha-authored PR rejected: %q", auth.Reason)
+	}
+
+	reportDir := filepath.Join(dir, "reports")
+	withVerdictDispatchState(t, review.DispatchState{})
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "alpha-2", Report: validVerdictJSONWithHead(t, "o/r", 1, "correctness", "approve", "abc123")}, reportDir)
+	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
+		t.Fatalf("sibling-replica self-approval verdict was recorded: %v", matches)
+	}
 }

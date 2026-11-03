@@ -1,0 +1,393 @@
+package automerge
+
+import (
+	"testing"
+
+	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
+)
+
+// TestPRDeriverReproducesResolveStage asserts the stageengine adapter is a
+// faithful wrapper: Facts rebuilt from the tracker's lane observations
+// derive exactly what resolveStage decides today (stage, reason, role,
+// terminal, hand-off), for every lane shape the legacy tests exercise.
+func TestPRDeriverReproducesResolveStage(t *testing.T) {
+	approve := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}}
+	reject := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}
+	human := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}
+	humanApproved := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}, HumanApprover: "clubanderson", HumanApprovalHead: "sha", Role: stagelabels.RoleContributor}
+	decision := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "approve", DecisionRequested: true, DecisionQuestion: "@clubanderson should decide."}}
+	trusted := stageDetail{Role: stagelabels.RoleTrusted}
+	base := stageObservation{Owner: "acme", Repo: "widgets", Number: 7, Author: "dev", HeadSHA: "sha", Labels: []string{"bug"}}
+	obs := func(o stageObservation) stageObservation {
+		o.Owner, o.Repo, o.Number = base.Owner, base.Repo, base.Number
+		if o.Author == "" {
+			o.Author = base.Author
+		}
+		if o.HeadSHA == "" {
+			o.HeadSHA = base.HeadSHA
+		}
+		if o.Labels == nil {
+			o.Labels = base.Labels
+		}
+		return o
+	}
+	cases := []struct {
+		name string
+		list []stageObservation
+	}{
+		{"merged", []stageObservation{obs(stageObservation{Lane: stageLaneSelf, Merged: true})}},
+		{"closed", []stageObservation{obs(stageObservation{Lane: stageLaneSelf, Reason: "closed"})}},
+		{"draft", []stageObservation{obs(stageObservation{Lane: stageLaneSelf, Reason: "draft"})}},
+		{"handoff abstains", []stageObservation{obs(stageObservation{Lane: stageLaneSelf, Reason: "not-app-authored"})}},
+		{"error abstains", []stageObservation{obs(stageObservation{Lane: stageLaneSelf, Reason: "fetch-pr", Err: true})}},
+		{"review pending", []stageObservation{obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict})}},
+		{"requires_human", []stageObservation{obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: human})}},
+		{"human approval on current head", []stageObservation{obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(remaining=30m)", Detail: humanApproved})}},
+		{"human approval on new head", []stageObservation{obs(stageObservation{Lane: stageLaneContributor, HeadSHA: "newsha", Reason: contributorLaneReasonSoaking + "(remaining=30m)", Detail: humanApproved})}},
+		{"decision requested", []stageObservation{obs(stageObservation{Lane: stageLaneContributor, Reason: "required-check-pending:unit", Detail: decision})}},
+		{"approved ci pending", []stageObservation{obs(stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build", Detail: approve})}},
+		{"self ci red", []stageObservation{obs(stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit"})}},
+		{"clanker ci red", []stageObservation{obs(stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: "required-check-failing:unit"})}},
+		{"human conflicting", []stageObservation{obs(stageObservation{AuthorKind: authorkind.Human, Lane: stageLaneTrusted, Reason: "conflicting"})}},
+		{"hive kind ci red", []stageObservation{obs(stageObservation{AuthorKind: authorkind.Hive, Lane: stageLaneContributor, Reason: "required-check-failing:unit"})}},
+		{"changes requested", []stageObservation{obs(stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: "pending: head pushed 1m0s ago (< min_head_age)", Detail: reject})}},
+		{"lane precedence: trusted weak, contributor refines", []stageObservation{
+			obs(stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}),
+			obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Role: stagelabels.RoleContributor}}),
+		}},
+		{"weak opinion only", []stageObservation{obs(stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"})}},
+		{"self outranks contributor handoff", []stageObservation{
+			obs(stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit", Detail: trusted}),
+			obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonAppAuthored}),
+		}},
+		{"registry-trusted with no contributor opinion abstains", []stageObservation{
+			obs(stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}),
+			obs(stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: trusted}),
+		}},
+		{"maintainer trusted error and contributor no-claim abstains", []stageObservation{
+			obs(stageObservation{Lane: stageLaneTrusted, Reason: "fetch-pr", Err: true, Detail: trusted}),
+			obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Role: stagelabels.RoleUntrusted}}),
+		}},
+		{"maintainer ci pending beats no-claim", []stageObservation{
+			obs(stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:golangci-lint", Detail: trusted}),
+			obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: trusted}),
+		}},
+		{"contributor tier needs-human", []stageObservation{
+			obs(stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}),
+			obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier, Detail: stageDetail{Role: stagelabels.RoleContributor}}),
+		}},
+		{"sentinel blocked needs-decision", []stageObservation{
+			obs(stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}),
+			obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted}),
+		}},
+		{"author/hive label lifts role", []stageObservation{obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Labels: []string{"author/hive"}})}},
+	}
+	deriver := stageengine.PRDeriver()
+	if deriver.Kind() != stagelabels.PRItem {
+		t.Fatal("kind")
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want, wantRole, wantObs := resolveStage(tc.list)
+			f := factsFrom(tc.list)
+			if f.Ref.Owner != "acme" || f.Ref.Number != 7 || f.PR == nil || len(f.PR.Lanes) != len(tc.list) {
+				t.Fatalf("facts %+v", f)
+			}
+			got := deriver.Derive(f)
+			if want.Rank == stageRankNone {
+				if !got.Abstain || got.Reason != wantObs.Reason {
+					t.Fatalf("legacy has no opinion; got %+v", got)
+				}
+				return
+			}
+			wantReason := want.Reason
+			if wantReason == "" {
+				wantReason = wantObs.Reason
+			}
+			if got.Abstain || got.Stage != want.Stage || got.Reason != wantReason || got.Role != wantRole || got.Terminal != want.Terminal {
+				t.Fatalf("got %+v; want stage=%v reason=%q role=%v terminal=%v", got, want.Stage, wantReason, wantRole, want.Terminal)
+			}
+			if (got.Human != nil) != (want.Human && !want.Terminal) || (got.Human != nil && got.Human.Stage != want.Stage) {
+				t.Fatalf("human route %+v vs verdict human=%v", got.Human, want.Human)
+			}
+			// The rebuilt observations classify exactly as the originals.
+			for i, o := range observationsFrom(f) {
+				a, b := classifyStage(o), classifyStage(tc.list[i])
+				if a != b {
+					t.Fatalf("lane %d reclassifies as %+v, was %+v", i, a, b)
+				}
+			}
+		})
+	}
+}
+
+func TestPRDeriverAbstainsWithoutEvidence(t *testing.T) {
+	d := stageengine.PRDeriver()
+	if got := d.Derive(factsFrom(nil)); !got.Abstain {
+		t.Fatalf("empty list: %+v", got)
+	}
+	if got := d.Derive(stageengine.Facts{Ref: stageengine.Ref{Kind: stagelabels.IssueItem}}); !got.Abstain {
+		t.Fatalf("issue facts: %+v", got)
+	}
+	if got := d.Derive(stageengine.Facts{Ref: stageengine.Ref{Kind: stagelabels.PRItem}, PR: &stageengine.PRFacts{}}); !got.Abstain {
+		t.Fatalf("no lanes: %+v", got)
+	}
+}
+
+// A PR no lane has observed but a person parked (an out-of-cycle Parked fact
+// from the issue request relay, or a needs-decision / needs-human label on
+// the fresh read) sits at 085 on the human route with the role it wears; an
+// un-park or a closed PR still abstains until the lanes speak.
+func TestPRDeriverParksUnobservedPR(t *testing.T) {
+	d := stageengine.PRDeriver()
+	base := stageengine.Facts{Ref: stageengine.Ref{Kind: stagelabels.PRItem}, Open: true, PR: &stageengine.PRFacts{}}
+
+	parked := base
+	parked.Labels = []string{"needs-decision", stagelabels.RoleContributor.Label()}
+	parked.Park = stageengine.ParkFacts{DecisionLabel: "needs-decision"}
+	got := d.Derive(parked)
+	if got.Abstain || got.Stage != stagelabels.NeedsDecision || got.Role != stagelabels.RoleContributor ||
+		got.Human == nil || got.Human.Stage != stagelabels.NeedsDecision || got.Reason != "parked on a person: needs-decision" {
+		t.Fatalf("decision park: %+v", got)
+	}
+
+	human := base
+	human.Park = stageengine.ParkFacts{NeedsHuman: true}
+	if got := d.Derive(human); got.Abstain || got.Stage != stagelabels.NeedsDecision || got.Reason != "parked on a person: "+stageengine.NeedsHumanLabel {
+		t.Fatalf("needs-human park: %+v", got)
+	}
+
+	unparked := parked
+	unparked.Park.ApprovedDirection = true
+	if got := d.Derive(unparked); !got.Abstain {
+		t.Fatalf("un-park must abstain without lanes: %+v", got)
+	}
+	closed := parked
+	closed.Open = false
+	if got := d.Derive(closed); !got.Abstain {
+		t.Fatalf("closed PR must abstain: %+v", got)
+	}
+}
+
+// TestPRDeriverRequiresHumanBeatsAdmissionReason is hivecommons/hive#13115
+// on the engine path: both lanes decline on trust (the trusted lane's role
+// check, the contributor lane's author-association admission), the
+// reviewer verdict for the head is requires_human, and nothing has
+// reported on the head yet. The engine must derive stage/085, never the
+// 050 the fresh-head wait used to produce (and the quiet dwell then
+// stalled), and the human route must agree (hivecommons/hive#13117).
+func TestPRDeriverRequiresHumanBeatsAdmissionReason(t *testing.T) {
+	human := stageDetail{Role: stagelabels.RoleContributor, VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}
+	list := []stageObservation{
+		{Owner: "acme", Repo: "widgets", Number: 336, Author: "dev", HeadSHA: "sha", Lane: stageLaneTrusted, Reason: "untrusted-author-role", Detail: human},
+		{Owner: "acme", Repo: "widgets", Number: 336, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: contributorLaneReasonAuthorAssociation, Detail: human},
+	}
+	f := factsFrom(list)
+	f.PR.Pass = &stageengine.PRPassFacts{
+		AuthorKind: authorkind.Human,
+		Route: &stagelabels.Evidence{
+			Head:      "sha",
+			HeadFresh: true,
+			Verdict:   stagelabels.VerdictRequiresHuman,
+			Checks:    stagelabels.CheckSummary{Known: true},
+			Cause:     stagelabels.CauseTrust,
+		},
+	}
+	got := stageengine.PRDeriver().Derive(f)
+	if got.Abstain || got.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("engine derived %+v, want stage %v", got, stagelabels.NeedsDecision)
+	}
+	if got.Human == nil || got.Human.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("human route %+v, want %v", got.Human, stagelabels.NeedsDecision)
+	}
+	if got.Role != stagelabels.RoleContributor {
+		t.Fatalf("role %v, want contributor", got.Role)
+	}
+	// Once the reviewer's verdict is pending again (new head), the same
+	// shape waits at 050 — the carve-out is for requires_human only.
+	f.PR.Pass.Route.Verdict = stagelabels.VerdictPending
+	for i := range f.PR.Lanes {
+		f.PR.Lanes[i].Reason = contributorLaneReasonNoVerdict
+	}
+	f.PR.Review = stageengine.ReviewFacts{}
+	if got := stageengine.PRDeriver().Derive(f); !got.Abstain && got.Stage == stagelabels.NeedsDecision {
+		t.Fatalf("pending verdict derived %+v, want not 085", got)
+	}
+}
+
+// TestPRDeriverPassCarriesStalledAndKindLabels pins the two Desired fields
+// the pass computes after resolution: the dwell verdict and the configured
+// author/<kind> names. Before PRPassFacts carried them an enforce-mode
+// sweep (the default since hivecommons/hive#13598) never wrote
+// stage/stalled on a PR and ignored custom kind names; the legacy
+// comparator had masked that in shadow. A terminal verdict still zeroes
+// every pipeline label and leaves the author label alone.
+func TestPRDeriverPassCarriesStalledAndKindLabels(t *testing.T) {
+	names := authorkind.Names{Human: "author/person"}
+	list := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Role: stagelabels.RoleContributor}}}
+	f := factsFrom(list)
+	f.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Human, Stalled: true, KindLabels: names}
+	got := stageengine.PRDeriver().Derive(f)
+	if got.Abstain || got.Stage != stagelabels.ReviewPending {
+		t.Fatalf("derived %+v, want 050", got)
+	}
+	if !got.Stalled || got.KindLabels != names || got.Kind != authorkind.Human {
+		t.Fatalf("decision dropped the pass's Desired fields: %+v", got)
+	}
+	want := got.Desired()
+	if !want.Stalled || want.KindLabels.Label(authorkind.Human) != "author/person" {
+		t.Fatalf("desired %+v", want)
+	}
+
+	closed := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: "closed", Detail: stageDetail{Role: stagelabels.RoleContributor}}}
+	tf := factsFrom(closed)
+	tf.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Human, Stalled: true, KindLabels: names}
+	term := stageengine.PRDeriver().Derive(tf)
+	if term.Abstain || !term.Terminal || term.Stage != stagelabels.None {
+		t.Fatalf("closed derived %+v, want terminal", term)
+	}
+	if term.Stalled || term.Role != stagelabels.RoleNone || term.Kind != authorkind.Unknown {
+		t.Fatalf("terminal decision must be a zero Desired: %+v", term)
+	}
+}
+
+// TestPRDeriverPassCarriesForkEscalation: a fork PR the hive declined to
+// adopt that waited at 072 past the dwell is moved to 085 by the pass
+// (escalateUnadoptableFork); the engine must derive the same stage and
+// reason from PRPassFacts.ForkEscalationReason, and nothing without it.
+func TestPRDeriverPassCarriesForkEscalation(t *testing.T) {
+	list := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "relay", HeadSHA: "sha", Lane: stageLaneContributor, Reason: "conflicting", Detail: stageDetail{Role: stagelabels.RoleContributor}}}
+	reason := stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
+	for _, tc := range []struct {
+		name   string
+		pass   stageengine.PRPassFacts
+		stage  stagelabels.Stage
+		reason string
+	}{
+		{"escalated", stageengine.PRPassFacts{AuthorKind: authorkind.Clanker, ForkEscalationReason: reason}, stagelabels.NeedsDecision, reason},
+		{"waiting", stageengine.PRPassFacts{AuthorKind: authorkind.Clanker}, stagelabels.ReturnedToContributor, ""},
+	} {
+		f := factsFrom(list)
+		pass := tc.pass
+		f.PR.Pass = &pass
+		got := stageengine.PRDeriver().Derive(f)
+		if got.Abstain || got.Stage != tc.stage || (tc.reason != "" && got.Reason != tc.reason) {
+			t.Errorf("%s: derived %+v, want %s %q", tc.name, got, tc.stage, tc.reason)
+		}
+	}
+}
+
+// TestPRDeriverPassHoldsEscalationAgainstWeakOpinion: a lane that errored
+// on an approved head reads it author-side done, 080 at role rank. With an
+// active escalation on the head the pass keeps 085 (projectbluefin/utah#919
+// flipped 085 → 080 → 085 on one head); the engine must derive the same
+// from PRPassFacts, and 080 without an escalation.
+func TestPRDeriverPassHoldsEscalationAgainstWeakOpinion(t *testing.T) {
+	approved := stageDetail{Role: stagelabels.RoleContributor, VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}}
+	list := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "relay", HeadSHA: "sha", Lane: stageLaneContributor, Err: true, Detail: approved}}
+	if v, _, _ := resolveStage(list); v.Stage != stagelabels.AwaitingMergeAdmission || v.Rank != stageRankRole {
+		t.Fatalf("fixture: errored approved lane resolved %+v, want weak 080", v)
+	}
+	stalled := stagelabels.LaneReasonAdoptionStalledPrefix + "check-failure"
+	fork := stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
+	for _, tc := range []struct {
+		name   string
+		pass   stageengine.PRPassFacts
+		stage  stagelabels.Stage
+		reason string
+	}{
+		{"adoption escalated", stageengine.PRPassFacts{AuthorKind: authorkind.Clanker, AdoptionLive: true, EscalationReason: stalled}, stagelabels.NeedsDecision, stalled},
+		{"fork escalated", stageengine.PRPassFacts{AuthorKind: authorkind.Clanker, ForkEscalationReason: fork}, stagelabels.NeedsDecision, fork},
+		{"adopted, not escalated", stageengine.PRPassFacts{AuthorKind: authorkind.Clanker, AdoptionLive: true}, stagelabels.AwaitingMergeAdmission, ""},
+		{"nothing", stageengine.PRPassFacts{AuthorKind: authorkind.Clanker}, stagelabels.AwaitingMergeAdmission, ""},
+	} {
+		f := factsFrom(list)
+		pass := tc.pass
+		f.PR.Pass = &pass
+		got := stageengine.PRDeriver().Derive(f)
+		if got.Abstain || got.Stage != tc.stage || (tc.reason != "" && got.Reason != tc.reason) {
+			t.Errorf("%s: derived %+v, want %s %q", tc.name, got, tc.stage, tc.reason)
+		}
+	}
+
+	// Only a weak opinion is held: an owned one past the merge gate (the
+	// lane admitted the head and is soaking it) is the lane's to state, and
+	// an adopted original's weak requires_human opinion now yields to 074,
+	// but a real adoption escalation must still park it at 085.
+	soaking := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "relay", HeadSHA: "sha", Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking, Detail: approved}}
+	weakHuman := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "relay", HeadSHA: "sha", Lane: stageLaneContributor, Reason: "untrusted-author-role", Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}}}
+	for _, tc := range []struct {
+		name string
+		list []stageObservation
+		rank int
+	}{
+		{"owned soak", soaking, stageRankOwned},
+		{"weak 085", weakHuman, stageRankRole},
+	} {
+		v, _, _ := resolveStage(tc.list)
+		owned := tc.rank == stageRankOwned
+		if (owned && (v.Rank != stageRankOwned || v.Stage.YieldsToAdoption() || v.Stage == stagelabels.NeedsDecision)) || (!owned && (v.Rank >= stageRankOwned || v.Stage != stagelabels.NeedsDecision)) {
+			t.Fatalf("%s fixture: resolved %+v", tc.name, v)
+		}
+		plain := factsFrom(tc.list)
+		plain.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Clanker, AdoptionLive: true}
+		want := stageengine.PRDeriver().Derive(plain)
+		f := factsFrom(tc.list)
+		f.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Clanker, AdoptionLive: true, EscalationReason: stalled}
+		if !owned {
+			got := stageengine.PRDeriver().Derive(f)
+			if want.Stage != stagelabels.AdoptedByHive || got.Stage != stagelabels.NeedsDecision || got.Reason != stalled {
+				t.Errorf("%s: adopted verdict must yield to its escalation: plain=%+v escalated=%+v", tc.name, want, got)
+			}
+			continue
+		}
+		if got := stageengine.PRDeriver().Derive(f); got.Stage != want.Stage || got.Reason != want.Reason || got.Reason == stalled {
+			t.Errorf("%s: escalation overrode the opinion: derived %+v, want %+v", tc.name, got, want)
+		}
+	}
+}
+
+// TestVerdictStateFold pins the ReviewFacts.State fold ADR-0025 defines
+// (review-state fold, resolved in plan PR-F): the one verdict fact the PR
+// deriver routes on.
+func TestVerdictStateFold(t *testing.T) {
+	cases := []struct {
+		name string
+		d    stageDetail
+		want stagelabels.VerdictState
+	}{
+		{"unknown", stageDetail{}, stagelabels.VerdictPending},
+		{"approved", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Approved: true}}, stagelabels.VerdictApproved},
+		{"no reviewer", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{}}, stagelabels.VerdictUnavailable},
+		{"changes requested", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}, stagelabels.VerdictChangesRequested},
+		{"reject", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "Reject"}}, stagelabels.VerdictChangesRequested},
+		{"requires human", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}, stagelabels.VerdictRequiresHuman},
+		{"decision requested", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "approve", DecisionRequested: true}}, stagelabels.VerdictRequiresHuman},
+		{"pending verdict", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true}}, stagelabels.VerdictPending},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := verdictStateFrom(tc.d); got != tc.want {
+				t.Fatalf("verdictStateFrom = %v, want %v", got, tc.want)
+			}
+			r := reviewFactsFrom(tc.d, "abc")
+			if r.State != tc.want {
+				t.Fatalf("ReviewFacts.State = %v, want %v", r.State, tc.want)
+			}
+			v := verdictFrom(r)
+			if v.Approved != (tc.want == stagelabels.VerdictApproved) || v.Configured != (tc.want != stagelabels.VerdictUnavailable) {
+				t.Fatalf("verdictFrom(%v) = %+v", tc.want, v)
+			}
+		})
+	}
+	// HumanApprover rides along only for the head it approved.
+	d := stageDetail{HumanApprover: "ann", HumanApprovalHead: "abc"}
+	if r := reviewFactsFrom(d, "abc"); r.HumanApprover != "ann" {
+		t.Fatalf("approver at head: %+v", r)
+	}
+	if r := reviewFactsFrom(d, "def"); r.HumanApprover != "" {
+		t.Fatalf("approver for a stale head kept: %+v", r)
+	}
+}

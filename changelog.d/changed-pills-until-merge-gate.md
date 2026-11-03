@@ -1,0 +1,1 @@
+- Hive activity monitor: `sentinel`, `needs human`, `needs human decision` and merge-time `unauthorized` pills are held back (payload `deferred_modifiers`) until the pull request reaches the merge gate (stage/080+), and do not count under *Needs attention* before then; `hold`, `draft`, `stalled`, `regressed` and an `unauthorized` on held workflow runs always show.

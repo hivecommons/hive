@@ -10,7 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -406,8 +407,10 @@ func newDeepTestServer(t *testing.T) *Server {
 			Repos: []string{"testrepo"},
 		},
 		Data: config.DataConfig{AgentsDir: agentsDir},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+			},
 		},
 		GitHub:     config.GitHubConfig{Token: "ghp_test123456789"},
 		SourcePath: t.TempDir() + "/hive.yaml",
@@ -426,7 +429,7 @@ func newDeepTestServer(t *testing.T) *Server {
 	scannerStore, _ := beads.NewStore(dir + "/scanner")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{
 		Org: "testorg", Repos: []string{"testrepo"}, ACMMLevel: *cfg.ACMMLevel, PRsAllowed: true,
 	})
 

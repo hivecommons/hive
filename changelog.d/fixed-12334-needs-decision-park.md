@@ -1,0 +1,1 @@
+- `hive-open-issue comment --needs-decision` now requires the lane's write allowlist to include `label` as well as `comment`, and refuses a pull-request target, so the configured needs-decision label can only be applied to an issue by a lane allowed to label ([#12334](https://github.com/hivecommons/hive/pull/12334)).

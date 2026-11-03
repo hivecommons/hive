@@ -1,0 +1,1 @@
+- docs(v6): sync v6 readiness doc and runbook with accepted evidence and closed blockers ([#12735](https://github.com/hivecommons/hive/issues/12735))

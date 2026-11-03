@@ -9,7 +9,9 @@ func validSlackConfig() *Config {
 	return &Config{
 		Project: ProjectConfig{Org: "acme"},
 		GitHub:  GitHubConfig{Token: "ghp_test"},
-		Agents:  map[string]AgentConfig{"worker": {Backend: "claude", Enabled: true}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"worker": {Backend: "claude", Enabled: true}},
+		},
 	}
 }
 

@@ -241,12 +241,12 @@ func TestPRRequestWatcher_HoldLabelApplied(t *testing.T) {
 	cases := []struct {
 		name     string
 		agent    string
-		holdFn   func(string) bool
+		holdFn   func(string, string) bool
 		wantHold bool
 	}{
-		{"hold-gated level applies hold", "scanner", func(string) bool { return true }, true},
-		{"non-hold-gated level applies nothing", "scanner", func(string) bool { return false }, false},
-		{"agent-specific decider applies hold", "publicist", func(agent string) bool { return agent == "publicist" }, true},
+		{"hold-gated level applies hold", "scanner", func(string, string) bool { return true }, true},
+		{"non-hold-gated level applies nothing", "scanner", func(string, string) bool { return false }, false},
+		{"agent-specific decider applies hold", "publicist", func(agent, _ string) bool { return agent == "publicist" }, true},
 		{"nil decider applies nothing", "scanner", nil, false},
 	}
 	for _, tc := range cases {
@@ -323,7 +323,7 @@ func TestPRRequestWatcher_RetriesRequiredHoldLabelFailure(t *testing.T) {
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	c.prAuthz = func(string, int) error { return nil }
-	c.prHoldLabel = func(string) bool { return true }
+	c.prHoldLabel = func(string, string) bool { return true }
 
 	dir := t.TempDir()
 	old := prRequestDirForTest
@@ -468,5 +468,55 @@ func TestPRRequestWatcher_QuarantinesAfterMaxAge(t *testing.T) {
 	c.processPRRequests(context.Background(), clock)
 	if created != before {
 		t.Errorf("quarantined request must not be retried")
+	}
+}
+
+// The hive-open-pr choke point corrects a title emoji that contradicts the
+// Conventional Commits type (hivecommons/hive#13131: "📝 docs: …" failed the
+// repo's PR Type gate; 📝 is the proposal emoji, docs is 📖).
+func TestPRRequestWatcher_CorrectsTitleEmojiToConvention(t *testing.T) {
+	var createdTitle string
+	inner := newPRMockServer(t, "", nil)
+	defer inner.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/pulls") {
+			body, _ := io.ReadAll(r.Body)
+			var np map[string]any
+			_ = json.Unmarshal(body, &np)
+			createdTitle = asString(np["title"])
+			_, _ = io.WriteString(w, `{"number":13131,"html_url":"https://github.com/o/r/pull/13131"}`)
+			return
+		}
+		req, err := http.NewRequest(r.Method, inner.URL+r.URL.RequestURI(), r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/docs-1", Title: "📝 docs: describe Prow dco-signoff labels", Body: "Fixes #1", Agent: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+	if createdTitle != "📖 docs: describe Prow dco-signoff labels" {
+		t.Fatalf("PR opened with title %q", createdTitle)
 	}
 }

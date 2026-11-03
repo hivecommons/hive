@@ -1,0 +1,1 @@
+- Activity Monitor merge zap re-voiced as a real bug-zapper arc: a high-voltage snap followed by a sputtering 120 Hz mains sizzle that dies out over ~0.45 s, high-passed at 700 Hz, replacing the swept-bandpass crackle and thunk.

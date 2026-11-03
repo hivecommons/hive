@@ -1,0 +1,106 @@
+# promtool unit tests for ../prometheusrule.yaml. Run by
+# src/scripts/check-prometheusrule.sh, which extracts spec.groups into a plain
+# rule file first (promtool does not read the PrometheusRule CRD).
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="hive", instance="10.0.0.1:3002"}'
+        values: '1x5 0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: HiveMetricsDown
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: HiveMetricsDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: hive
+              instance: 10.0.0.1:3002
+            exp_annotations:
+              summary: Hive metrics endpoint is down
+              description: >-
+                Prometheus has not been able to scrape the Hive /metrics endpoint
+                (instance 10.0.0.1:3002) for 10 minutes. The pod may be
+                down, or HIVE_METRICS_TOKEN may not match the scrape credentials.
+              runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivemetricsdown
+
+  # Deployment scaled to 0: no endpoints, so no target and no `up` series at
+  # all. `up == 0` is empty here; the `absent()` branch must fire. It carries
+  # only the job label, so the instance renders empty.
+  - interval: 1m
+    input_series:
+      - series: 'unrelated_metric{job="other"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: HiveMetricsDown
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: HiveMetricsDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: hive
+            exp_annotations:
+              summary: Hive metrics endpoint is down
+              description: >-
+                Prometheus has not been able to scrape the Hive /metrics endpoint
+                (instance ) for 10 minutes. The pod may be
+                down, or HIVE_METRICS_TOKEN may not match the scrape credentials.
+              runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivemetricsdown
+
+  - interval: 1m
+    input_series:
+      # Quiet hive: +1 USD per minute is 60 USD/h only after the first hour, so
+      # use +0.1 USD per minute (~6 USD/h) for the quiet case.
+      - series: 'hive_estimated_cost_usd_total{hive_id="quiet"}'
+        values: '0+0.1x120'
+      # Hot hive: +2 USD per minute is ~120 USD/h.
+      - series: 'hive_estimated_cost_usd_total{hive_id="hot"}'
+        values: '0+2x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: HiveCostBurnHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              hive_id: hot
+            exp_annotations:
+              summary: Hive estimated LLM spend is above the hourly threshold
+              description: >-
+                Hive hot accrued $120 of
+                estimated LLM cost in the last hour, above the configured
+                threshold. The figure is an estimate (token counts x list price).
+              runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivecostburnhigh
+
+  - interval: 1m
+    input_series:
+      - series: 'hive_stage_transition_anomaly_total{hive_id="h1", kind="pr", from="a", to="b"}'
+        values: '0x10 1+0x30'
+      - series: 'hive_stage_transition_anomaly_total{hive_id="h2", kind="pr", from="a", to="b"}'
+        values: '3x40'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: HiveStageTransitionAnomalies
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: HiveStageTransitionAnomalies
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              hive_id: h1
+              kind: pr
+              from: a
+              to: b
+            exp_annotations:
+              summary: Hive rejected stage transitions
+              description: >-
+                Hive h1 rejected 1 pr stage transition(s) from a to
+                b in the last 30 minutes.
+              runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivestagetransitionanomalies

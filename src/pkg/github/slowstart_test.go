@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -298,5 +299,129 @@ func waitForSlowStartSlotClaim(t *testing.T, st *slowStartState, initialSlot tim
 			t.Fatal("timed out waiting for slow-start slot claim")
 		case <-time.After(time.Millisecond):
 		}
+	}
+}
+
+const secondaryLimitBody = `{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.","documentation_url":"x"}`
+
+func secondaryLimitResponse(header http.Header) *http.Response {
+	if header == nil {
+		header = http.Header{}
+	}
+	return &http.Response{StatusCode: http.StatusForbidden, Header: header, Body: io.NopCloser(bytes.NewBufferString(secondaryLimitBody))}
+}
+
+// A secondary-limit 403 that names no retry time backs off GitHub's
+// documented one minute, not an hour: caution ends one minute plus the
+// slow-start window after the trip. A flat hour kept one search 403 shedding
+// the projectbluefin hive's merge sweep for 70 minutes (2026-10-28).
+func TestSlowStart_HeaderlessSecondaryBacksOffOneMinute(t *testing.T) {
+	tr := newSlowStartTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		h := http.Header{}
+		// The primary bucket's reset, far out: not the secondary block's.
+		h.Set("X-RateLimit-Remaining", "4000")
+		h.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(50*time.Minute).Unix(), 10))
+		resp := secondaryLimitResponse(h)
+		resp.Request = req
+		return resp, nil
+	}))
+	before := time.Now()
+	req, _ := http.NewRequest(http.MethodGet, "http://x/search/issues", nil)
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	after := time.Now()
+	tr.state.mu.Lock()
+	until := tr.state.cautiousUntil
+	tr.state.mu.Unlock()
+	lo := before.Add(slowStartSecondaryBackoff + slowStartWindow)
+	hi := after.Add(slowStartSecondaryBackoff + slowStartWindow)
+	if until.Before(lo) || until.After(hi) {
+		t.Fatalf("caution until %s after the trip, want %s (one minute + window)", until.Sub(before).Round(time.Second), slowStartSecondaryBackoff+slowStartWindow)
+	}
+	if got := resp.Header.Get(pacingLimitHeader); got != "secondary" {
+		t.Fatalf("%s = %q, want secondary", pacingLimitHeader, got)
+	}
+}
+
+// Repeated header-less trips escalate 1m → 2m → 4m → 8m → 15m (cap), the
+// rest of one burst neither escalates nor extends, and a trip after a quiet
+// spell starts over at one minute.
+func TestSlowStart_SecondaryBackoffEscalatesAndCaps(t *testing.T) {
+	st := newSlowStartState()
+	now := time.Date(2026, 10, 28, 17, 22, 28, 0, time.UTC)
+	next := func(at time.Time) time.Duration {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return st.secondaryBackoffLocked(at)
+	}
+	if got := next(now); got != time.Minute {
+		t.Fatalf("first trip = %s, want 1m", got)
+	}
+	// The other requests of the same burst come back refused 6s later.
+	if got := next(now.Add(6 * time.Second)); got != 54*time.Second {
+		t.Fatalf("same-burst trip = %s, want the 54s left of the first back-off", got)
+	}
+	end := now.Add(time.Minute)
+	for _, want := range []time.Duration{2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute, 15 * time.Minute} {
+		at := end.Add(5 * time.Minute) // re-tripped inside the repeat horizon
+		if got := next(at); got != want {
+			t.Fatalf("repeat trip = %s, want %s", got, want)
+		}
+		end = at.Add(want)
+	}
+	if got := next(end.Add(slowStartSecondaryRepeatWithin)); got != time.Minute {
+		t.Fatalf("trip after a quiet spell = %s, want 1m (reset)", got)
+	}
+}
+
+// GitHub's named waits win over the ladder: Retry-After in seconds or as an
+// HTTP date, and X-RateLimit-Reset when X-RateLimit-Remaining is 0. A reset
+// with quota remaining is the primary bucket's and is ignored.
+func TestSecondaryLimitBackoff_HonoursNamedWaits(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	hdr := func(kv ...string) http.Header {
+		h := http.Header{}
+		for i := 0; i < len(kv); i += 2 {
+			h.Set(kv[i], kv[i+1])
+		}
+		return h
+	}
+	reset := func(d time.Duration) string { return strconv.FormatInt(now.Add(d).Unix(), 10) }
+	tests := []struct {
+		name      string
+		header    http.Header
+		body      bool
+		wantAfter time.Duration
+		wantNamed bool
+		wantSec   bool
+	}{
+		{name: "retry-after seconds", header: hdr("Retry-After", "120"), wantAfter: 2 * time.Minute, wantNamed: true, wantSec: true},
+		{name: "retry-after http date", header: hdr("Retry-After", now.Add(90*time.Second).UTC().Format(http.TimeFormat)), wantAfter: 90 * time.Second, wantNamed: true, wantSec: true},
+		{name: "unparseable retry-after uses the ladder", header: hdr("Retry-After", "soon"), wantSec: true},
+		{name: "remaining 0 honours reset", header: hdr("X-RateLimit-Remaining", "0", "X-RateLimit-Reset", reset(40*time.Second)), body: true, wantAfter: 40 * time.Second, wantNamed: true, wantSec: true},
+		{name: "reset with quota left is ignored", header: hdr("X-RateLimit-Remaining", "25", "X-RateLimit-Reset", reset(50*time.Minute)), body: true, wantSec: true},
+		{name: "header-less body", body: true, wantSec: true},
+		{name: "plain permission 403"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: http.StatusForbidden, Header: tc.header, Body: io.NopCloser(bytes.NewBufferString(`{"message":"Resource not accessible by integration"}`))}
+			if tc.header == nil {
+				resp.Header = http.Header{}
+			}
+			if tc.body {
+				resp.Body = io.NopCloser(bytes.NewBufferString(secondaryLimitBody))
+			}
+			after, named, secondary := secondaryLimitBackoff(resp, now)
+			if secondary != tc.wantSec || named != tc.wantNamed {
+				t.Fatalf("secondary=%v named=%v, want %v/%v", secondary, named, tc.wantSec, tc.wantNamed)
+			}
+			if d := after - tc.wantAfter; d < -time.Second || d > time.Second {
+				t.Fatalf("after = %s, want %s", after, tc.wantAfter)
+			}
+		})
 	}
 }

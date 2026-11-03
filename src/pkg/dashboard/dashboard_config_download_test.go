@@ -23,7 +23,9 @@ func TestHandleConfigDownloadSuccess(t *testing.T) {
 
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo", Repos: []string{"testrepo"}},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
@@ -73,8 +75,10 @@ func TestHandleConfigDownloadMissingFile(t *testing.T) {
 func TestHandleSnapshotAPIEnabled(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
-		Hub:     config.HubConfig{AutoSnapshot: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
+		Hub: config.HubConfig{AutoSnapshot: true},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
@@ -92,8 +96,10 @@ func TestHandleSnapshotAPIEnabled(t *testing.T) {
 func TestHandleSnapshotAPIWithStatus(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
-		Hub:     config.HubConfig{AutoSnapshot: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
+		Hub: config.HubConfig{AutoSnapshot: true},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
@@ -114,8 +120,10 @@ func TestHandleSnapshotAPIWithStatus(t *testing.T) {
 func TestHandleSnapshotPageWithHubURL(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
-		Hub:     config.HubConfig{URL: "https://custom-hub.example.com", AutoSnapshot: false},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
+		Hub: config.HubConfig{URL: "https://custom-hub.example.com", AutoSnapshot: false},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
@@ -135,7 +143,9 @@ func TestHandleSnapshotPageWithHubURL(t *testing.T) {
 func TestHandleHistoryNoSeedFile(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	srv := NewServer(0, slog.Default())
 	gov := governor.New(cfg.Governor, cfg.Agents, slog.Default())
@@ -153,7 +163,9 @@ func TestHandleHistoryNoSeedFile(t *testing.T) {
 func TestHandleTrendsWeekRange(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	srv := NewServer(0, slog.Default())
 	gov := governor.New(cfg.Governor, cfg.Agents, slog.Default())
@@ -171,7 +183,9 @@ func TestHandleTrendsWeekRange(t *testing.T) {
 func TestHandleTrendsCustomHours(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	srv := NewServer(0, slog.Default())
 	gov := governor.New(cfg.Governor, cfg.Agents, slog.Default())
@@ -189,7 +203,9 @@ func TestHandleTrendsCustomHours(t *testing.T) {
 func TestHandleTrendsMaxHoursClamped(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	srv := NewServer(0, slog.Default())
 	gov := governor.New(cfg.Governor, cfg.Agents, slog.Default())
@@ -213,8 +229,10 @@ func TestHandleSelfUpgradeWithHubURL(t *testing.T) {
 	defer hub.Close()
 
 	cfg := &config.Config{
-		Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:     map[string]config.AgentConfig{},
+		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Hub:        config.HubConfig{URL: hub.URL},
 		HiveID:     "test-hive-123",
 		Dashboard:  config.DashboardConfig{AuthToken: "spoke-token"},
@@ -262,8 +280,10 @@ func TestHandleSelfUpgradeForwardsSpokeSessionProof(t *testing.T) {
 	defer hub.Close()
 
 	cfg := &config.Config{
-		Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:     map[string]config.AgentConfig{},
+		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Hub:        config.HubConfig{URL: hub.URL},
 		HiveID:     "test-hive-123",
 		Dashboard:  config.DashboardConfig{AuthToken: proofToken},
@@ -285,8 +305,10 @@ func TestHandleSelfUpgradeForwardsSpokeSessionProof(t *testing.T) {
 
 func TestHandleSelfUpgradeHubUnreachable(t *testing.T) {
 	cfg := &config.Config{
-		Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:     map[string]config.AgentConfig{},
+		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Hub:        config.HubConfig{URL: "http://127.0.0.1:1"},
 		HiveID:     "test-hive-123",
 		Dashboard:  config.DashboardConfig{AuthToken: "spoke-token"},

@@ -16,8 +16,9 @@ import (
 //     escalated PR is out of the automated lane by definition).
 //  2. The PR pill itself takes the needs-human (alert) tint over mergeable
 //     green.
-//  3. The section header shows a "N need human review" counter, hidden at
-//     zero.
+//  3. The section header shows the inbox's "· N your turn" counter (the
+//     your-turn feature replaced the old "need human review" count), hidden
+//     only when both of its numbers are zero.
 func TestNeedsHumanEscalationBadgePinned(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
@@ -28,12 +29,14 @@ func TestNeedsHumanEscalationBadgePinned(t *testing.T) {
 		"pill-needs-human-badge",
 		`<button type="button" class="repo-pr-pill needs-human pill-needs-human-badge pill-icon repo-pill-filter-toggle"`,
 		`aria-label="${esc(needsHumanTip)}"${repoPillFilterAttrs('needs-human')}>⚠</button>`,
+		// The badge names the label, not whose turn it is.
+		"'Labelled needs-human: automated fix attempts exhausted. '",
 		// Pill tint: needs-human wins over mergeable.
 		".repo-pr-pill.needs-human",
 		"needsHuman ? ' needs-human' : mergeClass",
 		// Section-header counter element + text.
 		"repos-needs-human",
-		"' human review'",
+		"yourTurnCounterText(inboxCounts)",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("dashboard needs-human escalation UI missing snippet %q", snippet)

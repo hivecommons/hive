@@ -63,7 +63,8 @@ env:
 jobs:
   testutil-guard:
     name: testutil-guard
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -138,6 +139,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       - name: internal/testutil coverage floor
         working-directory: src

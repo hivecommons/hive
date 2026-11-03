@@ -9,7 +9,7 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 - Docker or Podman if you are exercising containerized contributor relay or deployment paths.
 - `tmux` for local agent/contributor workflows that attach CLIs to terminal sessions.
 - `just` if you use the repository's helper recipes (`brew install just` on macOS, or install from the `just` project for your platform).
-- Optional agent CLIs depending on what you test locally: Claude Code, GitHub Copilot/`gh`, Gemini, Bob, Goose, Codex, Pi, or Antigravity.
+- Optional agent CLIs depending on what you test locally: Claude Code, GitHub Copilot/`gh`, Bob, Goose, Codex, Pi, or Antigravity.
 
 ## Clone and branch
 
@@ -23,11 +23,16 @@ Use `v5` as the PR base for ordinary Hive development (`v4` is feature-frozen an
 
 ## Build
 
-Build every package in the Go module:
+`src/` is a two-module Go workspace (`src/go.work`): the root module
+`github.com/hivecommons/hive` and the nested Crux agent-runtime module
+`github.com/hivecommons/hive/crux` at `src/crux/` (see
+[`src/docs/design/crux.md`](../src/docs/design/crux.md)). In workspace mode
+`./...` covers the **root module only**; the Crux module is addressed from
+`src/` as `./crux/...`. Build every package in both modules:
 
 ```bash
 cd src
-go build ./...
+go build ./... ./crux/...
 ```
 
 To build only the main Hive binary during quick iteration:
@@ -39,12 +44,16 @@ go build ./cmd/hive
 
 ## Test
 
-Run the module tests from `src/`:
+Run both modules' tests from `src/`:
 
 ```bash
 cd src
-go test ./...
+go test ./... ./crux/...
 ```
+
+(`cd src/crux && go test ./...` is the same Crux run from inside the module;
+`GOWORK=off` from `src/` builds the root module with the `replace` in
+`src/go.mod` and is what the container images do.)
 
 The `src/test/` package holds the inception e2e/regression suite. Those tests
 talk to a **live hive over the network** and sit behind the `integration` build
@@ -70,6 +79,7 @@ Useful narrower loops:
 ```bash
 cd src
 go test ./pkg/...
+go test ./crux/...
 go test ./cmd/hive
 ```
 
@@ -81,27 +91,31 @@ workflow that publishes the required `test` check — uses the same three flags:
 
 ```bash
 cd src
-go test ./pkg/hub     -short -race -count=1 -run '<1/3 slice>'   # test (hub i/3)
-go test ./pkg/agent   -short -race -count=1 -run '<1/5 slice>'   # test (agent i/5)
-go test $PKGS         -short -race -count=1                      # test (rest i/3)
+go test ./pkg/hub       -short -race -count=1 -run '<1/4 slice>'   # test (hub i/4)
+go test ./pkg/dashboard -short -race -count=1 -run '<1/4 slice>'   # test (dashboard i/4)
+go test ./pkg/scheduler -short -race -count=1 -run '<1/3 slice>'   # test (scheduler i/3)
+go test ./crux/agent    -short -race -count=1 -run '<1/5 slice>'   # test (agent i/5)
+go test $PKGS           -short -race -count=1                      # test (rest i/4)
 ```
 
-The workflow shards for wall-clock only: `pkg/hub` and `pkg/agent` are each
-sliced across several jobs by test *function* (they are single packages too
-slow to run whole), and everything else from
-`go list ./pkg/... ./cmd/... ./internal/...` is
+The workflow shards for wall-clock only: `pkg/hub`, `pkg/dashboard`,
+`pkg/scheduler` and `crux/agent` are each sliced across several jobs by test
+*function* (they are single packages too slow to run whole), and everything
+else from
+`go list ./pkg/... ./cmd/... ./internal/... ./crux/...` is
 partitioned into balanced buckets. Every shard also runs with `-v` and posts
 its slowest test functions to the job's step summary — look there before
 reaching for a local profile when the gate feels slow. Scheduled runs add
 `-shuffle=on` (the seed is in the log); the PR gate does not, so an
 order-dependent test shows up as a filed issue rather than as a red PR. The union of the shards is the whole of `./pkg/...`,
-`./cmd/...`, and `./internal/...` (the shared test helpers in
-`internal/testutil`), so what changes between your loop and the gate is the
-*flags*, not the coverage. To reproduce the gate locally in one unsharded run:
+`./cmd/...`, `./internal/...` (the shared test helpers in
+`internal/testutil`) and `./crux/...` (the Crux module), so what changes
+between your loop and the gate is the *flags*, not the coverage. To reproduce
+the gate locally in one unsharded run:
 
 ```bash
 cd src
-go test ./pkg/... ./cmd/... ./internal/... -short -race -count=1
+go test ./pkg/... ./cmd/... ./internal/... ./crux/... -short -race -count=1
 ```
 
 What each flag changes:
@@ -138,6 +152,42 @@ Two flags that appear in CI but are *not* part of the PR gate:
   report. Coverage is scored, but it is not the required merge gate; a failing
   test is.
 
+### Affected-package selection on pull requests
+
+On a pull request the gate does not always run every package. The
+`list-packages` job diffs the PR merge commit against its base parent and runs
+[`.github/scripts/affected-go-packages.sh`](../.github/scripts/affected-go-packages.sh),
+which selects:
+
+- the packages containing a changed `.go` file;
+- their reverse dependencies, including test-only imports (from
+  `go list -test`), for changes to non-test files — a `_test.go` change is
+  never compiled into importers;
+- packages whose tests name a changed file or directory as a string literal
+  (tests that read another package's source as text);
+- `./internal/...`, `pkg/config` and `pkg/rotation`, whose tests scan the
+  whole source tree.
+
+It falls back to the **full suite** for anything it cannot reason about: a
+change outside `src/` other than `docs/`, `changelog.d/` and `CHANGELOG.md`
+(workflows, `.github/scripts/`, `bin/`, `config/`, `Justfile`, `Makefile`,
+`dashboard/openapi.json`); `src/go.mod`/`src/go.sum`; `src/scripts/`; the
+shared harness under `src/internal/`; any non-Go file under `src/` (embedded
+static assets, docs, policies, fixtures — several are read across packages);
+any `testdata/` file; a `.go` file outside a module package; and any git or
+`go list` failure. The repository variable `HIVE_AFFECTED_TEST_SELECTION=off`
+forces the full suite on PRs without a code change.
+
+Every shard job still runs: a hub, agent, dashboard-shuffle or rest lane with
+nothing selected logs why and succeeds without testing, so the required `test`
+and `coverage` contexts never wait on a missing check. On a partial run the
+coverage job scores only the selected packages, each against its unchanged
+floor, fails if a selected package produced no result, labels the `./pkg/...`
+total as selection-only, and takes the no-test-files gate from the whole tree.
+It never writes floors or baselines. The safety net is unchanged: every push
+to a release branch and every scheduled run executes the full suite, and
+[`coverage-hourly.yml`](../.github/workflows/coverage-hourly.yml) scores it.
+
 Neither the PR gate nor the cron runs `./test/...`: both enumerate
 `./pkg/... ./cmd/... ./internal/...` explicitly, and the integration suite additionally needs
 the `integration` build tag and a live hive, as described above.
@@ -150,11 +200,11 @@ Run `gofmt` on Go files you edit:
 gofmt -w path/to/file.go
 ```
 
-The v5 CI workflow runs `go vet ./...` after building the Hive binary. Reproduce that check locally from the Go module:
+The v5 CI workflow runs `go vet ./... ./crux/...` after building the Hive binary. Reproduce that check locally from the Go workspace:
 
 ```bash
 cd src
-go vet ./...
+go vet ./... ./crux/...
 ```
 
 
@@ -195,7 +245,8 @@ There is no public `just lint` recipe in the current root `Justfile`; use `go ve
 
 ## Running Hive locally
 
-The quickest operator path remains Docker Compose from the root README:
+The quickest operator path remains Docker Compose; see the full quick start in
+[`src/docs/quickstart-docker-compose.md`](../src/docs/quickstart-docker-compose.md):
 
 ```bash
 cp src/hive.yaml.example src/hive.yaml
@@ -222,10 +273,11 @@ Current public recipes are centered on the **contribute** workflow:
 
 - `just contribute-check <backend>` — read-only preflight for an agent backend CLI.
 - `just contribute-setup <backend>` — one-time setup for GitHub auth, hub registration, and backend readiness.
-- `just contribute-hive [backend] [mode]` — start contributing work to a hive, using a container by default or local mode when requested.
+- `just contribute-hive [backend] [mode]` — start contributing work to a hive, using a container by default or local mode when requested. `mode` is `docker` (default), `local` or `krun` (same as `HIVE_CONTAINER_OCI_RUNTIME=krun`); an unknown backend or mode is refused before anything starts.
 - `just contribute-status`, `just contribute-browse`, and `just contribute-stop` — inspect, discover, or stop contributor relay activity.
 - `just contribute-move [backend]` — move a legacy positional contributor relay to another machine by reissuing its credential instead of hand-copying `contributor.env`; see [contributor-relay.md](../src/docs/contributor-relay.md#option-2--reissue-the-credential).
 - `just contribute-k8s [namespace] [outfile] [image_tag]` — print Kubernetes manifests for a headless contributor workload; it prints or writes the manifest you request and does not apply it.
+  - Optional `HIVE_K8S_RUNTIME_CLASS=<name>` (e.g. `gvisor`, `kata-qemu`) sets `runtimeClassName` on the contributor pod; unset emits no field. The RuntimeClass must already exist in the cluster.
 - `just hive-api <endpoint>` and `just hive-api-docs` — inspect hub API endpoints for the configured hive.
 - `just backend-smoke [backends]` — opt-in live smoke of the contributor CLI integration (`bin/test_backend_smoke.sh`) with this machine's own credentials; keyless machines still run the drift and stub wire-contract checks. See [backend-smoke.md](../src/docs/backend-smoke.md).
 

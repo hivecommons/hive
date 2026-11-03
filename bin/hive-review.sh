@@ -49,7 +49,14 @@
 
 set -euo pipefail
 
-REQ_DIR="/var/run/hive-metrics/review-requests"
+# Inside a sandbox (Podman or a Kubernetes Job) the pod-local relay dir is not
+# reachable; hive sets HIVE_REVIEW_REQUEST_DIR to the kick's workspace spool and
+# relays from there, attributing the request to the kick's own agent whatever
+# this script writes in "agent" (hivecommons/hive#14986). The spool is
+# group-writable, so hive also sets HIVE_REVIEW_SPOOL_KEY, a per-run key, and
+# accepts only a request MACed with it: the request is then written as
+# {"request": "<request JSON>", "mac": "<hex HMAC-SHA256(key, request JSON)>"}.
+REQ_DIR="${HIVE_REVIEW_REQUEST_DIR:-/var/run/hive-metrics/review-requests}"
 
 REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""; VERDICT_FILE=""; VERDICT=""; REVISE=0
 while [ $# -gt 0 ]; do
@@ -198,8 +205,15 @@ if verdict.strip():
                              % (i, obj.get("repo"), obj.get("number"), repo, number))
             raise SystemExit(2)
     req["report"] = verdict
+data = json.dumps(req)
+# Read from the environment, never argv: argv is visible to every user.
+key = os.environ.get("HIVE_REVIEW_SPOOL_KEY", "")
+if key:
+    import hashlib, hmac
+    mac = hmac.new(key.encode(), data.encode(), hashlib.sha256).hexdigest()
+    data = json.dumps({"request": data, "mac": mac})
 with open(temporary, "w") as fh:
-    json.dump(req, fh)
+    fh.write(data)
 os.replace(temporary, path)
 PY
 

@@ -43,8 +43,8 @@ func TestTerminalCopyHints(t *testing.T) {
 		"try { localStorage.setItem(TERMINAL_COPY_HINT_LS_KEY, '1'); } catch {}",
 		".terminal-copy-hint:not(.needs-login)",
 		"data-action=\"dismissTerminalCopyHint\"",
-		"${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}",
-		"${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}",
+		"${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}",
+		"${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("static dashboard terminal copy guidance is missing %q", want)
@@ -84,6 +84,7 @@ func TestTerminalCopyHintBannerRendering(t *testing.T) {
 	script := `
 function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function terminalCopyHintDismissed(){ return false; }
+const TERMINAL_KEYBOARD_COPY_HINT = 'keyboard copy hint';
 function terminalCopyUrlButtonHtml(agentName, hasLoginURL){ if (!agentName || !hasLoginURL) return ''; return '<button data-action="copyTerminalUrl">Copy login URL</button>'; }
 ` + jsFunc(t, html, "terminalCopyHintHtml") + `
 const withURL = terminalCopyHintHtml(true, false, 'scanner', 'https://github.com/login/device', '', '', '');
@@ -92,6 +93,14 @@ const noURL = terminalCopyHintHtml(true, false, 'scanner', '', '', '', '');
 if (!noURL.includes('no login URL is visible') || noURL.includes('copyTerminalUrl') || noURL.includes('The URL is on its terminal')) throw new Error('no-URL login banner lied or showed copy control: '+noURL);
 const backend = terminalCopyHintHtml(false, false, 'scanner', '', 'unreachable', 'Inference backend outage (401): Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute', '');
 if (!backend.includes('backend-auth-error') || !backend.includes('not an interactive login') || backend.includes('copyTerminalUrl')) throw new Error('backend auth banner wrong: '+backend);
+// #11761: the proxy's full error replaces the clipped pane line, escaped and wrappable.
+const full = 'inference backend returned 401: {"error":{"message":"Authentication Error, Invalid proxy server token passed. Received API Key = sk-...abcd, Key Hash (Token) = deadbeef. Unable to find token in cache or LiteLLM_VerificationTokenTable","type":"auth_error"}} (upstream: https://gw.example/v1/chat/completions)';
+const backendFull = terminalCopyHintHtml(false, false, 'scanner', '', 'unreachable', 'Inference backend rejected credentials (401): Authentication Error, Invalid proxy server tok', '', full);
+if (!backendFull.includes('Inference backend rejected credentials (401).') || !backendFull.includes('terminal-copy-hint-detail') || !backendFull.includes('LiteLLM_VerificationTokenTable') || !backendFull.includes('&quot;error&quot;')) throw new Error('backend auth banner did not show full proxy error: '+backendFull);
+const midRetry = terminalCopyHintHtml(false, false, 'scanner', '', '', '', '', full);
+if (!midRetry.includes('backend-auth-error') || !midRetry.includes('upstream: https://gw.example/v1/chat/completions')) throw new Error('mid-retry banner missing full proxy error: '+midRetry);
+const noFull = terminalCopyHintHtml(false, false, 'scanner', '', '', '', '', '');
+if (noFull.includes('backend-auth-error')) throw new Error('banner without any inference error must keep the keyboard hint: '+noFull);
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("node terminal copy banner assertions failed: %v\n%s", err, out)

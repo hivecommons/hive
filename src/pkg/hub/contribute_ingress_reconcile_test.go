@@ -123,8 +123,9 @@ func decodePatch(t *testing.T, patch string) map[string]string {
 }
 
 // The issue's spoke: provisioned before #7457, so the Ingress carries the
-// cert-manager issuer and the proxy timeouts but no auth-url. Both annotations
-// go on, and ONLY those two — the merge patch must not touch what is there.
+// cert-manager issuer and the proxy timeouts but no auth-url. The #7457 pair
+// goes on, plus the #12111 error-interception pair, and ONLY those — the
+// merge patch must not touch what is there.
 func TestContributeIngressPatchAddsTheMissingAnnotations(t *testing.T) {
 	want := contributeIngressAuthAnnotations("https://hive.hivecommons.dev", "hosted-projectbluefin-common-nmq5")
 	pre7457 := map[string]string{
@@ -140,14 +141,23 @@ func TestContributeIngressPatchAddsTheMissingAnnotations(t *testing.T) {
 		t.Fatal("a pre-#7457 Ingress with no auth-url was judged converged — this is the production bug: /api/contribute/me stays 401")
 	}
 	got := decodePatch(t, patch)
-	if len(got) != 2 {
-		t.Errorf("patch touches %d annotations, want exactly the two #7457 added: %v", len(got), got)
+	if len(got) != len(want) {
+		t.Errorf("patch touches %d annotations, want exactly the %d the sweep owns: %v", len(got), len(want), got)
 	}
 	if got[ingressAuthURLAnnotation] != "https://hive.hivecommons.dev/api/saas/auth-check?hive=hosted-projectbluefin-common-nmq5&uri=$request_uri" {
 		t.Errorf("auth-url = %q", got[ingressAuthURLAnnotation])
 	}
 	if got[ingressAuthResponseHeadersAnnotation] != "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth" {
 		t.Errorf("auth-response-headers = %q", got[ingressAuthResponseHeadersAnnotation])
+	}
+	// #12111: without these the Ingress inherits the controller's global
+	// custom-http-errors (403 included) and a JSON 403 on /api/contribute
+	// reaches the browser as the error backend's HTML 200.
+	if got[ingressCustomHTTPErrorsAnnotation] != "502,503" {
+		t.Errorf("custom-http-errors = %q, want 502,503", got[ingressCustomHTTPErrorsAnnotation])
+	}
+	if got[ingressDefaultBackendAnnotation] != "hive-error-pages" {
+		t.Errorf("default-backend = %q, want hive-error-pages", got[ingressDefaultBackendAnnotation])
 	}
 	for key := range pre7457 {
 		if _, touched := got[key]; touched {
@@ -196,6 +206,8 @@ func TestContributeIngressPatchReplacesOnlyTheStaleValue(t *testing.T) {
 	live := map[string]string{
 		ingressAuthURLAnnotation:             "https://previous-hub.example.com/api/saas/auth-check?hive=hosted-hive-x&uri=$request_uri",
 		ingressAuthResponseHeadersAnnotation: ingressAuthResponseHeaders,
+		ingressCustomHTTPErrorsAnnotation:    contributeIngressCustomHTTPErrors,
+		ingressDefaultBackendAnnotation:      contributeIngressDefaultBackend,
 	}
 	patch, err := contributeIngressAnnotationPatch(liveIngressJSON(t, live), want)
 	if err != nil {
@@ -208,16 +220,16 @@ func TestContributeIngressPatchReplacesOnlyTheStaleValue(t *testing.T) {
 }
 
 // An Ingress with no annotations at all (kubectl prints no `annotations` key)
-// still gets both — the absent map must read as "everything missing", not as
-// a parse failure.
+// still gets the full set — the absent map must read as "everything missing",
+// not as a parse failure.
 func TestContributeIngressPatchHandlesNoAnnotationsAtAll(t *testing.T) {
 	want := contributeIngressAuthAnnotations("https://hive.hivecommons.dev", "hosted-hive-x")
 	patch, err := contributeIngressAnnotationPatch([]byte(`{"metadata":{"name":"hive-contribute"}}`), want)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := decodePatch(t, patch); len(got) != 2 {
-		t.Errorf("patch = %v, want both annotations", got)
+	if got := decodePatch(t, patch); len(got) != len(want) {
+		t.Errorf("patch = %v, want all %d annotations", got, len(want))
 	}
 }
 

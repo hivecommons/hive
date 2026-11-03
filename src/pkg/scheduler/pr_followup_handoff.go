@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/prfollowup"
@@ -18,9 +17,9 @@ var prFollowUpDir = prfollowup.Dir
 // and how the PR was built, plus any human feedback that could not be
 // resumed into the authoring session. Regular kicks still /clear the
 // conversation; this is what lets the fresh session start from the original
-// reasoning instead of rebuilding it from the diff. Inserted at the same
-// below-the-header seam as the fix-before-new blocks, after them, so it lands
-// on top: the note is read before the lists it explains.
+// reasoning instead of rebuilding it from the diff. Appended to the dynamic
+// tail directly after the fix-before-new blocks (kick_layout.go), next to the
+// lists it explains.
 func (s *Scheduler) addPRFollowUpHandoff(agentName string, message string) string {
 	if message == "" || s.cfg == nil || !s.cfg.PRFollowUpResumeEnabled() || !s.isPRCapableAgent(agentName) {
 		return message
@@ -33,8 +32,5 @@ func (s *Scheduler) addPRFollowUpHandoff(agentName string, message string) strin
 	if section == "" {
 		return message
 	}
-	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
-		return message[:idx+1] + section + message[idx+1:]
-	}
-	return section + message
+	return appendKickSection(message, section)
 }

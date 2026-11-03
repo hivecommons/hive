@@ -431,3 +431,17 @@ func TestLiteLLMProbeResult_EdgeBlockedWithoutDefaultModelExplainsSkip(t *testin
 		t.Errorf("no default model must not trigger an inference POST (got %d chat calls)", chatCalls)
 	}
 }
+
+func TestDescribeEdgeServer(t *testing.T) {
+	cases := map[string]string{
+		"awselb/2.0": "an AWS Elastic Load Balancer",
+		"nginx":      "an nginx ingress/reverse proxy",
+		"uvicorn":    "",
+		"":           "",
+	}
+	for in, want := range cases {
+		if got := describeEdgeServer(in); got != want {
+			t.Errorf("describeEdgeServer(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

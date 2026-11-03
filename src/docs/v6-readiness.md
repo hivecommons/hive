@@ -14,8 +14,9 @@ Status today: merges to `v6` retag the **`edge`** channel (see
 track named on the line epic
 ([#7563](https://github.com/hivecommons/hive/issues/7563)) has merged code,
 but **merged is not exercised** — only the surfaces with a ✅ or partial
-evidence row in section 3 have run against a live hive (so far one passing
-runs-via-chat exercise, and a partial exercise of the serialized merge lane).
+evidence row in section 3 have run against a live hive (so far passing
+runs-via-chat, dashboard chat, GitHub @-mention, operator admin MCP and
+serialized merge lane exercises).
 This bar is what turns one into the other.
 
 ## 1. Channel binding
@@ -24,13 +25,15 @@ This bar is what turns one into the other.
 channel (a `candidate`-equivalent for the v6 line; the name is a maintainer
 decision recorded here) only when:
 
-- [ ] The **v5 GA bar's Release-train rows are green**
-      ([#6016](https://github.com/hivecommons/hive/issues/6016)). v6 does not
-      compete with v5 GA evidence for maintainer or agent attention; this
-      mirrors the accepted priority in
-      [#7577](https://github.com/hivecommons/hive/issues/7577) and
-      [ROADMAP.md](../../ROADMAP.md#v6--dashboard-optional-operation-line-open).
-- [ ] `v6` is present in `.github/release-lines.yml` and the release-line
+- [x] The **v5 GA bar's Release-train rows are green**
+      ([#6016](https://github.com/hivecommons/hive/issues/6016) closed
+      2026-09-21 with the channel re-base executed; post-hoc soak evidence
+      [#8062](https://github.com/hivecommons/hive/issues/8062)). The #7577
+      sequencing gate is retired
+      ([#8171](https://github.com/hivecommons/hive/issues/8171)).
+- [x] `v6` is present in `.github/release-lines.yml` (as a CI/publish extra;
+      not a `release_lines` entry; the GA-cut checklist is in
+      [`release-line-guard.md`](release-line-guard.md)) and the release-line
       guard is green on `v6`.
 - [ ] Every **shipped surface** below has its guard-invariant conformance row
       and at least one live-exercise row checked with linked evidence.
@@ -104,19 +107,19 @@ not a unit test:
 
 | Surface | Exercise definition | Evidence |
 | --- | --- | --- |
-| GitHub @-mention triggers | A human mentions the App on a real issue/PR; the kick runs; the 👀 ack and audit entries are linked. | ⬜ |
+| GitHub @-mention triggers | A human mentions the App on a real issue/PR; the kick runs; the 👀 ack and audit entries are linked. | ✅ Live exercise passed on a self-hosted v6 edge hive at `708a59d`: a maintainer mention on a sandbox issue was acked with 👀, audited as `agent_mention_kicked`, kicked with `source=mention:<node id>`, and answered on the thread; evidence on [#7563](https://github.com/hivecommons/hive/issues/7563#issuecomment-6236708574) and tracker row checked in the [#7563 v6 readiness bar section](https://github.com/hivecommons/hive/issues/7563). |
 | GitHub Actions trigger (comment relay) | One manual `workflow_dispatch` of `hive-action-smoke` against a real issue; kick recorded with `source=action`; 👀 ack and audit are linked. | ⬜ |
 | GitHub Actions trigger (OIDC dispatch) | One manual `workflow_dispatch` of `hive-action-smoke` with `transport=oidc` and `hive_url` set to the hive dashboard URL; kick recorded with `source=action, transport=oidc`; Actions receipt: one `workflow_dispatch` of `hive-action-smoke` returns a receipt; audit is linked. | ⬜ |
 | Slack | One command round-trip and one notification delivery over Socket Mode from a pull-only cluster. | ⬜ |
 | Discord | Reconnect/backoff observed across one induced disconnect; notification parity spot-checked. | ⬜ |
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |
-| Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ Pending live exercise; code landed in [#8326](https://github.com/hivecommons/hive/pull/8326) and conformance is tracked by the row above. |
-| Operator admin MCP | One endpoint client performs `tools/list`, one read, one write preview and one confirmed low-risk write against a live hive; one stdio client selects the same hive from a roster and performs one read; the linked evidence shows the confirmation text, result scrubbing, and dashboard audit/API outcome. | ⬜ Pending live exercise; code landed across [#8807](https://github.com/hivecommons/hive/pull/8807), [#8816](https://github.com/hivecommons/hive/pull/8816), [#8823](https://github.com/hivecommons/hive/pull/8823), [#8829](https://github.com/hivecommons/hive/pull/8829), [#8828](https://github.com/hivecommons/hive/pull/8828), and [#8827](https://github.com/hivecommons/hive/pull/8827). |
+| Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ✅ Live exercise passed on a self-hosted v6 edge spoke `d3c68d54f` (per-user session `onkar717:owner`, audit `chat.dashboard.message seq=36`); evidence on [#7563](https://github.com/hivecommons/hive/issues/7563#issuecomment-6174189077) and tracker row checked in the [#7563 v6 readiness bar section](https://github.com/hivecommons/hive/issues/7563). |
+| Operator admin MCP | One endpoint client performs `tools/list`, one read, one write preview and one confirmed low-risk write against a live hive; one stdio client selects the same hive from a roster and performs one read; the linked evidence shows the confirmation text, result scrubbing, and dashboard audit/API outcome. | ✅ Live exercise passed on a self-hosted v6 edge hive at `708a59d`: endpoint `tools/list`, `settings_read` with scrub markers, `agent.pause` / `agent.resume` preview and confirm with dashboard audit entries, and stdio `select_hive` plus one read; evidence on [#7563](https://github.com/hivecommons/hive/issues/7563#issuecomment-6236709046) and tracker row checked in the [#7563 v6 readiness bar section](https://github.com/hivecommons/hive/issues/7563). Follow-ups: [#12796](https://github.com/hivecommons/hive/issues/12796) (audit attribution docs), [#12797](https://github.com/hivecommons/hive/issues/12797) (`agent.resume` preview omits the pause-ownership claim). |
 | Inception via chat | One live greenfield run reaches `complete` entirely through the chat spine. | ⬜ Pending live exercise; code landed in [#8333](https://github.com/hivecommons/hive/pull/8333) / [#8393](https://github.com/hivecommons/hive/pull/8393). Exercise manually per the [runbook](v6-readiness-runbook.md#inception-via-chat); `just runs-e2e` drives staged runs, not inception, so it does not cover this row. |
 | Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ✅ Live exercise passed with `just runs-e2e-v6` against `clubanderson/hive-runs-e2e#11`; evidence on [#8466](https://github.com/hivecommons/hive/issues/8466#issuecomment-5805851875) and tracker row checked in the [#7563 v6 readiness bar section](https://github.com/hivecommons/hive/issues/7563). |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
-| Serialized merge lane (`merge_strategy: hive-serialized`, [#10884](https://github.com/hivecommons/hive/issues/10884)) | On a personal-account repo with no GitHub merge queue, following the [runbook](v6-readiness-runbook.md#evidence-template) evidence template: (1) strategy switch and ACMM Eval credit ("satisfied by Hive serialized merge lane"); (2) a single merge; (3) two PRs at once (ordering, and the behind PR is updated); (4) a hold refused at the front; (5) a failed required check at the front; (6) the front timeout; (7) a fork PR. | 🟨 Partial. A self-hosted v6 hive at `f55b5fe66` merged four PRs through the lane, which produced [#10984](https://github.com/hivecommons/hive/issues/10984) (fixed by [#10985](https://github.com/hivecommons/hive/pull/10985)) and [#11023](https://github.com/hivecommons/hive/issues/11023). **Done:** single merge; update-then-merge on the App sweep path; front timeout. **Not yet done:** hold at the front; red-at-front leave (blocked by #11023); fork PR. Row stays unchecked until every step has linked evidence. |
+| Serialized merge lane (`merge_strategy: hive-serialized`, [#10884](https://github.com/hivecommons/hive/issues/10884)) | On a personal-account repo with no GitHub merge queue, following the [runbook](v6-readiness-runbook.md#evidence-template) evidence template: (1) strategy switch and ACMM Eval credit ("satisfied by Hive serialized merge lane"); (2) a single merge; (3) two PRs at once (ordering, and the behind PR is updated); (4) a hold refused at the front; (5) a failed required check at the front; (6) the front timeout; (7) a fork PR. | ✅ Live exercise passed on a self-hosted v6 edge hive at `ba77df2`, all seven steps on one build ([evidence](https://github.com/hivecommons/hive/issues/7563#issuecomment-6547007887); tracker row in the [#7563 v6 readiness bar section](https://github.com/hivecommons/hive/issues/7563)): (1) ACMM credit; (2) single merge; (3) two at once, with the behind PR updated by a merge of the tip; (4) a `hold` on the front PR left the front 1s later with "a hold label is present" and the next PR was promoted in the same second (failed at `dd406b3` as [#14934](https://github.com/hivecommons/hive/issues/14934)); (5) red at the front left on the first round after the check failed, and the next PR was promoted in the same second; (6) front timeout after 60m with the next PR promoted in the same transaction (natural timeouts; timeout code unchanged since `dd406b3`); (7) up-to-date fork merges, and a behind fork with `base_sync` off leaves the front at once with one comment, then rejoins and merges after the author merges the tip. **Not exercised:** `front-extend` at a short `merge_front_timeout`; the `base_sync`-on fork leg. **Found on the way:** a closed front PR holds the front until its timeout ([#16056](https://github.com/hivecommons/hive/pull/16056)); a front whose writes are contained holds it for the full timeout ([#16059](https://github.com/hivecommons/hive/pull/16059)). The `dd406b3` run ([evidence](https://github.com/hivecommons/hive/issues/7563#issuecomment-6470375751)) produced [#14934](https://github.com/hivecommons/hive/issues/14934)–[#14938](https://github.com/hivecommons/hive/issues/14938), all fixed in `ba77df2`; an earlier partial run at `f55b5fe66` produced [#10984](https://github.com/hivecommons/hive/issues/10984) (fixed by [#10985](https://github.com/hivecommons/hive/pull/10985)) and [#11023](https://github.com/hivecommons/hive/issues/11023) (fixed by [#11031](https://github.com/hivecommons/hive/pull/11031)). |
 
 ## Admin MCP readiness evidence
 
@@ -134,7 +137,7 @@ a roster but has exactly one active hive at a time
 | `ioscan` on inbound text | The track does not introduce a direct shell text path; text-bearing writes are previewed and confirmed, then forwarded to the existing dashboard endpoints. Phase 0 made the risky kick path enforce `ioscan` before this surface could expose it, while `TestAgentNudgePreviewRequiresVerbatimPrompt` keeps the operator confirmation verbatim and `TestFeatureSettingsPreviewDisclosesProtectionChanges` calls out changes to the scanner setting itself. |
 | Outbound secret/canary scrubbing | `TestHandlerReadToolScrubsAndWraps` proves read results are wrapped and scrubbed before becoming MCP text. The stdio and endpoint transports share `pkg/adminmcp` envelopes and tool definitions (`TestSameToolAnswerMatchesHTTPAndStdioWrapper`), so the masking behaviour is common rather than transport-local. |
 | Write safety contract | [#8823](https://github.com/hivecommons/hive/pull/8823) added opt-in writes, durable confirmations and one-shot confirm tokens (`TestWritePreviewDisabledByDefault`, `TestWriteConfirmationPersistsAndExecutesAfterRestart`); [#8829](https://github.com/hivecommons/hive/pull/8829), [#8828](https://github.com/hivecommons/hive/pull/8828), and [#8827](https://github.com/hivecommons/hive/pull/8827) registered the agent, fleet, repository, spend, contributor and ops writes with preview/request tests. |
-| Live exercise | Not complete. The live-exercise table above names the minimum endpoint and stdio smoke that must be linked before the surface counts toward channel binding. |
+| Live exercise | Complete. The endpoint and stdio smoke named in the live-exercise table above passed on a self-hosted v6 edge hive at `708a59d` ([evidence](https://github.com/hivecommons/hive/issues/7563#issuecomment-6236709046)). |
 
 ## 4. Scope discipline
 

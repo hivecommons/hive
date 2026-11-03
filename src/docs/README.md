@@ -1,13 +1,44 @@
 # Hive introduction
 
-Hive is a governed fleet of AI coding agents for maintaining real GitHub and forge repositories. A hive helps with triage, fixes, reviews, release operations, and operational follow-up by watching the work a project already has — issues, pull requests, review queues, and health signals — then routing appropriate tasks to agents while deterministic guardrails handle filtering, permissions, merge eligibility, audit trails, and policy. Maintainers set the autonomy boundary through the Governor and ACMM levels, so Hive can range from advisory triage to carefully gated fixes and reviews without turning repository control over to an unconstrained model.
+Hive helps maintain a GitHub project. It watches reports and tasks (issues), proposed code changes (pull requests, or PRs), failed automated build and test checks (CI), known security vulnerabilities (CVEs), and Dependabot alerts. It sends AI coding agents to sort reports, make fixes, review changes, and prepare releases. See [Integrations](integrations.md) for supported agent backends.
 
-Hive is for maintainers of busy open source projects who need help keeping queues moving, and for platform teams that want a repeatable operations plane for agent work across many repositories. It is especially useful when the hard part is not invoking one agent, but coordinating many agents with clear ownership, safety checks, and a path for human oversight.
+For example, Hive can spot a missing test, record the finding on its dashboard, and — if the configured permissions allow it — ask the quality agent to propose a test in a pull request. At lower levels, a person reviews and merges that change. Autonomous merging is optional, not the starting goal.
 
-## Core concepts
+You decide what agents may do. The **AI Codebase Maturity Model (ACMM)** ties permissions to the project's safeguards: tests, coverage, review practice, and security posture. It is not a checklist for turning every issue into a PR.
+
+## Get started
+
+Choose how to obtain a running hive **before** configuring its agents:
+
+| Your situation | Start here | Expected result |
+|---|---|---|
+| You want a hosted hive, without running a cluster | [Hosted onboarding](hosted-hub.md); request at [hive.hivecommons.dev/get-started](https://hive.hivecommons.dev/get-started) | After admin approval and provisioning, **My Hives** links to your dashboard. |
+| You want to run one hive yourself | [Docker Compose](quickstart-docker-compose.md), [Podman](quickstart-podman.md), or [Kubernetes](kubernetes-deployment.md) | Your own running container and dashboard, with storage and authentication configured. |
+| Someone has already given you dashboard access | [Getting started](getting-started.md#step-0--before-you-start-do-this-first) | Connect the GitHub App, authenticate a model backend, set a budget, then enable agents conservatively. |
+
+You need a GitHub identity and a repository on GitHub.com or GitHub Enterprise.
+For the App route, have permission to install/authorize the GitHub App for that
+repository, or help from someone who can. Hosted requests need admin approval;
+requesting a hive does not itself install the App. Self-hosting also requires
+the chosen runtime, deployment privileges, and repository credentials; the
+Compose guide supports a PAT as well as an App. An agent separately needs its
+supported backend login, subscription, or model-gateway credentials.
+
+Once you can open a dashboard, follow [Getting started](getting-started.md) for the first session and its success checks. Operating a fleet is a separate task: see [self-hosted hub deployment](hub-deployment.md).
+
+## How Hive is organized
+
+A terminal agent is a power tool: you hold it, aim it, and it stops when you stop. Hive is the workshop that runs the power tools for you on three rules:
+
+1. **Short-lived agents.** Every task starts a fresh agent with a clean context and ends it.
+2. **External context.** What the agent needs to know lives outside the model and is re-injected each time.
+3. **Prompts driven by deterministic facts.** Instructions are templates filled from real data, not hand-tuned prose.
+
+### Core concepts
 
 - [Manual provisioning](manual-provisioning.md) — heartbeat-only cluster provisioning, hub access roles, and common gotchas.
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
+- [Hub login token](hub-login-token.md) — who consumes the stored GitHub user token from the Hub's browser sign-in, its lifetime, and the empty-scope caveat.
 - [Self-hosted hub deployment](hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](net-admin-requirement.md) — the container runs with or without `NET_ADMIN`; granting it (`--cap-add NET_ADMIN` / `securityContext.capabilities.add`) enables the full forced-proxy-egress gate, and what the degraded best-effort mode means without it.
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
@@ -31,9 +62,10 @@ Hive is for maintainers of busy open source projects who need help keeping queue
 - [Dashboard design system](dashboard-design-system.md) — shared token catalogue, component variants, migration rules, ratchet plan, and #8536 theme override contract for spoke, contributor, and hub dashboard surfaces.
 - [The `auto-update` Compose profile](auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.
 - [Environment variable reference](env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
-- [Kubernetes deployment](../../README.md#kubernetes-deployment) — the operator path for Kubernetes: prerequisites, namespace, secret, ConfigMap, PVC, Deployment, Service, Ingress, and published ports. Lives in the root README alongside the Compose and Podman quick starts; the manifests it applies are [`src/deploy/k8s/`](../deploy/k8s/). See also [dashboard route and health checks](health-checks.md) and the Kubernetes CronJob in [backup and restore](backup-restore.md).
+- [Kubernetes deployment](kubernetes-deployment.md) — the operator path for Kubernetes: prerequisites, namespace, secret, ConfigMap, PVC, Deployment, Service, Ingress, and published ports. The manifests it applies are [`src/deploy/k8s/`](../deploy/k8s/). See also [dashboard route and health checks](health-checks.md) and the Kubernetes CronJob in [backup and restore](backup-restore.md).
 - [Troubleshooting](troubleshooting.md) — container logs, config validation, agent tmux sessions, dashboard auth, GitHub credential checks, and GitHub App workflow-permission push rejections.
 - [Cross-cluster migration](cross-cluster-migration.md) — the manual procedure for moving a hive between clusters.
+- [Try Hive on kind](try-hive-on-kind.md) — a local single-node Kubernetes quickstart: the `kind` kustomize overlay (no inference component, `standard` StorageClass, external OpenAI-compatible endpoint), port-forward sign-in, and kind gotchas (`NET_ADMIN`, netfilter modules, image pull time).
 - [Self-hosted Kubernetes cluster move](move-kubernetes.md) — moving a self-hosted (non-hub) Kubernetes hive between clusters: which PVC/Secret/ConfigMap paths hold identity and state, a generic `kubectl`-based PVC copy, target prerequisites, and verification.
 - [Hub-registered hive cutover](move-hub-registered-cutover.md) — cross-cutting rules for any hub-registered hive's move: what identity is, how the hub reads heartbeat/`dashboard_url`, why source and target must never run concurrently, the required cutover order, and rollback.
 - [Moving a Hive between hosts, same runtime](move-host.md) — host-to-host move procedures preserving hive identity and state for Docker Compose → Compose, Podman Quadlet rootless → rootless (including a different `/etc/subuid` base on the target), and Podman Quadlet rootful → rootful: what's host-bound, a target preflight checklist, exact volumes/paths to archive, the stop-source-before-start-target rule, and post-restore verification. All procedures are DOCUMENTED, NOT EXECUTED.
@@ -58,7 +90,7 @@ Hive is for maintainers of busy open source projects who need help keeping queue
 - [TLS, HTTPS, and certificates](tls-setup.md) — termination patterns and certificate ownership.
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
-- [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](notifications.md#discord-webhook-vs-discord-bot).
+- [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](notifications.md#discord-webhook-vs-discord-bot) and the [Slack Socket Mode / Telegram / Matrix / Teams bots](notifications.md#chat-bots-slack-socket-mode-telegram-matrix-teams).
 - [State-triggered hooks](hooks.md) — declarative `transition → action` rules, the transition catalog, the vetted action set, and the security model (RFC #4001).
 - [GitHub Actions trigger](github-actions-trigger.md) — call a hive from a workflow via the v6 comment-relay composite action, with examples for PR review and scheduled status kicks.
 - [CEL-based agent triggers](cel-triggers.md) — the `triggers:` config key: declarative CEL rules that kick an agent on a normalized source-control event, additive to built-in label/governor triggering, the `event.*` field reference, and the fail-closed compile/runtime contract.
@@ -83,11 +115,11 @@ Hive is for maintainers of busy open source projects who need help keeping queue
 - [Deployment scripts](../deploy/README.md) — inventory of deployment helpers, including dashboard TTY panes and `hive-panes`.
 
 - **[Hive and spoke](architecture.md#8-hub--spoke):** a spoke is the running hive that serves repositories; a hub can register, provision, and observe multiple spokes.
-- **[Agents](agent-configuration.md):** configured AI workers with scopes, models, cadences, and permissions for specific lanes of work.
-- **[Governor](architecture.md#3-the-governor-loop--from-queue-depth-to-a-kick):** the scheduler and policy loop that decides what work is actionable and when agents should be kicked.
-- **[ACMM levels](acmm-policy-matrix.md):** the autonomy model that maps project maturity to what agents may observe, propose, open, review, or merge.
-- **[Hub](hosted-hub.md):** the hosted or self-hosted control plane for onboarding hives, heartbeats, fleet views, and hosted-spoke lifecycle.
-- **[Contributors and ClankeR relay](contributor-relay.md):** a way for trusted contributors to donate compute and run delegated work through hub-mediated roles.
+- **[Agents](agent-configuration.md):** AI workers assigned a job, model, schedule (cadence), and permissions.
+- **[Governor](architecture.md#3-the-governor-loop--from-queue-depth-to-a-kick):** the scheduler that checks for work and sends an agent a task (a kick).
+- **[ACMM levels](acmm-policy-matrix.md):** the **AI Codebase Maturity Model** — six levels that map how mature a codebase's tests, reviews and security posture are to what agents may observe, propose, open, review, or merge ([paper](https://arxiv.org/abs/2604.09388)).
+- **[Hub](hosted-hub.md):** the service that registers hives, receives their periodic status reports (heartbeats), and shows the fleet.
+- **[Contributors and ClankeR relay](contributor-relay.md):** a way for trusted contributors to donate compute and run delegated work with permissions checked by the hub.
 
 ## How it works
 
@@ -96,30 +128,31 @@ Hive is for maintainers of busy open source projects who need help keeping queue
 3. Agents receive bounded kicks, work in their configured lanes, and use Hive relays for audited writes such as issues, pull requests, reviews, or merges.
 4. Dashboards, logs, fleet health, and hub heartbeats show what happened and what still needs human attention.
 
-## Ways to run Hive
-
-- **Hosted Hive Hub:** start at [`https://hive.hivecommons.dev`](https://hive.hivecommons.dev) and follow the [hosted onboarding guide](hosted-hub.md) for the no-cluster path.
-- **Self-hosted:** run your own spoke on [Kubernetes](../../README.md#kubernetes-deployment) or [Podman](../../README.md#quick-start-podman), or operate a [self-hosted hub](hub-deployment.md) for a fleet.
-
-## Get started
-
-Start with [Zero to Automation: Getting Started with Hive](getting-started.md). If you want the hosted path, read [Hosted Hive Hub onboarding](hosted-hub.md) next.
-
 ## Where to go next
 
 - [Architecture](architecture.md)
+- [Integrations](integrations.md) — backends, trackers, forges and sandboxes Hive works with, at a glance.
 - [Getting started](getting-started.md)
 - [Operator reference](operator-reference.md)
+- [GitHub webhooks: cadence, patch and reconcile](webhooks.md) — polling fallback, webhook patch and reconcile, and the state-accuracy guarantees.
 - [Dashboard sections explained](dashboard-sections.md) — what each dashboard section shows and what to do about it.
+- [Activity monitor copy inventory](dashboard-copy-inventory.md) — every operator-visible string builder in the activity monitor, with before/after word counts and the hover budget.
+- [Hive on your iPhone Home Screen](ios-widget.md) — a Home Screen widget with issue/PR counts and sparklines (Scriptable, no server change).
 - [Dashboard settings explained](settings.md) — what each Settings tab controls and where each setting is documented.
 - [Maintainer commands](maintainer-commands.md) — slash commands for un-parking
   issues, requesting help, confirming fixes, reopening issues, and using label
   or assignment helpers.
 - [Release channels](release-channels.md) — what `stable`, `candidate`, and `edge` each mean and what to expect from them.
-- [Security model](security-model.md)
+- [Security model](security-model.md) — agent safety control inventory, threats, enforcement modes, residual gaps and operator audit checklist.
+- [Hive trust levels vs Copilot assisted permissions](copilot-permissions-comparison.md) — what GitHub's per-action permission mode (GA 2026-10-26) does, what Hive's levels, lanes, proxy and gates do, and where each covers ground the other does not.
 - [Data collection and telemetry](telemetry.md)
+- [Monitoring a hive with Prometheus and Grafana](monitoring.md)
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Community and support](community.md)
 - [Documentation map](documentation-map.md)
 
 Current docs target branch `v5`; use the [documentation map](documentation-map.md) for v2 → v4 and v4 → v5 migration pointers.
+
+## Contributor reference: maintaining security documentation
+
+`SECURITY.md`, every `src/docs/security*.md` / `ioscan*.md` page, and `landscape.md` must score Flesch-Kincaid grade 11 or lower (`src/scripts/check-security-docs-readability.sh`). The same pages need a `Last reviewed: YYYY-MM-DD` line in their first 15 lines, no older than 120 days, and must not describe a closed issue as "tracked in", "in progress", or "planned" (`src/scripts/check-security-docs-rot.sh`).

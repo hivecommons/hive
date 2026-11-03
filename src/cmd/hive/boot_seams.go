@@ -79,6 +79,18 @@ func shouldCollectHeartbeatClusterHealth(clusterID string) bool {
 	return strings.TrimSpace(clusterID) != ""
 }
 
+// adoptHubDeliveredClusterID fills an empty hub.cluster_id with the id the hub
+// delivered in its heartbeat response and reports whether it did. A configured
+// id (hive.yaml or HIVE_CLUSTER_ID) is never overridden.
+func adoptHubDeliveredClusterID(hub *config.HubConfig, delivered string) bool {
+	delivered = strings.TrimSpace(delivered)
+	if hub == nil || delivered == "" || strings.TrimSpace(hub.ClusterID) != "" {
+		return false
+	}
+	hub.ClusterID = delivered
+	return true
+}
+
 // maxACMMLevel is the highest ACMM maturity pack a hive can apply.
 const maxACMMLevel = 6
 

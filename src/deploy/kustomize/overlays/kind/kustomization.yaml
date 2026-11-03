@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Try-Hive-on-kind overlay. Layers on the core k8s base ONLY — deliberately
+# NOT ../../../inference, which needs the Gateway API Inference Extension CRDs
+# and downloads a model. Agents instead talk to an external OpenAI-compatible
+# endpoint (see patch-configmap.yaml). See src/docs/try-hive-on-kind.md.
+
+resources:
+  - ../../../k8s
+
+patches:
+  # Rewrite hive.yaml: litellm backend pointed at an external endpoint.
+  - path: patch-configmap.yaml
+
+  # kind's default StorageClass is `standard`; RWO is enough for the
+  # single-replica Recreate Deployment.
+  - path: patch-pvc-storageclass.yaml
+
+  # Drop the base's in-cluster llm-d endpoint: the inference component is not
+  # deployed here, so it would point at a Service that does not exist.
+  - path: patch-deployment-env.yaml

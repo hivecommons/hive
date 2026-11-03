@@ -1,0 +1,1 @@
+- A rebase-then-merge follow-through no longer treats an unsigned head as the hive's own just because its author email is the App bot's noreply address: an author GitHub resolves to the App bot now counts only on a commit GitHub reports as verified, as GitHub's update-branch commits are ([#15421](https://github.com/hivecommons/hive/issues/15421)).

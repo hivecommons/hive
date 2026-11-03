@@ -9,7 +9,9 @@ func TestDashboardThemeValidate(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "myorg"},
 		GitHub:  GitHubConfig{Token: "tok"},
-		Agents:  map[string]AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+		},
 	}
 	cfg.Dashboard.Theme = "honeycomb"
 	cfg.Dashboard.ThemeOverrides.Tokens = map[string]string{"--accent": "#e0a33a"}

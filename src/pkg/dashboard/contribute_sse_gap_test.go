@@ -408,7 +408,7 @@ func TestSSEHealthyStreamCarriesSeqAndNoGap(t *testing.T) {
 	waitFor(t, func() bool { return hub.sse.count() == 1 }, "subscriber to register")
 
 	hub.addActivity("live", "picked up", "contributor", "claude", "sonnet", "", "acme/repo#7")
-	waitFor(t, func() bool { return strings.Contains(rec.BodyString(), "live") }, "the live event to stream")
+	waitFor(t, func() bool { return strings.Contains(rec.BodyString(), `"username":"live"`) }, "the live event to stream")
 
 	frames := sseFrames(t, rec.BodyString())
 	if len(frames) < 2 {

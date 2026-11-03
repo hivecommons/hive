@@ -1,0 +1,1 @@
+- hivestate: pure observation detectors over the snapshot series (queue growth, hold growth, SLA, idle/thrashing agents, token efficiency) (#12652)

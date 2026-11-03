@@ -1,1 +1,0 @@
-- Change Throughput stat tiles now include history sparklines for velocity, time-to-merge, merge ratio, backlog, and trend metrics.

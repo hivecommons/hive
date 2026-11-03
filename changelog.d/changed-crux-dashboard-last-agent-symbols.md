@@ -1,0 +1,1 @@
+- crux: `CanonicalizeCopilotModel` and `BackendRequiresInteractiveAuth` are defined in the `crux` root (aliased by `crux/agent`), so `pkg/dashboard` no longer imports `crux/agent`; the inbound boundary ratchet drops its `pkg/dashboard` row (3 → 0), leaving `cmd/hive` as the only consumer naming `agent.<Symbol>` (refs #13536).

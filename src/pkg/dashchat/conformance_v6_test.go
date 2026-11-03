@@ -109,10 +109,10 @@ func parseDashboardChatSurface(t *testing.T) map[string]*ast.File {
 }
 
 var dashboardChatBlockedImports = map[string]string{
-	"github.com/hivecommons/hive/pkg/agent":     "direct agent control would bypass Converse and the proxy mode ladder",
+	"github.com/hivecommons/hive/crux/agent":    "direct agent control would bypass Converse and the proxy mode ladder",
 	"github.com/hivecommons/hive/pkg/dashboard": "dashboard actions require the role floor rather than surface-local authorization",
 	"github.com/hivecommons/hive/pkg/hub":       "hub control requires the role floor",
-	"github.com/hivecommons/hive/pkg/proxy":     "tool calls require the proxy mode ladder/capability check",
+	"github.com/hivecommons/hive/crux/proxy":    "tool calls require the proxy mode ladder/capability check",
 	"github.com/hivecommons/hive/pkg/effects":   "mutations require an effects claim",
 	"os/exec": "executing commands from dashboard chat bypasses every guard at once",
 }

@@ -1,0 +1,1 @@
+- Dashboard: the *Let hive decide* preview is one clear decision instead of a wall of text — one verb-first sentence (no doubled "Hive would:"), one short why, at most two "then" items, the sentinel finding / rails / ruled-out rungs under a collapsed Details, and **Approve & merge as-is** offered only when the head is mergeable as it is.

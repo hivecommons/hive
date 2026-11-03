@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
@@ -142,9 +141,7 @@ func (s *Server) selfAuthorizationHoldActiveForRepo(repo string) bool {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return true
 	}
-	cfg := s.deps.Config
-	level := cfg.EffectiveACMMLevelForRepo(repo)
-	return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
+	return selfAuthorizationHoldActive(s.deps.Config, repo)
 }
 
 func (s *Server) hiveAdviceThresholds() hiveadvisor.Thresholds {
@@ -176,44 +173,49 @@ func (s *Server) buildHiveAdvisorQueue(status *StatusPayload, now time.Time) hiv
 	}
 	for _, item := range s.overviewPRItems(status, cfg, overviewFilters{}, now) {
 		pr := item.pr
-		labels := labelSet(pr.Labels)
 		q.PRs = append(q.PRs, hiveadvisor.PRItem{
-			Repo:             pr.Repo,
-			Number:           pr.Number,
-			URL:              overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL),
-			Band:             item.info.Band,
-			Held:             item.held || len(holdLabels(pr.Labels, status.HiveID)) > 0,
-			NeedsHuman:       labels["needs-human"],
-			NeedsHumanReason: pr.ReporterTrustReason,
-			NeedsDecision:    labels["needs-decision"] || labels["2-discussing"],
-			CIFailing:        prCIFailing(pr),
-			FailingChecks:    append([]string(nil), pr.FailingChecks...),
-			Conflict:         pr.Mergeable == github.MergeableNo,
-			VerdictBlocked:   item.verdict != nil && item.verdict.State == github.MergeVerdictBlocked,
-			VerdictReason:    verdictReason(item.verdict),
-			Lane:             item.info.Role,
-			Author:           pr.Author,
-			Stale:            item.info.Stale,
-			AgeDays:          daysSince(pr.CreatedAt, now),
-			IdleDays:         daysSince(issueActivityPR(pr), now),
+			Repo:           pr.Repo,
+			Number:         pr.Number,
+			URL:            overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL),
+			Band:           item.info.Band,
+			CIFailing:      prCIFailing(pr),
+			FailingChecks:  append([]string(nil), pr.FailingChecks...),
+			Conflict:       pr.Mergeable == github.MergeableNo,
+			VerdictBlocked: item.verdict != nil && item.verdict.State == github.MergeVerdictBlocked,
+			VerdictReason:  verdictReason(item.verdict),
+			Lane:           item.info.Role,
+			Author:         pr.Author,
+			Stale:          item.info.Stale,
+			Ownership:      hiveAdvisorOwnership(item.ownership),
+			AgeDays:        daysSince(pr.CreatedAt, now),
+			IdleDays:       daysSince(issueActivityPR(pr), now),
 		})
 	}
+	// Every open issue counts, parked and other non-actionable rows included:
+	// the needs-human rules count the stored your-turn decision, and a parked
+	// issue is one of them.
 	for _, item := range overviewIssueItems(status, cfg, overviewFilters{}, now, s.selfAuthorizationHoldActiveForRepo) {
 		issue := item.issue
-		labels := labelSet(issue.Labels)
 		q.Issues = append(q.Issues, hiveadvisor.IssueItem{
-			Repo:          issue.Repo,
-			Number:        issue.Number,
-			URL:           overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL),
-			Band:          item.info.Band,
-			Blocked:       labels["blocked"],
-			NeedsDecision: labels["needs-decision"],
-			Discussing:    labels["2-discussing"],
-			AgeDays:       daysSince(issue.CreatedAt, now),
-			IdleDays:      daysSince(issueActivity(issue), now),
+			Repo:      issue.Repo,
+			Number:    issue.Number,
+			URL:       overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL),
+			Band:      item.info.Band,
+			AgeDays:   daysSince(issue.CreatedAt, now),
+			IdleDays:  daysSince(issueActivity(issue), now),
+			Ownership: hiveAdvisorOwnership(item.ownership),
 		})
 	}
 	return q
+}
+
+// hiveAdvisorOwnership hands the advisor the stored your-turn decision of one
+// row; the advisor never derives it from labels or bands.
+func hiveAdvisorOwnership(o *Ownership) hiveadvisor.Ownership {
+	if o == nil {
+		return hiveadvisor.Ownership{}
+	}
+	return hiveadvisor.Ownership{YourTurn: o.YourTurn, Verb: o.Verb, ReasonCode: o.ReasonCode, Reason: o.Reason}
 }
 
 func verdictReason(verdict *github.MergeVerdict) string {
@@ -241,10 +243,12 @@ func countDisabledConfiguredAgents(agents []FrontendConfiguredAgent) int {
 	return count
 }
 
+// countNoCadenceAgents mirrors the NoCadence predicate in status_builder.go and
+// governor/no_cadence.go (#5594): on-demand agents with an empty cadence are not counted.
 func countNoCadenceAgents(agents []FrontendAgent) int {
 	count := 0
 	for _, a := range agents {
-		if a.Enabled && (a.NoCadence || strings.TrimSpace(a.Cadence) == "") {
+		if a.Enabled && a.NoCadence {
 			count++
 		}
 	}

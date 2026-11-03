@@ -1,0 +1,1 @@
+- proxy: inference forward paths tolerate endpoints that already end in /v1 instead of calling /v1/v1/chat/completions (#13219)

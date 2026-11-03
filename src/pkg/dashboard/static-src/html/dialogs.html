@@ -1,0 +1,59 @@
+<div id="config-overlay" class="config-overlay hidden">
+  <div class="config-modal">
+    <div class="config-header">
+      <h2 class="config-title"></h2>
+      <button class="config-close" data-action="closeConfigDialog">&times;</button>
+    </div>
+    <nav class="config-tabs" id="config-tabs"></nav>
+    <div class="settings-search-panel" id="settings-search-panel" role="search" aria-label="Search global settings" hidden>
+      <div class="settings-search-input-wrap">
+        <span class="settings-search-icon" aria-hidden="true">⌕</span>
+        <input id="settings-search-input" class="settings-search-input" type="search" placeholder="Search settings…" aria-label="Search settings" autocomplete="off">
+        <button type="button" class="settings-search-clear" id="settings-search-clear" aria-label="Clear settings search" hidden>&times;</button>
+      </div>
+      <div id="settings-search-count" class="settings-search-count" aria-live="polite">Search settings</div>
+    </div>
+    <div class="config-main">
+      <nav class="config-rail" id="config-rail" aria-label="Sections in this tab" hidden></nav>
+      <div class="config-body modal-scroll" id="config-body"></div>
+    </div>
+    <div class="config-footer">
+      <button class="hv-btn btn-secondary btn config-cancel" data-action="closeConfigDialog">Cancel</button>
+      <button class="hv-btn btn-primary btn config-save" data-action="saveConfig">Save & close</button>
+    </div>
+  </div>
+</div>
+<!-- Add Agent dialog removed — create mode now uses the config dialog -->
+</div>
+<div id="acmm-overlay" class="config-overlay hidden">
+  <div class="config-modal" style="max-width:800px;max-height:85vh">
+    <div class="config-header">
+      <h2 class="config-title">ACMM Maturity Level <span id="acmm-dialog-current" style="font-size:0.72em;font-weight:400;color:var(--muted)"></span></h2>
+      <button class="config-close" data-action="closeACMMDialog">&times;</button>
+    </div>
+    <div class="config-body modal-scroll" style="padding:var(--sp-6) var(--sp-8);overflow-y:auto;max-height:calc(85vh - 120px)">
+      <p style="font-size:var(--fs-base);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-6)">
+        Select your AI Codebase Maturity Model (ACMM) level. Each level provides a curated set of agents
+        with increasing autonomy. Agents are additive — higher levels build on lower ones.
+      </p>
+      <div id="acmm-packs-list" style="display:flex;flex-direction:column;gap:var(--sp-5)"></div>
+      <div id="acmm-apply-error" style="color:var(--red);font-size:0.8rem;margin-top:var(--sp-5);display:none"></div>
+    </div>
+  </div>
+</div>
+<div id="welcome-overlay" class="config-overlay hidden">
+  <div class="config-modal welcome-modal">
+    <div class="config-header">
+      <h2 class="config-title">🐝 Getting Started<span id="welcome-progress" class="welcome-progress"></span></h2>
+      <button class="config-close" data-action="closeWelcomeDialog">&times;</button>
+    </div>
+    <!-- Bee-to-hive banner. Markup is injected from beeStageHtml() on dialog
+         open so this and the ACMM "Applying Level…" overlay stay in sync. -->
+    <div class="wb-stage" id="welcome-bee-stage" aria-hidden="true"></div>
+    <div class="config-body welcome-body modal-scroll" id="welcome-body"></div>
+    <div class="config-footer welcome-footer">
+      <button class="hv-btn btn-secondary hive-dialog-btn" data-action="closeWelcomeDialog" title="Close for now — the checklist opens again on the next dashboard load">Remind me next time</button>
+      <button class="hv-btn btn-primary hive-dialog-btn primary" data-action="dismissWelcomeDialog" title="Stop opening this checklist on load — reopen it any time from Getting Started in the sidebar or the Guide button in the top bar">Don't show on load</button>
+    </div>
+  </div>
+</div>

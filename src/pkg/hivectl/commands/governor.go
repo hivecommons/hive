@@ -27,7 +27,38 @@ func newGovernorCommand(env *commandEnv) *cobra.Command {
 	governor.AddCommand(governorFileCommand(env, "repos-set", "/api/config/governor/repos", "Update governed repositories"))
 	governor.AddCommand(governorAgentAddCommand(env))
 	governor.AddCommand(governorAgentRemoveCommand(env))
+	governor.AddCommand(governorHotspotsCommand(env))
 	return governor
+}
+
+// governorHotspotsCommand lists the merge-hotspot advisor's report: files
+// repeatedly touched by concurrent PRs, with the split recommendation and
+// the modularize issue filed for each (GET /api/hotspots).
+func governorHotspotsCommand(env *commandEnv) *cobra.Command {
+	var repo string
+	command := &cobra.Command{
+		Use:     "hotspots",
+		Short:   "List files repeatedly touched by concurrent PRs (merge hotspots)",
+		Args:    argsNone(),
+		Example: "  hivectl governor hotspots\n  hivectl governor hotspots --repo hivecommons/hive --output yaml",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			client, err := env.client()
+			if err != nil {
+				return err
+			}
+			var query url.Values
+			if repo != "" {
+				query = url.Values{"repo": {repo}}
+			}
+			result, err := client.Do(cmd.Context(), http.MethodGet, "/api/hotspots", query, nil)
+			if err != nil {
+				return err
+			}
+			return env.print(cmd, result)
+		},
+	}
+	command.Flags().StringVar(&repo, "repo", "", "restrict to one owner/name")
+	return command
 }
 
 func governorFileCommand(env *commandEnv, name, path, short string) *cobra.Command {

@@ -35,6 +35,12 @@ type Recommendation struct {
 	// origin) and Items name the first few issues/PRs the advice is about.
 	Links []Link `json:"links,omitempty"`
 	Items []Item `json:"items,omitempty"`
+	// Why says, in plain words, what the items behind the number wait for,
+	// largest group first ("24 parked until a maintainer decides (20 in
+	// utah-packages, …)."), and Help is the action for the largest few
+	// groups, without a leading label. Only the needs-human rules set them.
+	Why  []string `json:"why,omitempty"`
+	Help string   `json:"help,omitempty"`
 	// Bands lists the Overview band keys ("pr/blocked", "issue/waiting") the
 	// advice names, so a renderer can print each band's rule beside it.
 	Bands []string `json:"bands,omitempty"`
@@ -115,6 +121,7 @@ func Recommend(req Request) Result {
 		OverviewIssues: len(req.Signals.Queue.Issues),
 		OverviewPRs:    len(req.Signals.Queue.PRs),
 	}
+	counts.YourTurn, counts.ToClose = YourTurnCounts(req.Signals.Queue)
 
 	if req.Previous != nil && !req.Previous.Start.IsZero() && normalizeMode(req.Previous.Mode) == mode && now.Before(req.Previous.Start.Add(EpochLength)) && !placeholderOnly(req.Previous.Recommendations, fresh) {
 		epoch := copyEpoch(*req.Previous)
@@ -291,6 +298,7 @@ func copyRecommendations(in []Recommendation) []Recommendation {
 		out[i].Signals = append([]Signal(nil), out[i].Signals...)
 		out[i].Links = append([]Link(nil), out[i].Links...)
 		out[i].Items = append([]Item(nil), out[i].Items...)
+		out[i].Why = append([]string(nil), out[i].Why...)
 		out[i].Bands = append([]string(nil), out[i].Bands...)
 	}
 	return out

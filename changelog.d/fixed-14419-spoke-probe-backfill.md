@@ -1,0 +1,1 @@
+- Backfill stale spoke startup probes when the Deployment already matches the requested image, without repeatedly restarting an in-flight rollout.

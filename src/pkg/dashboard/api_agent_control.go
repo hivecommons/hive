@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
@@ -44,6 +44,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		return s.deps.AgentMgr.SendKickAsync(name, kickMsg)
 	}
 
+	operatorSupplied := msg != ""
 	if msg == "" && s.deps.Scheduler != nil {
 		if !s.deps.Scheduler.FirstScanDone() {
 			if err := s.deps.AgentMgr.ValidateKick(name); err != nil {
@@ -73,11 +74,16 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		}
 		msg = s.deps.Scheduler.BuildAgentMessageFromLastActionable(name)
 	}
-	if sanitized, ok := s.enforceKickPrompt(r, name, msg); !ok {
-		jsonError(w, "ioscan rejected critical injection in kick prompt", http.StatusUnprocessableEntity)
-		return
-	} else {
-		msg = sanitized
+	// Only operator-supplied text is untrusted here. A server-rendered prompt
+	// embeds hive-authored template text, and its untrusted items were already
+	// enforced individually on the scheduler path (#12936).
+	if operatorSupplied {
+		if sanitized, ok := s.enforceKickPrompt(r, name, msg); !ok {
+			jsonError(w, "ioscan rejected critical injection in kick prompt", http.StatusUnprocessableEntity)
+			return
+		} else {
+			msg = sanitized
+		}
 	}
 
 	// Queue the kick and answer immediately (#5325).
@@ -128,6 +134,11 @@ func (s *Server) enforceKickPrompt(r *http.Request, agentName, text string) (str
 	}
 	sanitized, v := ioscan.EnforceInput(text)
 	if v.Blocked {
+		rules := make([]string, 0, len(v.Findings))
+		for _, f := range v.Findings {
+			rules = append(rules, f.Rule)
+		}
+		s.deps.Logger.Warn("ioscan withheld operator kick prompt", "agent", agentName, "rules", strings.Join(rules, ","))
 		s.auditFromRequest(r, "ioscan_block", auditDetail("context", "kick_prompt", "findings", strconv.Itoa(len(v.Findings))), agentName)
 	}
 	level := detectACMMLevel(s.deps.Config)
@@ -194,9 +205,9 @@ func (s *Server) handleKickStatus(w http.ResponseWriter, r *http.Request) {
 // POST's, and so no client can mistake it for a settled outcome.
 func kickPhaseStatus(phase string) string {
 	switch phase {
-	case agent.KickPhaseDelivered:
+	case crux.KickPhaseDelivered:
 		return kickStatusDelivered
-	case agent.KickPhaseFailed:
+	case crux.KickPhaseFailed:
 		return kickStatusFailed
 	default:
 		return kickStatusInFlight
@@ -229,6 +240,7 @@ func (s *Server) claimAgentFieldOwnership(name, model, backend string) {
 	if backend != "" {
 		ac.Backend = backend
 		ac.BackendOwner = config.FieldOwnerOperator
+		s.reconcileLaunchCmdForBackend(name, &ac)
 	}
 	s.deps.Config.Agents[name] = ac
 	_ = s.deps.AgentMgr.UpdateConfig(name, ac)
@@ -247,6 +259,39 @@ func (s *Server) claimAgentFieldOwnership(name, model, backend string) {
 		}
 	}
 	s.ClearSystemAlert("agent-field-save-failed")
+}
+
+// reconcileLaunchCmdForBackend clears ac.LaunchCmd when it launches a
+// different CLI than ac.Backend, so a backend change never persists the
+// contradiction the loader rejects at boot. A launch_cmd that already agrees
+// with the backend is left alone. Returns whether launch_cmd was cleared.
+func (s *Server) reconcileLaunchCmdForBackend(name string, ac *config.AgentConfig) bool {
+	kept, cleared := s.deps.Config.Governor.ReconcileLaunchCmdForBackend(ac.Backend, ac.LaunchCmd)
+	if !cleared {
+		return false
+	}
+	s.logger.Info("launch_cmd cleared on backend switch",
+		"agent", name, "previous_launch_cmd", ac.LaunchCmd, "backend", ac.Backend)
+	ac.LaunchCmd = kept
+	return true
+}
+
+// launchCmdDegradedAlertPrefix prefixes the per-agent banner raised when the
+// loader dropped a base-config launch_cmd (config.DegradeContradictingLaunchCmds).
+const launchCmdDegradedAlertPrefix = "launch-cmd-degraded-"
+
+// surfaceLaunchCmdDegradations raises one dashboard alert per agent whose
+// launch_cmd the loader dropped at boot, so the operator learns the running
+// config is not the config on disk without reading pod logs.
+func (s *Server) surfaceLaunchCmdDegradations() {
+	if s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	for _, d := range s.deps.Config.LaunchCmdDegradations {
+		s.AddSystemAlert(launchCmdDegradedAlertPrefix+d.Agent, "error",
+			fmt.Sprintf("Agent %s: its saved launch_cmd %q contradicts backend %q, so it was dropped at startup and the agent launches on the %s default command. Save the agent once from the dashboard (or clear launch_cmd in its config) to make this permanent.",
+				d.Agent, d.LaunchCmd, d.Backend, d.Backend))
+	}
 }
 
 // claimAgentPauseOwnership marks name's pause/run state operator-owned and
@@ -316,7 +361,7 @@ func (s *Server) validateModelForAgent(name, model string) error {
 	// the served list is canonical, so compare the canonicalized candidate
 	// rather than rejecting a dotted/dashed variant of an available model.
 	if backend == "copilot" {
-		model = agent.CanonicalizeCopilotModel(model)
+		model = crux.CanonicalizeCopilotModel(model)
 	}
 	for _, id := range known {
 		if id == model {
@@ -734,7 +779,7 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	// the relaunched CLI, and "restarted" alone would leave them expecting
 	// exactly that.
 	resp := map[string]any{"ok": true, "status": "restarted", "agent": name}
-	if d, ok := s.deps.AgentMgr.KickDispatchState(name); ok && d.Phase == agent.KickPhaseFailed && strings.HasPrefix(d.Error, "cancelled:") {
+	if d, ok := s.deps.AgentMgr.KickDispatchState(name); ok && d.Phase == crux.KickPhaseFailed && strings.HasPrefix(d.Error, "cancelled:") {
 		resp["kickCancelled"] = true
 	}
 	jsonResponse(w, resp)

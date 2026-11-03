@@ -1,0 +1,1 @@
+- Review dispatch now remembers heads it passed over for want of a free reviewer, promotes them ahead of webhook-prioritized PRs after three consecutive cycles, and the review queue plus Activity Monitor say how far the review got and how long the head has waited instead of a bare `stalled` pill (#15229).

@@ -232,6 +232,20 @@ func TestApplyDefaults_DataDirs(t *testing.T) {
 	if cfg.Data.BobSessionsDir != "/data/home/.bob" {
 		t.Errorf("Data.BobSessionsDir = %q, want %q", cfg.Data.BobSessionsDir, "/data/home/.bob")
 	}
+	if cfg.Data.NousDir != "/data/nous" {
+		t.Errorf("Data.NousDir = %q, want %q", cfg.Data.NousDir, "/data/nous")
+	}
+}
+
+func TestApplyDefaults_NousDirNotOverridden(t *testing.T) {
+	path := writeTempConfig(t, minimalValidYAML("my-org", "ghp_tok")+"\ndata:\n  nous_dir: /mnt/nous\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Data.NousDir != "/mnt/nous" {
+		t.Errorf("Data.NousDir = %q, want explicit /mnt/nous", cfg.Data.NousDir)
+	}
 }
 
 func TestApplyDefaults_AgentBeadsDir(t *testing.T) {
@@ -451,9 +465,11 @@ func TestEnabledAgents_FiltersDisabled(t *testing.T) {
 	// After Load(), applyDefaults sets all agents to enabled=true.
 	// Test EnabledAgents() directly on a crafted Config where one is disabled.
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"active":   {Backend: "claude", Enabled: true},
-			"inactive": {Backend: "copilot", Enabled: false},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"active":   {Backend: "claude", Enabled: true},
+				"inactive": {Backend: "copilot", Enabled: false},
+			},
 		},
 	}
 	enabled := cfg.EnabledAgents()
@@ -470,9 +486,11 @@ func TestEnabledAgents_FiltersDisabled(t *testing.T) {
 
 func TestEnabledAgents_AllEnabled(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"a": {Backend: "claude", Enabled: true},
-			"b": {Backend: "copilot", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"a": {Backend: "claude", Enabled: true},
+				"b": {Backend: "copilot", Enabled: true},
+			},
 		},
 	}
 	enabled := cfg.EnabledAgents()
@@ -483,8 +501,10 @@ func TestEnabledAgents_AllEnabled(t *testing.T) {
 
 func TestEnabledAgents_NoneEnabled(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"a": {Backend: "claude", Enabled: false},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"a": {Backend: "claude", Enabled: false},
+			},
 		},
 	}
 	enabled := cfg.EnabledAgents()
@@ -892,7 +912,9 @@ func TestApplyDefaults_AllGovernorDefaults(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
 		GitHub:  GitHubConfig{Token: "t"},
-		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 	}
 	cfg.applyDefaults()
 
@@ -933,9 +955,11 @@ func TestApplyDefaults_AllGovernorDefaults(t *testing.T) {
 
 func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	cfg := &Config{
-		Project:   ProjectConfig{Org: "o", Repos: []string{"r"}},
-		GitHub:    GitHubConfig{Token: "t"},
-		Agents:    map[string]AgentConfig{"a": {Backend: "claude"}},
+		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:  GitHubConfig{Token: "t"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 		Knowledge: KnowledgeConfig{Enabled: true},
 	}
 	cfg.applyDefaults()
@@ -945,6 +969,9 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	}
 	if cfg.Knowledge.Primer.MaxFacts != defaultKnowledgeMaxFacts {
 		t.Errorf("max_facts = %d", cfg.Knowledge.Primer.MaxFacts)
+	}
+	if cfg.Knowledge.Primer.MaxBytes != defaultKnowledgeMaxBytes {
+		t.Errorf("max_bytes = %d", cfg.Knowledge.Primer.MaxBytes)
 	}
 	if cfg.Knowledge.Primer.MergeStrategy != "precedence" {
 		t.Errorf("merge_strategy = %q", cfg.Knowledge.Primer.MergeStrategy)
@@ -971,24 +998,31 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	}
 }
 
-func TestDashboardStrategyLabDefaultsHidden(t *testing.T) {
+func TestDashboardExperimentLabDefaultsHidden(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
 		GitHub:  GitHubConfig{Token: "t"},
-		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 	}
 	cfg.applyDefaults()
 
+	if cfg.Dashboard.ExperimentLab {
+		t.Fatal("dashboard.experiment_lab defaulted on; Experiment Lab must stay hidden unless explicitly enabled")
+	}
 	if cfg.Dashboard.StrategyLab {
-		t.Fatal("dashboard.strategy_lab defaulted on; Strategy Lab must stay hidden unless explicitly enabled")
+		t.Fatal("deprecated dashboard.strategy_lab alias defaulted on")
 	}
 }
 
 func TestApplyDefaults_ExistingValuesNotOverridden(t *testing.T) {
 	cfg := &Config{
-		Project:   ProjectConfig{Org: "o", Repos: []string{"r"}},
-		GitHub:    GitHubConfig{Token: "t"},
-		Agents:    map[string]AgentConfig{"a": {Backend: "claude"}},
+		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:  GitHubConfig{Token: "t"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 		Dashboard: DashboardConfig{Port: 8080},
 		Governor: GovernorConfig{
 			EvalIntervalS: 600,
@@ -1096,7 +1130,9 @@ func TestSave_BlocksEmptyOrg(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: ""}, // missing org
-		Agents:     map[string]AgentConfig{"w": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"w": {Backend: "claude"}},
+		},
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -1118,7 +1154,9 @@ func TestSave_BlocksNoAgents(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "my-org", Repos: []string{"r"}},
-		Agents:     map[string]AgentConfig{}, // no agents
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		}, // no agents
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -1139,7 +1177,9 @@ func TestSave_AllowsValidConfig(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "my-org", Repos: []string{"r"}},
-		Agents:     map[string]AgentConfig{"w": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"w": {Backend: "claude"}},
+		},
 	}
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save() should succeed for valid config: %v", err)
@@ -1228,6 +1268,41 @@ func TestSelfAuthoredAutoMergeAllowed(t *testing.T) {
 				t.Errorf("SelfAuthoredAutoMergeAllowed(%v) = %v, want %v", tc.level, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestQueueOnApproveAndUnholdAllowed pins hivecommons/hive#13629: the opt-in
+// is per repo, default off, and applies at ACMM L5 only. It never touches the
+// self-merge floor.
+func TestQueueOnApproveAndUnholdAllowed(t *testing.T) {
+	l4, l5, l6 := 4, 5, 6
+	optedIn := AutoMergeConfig{QueueOnApproveAndUnhold: []string{" Acme/Widget ", "gadget"}}
+	cases := []struct {
+		name  string
+		cfg   AutoMergeConfig
+		repo  string
+		level *int
+		want  bool
+	}{
+		{"default off at L5", AutoMergeConfig{}, "acme/widget", &l5, false},
+		{"opted-in repo at L5", optedIn, "acme/widget", &l5, true},
+		{"opted-in repo matched case-insensitively", optedIn, "ACME/widget", &l5, true},
+		{"bare-name entry matches owner/repo", optedIn, "acme/gadget", &l5, true},
+		{"other repo stays off", optedIn, "acme/other", &l5, false},
+		{"blank repo stays off", optedIn, " ", &l5, false},
+		{"nil level fails closed", optedIn, "acme/widget", nil, false},
+		{"L4 stays off", optedIn, "acme/widget", &l4, false},
+		{"L6 stays off: self-merge already applies there", optedIn, "acme/widget", &l6, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.QueueOnApproveAndUnholdAllowed(tc.repo, tc.level); got != tc.want {
+				t.Errorf("QueueOnApproveAndUnholdAllowed(%q, %v) = %v, want %v", tc.repo, tc.level, got, tc.want)
+			}
+		})
+	}
+	if SelfMergeMinACMMLevel != 6 {
+		t.Fatalf("SelfMergeMinACMMLevel = %d, want 6: #13629 must not move the self-merge floor", SelfMergeMinACMMLevel)
 	}
 }
 
@@ -1393,8 +1468,21 @@ func TestHumanMergePathsFor(t *testing.T) {
 }
 
 func TestValidateGitHubAPIBudgetThresholds(t *testing.T) {
-	cfg := &Config{Project: ProjectConfig{Org: "acme", Repos: []string{"widgets"}}, GitHub: GitHubConfig{Token: "ghp_test", APIReserve: 250, APICritical: 250}, Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude"}}}
+	cfg := &Config{Project: ProjectConfig{Org: "acme", Repos: []string{"widgets"}}, GitHub: GitHubConfig{Token: "ghp_test", APIReserve: 250, APICritical: 250}, AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude"}}}}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "github.api_critical") {
 		t.Fatalf("Validate() error = %v, want github.api_critical", err)
+	}
+}
+
+func TestStageDCOConfigRequiredFor(t *testing.T) {
+	var none StageDCOConfig
+	if _, ok := none.RequiredFor("acme/widget"); ok {
+		t.Fatal("empty map must not match")
+	}
+	c := StageDCOConfig{Required: map[string]bool{"Acme/Widget": true, "docs": false, "*": true}}
+	for display, want := range map[string]bool{"acme/widget": true, "acme/docs": false, "other/thing": true} {
+		if got, ok := c.RequiredFor(display); !ok || got != want {
+			t.Fatalf("%s: got %v ok=%v want %v", display, got, ok, want)
+		}
 	}
 }

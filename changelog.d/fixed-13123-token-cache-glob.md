@@ -1,0 +1,1 @@
+- The entrypoint's agent token-cache re-own step now matches only the agent's own `gh-token-<agent>.cache` files (and `.cache.*` / `-<n>.cache` siblings) instead of any file containing the agent name, so `reviewer` no longer steals `code-reviewer`'s token cache ([#13123](https://github.com/hivecommons/hive/issues/13123)).

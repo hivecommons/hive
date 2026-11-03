@@ -119,25 +119,6 @@ func TestStringFromMap(t *testing.T) {
 	}
 }
 
-func TestConfidenceToFloat(t *testing.T) {
-	cases := []struct {
-		input string
-		want  float64
-	}{
-		{"high", 0.9},
-		{"medium", 0.7},
-		{"low", 0.4},
-		{"unknown", 0.5},
-		{"", 0.5},
-	}
-	for _, tc := range cases {
-		got := confidenceToFloat(tc.input)
-		if got != tc.want {
-			t.Errorf("confidenceToFloat(%q) = %v, want %v", tc.input, got, tc.want)
-		}
-	}
-}
-
 func TestInferACMMLevel(t *testing.T) {
 	t.Run("explicit level", func(t *testing.T) {
 		level := 3

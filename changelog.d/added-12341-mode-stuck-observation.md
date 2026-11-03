@@ -1,0 +1,1 @@
+- hivestate: new `mode-stuck` observation fires when the governor sits in `surge` or `idle` for 7 days, backed by a per-mode sample count on hourly buckets ([#12341](https://github.com/hivecommons/hive/issues/12341)).

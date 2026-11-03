@@ -95,7 +95,11 @@ data:
     #    Client ID here. For a GitHub Enterprise host, also set project.forge /
     #    github.forge to your host (e.g. github.example.com). The client SECRET
     #    is NOT needed for device flow.
+    #    `token` is expanded from the HIVE_GITHUB_TOKEN key in `hive-secrets`.
+    #    Using a GitHub App instead? Replace it with app_id / installation_id /
+    #    key_file (see src/hive.yaml.example).
     github:
+      token: ${HIVE_GITHUB_TOKEN}
       oauth_client_id: YOUR_OAUTH_CLIENT_ID
 
     notifications: {}

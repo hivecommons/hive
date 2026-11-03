@@ -58,7 +58,7 @@ func (s *stubHivesStore) LoadOrMigrate() (*hivectl.ProfileSet, bool, error) {
 	return s.set, false, s.loadErr
 }
 
-func (s *stubHivesStore) Commit(set *hivectl.ProfileSet) error {
+func (s *stubHivesStore) CommitExpecting(set *hivectl.ProfileSet, _ string) error {
 	s.set = set
 	return s.commitErr
 }
@@ -904,12 +904,15 @@ func TestHivesOverlayConsumesEveryKey(t *testing.T) {
 	h.open(t)
 
 	// On the list, the letters that are not bindings do nothing at all.
-	for _, k := range []string{"q", "p", "m", "K", "A", "?", "x"} {
+	for _, k := range []string{"q", "p", "m", "K", "A", "?"} {
 		if cmd := h.send(t, key(k)); cmd != nil {
 			t.Errorf("%q produced a command while the Hives overlay was open", k)
 		}
 		if h.model.hives == nil {
 			t.Fatalf("%q closed the Hives overlay", k)
+		}
+		if h.model.hives.Typing() {
+			t.Fatalf("unbound key %q opened a Hives form", k)
 		}
 		if h.model.confirm != nil || h.model.picker != nil || h.model.acmm != nil || h.model.helpVisible {
 			t.Fatalf("%q opened another overlay from inside the Hives overlay", k)

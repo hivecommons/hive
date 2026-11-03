@@ -1,0 +1,1 @@
+- Issue stage-label sweeps stop cleanly when their best-effort budget expires or the request pacer fails fast before the deadline instead of reporting a write failure for every unattempted issue; live-context request failures still warn once and unfinished work retries next cycle. PR sweeps also skip comments and adoption side effects for the unattempted batch tail.

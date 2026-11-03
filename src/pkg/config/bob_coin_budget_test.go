@@ -36,7 +36,9 @@ func TestBobCoinBudgetValidation(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "hivecommons"},
 		GitHub:  GitHubConfig{Token: "ghp_test"},
-		Agents:  map[string]AgentConfig{"scanner": {Enabled: true, Backend: "bob"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "bob"}},
+		},
 	}
 	cfg.applyDefaults()
 	cfg.Governor.Budget.Coins["bob"] = CoinBudgetConfig{TokensPerCoin: -1, USDPerCoin: DefaultBobUSDPerCoin, Label: DefaultBobCoinLabel}

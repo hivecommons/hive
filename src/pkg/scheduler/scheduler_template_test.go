@@ -24,8 +24,10 @@ func TestBuildAgentMessageWithKickTemplate(t *testing.T) {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo"},
 		},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Role: "scanner", KickTemplate: "custom-kick.md"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Role: "scanner", KickTemplate: "custom-kick.md"},
+			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 	}
@@ -60,8 +62,10 @@ func TestBuildAgentMessageWithPromptTemplate(t *testing.T) {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo"},
 		},
-		Agents: map[string]config.AgentConfig{
-			"helper": {Role: "helper"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"helper": {Role: "helper"},
+			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 	}
@@ -86,8 +90,10 @@ func TestBuildAgentMessageWithACMMPackTemplate(t *testing.T) {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo"},
 		},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Role: "scanner"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Role: "scanner"},
+			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 	}
@@ -110,8 +116,10 @@ func TestLoadNamedTemplateFromLocalDir(t *testing.T) {
 	os.WriteFile(filepath.Join(agentsDir, "test-template.md"), []byte("template content"), 0644)
 
 	cfg := &config.Config{
-		Project:  config.ProjectConfig{Org: "testorg", Name: "test"},
-		Agents:   map[string]config.AgentConfig{},
+		Project: config.ProjectConfig{Org: "testorg", Name: "test"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 	}
 	s := New(cfg, slog.Default())
@@ -125,7 +133,9 @@ func TestLoadNamedTemplateFromLocalDir(t *testing.T) {
 func TestLoadNamedTemplateNotFound(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test"},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	s := New(cfg, slog.Default())
 
@@ -142,8 +152,10 @@ func TestLoadPromptTemplateFromLocalDir(t *testing.T) {
 	os.WriteFile(filepath.Join(agentsDir, "my-agent.md"), []byte("agent prompt"), 0644)
 
 	cfg := &config.Config{
-		Project:  config.ProjectConfig{Org: "testorg", Name: "test"},
-		Agents:   map[string]config.AgentConfig{},
+		Project: config.ProjectConfig{Org: "testorg", Name: "test"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 	}
 	s := New(cfg, slog.Default())
@@ -160,7 +172,9 @@ func TestSubstituteTemplateVars(t *testing.T) {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo", "other"},
 		},
-		Agents: map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	s := New(cfg, slog.Default())
 

@@ -420,7 +420,7 @@ func TestTriggerAutoUpgradesHoldsThenRollsOnce(t *testing.T) {
 	setLatestSHAForBranchForTest(t, "v4", "merge111")
 
 	const id = "debounce-e2e"
-	saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "dc1"})
+	saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant, Status: "running", ClusterID: "dc1"})
 	s := &HubServer{
 		logger:           slog.Default(),
 		hubSecret:        testHubSecret,
@@ -521,7 +521,7 @@ func TestTriggerAutoUpgradesSkipsSpokeAheadOfLatest(t *testing.T) {
 	setLatestSHAForBranchForTest(t, "v5", "6d2195d")
 
 	const id = "ahead-of-latest"
-	saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "dc1"})
+	saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant, Status: "running", ClusterID: "dc1"})
 	s := &HubServer{
 		logger:           slog.Default(),
 		hubSecret:        testHubSecret,
@@ -557,7 +557,7 @@ func TestTriggerAutoUpgradesChasesChannelCommitNotBranchTip(t *testing.T) {
 
 	const atChannel, behindChannel = "stable-at-channel", "stable-behind-channel"
 	for _, id := range []string{atChannel, behindChannel} {
-		saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "dc1"})
+		saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant, Status: "running", ClusterID: "dc1"})
 	}
 	s := &HubServer{
 		logger:           slog.Default(),

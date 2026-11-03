@@ -2,6 +2,13 @@
 
 Status: Accepted (back-filled)
 
+**CEL** is the **Common Expression Language**. Operators write boolean rules
+over events to select agents. A **normalized forge event** is Hive's common
+representation of a repository-host event, so rules do not depend on a
+GitHub-specific webhook payload.
+
+For configuration and examples, use the [CEL triggers operator guide](../cel-triggers.md).
+
 ## Context
 
 Hive's built-in label and governor triggers cover common flows, but operators

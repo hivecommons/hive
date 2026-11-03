@@ -1,1 +1,0 @@
-- Restart the self-authored automerge sweep when runtime ACMM level changes cross the self-merge gate, keep level-applied holds until a human removes them or an operator explicitly sets release_level_holds=true, and show owners an informational L6 auto-merge notice.

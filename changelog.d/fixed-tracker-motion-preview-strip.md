@@ -1,0 +1,1 @@
+- Hive Activity settings: the Movement animation preview no longer stacks a second, mis-sized chevron strip under the sample row; each Preview rebuilds the one sample row in place so it matches live tracker rows.

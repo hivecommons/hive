@@ -14,13 +14,15 @@ import (
 
 func modeSchedulesFixture() *Config {
 	return &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":    {},
-			"reviewer":   {},
-			"reviewer-2": {ReplicaOf: "reviewer"},
-			"parked":     {},
-			"janitor":    {},
-			"lonely":     {},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":    {},
+				"reviewer":   {},
+				"reviewer-2": {ReplicaOf: "reviewer"},
+				"parked":     {},
+				"janitor":    {},
+				"lonely":     {},
+			},
 		},
 		Governor: GovernorConfig{Modes: map[string]ModeConfig{
 			"idle":  {Threshold: 0, Cadences: map[string]Cadence{"scanner": "1h", "janitor": "2h"}},

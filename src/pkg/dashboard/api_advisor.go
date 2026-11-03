@@ -52,14 +52,15 @@ type advisorRecordsResponse struct {
 const advisorWindowMaxHours = 720
 
 // advisorSpendRanges mirrors the Cost section's timeframe selector
-// (COST_RANGES in static/index.html): each preset is a window anchored at now,
-// so advisor spend is reported over exactly the ranges the existing spend
-// reporting offers. A custom range is expressed with since/until.
+// (costWindow in static/index.html): hourly and daily are windows anchored at
+// now (COST_HOURLY_WINDOW_H hours, COST_DAILY_WINDOW_DAYS days); weekly and
+// monthly are calendar-anchored there, which a plain lookback approximates
+// with one week and one month. A custom range is expressed with since/until.
 var advisorSpendRanges = map[string]time.Duration{
 	"hourly":  24 * time.Hour,
-	"daily":   30 * 24 * time.Hour,
-	"weekly":  12 * 7 * 24 * time.Hour,
-	"monthly": 12 * 30 * 24 * time.Hour,
+	"daily":   7 * 24 * time.Hour,
+	"weekly":  7 * 24 * time.Hour,
+	"monthly": 30 * 24 * time.Hour,
 }
 
 // advisorWindow parses the shared time-window parameters of the advisor

@@ -1,1 +1,0 @@
-- Added the shared Agent power rocker to the governor cadence table so owners can enable or disable agents without opening settings.

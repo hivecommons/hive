@@ -9,6 +9,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,7 @@ import (
 type evidenceContextFixture struct {
 	mu          sync.Mutex
 	head        string
+	opened      string
 	checksFail  bool
 	reviewsFail bool
 	eventsFail  bool
@@ -48,10 +50,14 @@ func newEvidenceContextServer(t *testing.T, f *evidenceContextFixture) *httptest
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			pr := map[string]any{
 				"number": 7, "head": map[string]any{"sha": f.head},
 				"merged_by": map[string]any{"login": "hive-app[bot]"},
-			})
+			}
+			if f.opened != "" {
+				pr["created_at"] = f.opened
+			}
+			_ = json.NewEncoder(w).Encode(pr)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/commits/"+f.head+"/check-runs":
 			f.checkHits++
 			if !fail(f.checksFail) {
@@ -165,6 +171,9 @@ func TestRecordReviewEvidenceMergeCapturesCIAndHumanActions(t *testing.T) {
 			if (len(tt.wantCI) > 0) == b.CI.CapturedAt.IsZero() {
 				t.Fatalf("ci captured_at = %v with %d checks", b.CI.CapturedAt, len(tt.wantCI))
 			}
+			if wantStatus := "failure"; len(tt.wantCI) > 0 && b.CI.Status != wantStatus {
+				t.Fatalf("ci status = %q, want %q", b.CI.Status, wantStatus)
+			}
 			if !reflect.DeepEqual(b.HumanActions, tt.wantActions) {
 				t.Fatalf("human actions = %+v, want %+v", b.HumanActions, tt.wantActions)
 			}
@@ -226,12 +235,14 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 		{Rule: "", Summary: "no rule, dropped"},
 	}
 	want := []evidence.SentinelFinding{{Rule: sentinel.RuleSensitivePath, Summary: "touches OWNERS", Paths: []string{"OWNERS", "z.yml"}}}
+	wantNotice := []evidence.SentinelFinding{{Rule: sentinel.RuleSensitivePath, Summary: "touches OWNERS", Paths: []string{"OWNERS", "z.yml"}, Notice: true}}
 
 	tests := []struct {
 		name         string
 		settings     *ReviewEvidenceSettings
 		seed         bool
 		corrupt      bool
+		notice       bool
 		pr           *gh.PullRequest
 		findings     []sentinel.Finding
 		wantSentinel []evidence.SentinelFinding
@@ -250,6 +261,10 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 		{
 			name: "starts a bundle from the listed PR", settings: &ReviewEvidenceSettings{Enabled: true},
 			pr: evidenceSentinelPR("h1"), findings: findings, wantSentinel: want,
+		},
+		{
+			name: "notice-only pass marks the finding", settings: &ReviewEvidenceSettings{Enabled: true}, notice: true,
+			pr: evidenceSentinelPR("h1"), findings: findings, wantSentinel: wantNotice,
 		},
 		{
 			name: "unreadable bundle left alone", settings: &ReviewEvidenceSettings{Enabled: true}, corrupt: true,
@@ -273,7 +288,7 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 			}
 			c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, tt.settings)
 
-			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, now)
+			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, !tt.notice, now)
 
 			if tt.wantNoBundle {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -302,11 +317,31 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 			}
 
 			// The same finding flagged again is not duplicated and the file is untouched.
-			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, now.Add(time.Hour))
+			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, !tt.notice, now.Add(time.Hour))
 			if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash || len(again.Sentinel) != len(tt.wantSentinel) {
 				t.Fatalf("re-flag changed the bundle: %+v", again.Sentinel)
 			}
 		})
+	}
+}
+
+// A notice (trusted author, no label) is recorded as one, so readers can tell
+// it from a blocking alert a maintainer later cleared.
+func TestRecordReviewEvidenceSentinelMarksNotices(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	root := withEvidenceRoot(t)
+	c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, &ReviewEvidenceSettings{Enabled: true})
+	findings := []sentinel.Finding{{Rule: sentinel.RuleSensitivePath, Summary: "touches OWNERS", Paths: []string{"OWNERS"}}}
+
+	c.recordReviewEvidenceSentinel("o/r", evidenceSentinelPR("h1"), findings, false, now)
+
+	b := mustLoadBundle(t, root, "h1")
+	want := []evidence.SentinelFinding{{Rule: sentinel.RuleSensitivePath, Summary: "touches OWNERS", Paths: []string{"OWNERS"}, Notice: true}}
+	if !reflect.DeepEqual(b.Sentinel, want) {
+		t.Fatalf("sentinel = %+v, want %+v", b.Sentinel, want)
+	}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("bundle with a notice finding invalid: %v", err)
 	}
 }
 
@@ -334,6 +369,9 @@ func TestSweepSentinelRecordsReviewEvidence(t *testing.T) {
 	var rules []string
 	for _, s := range b.Sentinel {
 		rules = append(rules, s.Rule)
+		if s.Notice {
+			t.Fatalf("a blocking alert was recorded as a notice: %+v", s)
+		}
 	}
 	if want := res.Flagged[0].Rules(); !reflect.DeepEqual(rules, want) {
 		t.Fatalf("bundle sentinel rules = %v, want %v", rules, want)
@@ -341,4 +379,258 @@ func TestSweepSentinelRecordsReviewEvidence(t *testing.T) {
 	if b.Author.Login != "vjymisal0" || b.BaseSHA != "base000" {
 		t.Fatalf("bundle started with author %+v base %q", b.Author, b.BaseSHA)
 	}
+}
+
+func evidenceCheckRun(id int64, name, status, conclusion string) *gh.CheckRun {
+	cr := &gh.CheckRun{ID: gh.Ptr(id), Name: gh.Ptr(name), Status: gh.Ptr(status), App: &gh.App{ID: gh.Ptr(int64(1))}}
+	if conclusion != "" {
+		cr.Conclusion = gh.Ptr(conclusion)
+	}
+	return cr
+}
+
+func TestRecordReviewEvidenceCI(t *testing.T) {
+	t0 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	green := []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "build", "completed", "success")}
+	red := []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(3, "build", "completed", "failure")}
+	wantGreen := []evidence.Check{{Name: "build", Conclusion: "success"}, {Name: "test", Conclusion: "success"}}
+	wantRed := []evidence.Check{{Name: "build", Conclusion: "failure"}, {Name: "test", Conclusion: "success"}}
+
+	newClient := func(t *testing.T, enabled bool) *Client {
+		t.Helper()
+		c := newTestClient(t, newEvidenceContextServer(t, &evidenceContextFixture{head: "h1"}), "o", []string{"o/r"})
+		c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: enabled} })
+		return c
+	}
+
+	t.Run("captures verdict and rewrites only on change", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		orig := writeTestEvidence(t, root, "h1", "", t0)
+		c := newClient(t, true)
+
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, green)
+		b := mustLoadBundle(t, root, "h1")
+		if b.CI.Status != "success" || !reflect.DeepEqual(b.CI.Checks, wantGreen) || b.CI.CapturedAt.IsZero() {
+			t.Fatalf("first capture: %+v", b.CI)
+		}
+		if b.Hash == orig.Hash || !b.UpdatedAt.Equal(b.CI.CapturedAt) {
+			t.Fatalf("first capture not sealed in: hash %s (orig %s), updated_at %v", b.Hash, orig.Hash, b.UpdatedAt)
+		}
+		if h, _ := evidence.Hash(b); h != b.Hash {
+			t.Fatalf("hash not resealed: %s vs %s", h, b.Hash)
+		}
+
+		// Same verdict and checks again: nothing written, captured_at stays put.
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, green)
+		if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash || !again.CI.CapturedAt.Equal(b.CI.CapturedAt) {
+			t.Fatalf("unchanged verdict rewrote the bundle: %+v", again.CI)
+		}
+
+		// Same checks from the other source (GraphQL batch fills details_url,
+		// REST fills html_url): still nothing written.
+		greenWithURLs := []*gh.CheckRun{
+			evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "build", "completed", "success"),
+		}
+		for i, cr := range greenWithURLs {
+			cr.HTMLURL = gh.Ptr(fmt.Sprintf("https://example.com/runs/%d", i))
+		}
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, greenWithURLs)
+		if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash {
+			t.Fatalf("URL-only difference rewrote the bundle: %+v", again.CI)
+		}
+
+		// A changed verdict is recorded.
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "failure", nil, red)
+		b2 := mustLoadBundle(t, root, "h1")
+		if b2.CI.Status != "failure" || !reflect.DeepEqual(b2.CI.Checks, wantRed) || b2.Hash == b.Hash {
+			t.Fatalf("changed verdict not recorded: %+v", b2.CI)
+		}
+		if err := b2.Validate(); err != nil {
+			t.Fatalf("bundle invalid: %v", err)
+		}
+
+		// A gate status the caller never set falls back to the runs' verdict.
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "", nil, green)
+		if b3 := mustLoadBundle(t, root, "h1"); b3.CI.Status != "success" {
+			t.Fatalf("derived status = %q, want success", b3.CI.Status)
+		}
+	})
+
+	t.Run("never touches a merged bundle", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		b := writeTestEvidence(t, root, "h1", "", t0)
+		b.Merge = &evidence.MergeEvent{Actor: "bob", Method: "squash", At: t0, SHA: "m1"}
+		if err := evidence.Seal(b, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeReviewEvidence(ReviewEvidencePath(root, "o/r", 7, "h1"), b); err != nil {
+			t.Fatal(err)
+		}
+		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, green)
+		if got := mustLoadBundle(t, root, "h1"); got.Hash != b.Hash || got.CI.Status != "" {
+			t.Fatalf("merged bundle was rewritten: %+v", got.CI)
+		}
+	})
+
+	t.Run("starts a bundle from available PR metadata", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		pr := &gh.PullRequest{
+			User: &gh.User{Login: gh.Ptr("alice"), Type: gh.Ptr("User")},
+			Base: &gh.PullRequestBranch{SHA: gh.Ptr("base000")},
+		}
+		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", pr, green)
+		got := mustLoadBundle(t, root, "h1")
+		if got.Author.Login != "alice" || got.BaseSHA != "base000" || got.CI.Status != "success" || !reflect.DeepEqual(got.CI.Checks, wantGreen) {
+			t.Fatalf("bundle started from CI snapshot: author %+v base %q CI %+v", got.Author, got.BaseSHA, got.CI)
+		}
+	})
+
+	t.Run("skips when disabled or checks are empty", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		pr := &gh.PullRequest{
+			User: &gh.User{Login: gh.Ptr("alice"), Type: gh.Ptr("User")},
+			Base: &gh.PullRequestBranch{SHA: gh.Ptr("base000")},
+		}
+		newClient(t, false).recordReviewEvidenceCI("o/r", 7, "h1", "success", pr, green)
+		if _, err := os.Stat(ReviewEvidencePath(root, "o/r", 7, "h1")); !os.IsNotExist(err) {
+			t.Fatalf("disabled evidence started a bundle: %v", err)
+		}
+		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", pr, nil)
+		if _, err := os.Stat(ReviewEvidencePath(root, "o/r", 7, "h1")); !os.IsNotExist(err) {
+			t.Fatalf("empty run list started a bundle: %v", err)
+		}
+	})
+}
+
+func TestEvidenceCIVerdict(t *testing.T) {
+	tests := []struct {
+		name string
+		runs []*gh.CheckRun
+		want string
+	}{
+		{"no runs", nil, "pending"},
+		{"all green", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success")}, "success"},
+		{"one failed", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "build", "completed", "failure")}, "failure"},
+		{"action required", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "action_required")}, "failure"},
+		{"still running", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "lint", "in_progress", "")}, "pending"},
+		{"only meta checks", []*gh.CheckRun{evidenceCheckRun(1, "tide", "completed", "success")}, "pending"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := evidenceCIVerdict(tt.runs); got != tt.want {
+				t.Fatalf("evidenceCIVerdict = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The CI snapshot is called with the short repo name; it must land at the
+// canonical owner/name path, never under a name-only directory.
+func TestRecordReviewEvidenceCINormalizesShortRepo(t *testing.T) {
+	root := withEvidenceRoot(t)
+	c := newTestClient(t, newEvidenceContextServer(t, &evidenceContextFixture{head: "h1"}), "acme", []string{"acme/exult"})
+	c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
+
+	pr := &gh.PullRequest{
+		User: &gh.User{Login: gh.Ptr("alice"), Type: gh.Ptr("User")},
+		Base: &gh.PullRequestBranch{SHA: gh.Ptr("base000")},
+	}
+	green := []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success")}
+	c.recordReviewEvidenceCI("exult", 192, "h1", "success", pr, green)
+
+	b, err := LoadReviewEvidence(ReviewEvidencePath(root, "acme/exult", 192, "h1"))
+	if err != nil {
+		t.Fatalf("load bundle at canonical path: %v", err)
+	}
+	if b.Repo != "acme/exult" || b.CI.Status != "success" {
+		t.Fatalf("bundle = repo %q ci %+v", b.Repo, b.CI)
+	}
+	if _, err := os.Stat(filepath.Join(root, "exult")); !os.IsNotExist(err) {
+		t.Fatalf("short-name directory created: %v", err)
+	}
+}
+
+func TestRecordReviewEvidenceCISkipsWithoutBaseSHA(t *testing.T) {
+	root := withEvidenceRoot(t)
+	c := newTestClient(t, newEvidenceContextServer(t, &evidenceContextFixture{head: "h1"}), "acme", []string{"acme/exult"})
+	c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
+
+	pr := &gh.PullRequest{
+		User: &gh.User{Login: gh.Ptr("alice"), Type: gh.Ptr("User")},
+		Base: nil,
+	}
+	green := []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success")}
+	c.recordReviewEvidenceCI("exult", 192, "h1", "success", pr, green)
+
+	if _, err := os.Stat(ReviewEvidencePath(root, "acme/exult", 192, "h1")); !os.IsNotExist(err) {
+		t.Fatalf("bundle written without a base sha: %v", err)
+	}
+}
+
+// TestRecordReviewEvidenceSentinelAck: the owner's Approve on a
+// sentinel-flagged head records a head-keyed acknowledgment in the bundle
+// (hivecommons/crux#30 carried findings but no label, so nothing could clear
+// its alert); a head with no bundle or no findings has nothing to
+// acknowledge, and a second approval does not duplicate the action.
+func TestRecordReviewEvidenceSentinelAck(t *testing.T) {
+	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	findings := []sentinel.Finding{{Rule: sentinel.RuleSensitivePath, Summary: "touches workflows", Paths: []string{".github/workflows/ci.yml"}}}
+	enabled := &ReviewEvidenceSettings{Enabled: true}
+
+	t.Run("not wired", func(t *testing.T) {
+		withEvidenceRoot(t)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, nil)
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0) {
+			t.Fatal("no evidence wiring must acknowledge nothing")
+		}
+	})
+	t.Run("no bundle", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, enabled)
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0) {
+			t.Fatal("a head without a bundle has nothing to acknowledge")
+		}
+		if _, err := os.Stat(ReviewEvidencePath(root, "o/r", 7, "h1")); !os.IsNotExist(err) {
+			t.Fatalf("acknowledging must not start a bundle: %v", err)
+		}
+	})
+	t.Run("bundle without findings", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		writeTestEvidence(t, root, "h1", "", t0)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, enabled)
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0) {
+			t.Fatal("a bundle without sentinel findings has nothing to acknowledge")
+		}
+		if b := mustLoadBundle(t, root, "h1"); b.SentinelAcknowledgedBy() != "" || len(b.HumanActions) != 0 {
+			t.Fatalf("actions written without findings: %+v", b.HumanActions)
+		}
+	})
+	t.Run("acknowledges once", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, enabled)
+		c.recordReviewEvidenceSentinel("o/r", evidenceSentinelPR("h1"), findings, false, t0)
+		if b := mustLoadBundle(t, root, "h1"); b.SentinelAcknowledgedBy() != "" {
+			t.Fatalf("fresh findings must not read as acknowledged: %+v", b.HumanActions)
+		}
+		if !c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0.Add(time.Hour)) {
+			t.Fatal("findings on the head must be acknowledgeable")
+		}
+		if !c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0.Add(2*time.Hour)) {
+			t.Fatal("a standing acknowledgment reports true")
+		}
+		b := mustLoadBundle(t, root, "h1")
+		if got := b.SentinelAcknowledgedBy(); got != "clubanderson" {
+			t.Fatalf("SentinelAcknowledgedBy = %q, want clubanderson", got)
+		}
+		if len(b.HumanActions) != 1 || b.HumanActions[0].Kind != evidence.ActionSentinelAcknowledged || !b.HumanActions[0].At.Equal(t0.Add(time.Hour)) {
+			t.Fatalf("one acknowledgment expected, got %+v", b.HumanActions)
+		}
+		if len(b.Sentinel) != 1 {
+			t.Fatalf("findings must stay on record, got %+v", b.Sentinel)
+		}
+		// A new head carries no acknowledgment.
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h2", "clubanderson", t0) {
+			t.Fatal("another head has no bundle to acknowledge")
+		}
+	})
 }

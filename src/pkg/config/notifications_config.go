@@ -64,6 +64,14 @@ type MatrixConfig struct {
 	AllowedUsers []string `yaml:"allowed_users,omitempty"`
 }
 
+// MSTeamsConfig configures the Teams chat surface. Inbound thread replies are
+// polled only under the five newest bot-authored root posts. After five newer
+// bot posts, replies under an older checkpoint prompt are ignored, even while
+// its checkpoint is pending. Notifications, command replies, split message parts,
+// and the 15-minute heartbeat all consume this window (~75 minutes with only
+// heartbeats). For older prompts, send a new top-level channel post: approve
+// (one pending checkpoint for you) or !runs approve <key> (explicit run key).
+// Approval still requires an allowed user with the owner role.
 type MSTeamsConfig struct {
 	Enabled      bool   `yaml:"enabled"`
 	TenantID     string `yaml:"tenant_id"`
@@ -88,6 +96,9 @@ type MSTeamsConfig struct {
 	AllowedUsers []string `yaml:"allowed_users,omitempty"`
 }
 
+// DiscordRFCChannelIDEnvVar overrides notifications.discord.rfc_channel_id.
+const DiscordRFCChannelIDEnvVar = "HIVE_DISCORD_RFC_CHANNEL_ID"
+
 type DiscordConfig struct {
 	Webhook        string `yaml:"webhook"`
 	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
@@ -96,6 +107,12 @@ type DiscordConfig struct {
 	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
 	BotToken           string `yaml:"bot_token"`
 	ChannelID          string `yaml:"channel_id"`
+	// RFCChannelID is the channel that receives RFC lifecycle notices (an
+	// RFC issue opened, closed, or taken off hold; pkg/rfcnotify). Posted
+	// with BotToken; needs no ChannelID and does not start the command bot.
+	// Empty (the default) disables the notices. The env var
+	// HIVE_DISCORD_RFC_CHANNEL_ID overrides it.
+	RFCChannelID string `yaml:"rfc_channel_id,omitempty" json:"rfc_channel_id,omitempty"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel

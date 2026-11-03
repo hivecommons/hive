@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/planengine"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 	// Linking pkg/spektacular registers the default "spektacular" engine.
 	_ "github.com/hivecommons/hive/pkg/spektacular"
 )

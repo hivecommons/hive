@@ -6,7 +6,7 @@ the kubestellar hub**. It layers on the two in-repo bases:
 
 | Base | What it provides |
 |------|------------------|
-| `../../../k8s` | Core Hive workload: namespace, ConfigMap, Secret, PVC, RBAC, Deployment, Service. |
+| `../../../k8s` | Core Hive workload: namespace, ConfigMap, PVC, RBAC, Deployment, Service. The `hive-secrets` Secret is not included; create it yourself (below). |
 | `../../../inference` | An in-cluster OpenAI-compatible inference backend (llama.cpp serving Qwen2.5-0.5B) plus EPP RBAC — so you get a working model endpoint without an external provider. |
 
 The overlay only adds **deltas**; it never edits the bases. A concrete,
@@ -38,8 +38,12 @@ callback leg can derive different `redirect_uri`s and the provider rejects the
 code exchange. Do not use `hub.dashboard_url` for this on a standalone hive;
 see [docs/linear-agent.md](../../../../docs/linear-agent.md#setup).
 
-Also populate `hive-secrets` (from the base) with a GitHub App PEM **or**
-`HIVE_GITHUB_TOKEN`, and — if your litellm/inference endpoint needs auth —
+Also create the `hive-secrets` Secret yourself (keys documented in the
+`src/deploy/k8s/secret.yaml` template; `kubectl apply -k` does not manage it, so
+re-applying the overlay leaves your keys alone) with a GitHub App PEM **or**
+`HIVE_GITHUB_TOKEN` (wired into `hive.yaml` as `github.token:
+${HIVE_GITHUB_TOKEN}`; swap it for `app_id`/`installation_id`/`key_file` when
+using an App), and — if your litellm/inference endpoint needs auth —
 the key named by `governor.litellm.api_key_env` (default `HIVE_LITELLM_API_KEY`)
 or mounted at `api_key_file` (default `/secrets/litellm_api_key`).
 
@@ -102,6 +106,8 @@ kubectl -n hive-inference rollout status deploy/vllm
 
 ## Pinning / upgrading the image
 
+To test a `v6` change, track `:edge` instead of `:stable` — see [Testing v6 changes](../../../../docs/release-channels.md#testing-v6-changes).
+
 The base tracks `ghcr.io/hivecommons/hive:stable`. Pin so that upgrades are
 deliberate — there is no hub to auto-upgrade a standalone hive.
 
@@ -114,20 +120,23 @@ deliberate — there is no hub to auto-upgrade a standalone hive.
 
   | Tag | Release line | Moved by |
   |---|---|---|
-  | `v4-latest`, `candidate` | `v4` | every green merge to `v4` |
-  | `stable` | `v4` | the stable-promotion workflow, by digest, after the soak gate |
-  | `v5-latest`, `edge` | `v5` | every green merge to `v5` |
+  | `v5-latest`, `candidate`, `latest` | `v5` | every green merge to `v5` |
+  | `stable` | `v5` | the stable-promotion workflow (`promote-stable.yml`), by digest, after the soak gate |
+  | `v6-latest`, `edge` | `v6` | every green merge to `v6` |
+  | `v4-latest` | `v4` | every green merge to `v4` (maintenance line; publishes **no** channel) |
 
-  `latest` is currently moved by **both** lines and so is not safe to deploy —
-  see [#6711](https://github.com/hivecommons/hive/issues/6711). Name the line,
-  the channel, or a digest instead.
+  `latest` follows `candidate` (both are the newest green `v5` merge); the
+  earlier flapping between lines was fixed by
+  [#6711](https://github.com/hivecommons/hive/issues/6711) / the
+  [#7721](https://github.com/hivecommons/hive/issues/7721) channel ownership
+  cut-over. Prefer naming the channel or a digest anyway.
 
-  So `edge` is an **active-development `v5` build, not a newer `stable`** — see
+  So `edge` is an **active-development `v6` build, not a newer `stable`** — see
   [release-channels.md](../../../../docs/release-channels.md). A standalone hive
-  that wants the v5 line should track `v5-latest` (or better, a digest resolved
-  from it). Note that `v5` is pre-GA and there is no v4→v5 migration guide yet,
-  so treat the switch as one-way unless you have recorded the digest you came
-  from.
+  on the supported line should track `stable` or `candidate` (or better, a
+  digest resolved from one of them). `v4` is feature-frozen maintenance; moving
+  a v4 hive forward is covered by the
+  [v4 → v5 migration guide](../../../../docs/migration-v4-v5.md).
 - `vX.Y.Z` **image** tags are produced only by the automated
   [tagged-release workflow](../../../../docs/releases.md)
   (`.github/workflows/tagged-release.yml`), which retags the just-published short-SHA
@@ -141,7 +150,7 @@ deliberate — there is no hub to auto-upgrade a standalone hive.
   TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:hivecommons/hive:pull" | jq -r .token)
   curl -sI -H "Authorization: Bearer $TOKEN" \
     -H "Accept: application/vnd.oci.image.index.v1+json" \
-    https://ghcr.io/v2/hivecommons/hive/manifests/v4.1.0 | head -1   # 200 = exists, 404 = not published
+    https://ghcr.io/v2/hivecommons/hive/manifests/v5.186.4 | head -1   # 200 = exists, 404 = not published
   ```
 
   Version tags that do exist are listed on the

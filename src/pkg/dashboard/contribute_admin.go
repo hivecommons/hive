@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -68,10 +69,22 @@ func (s *Server) paneTailViewer(r *http.Request) bool {
 func (s *Server) handleContributorsList(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	var liveStates map[string]ContributorLiveState
+	var heartbeats map[string]time.Time
+	window := config.DefaultPresenceWindow
 	if s.contributeHub != nil {
 		liveStates = s.contributeHub.LiveStates()
+		heartbeats = s.contributeHub.LastHeartbeats()
+		window = s.contributeHub.presenceWindow()
 	}
+	now := time.Now()
 	for i := range profiles {
+		profiles[i].Online = countOnlineContributors(profiles[i:i+1], heartbeats, window, now) == 1
+		policy := s.contributorTokenPolicy()
+		if err := policy.migrate(&profiles[i], time.Now().UTC()); err != nil {
+			jsonError(w, "Token migration failed; retry", http.StatusConflict)
+			return
+		}
+		profiles[i].TokenRotationDue = policy.rotationDue(&profiles[i], time.Now().UTC())
 		profiles[i].TokenPlain = ""
 		profiles[i].RegistrationToken = ""
 		profiles[i].EligibleForTrusted = contributorEligibleForTrusted(&profiles[i])
@@ -92,6 +105,12 @@ func (s *Server) handleContributorGet(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "Contributor not found", http.StatusNotFound)
 		return
 	}
+	policy := s.contributorTokenPolicy()
+	if err := policy.migrate(p, time.Now().UTC()); err != nil {
+		jsonError(w, "Token migration failed; retry", http.StatusConflict)
+		return
+	}
+	p.TokenRotationDue = policy.rotationDue(p, time.Now().UTC())
 	p.TokenPlain = ""
 	p.RegistrationToken = ""
 	p.EligibleForTrusted = contributorEligibleForTrusted(p)
@@ -110,18 +129,28 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		Tier string `json:"tier"`
+		Tier   string `json:"tier"`
+		Reason string `json:"reason,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	validTiers := map[string]bool{"newcomer": true, "contributor": true, "trusted": true, "merger": true, "advisor": true, "revoked": true}
+	validTiers := map[string]bool{contributorTierNewcomer: true, contributorTierContributor: true, contributorTierTrusted: true, contributorTierMerger: true, contributorTierAdvisor: true, contributorTierRevoked: true}
 	if !validTiers[req.Tier] {
 		jsonError(w, "Invalid tier", http.StatusBadRequest)
 		return
 	}
-	p.TrustTier = req.Tier
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "operator set tier"
+	}
+	change, changed := applyContributorTierChange(p, req.Tier, requestUser(r), reason, tierChangeSourceOperator, time.Now())
+	if !changed {
+		// Same tier: nothing to persist, no history entry, no audit event.
+		jsonResponse(w, map[string]any{"ok": true, "trust_tier": p.TrustTier, "unchanged": true})
+		return
+	}
 	// H2: admin path — adminOverride lets this change a terminal (revoked) tier and
 	// wins the CAS reconcile against any concurrent stale WS save. The write is
 	// server-authoritative.
@@ -129,6 +158,7 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
+	s.auditContributorTierChange(p, change)
 	// H2: if this change revokes access, fence any live WebSocket sessions the
 	// contributor holds so an in-flight connection cannot keep working (or keep
 	// saving a stale "contributor" profile) after the revoke.
@@ -138,8 +168,8 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 			s.contributeHub.DisconnectContributor(p.ContributorID, "contribution access revoked")
 		}
 	}
-	s.logger.Info("contributor tier changed", "username", p.GitHubUsername, "tier", req.Tier)
-	jsonResponse(w, map[string]any{"ok": true, "trust_tier": req.Tier})
+	s.logger.Info("contributor tier changed", "username", p.GitHubUsername, "tier", req.Tier, "prev", change.Prev, "by", change.By, "reason", change.Reason)
+	jsonResponse(w, map[string]any{"ok": true, "trust_tier": req.Tier, "tier_change": change})
 }
 
 func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http.Request) {
@@ -333,13 +363,16 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "Contributor not found", http.StatusNotFound)
 		return
 	}
-	p.TrustTier = "revoked"
+	change, changed := applyContributorTierChange(p, contributorTierRevoked, requestUser(r), "operator revoked contribution access", tierChangeSourceOperator, time.Now())
 	// H2: admin path — adminOverride wins the CAS reconcile so this revoke cannot be
 	// silently clobbered by a concurrent stale WS save, and the tier is now
 	// server-authoritative and terminal for any later non-admin write.
 	if err := saveContributorProfileCAS(p, true); err != nil {
 		jsonError(w, "Failed to save", http.StatusInternalServerError)
 		return
+	}
+	if changed {
+		s.auditContributorTierChange(p, change)
 	}
 	// H2: fence live sessions — close any WebSocket connections this contributor
 	// holds so an in-flight session cannot keep working, keep minting credentials, or
@@ -441,4 +474,14 @@ func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request)
 	}
 	s.logger.Info("contributor deleted", "username", p.GitHubUsername)
 	jsonResponse(w, map[string]any{"ok": true, "deleted": p.GitHubUsername})
+}
+
+// auditContributorTierChange writes the audit.jsonl event that pairs with a
+// TierHistory entry: user = who moved the tier (operator login or the hive
+// writer), agent = the contributor id, detail = the same fields as the entry.
+func (s *Server) auditContributorTierChange(p *ContributorProfile, change ContributorTierChange) {
+	if s == nil || s.audit == nil || p == nil {
+		return
+	}
+	s.audit.Log(change.By, auditActionContributorTierChanged, tierChangeAuditDetail(p.GitHubUsername, change), p.ContributorID)
 }

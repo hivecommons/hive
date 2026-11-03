@@ -23,9 +23,6 @@ const DecidePort = 18446
 // DecidePath is the single route the endpoint serves.
 const DecidePath = "/v1/decide"
 
-// DefaultEndpoint is what HIVE_JEV_ENDPOINT carries to agents.
-const DefaultEndpoint = "http://127.0.0.1:18446"
-
 // UsageRecorder receives the input tokens of every answered decision so they
 // land in the governor's budget. *tokens.InferenceSink satisfies it.
 type UsageRecorder interface {

@@ -33,12 +33,12 @@ func TestOverviewServerClassifierAndCSVParity9102(t *testing.T) {
 	var script strings.Builder
 	script.WriteString(`
 const REPO_ISSUE_BAND_DEFAULTS = {
-  waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+  waitingLabels: ['needs-human', 'stage/045-needs-decision', 'stage/085-needs-decision', 'stage/017-possible-existing', 'needs-direction', 'needs-decision', 'needs-spec', 'blocked'],
   doneLabels: ['hive/already-done', 'hive/covered-by-pr', 'hive/likely-done'],
   staleDays: 14
 };
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
+const PR_HUMAN_GATE_LABELS = ['needs-human', 'stage/085-needs-decision', 'needs-decision', '2-discussing'];
 const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
 const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
 const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];
@@ -108,8 +108,10 @@ process.stdout.write(JSON.stringify({
 	now := mustTime9102(t, "2026-09-27T00:00:00Z")
 	issueRows, _ := s.overviewRows(status, overviewKindIssues, config.DashboardIssueBandsConfig{}, overviewFilters{}, now)
 	prRows, _ := s.overviewRows(status, overviewKindPRs, config.DashboardIssueBandsConfig{}, overviewFilters{}, now)
-	issueCSV := overviewCSV(issueRows, overviewCSVColumns(overviewKindIssues))
-	prCSV := overviewCSV(prRows, overviewCSVColumns(overviewKindPRs))
+	// The frozen browser oracle predates the ownership, bucket and slice
+	// columns; compare the columns it knows.
+	issueCSV := overviewCSV(issueRows, []string{"band", "band_rule", "repo", "number", "title", "url", "state_signals", "labels", "assignees", "agent_role", "acknowledged", "held", "hold_reason", "linked_prs", "updated_at", "stale"})
+	prCSV := overviewCSV(prRows, []string{"band", "band_rule", "repo", "number", "title", "url", "author", "draft", "merge_verdict", "mergeable", "failing_checks", "review_decision", "review_class", "held", "hold_reason", "labels", "updated_at", "stale", "signals"})
 	if issueCSV != js.IssueCSV {
 		t.Fatalf("issue CSV diverged from browser\nGo:\n%s\nJS:\n%s", issueCSV, js.IssueCSV)
 	}
@@ -241,7 +243,7 @@ func TestOverviewExportHelperBranches9102(t *testing.T) {
 	if got := prBandSpec("waiting", cfg).Rule; !strings.Contains(got, "wait-human") || strings.Contains(got, "Wait-Human, wait-human") {
 		t.Fatalf("custom waiting rule did not normalize labels: %q", got)
 	}
-	rows := []any{overviewPRCSVRow(pr, &github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: "review"}, true, info, cfg, "")}
+	rows := []any{overviewPRCSVRow(overviewPRItem{pr: pr, verdict: &github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: "review"}, held: true, info: info}, cfg, "")}
 	csv := overviewCSV(rows, overviewCSVColumns(overviewKindPRs))
 	for _, want := range []string{"outstanding: review", "CHANGES_REQUESTED", "review requested from @alice, team team-a", "1 comment, 2 review threads"} {
 		if !strings.Contains(csv, want) {
@@ -257,7 +259,7 @@ func TestOverviewExportHelperBranches9102(t *testing.T) {
 			{Number: 3, Merged: true},
 		},
 	}
-	issueRow := overviewIssueCSVRow(issue, false, IssueBand(issue, false, cfg, now), cfg, "")
+	issueRow := overviewIssueCSVRow(overviewIssueItem{issue: issue, info: IssueBand(issue, false, cfg, now)}, cfg, "")
 	if links := issueRow["linked_prs"].([]any); len(links) != 2 || links[1] != "#3 merged" {
 		t.Fatalf("linked PR labels = %#v", links)
 	}

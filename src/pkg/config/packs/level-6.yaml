@@ -1,9 +1,14 @@
 level: 6
-name: Fully Autonomous
-description: 'Fully autonomous operation. Fourteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
+name: Autonomous
+description: 'Autonomous operation. Fifteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
 
   '
 governor:
+  # The semantic injection classifier is on by default from L4 up: agents at
+  # this level open PRs, so paraphrased injections the rules miss are worth a
+  # small model call per untrusted text. Override per hive with
+  # ioscan.classifier.enabled: false.
+  ioscan_classifier: "on"
   modes: SURGE, BUSY, QUIET, IDLE
   # High-trust level: decomposed epic plans are approved automatically, so their
   # child sub-tasks become claimable without a human plan-review step.
@@ -47,6 +52,7 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
     busy:
@@ -59,6 +65,7 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
     quiet:
@@ -73,6 +80,7 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
     idle:
@@ -87,13 +95,14 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
 agents:
 - name: supervisor
   display_name: Supervisor
   role: supervisor
-  description: 'Full autonomous oversight. Self-healing: restarts stalled agents,
+  description: 'Autonomous oversight. Self-healing: restarts stalled agents,
     triggers rollbacks on deploy failures.
 
     '
@@ -108,7 +117,7 @@ agents:
   include_repos: true
   clear_on_kick: false
   stale_timeout: 600
-  interactions: 'Full autonomous oversight of all agents. Triggers self-healing actions
+  interactions: 'Autonomous oversight of all agents. Triggers self-healing actions
     without human intervention.
 
     '
@@ -221,7 +230,7 @@ agents:
 - name: sec-check
   display_name: security
   role: sec-check
-  description: 'Full autonomous security scanning with auto-patch for known CVEs.
+  description: 'Autonomous security scanning with auto-patch for known CVEs.
 
     '
   emoji: 🛡
@@ -248,8 +257,8 @@ agents:
 - name: architect
   display_name: architect
   role: architect
-  description: 'Full autonomous architecture. Implements RFCs and auto-merges structural
-    changes.
+  description: 'Autonomous architecture. Implements RFCs and files issues and PRs
+    for structural changes; merging is left to a person.
 
     '
   emoji: 🏗
@@ -268,7 +277,7 @@ agents:
   - rfc
   - design
   - feature
-  interactions: 'Full autonomous design and implementation.
+  interactions: 'Autonomous design and implementation.
 
     '
   knowledge_use: 'Full architecture knowledge access.
@@ -277,7 +286,7 @@ agents:
 - name: strategist
   display_name: strategist
   role: strategist
-  description: 'Full autonomous strategic planning with roadmap execution.
+  description: 'Autonomous strategic planning with roadmap execution.
 
     '
   emoji: 🧠
@@ -294,7 +303,7 @@ agents:
   - strategy
   - roadmap
   - planning
-  interactions: 'Full autonomous strategic planning and priority setting.
+  interactions: 'Autonomous strategic planning and priority setting.
 
     '
   knowledge_use: 'Full cross-agent knowledge synthesis.
@@ -303,7 +312,7 @@ agents:
 - name: outreach
   display_name: outreach
   role: outreach
-  description: 'Full autonomous outreach. Files issues on partner projects and manages
+  description: 'Autonomous outreach. Files issues on partner projects and manages
     community engagement. Highest trust — external-facing.
 
     '
@@ -322,7 +331,7 @@ agents:
   - adopters
   - outreach
   - ecosystem
-  interactions: 'Fully autonomous community engagement.
+  interactions: 'Autonomous community engagement.
 
     '
   knowledge_use: 'Full community knowledge access.
@@ -373,8 +382,9 @@ agents:
   display_name: adjudicator
   role: reviewer
   description: 'Escalated-PR adjudicator (the reviewer lane). Works hive-authored PRs
-    carrying needs-human and delivers exactly one verdict per PR: REPAIR, DE-ESCALATE
-    or RECOMMEND-CLOSE. Gets no kick_template on purpose, so its kick is routed by
+    carrying needs-human and delivers exactly one verdict per PR: REPAIR, DE-ESCALATE,
+    RECOMMEND-CLOSE or HAND-OFF (only a maintainer can unblock it; the verdict names
+    the next step). Gets no kick_template on purpose, so its kick is routed by
     role to reviewer-lane.md (hivecommons/hive#9477). Never merges.
 
     '
@@ -389,12 +399,45 @@ agents:
   on_demand: false
   stale_timeout: 3600  # 1h — must exceed the 30m cadence
   interactions: 'Adjudicates escalated (needs-human) hive-authored PRs at most three
-    per kick, one pass per PR (reviewer-passed / reviewer-recommend-close). Pushes
+    per kick, one pass per PR (reviewer-passed / reviewer-recommend-close /
+    reviewer-handoff). Pushes
     repairs to the same branch; never opens a replacement PR and never merges.
 
     '
   knowledge_use: 'Reads the escalated PR, its CI evidence and the base branch to decide
     whether the change is still wanted and can be made lossless.
+
+    '
+- name: dedupe
+  display_name: dedupe
+  role: dedupe
+  description: 'Scheduled issue+PR duplicate-triage lane (hivecommons/hive#11582). Once
+    a day reads every open issue and pull request in each repository, verifies
+    near-duplicates, same-root-cause clusters, unlinked PR/issue pairs and
+    already-resolved items by reading both sides, and posts ONE consolidation
+    checklist issue per repository, updated in place on later kicks. Recommendations
+    only: never closes, labels, merges or comments on the candidate items.
+
+    '
+  emoji: "🧹"
+  color: '#7f8c8d'
+  sort_order: 28
+  backend: copilot
+  model: claude-fable-5
+  bead_role: worker
+  kick_template: dedupe-issues.md
+  mode: ISSUES_ONLY
+  include_repos: true
+  on_demand: false
+  stale_timeout: 100800  # 28h — must exceed the 24h cadence
+  interactions: 'Writes to exactly one place per repository: the consolidation checklist
+    issue it owns (found by its hive:dedupe-checklist marker), filed with --needs-decision only for the risk categories and with a Risk: <category> body line
+    so it stays out of the work queue. Complements the reviewer''s per-PR duplicate flags
+    and the mechanical PR duplicate sweep; does not repeat them.
+
+    '
+  knowledge_use: 'Reads the last-actionable snapshot, gh search results, and the body,
+    comments and diff of every candidate pair before calling anything a duplicate.
 
     '
 - name: brainstorm

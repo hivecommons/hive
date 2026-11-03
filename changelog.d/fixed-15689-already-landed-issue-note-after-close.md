@@ -1,0 +1,1 @@
+- Already-landed auto-close now posts its "this issue is done" note only after the issue close goes through, so an issue that CloseIssue's tracking-issue or reporter-confirmation gate keeps open no longer carries a misleading note ([#15689](https://github.com/hivecommons/hive/issues/15689))

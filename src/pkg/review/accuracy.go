@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
 const ReviewerAccuracyDefaultWindow = 30 * 24 * time.Hour
@@ -28,6 +30,81 @@ type ReviewerAccuracySummary struct {
 	MissingOutcomes  int                     `json:"missing_outcomes"`
 	Perspectives     []ReviewerAccuracyGroup `json:"perspectives"`
 	ReviewerModels   []ReviewerAccuracyGroup `json:"reviewer_models"`
+	// AuthorFamilies groups the same verdicts by the PR author's model
+	// family (modelfamily.Bucket: claude / gpt / gemini / other, "unknown"
+	// for an agent whose model was not recorded). A person's PR has no
+	// author model and lands under "human".
+	AuthorFamilies []ReviewerAccuracyGroup `json:"author_families"`
+	// FamilyMatch splits verdicts into "same" (reviewer and author model
+	// share a family), "cross" and "unknown" (either side unrecorded), so a
+	// cross-family review_models pool has a visible effect to compare.
+	FamilyMatch []ReviewerAccuracyGroup `json:"family_match"`
+	// ReviewHeads scores each review head's raw reports against the decided
+	// outcome of the PR heads it judged (hivecommons/hive#13542), grouped by
+	// the head's review model. The decided verdict and the decision step's
+	// dispositions are the reference, so it needs no merge outcome.
+	ReviewHeads []ReviewerHeadAgreementGroup `json:"review_heads,omitempty"`
+}
+
+// ReviewerHeadAgreementGroup is one review model's record as a review head.
+// A sample is one (PR head, perspective) the head judged. MissedBlocks: the
+// head approved a perspective the decision blocked. OverBlocks: the head
+// blocked a perspective the decision approved. Findings are counted against
+// the decision step's dispositions: confirmed, or rejected (not reproducible
+// or out of scope).
+type ReviewerHeadAgreementGroup struct {
+	Name              string  `json:"name"`
+	Samples           int     `json:"samples"`
+	Agreements        int     `json:"agreements"`
+	MissedBlocks      int     `json:"missed_blocks"`
+	OverBlocks        int     `json:"over_blocks"`
+	FindingsRaised    int     `json:"findings_raised"`
+	FindingsConfirmed int     `json:"findings_confirmed"`
+	FindingsRejected  int     `json:"findings_rejected"`
+	AgreementRate     float64 `json:"agreement_rate"`
+	ConfirmRate       float64 `json:"confirm_rate"`
+}
+
+// ReviewerAccuracyOptions tunes SummarizeReviewerAccuracyWith.
+type ReviewerAccuracyOptions struct {
+	// FallbackReviewModel is attributed to a verdict that recorded no
+	// review_model: the reviewer agent's launch model, the same fallback
+	// pkg/github applies when it writes evidence bundles. Empty keeps such
+	// verdicts under "unknown".
+	FallbackReviewModel string
+}
+
+// Family-match group names.
+const (
+	FamilyMatchSame    = "same"
+	FamilyMatchCross   = "cross"
+	FamilyMatchUnknown = "unknown"
+)
+
+// AuthorFamilyBucket is the author-family group a verdict belongs to: the
+// model's family bucket when one was recorded, "human" when the PR is known
+// to be a person's (no model, not hive-authored), "unknown" otherwise.
+func AuthorFamilyBucket(authorModel string, hiveAuthoredKnown, hiveAuthored bool) string {
+	if strings.TrimSpace(authorModel) != "" {
+		return modelfamily.Bucket(authorModel)
+	}
+	if hiveAuthoredKnown && !hiveAuthored {
+		return modelfamily.BucketHuman
+	}
+	return modelfamily.Unknown
+}
+
+// FamilyMatchBucket classifies a reviewer/author model pair.
+func FamilyMatchBucket(reviewModel, authorModel string) string {
+	same, known := modelfamily.SameFamily(reviewModel, authorModel)
+	switch {
+	case !known:
+		return FamilyMatchUnknown
+	case same:
+		return FamilyMatchSame
+	default:
+		return FamilyMatchCross
+	}
 }
 
 type ReviewerAccuracyGroup struct {
@@ -55,6 +132,11 @@ type ReviewerConfidenceCalibrationBucket struct {
 // outcome ledger and cached GitHub history. It deliberately accepts the data as
 // parameters so the dashboard endpoint and tests use the same pure aggregation.
 func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Artifact, ledger *OutcomeLedger, evidence map[string]ReviewerAccuracyEvidence) ReviewerAccuracySummary {
+	return SummarizeReviewerAccuracyWith(now, window, artifact, ledger, evidence, ReviewerAccuracyOptions{})
+}
+
+// SummarizeReviewerAccuracyWith is SummarizeReviewerAccuracy with options.
+func SummarizeReviewerAccuracyWith(now time.Time, window time.Duration, artifact Artifact, ledger *OutcomeLedger, evidence map[string]ReviewerAccuracyEvidence, ropts ReviewerAccuracyOptions) ReviewerAccuracySummary {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -69,14 +151,19 @@ func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Art
 	}
 	perspectives := map[string]*accuracyAccumulator{}
 	models := map[string]*accuracyAccumulator{}
+	families := map[string]*accuracyAccumulator{}
+	matches := map[string]*accuracyAccumulator{}
+	fallbackModel := strings.TrimSpace(ropts.FallbackReviewModel)
 	seen := map[string]bool{}
 	seenRecorded := map[string]bool{}
 	missingOutcomes := map[string]bool{}
+	heads := map[string]*ReviewerHeadAgreementGroup{}
 	for _, item := range artifact.Items {
 		if item.RecordedAt.IsZero() || item.RecordedAt.Before(since) {
 			continue
 		}
-		key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+		scoreReviewHeads(heads, item, fallbackModel)
+		key := reviewKey(item.Repo, item.Number, item.HeadSHA, "")
 		if !seenRecorded[key] {
 			seenRecorded[key] = true
 			sum.RecordedVerdicts++
@@ -101,14 +188,101 @@ func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Art
 		}
 		model := strings.TrimSpace(item.ReviewModel)
 		if model == "" {
-			model = "unknown"
+			model = fallbackModel
+		}
+		if model == "" {
+			model = modelfamily.Unknown
 		}
 		accuracyAcc(models, model).add(item.Verdict, item.Confidence.Score, outcome, ev)
+		accuracyAcc(families, AuthorFamilyBucket(item.AuthorModel, item.HiveAuthoredKnown, item.HiveAuthored)).add(item.Verdict, item.Confidence.Score, outcome, ev)
+		accuracyAcc(matches, FamilyMatchBucket(model, item.AuthorModel)).add(item.Verdict, item.Confidence.Score, outcome, ev)
 	}
 	sum.MissingOutcomes = len(missingOutcomes)
 	sum.Perspectives = finishAccuracyGroups(perspectives)
 	sum.ReviewerModels = finishAccuracyGroups(models)
+	sum.AuthorFamilies = finishAccuracyGroups(families)
+	sum.FamilyMatch = finishAccuracyGroups(matches)
+	sum.ReviewHeads = finishHeadAgreementGroups(heads)
 	return sum
+}
+
+// scoreReviewHeads adds one aggregate's head reports to the per-model head
+// scores. Only a settled review-heads outcome is a reference: decided, or the
+// skip rule's unanimous clean approval.
+func scoreReviewHeads(groups map[string]*ReviewerHeadAgreementGroup, item Aggregate, fallbackModel string) {
+	if len(item.HeadReports) == 0 || (!item.Decided && !item.DecisionSkipped) {
+		return
+	}
+	for _, r := range item.HeadReports {
+		decided, ok := item.Perspectives[r.Perspective]
+		if !ok {
+			continue
+		}
+		model := strings.TrimSpace(r.ReviewModel)
+		if model == "" {
+			model = fallbackModel
+		}
+		if model == "" {
+			model = modelfamily.Unknown
+		}
+		g := groups[model]
+		if g == nil {
+			g = &ReviewerHeadAgreementGroup{Name: model}
+			groups[model] = g
+		}
+		g.Samples++
+		headBlocks := !r.NotApplicable && r.Verdict != VerdictApprove
+		decidedBlocks := decided != VerdictApprove
+		switch {
+		case headBlocks == decidedBlocks:
+			g.Agreements++
+		case decidedBlocks:
+			g.MissedBlocks++
+		default:
+			g.OverBlocks++
+		}
+		g.FindingsRaised += len(r.Findings)
+		for _, f := range r.Findings {
+			switch dispositionFor(item.Dispositions, r.Perspective, r.Head, f.Title) {
+			case DispositionConfirmed:
+				g.FindingsConfirmed++
+			case DispositionNotReproducible, DispositionOutOfScope:
+				g.FindingsRejected++
+			}
+		}
+	}
+}
+
+func dispositionFor(ds []FindingDisposition, p Perspective, head, title string) string {
+	for _, d := range ds {
+		if (d.Perspective == "" || d.Perspective == p) && strings.TrimSpace(d.Head) == strings.TrimSpace(head) && strings.EqualFold(strings.TrimSpace(d.Title), strings.TrimSpace(title)) {
+			return strings.TrimSpace(d.Disposition)
+		}
+	}
+	return ""
+}
+
+func finishHeadAgreementGroups(m map[string]*ReviewerHeadAgreementGroup) []ReviewerHeadAgreementGroup {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]ReviewerHeadAgreementGroup, 0, len(m))
+	for _, g := range m {
+		if g.Samples > 0 {
+			g.AgreementRate = float64(g.Agreements) / float64(g.Samples)
+		}
+		if judged := g.FindingsConfirmed + g.FindingsRejected; judged > 0 {
+			g.ConfirmRate = float64(g.FindingsConfirmed) / float64(judged)
+		}
+		out = append(out, *g)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Samples != out[j].Samples {
+			return out[i].Samples > out[j].Samples
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 type accuracyAccumulator struct {

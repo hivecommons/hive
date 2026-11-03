@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -506,12 +507,15 @@ func TestReadProviderReviewQueueMergesIssuesAndPRs(t *testing.T) {
 		case "/api/overview/issues.json":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"bands": []any{map[string]any{"key": "done", "label": "Confirm & close"}},
-				"rows":  []any{map[string]any{"repo": "o/a", "number": 1, "band": "Confirm & close", "updated_at": "2026-01-01T00:00:00Z"}},
+				"rows": []any{
+					map[string]any{"repo": "o/a", "number": 1, "band": "Confirm & close", "updated_at": "2026-01-01T00:00:00Z", "your_turn": true, "verb": "CLOSE", "reason_code": "verified_done", "reason": "verified done", "inbox_rank": 2},
+					map[string]any{"repo": "o/a", "number": 3, "band": "outside", "updated_at": "2026-01-01T00:00:00Z", "your_turn": false},
+				},
 			})
 		case "/api/overview/prs.json":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"bands": []any{map[string]any{"key": "waiting", "label": "Needs human"}},
-				"rows":  []any{map[string]any{"repo": "o/a", "number": 2, "band": "Needs human", "held": true, "hold_reason": "hold", "updated_at": "2026-01-02T00:00:00Z"}},
+				"rows":  []any{map[string]any{"repo": "o/a", "number": 2, "band": "Needs human", "held": true, "hold_reason": "hold", "updated_at": "2026-01-02T00:00:00Z", "your_turn": true, "verb": "REVIEW", "reason_code": "level_gate_hold", "reason": "held by the level gate", "inbox_rank": 1}},
 			})
 		default:
 			http.NotFound(w, r)
@@ -539,8 +543,48 @@ func TestReadProviderReviewQueueMergesIssuesAndPRs(t *testing.T) {
 	if err := json.Unmarshal(encoded, &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Rows) != 2 || body.Rows[0].Kind != "pr" || body.Rows[0].ReasonCode != adminmcp.ReviewReasonHold || body.Rows[1].ReasonCode != adminmcp.ReviewReasonConfirmClose {
-		t.Fatalf("queue = %s, want the held PR before the confirm-and-close issue", encoded)
+	if len(body.Rows) != 2 || body.Rows[0].Kind != "pr" || body.Rows[0].ReasonCode != "level_gate_hold" || body.Rows[1].ReasonCode != "verified_done" {
+		t.Fatalf("queue = %s, want the your-turn rows only, in inbox_rank order", encoded)
+	}
+}
+
+func TestReadProviderReviewQueueRereadsAfterSnapshotChange(t *testing.T) {
+	// The first PR export comes from a newer snapshot than the first issues
+	// export; the re-read of both agrees.
+	issueSeqs := []int{3, 4}
+	prSeqs := []int{4, 4}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var seq int
+		var row map[string]any
+		switch r.URL.Path {
+		case "/api/overview/issues.json":
+			seq, issueSeqs = issueSeqs[0], issueSeqs[1:]
+			row = map[string]any{"repo": "o/a", "number": 1, "band": "outside", "your_turn": true, "verb": "CLOSE", "reason_code": "verified_done", "reason": "verified done", "inbox_rank": 2}
+		case "/api/overview/prs.json":
+			seq, prSeqs = prSeqs[0], prSeqs[1:]
+			row = map[string]any{"repo": "o/a", "number": 2, "band": "outside", "your_turn": true, "verb": "REVIEW", "reason_code": "level_gate_hold", "reason": "held", "inbox_rank": 1}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"snapshot_instance": "i1", "snapshot_seq": seq, "snapshot_at": "2026-10-13T00:00:00Z", "bands": []any{}, "rows": []any{row}})
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	result, err := (readProvider{roster: r}).Read(context.Background(), adminmcp.ToolReviewQueue, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(encoded, &body); err != nil || body.Total != 2 {
+		t.Fatalf("queue = %s (err %v), want both rows from the matching re-read", encoded, err)
 	}
 }
 
@@ -581,5 +625,64 @@ func TestVersionReadReportsStdioBuild(t *testing.T) {
 		if build["short"] != tc.short || m["skew"] != tc.skew || m["short"] != "abc1234" {
 			t.Fatalf("short=%s: result = %#v", tc.short, m)
 		}
+	}
+}
+
+// TestReadLogToolsBypassListCap: log_read forwards its own arguments to
+// /api/logs/read and returns lines[] as the hive answered, never cut to the
+// shared limit (#11942); a since without an offset is refused before any call.
+func TestReadLogToolsBypassListCap(t *testing.T) {
+	var mu sync.Mutex
+	var requests []string
+	seen := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), requests...)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/logs/sources" {
+			_, _ = w.Write([]byte(`{"type":"log_sources","default_source":"hive","sources":[{"name":"hive","available":true}]}`))
+			return
+		}
+		lines := make([]map[string]any, 300)
+		for i := range lines {
+			lines[i] = map[string]any{"source": "hive", "text": "line"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "log_read", "status": "ok", "lines": lines, "line_count": len(lines)})
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	provider := readProvider{roster: r}
+
+	data, err := provider.Read(context.Background(), adminmcp.ToolLogRead, map[string]any{"lines": float64(300), "since": "2026-03-01T07:00:00-05:00", "exclude": []any{"noise", "heartbeat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := data.(map[string]any)
+	if lines, _ := m["lines"].([]any); len(lines) != 300 || m["lines_truncated"] != nil || m["_admin_mcp"] != nil {
+		t.Fatalf("log_read result was capped: %d lines, %#v", len(lines), m["_admin_mcp"])
+	}
+	if got := seen(); len(got) != 1 || !strings.HasPrefix(got[0], "/api/logs/read?") || !strings.Contains(got[0], "lines=300") ||
+		!strings.Contains(got[0], "exclude=noise&exclude=heartbeat") || !strings.Contains(got[0], "since=2026-03-01T07%3A00%3A00-05%3A00") {
+		t.Fatalf("requests = %q", got)
+	}
+
+	if _, err := provider.Read(context.Background(), adminmcp.ToolLogRead, map[string]any{"since": "2026-03-01T07:00:00"}); err == nil || !strings.Contains(err.Error(), "offset") {
+		t.Fatalf("offset-less since: err = %v", err)
+	}
+	if got := seen(); len(got) != 1 {
+		t.Fatalf("a refused argument must not reach the hive: %q", got)
+	}
+
+	sources, err := provider.Read(context.Background(), adminmcp.ToolLogSources, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sm, _ := sources.(map[string]any); sm["default_source"] != "hive" || seen()[len(seen())-1] != "/api/logs/sources?" {
+		t.Fatalf("sources = %#v, requests = %q", sources, seen())
 	}
 }

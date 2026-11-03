@@ -1,0 +1,1 @@
+- Apply writeback containment to incoming v6 automatic issue, pull-request, merge-lane, and work-source updates while preserving explicitly requested approvals, replies, and dashboard actions.

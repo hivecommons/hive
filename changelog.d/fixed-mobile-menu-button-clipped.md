@@ -1,0 +1,1 @@
+- On phones and tablets the dashboard menu button (☰) is no longer cut off at the left edge of the top bar. The button kept a `-10px` left margin from when it was a bare glyph; since it became a bordered navbar chip, the top bar's left zone (which hides overflow) clipped its left side.

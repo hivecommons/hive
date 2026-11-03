@@ -16,8 +16,8 @@
 # forge-resistance as the gh wrapper; this shim adds no privilege.
 #
 # Usage (drop-in for the common gh shapes):
-#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision]
-#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
+#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>]
+#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -47,13 +47,42 @@
 # (hivecommons/hive#11215): the watcher applies the hive's configured
 # needs-decision label (hard_suppress_labels.needs_decision) itself, so the
 # issue gets the "What to reply" notice and stays out of the actionable queue
-# until the maintainer answers with /hive approve or /hive decision. Use it
-# whenever the body asks the maintainer to choose or approve before work can
-# start; do not name the label yourself. Only meaningful for a create.
+# until the maintainer answers with /hive approve, /hive decision or /hive
+# done. Use it whenever the body asks the maintainer to choose or approve
+# before work can start; do not name the label yourself. On `comment` it parks
+# the EXISTING issue the same way (hivecommons/hive#12329): use it when your
+# diagnosis ends in a step only the owner can take, and say the exact step in
+# the body. Either shape tags the text so the notice offers /hive done; the
+# owner's /hive done reply records the done decision, and the lane that next
+# picks the issue up re-checks the step and closes it once verified.
+#
+# --no-consolidate <reason> (issue only) asks the watcher not to fold this
+# request into an existing open issue (hivecommons/hive#14360); use it when the
+# request is unrelated work that merely shares a file or component with one.
+# The reason is required, and the watcher records it in the result.
+#
+# --blocked-on-pr <n> (comment only) parks the issue on open PR <n> in the
+# same repo (hivecommons/hive#13093): use it when the code a finding names
+# exists only in an unmerged PR, so there is nothing to ship until it lands.
+# The watcher prefixes the note with the blocked-on marker, strips any
+# @-mentions (the PR's author is not asked to do the hive's work), adds the
+# `blocked` label and removes `help wanted`; the hive lifts the label itself
+# once the PR merges or closes. Never @-mention the PR author in the note.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
-# created. A flag this shim does not understand is REFUSED (exit 2), never
+# created. USE IT TO TEST. A live call (no --dry-run) creates a real GitHub
+# issue/comment/label change under the hive's App identity that you cannot
+# undo yourself; never "smoke-test" the relay with a made-up repo or a
+# placeholder title. --repo is validated BEFORE anything is written: it must
+# be a real `owner/name` (letters, digits, `-`, `_`, `.`), must not be a
+# documentation placeholder (`owner/repo`, `org/repo`, `OWNER/REPO`,
+# `example/…`, `your-org/…`, `<owner>/<repo>` …), and when $HIVE_REPOS is set
+# must be one of the repos listed there (your hive's configured repo set).
+# Any of these exits 2 with the reason and writes nothing — including under
+# --dry-run. Live on 2026-10-22, eleven `owner/repo` smoke-test requests from
+# three agents cost the hive three hours of retries against a repository that
+# cannot exist. A flag this shim does not understand is REFUSED (exit 2), never
 # silently dropped: the original parser swallowed unknown flags, so an agent
 # probing its access with `gh issue create --dry-run` filed a real issue with
 # the body "placeholder" that its create-only token could not then edit,
@@ -108,12 +137,16 @@ PARENT=""
 BLOCKED_BY=()
 CLOSE_ON_MERGE=0
 NEEDS_DECISION=0
+STEP_KIND=""; RELEASE_TAG=""; RELEASE_TARGET=""; STEP_REQUESTED=0
+BLOCKED_ON_PR=""
+NO_CONSOLIDATE=""
+NO_CONSOLIDATE_SET=0
 DRY_RUN=0
 LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --no-consolidate, --blocked-on-pr, --step-kind, --release-tag, --release-target, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -142,6 +175,25 @@ while [ $# -gt 0 ]; do
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     --close-on-merge) CLOSE_ON_MERGE=1; shift;;
     --needs-decision) NEEDS_DECISION=1; shift;;
+    --step-kind|--release-tag|--release-target)
+      STEP_REQUESTED=1
+      if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+        echo "hive-open-issue: $1 requires a value; nothing was written." >&2
+        exit 2
+      fi
+      case "$1" in
+        --step-kind) STEP_KIND="$2";;
+        --release-tag) RELEASE_TAG="$2";;
+        --release-target) RELEASE_TARGET="$2";;
+      esac
+      shift 2;;
+    --step-kind=*) STEP_KIND="${1#*=}"; STEP_REQUESTED=1; shift;;
+    --release-tag=*) RELEASE_TAG="${1#*=}"; STEP_REQUESTED=1; shift;;
+    --release-target=*) RELEASE_TARGET="${1#*=}"; STEP_REQUESTED=1; shift;;
+    --no-consolidate) NO_CONSOLIDATE_SET=1; NO_CONSOLIDATE="${2:-}"; shift $(( $# > 1 ? 2 : 1 ));;
+    --no-consolidate=*) NO_CONSOLIDATE_SET=1; NO_CONSOLIDATE="${1#*=}"; shift;;
+    --blocked-on-pr) BLOCKED_ON_PR="$2"; shift 2;;
+    --blocked-on-pr=*) BLOCKED_ON_PR="${1#*=}"; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
     # that take one, so a bare flag can't swallow the next real argument.
@@ -187,8 +239,26 @@ if [ "$CLOSE_ON_MERGE" -eq 1 ] && [ "$KIND" != "issue" ]; then
   exit 2
 fi
 
-if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ]; then
-  echo "hive-open-issue: --needs-decision only applies when creating an issue; nothing was written." >&2
+if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ] && [ "$KIND" != "comment" ]; then
+  echo "hive-open-issue: --needs-decision only applies when creating an issue or commenting on one; nothing was written." >&2
+  exit 2
+fi
+
+if [ "$NO_CONSOLIDATE_SET" -eq 1 ] && [ "$KIND" != "issue" ]; then
+  echo "hive-open-issue: --no-consolidate only applies when creating an issue; nothing was written." >&2
+  exit 2
+fi
+if [ "$NO_CONSOLIDATE_SET" -eq 1 ] && [ -z "${NO_CONSOLIDATE//[[:space:]]/}" ]; then
+  echo "hive-open-issue: --no-consolidate needs a non-empty reason; nothing was written." >&2
+  exit 2
+fi
+
+if [ -n "${BLOCKED_ON_PR:-}" ] && [ "$KIND" != "comment" ]; then
+  echo "hive-open-issue: --blocked-on-pr only applies to a comment; nothing was written." >&2
+  exit 2
+fi
+if [ -n "${BLOCKED_ON_PR:-}" ] && ! [[ "$BLOCKED_ON_PR" =~ ^[0-9]+$ && "$BLOCKED_ON_PR" -gt 0 ]]; then
+  echo "hive-open-issue: --blocked-on-pr needs a positive PR number; nothing was written." >&2
   exit 2
 fi
 
@@ -236,6 +306,44 @@ else
   fi
 fi
 
+# --repo gate (hivecommons/hive, live 2026-10-22). Mirrors the watcher's
+# validateIssueRequestRepo in src/pkg/github/issue_request_errors.go — keep
+# the placeholder lists in step. Every refusal writes nothing and exits 2, so
+# a probe with a made-up repo cannot leave a request the hive will retry.
+if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "hive-open-issue: --repo must be owner/name (letters, digits, '-', '_', '.'), got '$REPO'; nothing was written. Name a real repo from \$HIVE_REPOS (${HIVE_REPOS:-unset})." >&2
+  exit 2
+fi
+REPO_OWNER_LC="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
+REPO_NAME_LC="$(printf '%s' "${REPO#*/}" | tr '[:upper:]' '[:lower:]')"
+REPO_IS_PLACEHOLDER=0
+case "$REPO_OWNER_LC" in
+  owner|org|organization|orgname|org-name|example|example-org|exampleorg|your-org|yourorg|your_org|your-organization|my-org|myorg|my_org|acme|user|username|placeholder) REPO_IS_PLACEHOLDER=1;;
+esac
+case "$REPO_NAME_LC" in
+  repo|repository|reponame|repo-name|your-repo|yourrepo|your_repo|your-repository|my-repo|myrepo|my_repo|example-repo|placeholder) REPO_IS_PLACEHOLDER=1;;
+esac
+REPO_IN_SCOPE=0
+if [ -n "${HIVE_REPOS:-}" ]; then
+  REPO_LC="$REPO_OWNER_LC/$REPO_NAME_LC"
+  IFS=',' read -r -a HIVE_REPO_LIST <<< "${HIVE_REPOS},${HIVE_REPO:-}"
+  for candidate in "${HIVE_REPO_LIST[@]}"; do
+    candidate="$(printf '%s' "$candidate" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+    [ -n "$candidate" ] || continue
+    if [ "$candidate" = "$REPO_LC" ]; then REPO_IN_SCOPE=1; break; fi
+  done
+fi
+# A placeholder is refused unless the hive has literally configured that
+# name as one of its repos (then it is real, whatever it is called).
+if [ "$REPO_IS_PLACEHOLDER" -eq 1 ] && [ "$REPO_IN_SCOPE" -eq 0 ]; then
+  echo "hive-open-issue: --repo '$REPO' is a documentation placeholder, not a repository; nothing was written. Name a real repo from \$HIVE_REPOS (${HIVE_REPOS:-unset}). To test this tool safely use --dry-run; a live call creates a real GitHub object." >&2
+  exit 2
+fi
+if [ -n "${HIVE_REPOS:-}" ] && [ "$REPO_IN_SCOPE" -eq 0 ]; then
+  echo "hive-open-issue: --repo '$REPO' is not in this hive's configured repo set (\$HIVE_REPOS=$HIVE_REPOS); nothing was written." >&2
+  exit 2
+fi
+
 AGENT="${HIVE_AGENT:-agent}"
 UID_NOW="$(id -u 2>/dev/null || echo 0)"
 UID_MAP="/var/run/hive/uid-map.json"
@@ -268,9 +376,10 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" <<'PY'
-import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision = sys.argv[1:17]
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" "$NO_CONSOLIDATE" <<'PY'
+import json, os, re, sys
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr = sys.argv[1:18]
+no_consolidate = sys.argv[22]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -280,9 +389,33 @@ reviewers = [part.strip() for value in json.loads(reviewers)
 team_reviewers = [part.strip() for value in json.loads(team_reviewers)
                   for part in value.split(",") if part.strip()]
 req = {"kind": kind, "repo": repo, "agent": agent}
+step_kind, release_tag, release_target = sys.argv[18:21]
+if sys.argv[21] == "1":
+    error = ""
+    if needs_decision != "1" or kind not in ("issue", "comment"):
+        error = "release step metadata requires --needs-decision on an issue or comment"
+    elif step_kind != "release":
+        error = "--step-kind must be release"
+    elif not re.fullmatch(r"[0-9a-f]{40}", release_target):
+        error = "--release-target must be a full lowercase 40-character commit SHA"
+    elif (not release_tag or release_tag == "@" or release_tag.startswith("/") or release_tag.endswith("/")
+          or any(x in release_tag for x in ("..", "@{", "//"))
+          or any(ord(c) <= 32 or ord(c) >= 127 or c in '~^:?*[\\<>`' for c in release_tag)
+          or any(p.startswith(".") or p.endswith((".", ".lock")) for p in release_tag.split("/"))):
+        error = "--release-tag must be a valid release tag"
+    elif re.search(r"<!-- hive:owner-step(?: [^>]*)? -->", body):
+        error = "supply the owner step via flags, not also as a body marker"
+    if error:
+        sys.stderr.write("hive-open-issue: " + error + "; nothing was written.\n")
+        sys.exit(2)
+    req["owner_step"] = {"kind": step_kind, "tag": release_tag, "target": release_target}
 if kind == "comment":
     req["number"] = int(number)
     req["body"] = body
+    # --needs-decision on a comment parks the existing issue: the watcher adds
+    # the configured needs-decision label before posting (hivecommons/hive#12329).
+    if needs_decision == "1":
+        req["needs_decision"] = True
 elif kind == "claim":
     # The watcher applies the hive/claimed-by-<agent> label; number is all it
     # needs. No body/title/labels.
@@ -336,6 +469,14 @@ else:
     # label itself (hivecommons/hive#11215).
     if needs_decision == "1":
         req["needs_decision"] = True
+    # --no-consolidate: the watcher skips open-issue consolidation and records
+    # the reason (hivecommons/hive#14360).
+    if no_consolidate.strip():
+        req["no_consolidate_reason"] = no_consolidate.strip()
+if kind == "comment" and int(blocked_on_pr) > 0:
+    # --blocked-on-pr: the watcher adds the marker and the `blocked` label
+    # itself (hivecommons/hive#13093).
+    req["blocked_on_pr"] = int(blocked_on_pr)
 if dry_run == "1":
     # Honour --dry-run: show exactly what would be queued, write nothing.
     print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)
@@ -352,6 +493,12 @@ fi
 
 if [ "$KIND" = "comment" ]; then
   echo "hive-open-issue: requested comment on $REPO#$NUMBER as the App bot"
+  if [ "$NEEDS_DECISION" -eq 1 ]; then
+    echo "hive-open-issue: will park $REPO#$NUMBER on a maintainer decision (needs-decision label)"
+  fi
+  if [ -n "${BLOCKED_ON_PR:-}" ]; then
+    echo "hive-open-issue: will park the issue on $REPO#$BLOCKED_ON_PR (blocked label; help wanted removed; no one is @-mentioned)"
+  fi
 elif [ "$KIND" = "claim" ]; then
   echo "hive-open-issue: requested claim of $REPO#$NUMBER (hive/claimed-by-$AGENT label)"
 elif [ "$KIND" = "close" ]; then
@@ -367,6 +514,9 @@ else
   fi
   if [ "$NEEDS_DECISION" -eq 1 ]; then
     echo "hive-open-issue: will park the issue on a maintainer decision (needs-decision label)"
+  fi
+  if [ "$NO_CONSOLIDATE_SET" -eq 1 ]; then
+    echo "hive-open-issue: will not consolidate into an existing issue: $NO_CONSOLIDATE"
   fi
 fi
 echo "hive-open-issue: request $REQ_FILE (Hive validates and fulfills it within one watcher tick; result appears at ${REQ_FILE%.json}.result.json)"

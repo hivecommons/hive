@@ -2,6 +2,7 @@ package claims
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,18 +65,18 @@ func TestMarkListedLeavesClaimedIssuesAlone(t *testing.T) {
 func TestClaimOnStartClaimsOnlyListedIssues(t *testing.T) {
 	var outcomes []Outcome
 	l, now := newTestLedger(t, Hooks{OnClaimed: func(_ Claim, o Outcome) { outcomes = append(outcomes, o) }})
-	if _, started, _ := l.ClaimOnStart("o/r", 5, "scanner"); started {
+	if _, started, _ := l.ClaimOnStart("o/r", 5, "scanner", false); started {
 		t.Fatal("start signal on an issue no kick listed recorded a claim")
 	}
 	l.MarkListed("o/r", 5, "scanner")
-	if _, started, _ := l.ClaimOnStart("o/r", 5, "quality"); started {
+	if _, started, _ := l.ClaimOnStart("o/r", 5, "quality", false); started {
 		t.Fatal("another agent's start signal claimed a listing")
 	}
 
 	// The start signal can come after the listing's short hold lapsed, as
 	// long as it is within the agent claim TTL of the kick.
 	*now = now.Add(DefaultListedTTL + time.Minute)
-	res, started, err := l.ClaimOnStart("o/r", 5, "scanner")
+	res, started, err := l.ClaimOnStart("o/r", 5, "scanner", false)
 	if err != nil || !started || res.Outcome != OutcomeClaimed || res.Claim.Kind != KindAgent {
 		t.Fatalf("first start signal: res=%+v started=%v err=%v", res, started, err)
 	}
@@ -89,7 +90,7 @@ func TestClaimOnStartClaimsOnlyListedIssues(t *testing.T) {
 
 	// A second signal renews: no second 🔒 comment, no second attempt.
 	*now = now.Add(time.Minute)
-	if res, started, _ := l.ClaimOnStart("o/r", 5, "scanner"); !started || res.Outcome != OutcomeRenewed {
+	if res, started, _ := l.ClaimOnStart("o/r", 5, "scanner", false); !started || res.Outcome != OutcomeRenewed {
 		t.Fatalf("second start signal: %+v started=%v", res, started)
 	}
 	if len(outcomes) != 2 || outcomes[0] != OutcomeClaimed || outcomes[1] != OutcomeRenewed {
@@ -104,7 +105,7 @@ func TestClaimOnStartAfterTheListingWindowRecordsNothing(t *testing.T) {
 	l, now := newTestLedger(t, Hooks{})
 	l.MarkListed("o/r", 5, "scanner")
 	*now = now.Add(DefaultAgentTTL)
-	if _, started, _ := l.ClaimOnStart("o/r", 5, "scanner"); started {
+	if _, started, _ := l.ClaimOnStart("o/r", 5, "scanner", false); started {
 		t.Fatal("start signal past the agent claim TTL of the kick recorded a claim")
 	}
 	// Pruned once the window has passed.
@@ -143,7 +144,36 @@ func TestListingsPersist(t *testing.T) {
 	if li, ok := reloaded.Listed("o/r", 5); !ok || li.Holder != "scanner" {
 		t.Fatalf("listing lost across restart: %+v %v", li, ok)
 	}
-	if res, started, err := reloaded.ClaimOnStart("o/r", 5, "scanner"); err != nil || !started || res.Outcome != OutcomeClaimed {
+	if res, started, err := reloaded.ClaimOnStart("o/r", 5, "scanner", false); err != nil || !started || res.Outcome != OutcomeClaimed {
 		t.Fatalf("start after restart: %+v started=%v err=%v", res, started, err)
+	}
+}
+
+// hivecommons/hive#13069: PR evidence on a start signal is recorded on the
+// claim, survives a later PR-less renewal, and is stamped on the marker.
+func TestClaimOnStartRecordsPREvidence(t *testing.T) {
+	l, now := newTestLedger(t, Hooks{})
+	l.MarkListed("o/r", 5, "scanner")
+	res, started, err := l.ClaimOnStart("o/r", 5, "scanner", false)
+	if err != nil || !started || res.Claim.PRStarted {
+		t.Fatalf("bare claim: res=%+v started=%v err=%v", res, started, err)
+	}
+	if strings.Contains(ClaimMarker(res.Claim), "pr_started=") {
+		t.Fatalf("bare claim marker must not carry pr_started: %s", ClaimMarker(res.Claim))
+	}
+	*now = now.Add(time.Minute)
+	res, _, _ = l.ClaimOnStart("o/r", 5, "scanner", true)
+	if res.Outcome != OutcomeRenewed || !res.Claim.PRStarted {
+		t.Fatalf("PR request did not mark the claim: %+v", res)
+	}
+	if !strings.Contains(ClaimMarker(res.Claim), " pr_started=true ") {
+		t.Fatalf("marker must carry pr_started=true: %s", ClaimMarker(res.Claim))
+	}
+	*now = now.Add(time.Minute)
+	if res, _, _ = l.ClaimOnStart("o/r", 5, "scanner", false); !res.Claim.PRStarted {
+		t.Fatalf("a later PR-less renewal cleared PRStarted: %+v", res)
+	}
+	if c, ok := l.Lookup("o/r", 5); !ok || !c.PRStarted {
+		t.Fatalf("Lookup = %+v, %v", c, ok)
 	}
 }

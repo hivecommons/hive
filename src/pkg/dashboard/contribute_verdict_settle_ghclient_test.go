@@ -320,6 +320,126 @@ func TestVerdictSettleGH_AlreadyDoneEvidenceText(t *testing.T) {
 	}
 }
 
+// projectbluefin/chairlift#591: an already-done verdict whose evidence is
+// missing or fails verification gets a claim-worded comment and the offer
+// hold, never the already-done label or "already resolved" wording.
+func TestVerdictSettleGH_UnverifiedAlreadyDone_ClaimCommentNoLabel(t *testing.T) {
+	cases := []struct {
+		name     string
+		reason   string
+		kind     string
+		evidence *VerdictEvidence
+	}{
+		{"no refs", "the e2e fake already handles this", verdictReasonKindAlreadyDone, nil},
+		{"ref fails verification", "the e2e fake already handles this", verdictReasonKindAlreadyDone, &VerdictEvidence{PR: 41}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := &settleGHFixture{}
+			hub, s := settleGHHub(t, fx)
+			s.deps.RecordIssueClaim = (&settleFixture{}).record
+			hub.settleVerifier = func(context.Context, string, int, ghpkg.SettlingRef, time.Time) (ghpkg.SettleVerification, error) {
+				return ghpkg.SettleVerification{Reason: "not merged"}, nil
+			}
+
+			got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, tc.reason, tc.kind, tc.evidence, time.Now(), "kylerankin")
+			if got != verdictDispositionAlreadyDoneUnverified {
+				t.Fatalf("disposition = %q, want unverified", got)
+			}
+
+			fx.mu.Lock()
+			defer fx.mu.Unlock()
+			if len(fx.comments) != 1 {
+				t.Fatalf("comments = %v, want exactly one", fx.comments)
+			}
+			body := fx.comments[0]
+			for _, want := range []string{
+				"contributor kylerankin reports this issue may already be resolved",
+				"cited no PR or commit the hive could verify",
+				"not labelled `hive/already-done`",
+				"withheld from contributor offers for up to 30 days",
+				"a maintainer should confirm",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("comment %q missing %q", body, want)
+				}
+			}
+			if strings.Contains(body, "already resolved by") {
+				t.Errorf("unverified comment must not assert resolution: %q", body)
+			}
+			if len(fx.labelsAdded) != 0 || len(fx.labelsCreated) != 0 {
+				t.Errorf("unverified claim must not label: added=%v created=%v", fx.labelsAdded, fx.labelsCreated)
+			}
+			if fx.closed {
+				t.Error("unverified claim must not close the issue")
+			}
+			hub.completedMu.Lock()
+			rec, ok := hub.noWorkVerdicts["o/r#7"]
+			hub.completedMu.Unlock()
+			if !ok || !rec.AlreadyDoneUnverified || rec.SuppressHours != float64(30*24) {
+				t.Fatalf("unverified hold not recorded: ok=%v rec=%+v", ok, rec)
+			}
+		})
+	}
+}
+
+func TestVerdictSettleGH_UnverifiedAlreadyDone_ExistingCommentIsNotReposted(t *testing.T) {
+	fx := &settleGHFixture{}
+	hub, _ := settleGHHub(t, fx)
+
+	hub.markAlreadyDoneUnverified("o/r", 7, "ct", "already fixed upstream", nil)
+	fx.mu.Lock()
+	if len(fx.comments) != 1 {
+		fx.mu.Unlock()
+		t.Fatalf("comments = %v, want one", fx.comments)
+	}
+	fx.existingComments = []string{"unrelated", fx.comments[0]}
+	fx.comments = nil
+	fx.mu.Unlock()
+
+	hub.markAlreadyDoneUnverified("o/r", 7, "ct", "already fixed upstream", nil)
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	if len(fx.comments) != 0 {
+		t.Fatalf("existing comment must not be reposted, got %v", fx.comments)
+	}
+}
+
+// A verified merged PR keeps the already-done label, the "already resolved"
+// comment and the close.
+func TestVerdictSettleGH_VerifiedMergedPRLabelsAndCloses(t *testing.T) {
+	fx := &settleGHFixture{}
+	hub, s := settleGHHub(t, fx)
+	s.deps.RecordIssueClaim = (&settleFixture{}).record
+	hub.settleVerifier = func(context.Context, string, int, ghpkg.SettlingRef, time.Time) (ghpkg.SettleVerification, error) {
+		return ghpkg.SettleVerification{Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 41, PRRepo: "o/r", PRURL: "https://github.com/o/r/pull/41", PRAuthor: "dev",
+			MergedPR: true, MergedAt: time.Now().Add(-time.Hour),
+		}}, nil
+	}
+
+	got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "fixed by the merged PR", verdictReasonKindAlreadyDone, &VerdictEvidence{PR: 41}, time.Now(), "kylerankin")
+	if got != verdictDispositionAlreadyDoneClosed {
+		t.Fatalf("disposition = %q, want closed", got)
+	}
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	if len(fx.comments) != 1 || !strings.Contains(fx.comments[0], "already resolved by #41 (found by contributor kylerankin)") {
+		t.Fatalf("comments = %v, want the verified already-resolved comment", fx.comments)
+	}
+	label := config.HubConfig{}.ContributeAlreadyDoneLabelOrDefault()
+	found := false
+	for _, l := range fx.labelsAdded {
+		found = found || l == label
+	}
+	if !found {
+		t.Fatalf("labels added = %v, want %s", fx.labelsAdded, label)
+	}
+	if !fx.closed {
+		t.Fatal("verified merged PR must close the issue")
+	}
+}
+
 // settleIssueFromVerdict (the no-evidence wrapper) and the early
 // already-done-unverified returns in settleIssueFromVerdictWithEvidence.
 func TestVerdictSettleGH_WrapperAndUnverifiedEarlyReturns(t *testing.T) {

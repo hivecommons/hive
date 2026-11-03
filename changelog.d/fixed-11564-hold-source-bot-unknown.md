@@ -1,0 +1,1 @@
+- Fix hold-source detection so a pull request whose latest hold label was applied by a non-App bot lists `unknown` alongside its Hive-notice sources, and no longer offers Release hold.

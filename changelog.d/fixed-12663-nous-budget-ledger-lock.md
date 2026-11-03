@@ -1,0 +1,1 @@
+- The Nous observations weekly budget ledger is now guarded by a process-level lock and written atomically through a unique temp file, so overlapping eval cycles can no longer exceed `max_per_week` or file the same fingerprint twice.

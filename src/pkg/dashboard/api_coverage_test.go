@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -79,8 +80,10 @@ func apiServerWithKnowledge(t *testing.T) (*Server, *Dependencies, *httptest.Ser
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
@@ -96,7 +99,7 @@ func apiServerWithKnowledge(t *testing.T) (*Server, *Dependencies, *httptest.Ser
 	}
 
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 
 	layers := []knowledge.LayerConfig{
 		{Type: knowledge.LayerProject, URL: wiki.URL},
@@ -541,12 +544,34 @@ func TestHandleNousMode_MissingMode(t *testing.T) {
 
 func TestHandleNousScope_WithNous(t *testing.T) {
 	s, deps := apiServerWithNous(t)
-	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "limited"})
+	deps.Nous.Scope = ""
+	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "Repo"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	if deps.Nous.Scope != "limited" {
-		t.Errorf("scope = %q, want limited", deps.Nous.Scope)
+	if deps.Nous.Scope != NousScopeRepo {
+		t.Errorf("scope = %q, want %q", deps.Nous.Scope, NousScopeRepo)
+	}
+}
+
+// The Experiment Lab is repo-only: the legacy governor/both scopes (and
+// anything else) are rejected with 400 and leave the state untouched.
+func TestHandleNousScope_RejectsNonRepo(t *testing.T) {
+	for _, scope := range []string{"governor", "both", "limited"} {
+		t.Run(scope, func(t *testing.T) {
+			s, deps := apiServerWithNous(t)
+			deps.Nous.Scope = NousScopeRepo
+			rec := doPut(s, "/api/nous/scope", map[string]string{"scope": scope})
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "repo-only") {
+				t.Errorf("body = %s, want repo-only explanation", rec.Body.String())
+			}
+			if deps.Nous.Scope != NousScopeRepo {
+				t.Errorf("scope = %q, want unchanged %q", deps.Nous.Scope, NousScopeRepo)
+			}
+		})
 	}
 }
 
@@ -735,7 +760,7 @@ func TestHandleVersion_Fields(t *testing.T) {
 // ---- Config endpoint ----
 
 func TestHandleConfig_Fields(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
 	rec := doGet(s, "/api/config")
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
@@ -743,6 +768,9 @@ func TestHandleConfig_Fields(t *testing.T) {
 	result := decodeJSON(t, rec)
 	if result["org"] != "myorg" {
 		t.Errorf("org = %v", result["org"])
+	}
+	if got, ok := result["app_bot_login"]; !ok || got != deps.Config.GitHub.BotLogin() {
+		t.Errorf("app_bot_login = %v (present=%v), want %q", got, ok, deps.Config.GitHub.BotLogin())
 	}
 }
 
@@ -1292,7 +1320,7 @@ func TestHandleNousMode_NilNous(t *testing.T) {
 func TestHandleNousScope_NilNous(t *testing.T) {
 	s, deps := apiServer(t)
 	deps.Nous = nil
-	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "test"})
+	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "repo"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d", rec.Code)
 	}
@@ -2337,6 +2365,21 @@ func TestHandleGovernorAddAgent_WithModel(t *testing.T) {
 		t.Error("agent not added")
 	} else if agentCfg.Model != "gpt-4" {
 		t.Errorf("model = %q, want gpt-4", agentCfg.Model)
+	} else if !agentCfg.BackendIsOperatorOwned() || !agentCfg.ModelIsOperatorOwned() {
+		t.Errorf("backend_owner=%q model_owner=%q, want both operator: the operator named them (#14678)", agentCfg.BackendOwner, agentCfg.ModelOwner)
+	}
+}
+
+// TestHandleGovernorAddAgent_DefaultBackendUnowned: the "claude" the endpoint
+// fills in when no backend is given is not an operator pick.
+func TestHandleGovernorAddAgent_DefaultBackendUnowned(t *testing.T) {
+	s, deps := apiServer(t)
+	rec := doPost(s, "/api/config/governor/agents", map[string]string{"name": "new-agent"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := deps.Config.Agents["new-agent"]; got.Backend != "claude" || got.BackendOwner != "" {
+		t.Errorf("backend=%q owner=%q, want claude with no owner", got.Backend, got.BackendOwner)
 	}
 }
 
@@ -2970,8 +3013,10 @@ func TestHandleAgentConfigGet_CopilotBackend(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "copilot", Model: "gpt-4", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "copilot", Model: "gpt-4", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -2980,7 +3025,7 @@ func TestHandleAgentConfigGet_CopilotBackend(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -3011,8 +3056,10 @@ func TestHandleAgentConfigGet_CustomLaunchCmd(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "custom", Model: "m1", LaunchCmd: "/usr/bin/my-agent --special", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "custom", Model: "m1", LaunchCmd: "/usr/bin/my-agent --special", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -3021,7 +3068,7 @@ func TestHandleAgentConfigGet_CustomLaunchCmd(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -3052,8 +3099,10 @@ func TestHandleAgentConfigGet_DisplayNameAndPauseCadence(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", DisplayName: "Bug Scanner", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", DisplayName: "Bug Scanner", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -3062,7 +3111,7 @@ func TestHandleAgentConfigGet_DisplayNameAndPauseCadence(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -3208,8 +3257,10 @@ func TestHandleAgentConfigGet_OffCadence(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -3218,7 +3269,7 @@ func TestHandleAgentConfigGet_OffCadence(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -3925,5 +3976,106 @@ func TestSidebarDiskUsesInjectablePath(t *testing.T) {
 	s.loadSidebarFromDisk()
 	if s.sidebar == nil {
 		t.Fatal("sidebar was not loaded from injected path")
+	}
+}
+
+// The Experiment Lab is repo-only: the research question is always the repo
+// one, a stale governorGoal is ignored, and the reported scope is "repo"
+// regardless of what the stored status says.
+func TestHandleNousStatus_ResearchQuestion(t *testing.T) {
+	cases := []struct {
+		name  string
+		scope string
+		goals interface{}
+		want  string
+	}{
+		{"repo scope", "repo", map[string]interface{}{"repoGoal": " repo? "}, "repo?"},
+		{"stale governor scope still uses repo goal", "governor", map[string]interface{}{"governorGoal": "gov?", "repoGoal": "repo?"}, "repo?"},
+		{"governor goal alone is ignored", "both", map[string]interface{}{"governorGoal": "gov?"}, ""},
+		{"no goals", "", nil, ""},
+		{"pasted yaml key and folded marker are stripped", "repo", map[string]interface{}{"repoGoal": "research_question: > Can prefilter gates be tightened?"}, "Can prefilter gates be tightened?"},
+		{"blockquote marker alone is stripped", "repo", map[string]interface{}{"repoGoal": ">Can we cut CI time?"}, "Can we cut CI time?"},
+		{"folded newlines collapse to spaces", "repo", map[string]interface{}{"repoGoal": "Can we\n  cut CI\n  time?"}, "Can we cut CI time?"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, deps := apiServerWithNous(t)
+			deps.Nous.Status = map[string]interface{}{"scope": tc.scope}
+			if tc.goals != nil {
+				deps.Nous.Config = map[string]interface{}{"goals": tc.goals}
+			}
+			rec := doGet(s, "/api/nous/status")
+			var got map[string]interface{}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got["researchQuestion"] != tc.want {
+				t.Errorf("researchQuestion = %v, want %q", got["researchQuestion"], tc.want)
+			}
+			if got["scope"] != NousScopeRepo {
+				t.Errorf("scope = %v, want %q", got["scope"], NousScopeRepo)
+			}
+		})
+	}
+}
+
+// Governor phase data published into the status map is stripped from the
+// API response; only the repo phase block survives.
+func TestHandleNousStatus_RepoOnlyPhases(t *testing.T) {
+	s, deps := apiServerWithNous(t)
+	deps.Nous.Status = map[string]interface{}{
+		"phases": map[string]interface{}{
+			"governor": map[string]interface{}{"phase": "DESIGN", "iteration": 3},
+			"repo":     map[string]interface{}{"phase": "FRAMING", "iteration": 1},
+		},
+	}
+	rec := doGet(s, "/api/nous/status")
+	var got struct {
+		Phases map[string]interface{} `json:"phases"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := got.Phases["governor"]; ok {
+		t.Errorf("governor phase leaked into status: %v", got.Phases)
+	}
+	repo, _ := got.Phases["repo"].(map[string]interface{})
+	if repo["phase"] != "FRAMING" {
+		t.Errorf("repo phase = %v, want FRAMING", repo)
+	}
+	if deps.Nous.Status["phases"].(map[string]interface{})["governor"] == nil {
+		t.Error("stored status must not be mutated by the handler")
+	}
+}
+
+func TestHealthReportsCruxRuntime(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := NewServer(0, logger)
+	s.MarkReady()
+	health := CruxRuntimeHealth{Mode: "sidecar", Reachable: true, Supervise: "child", Child: &CruxRuntimeChild{Running: true, Ready: true, PID: 42, Starts: 1}}
+	s.RegisterAPI(&Dependencies{Config: &config.Config{}, CruxRuntimeHealth: func() CruxRuntimeHealth { return health }})
+
+	get := func() map[string]any {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	body := get()
+	rt, _ := body["crux_runtime"].(map[string]any)
+	if body["status"] != "ok" || rt["mode"] != "sidecar" || rt["reachable"] != true || rt["child"].(map[string]any)["pid"] != float64(42) {
+		t.Fatalf("health = %v", body)
+	}
+	health.Reachable, health.LastError = false, "dial unix /run/crux.sock: connection refused"
+	body = get()
+	rt, _ = body["crux_runtime"].(map[string]any)
+	if body["status"] != "degraded" || rt["reachable"] != false || rt["last_error"] == "" {
+		t.Fatalf("degraded health = %v", body)
 	}
 }

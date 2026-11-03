@@ -1,1 +1,0 @@
-- Add a default-off vibe-kanban extwork adapter that dispatches Hive assignments to local board workspaces with durable Hive-key correlation.

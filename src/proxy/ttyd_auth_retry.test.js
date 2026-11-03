@@ -1,18 +1,21 @@
-// The browser basic-auth flow against /terminal must survive ttyd's
+// Credentialed requests to /terminal must survive ttyd's
 // one-request-per-connection behavior.
 //
 // ttyd (libwebsockets) does not serve a second HTTP request on a reused TCP
 // connection — it hangs up. http-proxy-middleware's engine (httpxy) pools
 // upstream sockets in its own keepAlive:true default agents whenever no
-// explicit agent option is given, so the flow every browser performs — an
-// unauthenticated GET answered 401 (auth dialog), then an authenticated
-// retry — deterministically picked the dead pooled socket and surfaced as
-// 502 "Terminal unavailable" WITH THE CORRECT PASSWORD. Measured on a live
-// hive: unauth 401 → auth 502 → auth 200, repeating (every fresh-socket
-// request pools a socket ttyd then kills, so every second request died).
-// The fix gives ttydProxy a keepAlive:false agent; this test pins the whole
-// sequence through the real proxy against a mock ttyd reproducing the
-// one-request-per-connection behavior.
+// explicit agent option is given, so back-to-back requests (the document,
+// then /token, then the websocket handshake) deterministically picked the
+// dead pooled socket and surfaced as 502 "Terminal unavailable" WITH THE
+// CORRECT PASSWORD. Measured on a live hive: 401 → 502 → 200, repeating
+// (every fresh-socket request pools a socket ttyd then kills, so every
+// second request died). The fix gives ttydProxy a keepAlive:false agent;
+// this test pins a run of consecutive requests through the real proxy
+// against a mock ttyd reproducing the one-request-per-connection behavior.
+//
+// The proxy now presents ttyd's credential itself (HIVE_TTYD_CREDENTIAL /
+// hive:<HIVE_DASHBOARD_TOKEN>) rather than relaying a browser basic-auth
+// dialog, so the mock's 401 branch is the proxy FAILING to inject it.
 import { createServer, request as httpRequest } from 'http';
 import { strict as assert } from 'assert';
 import { spawn } from 'child_process';
@@ -69,6 +72,7 @@ function startProxy() {
         HIVE_API_PORT: String(GO_PORT),
         HIVE_TTYD_PORT: String(TTYD_PORT),
         HIVE_DASHBOARD_TOKEN: '',
+        HIVE_TTYD_CREDENTIAL: 'hive:sekrit',
         HIVE_STATIC_DIR: __dirname,
         NODE_ENV: 'test',
       },
@@ -86,13 +90,12 @@ function startProxy() {
   });
 }
 
-function get(auth) {
+function get() {
   return new Promise((resolve, reject) => {
     const req = httpRequest({
       host: '127.0.0.1',
       port: PROXY_PORT,
       path: '/terminal/?arg=hive-scanner',
-      headers: auth ? { Authorization: CRED } : {},
     }, (res) => {
       let body = '';
       res.on('data', d => { body += d; });
@@ -109,19 +112,19 @@ async function main() {
   proxyProcess = await startProxy();
   await new Promise(r => setTimeout(r, 500));
 
-  // The browser's exact sequence. Before the fix, step 2 was the 502: the
-  // unauthenticated request left a pooled socket ttyd will not serve again.
-  const first = await get(false);
-  assert.equal(first.status, 401, `unauthenticated GET should pass ttyd's 401 through, got ${first.status}`);
+  // Before the fix, the second request was the 502: the first left a pooled
+  // socket ttyd will not serve again.
+  const first = await get();
+  assert.equal(first.status, 200, `first GET must reach ttyd with the injected credential, got ${first.status}`);
+  assert.equal(first.body, 'ttyd-ok');
 
-  // Let the upstream socket settle into the agent's free pool — in the real
-  // flow the user spends seconds in the auth dialog, and reuse of a pooled
-  // (dead) socket is exactly the failure under test.
+  // Let the upstream socket settle into the agent's free pool — reuse of a
+  // pooled (dead) socket is exactly the failure under test.
   await new Promise(r => setTimeout(r, 150));
 
-  const second = await get(true);
+  const second = await get();
   assert.equal(second.status, 200,
-    `authenticated retry must reach ttyd on a fresh connection, got ${second.status} ` +
+    `second GET must reach ttyd on a fresh connection, got ${second.status} ` +
     `(502 here means the proxy reused a pooled socket ttyd already considers dead)`);
   assert.equal(second.body, 'ttyd-ok');
 
@@ -129,8 +132,8 @@ async function main() {
   // mock kills, so any reuse regression fails on one of these.
   for (let i = 0; i < 3; i++) {
     await new Promise(r => setTimeout(r, 150));
-    const again = await get(true);
-    assert.equal(again.status, 200, `repeat authenticated GET #${i + 1} got ${again.status}`);
+    const again = await get();
+    assert.equal(again.status, 200, `repeat GET #${i + 1} got ${again.status}`);
   }
 
   console.log('ttyd_auth_retry: all assertions passed');

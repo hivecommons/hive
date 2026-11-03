@@ -1,0 +1,5 @@
+# omp --version
+omp/18.13.1
+# stub provider: one bash call, ls /nonexistent
+# records.jsonl written by Hive's omp extension
+{"agent":"rf-harness","backend":"omp","time":"2026-10-28T01:28:42.345Z","raw_command":"ls /nonexistent","exit_code":2,"failed":true,"route":"omp_extension"}

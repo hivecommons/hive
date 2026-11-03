@@ -335,6 +335,10 @@ func TestAlreadyDoneVerdict8477_UnverifiedSuppressesLonger(t *testing.T) {
 	hub.settleVerifier = func(_ context.Context, _ string, _ int, ref ghpkg.SettlingRef, _ time.Time) (ghpkg.SettleVerification, error) {
 		return ghpkg.SettleVerification{Reason: "not merged"}, nil
 	}
+	hub.alreadyDoneMarker = func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error {
+		t.Fatal("a ref that fails verification must not take the already-done label path")
+		return nil
+	}
 
 	got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "already fixed by merged PR #41", "", nil, time.Now(), "ct")
 
@@ -352,6 +356,36 @@ func TestAlreadyDoneVerdict8477_UnverifiedSuppressesLonger(t *testing.T) {
 	}
 	if gotHours, wantHours := rec.SuppressHours, float64(30*24); gotHours != wantHours {
 		t.Fatalf("suppress hours = %v, want %v", gotHours, wantHours)
+	}
+}
+
+// projectbluefin/chairlift#591: a structured already_done verdict that cites
+// nothing is the contributor's word alone. It keeps the longer offer hold but
+// never takes the already-done label path.
+func TestAlreadyDoneVerdict_NoRefsHoldsWithoutAlreadyDoneLabel(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	s.deps.Config.Hub.ContributeAlreadyDoneHoldDays = 30
+	hub.settleVerifier = fx.verifier(nil, nil)
+	hub.alreadyDoneMarker = func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error {
+		t.Fatal("an already-done verdict with no refs must not take the already-done label path")
+		return nil
+	}
+
+	got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "the e2e fake already handles this", verdictReasonKindAlreadyDone, &VerdictEvidence{}, time.Now(), "kylerankin")
+
+	if got != verdictDispositionAlreadyDoneUnverified {
+		t.Fatalf("disposition = %q, want unverified", got)
+	}
+	if len(fx.checked) != 0 || len(fx.recorded) != 0 {
+		t.Fatalf("nothing to verify or record: checked=%v recorded=%+v", fx.checked, fx.recorded)
+	}
+	hub.completedMu.Lock()
+	rec, ok := hub.noWorkVerdicts["o/r#7"]
+	hub.completedMu.Unlock()
+	if !ok || !rec.AlreadyDoneUnverified || rec.SuppressHours != float64(30*24) {
+		t.Fatalf("unverified hold not recorded: ok=%v rec=%+v", ok, rec)
 	}
 }
 

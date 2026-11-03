@@ -1,0 +1,1 @@
+- Workspace cleanup no longer sweeps dot-prefixed per-agent cache dirs (e.g. `.gomodcache-*`) and logs repeated permission-denied removal failures at Debug after the first Warn, stopping the repeated warning spam (#13660).

@@ -1,0 +1,1 @@
+- Evidence cards: every panel now carries a server-computed letter grade (A+ … C-, or — for not enough data) and a one-sentence plain-English summary; dense stats and "what this does not show" move behind the ⓘ popover, and the CI gate card no longer breaks the type scale (#13204)

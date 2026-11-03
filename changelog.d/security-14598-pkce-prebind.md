@@ -1,0 +1,1 @@
+- The Hub's GitHub browser login now binds the PKCE verifier to the login transaction and rejects a missing or substituted verifier locally, before the authorization code is ever sent to GitHub ([#14598](https://github.com/hivecommons/hive/issues/14598)).

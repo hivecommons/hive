@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -183,5 +184,97 @@ func TestInceptionRestartWithCollidingIdeaDoesNotOverwriteEarlierArchive(t *test
 	}
 	if string(data) != "# Spec\nFirst campaign" {
 		t.Fatalf("first archive wiki content overwritten: %q", string(data))
+	}
+}
+
+// TestInceptionCampaignArchiveDelete pins hivecommons/hive#12698: deleting a
+// campaign removes only its directory (state + wiki snapshot), leaves the
+// other archives and the working wiki intact, and clears the live session
+// when the deleted id is the active one. On v6 Revise rewrites the archive in
+// place (ADR 0020 v6 addendum), so the survivor is a second archived campaign
+// rather than a linked revision.
+func TestInceptionCampaignArchiveDelete(t *testing.T) {
+	dir := t.TempDir()
+	engine := NewInceptionEngine(dir, nil, nil)
+	state, err := engine.StartBrownfield("https://github.com/hivecommons/hive")
+	if err != nil {
+		t.Fatalf("start brownfield: %v", err)
+	}
+	wikiDir := engine.WikiDir()
+	if err := os.MkdirAll(wikiDir, 0o755); err != nil {
+		t.Fatalf("mkdir wiki: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wikiDir, "scan.md"), []byte("# Scan"), 0o644); err != nil {
+		t.Fatalf("write wiki: %v", err)
+	}
+	if _, err := engine.ArchiveCurrentCampaign(); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if err := engine.Reset(); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	other, err := engine.Start("Keep this one")
+	if err != nil {
+		t.Fatalf("start other: %v", err)
+	}
+	if _, err := engine.ArchiveCurrentCampaign(); err != nil {
+		t.Fatalf("archive other: %v", err)
+	}
+	if err := engine.Reset(); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if err := os.MkdirAll(wikiDir, 0o755); err != nil {
+		t.Fatalf("mkdir wiki: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wikiDir, "scan.md"), []byte("# Scan"), 0o644); err != nil {
+		t.Fatalf("write wiki: %v", err)
+	}
+	revision, err := engine.ReviseCampaignArchive(other.IdeaSlug, "alice", time.Now())
+	if err != nil {
+		t.Fatalf("revise: %v", err)
+	}
+	if revision.ID != other.IdeaSlug {
+		t.Fatalf("v6 revise must rewrite in place: got %q, want %q", revision.ID, other.IdeaSlug)
+	}
+
+	deleted, err := engine.DeleteCampaignArchive(revision.ID)
+	if err != nil {
+		t.Fatalf("delete revised: %v", err)
+	}
+	if deleted.ID != revision.ID {
+		t.Fatalf("deleted id = %q, want %q", deleted.ID, revision.ID)
+	}
+	if _, err := os.Stat(filepath.Join(dir, inceptionCampaignsDir, revision.ID)); !os.IsNotExist(err) {
+		t.Fatalf("deleted directory still present: %v", err)
+	}
+	if _, err := engine.LoadCampaignArchive(state.IdeaSlug); err != nil {
+		t.Fatalf("other archive removed with the deleted one: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wikiDir, "scan.md")); err != nil {
+		t.Fatalf("working wiki touched by delete: %v", err)
+	}
+	if _, err := engine.DeleteCampaignArchive(revision.ID); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("second delete err = %v, want not found", err)
+	}
+	if _, err := engine.DeleteCampaignArchive("   "); err == nil {
+		t.Fatalf("blank id should be rejected")
+	}
+
+	// Deleting the live session's campaign clears it too.
+	if _, err := engine.RestoreCampaignArchive(state.IdeaSlug); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if _, err := engine.DeleteCampaignArchive(state.IdeaSlug); err != nil {
+		t.Fatalf("delete active: %v", err)
+	}
+	if engine.GetState() != nil {
+		t.Fatalf("active state should be cleared after deleting its campaign")
+	}
+	if _, err := os.Stat(filepath.Join(dir, inceptionStateFile)); !os.IsNotExist(err) {
+		t.Fatalf("state file still present: %v", err)
+	}
+	listed, err := engine.ListCampaignArchives()
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("archives after delete = %+v err=%v, want none", listed, err)
 	}
 }

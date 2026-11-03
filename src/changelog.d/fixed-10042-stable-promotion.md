@@ -1,1 +1,0 @@
-- Define stable as chasing candidate 24 hours behind it, without requiring a quiet candidate period.

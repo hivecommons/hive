@@ -26,6 +26,7 @@ const prThroughputMergePathUnknown = "unknown"
 const (
 	prThroughputMergePathSweep           = "sweep"
 	prThroughputMergePathRelay           = "relay"
+	prThroughputMergePathForge           = "forge"
 	prThroughputMergePathHuman           = "human"
 	prThroughputMergePathOtherAutomation = "other_automation"
 )
@@ -240,7 +241,7 @@ func cloneIntMap(in map[string]int) map[string]int {
 }
 
 // prThroughputMergePath extracts the path= field of a pr_merged detail
-// (sweep / queue / relay), or prThroughputMergePathUnknown when absent.
+// (sweep / queue / relay / forge), or prThroughputMergePathUnknown when absent.
 func prThroughputMergePath(detail string) string {
 	if p := strings.TrimSpace(parseAuditDetailAttrs(detail)["path"]); p != "" {
 		if p == ghpkg.PRAuditPathQueue {
@@ -275,7 +276,7 @@ func prThroughputActorAttribution(e AuditEntry) (kind, role, actor string, ok bo
 
 func actorFromPRPath(path string) string {
 	switch path {
-	case prThroughputMergePathSweep, prThroughputMergePathRelay, ghpkg.PRAuditPathQueue:
+	case prThroughputMergePathSweep, prThroughputMergePathRelay, prThroughputMergePathForge, ghpkg.PRAuditPathQueue:
 		return prThroughputActorHive
 	case prThroughputMergePathHuman:
 		return prThroughputActorHuman
@@ -291,7 +292,7 @@ func actorFromPRPath(path string) string {
 func prThroughputActorFromAttrs(attrs map[string]string, fallback string) string {
 	for _, key := range []string{"actor_class", "actor", "path"} {
 		switch strings.ToLower(strings.TrimSpace(attrs[key])) {
-		case prThroughputActorHive, "sweep", "relay", "queue":
+		case prThroughputActorHive, "sweep", "relay", "forge", "queue":
 			return prThroughputActorHive
 		case prThroughputActorHuman:
 			return prThroughputActorHuman

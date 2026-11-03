@@ -684,3 +684,23 @@ func TestPollLoop_TickerFetchErrorPath(t *testing.T) {
 		t.Fatal("Listen did not stop after context cancellation")
 	}
 }
+
+func TestSendMessageTo_OtherChannelAndEmptyChannel(t *testing.T) {
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	b := newTestBot(ts, "status-channel")
+	if err := b.SendMessageTo("rfc-channel", "RFC opened"); err != nil {
+		t.Fatalf("SendMessageTo returned error: %v", err)
+	}
+	if !strings.HasSuffix(gotPath, "/channels/rfc-channel/messages") {
+		t.Fatalf("path = %q, want the explicit channel, not the status channel", gotPath)
+	}
+	if err := b.SendMessageTo("  ", "x"); err == nil {
+		t.Fatal("empty channel must error before any request")
+	}
+}

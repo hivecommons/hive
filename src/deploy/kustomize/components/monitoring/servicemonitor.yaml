@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: hive
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hive
+  endpoints:
+    - port: dashboard
+      path: /metrics
+      authorization:
+        credentials:
+          name: hive-metrics-token
+          key: HIVE_METRICS_TOKEN

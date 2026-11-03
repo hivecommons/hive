@@ -1,1 +1,0 @@
-- Gave the dashboard Overview issue and PR band charts a shared, distinct per-band color palette.

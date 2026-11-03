@@ -37,7 +37,7 @@ material for everything after that.
 
 Docker Compose is the default standalone runtime. Podman is a parallel
 supported choice — see the
-[Podman quick start](https://github.com/hivecommons/hive/blob/v5/README.md#quick-start-podman).
+[Podman quick start](https://github.com/hivecommons/hive/blob/v5/src/docs/quickstart-podman.md).
 
 **Prerequisites**
 

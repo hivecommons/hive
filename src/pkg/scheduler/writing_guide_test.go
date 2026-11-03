@@ -19,7 +19,9 @@ func writingGuideKick(t *testing.T, guide string) string {
 	t.Helper()
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "acme", Name: "widgets", Repos: []string{"widgets"}, WritingGuide: guide},
-		Agents:  map[string]config.AgentConfig{"quality": {Role: "quality"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"quality": {Role: "quality"}},
+		},
 	}
 	s := New(cfg, slog.Default())
 	data, err := policies.DefaultPolicies.ReadFile("defaults/quality-full.md")

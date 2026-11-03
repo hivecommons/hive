@@ -1,1 +1,0 @@
-- Fixed dashboard sidebar navigation so collapsed-section jumps wait for expand/collapse layout settling before scrolling.

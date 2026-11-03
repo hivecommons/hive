@@ -1,0 +1,555 @@
+package dashboard
+
+import (
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+// costRangeScript extracts the Cost section's window/bucket/run-rate code
+// (constants through costTrendHtml) from index.html so node can execute it
+// against a synthetic history.
+func costRangeScript(t *testing.T, html string) string {
+	t.Helper()
+	start := strings.Index(html, "    const COST_HOUR_MS = ")
+	if start < 0 {
+		t.Fatal("index.html does not define COST_HOUR_MS")
+	}
+	body, ok := jsFuncOptional(html, "costTrendHtml")
+	fn := strings.Index(html[start:], body)
+	if !ok || fn < 0 {
+		t.Fatal("index.html does not define costTrendHtml after COST_HOUR_MS")
+	}
+	return html[start : start+fn+len(body)]
+}
+
+// TestCostRangeBucketsFollowSelector pins the Cost section's window model:
+// the bar chart, "spend in selected range" and the run-rate are all derived
+// from the ONE window the selector names — hourly = 24 hour bars, daily = 14
+// day bars (M/D labels once there are more than 7), weekly = 5 week bars,
+// monthly = 5 month bars, custom = hour or day bars by span — each count
+// adjustable with the −/+ stepper within named bounds, and the run-rate is
+// spend ÷ elapsed window in the bucket's unit.
+func TestCostRangeBucketsFollowSelector(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — cost range bucket behaviour was NOT executed by this run")
+	}
+	html := indexHTML(t)
+
+	script := "const assert = require('node:assert/strict');\n" +
+		"process.env.TZ = 'UTC';\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+// Wed 2026-10-21 12:30 UTC.
+const NOW = Date.UTC(2026, 9, 21, 12, 30, 0);
+const H = 3600e3, D = 24 * H;
+// Synthetic cumulative history: one model spending exactly $1 per hour for
+// the last 40 days, observed once an hour on the hour (sparser than the
+// accrual-liveness gap, so each $1 lands in the bucket it was observed in),
+// priced at $1 per 1000 tokens.
+const HIST_START = NOW - 40 * D - 30 * 60e3;
+_costHistory = [];
+for (let t = HIST_START; t <= NOW; t += H) {
+  const hours = (t - HIST_START) / H;
+  _costHistory.push({ t, usd: hours, models: { m: { i: hours * 1000, o: 0, usd: hours } } });
+}
+
+function setRange(k){ _costRange = k; }
+const approx = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, msg + ': ' + a + ' vs ' + b);
+const sum = (bs) => bs.filter(b => b.hasData).reduce((s, b) => s + b.spend, 0);
+
+// Defaults and stepper bounds.
+assert.deepEqual(Object.keys(COST_RANGE_COUNT), ['hourly', 'daily', 'weekly', 'monthly']);
+assert.equal(costRangeCount('hourly'), 24);
+assert.equal(costRangeCount('daily'), 14);
+assert.equal(costRangeCount('weekly'), 5);
+assert.equal(costRangeCount('monthly'), 5);
+assert.equal(costRangeCount('custom'), null, 'custom has no count');
+for (const k in COST_RANGE_COUNT) {
+  const c = COST_RANGE_COUNT[k];
+  assert.ok(c.min <= c.def && c.def <= c.max && c.step > 0, k + ' bounds bracket the default');
+  assert.equal((c.def - c.min) % c.step, 0, k + ' default sits on the step grid');
+}
+assert.equal(costClampCount('daily', 100), 60, 'clamps above max');
+assert.equal(costClampCount('daily', 1), 7, 'clamps below min');
+assert.equal(costClampCount('daily', 16), 14, 'snaps onto the 7-day grid');
+assert.equal(costClampCount('hourly', NaN), 24, 'garbage falls back to the default');
+
+// hourly: 24 one-hour bars, the last one partial (clock hour → now).
+setRange('hourly');
+let win = costWindow(NOW);
+assert.equal(win.count, 24, 'hourly bucket count');
+assert.equal(win.bucket, 'hour');
+assert.equal(win.start, Date.UTC(2026, 9, 20, 13, 0, 0), 'hourly window start');
+assert.equal(win.end, NOW);
+let buckets = costBuckets(win);
+assert.deepEqual(buckets.slice(0, 3).map(b => costBucketAxisLabel(b, win)), ['13', '14', '15']);
+assert.equal(costBucketAxisLabel(buckets[23], win), '12');
+let total = sum(buckets);
+assert.equal(total, 23, 'hourly spend: 23 observed $1 steps inside (13:00, 12:30]');
+let rate = costWindowRunRate(total, win);
+assert.equal(costRunRateUnit(win).label, '/hr');
+approx(rate * H, 1, 0.05, 'hourly run-rate ≈ $1/hr');
+// Stepper: +6h twice → 36 bars; −6h back to 30; floor/ceiling respected.
+assert.equal(costStepCount(1), true);
+assert.equal(costStepCount(1), true);
+assert.equal(costRangeCount(), 36);
+assert.equal(costWindow(NOW).count, 36, 'hourly window follows the count');
+assert.equal(costWindow(NOW).start, Date.UTC(2026, 9, 20, 1, 0, 0));
+assert.equal(costStepCount(-1), true);
+assert.equal(costRangeCount(), 30);
+assert.equal(JSON.parse(localStorage.getItem('hiveCostRangeCounts')).hourly, 30, 'count persisted per range');
+for (let i = 0; i < 20; i++) costStepCount(-1);
+assert.equal(costRangeCount(), 6, 'hourly floor');
+assert.equal(costStepCount(-1), false, 'at the floor the step is a no-op');
+for (let i = 0; i < 20; i++) costStepCount(1);
+assert.equal(costRangeCount(), 72, 'hourly ceiling');
+_costCounts.hourly = 24;
+
+// daily: last 14 calendar days incl. today, labelled by M/D (14 weekday
+// names would repeat).
+setRange('daily');
+win = costWindow(NOW);
+assert.equal(win.count, 14, 'daily bucket count');
+assert.equal(win.start, Date.UTC(2026, 9, 8), 'daily window starts at local midnight 13 days ago');
+buckets = costBuckets(win);
+assert.deepEqual(buckets.slice(0, 2).map(b => costBucketAxisLabel(b, win)), ['10/8', '10/9']);
+assert.equal(costBucketAxisLabel(buckets[13], win), '10/21');
+total = sum(buckets);
+assert.equal(total, 13 * 24 + 12, 'daily spend: $1 steps inside the 14 calendar days');
+rate = costWindowRunRate(total, win);
+assert.equal(costRunRateUnit(win).label, '/day');
+approx(rate * D, 24, 0.5, 'daily run-rate ≈ $24/day');
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 5, '14 bars get 5 evenly spaced labels');
+// Shrunk to 7 days the weekday labels come back, unambiguous again.
+assert.equal(costStepCount(-1), true);
+win = costWindow(NOW);
+assert.equal(win.count, 7);
+buckets = costBuckets(win);
+assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['Th', 'F', 'Sa', 'Su', 'M', 'Tu', 'W']);
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 7, '7 bars label every bar');
+assert.equal(costStepCount(-1), false, 'daily floor is 7');
+_costCounts.daily = 14;
+
+// weekly: the current Mon→Sun week plus the 4 before it, one bar per week
+// labelled by its Monday; the rest of this week carries no data.
+setRange('weekly');
+win = costWindow(NOW);
+assert.equal(win.count, 5, 'weekly bucket count');
+assert.equal(win.bucket, 'week');
+assert.equal(win.start, Date.UTC(2026, 8, 21), 'first week starts on a Monday 4 weeks back');
+assert.equal(win.end, Date.UTC(2026, 9, 26), 'window ends next Monday 00:00');
+buckets = costBuckets(win);
+assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['9/21', '9/28', '10/5', '10/12', '10/19']);
+assert.deepEqual(buckets.map(b => b.hasData), [true, true, true, true, true]);
+total = sum(buckets);
+assert.equal(total, 4 * 7 * 24 + 2 * 24 + 12, 'weekly spend: four full weeks + Mon, Tue and half of Wed');
+assert.equal(win.elapsedMs, 4 * 7 * D + 2 * D + 12.5 * H, 'elapsed stops at now, not at the end of the week');
+rate = costWindowRunRate(total, win);
+assert.equal(costRunRateUnit(win).label, '/day');
+approx(rate * D, 24, 0.5, 'weekly run-rate is $/day over elapsed time');
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 5, 'weekly axis labels every bar');
+assert.equal(costStepCount(1), true);
+assert.equal(costWindow(NOW).count, 6);
+assert.equal(costWindow(NOW).start, Date.UTC(2026, 8, 14));
+_costCounts.weekly = 5;
+
+// monthly: the current calendar month plus the 4 before it, one bar per
+// month labelled by name. History only reaches 40 days back, so the three
+// oldest months have no data at all.
+setRange('monthly');
+win = costWindow(NOW);
+assert.equal(win.count, 5, 'monthly bucket count');
+assert.equal(win.bucket, 'month');
+assert.equal(win.start, Date.UTC(2026, 5, 1));
+assert.equal(win.end, Date.UTC(2026, 10, 1));
+buckets = costBuckets(win);
+assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['Jun', 'Jul', 'Aug', 'Sep', 'Oct']);
+assert.deepEqual(buckets.map(b => b.hasData), [false, false, false, true, true], 'months before history are uncovered');
+total = sum(buckets);
+assert.equal(total, 40 * 24, 'monthly spend: everything since history began');
+approx(costWindowRunRate(total, win) * D, 40 * 24 / (142 + 12.5 / 24), 0.5, 'monthly run-rate in $/day over the elapsed Jun 1 → now');
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 5);
+
+// Daily rollup (from /api/cost) backs buckets older than the snapshots:
+// $10/day for Jun 1 → Sep 10 UTC, every day ending before the first snapshot.
+const roll = [];
+for (let d = Date.UTC(2026, 5, 1); d < Date.UTC(2026, 8, 11); d += D) {
+  roll.push({ day: new Date(d).toISOString().slice(0, 10), cost_usd: 10, input_tokens: 1000, output_tokens: 100, samples: 288 });
+}
+// A day the snapshots already cover must NOT be double counted, and a day
+// with no samples is not data.
+roll.push({ day: '2026-10-01', cost_usd: 999, samples: 288 });
+roll.push({ day: '2026-05-31', cost_usd: 999, samples: 0 });
+_lastCost = { daily_rollup: roll };
+assert.equal(costHistoryStart(), Date.UTC(2026, 5, 1), 'history starts at the first rollup day');
+buckets = costBuckets(win);
+assert.deepEqual(buckets.map(b => b.hasData), [true, true, true, true, true], 'rollup covers the older months');
+assert.deepEqual(buckets.map(b => b.rollup), [true, true, true, true, false], 'September mixes rollup days and snapshots');
+assert.equal(buckets[0].spend, 300, 'June: 30 rollup days × $10');
+assert.equal(buckets[1].spend, 310, 'July: 31 rollup days × $10');
+// September: rollup Sep 1–10 ($100) + snapshots from Sep 11 12:30 → Oct 1 ($1/hr).
+assert.equal(buckets[3].spend, 100 + Math.floor((Date.UTC(2026, 9, 1) - HIST_START) / H), 'September sums rollup days before the snapshots with the snapshots');
+assert.equal(buckets[4].spend, 20 * 24 + 12, 'October ignores the rollup for a day the snapshots cover');
+
+// custom: hour buckets up to 2 days, day buckets beyond.
+_lastCost = null;
+setRange('custom');
+_costCustom = { start: NOW - 36 * H, end: NOW };
+win = costWindow(NOW);
+assert.equal(win.bucket, 'hour');
+assert.equal(win.count, 36);
+assert.equal(costRunRateUnit(win).label, '/hr');
+_costCustom = { start: NOW - 5 * D, end: NOW };
+win = costWindow(NOW);
+assert.equal(win.bucket, 'day');
+assert.equal(win.count, 5);
+assert.equal(costRunRateUnit(win).label, '/day');
+_costCustom = { start: NOW - 2 * D - 1, end: NOW };
+assert.equal(costWindow(NOW).bucket, 'day', 'just over 2 days switches to day buckets');
+assert.equal(costStepCount(1), false, 'custom has no stepper');
+
+// Run-rate guards.
+assert.equal(costWindowRunRate(0, win), null, 'no spend → no run-rate');
+assert.equal(costWindowRunRate(5, { elapsedMs: 0 }), null, 'no elapsed time → no run-rate');
+
+// The rendered summary carries both values and the chart switches with the selector.
+setRange('weekly');
+let out = costTrendHtml(NOW);
+assert.match(out, /spend in selected range: <b>\$73[0-9]\.[0-9]{2}<\/b>/, 'weekly summary spend (4 weeks + 2.5 days at $24/day)');
+assert.match(out, /run-rate: <b>~\$2[34]\.[0-9]{2}\/day<\/b>/, 'weekly run-rate per day');
+assert.equal((out.match(/class="cost-bar( zero)?"/g) || []).length, 5, 'weekly chart has 5 bars');
+assert.match(out, /class="cost-range-step" role="group"/, 'stepper rendered');
+assert.match(out, /data-cost-step="-1"[^>]*aria-label="Shrink weekly window by 1 weeks"/, 'shrink chip labelled');
+assert.match(out, /data-cost-step="1"[^>]*aria-label="Grow weekly window by 1 weeks"/, 'grow chip labelled');
+assert.match(out, /class="cost-range-step-val"[^>]*>5&thinsp;wk</, 'count with unit');
+assert.ok(!out.includes('history starts'), 'no horizon note when every bar is covered');
+setRange('hourly');
+out = costTrendHtml(NOW);
+assert.match(out, /run-rate: <b>~\$[01]\.[0-9]{2}\/hr<\/b>/, 'hourly run-rate per hour');
+assert.equal((out.match(/class="cost-bar( zero)?"/g) || []).length, 24, 'hourly chart has 24 bars');
+assert.ok(!out.includes('(est.)'), 'no run-rate-extrapolated estimate marker');
+assert.match(out, />24&thinsp;h</, 'hourly count');
+// Monthly without a rollup: three hatched no-data bars and a horizon note.
+setRange('monthly');
+out = costTrendHtml(NOW);
+assert.equal((out.match(/class="cost-bar nodata"/g) || []).length, 3, 'months before history draw hatched');
+assert.match(out, /history starts 9\/11/, 'summary names the first data point');
+// Stepper at a bound disables the matching chip.
+_costCounts.monthly = COST_RANGE_COUNT.monthly.max;
+out = costTrendHtml(NOW);
+assert.match(out, /data-cost-step="1"[^>]*disabled/, 'grow disabled at the ceiling');
+assert.ok(!/data-cost-step="-1"[^>]*disabled/.test(out), 'shrink still enabled at the ceiling');
+setRange('custom');
+assert.ok(!costTrendHtml(NOW).includes('cost-range-step'), 'custom range shows no stepper');
+console.log('ok');
+`
+	cmd := exec.Command(node, "-e", script)
+	cmd.Env = append(cmd.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node cost range bucket check failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+// TestCostRangeSummaryAndChartShareWindow pins that costTrendHtml derives the
+// bars, the spend and the run-rate from one costWindow() call instead of a
+// fixed trailing window.
+func TestCostRangeSummaryAndChartShareWindow(t *testing.T) {
+	html := indexHTML(t)
+	fn := jsFunc(t, html, "costTrendHtml")
+	for _, want := range []string{
+		"const win = costWindow(now);",
+		"costBuckets(win)",
+		"costWindowRunRate(total, win)",
+		"costRunRateUnit(win)",
+		"costAxisLabelsHtml(buckets, win)",
+	} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("costTrendHtml should contain %q", want)
+		}
+	}
+	for _, stale := range []string{"costRunRate()", "cfg.windowMs", "(est.)"} {
+		if strings.Contains(fn, stale) {
+			t.Errorf("costTrendHtml still uses %q", stale)
+		}
+	}
+	if strings.Contains(html, "function costRunRate()") {
+		t.Error("fixed-trailing-window costRunRate() should be gone")
+	}
+}
+
+// TestCostDiscontinuityGuardIsGapAware pins #13482: a step above the fixed
+// per-step ceiling is still spend when a plausible rate over the observation
+// gap explains it (the sampler was simply not running), while the same step
+// at normal cadence remains a correction when it regains already-reached
+// ground (#13497: only restores are corrections). Mirrors
+// costRollupStepAllowed / costRollupStepRegainsGround.
+func TestCostDiscontinuityGuardIsGapAware(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — cost discontinuity behaviour was NOT executed by this run")
+	}
+	html := indexHTML(t)
+
+	script := "const assert = require('node:assert/strict');\n" +
+		"process.env.TZ = 'UTC';\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+const M = 60e3, H = 3600e3;
+const T0 = Date.UTC(2026, 8, 1, 0, 0, 0);
+// $40 every 5 minutes, 24 samples → median step $40 ($800 fixed ceiling); ≈$20/h average → ≈$399/h plausible rate.
+const hist = [];
+for (let i = 0; i < 24; i++) hist.push({ timestamp: T0 + i * 5 * M, usd: 40 * i, models: { m: { i: 1000 * i, o: 0, usd: 40 * i } } });
+const lastUsd = 40 * 23, lastTok = 1000 * 23;
+const gapEnd = T0 + 48 * H;
+// 48 h silence then +$10,000 (gap-explained: 48 h × ≈$399/h ≈ $19,100 ≥ $10,000).
+hist.push({ timestamp: gapEnd, usd: lastUsd + 10000, models: { m: { i: lastTok + 250000, o: 0, usd: lastUsd + 10000 } } });
+// The counter drops back (sessions aged out) …
+hist.push({ timestamp: gapEnd + 5 * M, usd: lastUsd, models: { m: { i: lastTok, o: 0, usd: lastUsd } } });
+// … and 5 min later regains +$10,000 onto ground already reached — a restore.
+hist.push({ timestamp: gapEnd + 10 * M, usd: lastUsd + 10000, models: { m: { i: lastTok + 250000, o: 0, usd: lastUsd + 10000 } } });
+// then an ordinary +$40 to a new high.
+hist.push({ timestamp: gapEnd + 15 * M, usd: lastUsd + 10040, models: { m: { i: lastTok + 251000, o: 0, usd: lastUsd + 10040 } } });
+const end = gapEnd + 15 * M;
+
+const rate = costPriceMap(hist);
+const ceiling = costDiscontinuityCeiling(hist, rate);
+assert.equal(ceiling, 800, 'fixed ceiling = 20 × $40 median');
+const ratePerMs = costDiscontinuityRate(hist, rate);
+const perHour = ratePerMs * H;
+// Ordinary spend $920 (+$40 after the gap = $960) over the 48h15m span, ×20.
+const expectPerHour = 20 * 960 / (48 + 15 / 60);
+assert.ok(Math.abs(perHour - expectPerHour) < 1e-6, 'rate ceiling = 20 × average $/h, got ' + perHour + ' want ' + expectPerHour);
+
+assert.equal(costStepAllowed(500, 1, 800), true, 'under the fixed ceiling');
+assert.equal(costStepAllowed(10000, 5 * M, { ceiling, ratePerMs }), false, '$10,000 in 5 min is a correction');
+assert.equal(costStepAllowed(10000, 48 * H, { ceiling, ratePerMs }), true, '$10,000 over 48 h is spend');
+assert.equal(costStepAllowed(10000, 0, { ceiling, ratePerMs }), false, 'zero gap cannot explain it');
+assert.equal(costStepAllowed(10000, 0, { ceiling, ratePerMs: Infinity }), true, 'no rate baseline → nothing dropped by rate');
+assert.equal(costStepAllowed(10000, 5 * M, 800), false, 'legacy numeric cap: fixed ceiling only');
+assert.equal(costStepAllowed(10000, 5 * M, { ceiling, ratePerMs }, false), true, 'a step to a new high is spend however large (#13497)');
+assert.equal(costStepAllowed(10000, 5 * M, { ceiling, ratePerMs }, true), false, 'a restore at normal cadence is a correction');
+
+const cap = { ceiling, ratePerMs };
+const spend = costSpendBetween(hist, rate, T0, end, cap);
+assert.equal(spend, 40 * 23 + 10000 + 40, 'window spend keeps the gap-explained step and drops the restore');
+const legacy = costSpendBetween(hist, rate, T0, end, ceiling);
+assert.equal(legacy, 40 * 23 + 10000 + 40, 'the fixed ceiling alone still drops the restore; the new-high step is never a correction');
+
+const spans = costAccrualSpans(hist, rate);
+const big = spans.filter(s => s.amount > 800);
+assert.equal(big.length, 2);
+assert.equal(big[0].gap, 48 * H - 23 * 5 * M, 'span records the observation gap');
+assert.equal(big[0].restore, false, 'the gap step reaches a new high');
+assert.equal(big[1].gap, 5 * M);
+assert.equal(big[1].restore, true, 'the regain is restore-shaped');
+const spread = costSpreadSpendBetween(spans, T0, end, cap);
+assert.ok(Math.abs(spread - (40 * 23 + 10000 + 40)) < 1e-6, 'spread spend matches: ' + spread);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost discontinuity JS failed: %v\n%s", err, out)
+	}
+}
+
+// TestCostPriceMapKeepsEveryModelEverSeen pins that costPriceMap takes each
+// model's $/token from the newest snapshot that still lists THAT model — not
+// from the newest snapshot alone. The token summary only lists the models of
+// the sessions currently on disk, so after a backend/model change the latest
+// snapshot may name only today's helper model; pricing from it alone put every
+// historical model at $0 and the chart of a $17K history summed to $15.
+func TestCostPriceMapKeepsEveryModelEverSeen(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — cost price-map behaviour was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := "const assert = require('node:assert/strict');\n" +
+		"process.env.TZ = 'UTC';\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+const H = 3600e3;
+const t0 = Date.UTC(2026, 9, 1);
+// An expensive model ran for two hours ($100/h at $0.01/token), then only a
+// cheap helper model is left in the summary ($0.000001/token).
+const hist = [
+  { timestamp: t0,         usd: 0,      models: { opus: { i: 0, o: 0, usd: 0 } } },
+  { timestamp: t0 + 1 * H, usd: 100,    models: { opus: { i: 10000, o: 0, usd: 100 } } },
+  { timestamp: t0 + 2 * H, usd: 200,    models: { opus: { i: 20000, o: 0, usd: 200 } } },
+  { timestamp: t0 + 3 * H, usd: 200.01, models: { mini: { i: 10000, o: 0, usd: 0.01 } } },
+  { timestamp: t0 + 4 * H, usd: 200.02, models: { mini: { i: 20000, o: 0, usd: 0.02 } } },
+];
+const rate = costPriceMap(hist);
+assert.ok(Math.abs(rate.opus - 0.01) < 1e-12, 'opus keeps the rate from the last snapshot that listed it: ' + rate.opus);
+assert.ok(Math.abs(rate.mini - 0.000001) < 1e-15, 'mini priced from the newest snapshot: ' + rate.mini);
+// The whole-history spend must include the expensive model's $200, not just
+// the helper's cents. (The opus → mini hand-over itself is a counter DROP,
+// so only the increments on either side of it count: 100 + 100 + 0.01.)
+const spend = costSpendBetween(hist, rate, t0, t0 + 4 * H, costDiscontinuityCeiling(hist, rate));
+assert.ok(Math.abs(spend - 200.01) < 1e-9, 'spend should price historical models: ' + spend);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost price-map JS failed: %v\n%s", err, out)
+	}
+}
+
+// TestCostAccrualSpreadStopsAtCountersLastRise pins the accrual-spreading
+// bound: an increment is spread back only over the stretch its OWN counter
+// sat flat, never past that counter's previous rise. On hive's hive the proxy
+// began recording Copilot usage in real time (#13492) and every 5-minute
+// increment of the new live counter was smeared back across the whole dense
+// 24 h, so the first day of recording drew $860 on the day BEFORE it (whose
+// own record was $1.19) and $191 on itself; the earlier $1 days then rendered
+// under a pixel beside the $860 bar and read as lost. Flatness is judged per
+// model so a chatty cheap helper does not stop a session flush from being
+// spread across its flat hours, the split of a step across rising models
+// conserves the aggregate step (bars still sum to "spend in selected range"),
+// and a bar with any spend keeps a visible minimum height.
+func TestCostAccrualSpreadStopsAtCountersLastRise(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — cost accrual spreading was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := "const assert = require('node:assert/strict');\n" +
+		"process.env.TZ = 'UTC';\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+const M = 60e3, H = 3600e3, D = 24 * H;
+const STEP = 5 * M;
+const approx = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, msg + ': ' + a + ' vs ' + b);
+const sum = (bs) => bs.filter(b => b.hasData).reduce((s, b) => s + b.spend, 0);
+
+// ── Scenario 1: a live counter appears on day 3 (the hive's hive case). ──
+// Three UTC days of dense 5-minute snapshots. "mini" is a cheap helper that
+// rises $0.001 every snapshot ($0.288/day, $1 per 1M tokens). From 06:00 on
+// day 3 "fable" is recorded in real time: +$10 every snapshot ($10 per 1k
+// tokens) until NOW = day 3 12:00 → 72 steps = $720.
+const DAY1 = Date.UTC(2026, 9, 20);
+const NOW = DAY1 + 2 * D + 12 * H;
+const FABLE_FROM = DAY1 + 2 * D + 6 * H;
+_costHistory = [];
+let miniTok = 0, fableTok = 0;
+for (let ts = DAY1; ts <= NOW; ts += STEP) {
+  miniTok += 1000;
+  const models = { mini: { i: miniTok, o: 0, usd: miniTok / 1e6 } };
+  let usd = miniTok / 1e6;
+  if (ts > FABLE_FROM) { fableTok += 1000; models.fable = { i: fableTok, o: 0, usd: fableTok / 100 }; usd += fableTok / 100; }
+  _costHistory.push({ t: ts, usd, models });
+}
+_costRange = 'daily';
+_costCounts.daily = 7;
+const win = costWindow(NOW);
+const buckets = costBuckets(win);
+assert.equal(buckets.length, 7);
+const day2 = buckets[5], day3 = buckets[6];
+assert.equal(day2.start, DAY1 + D, 'bucket 5 is day 2');
+// Day 2 keeps ITS record: the helper's $0.288 (± one 5-minute step either
+// side of midnight). Before the fix it drew ~$500 of day 3's fable spend.
+approx(day2.spend, 0.288, 0.01, 'day 2 is not billed for day 3 live recording');
+approx(day3.spend, 720 + 0.144, 0.01, 'day 3 carries the live recording');
+// Two views of one figure: the bars sum to the range total and the headline
+// the summary prints.
+const total = sum(buckets);
+approx(total, 720 + 0.288 * 2 + 0.144, 0.02, 'range total');
+const htmlOut = costTrendHtml(NOW);
+assert.ok(htmlOut.includes('spend in selected range: <b>' + fmtUSD(total) + '</b>'), 'summary prints the sum of the bars');
+// Conservation: spreading moves spend, never creates or drops it.
+const rate = costPriceMap(costHist());
+const cap = { ceiling: costDiscontinuityCeiling(costHist(), rate), ratePerMs: costDiscontinuityRate(costHist(), rate) };
+const spans = costAccrualSpans(costHist(), rate);
+approx(costSpreadSpendBetween(spans, DAY1, NOW, cap), costSpendBetween(costHist(), rate, DAY1, NOW, cap), 1e-6, 'spread total equals step total');
+// Every live fable increment accrues over its own observation interval.
+const fableSpans = spans.filter(s => s.amount > 1);
+assert.equal(fableSpans.length, 72);
+for (const s of fableSpans) assert.equal(s.to - s.from, STEP, 'a live counter spreads back only to its previous rise');
+// A guard judged on the whole step: each span carries the aggregate step.
+assert.ok(fableSpans.every(s => Math.abs(s.step - (10 + 0.001)) < 1e-9), 'spans record the aggregate step for the discontinuity guard');
+// A $0.29 day beside a $720 day is still a visible bar, not a sub-pixel line.
+assert.equal(costBarHeightPct(day2, day3.spend), COST_BAR_MIN_SPEND_PCT, 'tiny spend keeps the minimum visible height');
+assert.equal(costBarHeightPct(day3, day3.spend), 100);
+assert.equal(costBarHeightPct({ spend: 0, hasData: true }, day3.spend), COST_BAR_ZERO_PCT, 'recorded $0 draws the baseline');
+assert.equal(costBarHeightPct({ spend: 0, hasData: false }, day3.spend), 0);
+assert.ok(htmlOut.includes('style="height:' + COST_BAR_MIN_SPEND_PCT.toFixed(1) + '%"'), 'rendered bars use the minimum height');
+
+// ── Scenario 2: a flush-type model beside a chatty helper. ──
+// "opus" is observed at 00:00, flat while the helper keeps the TOTAL moving
+// every 5 minutes, then its transcript flushes at 06:00 as one +$60 step.
+// The flush is spread across opus's six flat hours — the helper's chatter
+// must not pin it to the 05:55 → 06:00 interval.
+const T0 = Date.UTC(2026, 9, 1);
+const hist2 = [];
+let m2 = 0;
+for (let ts = T0; ts <= T0 + 8 * H; ts += STEP) {
+  m2 += 1000;
+  const opusUsd = ts >= T0 + 6 * H ? 160 : 100;
+  hist2.push({ timestamp: ts, usd: m2 / 1e6 + opusUsd, models: { mini: { i: m2, o: 0, usd: m2 / 1e6 }, opus: { i: opusUsd * 100, o: 0, usd: opusUsd } } });
+}
+const rate2 = costPriceMap(hist2);
+const spans2 = costAccrualSpans(hist2, rate2);
+const flush = spans2.filter(s => s.amount > 1);
+assert.equal(flush.length, 1, 'one flush span');
+assert.equal(flush[0].to, T0 + 6 * H);
+assert.equal(flush[0].from, T0, 'the flush spreads back to the start of the opus flat stretch');
+approx(flush[0].amount, 60, 1e-9, 'opus takes its share of the aggregate step');
+approx(flush[0].step, 60.001, 1e-9, 'the span records the whole aggregate step');
+const cap2 = { ceiling: Infinity, ratePerMs: Infinity };
+for (let h = 0; h < 6; h++) {
+  approx(costSpreadSpendBetween(spans2, T0 + h * H, T0 + (h + 1) * H, cap2), 10 + 0.012, 0.02, 'hour ' + h + ' gets a sixth of the flush');
+}
+approx(costSpreadSpendBetween(spans2, T0 + 6 * H, T0 + 8 * H, cap2), 0.024, 0.01, 'nothing of the flush lands after it was observed');
+
+// ── Scenario 3: usd-only snapshots keep the flat-stretch bound too. ──
+const hist3 = [];
+for (let ts = T0; ts <= T0 + 3 * H; ts += STEP) hist3.push({ timestamp: ts, usd: ts >= T0 + 2 * H ? 50 : (ts >= T0 + 1 * H ? 20 : 0) });
+const spans3 = costAccrualSpans(hist3, {});
+assert.equal(spans3.length, 2);
+assert.equal(spans3[0].from, T0, 'first rise spreads over the dense stretch before it');
+assert.equal(spans3[0].to, T0 + 1 * H);
+assert.equal(spans3[1].from, T0 + 1 * H, 'second rise stops at the first');
+assert.equal(spans3[1].to, T0 + 2 * H);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost accrual spreading JS failed: %v\n%s", err, out)
+	}
+}

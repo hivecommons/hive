@@ -1,1 +1,0 @@
-- Change repository auto-merge controls to Level 6-gated switches that turn on when a hive enters L6.

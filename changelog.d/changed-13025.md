@@ -1,0 +1,1 @@
+- `hive-baseline-check.sh --json` now prints a `transient_marker` that the scanner policy copies verbatim, and the operator reference's dependency-bot sweep paragraph describes the `hive-ci-transient` re-run wording ([#13025](https://github.com/hivecommons/hive/issues/13025), [#13026](https://github.com/hivecommons/hive/issues/13026)).

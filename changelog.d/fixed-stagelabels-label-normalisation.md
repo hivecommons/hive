@@ -1,0 +1,1 @@
+- Stage-label predicates `Current` and `IssueCoveredByPR` now consistently normalize labels (lowercase and trim whitespace) before matching, ensuring both functions agree on case handling.

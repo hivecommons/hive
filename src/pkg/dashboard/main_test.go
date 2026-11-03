@@ -80,10 +80,15 @@ func TestMain(m *testing.M) {
 		panic("dashboard TestMain: cannot create temp data dir: " + err.Error())
 	}
 	auditLogPath = filepath.Join(testDataDir, "audit.jsonl")
+	contribAuditDirPath = filepath.Join(testDataDir, "contrib-audit")
 	// Prompt save/bake/import all persist templates through this one seam. Keep
 	// the production default in api.go, but point package tests at this run's
 	// private directory before any test can construct a dashboard server.
 	promptTemplateSaveDir = filepath.Join(testDataDir, "policies")
+	// The request log and the output log sources (#11944) default to
+	// /data/.hive/logs, which on a hive host is the REAL directory.
+	outputLogDir = func() string { return filepath.Join(testDataDir, "logs") }
+	promptTemplateOverrideDir = filepath.Join(testDataDir, "policy-overrides")
 	// Disk counterpart: the data_disk health check samples the REAL /data on
 	// a live hive host or CI runner, which may legitimately sit above a
 	// threshold and would turn every HealthSummary "ok" assertion in this
@@ -92,6 +97,9 @@ func TestMain(m *testing.M) {
 	dataDiskUsageFn = func() (dataDiskUsage, bool) {
 		return dataDiskUsage{Path: dataVolumePath, TotalBytes: 100 << 30, UsedBytes: 10 << 30}, true
 	}
+	// Likewise the uid_isolation check (#11713) reads ambient HIVE_* env and
+	// the serviceaccount mount; a CI runner inside a hive pod has both.
+	uidIsolationExpectedFn = func() bool { return false }
 
 	code := m.Run()
 	os.RemoveAll(testDataDir)

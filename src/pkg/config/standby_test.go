@@ -421,7 +421,7 @@ func TestStandby_AbsentBlockSerializesBackOutAbsent(t *testing.T) {
 // the difference between "absent" and "present and off", and the round trip
 // above depends on it.
 func TestStandby_DefaultsDoNotMaterializeABlock(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{"quality": {}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"quality": {}}}}
 	cfg.applyStandbyDefaults()
 	if cfg.Agents["quality"].Standby != nil {
 		t.Error("applyStandbyDefaults() created a standby block for a lane that never declared one")

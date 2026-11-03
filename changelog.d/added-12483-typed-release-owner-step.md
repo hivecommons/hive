@@ -1,0 +1,1 @@
+- `hive-open-issue` can record a typed release-only owner step with a tag and immutable target SHA while keeping the issue parked for its owner; this metadata does not yet authorize Hive to publish releases ([#12483](https://github.com/hivecommons/hive/issues/12483)).

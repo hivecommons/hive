@@ -3,11 +3,12 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/hivecommons/hive/pkg/config"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Tests for the three top-level config sections whose handlers had zero
@@ -304,6 +305,42 @@ func TestReviewConfigGet_ReturnsSection(t *testing.T) {
 	}
 }
 
+// review.shadow (hivecommons/hive#12104) round-trips through the review GET
+// and has a Settings toggle that stages into the review section like
+// require_approval does.
+func TestReviewConfigShadow_SettingsParity(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.Review.Shadow = true
+	rec := doGetNoRole(s, "/api/config/review")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET review: expected 200, got %d", rec.Code)
+	}
+	var got struct {
+		Shadow bool `json:"shadow"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Shadow {
+		t.Fatalf("GET review did not surface shadow: %s", rec.Body.String())
+	}
+
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	for _, want := range []string{
+		`data-action="toggleConfigSwitch" data-section="review" data-key="shadow"`,
+		`${rv.shadow ? 'on' : ''}`,
+		"Shadow-evaluate the review gate (record only)",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing review.shadow toggle piece %q", want)
+		}
+	}
+}
+
 func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 	s := covApiServer(t)
 
@@ -319,6 +356,7 @@ func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 
 	rec := doPut(s, "/api/config/review", map[string]any{
 		"require_approval":     true,
+		"shadow":               true,
 		"fan_out":              true,
 		"max_parallel_reviews": 2,
 		"reviewer_agents":      []string{" rev-a ", "", "rev-b"},
@@ -328,7 +366,7 @@ func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	rv := s.deps.Config.Review
-	if !rv.RequireApproval || !rv.FanOut || rv.MaxParallelReviews != 2 {
+	if !rv.RequireApproval || !rv.Shadow || !rv.FanOut || rv.MaxParallelReviews != 2 {
 		t.Fatalf("scalars not applied: %+v", rv)
 	}
 	if len(rv.ReviewerAgents) != 2 || rv.ReviewerAgents[0] != "rev-a" || rv.ReviewerAgents[1] != "rev-b" {
@@ -342,7 +380,7 @@ func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 	if rec := doPut(s, "/api/config/review", map[string]any{}); rec.Code != http.StatusOK {
 		t.Fatalf("empty put: expected 200, got %d", rec.Code)
 	}
-	if !s.deps.Config.Review.RequireApproval || s.deps.Config.Review.MaxParallelReviews != 2 {
+	if !s.deps.Config.Review.RequireApproval || !s.deps.Config.Review.Shadow || s.deps.Config.Review.MaxParallelReviews != 2 {
 		t.Fatalf("empty put mutated config: %+v", s.deps.Config.Review)
 	}
 }
@@ -583,5 +621,180 @@ func TestReviewConfigPut_Revise(t *testing.T) {
 	doPut(s, "/api/config/review", map[string]any{"revise_verdicts_before": ""})
 	if s.deps.Config.Review.ReviseVerdictsBefore != "" {
 		t.Fatal("empty cutoff did not clear")
+	}
+}
+
+func TestAutoMergeGet_ContributorLaneDefaults(t *testing.T) {
+	s := covApiServer(t)
+	rec := doOwnerGet(s, "/api/config/auto-merge")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET auto-merge: expected 200, got %d", rec.Code)
+	}
+	var body struct {
+		ContributorLane struct {
+			Enabled                bool     `json:"enabled"`
+			SoakMinutes            int      `json:"soak_minutes"`
+			RequireReviewerVerdict bool     `json:"require_reviewer_verdict"`
+			Repos                  []string `json:"repos"`
+			ExcludeLabels          []string `json:"exclude_labels"`
+			RequireTiers           []string `json:"require_tiers"`
+			RegistryTiers          bool     `json:"registry_tiers_sufficient"`
+			AutoPromotionScope     string   `json:"auto_promotion_scope"`
+			AutoPromotionScopes    []string `json:"auto_promotion_scopes"`
+			ApproveHeldRuns        bool     `json:"approve_held_runs_for_registry_trusted"`
+			OwnerApprovalWorkflow  bool     `json:"owner_approval_releases_workflow_fence"`
+			GrantableTiers         []string `json:"grantable_tiers"`
+		} `json:"contributor_lane"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	cl := body.ContributorLane
+	if strings.Join(cl.RequireTiers, ",") != "merger,trusted" {
+		t.Fatalf("contributor_lane default require_tiers = %v, want merger,trusted", cl.RequireTiers)
+	}
+	if strings.Join(cl.GrantableTiers, ",") != strings.Join(config.ContributorLaneGrantableTiers, ",") {
+		t.Fatalf("contributor_lane grantable_tiers = %v", cl.GrantableTiers)
+	}
+	if !cl.Enabled || cl.SoakMinutes != config.DefaultContributorLaneSoakMinutes || !cl.RequireReviewerVerdict || !cl.RegistryTiers || !cl.ApproveHeldRuns || !cl.OwnerApprovalWorkflow || len(cl.Repos) != 0 {
+		t.Fatalf("contributor_lane defaults wrong: %+v", cl)
+	}
+	if cl.AutoPromotionScope != config.ContributorLaneAutoPromotionScopeHive || strings.Join(cl.AutoPromotionScopes, ",") != "hive,repo" {
+		t.Fatalf("contributor_lane auto_promotion_scope defaults wrong: %+v", cl)
+	}
+	if strings.Join(cl.ExcludeLabels, ",") != strings.Join(config.DefaultContributorLaneExcludeLabels, ",") {
+		t.Fatalf("contributor_lane default labels wrong: %v", cl.ExcludeLabels)
+	}
+}
+
+func TestAutoMergePut_ContributorLaneValidation(t *testing.T) {
+	s := covApiServer(t)
+	valid := map[string]any{
+		"contributor_lane": map[string]any{
+			"enabled":                                false,
+			"soak_minutes":                           30,
+			"require_reviewer_verdict":               false,
+			"registry_tiers_sufficient":              false,
+			"repos":                                  []string{" widget ", ""},
+			"exclude_labels":                         []string{"hold"},
+			"require_tiers":                          []string{" merger "},
+			"auto_promotion_scope":                   " Repo ",
+			"approve_held_runs_for_registry_trusted": false,
+			"owner_approval_releases_workflow_fence": false,
+		},
+	}
+	if rec := doPut(s, "/api/config/auto-merge", valid); rec.Code != http.StatusOK {
+		t.Fatalf("valid contributor_lane: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cl := s.deps.Config.AutoMerge.ContributorLane
+	if cl.IsEnabled() || cl.EffectiveSoakMinutes() != 30 || cl.EffectiveRequireReviewerVerdict() || cl.EffectiveRegistryTiersSufficient() || cl.EffectiveApproveHeldRunsForRegistryTrusted() || cl.EffectiveOwnerApprovalReleasesWorkflowFence() {
+		t.Fatalf("contributor_lane write did not apply: %+v", cl)
+	}
+	if cl.AutoPromotionScope != config.ContributorLaneAutoPromotionScopeRepo {
+		t.Fatalf("contributor_lane auto_promotion_scope not normalized: %q", cl.AutoPromotionScope)
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"auto_promotion_scope": "fleet"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid auto_promotion_scope: expected 400, got %d", rec.Code)
+	}
+	if strings.Join(cl.Repos, ",") != "widget" || strings.Join(cl.ExcludeLabels, ",") != "hold" {
+		t.Fatalf("contributor_lane lists not normalized: repos=%v labels=%v", cl.Repos, cl.ExcludeLabels)
+	}
+	if strings.Join(cl.RequireTiers, ",") != "merger" {
+		t.Fatalf("contributor_lane require_tiers not applied: %v", cl.RequireTiers)
+	}
+	for _, tier := range []string{"newcomer", "contributor", " "} {
+		if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"require_tiers": []string{"trusted", tier}}}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("require_tiers %q: expected 400, got %d", tier, rec.Code)
+		}
+	}
+	if got := strings.Join(s.deps.Config.AutoMerge.ContributorLane.RequireTiers, ","); got != "merger" {
+		t.Fatalf("invalid require_tiers write mutated config: %v", got)
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"soak_minutes": -1}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative soak: expected 400, got %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"exclude_labels": []string{"hold", " "}}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank contributor_lane label: expected 400, got %d", rec.Code)
+	}
+	if s.deps.Config.AutoMerge.ContributorLane.EffectiveSoakMinutes() != 30 {
+		t.Fatalf("invalid write mutated config: %+v", s.deps.Config.AutoMerge.ContributorLane)
+	}
+}
+
+// review.reviewer_agents is picked from a list of configured agents in
+// Settings → Features → Review Gate → Reviewers (hivecommons/hive#13460). The
+// review GET carries every agent with its engine and eligibility so the
+// dialog can show who reviews today and warn when a fan-out would run on a
+// single engine.
+func TestReviewConfigGet_ReviewerCandidates(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.Agents["reviewer-copilot"] = config.AgentConfig{Backend: "copilot", Model: "gpt-5", Enabled: true}
+	s.deps.Config.Agents["paused-reviewer"] = config.AgentConfig{Backend: "codex", Enabled: true, Paused: true}
+	s.deps.Config.Agents["off"] = config.AgentConfig{Backend: "claude", Enabled: false}
+	s.deps.Config.Review.ReviewerAgents = []string{"scanner", "paused-reviewer"}
+
+	rec := doGetNoRole(s, "/api/config/review")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET review: expected 200, got %d", rec.Code)
+	}
+	var got struct {
+		Candidates []reviewerCandidate `json:"reviewer_candidates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	byName := map[string]reviewerCandidate{}
+	var order []string
+	for _, c := range got.Candidates {
+		byName[c.Name] = c
+		order = append(order, c.Name)
+	}
+	if strings.Join(order, ",") != "off,paused-reviewer,reviewer-copilot,scanner" {
+		t.Fatalf("candidates not in name order: %v", order)
+	}
+	cases := map[string]reviewerCandidate{
+		"scanner":          {Backend: "claude", Model: "sonnet", Enabled: true, Available: true, KeywordMatch: false, ReviewCapable: true},
+		"reviewer-copilot": {Backend: "copilot", Model: "gpt-5", Enabled: true, Available: true, KeywordMatch: true, ReviewCapable: false},
+		"paused-reviewer":  {Backend: "codex", Enabled: true, Available: false, KeywordMatch: false, ReviewCapable: false},
+		"off":              {Backend: "claude", Enabled: false, Available: false, KeywordMatch: false, ReviewCapable: false},
+	}
+	for name, want := range cases {
+		want.Name = name
+		if got := byName[name]; got != want {
+			t.Errorf("%s: got %+v, want %+v", name, got, want)
+		}
+	}
+
+	// Empty allow-list: the keyword scan decides.
+	s.deps.Config.Review.ReviewerAgents = nil
+	for _, c := range reviewerCandidates(s.deps.Config) {
+		if c.ReviewCapable != c.KeywordMatch {
+			t.Errorf("%s: with no allow-list review_capable (%v) must equal keyword_match (%v)", c.Name, c.ReviewCapable, c.KeywordMatch)
+		}
+	}
+	if got := reviewerCandidates(nil); len(got) != 0 {
+		t.Fatalf("nil config: expected empty list, got %v", got)
+	}
+
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	for _, want := range []string{
+		`id="rv-reviewer-agents"`,
+		`rv.reviewer_candidates`,
+		`class="rv-reviewer-on"`,
+		`markDirty('review', 'reviewer_agents', names)`,
+		`id="rv-reviewer-engine-warn"`,
+		`id="rv-reviewer-combined-note"`,
+		`data-section="review" data-key="fan_out"`,
+		`data-section="review" data-key="combined_perspectives"`,
+		`markDirty('review','max_parallel_reviews'`,
+		`refreshReviewerAgentSummary()`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Review Gate reviewer control piece %q", want)
+		}
 	}
 }

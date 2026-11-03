@@ -13,7 +13,8 @@ import (
 
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -838,10 +839,12 @@ func newFullServerWithAgents(t *testing.T) *Server {
 			Repos: []string{"testrepo"},
 		},
 		Data: config.DataConfig{AgentsDir: t.TempDir()},
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
-			"reviewer":   {ID: "rev-001", Role: "reviewer", Backend: "claude", Model: "sonnet", DisplayName: "Reviewer", Enabled: true},
-			"supervisor": {ID: "sup-001", Role: "supervisor", Backend: "claude", Model: "opus", DisplayName: "Supervisor", Enabled: true, BeadRole: "supervisor"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+				"reviewer":   {ID: "rev-001", Role: "reviewer", Backend: "claude", Model: "sonnet", DisplayName: "Reviewer", Enabled: true},
+				"supervisor": {ID: "sup-001", Role: "supervisor", Backend: "claude", Model: "opus", DisplayName: "Supervisor", Enabled: true, BeadRole: "supervisor"},
+			},
 		},
 		GitHub:     config.GitHubConfig{Token: "ghp_test123456789"},
 		SourcePath: t.TempDir() + "/hive.yaml",
@@ -858,9 +861,9 @@ func newFullServerWithAgents(t *testing.T) *Server {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManagerWithOptions(cfg.Agents, logger, agent.ProjectContext{
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{
 		Org: "testorg", Repos: []string{"testrepo"}, ACMMLevel: *cfg.ACMMLevel, PRsAllowed: true,
-	}, agent.WithUIDMapPath(filepath.Join(t.TempDir(), "uid-map.json")))
+	}, cruxtest.WithUIDMapPath(filepath.Join(t.TempDir(), "uid-map.json")))
 
 	srv := NewServer(0, logger)
 	srv.deps = &Dependencies{

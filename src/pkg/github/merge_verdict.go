@@ -25,7 +25,9 @@ const (
 	// still wants something — a red check with no required-check set to call
 	// it optional, a hold label, a missing review approval, an intent verdict.
 	// Amber, with Reason saying what. This is the honest colour for
-	// "unstable".
+	// "unstable". Also the state of a HandMerge verdict: every per-PR gate
+	// passed, but the repo's auto-merge switch is off, so no sweep will ever
+	// act and a person merges it.
 	MergeVerdictOutstanding MergeVerdictState = "outstanding"
 	// MergeVerdictBlocked: GitHub itself says no (conflicts, a required review
 	// or status missing, draft). Nothing lights; Reason names the state.
@@ -44,6 +46,12 @@ type MergeVerdict struct {
 	State  MergeVerdictState `json:"state"`
 	Reason string            `json:"reason,omitempty"`
 	Tier   string            `json:"tier,omitempty"`
+	// HandMerge marks a PR that passes every per-PR gate but sits in a repo
+	// whose auto-merge switch is off (config.RepoAutoMergeEnabled: an owner
+	// override, or a hive below ACMM L6). No Hive sweep merges there, so the
+	// verdict is outstanding rather than eligible and only a person can land
+	// it — the dashboard's your-turn decision reads this flag.
+	HandMerge bool `json:"hand_merge,omitempty"`
 }
 
 // MergeVerdictKey is the map key the governor records verdicts under and the

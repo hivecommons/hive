@@ -1,1 +1,0 @@
-- Documented `GET /api/feedback/status` in the dashboard OpenAPI spec and made the stable next-promotion test hermetic, restoring a green v5 baseline (#10593, #10587).

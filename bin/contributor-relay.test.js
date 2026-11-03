@@ -41,6 +41,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // creates it, the retry lands) or a gh that is down for good.
   let issueEditFailuresLeft = ghIssueEditFailures;
   const sent = [];
+  // Every WebSocket the relay constructed, in order (see FakeWebSocket).
+  const wsInstances = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
   const execFileCalls = [];
   const deferredExecFileCallbacks = [];
@@ -259,10 +261,25 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     },
     ws: class FakeWebSocket {
       static get OPEN() { return 1; }
-      constructor() { this.readyState = 1; }
-      on() {}
+      constructor(url) {
+        this.readyState = 1;
+        this.url = url;
+        this.listeners = new Map();
+        wsInstances.push(this);
+      }
+      // Listeners are recorded so a test can fire 'error'/'close' on the
+      // socket connectHub() opened; every existing test ignores them.
+      on(event, fn) {
+        if (!this.listeners.has(event)) this.listeners.set(event, []);
+        this.listeners.get(event).push(fn);
+      }
+      emit(event, ...args) {
+        for (const fn of this.listeners.get(event) || []) fn(...args);
+      }
+      removeAllListeners() { this.listeners.clear(); }
       send(payload) { sent.push(JSON.parse(payload)); }
       close() {}
+      terminate() {}
       ping() {}
     },
   };
@@ -283,6 +300,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // and takes the whole run down before its first assertion. A test that wants
   // several hubs passes them through `env` (MULTI_HUB_ENV).
   process.env.HIVE_HUB = '';
+  delete process.env.HIVE_REPO_SCOPE;
+  delete process.env.HIVE_REPO_SCOPE_VERSION;
   process.env.AGENT_BACKEND = backend;
   process.env.AGENT_MODEL = model;
   process.env.AGENT_REASONING_EFFORT = reasoningEffort;
@@ -294,6 +313,9 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // names a workspace full of live checkouts) gets the same hermetic run CI
   // does; a test that wants a checkout on disk passes one via `env`.
   process.env.HIVE_WORKSPACE_DIR = '';
+  // #12200: a run inside a krun contributor inherits the launcher's isolation
+  // class; pin it empty so only a test's own `env` declares one.
+  process.env.HIVE_ISOLATION_CLASS = '';
   Object.assign(process.env, env);
 
   // Keep the relay's task-file/token writes out of the real prod paths.
@@ -308,6 +330,14 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   process.env.HIVE_HEADLESS_STATUS_FILE = headlessStatusFile;
   process.env.HIVE_TASK_FILE = path.join(tmpDir, 'contributor-task.json');
   process.env.HIVE_GH_TOKEN_CACHE = path.join(tmpDir, 'gh-token.cache');
+  // #13293: every terminal task frame now appends local activity; keep it in
+  // the per-test scratch dir unless a test names its own file.
+  process.env.HIVE_RELAY_ACTIVITY_FILE = path.join(tmpDir, 'relay-activity.jsonl');
+  // #13456: the leveled audit's shim/state/spool directory, and the default
+  // level unless a test asks for another one.
+  process.env.HIVE_RELAY_AUDIT_DIR = path.join(tmpDir, 'relay-audit');
+  delete process.env.HIVE_RELAY_AUDIT_LEVEL;
+  process.env.HIVE_RELAY_STATUS_FILE = path.join(tmpDir, 'relay-status.json');
   if (env) Object.assign(process.env, env);
 
   // The cache must be cleared on every load so each test gets a fresh module
@@ -330,6 +360,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   relay.__commands = commands;
   relay.__failNextNudge = () => { failNextLiteralSend = true; };
   relay.__sent = sent;
+  relay.__wsInstances = wsInstances;
   relay.__tmpDir = tmpDir;
   relay.__execFileCalls = execFileCalls;
   relay.__completeDeferredExecFile = (err, stdout = '', stderr = '') => {
@@ -423,6 +454,43 @@ test('team metadata reports bounded opt-in overrides without identity fields', (
     process.env = savedEnv;
     process.env.HIVE_RELAY_TEST_MODE = '1';
     teardown(relay);
+  }
+});
+
+// #12200: a krun launch passes the host's kernel release, so team metadata
+// reports the host's kernel and not the microVM guest's.
+test('team metadata reports HIVE_TEAM_KERNEL_RELEASE as kernel_release (#12200)', () => {
+  const teamEnv = {
+    HIVE_CONTRIBUTOR_TEAM_METADATA: '1',
+    HIVE_TEAM_KERNEL_RELEASE: '6.11.0-host',
+  };
+  const relay = loadRelay({ backend: 'copilot', env: teamEnv });
+  const savedEnv = { ...process.env };
+  try {
+    Object.assign(process.env, teamEnv);
+    assert.strictEqual(relay.optInTeamMetadata().kernel_release, '6.11.0-host');
+  } finally {
+    process.env = savedEnv;
+    process.env.HIVE_RELAY_TEST_MODE = '1';
+    teardown(relay);
+  }
+});
+
+// #12200: the launcher names the isolation class; the relay declares it
+// verbatim and declares nothing when the launcher set none.
+test('the relay declares isolation_class only when HIVE_ISOLATION_CLASS is set (#12200)', () => {
+  const krun = loadRelay({ backend: 'copilot', env: { HIVE_ISOLATION_CLASS: 'microvm-krun' } });
+  try {
+    assert.strictEqual(krun.detectCapabilities().isolation_class, 'microvm-krun');
+  } finally { teardown(krun); }
+
+  for (const env of [null, { HIVE_ISOLATION_CLASS: '' }, { HIVE_ISOLATION_CLASS: '   ' }]) {
+    const plain = loadRelay({ backend: 'copilot', env });
+    try {
+      const caps = plain.detectCapabilities();
+      assert.ok(!('isolation_class' in caps),
+        `without HIVE_ISOLATION_CLASS nothing may be declared, got ${JSON.stringify(caps)}`);
+    } finally { teardown(plain); }
   }
 });
 
@@ -710,6 +778,115 @@ test('#5652 the launcher-resolved line is the WHOLE command — no flags are app
   try {
     assert.strictEqual(relay.buildLaunchCommand(), LOCAL_SANDBOXED_CLAUDE_CMD,
       'AGENT_MODEL must not be appended onto the launcher-resolved line');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#16222 — local mode dropped AGENT_MODEL and the effort from
+// the launch line, yet the relay still reported both to the hub. The local
+// launcher now appends config/backends.conf's backend_selection_flags_shell
+// output to AGENT_LAUNCH_CMD, and the relay reports a model/effort only when
+// that line carries the flag its own builder would have added.
+// ---------------------------------------------------------------------------
+
+const SELECTION_CASES = [
+  ['claude', 'claude-sonnet-5-5', 'medium'],
+  ['claude', 'claude-sonnet-5-5', 'turbo'],
+  ['claude', '', 'xhigh'],
+  ['litellm', 'anthropic/claude-sonnet-4', 'high'],
+  ['copilot', 'gpt-5.6-luna', ''],
+  ['codex', 'gpt-5.5', 'high'],
+  ['codex', '', 'low'],
+  ['agy', 'gemini-3.6-flash-high', 'medium'],
+  ['agy', 'gemini-3.6-flash-high', 'xhigh'],
+  ['agy', '', 'high'],
+  ['muse', 'muse-1', 'ultra'],
+  ['muse', '', 'bogus'],
+  ['pi', 'openai/gpt-5', 'high'],
+  ['omp', 'github-copilot/gpt-5.6-luna', 'high'],
+  ['goose', 'llama3.2:3b', 'high'],
+  ['bob', 'auto', ''],
+  ['openhands', 'anthropic/claude-sonnet-4-6', 'high'],
+];
+
+function localSelectionFlags(backend, model, effort) {
+  const conf = path.join(__dirname, '..', 'config', 'backends.conf');
+  const r = require('child_process').spawnSync('bash', ['-c', 'source "$1"; backend_selection_flags_shell "$2" "$3" "$4"', '_', conf, backend, model, effort], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return r.stdout.trim();
+}
+
+test('#16222 local-mode selection flags match the relay builder for every backend', () => {
+  for (const [backend, model, effort] of SELECTION_CASES) {
+    const relay = loadRelay({ backend, model, reasoningEffort: effort, backendPerm: '' });
+    try {
+      const built = relay.buildLaunchCommand();
+      const builderFlags = built === backend ? '' : built.slice(backend.length + 1);
+      assert.strictEqual(localSelectionFlags(backend, model, effort), builderFlags,
+        `${backend} model=${model} effort=${effort}: local launch flags diverge from the relay builder`);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#16222 a launch line carrying the local selection flags reports what the builder would', () => {
+  for (const [backend, model, effort] of SELECTION_CASES) {
+    const expected = loadRelay({ backend, model, reasoningEffort: effort, backendPerm: '' });
+    let want;
+    try {
+      want = { model: expected.effectiveModel(), effort: expected.effectiveReasoningEffort() };
+    } finally { teardown(expected); }
+    const flags = localSelectionFlags(backend, model, effort);
+    const relay = loadRelay({
+      backend, model, reasoningEffort: effort, backendPerm: '',
+      env: { AGENT_LAUNCH_CMD: `HIVE_WORKSPACE_DIR=/w ${backend} --sandboxed${flags ? ` ${flags}` : ''}` },
+    });
+    try {
+      assert.deepStrictEqual({ model: relay.effectiveModel(), effort: relay.effectiveReasoningEffort() }, want,
+        `${backend} model=${model} effort=${effort}`);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#16222 a launch line without --model/--effort does not report them to the hub', () => {
+  const relay = loadRelay({
+    backend: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'medium',
+    env: { AGENT_LAUNCH_CMD: LOCAL_SANDBOXED_CLAUDE_CMD },
+  });
+  try {
+    assert.strictEqual(relay.effectiveModel(), '');
+    assert.strictEqual(relay.effectiveReasoningEffort(), '');
+    assert.deepStrictEqual(relay.progressModelFields(), {});
+    assert.deepStrictEqual(relay.effectiveSelectionFields(), { cli_backend: 'claude' });
+    relay.__setDetectedModel('claude-sonnet-5');
+    assert.strictEqual(relay.effectiveModel(), 'claude-sonnet-5',
+      'the transcript-detected model is what is really running');
+  } finally { teardown(relay); }
+});
+
+test('#16222 agy effort is not reported when the launch line drops its --model', () => {
+  const relay = loadRelay({
+    backend: 'agy', model: 'gemini-3.6-flash-high', reasoningEffort: 'high',
+    env: { AGENT_LAUNCH_CMD: 'agy --dangerously-skip-permissions --effort high' },
+  });
+  try {
+    assert.strictEqual(relay.effectiveModel(), '');
+    assert.strictEqual(relay.effectiveReasoningEffort(), '');
+  } finally { teardown(relay); }
+});
+
+test('#16222 headless mode ignores the launch line and keeps the requested selection', () => {
+  const relay = loadRelay({
+    backend: 'claude', mode: 'headless', model: 'claude-sonnet-5-5', reasoningEffort: 'medium',
+    backendPerm: '--dangerously-skip-permissions',
+    env: { AGENT_LAUNCH_CMD: LOCAL_SANDBOXED_CLAUDE_CMD },
+  });
+  try {
+    assert.strictEqual(relay.effectiveModel(), 'claude-sonnet-5-5');
+    assert.strictEqual(relay.effectiveReasoningEffort(), 'medium');
+    const argv = relay.buildHeadlessArgv('do the thing');
+    const args = argv.args.join(' ');
+    assert.match(args, /--model claude-sonnet-5-5/);
+    assert.match(args, /--effort medium/);
   } finally { teardown(relay); }
 });
 
@@ -3588,6 +3765,249 @@ function withImmediateTimers(fn) {
   try { fn(); } finally { global.setTimeout = origSetTimeout; }
 }
 
+// Scope negotiation and assignment checks exercise the real message handler:
+// no rejected offer may reach credentials, task accounting or fix interrupts.
+const SCOPE_ENV = { ...MULTI_HUB_ENV, HIVE_REPO_SCOPE: '*,github/github.com/org/a;github/github.com/org/b', HIVE_REPO_SCOPE_VERSION: '7' };
+function scopeAuth(relay, hub, capabilities = ['repo_scope_v1']) {
+  relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: hub.contributorId || 'c1', server_capabilities: capabilities }), hub);
+}
+function scopeAck(relay, hub, version = hub.scopeVersion, accepted = true) {
+  relay.handleMessage(JSON.stringify({ type: 'repo_scope_ack', scope_version: version, accepted }), hub);
+}
+
+test('relay status records adoption, acknowledgement, draining and idle without secrets', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(scratchRoot, 'relay-status-'));
+  const envFile = path.join(dir, 'contributor.env');
+  const relay = loadRelay({ env: {
+    HIVE_HUB: 'wss://hub-a.example/contribute', HIVE_REGISTRATION_TOKEN: 'secret-registration-token',
+    HIVE_REPO_SCOPE: 'github/github.com/org/a', HIVE_REPO_SCOPE_VERSION: '7',
+    HIVE_CONTRIBUTOR_ENV: envFile,
+  } });
+  const read = () => JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+  try {
+    const hub = relay.getHubs()[0];
+    relay.writeRelayStatus();
+    assert.strictEqual(read().adopted_scope_version, 7);
+    assert.strictEqual(read().subscriptions[0].readiness, 'discovery-unavailable');
+    scopeAuth(relay, hub);
+    assert.strictEqual(read().subscriptions[0].readiness, 'scope-pending');
+    scopeAck(relay, hub);
+    assert.strictEqual(read().subscriptions[0].acknowledged_scope_version, 7);
+    assert.strictEqual(read().subscriptions[0].readiness, 'connected');
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'task-1', kind: 'issue',
+      forge: 'github', host: 'github.com', repo: 'org/a', number: 42,
+      title: 'private task title', prompt: 'private task prompt' }), hub);
+    assert.strictEqual(read().current_task.repository, 'github/github.com/org/a');
+    assert.strictEqual(read().current_task.draining, false);
+    fs.writeFileSync(envFile, 'HIVE_HUB=wss://hub-a.example/contribute\nHIVE_REGISTRATION_TOKEN=secret-registration-token\nHIVE_REPO_SCOPE=\nHIVE_REPO_SCOPE_VERSION=8\n');
+    assert.strictEqual(read().adopted_scope_version, 7, 'saving alone does not acknowledge adoption');
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(read().adopted_scope_version, 8);
+    assert.strictEqual(read().current_task.draining, true);
+    assert.strictEqual(read().idle_reason, 'no-repositories-selected');
+    assert.ok(!fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8').includes('secret-registration-token'));
+    assert.ok(!fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8').includes('private task'));
+    assert.strictEqual(fs.statSync(relay.RELAY_STATUS_FILE).mode & 0o777, 0o600);
+    relay.setCurrentTask(null);
+    relay.writeRelayStatus();
+    assert.strictEqual(read().current_task, null);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'not-leased', kind: 'issue',
+      forge: 'github', host: 'github.com', repo: 'org/a', number: 43 }), hub);
+    assert.strictEqual(relay.getCurrentTask(), null, 'deselected target must not be leased again');
+    fs.writeFileSync(envFile, 'HIVE_HUB=wss://hub-a.example/contribute\nHIVE_REGISTRATION_TOKEN=secret-registration-token\nHIVE_HUB_DISABLED=true\nHIVE_REPO_SCOPE=\nHIVE_REPO_SCOPE_VERSION=9\n');
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(read().idle_reason, 'all-subscriptions-disabled');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('relay status distinguishes unsupported scope, quota hold and disabled subscription', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV,
+    HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b',
+    HIVE_HUB_DISABLED: 'false,true' } });
+  const read = () => JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+  try {
+    relay.writeRelayStatus();
+    assert.deepStrictEqual(read().subscriptions.map(s => s.readiness), ['discovery-unavailable', 'disabled']);
+    const first = relay.getHubs()[0];
+    scopeAuth(relay, first, []);
+    assert.strictEqual(read().subscriptions[0].readiness, 'scope-unsupported');
+    relay.setContributorQuotaPaused(true);
+    relay.writeRelayStatus();
+    assert.strictEqual(read().subscriptions[0].readiness, 'quota-held');
+    assert.strictEqual(read().subscriptions[1].readiness, 'disabled');
+  } finally { teardown(relay); }
+});
+
+test('scope projection preserves legacy, empty and per-hub selections', () => {
+  const relay = loadRelay();
+  try {
+    assert.deepStrictEqual(relay.hubListFromEnv(MULTI_HUB_ENV).map(h => h.repoScope), [null, null]);
+    assert.deepStrictEqual(relay.hubListFromEnv({ ...SCOPE_ENV, HIVE_REPO_SCOPE: ',*' }).map(h => h.repoScope), [[], null]);
+    assert.deepStrictEqual(relay.hubListFromEnv(SCOPE_ENV)[1].repoScope, ['github/github.com/org/a', 'github/github.com/org/b']);
+    for (const scope of ['*', '*,bad', '*,github/github.com/../a']) {
+      assert.throws(() => relay.hubListFromEnv({ ...SCOPE_ENV, HIVE_REPO_SCOPE: scope }), /HIVE_REPO_SCOPE/);
+    }
+    assert.throws(() => relay.hubListFromEnv({ ...SCOPE_ENV, HIVE_REPO_SCOPE_VERSION: '' }), /HIVE_REPO_SCOPE_VERSION/);
+  } finally { teardown(relay); }
+});
+
+test('scoped ready waits for matching accepted acknowledgement, including direct sends', () => {
+  const relay = loadRelay({ env: SCOPE_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    scopeAuth(relay, hubs[0]); scopeAuth(relay, hubs[1]);
+    assert.ok(sentA.some(m => m.type === 'ready' && m.scope_version === undefined));
+    assert.deepStrictEqual(sentB.find(m => m.type === 'repo_scope').repositories, hubs[1].repoScope);
+    for (const [version, accepted] of [[6, true], [7, false]]) {
+      scopeAck(relay, hubs[1], version, accepted);
+      relay.sendTo(hubs[1], { type: 'ready' });
+      assert.ok(!sentB.some(m => m.type === 'ready'));
+    }
+    scopeAck(relay, hubs[1]);
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(sentB.some(m => m.type === 'ready' && m.scope_version === 7));
+    assert.ok(relay.assignmentInScope(hubs[1], { forge: 'GitHub', host: 'GitHub.com', repo: 'Org/A' }));
+    assert.ok(relay.assignmentInScope(hubs[1], { repo: 'org/b', url: 'https://github.com/org/b/issues/2' }));
+  } finally { teardown(relay); }
+});
+
+for (const strategy of ['ranked', 'spread', 'neediest']) {
+  test(`${strategy} skips unsupported and empty scoped hubs without fallback`, () => {
+    const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,', HIVE_COMMONS_STRATEGY: strategy, HIVE_COMMONS_NEEDIEST_REFRESH_MS: '0' } });
+    try {
+      const { hubs, sentA, sentB } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      scopeAuth(relay, hubs[0], []); scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+      assert.strictEqual(hubs[0].scopeUnsupported, true);
+      for (const reason of ['task_complete', 'unavailable']) relay.sendReadyForNextTask(reason);
+      for (const hub of hubs) relay.sendTo(hub, { type: 'ready' });
+      assert.ok(![...sentA, ...sentB].some(m => m.type === 'ready'));
+    } finally { teardown(relay); }
+  });
+}
+
+test('scope declines unknown, unselected and interrupt offers before any task side effects', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,*' } });
+  try {
+    const { hubs, sentA } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[0]); scopeAck(relay, hubs[0]);
+    for (const offer of [{ repo: 'org/a' }, { forge: 'github', host: 'evil.example', repo: 'org/a' },
+      { forge: 'github', host: 'github.com', repo: 'org/no' }, { kind: 'fix-pr', repo: 'org/no' }]) {
+      const before = relay.getTasksCompletedCount();
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'declined', task_gen: 3, number: 1, github_token: 'must-not-be-delivered', ...offer }), hubs[0]);
+      assert.strictEqual(relay.getCurrentTask(), null);
+      assert.strictEqual(relay.getTasksCompletedCount(), before);
+      assert.deepStrictEqual(relay.getAuthorizedRepos(), []);
+      assert.strictEqual(relay.__execFileCalls.length, 0);
+      assert.ok(sentA.some(m => m.type === 'task_declined' && m.reason === 'out_of_contributor_scope' && m.task_gen === 3));
+      assert.ok(!sentA.some(m => m.type === 'task_failed' || m.type === 'task_accepted'));
+    }
+  } finally { teardown(relay); }
+});
+
+test('standby relay with a repository selection stays passive after repo_scope_ack', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_STANDBY: '1' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    scopeAuth(relay, hubs[0]); scopeAuth(relay, hubs[1]);
+    assert.ok(sentB.some(m => m.type === 'repo_scope'), 'standby still negotiates its repository selection');
+    scopeAck(relay, hubs[1]);
+    assert.ok(![...sentA, ...sentB].some(m => m.type === 'ready'),
+      'standby must not request ordinary work after the scope is acknowledged');
+  } finally { teardown(relay); }
+});
+
+test('one session accepts legacy Hive A and both selected repositories on Hive B', () => {
+  const relay = loadRelay({ env: SCOPE_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[0]); scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'a', repo: 'anything/repo', number: 1 }), hubs[0]);
+    assert.ok(sentA.some(m => m.type === 'task_accepted' && m.task_id === 'a'));
+    relay.setCurrentTask(null);
+    relay.sendReadyForNextTask('unavailable');
+    for (const repo of ['org/a', 'org/b']) {
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: repo, repo, forge: 'github', host: 'github.com', number: 1 }), hubs[1]);
+      assert.ok(sentB.some(m => m.type === 'task_accepted' && m.task_id === repo));
+      relay.setCurrentTask(null);
+    }
+  } finally { relay.setCurrentTask(null); teardown(relay); }
+});
+
+test('clearing a live scope waits for all-mode ack and reconnect renegotiates selected scope', () => {
+  const envFile = path.join(__dirname, '..', '.relay-test-tmp', 'scope-all.env');
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_CONTRIBUTOR_ENV: envFile } });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    // A fresh auth requires a fresh ack even at the same selection version.
+    scopeAuth(relay, hubs[1]);
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(!sentB.some(m => m.type === 'ready'));
+    scopeAck(relay, hubs[1]);
+    fs.writeFileSync(envFile, Object.entries({ ...SCOPE_ENV, HIVE_REPO_SCOPE: '*,*', HIVE_REPO_SCOPE_VERSION: '8' }).map(([k,v]) => `${k}=${v}`).join('\n'));
+    relay.reloadHubsFromProjection();
+    assert.ok(sentB.some(m => m.type === 'repo_scope' && m.mode === 'all' && m.scope_version === 8));
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(!sentB.some(m => m.type === 'ready'));
+    scopeAck(relay, hubs[1]);
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(sentB.some(m => m.type === 'ready' && m.scope_version === 8));
+  } finally { teardown(relay); fs.rmSync(envFile, { force: true }); }
+});
+
+test('unsupported active hub advances to a scoped hub that acknowledged first', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b' } });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    assert.ok(!sentB.some(m => m.type === 'ready'));
+    scopeAuth(relay, hubs[0], []);
+    assert.ok(sentB.some(m => m.type === 'ready' && m.scope_version === 7));
+  } finally { teardown(relay); }
+});
+
+test('unsupported scope is persisted per contributor alongside last-seen time', () => {
+  const seenFile = path.join(__dirname, '..', '.relay-test-tmp', 'scope-seen.json');
+  const relay = loadRelay({ env: { ...SCOPE_ENV, CONTRIBUTOR_ID: 'c1,c2', HIVE_HUBS_SEEN_FILE: seenFile } });
+  try {
+    const { hubs } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1], []);
+    relay.writeHubsSeenNow();
+    const seen = JSON.parse(fs.readFileSync(seenFile, 'utf8'));
+    assert.strictEqual(seen[hubs[1].sourceURL].subscriptions.c2, 'unsupported');
+    assert.ok(seen[hubs[1].sourceURL].last_seen);
+  } finally { teardown(relay); fs.rmSync(seenFile, { force: true }); }
+});
+
+test('reload tightens scope before stale offers and preserves an executing lease', () => {
+  const envFile = path.join(__dirname, '..', '.relay-test-tmp', 'scope-reload.env');
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_CONTRIBUTOR_ENV: envFile } });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    const running = { task_id: 'running', repo: 'org/b', _hub: hubs[1] };
+    relay.setCurrentTask(running);
+    fs.writeFileSync(envFile, Object.entries({ ...SCOPE_ENV, HIVE_REPO_SCOPE: '*,github/github.com/org/a', HIVE_REPO_SCOPE_VERSION: '8' }).map(([k,v]) => `${k}=${v}`).join('\n'));
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(relay.getCurrentTask(), running);
+    assert.strictEqual(hubs[1].scopeVersion, 8);
+    scopeAck(relay, hubs[1], 7);
+    assert.strictEqual(hubs[1].scopeAckVersion, null);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', kind: 'fix-pr', task_id: 'late', repo: 'org/b', forge: 'github', host: 'github.com' }), hubs[1]);
+    assert.ok(sentB.some(m => m.type === 'task_declined' && m.task_id === 'late'));
+    assert.strictEqual(relay.getCurrentTask(), running);
+    fs.writeFileSync(envFile, 'HIVE_HUB=broken');
+    relay.handleProfileSwitchSignal();
+    assert.ok(hubs.every(h => Array.isArray(h.repoScope) && h.repoScope.length === 0));
+  } finally { relay.setCurrentTask(null); teardown(relay); fs.rmSync(envFile, { force: true }); }
+});
+
 test('SIGUSR1 reload switches the active hub from contributor.env without dropping an in-flight task', () => {
   const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
   fs.mkdirSync(scratchRoot, { recursive: true });
@@ -3625,6 +4045,493 @@ test('relay records last-seen hubs without registration tokens', () => {
     assert.ok(raw.includes('wss://hub-a.example/contribute'));
     assert.ok(raw.includes('2026-09-21T15:04:05.000Z') || raw.includes('2026-09-21T15:04:05Z'));
     assert.ok(!raw.includes('tok-a'), 'hubs-seen.json must not contain registration tokens');
+  } finally { teardown(relay); }
+});
+
+// #13293: durable local activity — one record per terminal attempt. Since
+// #13456 the same file also holds leveled audit rows (`event`); the terminal
+// rows are the ones without one.
+function readAuditRows(relay) {
+  try {
+    return fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+  } catch (_) { return []; }
+}
+
+function readActivity(relay) {
+  return readAuditRows(relay).filter(r => !r.event);
+}
+
+const ACTIVITY_TASK = { type: 'task_assign', task_id: 'act-1', task_gen: 3, kind: 'issue', repo: 'org/a', forge: 'github', host: 'github.com', number: 42, title: 'work', prompt: 'SECRET PROMPT TEXT', github_token: 'ghs_activitysecret' };
+
+test('#13293 a completed task appends one success record; a replayed completion does not add another', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed', summary: 'log text', tmux_output: ['pane text'] });
+    relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed' });
+    const records = readActivity(relay);
+    assert.strictEqual(records.length, 1);
+    const [r] = records;
+    assert.strictEqual(r.outcome, 'success');
+    assert.strictEqual(r.hub, hubs[0].sourceURL);
+    assert.strictEqual(r.repository, 'github/github.com/org/a');
+    assert.strictEqual(r.number, 42);
+    assert.strictEqual(r.task_id, 'act-1');
+    assert.strictEqual(r.task_gen, 3);
+    assert.ok(r.started_at && r.ended_at && r.key);
+    assert.strictEqual(r.backend, 'copilot');
+    assert.strictEqual(relay.appendTaskActivity({ hub: r.hub, contributor_id: r.contributor_id || '', task_id: 'act-1', task_gen: 3 }, 'failure'), false,
+      'a replay of the same attempt under another outcome must not add a record');
+    assert.strictEqual(readActivity(relay).length, 1);
+    if (process.platform !== 'win32') {
+      assert.strictEqual(fs.statSync(relay.RELAY_ACTIVITY_FILE).mode & 0o777, 0o600);
+    }
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#13293 activity never records prompts, tokens, reasons, summaries or pane text', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    relay.failCurrentTask('agent said: SECRET REASON', { kind: 'task' });
+    const raw = fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8');
+    for (const secret of ['SECRET PROMPT TEXT', 'ghs_activitysecret', 'SECRET REASON', 'tok-a']) {
+      assert.ok(!raw.includes(secret), `activity store leaked ${secret}`);
+    }
+    const [r] = readActivity(relay);
+    assert.strictEqual(r.outcome, 'failure');
+    for (const field of ['prompt', 'github_token', 'mcp', 'title', 'summary', 'reason', 'tmux_output', 'token']) {
+      assert.ok(!(field in r), `activity record carries ${field}`);
+    }
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#13293 a revoked task is recorded as cancelled, not completed', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 'act-1', reason: 'hub restart' }), hubs[0]);
+    const records = readActivity(relay);
+    assert.deepStrictEqual(records.map(r => r.outcome), ['cancelled']);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#13293 an out-of-scope offer is recorded once as scope-refused', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b' } });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    const offer = { type: 'task_assign', kind: 'issue', task_id: 'out', task_gen: 1, repo: 'org/z', forge: 'github', host: 'github.com', number: 7, prompt: 'SECRET PROMPT TEXT' };
+    relay.handleMessage(JSON.stringify(offer), hubs[1]);
+    relay.handleMessage(JSON.stringify(offer), hubs[1]);
+    const records = readActivity(relay);
+    assert.strictEqual(records.length, 1);
+    assert.strictEqual(records[0].outcome, 'scope-refused');
+    assert.strictEqual(records[0].repository, 'github/github.com/org/z');
+    assert.ok(!fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8').includes('SECRET PROMPT TEXT'));
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#13293 activity is pruned to the newest entries inside the retention window', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_ACTIVITY_MAX_ENTRIES: '3', HIVE_RELAY_ACTIVITY_RETENTION_DAYS: '30' } });
+  try {
+    const now = Date.now();
+    const facts = id => ({ hub: 'wss://hub-a.example/contribute', contributor_id: 'c1', repository: 'github/github.com/org/a', task_id: id, task_gen: 1 });
+    relay.appendTaskActivity(facts('old'), 'success', now - 31 * 24 * 60 * 60 * 1000);
+    relay.appendTaskActivity(facts('t1'), 'success', now);
+    assert.deepStrictEqual(readActivity(relay).map(r => r.task_id), ['t1'], 'entries past the retention window are pruned');
+    for (const id of ['t2', 't3', 't4']) relay.appendTaskActivity(facts(id), 'success', now);
+    assert.deepStrictEqual(readActivity(relay).map(r => r.task_id), ['t2', 't3', 't4'], 'the store keeps only the newest entries');
+  } finally { teardown(relay); }
+});
+
+test('#13293 malformed activity lines are skipped rather than blocking new records', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    fs.mkdirSync(path.dirname(relay.RELAY_ACTIVITY_FILE), { recursive: true });
+    fs.writeFileSync(relay.RELAY_ACTIVITY_FILE, 'not json\n{"no":"key"}\n', { mode: 0o600 });
+    assert.strictEqual(relay.appendTaskActivity({ hub: 'h', task_id: 't', task_gen: 1 }, 'success'), true);
+    assert.deepStrictEqual(readActivity(relay).map(r => r.task_id), ['t']);
+  } finally { teardown(relay); }
+});
+
+test('#13293 shutdown with a task in flight records a cancelled attempt', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    assert.ok(relay.getCurrentTask(), 'precondition: a task is in flight');
+    relay.cleanup();
+    const records = readActivity(relay);
+    assert.strictEqual(records.length, 1);
+    assert.strictEqual(records[0].outcome, 'cancelled');
+    assert.strictEqual(records[0].task_id, 'act-1');
+  } finally { console.log = log; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// #13456: leveled local audit — lifecycle rows, the commands shim, reasoning
+// binding, redaction and per-class caps.
+// ---------------------------------------------------------------------------
+const relayAudit = require('./lib/relay-audit.js');
+const RELAY_AUDIT_SHIM_PATH = path.join(__dirname, 'lib', 'relay-audit-shim.js');
+
+function auditScratch(prefix) {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  return fs.mkdtempSync(path.join(scratchRoot, prefix));
+}
+
+function quietly(fn) {
+  const log = console.log, err = console.error, warn = console.warn;
+  console.log = () => {}; console.error = () => {}; console.warn = () => {};
+  try { return fn(); } finally { console.log = log; console.error = err; console.warn = warn; }
+}
+
+test('#13456 audit levels parse as one value for every hive or one per hive, defaulting on a bad value', () => {
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv('', 2).levels, ['lifecycle', 'lifecycle']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv('commands', 2).levels, ['commands', 'commands']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv('off,reasoning', 2).levels, ['off', 'reasoning']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv(',commands', 2).levels, ['lifecycle', 'commands']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv("'off,commands'", 2).levels, ['off', 'commands']);
+  for (const bad of ['verbose', 'off,commands,reasoning', 'off,typo']) {
+    const parsed = relayAudit.auditLevelsFromEnv(bad, 2);
+    assert.ok(parsed.error, `${bad} must report an error`);
+    assert.ok(parsed.levels.every(l => relayAudit.AUDIT_LEVELS.includes(l)), `${bad} must still yield valid levels`);
+  }
+  assert.ok(relayAudit.auditLevelAtLeast('reasoning', 'commands'));
+  assert.ok(relayAudit.auditLevelAtLeast('commands', 'lifecycle'));
+  assert.ok(!relayAudit.auditLevelAtLeast('lifecycle', 'commands'));
+  assert.ok(!relayAudit.auditLevelAtLeast('off', 'lifecycle'));
+
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'off,reasoning' } }));
+  try {
+    assert.deepStrictEqual(relay.getHubs().map(h => h.auditLevel), ['off', 'reasoning']);
+    assert.deepStrictEqual(relay.hubListFromEnv({ ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'commands' }).map(h => h.auditLevel), ['commands', 'commands']);
+    const bad = quietly(() => relay.hubListFromEnv({ ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'loud' }));
+    assert.deepStrictEqual(bad.map(h => h.auditLevel), ['lifecycle', 'lifecycle'], 'a bad level must not stop the relay');
+  } finally { teardown(relay); }
+});
+
+test('#13456 lifecycle rows record the task story; terminal rows are unchanged and nothing secret is written', () => {
+  const dir = auditScratch('audit-life-');
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_MCP_CONFIG_FILE: path.join(dir, 'mcp.json'), HIVE_AGENT_CWD: dir } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify({ ...ACTIVITY_TASK, mcp: { url: 'https://hub-a.example/mcp', token: 'MCP-BEARER-SECRET' } }), hubs[0]);
+      relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'ghs_renewedsecret0000' }), hubs[0]);
+      for (const status of ['blocked_on_human', 'blocked_on_human', 'working', 'blocked_on_human']) {
+        relay.sendTo(hubs[0], { type: 'task_progress', task_id: 'act-1', task_gen: 3, status });
+      }
+      relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed', pr_url: 'https://github.com/org/a/pull/9' });
+    });
+    const rows = readAuditRows(relay);
+    assert.deepStrictEqual(rows.filter(r => r.event).map(r => r.event),
+      ['assigned', 'token_received', 'mcp_configured', 'token_renewed', 'blocked_on_human', 'blocked_on_human', 'pr_opened']);
+    for (const r of rows.filter(r => r.event)) {
+      assert.strictEqual(r.level, 'lifecycle');
+      assert.strictEqual(r.task_id, 'act-1');
+      assert.strictEqual(r.task_gen, 3);
+      assert.strictEqual(r.repository, 'github/github.com/org/a');
+      assert.ok(r.ts);
+    }
+    assert.deepStrictEqual(rows.filter(r => /^token_/.test(r.event)).map(r => r.token_gen), [1, 2]);
+    assert.strictEqual(rows.find(r => r.event === 'pr_opened').url, 'https://github.com/org/a/pull/9');
+    const terminal = readActivity(relay);
+    assert.strictEqual(terminal.length, 1);
+    assert.strictEqual(terminal[0].outcome, 'success');
+    assert.ok(!('event' in terminal[0]) && !('level' in terminal[0]), 'terminal rows keep the #13293 shape');
+    const raw = fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8');
+    for (const secret of ['SECRET PROMPT TEXT', 'ghs_activitysecret', 'ghs_renewedsecret', 'MCP-BEARER-SECRET', 'hub-a.example/mcp', 'tok-a']) {
+      assert.ok(!raw.includes(secret), `audit stream leaked ${secret}`);
+    }
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13456 audit level off keeps only the terminal rows', () => {
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'off' } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+      relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed', pr_url: 'https://github.com/org/a/pull/9' });
+    });
+    const rows = readAuditRows(relay);
+    assert.deepStrictEqual(rows.map(r => r.outcome), ['success']);
+  } finally { teardown(relay); }
+});
+
+test('#13456 declined offers and revokes record their reason once', () => {
+  const relay = quietly(() => loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b' } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+      const offer = { type: 'task_assign', kind: 'issue', task_id: 'out', task_gen: 1, repo: 'org/z', forge: 'github', host: 'github.com', number: 7, prompt: 'SECRET PROMPT TEXT' };
+      relay.handleMessage(JSON.stringify(offer), hubs[1]);
+      relay.handleMessage(JSON.stringify(offer), hubs[1]);
+    });
+    const declined = readAuditRows(relay).filter(r => r.event === 'declined');
+    assert.strictEqual(declined.length, 1);
+    assert.strictEqual(declined[0].reason, 'out_of_contributor_scope');
+    assert.strictEqual(declined[0].task_id, 'out');
+  } finally { teardown(relay); }
+
+  const revoking = quietly(() => loadRelay({ env: MULTI_HUB_ENV }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(revoking);
+      revoking.setCliReady(true);
+      revoking.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      revoking.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+      revoking.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 'act-1', reason: 'hub restart with ghp_abcdefghijklmnop1234' }), hubs[0]);
+    });
+    const rows = readAuditRows(revoking);
+    const revoked = rows.find(r => r.event === 'revoked');
+    assert.ok(revoked, 'a revoke must leave a lifecycle row');
+    assert.ok(revoked.reason.startsWith('hub restart with '));
+    assert.ok(!revoked.reason.includes('ghp_abcdefghijklmnop1234'), 'reasons are redacted');
+    assert.deepStrictEqual(readActivity(revoking).map(r => r.outcome), ['cancelled']);
+  } finally { teardown(revoking); }
+});
+
+test('#13456 redaction strips tokens, auth headers, GH_TOKEN= and x-access-token URLs before a row exists', () => {
+  const patterns = relayAudit.compileSecretPatterns(relayAudit.serializeSecretPatterns([
+    { category: 'github-token', pattern: /(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}/g },
+  ]));
+  const args = relayAudit.redactAuditArgs('gh', [
+    'api', '-H', 'Authorization: token abc123', '--token', 'plain-secret', '--token=inline-secret',
+    'repos/org/a', '-f', 'body=see ghp_abcdefghijklmnopqrst', 'GH_TOKEN=envsecret',
+  ], patterns);
+  const joined = args.join(' ');
+  for (const leaked of ['abc123', 'plain-secret', 'inline-secret', 'ghp_abcdefghijklmnopqrst', 'envsecret']) {
+    assert.ok(!joined.includes(leaked), `leaked ${leaked}: ${joined}`);
+  }
+  assert.ok(joined.includes('Authorization: [redacted]'));
+  assert.ok(joined.includes('--token [redacted]'));
+  assert.ok(joined.includes('repos/org/a'), 'non-secret arguments survive');
+  const secret = relayAudit.redactAuditArgs('gh', ['secret', 'set', 'NAME', '--body', 'hunter2', '-b=hunter3'], patterns).join(' ');
+  assert.ok(!secret.includes('hunter2') && !secret.includes('hunter3'), secret);
+  assert.strictEqual(relayAudit.redactAuditText('https://x-access-token:ghs_zzzzzzzzzzzzzzzz@github.com/org/a.git', patterns),
+    'https://x-access-token:[redacted]@github.com/org/a.git');
+  assert.strictEqual(relayAudit.redactAuditText('https://user:pw@example.com/x', []), 'https://user:[redacted]@example.com/x');
+});
+
+test('#13456 only GitHub-touching commands are recorded; git reads only at reasoning (Q6)', () => {
+  assert.strictEqual(relayAudit.auditCommandMinLevel('gh', ['pr', 'create']), 'commands');
+  assert.strictEqual(relayAudit.auditCommandMinLevel('gh', ['--version']), null);
+  assert.strictEqual(relayAudit.auditCommandMinLevel('gh', []), null);
+  assert.strictEqual(relayAudit.auditCommandMinLevel('git', ['-C', 'repo', 'push', 'origin', 'HEAD:main']), 'commands');
+  for (const sub of ['fetch', 'clone', 'ls-remote', 'pull']) {
+    assert.strictEqual(relayAudit.auditCommandMinLevel('git', [sub, 'origin']), 'reasoning', sub);
+  }
+  for (const sub of ['status', 'commit', 'log', 'stash']) {
+    assert.strictEqual(relayAudit.auditCommandMinLevel('git', [sub]), null, sub);
+  }
+  const row = relayAudit.buildCommandRow({
+    op: 'git', args: ['-c', 'http.extraheader=AUTHORIZATION: basic Zm9vOmJhcg==', 'push', '--force-with-lease', 'https://x-access-token:ghs_pushsecret12345@github.com/org/a.git', 'HEAD:refs/heads/fix'],
+    patterns: [], state: { task_id: 't1', task_gen: 2, checkout: '/w/org/a' }, startedAt: Date.parse('2026-10-21T10:00:00Z'), durationMs: 812.4, exit: 0, cwd: '/w/org/a/sub', pid: 42,
+  });
+  assert.strictEqual(row.level, 'commands');
+  assert.strictEqual(row.event, 'command');
+  assert.strictEqual(row.op, 'git');
+  assert.strictEqual(row.cwd, 'sub');
+  assert.strictEqual(row.exit, 0);
+  assert.strictEqual(row.duration_ms, 812);
+  assert.strictEqual(row.capture, 'shim');
+  assert.strictEqual(row.remote, 'https://x-access-token:[redacted]@github.com/org/a.git');
+  assert.strictEqual(row.refspec, 'HEAD:refs/heads/fix');
+  assert.ok(!JSON.stringify(row).includes('ghs_pushsecret') && !JSON.stringify(row).includes('Zm9vOmJhcg'), JSON.stringify(row));
+  assert.ok(row.cmd.startsWith('git -c '), 'cmd follows the token-access.jsonl "<op> <args>" shape');
+});
+
+test('#13456 reasoning binds one preceding assistant turn, capped at 2 KiB with a marker', () => {
+  const row = { op: 'gh', cmd: 'gh pr create --title x', ts: '2026-10-21T10:00:05.000Z' };
+  const claude = relayAudit.parseTranscriptEntries('claude', [
+    JSON.stringify({ type: 'user', timestamp: '2026-10-21T09:59:00Z', message: { content: 'USER PROMPT TEXT' } }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-10-21T09:59:30Z', message: { content: [{ type: 'text', text: 'Older turn.' }] } }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-10-21T10:00:04Z', message: { content: [
+      { type: 'text', text: 'Tests pass, so I will open the PR now.' },
+      { type: 'tool_use', id: 'toolu_1', input: { command: 'gh pr create --title x', description: 'Open PR' } },
+    ] } }),
+    'not json',
+  ]);
+  const bound = relayAudit.bindCommandReason(claude, row, { includeReason: true, patterns: [] });
+  assert.deepStrictEqual(bound, { tool_call_id: 'toolu_1', capture: 'shim+transcript', reason: 'Tests pass, so I will open the PR now.', reason_source: 'transcript' });
+  assert.ok(!JSON.stringify(claude).includes('USER PROMPT TEXT'), 'user turns are never parsed into entries');
+  assert.deepStrictEqual(relayAudit.bindCommandReason(claude, row, { includeReason: false }), { tool_call_id: 'toolu_1', capture: 'shim+transcript' },
+    'at commands level the transcript only reconciles');
+
+  const copilot = relayAudit.parseTranscriptEntries('copilot', [
+    JSON.stringify({ type: 'assistant.message', timestamp: '2026-10-21T10:00:01Z', data: { content: '', toolRequests: [{ toolCallId: 'call_9', arguments: { command: 'gh pr create --title x', description: 'Open the pull request' } }] } }),
+  ]);
+  assert.deepStrictEqual(relayAudit.bindCommandReason(copilot, row, { includeReason: true, patterns: [] }),
+    { tool_call_id: 'call_9', capture: 'shim+transcript', reason: 'Open the pull request', reason_source: 'tool_description' });
+  assert.deepStrictEqual(relayAudit.bindCommandReason([], row, { includeReason: true }), { reason_source: 'unavailable' });
+
+  const long = relayAudit.parseTranscriptEntries('claude', [JSON.stringify({ type: 'assistant', timestamp: '2026-10-21T10:00:00Z', message: { content: [{ type: 'text', text: 'é'.repeat(3000) }] } })]);
+  const capped = relayAudit.bindCommandReason(long, row, { includeReason: true, patterns: [] });
+  assert.ok(Buffer.byteLength(capped.reason, 'utf8') <= relayAudit.REASON_MAX_BYTES);
+  assert.ok(capped.reason.endsWith(relayAudit.TRUNCATION_MARKER));
+});
+
+test('#13456 per-class caps: command rows cannot evict lifecycle or terminal history', () => {
+  const now = Date.parse('2026-10-21T12:00:00Z');
+  const ts = new Date(now - 1000).toISOString();
+  const rows = [
+    { key: 'k1', task_id: 't1', outcome: 'success', ended_at: ts },
+    { v: 2, level: 'lifecycle', event: 'assigned', ts, task_id: 't1' },
+    ...Array.from({ length: 50 }, (_, i) => ({ v: 2, level: 'commands', event: 'command', ts, task_id: 't1', cmd: `gh api ${'x'.repeat(100)} ${i}` })),
+    { v: 2, level: 'lifecycle', event: 'pr_opened', ts, task_id: 't1' },
+  ];
+  const kept = relayAudit.pruneAuditRows(rows, { now, retentionDays: 90, maxTerminal: 10, maxLifecycle: 10, maxCommandBytes: 2000 });
+  assert.deepStrictEqual(kept.filter(r => r.event !== 'command').map(r => r.event || r.outcome), ['success', 'assigned', 'pr_opened']);
+  const commands = kept.filter(r => r.event === 'command');
+  assert.ok(commands.length > 0 && commands.length < 50, `command rows trimmed by bytes, got ${commands.length}`);
+  assert.ok(commands[commands.length - 1].cmd.endsWith(' 49'), 'the newest command rows are kept');
+  const old = relayAudit.pruneAuditRows([{ v: 2, event: 'assigned', ts: new Date(now - 91 * 86400000).toISOString() }], { now, retentionDays: 90, maxTerminal: 10, maxLifecycle: 10, maxCommandBytes: 2000 });
+  assert.deepStrictEqual(old, [], 'retention applies to leveled rows by ts');
+});
+
+test('#13456 commands level prefixes the shim PATH onto the CLI launch only, and only when asked', () => {
+  const plain = quietly(() => loadRelay({ backend: 'agy', env: { HIVE_AGENT_CWD: '/home/agent' } }));
+  try {
+    assert.ok(!plain.launchCommandWithCwd('agy --x').includes('PATH='), 'the default level adds nothing to the launch');
+  } finally { teardown(plain); }
+  const relay = quietly(() => loadRelay({ backend: 'agy', env: { HIVE_AGENT_CWD: '/home/agent', HIVE_RELAY_AUDIT_LEVEL: 'commands' } }));
+  try {
+    const launched = relay.launchCommandWithCwd('agy --x');
+    assert.ok(launched.startsWith(`cd '/home/agent' && PATH='${relay.RELAY_AUDIT_SHIM_DIR}':"$PATH" agy --x`), launched);
+    for (const op of ['gh', 'git']) {
+      const file = path.join(relay.RELAY_AUDIT_SHIM_DIR, op);
+      const body = fs.readFileSync(file, 'utf8');
+      assert.ok(body.includes(RELAY_AUDIT_SHIM_PATH) && body.includes(`${op} "$@"`), body);
+      if (process.platform !== 'win32') assert.strictEqual(fs.statSync(file).mode & 0o777, 0o700);
+    }
+    const compound = quietly(() => relay.launchCommandWithCwd('a && b'));
+    assert.ok(!compound.includes('PATH='), 'a compound launch is left alone rather than half-prefixed');
+  } finally { teardown(relay); }
+});
+
+test('#13456 the shim runs the real binary untouched and spools one redacted row for the current task', () => {
+  if (process.platform === 'win32') return;
+  const { spawnSync } = require('child_process');
+  const dir = auditScratch('audit-shim-');
+  try {
+    const realDir = path.join(dir, 'real');
+    fs.mkdirSync(realDir);
+    fs.writeFileSync(path.join(realDir, 'gh'), '#!/bin/sh\necho "real gh $*"\nexit 3\n', { mode: 0o755 });
+    const stateFile = path.join(dir, 'state.json');
+    const spool = path.join(dir, 'spool.jsonl');
+    fs.writeFileSync(stateFile, JSON.stringify({ v: 1, level: 'commands', task_id: 't1', task_gen: 1, checkout: dir, spool, real: { gh: path.join(realDir, 'gh') }, secret_patterns: [] }));
+    const run = spawnSync(process.execPath, [RELAY_AUDIT_SHIM_PATH, stateFile, 'gh', 'pr', 'create', '--token', 'tok-secret'], { cwd: dir, encoding: 'utf8' });
+    assert.strictEqual(run.status, 3, 'the real exit status is returned unchanged');
+    assert.strictEqual(run.stdout.trim(), 'real gh pr create --token tok-secret', 'arguments reach the real binary unrewritten');
+    const rows = fs.readFileSync(spool, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].cmd, 'gh pr create --token [redacted]');
+    assert.strictEqual(rows[0].exit, 3);
+    assert.strictEqual(rows[0].cwd, '.');
+    assert.strictEqual(rows[0].task_id, 't1');
+    assert.strictEqual(fs.statSync(spool).mode & 0o777, 0o600);
+
+    // No current task, or a level below commands: run, but write nothing.
+    fs.rmSync(spool);
+    fs.writeFileSync(stateFile, JSON.stringify({ v: 1, level: 'lifecycle', task_id: 't1', spool, real: { gh: path.join(realDir, 'gh') } }));
+    assert.strictEqual(spawnSync(process.execPath, [RELAY_AUDIT_SHIM_PATH, stateFile, 'gh', 'pr', 'list'], { encoding: 'utf8' }).status, 3);
+    assert.ok(!fs.existsSync(spool));
+    // A missing state file is not an error either.
+    assert.strictEqual(spawnSync(process.execPath, [RELAY_AUDIT_SHIM_PATH, path.join(dir, 'nope.json'), 'gh', 'x'], { encoding: 'utf8', env: { ...process.env, PATH: realDir } }).status, 3);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13456 reasoning: the relay drains the spool into rows with identity, token generation and the stated reason', () => {
+  const dir = auditScratch('audit-reason-');
+  const sessions = path.join(dir, 'copilot-sessions');
+  fs.mkdirSync(path.join(sessions, 's1'), { recursive: true });
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'reasoning', HIVE_COPILOT_SESSIONS_DIR: sessions } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    });
+    const state = JSON.parse(fs.readFileSync(relay.RELAY_AUDIT_STATE_FILE, 'utf8'));
+    assert.strictEqual(state.level, 'reasoning');
+    assert.strictEqual(state.task_id, 'act-1');
+    assert.ok(!JSON.stringify(state).includes('ghs_activitysecret') && !JSON.stringify(state).includes('SECRET PROMPT'), 'the shim state carries no token or prompt');
+    const at = Date.now();
+    fs.writeFileSync(path.join(sessions, 's1', 'events.jsonl'), [
+      JSON.stringify({ type: 'user.message', timestamp: new Date(at - 3000).toISOString(), data: { content: 'SECRET PROMPT TEXT' } }),
+      JSON.stringify({ type: 'assistant.message', timestamp: new Date(at - 2000).toISOString(), data: { content: 'Pushing the fix branch before opening the PR.', toolRequests: [{ toolCallId: 'call_1', arguments: { command: 'git push origin fix' } }] } }),
+    ].join('\n') + '\n');
+    assert.ok(relayAudit.recordShimCommand({ state, op: 'git', args: ['push', 'origin', 'fix'], startedAt: at, durationMs: 10, exit: 0, cwd: state.checkout, pid: 7 }));
+    assert.ok(relayAudit.recordShimCommand({ state, op: 'git', args: ['fetch', 'origin'], startedAt: at, durationMs: 5, exit: 0, cwd: state.checkout, pid: 8 }));
+    assert.ok(!relayAudit.recordShimCommand({ state, op: 'git', args: ['status'], startedAt: at, durationMs: 1, exit: 0, cwd: state.checkout, pid: 9 }));
+    quietly(() => relay.sendTo(relay.getHubs()[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed' }));
+    const commands = readAuditRows(relay).filter(r => r.event === 'command');
+    assert.deepStrictEqual(commands.map(r => [r.level, r.cmd]), [['commands', 'git push origin fix'], ['reasoning', 'git fetch origin']]);
+    const push = commands[0];
+    assert.strictEqual(push.task_id, 'act-1');
+    assert.strictEqual(push.task_gen, 3);
+    assert.strictEqual(push.hub, relay.getHubs()[0].sourceURL);
+    assert.strictEqual(push.repository, 'github/github.com/org/a');
+    assert.strictEqual(push.token_gen, 1);
+    assert.strictEqual(push.remote, 'origin');
+    assert.strictEqual(push.refspec, 'fix');
+    assert.strictEqual(push.tool_call_id, 'call_1');
+    assert.strictEqual(push.capture, 'shim+transcript');
+    assert.strictEqual(push.reason, 'Pushing the fix branch before opening the PR.');
+    assert.strictEqual(push.reason_source, 'transcript');
+    assert.ok(!fs.existsSync(relay.RELAY_AUDIT_STATE_FILE), 'the shim state is removed when the task ends');
+    assert.ok(!fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8').includes('SECRET PROMPT TEXT'));
+    assert.deepStrictEqual(readActivity(relay).map(r => r.outcome), ['success'], 'command rows never change activity counts');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13456 commands level never binds a reason and records the shim as the capture path', () => {
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'commands' }, mode: 'headless', execFileResult: { defer: true } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    });
+    const assigned = readAuditRows(relay).find(r => r.event === 'assigned');
+    assert.strictEqual(assigned.capture, 'shim');
+    const env = relay.headlessChildEnv();
+    assert.ok(String(env.PATH).startsWith(relay.RELAY_AUDIT_SHIM_DIR + path.delimiter), 'the headless child gets the shim PATH');
+    assert.notStrictEqual(env, process.env, 'the relay\'s own environment is not modified');
+    const state = JSON.parse(fs.readFileSync(relay.RELAY_AUDIT_STATE_FILE, 'utf8'));
+    relayAudit.recordShimCommand({ state, op: 'gh', args: ['pr', 'view', '1'], startedAt: Date.now(), durationMs: 3, exit: 0, cwd: state.checkout, pid: 1 });
+    relayAudit.recordShimCommand({ state, op: 'git', args: ['fetch'], startedAt: Date.now(), durationMs: 3, exit: 0, cwd: state.checkout, pid: 1 });
+    assert.strictEqual(relay.drainCommandSpool(relay.auditFactsForTask(relay.getCurrentTask())), 1, 'git fetch is a reasoning-only row (Q6)');
+    const [row] = readAuditRows(relay).filter(r => r.event === 'command');
+    assert.strictEqual(row.cmd, 'gh pr view 1');
+    assert.ok(!('reason' in row) && !('reason_source' in row));
   } finally { teardown(relay); }
 });
 
@@ -3701,6 +4608,28 @@ test('an idle non-active hub cannot assign work until the poll slot reaches it',
     assert.strictEqual(relay.getCurrentTask(), null);
     assert.ok(sentB.some(m => m.type === 'task_failed' && m.reason === 'Hub is not the active polling slot'),
       'unexpected assignment must be rejected back to the hub that sent it');
+  } finally { teardown(relay); }
+});
+
+test('parseContributorEnvFile strips matching outer shell quotes only', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const file = path.join(fs.mkdtempSync(path.join(scratchRoot, 'env-quotes-')), 'contributor.env');
+  fs.writeFileSync(file, [
+    "HIVE_REPO_SCOPE='*,github/github.com/org/a;github/github.com/org/b'",
+    'HIVE_HUB="https://a.example"',
+    'PLAIN=value',
+    "EMPTY=''",
+    "ODD='abc",
+  ].join('\n') + '\n');
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const env = relay.parseContributorEnvFile(file);
+    assert.strictEqual(env.HIVE_REPO_SCOPE, '*,github/github.com/org/a;github/github.com/org/b');
+    assert.strictEqual(env.HIVE_HUB, 'https://a.example');
+    assert.strictEqual(env.PLAIN, 'value');
+    assert.strictEqual(env.EMPTY, '');
+    assert.strictEqual(env.ODD, "'abc");
   } finally { teardown(relay); }
 });
 
@@ -6147,6 +7076,7 @@ test('#5478 redactTokens matches the Go scrubber credential categories', () => {
     ['PEM key', '-----BEGIN RSA PRIVATE KEY-----\nkey-data\n-----END RSA PRIVATE KEY-----'],
     ['encrypted PEM key', '-----BEGIN ENCRYPTED PRIVATE KEY-----\nkey-data\n-----END ENCRYPTED PRIVATE KEY-----'],
     ['PGP key', '-----BEGIN PGP PRIVATE KEY BLOCK-----\nkey-data\n-----END PGP PRIVATE KEY BLOCK-----'],
+    ['Basic auth header', 'Authorization: Basic aGl2ZTpzM2NyM3QtdmFsdWU='],
   ];
   try {
     for (const [name, secret] of cases) {
@@ -7772,7 +8702,7 @@ test('#6437 bob is told about its API key, not to type /login', () => {
   const relay = loadRelay({ backend: 'bob' });
   try {
     const text = relay.loginBannerLines('bob', 'podman exec -it c tmux attach -t contributor').join('\n');
-    assert.ok(/BOBSHELL_API_KEY/.test(text), 'bob needs its API key named');
+    assert.ok(/BOB_API_KEY/.test(text), 'bob needs its API key named');
     assert.ok(!/\/login/.test(text), 'typing /login cannot authenticate bob');
     assert.ok(!/tmux attach/.test(text),
       'attaching to the pane cannot fix a missing API key, so the banner must not send the operator there');
@@ -7838,7 +8768,7 @@ test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code
   try {
     assert.ok(/needs authentication/.test(output),
       'the needs-login banner should have been printed during startup');
-    assert.ok(/BOBSHELL_API_KEY/.test(output),
+    assert.ok(/BOB_API_KEY/.test(output),
       'bob was told to authenticate some other way than with its API key');
     assert.ok(!/Claude Code/.test(output),
       'a blocked bob is announced as Claude Code');
@@ -7914,6 +8844,37 @@ test('#5145 a docker container is unchanged, with or without the new variable', 
       'an older launch that passes no runtime must keep printing docker');
   } finally { teardown(withoutVar); }
 });
+
+for (const runtime of ['apptainer', 'singularity']) {
+  test(`#13976 a ${runtime} authentication banner attaches to the named instance`, () => {
+    const { relay, output } = captureStartupWithImmediateTimers({
+      backend: 'claude',
+      cliStates: ['Please run /login\n', 'Please run /login\n', 'Please run /login\n'],
+      env: {
+        HIVE_CONTAINER_NAME: 'hive-contributor-claude-9a1c',
+        HIVE_CONTAINER_RUNTIME: runtime,
+        HIVE_AGENT_SESSION: 'claude-session',
+      },
+    });
+    try {
+      const expected = `${runtime} exec instance://hive-contributor-claude-9a1c tmux attach -t claude-session`;
+      assert.strictEqual(relay.ATTACH_COMMAND, expected);
+      assert.ok(output.includes('needs authentication'), 'the login banner must fire');
+      assert.ok(output.includes(expected), `the banner must print the instance attach command; captured:\n${output}`);
+    } finally { teardown(relay); }
+  });
+
+  test(`#13976 local mode ignores ${runtime} without a container name`, () => {
+    const relay = loadRelay({ env: {
+      HIVE_CONTAINER_NAME: '',
+      HIVE_CONTAINER_RUNTIME: runtime,
+      HIVE_AGENT_SESSION: 'local-session',
+    } });
+    try {
+      assert.strictEqual(relay.ATTACH_COMMAND, 'tmux attach -t local-session');
+    } finally { teardown(relay); }
+  });
+}
 
 test('#5145 local mode names no container at all', () => {
   // HIVE_CONTAINER_NAME is set ONLY by the container arm of the recipe
@@ -11718,6 +12679,26 @@ test('#10457 contributor review repairs fork base drift before review feedback',
   } finally { teardown(relay); }
 });
 
+test('#13787 the review prompt never stalls on command permission', () => {
+  // "Run these, and only these" made an agent ask "May I run additional
+  // commands…?" before reading review comments or resolving an UNKNOWN merge
+  // state — and no human is attached to answer.
+  const relay = loadRelay({});
+  try {
+    const prompt = relay.buildReviewPrompt(['foo/bar'], ['foo/bar'], 'ct-bot');
+    assert.ok(!/only these/.test(prompt), `the closed allowlist is the bug: ${prompt}`);
+    assert.match(prompt, /gh pr view <n> --repo <repo> --comments/);
+    assert.match(prompt, /--json mergeable,mergeStateStatus/);
+    assert.match(prompt, /gh pr checks <n> --repo <repo>/);
+    assert.match(prompt, /gh api repos\/<repo>\/pulls\/<n>\/comments/);
+    assert.match(prompt, /gh api repos\/<repo>\/pulls\/<n>\/reviews/);
+    assert.match(prompt, /never ask for permission or wait for confirmation/);
+    assert.match(prompt, /skip that check, note the limitation/);
+    assert.match(prompt, /name the skipped check and blocker in the reason/);
+    assert.match(prompt, /do not read, comment on, or push to a PR in any other repository/);
+  } finally { teardown(relay); }
+});
+
 test('#6908 the review prompt is scoped to authorized repos, not the account', () => {
   const relay = loadRelay({});
   try {
@@ -12763,6 +13744,108 @@ test('#7932 a hub that advertises no limit keeps the default budget', () => {
 
 // ---------------------------------------------------------------------------
 
+test('#13236 local relay log is private, bounded, rotated and fresh each launch', () => {
+  const { createRelayLog } = require('./lib/contributor-relay-log.js');
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-watch-'));
+  const file = path.join(dir, 'relay.log');
+  try {
+    fs.writeFileSync(file, 'old launch', { mode: 0o644 });
+    const log = createRelayLog(file, 16);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), '');
+    assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+    log.write(Buffer.from('a'.repeat(16)));
+    log.write('new output');
+    assert.strictEqual(fs.readFileSync(file + '.1', 'utf8'), 'a'.repeat(16));
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), 'new output');
+    log.write('b'.repeat(100));
+    assert.ok(fs.statSync(file).size <= 16);
+    assert.ok(fs.statSync(file + '.1').size <= 16);
+    assert.strictEqual(fs.statSync(file + '.1').mode & 0o777, 0o600);
+    log.close();
+    const next = createRelayLog(file, 16);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), '');
+    assert.ok(!fs.existsSync(file + '.1'));
+    next.close();
+    fs.unlinkSync(file);
+    const target = path.join(dir, 'target');
+    fs.writeFileSync(target, 'do not truncate');
+    fs.symlinkSync(target, file);
+    assert.throws(() => createRelayLog(file, 16));
+    assert.strictEqual(fs.readFileSync(target, 'utf8'), 'do not truncate');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13236 local log mirrors both streams without losing terminal output', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-watch-mirror-'));
+  try {
+    const file = path.join(dir, 'relay.log');
+    const helper = path.join(__dirname, 'lib/contributor-relay-log.js');
+    const code = `require(${JSON.stringify(helper)}).mirrorRelayOutput(${JSON.stringify(file)}); process.stdout.write('normal'); process.stderr.write('error');`;
+    const child = require('child_process').spawnSync(process.execPath, ['-e', code], { encoding: 'utf8' });
+    assert.strictEqual(child.status, 0, child.stderr);
+    assert.strictEqual(child.stdout, 'normal');
+    assert.strictEqual(child.stderr, 'error');
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), 'normalerror');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13236 PID record advertises session, mode and local log without another state file', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-watch-pid-'));
+  function writeRecord(relay, env) {
+    const previous = { ...process.env };
+    try { Object.assign(process.env, env); relay.writeRelayPidFile(); }
+    finally { process.env = previous; }
+  }
+  try {
+    for (const mode of ['interactive', 'headless']) {
+      const relay = loadRelay({ mode, env: {
+        HIVE_RELAY_PID_FILE: path.join(dir, 'contributor-relay.pid'),
+        HIVE_AGENT_SESSION: 'hive-pi-abcd', HIVE_RELAY_LOG_FILE: path.join(dir, 'relay.log'),
+        HIVE_CONTAINER_NAME: '', HIVE_CONTAINER_RUNTIME: '',
+      } });
+      try {
+        writeRecord(relay, { HIVE_CONTAINER_NAME: '', HIVE_CONTAINER_RUNTIME: '', HIVE_RELAY_LOG_FILE: path.join(dir, 'relay.log') });
+        const record = JSON.parse(fs.readFileSync(relay.RELAY_PID_FILE, 'utf8'));
+        assert.strictEqual(record.mode, mode === 'headless' ? 'headless' : 'local');
+        assert.strictEqual(record.tmux_session, mode === 'headless' ? undefined : 'hive-pi-abcd');
+        assert.strictEqual(record.log_file, path.join(dir, 'relay.log'));
+      } finally { teardown(relay); }
+    }
+    const relay = loadRelay({ env: { HIVE_RELAY_PID_FILE: path.join(dir, 'contributor-relay.pid'),
+      HIVE_CONTAINER_NAME: 'hive-contributor-pi', HIVE_CONTAINER_RUNTIME: 'podman', HIVE_RELAY_LOG_FILE: '/not-a-host-log' } });
+    try {
+      writeRecord(relay, { HIVE_CONTAINER_NAME: 'hive-contributor-pi', HIVE_CONTAINER_RUNTIME: 'podman', HIVE_RELAY_LOG_FILE: '/not-a-host-log' });
+      const record = JSON.parse(fs.readFileSync(relay.RELAY_PID_FILE, 'utf8'));
+      assert.strictEqual(record.mode, 'container');
+      assert.strictEqual(record.container_runtime, 'podman');
+      assert.strictEqual(record.log_file, undefined);
+    } finally { teardown(relay); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13236 krun launches record mode krun interactive, headless krun records a headless container', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-watch-krun-'));
+  try {
+    for (const mode of ['interactive', 'headless']) {
+      const env = { HIVE_RELAY_PID_FILE: path.join(dir, 'contributor-relay.pid'),
+        HIVE_CONTAINER_NAME: 'hive-contributor-krun', HIVE_CONTAINER_RUNTIME: 'podman',
+        HIVE_ISOLATION_CLASS: 'microvm-krun', HIVE_AGENT_SESSION: 'contributor', HIVE_RELAY_LOG_FILE: '/not-a-host-log' };
+      const relay = loadRelay({ mode, env });
+      try {
+        const previous = { ...process.env };
+        try { Object.assign(process.env, env); relay.writeRelayPidFile(); } finally { process.env = previous; }
+        const record = JSON.parse(fs.readFileSync(relay.RELAY_PID_FILE, 'utf8'));
+        assert.strictEqual(record.mode, mode === 'headless' ? 'headless' : 'krun');
+        assert.strictEqual(record.container_runtime, 'podman');
+        assert.strictEqual(record.container_name, 'hive-contributor-krun');
+        assert.strictEqual(record.tmux_session, mode === 'headless' ? undefined : 'contributor');
+        assert.strictEqual(record.isolation_class, 'microvm-krun');
+        assert.strictEqual(record.log_file, undefined);
+      } finally { teardown(relay); }
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.
 
@@ -12862,6 +13945,21 @@ test('#6951 an exhausted window of an UNRECOGNIZED kind refuses work', () => {
   assert.strictEqual(d.admit, false, 'a window kind this build was never taught must not admit work at 0% remaining');
   assert.strictEqual(d.reason, 'guarded_unknown_window');
   assert.strictEqual(d.window_id, 'd1');
+});
+
+test('#13946 agy Gemini ignores an exhausted 3p window but Claude/GPT and Gemini pools still hold', () => {
+  const limits = [{ id: '3p-5h', kind: 'short', pct_remaining: 0 }, { id: 'gemini-5h', kind: 'short', pct_remaining: 99 }];
+  const run = (model, lim) => loadRelay({ env: { AGENT_BACKEND: 'agy', AGENT_MODEL: model,
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: lim }) } })
+    .evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(run('gemini-3.8-flash-high', limits).admit, true);
+  const claude = run('claude-opus-5', limits);
+  assert.strictEqual(claude.admit, false);
+  assert.strictEqual(claude.window_id, '3p-5h');
+  const gem = run('gemini-3.8-flash-high', [{ id: 'gemini-5h', kind: 'short', pct_remaining: 0 }]);
+  assert.strictEqual(gem.admit, false);
+  assert.strictEqual(gem.window_id, 'gemini-5h');
+  assert.strictEqual(run('mystery-model', limits).admit, false, 'unknown model stays conservative');
 });
 
 test('#6951 a recognized kind is held as `guarded`, an unrecognized one as `guarded_unknown_window`', () => {
@@ -13711,6 +14809,58 @@ function authIdleRelay(relay) {
   assert.strictEqual(readyFrames(relay).length, 1, 'auth_ok should request initial work');
 }
 
+// #14831: standby must stay passive through the shared request path, even
+// when one subscribed hub cannot negotiate standby and a retry rotates hubs.
+for (const standby of [true, false]) {
+  test(`#14831 CLI readiness respects standby on mixed-capability hubs (standby: ${standby})`, async () => {
+    const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_STANDBY: standby ? '1' : '0' }, cliStates: ['ready'] });
+    try {
+      const { hubs, sentA, sentB } = attachHubSinks(relay);
+      scopeAuth(relay, hubs[0], []);
+      scopeAuth(relay, hubs[1], ['standby_v1']);
+      relay.handleMessage(JSON.stringify({ type: 'standby_ack', standby: { accepted: [{ lane: 'scanner' }], rejected: [] } }), hubs[1]);
+      sentA.length = 0;
+      sentB.length = 0;
+
+      relay.armCLIReadyWait();
+      await flushMicrotasks();
+      assert.strictEqual(relay.getCliReady(), true, 'the CLI still becomes ready');
+      assert.strictEqual(relay.getCliReadyFailed(), false);
+      assert.strictEqual(sentA.filter(m => m.type === 'ready').length, standby ? 0 : 1,
+        'a hub without standby support must not turn standby into ordinary polling');
+      assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 0);
+      assert.strictEqual(relay.requestWork(hubs[1], 'future_caller'), !standby,
+        'the shared guard also covers direct requests to the standby hub');
+      assert.strictEqual(sentB.filter(m => m.type === 'ready').length, standby ? 0 : 1);
+    } finally { teardown(relay); }
+  });
+
+  test(`#14831 multi-hub no-work retry respects standby (standby: ${standby})`, () => {
+    withCapturedReadyRetryTimers((timers) => {
+      const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_STANDBY: standby ? '1' : '0' } });
+      try {
+        const { hubs, sentA, sentB } = attachHubSinks(relay);
+        relay.setCliReady(true);
+        scopeAuth(relay, hubs[0], []);
+        scopeAuth(relay, hubs[1], ['standby_v1']);
+        relay.handleMessage(JSON.stringify({ type: 'standby_ack', standby: { accepted: [{ lane: 'scanner' }], rejected: [] } }), hubs[1]);
+        sentA.length = 0;
+        sentB.length = 0;
+
+        // Model a no-work reply already in flight from the unsupported hub.
+        relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hubs[0]);
+        assert.strictEqual(timers.length, 1, 'capture the retry instead of waiting');
+        timers[0].cb();
+        assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 0);
+        assert.strictEqual(sentB.filter(m => m.type === 'ready').length, standby ? 0 : 1,
+          'rotation must not request ordinary work from the standby hub');
+        assert.strictEqual(hubs[1].readyOutstanding, !standby);
+        assert.strictEqual(relay.getCurrentTask(), null);
+      } finally { teardown(relay); }
+    });
+  });
+}
+
 test('#9063 stale task_unavailable retry does not duplicate a CLI readiness ready', async () => {
   await withCapturedReadyRetryTimers(async (timers) => {
     const relay = loadRelay({ cliStates: ['ready'] });
@@ -13820,6 +14970,141 @@ test('#9063 readiness before a no-work response waits for the tracked retry', ()
 // failure before it was an unhandled rejection the exit pre-empted. The
 // readiness callback under test for #7732 (armCLIReadyWait's .then) IS a
 // microtask, so it can only be observed by a test that yields to it.
+// ---------------------------------------------------------------------------
+// hivecommons/hive#12436 — stage-072 `fix-pr` interrupts: spawn a parallel fix
+// session when capacity allows, preempt the interactive primary otherwise,
+// defer behind a headless primary, and run deferred fixes before `ready`.
+// ---------------------------------------------------------------------------
+const FIX_PR_TASK = (id, extra = {}) => ({
+  type: 'task_assign', task_id: id, task_gen: 7, kind: 'fix-pr', priority: 'interrupt', mode: 'spawn',
+  repo: 'foo/bar', number: 99, title: 'red pr', url: 'https://github.com/foo/bar/pull/99',
+  fix_prs: [{ repo: 'foo/bar', number: 99, head_sha: 'abc', failing_checks: ['build'] }],
+  prompt: 'Fix PR foo/bar#99 on its existing branch', ...extra,
+});
+
+test('#12436 relay advertises fix_pr_interrupt_v1, and parallel_sessions only with a headless backend', () => {
+  const headless = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '2' } });
+  try {
+    const caps = headless.detectCapabilities();
+    assert.ok(caps.relay_capabilities.includes('fix_pr_interrupt_v1'));
+    assert.ok(caps.relay_capabilities.includes('parallel_sessions'));
+    assert.strictEqual(caps.max_parallel_fixes, 2);
+    assert.ok(headless.relaySupportsParallelFixes());
+  } finally { teardown(headless); }
+  const noParallel = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '0' } });
+  try {
+    const caps = noParallel.detectCapabilities();
+    assert.ok(caps.relay_capabilities.includes('fix_pr_interrupt_v1'));
+    assert.ok(!caps.relay_capabilities.includes('parallel_sessions'));
+    assert.strictEqual(caps.max_parallel_fixes, undefined);
+  } finally { teardown(noParallel); }
+});
+
+test('#12436 spawn: a fix-pr interrupt runs as a parallel child and never replaces the primary task', () => {
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '1' }, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    const primary = { task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' };
+    relay.setCurrentTask(primary);
+    const before = relay.__execFileCalls.length;
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-1')), hub);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary', 'primary task must stay current');
+    assert.ok(sent.some(m => m.type === 'task_accepted' && m.task_id === 'fix-1'), `fix must be accepted: ${JSON.stringify(sent)}`);
+    assert.ok(!sent.some(m => m.type === 'task_failed'), 'a fix interrupt is not "Already has active task"');
+    assert.strictEqual(relay.__execFileCalls.length, before + 1, 'one parallel child spawned');
+    assert.deepStrictEqual(relay.fixPRState().parallel, ['fix-1']);
+    // Cap reached: a second spawn-mode fix is NOT spawned; in interactive mode it
+    // preempts the primary pane instead (hub-side budget normally prevents this).
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-2')), hub);
+    assert.strictEqual(relay.__execFileCalls.length, before + 1, 'cap of 1 parallel fix respected');
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-2');
+    // Child exits 0 → task_complete for the fix id, primary untouched.
+    relay.__completeDeferredExecFile(null, 'pushed\n');
+    const done = sent.find(m => m.type === 'task_complete' && m.task_id === 'fix-1');
+    assert.ok(done, `task_complete for the fix expected: ${JSON.stringify(sent)}`);
+    assert.strictEqual(done.task_gen, 7);
+    assert.deepStrictEqual(relay.fixPRState().parallel, []);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#12436 spawn: a non-zero child exit reports task_failed for the fix only', () => {
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '1' }, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCurrentTask({ task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' });
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-9')), hub);
+    relay.__completeDeferredExecFile(Object.assign(new Error('exit'), { code: 2 }), '', 'boom');
+    const failed = sent.find(m => m.type === 'task_failed' && m.task_id === 'fix-9');
+    assert.ok(failed, JSON.stringify(sent));
+    assert.ok(/exited 2/.test(failed.reason), failed.reason);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#12436 preempt: the interactive primary is told to park, fix and resume; the pane marker settles the fix', () => {
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_MAX_PARALLEL_FIXES: '0' } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCliReady(true);
+    relay.setCurrentTask({ task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' });
+    const sendsBefore = relay.__tmuxSends().length;
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-p', { mode: 'preempt' })), hub);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary', 'preempt keeps the primary lease');
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-p');
+    assert.ok(sent.some(m => m.type === 'task_accepted' && m.task_id === 'fix-p'));
+    const typed = relay.__tmuxSends().slice(sendsBefore).join('\n');
+    assert.ok(/INTERRUPT \(hive fix-pr, preempt mode\)/.test(typed), `preempt prompt must reach the pane: ${typed}`);
+    assert.ok(/Park foo\/bar#1/.test(typed) && /resume foo\/bar#1/.test(typed), typed);
+    // A second fix while one preempts queues behind it.
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-q', { mode: 'preempt' })), hub);
+    assert.deepStrictEqual(relay.fixPRState().deferred, ['fix-q']);
+    // The echoed instruction must not count as the marker.
+    relay.scanPaneForFixMarkers([`3. When the fix is pushed, print exactly this line on its own: ${relay.FIX_PR_DONE_MARKER} fix-p`]);
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-p');
+    relay.scanPaneForFixMarkers(['working…', `${relay.FIX_PR_DONE_MARKER} fix-p`, '']);
+    assert.ok(sent.some(m => m.type === 'task_complete' && m.task_id === 'fix-p' && m.task_gen === 7), JSON.stringify(sent));
+    // The queued fix now preempts in turn.
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-q');
+    assert.deepStrictEqual(relay.fixPRState().deferred, []);
+    relay.scanPaneForFixMarkers([`${relay.FIX_PR_FAILED_MARKER} fix-q cannot reproduce`]);
+    const failed = sent.find(m => m.type === 'task_failed' && m.task_id === 'fix-q');
+    assert.ok(failed && /cannot reproduce/.test(failed.reason), JSON.stringify(sent));
+    assert.strictEqual(relay.fixPRState().preempting, null);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#12436 headless primary: a preempt fix is deferred and runs before the next ready', () => {
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', env: { HIVE_MAX_PARALLEL_FIXES: '0', HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off' }, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCurrentTask({ task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' });
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-d', { mode: 'preempt' })), hub);
+    assert.deepStrictEqual(relay.fixPRState().deferred, ['fix-d']);
+    assert.ok(sent.some(m => m.type === 'task_accepted' && m.task_id === 'fix-d'));
+    // Primary finishes; the relay asks for work → the deferred fix is dispatched instead of `ready`.
+    relay.setCurrentTask(null);
+    const took = relay.requestWork(hub, 'headless_task_complete');
+    assert.strictEqual(took, false, 'requestWork must not send ready while a fix is deferred');
+    assert.ok(!sent.some(m => m.type === 'ready'), `no ready while a fix waits: ${JSON.stringify(sent.map(m => m.type))}`);
+    assert.strictEqual(relay.getCurrentTask() && relay.getCurrentTask().task_id, 'fix-d', 'deferred fix becomes the current task');
+    assert.deepStrictEqual(relay.fixPRState().deferred, []);
+  } finally { console.log = log; teardown(relay); }
+});
+
 (async () => {
   for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
     try {
@@ -13983,6 +15268,16 @@ test('run-stage task_assign display uses source-aware key instead of repo#undefi
     const prompt = relay.resolveTaskPrompt(task);
     assert.ok(prompt.includes('acme/widgets!LIN-7:implement'), prompt);
     assert.ok(!prompt.includes('undefined') && !prompt.includes('#0'), prompt);
+  } finally { teardown(relay); }
+});
+
+test('#14605 resolveTaskPrompt requires sign-off on fix-pr tasks only', () => {
+  const relay = loadRelay({});
+  try {
+    const fix = relay.resolveTaskPrompt({ kind: 'fix-pr', prompt: 'fix it' });
+    assert.ok(fix.startsWith('fix it'), 'original prompt is kept');
+    assert.ok(fix.includes('git commit -s') && fix.includes('git rebase --signoff') && fix.includes('Signed-off-by'));
+    assert.ok(!relay.resolveTaskPrompt({ kind: 'issue', prompt: 'do it' }).includes('Signed-off-by'));
   } finally { teardown(relay); }
 });
 
@@ -14359,6 +15654,44 @@ test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict lin
   } finally { teardown(relay); }
 });
 
+// ── hivecommons/hive#13146: the `wrong_base` verdict ─────────────────────────
+
+test('#13146 wrong_base carries a release branch without becoming already-done', () => {
+  const relay = loadRelay({});
+  try {
+    const line = 'HIVE_VERDICT: wrong_base — v6';
+    const v = relay.detectCompletionVerdict([line], null);
+    assert.deepStrictEqual(v, {
+      verdict: 'wrong_base',
+      reason: 'v6',
+      line,
+      targetBranch: 'v6',
+    });
+    assert.ok(relay.isNoWorkVerdict(v), 'wrong_base completes without a PR');
+    assert.strictEqual(relay.isAlreadyDoneNoWork(v), false,
+      'wrong_base must never apply the already-done workflow label');
+    assert.deepStrictEqual(relay.verdictWireFields(v), {
+      verdict: 'wrong_base',
+      verdict_reason: 'v6',
+      verdict_target_branch: 'v6',
+    });
+  } finally { teardown(relay); }
+});
+
+test('#13146 malformed wrong_base targets still reach the hub for parking', () => {
+  const relay = loadRelay({});
+  try {
+    const v = relay.detectNoWorkVerdict(['HIVE_VERDICT: wrong_base — feature/not-a-release-line']);
+    assert.strictEqual(v.verdict, 'wrong_base');
+    assert.strictEqual(v.targetBranch, undefined);
+    assert.deepStrictEqual(relay.verdictWireFields(v), {
+      verdict: 'wrong_base',
+      verdict_reason: 'feature/not-a-release-line',
+      verdict_target_branch: undefined,
+    });
+  } finally { teardown(relay); }
+});
+
 // ── hivecommons/hive#7924: the `blocked` verdict ─────────────────────────────
 //
 // utah#100 ended in a correct no_work_needed whose reason was "nothing here can
@@ -14373,7 +15706,7 @@ test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict lin
 
 const BLOCKED_REASON = "nautilus's dependency closure now has recipes on utah-packages main, but no factory build has published since they merged";
 
-test('#7924 HIVE_VERDICT: blocked is a verdict of its own, echo-guarded like the other two', () => {
+test('#7924 HIVE_VERDICT: blocked is a verdict of its own, echo-guarded like the other verdicts', () => {
   const relay = loadRelay({});
   try {
     const v = relay.detectCompletionVerdict([`HIVE_VERDICT: blocked — ${BLOCKED_REASON}`], null);
@@ -14387,7 +15720,7 @@ test('#7924 HIVE_VERDICT: blocked is a verdict of its own, echo-guarded like the
     // Token boundary: prose that starts with the word is not the sentinel.
     assert.strictEqual(relay.detectCompletionVerdict(['HIVE_VERDICT: blockedness is a state of mind'], null), null);
     assert.strictEqual(relay.detectCompletionVerdict(['blocked — waiting on the factory'], null), null, 'no marker, no verdict');
-    assert.deepStrictEqual(relay.HIVE_VERDICT_TOKENS, ['complete', 'no_work_needed', 'blocked']);
+    assert.deepStrictEqual(relay.HIVE_VERDICT_TOKENS, ['complete', 'no_work_needed', 'blocked', 'wrong_base']);
   } finally { teardown(relay); }
 });
 
@@ -14473,6 +15806,293 @@ test('#7924 without issues:write the relay leaves the label alone and the verdic
         `perms=${JSON.stringify(perms)}: no label attempt without issues:write`);
     } finally { console.log = log; teardown(relay); }
   }
+});
+
+// ── hivecommons/hive#11775 / #11776: a blocked verdict about the contributor's
+// OWN tooling is not blocked ──────────────────────────────────────────────────
+//
+// Bob's agent could not push to its fork (task token without the `workflow`
+// scope), printed `HIVE_VERDICT: blocked — the push to my fork is rejected…`
+// for two issues, and the relay labelled both `blocked`. Nothing outside the
+// repository was in the way, yet every hive's workflow gate parked the issues
+// with no PR and nothing coming to lift the label. Such a verdict is demoted
+// here: no label, no blocked marker on the wire, so the hub books an idle
+// completion and re-offers the issue to a contributor whose tooling works.
+
+const TOOLING_BLOCKED_REASON = "the push to my fork is rejected because the token lacks workflow scope, and syncing the fork's v5 is blocked by the gh wrapper; the commit is ready in";
+
+test('#11775 isToolingFailureBlockedReason separates push/token/credential failures from external dependencies', () => {
+  const relay = loadRelay({});
+  try {
+    for (const r of [
+      TOOLING_BLOCKED_REASON,
+      'push to my fork was rejected: refusing to allow a GitHub App to create or update workflow',
+      'Fix is ready locally but the push to my fork is rejected: the token lacks the `workflow` scope',
+      'git push failed with HTTP 403',
+      'permission denied when pushing the branch',
+      "the fork's v6 is behind upstream and the gh wrapper refuses to sync it",
+      'GH_TOKEN does not have the repo scope needed to open the PR',
+    ]) assert.ok(relay.isToolingFailureBlockedReason(r), `tooling: ${r}`);
+    for (const r of [
+      BLOCKED_REASON,
+      'waiting on projectbluefin/utah-packages to publish a factory image with the recipes',
+      'the upstream library has not released the API this needs',
+      'depends on hivecommons/hub#42 landing first',
+      '', null, undefined,
+    ]) assert.ok(!relay.isToolingFailureBlockedReason(r), `external: ${r}`);
+  } finally { teardown(relay); }
+});
+
+test('#11775 a tooling-failure blocked verdict is detected as blocked but flagged, and verdictWireFields drops the verdict', () => {
+  const relay = loadRelay({});
+  try {
+    const v = relay.detectNoWorkVerdict([`HIVE_VERDICT: blocked — ${TOOLING_BLOCKED_REASON}`]);
+    assert.strictEqual(v.verdict, 'blocked');
+    assert.strictEqual(v.toolingFailure, true);
+    assert.strictEqual(v.reason, TOOLING_BLOCKED_REASON);
+    // It is still a completion: the agent said it is done.
+    assert.strictEqual(relay.detectCompletionVerdict([`HIVE_VERDICT: blocked — ${TOOLING_BLOCKED_REASON}`], null).verdict, 'blocked');
+    // The older spelling is flagged the same way.
+    assert.strictEqual(relay.detectNoWorkVerdict([`HIVE_VERDICT: no_work_needed — blocked: ${TOOLING_BLOCKED_REASON}`]).toolingFailure, true);
+    // On the wire: the reason for the hub's log, but NO verdict — an old or
+    // new hub both book idle (short cooldown, re-offered).
+    assert.deepStrictEqual(relay.verdictWireFields(v), { verdict_reason: TOOLING_BLOCKED_REASON });
+    // A genuine blocked verdict is untouched.
+    const g = relay.detectNoWorkVerdict([`HIVE_VERDICT: blocked — ${BLOCKED_REASON}`]);
+    assert.strictEqual(g.toolingFailure, undefined);
+    assert.strictEqual(relay.verdictWireFields(g).verdict_blocked, true);
+  } finally { teardown(relay); }
+});
+
+test('#11775 end to end: a tooling-failure blocked verdict applies no label and reaches the hub without the blocked marker', () => {
+  const PANE = `HIVE_VERDICT: blocked — ${TOOLING_BLOCKED_REASON}\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; const logged = []; console.log = (...a) => logged.push(a.join(' '));
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'newcomer', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-11775-tooling', 100);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the verdict still completes the task');
+    assert.strictEqual(completed[0].verdict, undefined, 'no verdict on the wire: the hub books idle');
+    assert.strictEqual(completed[0].verdict_blocked, undefined);
+    assert.strictEqual(completed[0].verdict_reason, TOOLING_BLOCKED_REASON, 'the reason still reaches the hub log');
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0,
+      `no blocked label for a tooling failure: ${JSON.stringify(relay.__commands.filter(c => /gh /.test(c)))}`);
+    assert.ok(logged.some(l => /own tooling/.test(l) && /not applying the 'blocked' label/.test(l)), `expected the demotion to be logged, got ${JSON.stringify(logged)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#11775 markIssueBlocked refuses a tooling-failure reason even when called directly with issues:write', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, TOOLING_BLOCKED_REASON);
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, BLOCKED_REASON);
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh issue edit/.test(c)).length, 1, 'the genuine reason still labels');
+  } finally { console.log = log; teardown(relay); }
+});
+
+// hivecommons/hive#12376: a blocked verdict whose reason says a PERSON must
+// act (an admin restoring an app install, a maintainer applying a change) is
+// routed to the parking path a person answers — `needs-human` — so the
+// your-turn inbox and the "What to reply" notice pick it up. A reason that
+// names another item, an upstream or a release keeps `blocked`.
+
+const PERSON_BLOCKED_REASON = 'An org admin must restore the Mergeraptor app installation before the bot can run';
+
+test('#12376 isPersonBlockedReason separates a person-gate from a wait on another item', () => {
+  const relay = loadRelay({});
+  try {
+    for (const r of [
+      PERSON_BLOCKED_REASON,
+      'Needs an org administrator to reinstall the GitHub App',
+      'only a repository owner can enable GitHub Pages for this repo',
+      'requires manual action in the repository settings',
+      'A maintainer has to add the DEPLOY_KEY secret',
+    ]) assert.ok(relay.isPersonBlockedReason(r), `person: ${r}`);
+    for (const r of [
+      BLOCKED_REASON,
+      'waiting on projectbluefin/utah-packages to publish a factory image with the recipes',
+      'the upstream maintainer needs to cut a release',
+      'depends on hivecommons/hub#42 landing first',
+      'an admin must merge projectbluefin/.project#25 first',
+      'waiting on #25 which a maintainer must review',
+      '', null, undefined,
+    ]) assert.ok(!relay.isPersonBlockedReason(r), `item: ${r}`);
+  } finally { teardown(relay); }
+});
+
+test('#12376 markIssueBlocked applies needs-human for a person-gate and blocked for anything else', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    for (const [reason, want, notWant] of [
+      [PERSON_BLOCKED_REASON, relay.NEEDS_HUMAN_LABEL, relay.BLOCKED_WORKFLOW_LABEL],
+      [BLOCKED_REASON, relay.BLOCKED_WORKFLOW_LABEL, relay.NEEDS_HUMAN_LABEL],
+    ]) {
+      const before = relay.__commands.length;
+      relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, reason);
+      const edits = relay.__commands.slice(before).filter(c => /gh issue edit/.test(c));
+      assert.strictEqual(edits.length, 1, `one label call for ${reason}: ${JSON.stringify(edits)}`);
+      assert.ok(edits[0].includes(want), `${reason}: expected '${want}' in ${edits[0]}`);
+      assert.ok(!edits[0].includes(`'${notWant}'`), `${reason}: did not expect '${notWant}' in ${edits[0]}`);
+    }
+    assert.strictEqual(relay.NEEDS_HUMAN_LABEL, 'needs-human');
+  } finally { console.log = log; teardown(relay); }
+});
+
+// ── hivecommons/hive#14832: an environment-failure verdict is not a completion ──
+//
+// On Ubuntu's AppArmor user-namespace restriction every Bash call inside
+// Claude's sandbox failed, and the agent printed the verdict below. Booked as
+// complete, the hub counted a finished task and the relay took the next issue
+// to drop it the same way.
+
+const ENV_FAILURE_REASON = 'environment failure: Bash tool broken this session (every command, even pwd/true, fails with "apply-seccomp: write /proc/self/setgroups ..."); cannot clone repo, read issue, or open PR. Offering issue to another contributor.';
+
+test('#14832 isEnvironmentFailureReason: table of broken-runtime reasons vs ordinary verdict reasons', () => {
+  const relay = loadRelay({});
+  try {
+    assert.ok(relay.ENVIRONMENT_FAILURE_REASON_PATTERNS.length > 0);
+    for (const r of [
+      ENV_FAILURE_REASON,
+      'environment failure — nothing runs',
+      'Environmental failure: the shell is gone',
+      'the environment is broken, cannot proceed',
+      'Bash tool broken this session',
+      'shell tool is unusable in this sandbox',
+      'the sandbox is broken on this host',
+      'every command fails with Permission denied',
+      'every shell command failed before running',
+      'apply-seccomp refuses to start',
+      'write /proc/self/setgroups: Permission denied',
+    ]) assert.ok(relay.isEnvironmentFailureReason(r), `environment: ${r}`);
+    for (const r of [
+      BLOCKED_REASON,
+      TOOLING_BLOCKED_REASON,
+      'opened https://github.com/foo/bar/pull/12 fixing the parser',
+      'merged PR #4410 already resolves this',
+      'added a test for the environment variable parser',
+      'every command in the README now has an example',
+      'the sandbox docs now describe the Seatbelt profile',
+      '', null, undefined,
+    ]) assert.ok(!relay.isEnvironmentFailureReason(r), `not environment: ${r}`);
+  } finally { teardown(relay); }
+});
+
+test('#14832 a complete verdict reporting a broken environment is classified blocked and flagged', () => {
+  const relay = loadRelay({});
+  try {
+    const line = `HIVE_VERDICT: complete — ${ENV_FAILURE_REASON}`;
+    const v = relay.detectCompletionVerdict([line], null);
+    assert.strictEqual(v.verdict, 'blocked');
+    assert.strictEqual(v.environmentFailure, true);
+    assert.strictEqual(v.toolingFailure, true, 'never a genuine external blocker');
+    assert.strictEqual(v.reason, ENV_FAILURE_REASON);
+    // Headless detection must classify complete before filtering tokens.
+    for (const token of ['complete', 'no_work_needed', 'blocked']) {
+      const nw = relay.detectNoWorkVerdict([`HIVE_VERDICT: ${token} — ${ENV_FAILURE_REASON}`]);
+      assert.strictEqual(nw.verdict, 'blocked', token);
+      assert.strictEqual(nw.environmentFailure, true, token);
+    }
+    // wrong_base keeps its own meaning.
+    assert.strictEqual(relay.detectNoWorkVerdict(['HIVE_VERDICT: wrong_base — v6']).environmentFailure, undefined);
+    // An ordinary complete is untouched.
+    const ok = relay.detectCompletionVerdict(['HIVE_VERDICT: complete — opened the fix'], null);
+    assert.strictEqual(ok.verdict, 'complete');
+    assert.strictEqual(ok.environmentFailure, undefined);
+    assert.strictEqual(relay.detectNoWorkVerdict(['HIVE_VERDICT: complete — opened the fix']), null);
+  } finally { teardown(relay); }
+});
+
+test('#14940 headless exit 0 with a broken-runtime verdict fails the task without labelling the issue', () => {
+  for (const token of ['complete', 'no_work_needed', 'blocked']) {
+    const relay = loadRelay({
+      backend: 'claude', mode: 'headless',
+      execFileResult: { stdout: `HIVE_VERDICT: ${token} — ${ENV_FAILURE_REASON}\n` },
+    });
+    try {
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+      assignHeadlessTask(relay, { task_gen: 4 });
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, token);
+      const failed = relay.__sent.filter(m => m.type === 'task_failed');
+      assert.strictEqual(failed.length, 1, token);
+      assert.strictEqual(failed[0].task_id, 'ct-h-1');
+      assert.strictEqual(failed[0].task_gen, 4);
+      assert.strictEqual(failed[0].result, 'failed');
+      assert.strictEqual(failed[0].failure_kind, 'environment');
+      assert.ok(failed[0].reason.includes(ENV_FAILURE_REASON));
+      assert.ok(failed[0].tmux_output.some(l => l.includes(`HIVE_VERDICT: ${token}`)),
+        'headless has no tmux pane; the captured output must be the task_failed evidence');
+      assert.strictEqual(relay.__readHeadlessStatus().state, relay.HEADLESS_STATE_FAILED);
+      assert.strictEqual(relay.getCurrentTask(), null);
+      assert.ok(relay.__sent.some(m => m.type === 'ready'));
+      assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#14940 headless preserves ordinary completion, external blockers, wrong_base and shipped PR precedence', () => {
+  const prURL = 'https://github.com/foo/bar/pull/9';
+  for (const [stdout, verdict, prMeta] of [
+    ['HIVE_VERDICT: complete — finished the fix', undefined, null],
+    ['HIVE_VERDICT: blocked — waiting on another repository release', 'no_work_needed', null],
+    ['HIVE_VERDICT: wrong_base — v6', 'wrong_base', null],
+    [`${prURL}\nHIVE_VERDICT: complete — ${ENV_FAILURE_REASON}`, undefined,
+      { url: prURL, author: { login: 'test-contributor' }, createdAt: new Date(Date.now() + 1000).toISOString(), mergedAt: null, state: 'OPEN' }],
+  ]) {
+    const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { stdout }, prMeta,
+      env: { HIVE_CONTRIBUTOR_USERNAME: 'test-contributor' } });
+    try {
+      assignHeadlessTask(relay);
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0, stdout);
+      const complete = relay.__sent.filter(m => m.type === 'task_complete');
+      assert.strictEqual(complete.length, 1, stdout);
+      assert.strictEqual(complete[0].verdict, verdict);
+      if (verdict === 'no_work_needed') assert.strictEqual(complete[0].verdict_blocked, true);
+      if (verdict === 'wrong_base') assert.strictEqual(complete[0].verdict_target_branch, 'v6');
+      if (prMeta) assert.strictEqual(complete[0].pr_url, prURL);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#14832 end to end: an environment-failure verdict is reported as task_failed [environment], never task_complete, and labels nothing', () => {
+  const PANE = `HIVE_VERDICT: complete — ${ENV_FAILURE_REASON}\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; const warned = []; console.warn = (...a) => warned.push(a.join(' '));
+  const err = console.error; console.error = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-14832-env', 104);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'must not be booked as completed');
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1, `expected one task_failed, sent ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(failed[0].task_id, 'ct-14832-env');
+    assert.strictEqual(failed[0].failure_kind, 'environment');
+    assert.ok(failed[0].reason.includes('apply-seccomp'), failed[0].reason);
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0, 'no blocked label for this contributor\'s own environment');
+    assert.ok(warned.some(l => /#14832/.test(l)), `expected the reclassification to be logged, got ${JSON.stringify(warned)}`);
+  } finally { console.log = log; console.warn = warn; console.error = err; teardown(relay); }
+});
+
+test('#14832 markIssueBlocked refuses an environment-failure reason even when called directly with issues:write', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'a maintainer must push it: the token lacks the workflow scope');
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'Bash tool broken this session');
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
+  } finally { console.log = log; teardown(relay); }
 });
 
 test('#7924 a label the repository does not define is created once and the add retried once; a second failure costs only a log line', () => {
@@ -14873,4 +16493,286 @@ test('#10597 a manual pause outranks the reset-backed exception', () => {
   const d = relay.evaluateContributorQuota({ complexity: 'medium' });
   assert.strictEqual(d.admit, false);
   assert.strictEqual(d.reason, 'explicit_pause');
+});
+
+test('claude trust prompt: Down moves off "No, exit" onto the trust option', () => {
+  const noDefault = [
+    ' Do you trust the files in this folder?',
+    '',
+    ' ❯ 1. No, exit',
+    '   2. Yes, I trust this folder',
+    '',
+    ' Enter to confirm · Esc to cancel',
+  ].join('\n');
+  const yesDefault = noDefault.replace('❯ 1. No, exit', '  1. No, exit').replace('  2. Yes', '❯ 2. Yes');
+  const cases = [
+    ['cursor on No, exit', 'claude', noDefault, 'Down'],
+    ['cursor already on Yes', 'claude', yesDefault, null],
+    ['non-claude backend', 'codex', noDefault, null],
+  ];
+  for (const [name, backend, pane, want] of cases) {
+    assert.strictEqual(paneClassifier.blockingPromptKey(pane, backend), want, name);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Retired hosted-hive domain — a stale contributor.env must not loop forever.
+//
+// The hosted fleet moved apex from *.hive.kubestellar.io to
+// *.hive.hivecommons.dev. The old wildcard is no longer in the served
+// certificate, so a relay still dialing the URL contribute-setup wrote before
+// the move fails every TLS handshake with "Hostname/IP does not match
+// certificate's altnames" and, before this fix, reconnected to the same dead
+// host every MAX_RECONNECT_DELAY_MS with no hint that anything had moved.
+// ---------------------------------------------------------------------------
+
+test('retired-domain: a saved *.hive.kubestellar.io URL is relocated to *.hive.hivecommons.dev, label intact', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const cases = [
+      { name: 'hosted spoke wss', in: 'wss://hosted-kubestellar-hive-ojv6.hive.kubestellar.io/contribute', want: 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute' },
+      { name: 'already on ws path', in: 'wss://hosted-x.hive.kubestellar.io/api/contribute/ws', want: 'wss://hosted-x.hive.hivecommons.dev/api/contribute/ws' },
+      { name: 'uppercase host', in: 'wss://Hosted-X.Hive.KubeStellar.IO/contribute', want: 'wss://hosted-x.hive.hivecommons.dev/contribute' },
+      { name: 'trailing FQDN dot', in: 'wss://hosted-x.hive.kubestellar.io./contribute', want: 'wss://hosted-x.hive.hivecommons.dev/contribute' },
+      { name: 'hub apex', in: 'wss://hive.kubestellar.io/contribute', want: 'wss://hive.hivecommons.dev/contribute' },
+      { name: 'https dashboard URL', in: 'https://hosted-x.hive.kubestellar.io', want: 'https://hosted-x.hive.hivecommons.dev/' },
+      { name: 'current domain untouched', in: 'wss://hosted-x.hive.hivecommons.dev/contribute', want: null },
+      { name: 'unrelated host untouched', in: 'wss://hive.example.org/contribute', want: null },
+      { name: 'lookalike suffix untouched', in: 'wss://nothive.kubestellar.io/contribute', want: null },
+      { name: 'garbage untouched', in: 'not a url', want: null },
+      { name: 'empty untouched', in: '', want: null },
+    ];
+    for (const c of cases) {
+      assert.strictEqual(relay.relocateRetiredHiveURL(c.in), c.want, c.name);
+    }
+  } finally { teardown(relay); }
+});
+
+test('retired-domain: hubWsURL/hubPublicURL dial the successor host and warn exactly once per saved URL', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const warn = console.warn; const warned = []; console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    const saved = 'wss://hosted-kubestellar-hive-ojv6.hive.kubestellar.io/contribute';
+    assert.strictEqual(relay.hubWsURL(saved), 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/api/contribute/ws');
+    assert.strictEqual(relay.hubPublicURL(saved), 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute');
+    relay.hubWsURL(saved);
+    assert.strictEqual(warned.length, 1, `one warning per distinct saved URL, got ${warned.length}: ${warned.join(' | ')}`);
+    assert.ok(/retired/.test(warned[0]) && /contributor\.env/.test(warned[0]) && /contribute-setup/.test(warned[0]),
+      `the warning must say what moved, where the stale value lives and how to refresh it: ${warned[0]}`);
+    warned.length = 0;
+    relay.hubWsURL('wss://hosted-x.hive.hivecommons.dev/contribute');
+    assert.strictEqual(warned.length, 0, 'a current-domain URL must not warn');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('retired-domain: a stale HIVE_HUB in the environment connects to the successor host from the first dial', () => {
+  const warn = console.warn; console.warn = () => {};
+  const relay = loadRelay({ backend: 'claude', env: {
+    HIVE_HUB: 'wss://hosted-kubestellar-hive-ojv6.hive.kubestellar.io/contribute',
+    HIVE_REGISTRATION_TOKEN: 'tok',
+  } });
+  try {
+    const hub = relay.getHubs()[0];
+    assert.strictEqual(hub.url, 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/api/contribute/ws');
+    assert.strictEqual(hub.sourceURL, 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('tls-mismatch: the altname error is recognised by code or by message, nothing else is', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const cases = [
+      { name: 'node error code', err: Object.assign(new Error('x'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }), want: true },
+      { name: 'message only', err: new Error("Hostname/IP does not match certificate's altnames: Host: a.hive.kubestellar.io. is not in the cert's altnames: DNS:*.hive.hivecommons.dev"), want: true },
+      { name: 'message without apostrophe', err: new Error('does not match certificates altnames'), want: true },
+      { name: 'ECONNREFUSED', err: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }), want: false },
+      { name: 'expired cert', err: Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' }), want: false },
+      { name: 'unexpected response', err: new Error('Unexpected server response: 502'), want: false },
+      { name: 'null', err: null, want: false },
+    ];
+    for (const c of cases) assert.strictEqual(relay.isTLSHostMismatchError(c.err), c.want, c.name);
+  } finally { teardown(relay); }
+});
+
+test('tls-mismatch: hub registry lookup is only for hosted hives, and resolves by id or vanity label to a different host', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    assert.strictEqual(relay.hubRegistryURLFor('wss://hosted-x.hive.hivecommons.dev/contribute'), 'https://hive.hivecommons.dev/api/registry');
+    assert.strictEqual(relay.hubRegistryURLFor('wss://hive.example.org/contribute'), null, 'a standalone hive has no hub to ask');
+    assert.strictEqual(relay.hubRegistryURLFor('wss://hosted-x.hive.kubestellar.io/contribute'), null, 'the retired apex is not a hub we dial');
+    assert.strictEqual(relay.hubRegistryURLFor('garbage'), null);
+
+    const registry = { hives: [
+      { id: 'hosted-available-oke-11-placeholder-r05x', dashboardUrl: 'https://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev' },
+      { id: 'hosted-other', dashboardUrl: 'https://hosted-plain.relay.example' },
+      { id: 'hosted-plain', dashboardUrl: 'https://hosted-plain.hive.hivecommons.dev' },
+      { id: 'hosted-clear', dashboardUrl: 'http://hosted-clear.hive.hivecommons.dev' },
+      { id: 'hosted-lookalike', dashboardUrl: 'https://hosted-lookalike.hive.hivecommons.dev.relay.example' },
+      { id: 'bad', dashboardUrl: 'not a url' },
+      null, 'junk',
+    ] };
+    const cases = [
+      { name: 'by id', url: 'wss://hosted-plain.hive.example/contribute', want: 'wss://hosted-plain.hive.hivecommons.dev/contribute' },
+      { name: 'by vanity label', url: 'wss://hosted-kubestellar-hive-ojv6.old.example/contribute', want: 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute' },
+      { name: 'same host already — no identical retry', url: 'wss://hosted-plain.hive.hivecommons.dev/contribute', want: null },
+      { name: 'unknown hive', url: 'wss://hosted-nope.hive.example/contribute', want: null },
+      { name: 'entry outside the hub spoke domain is not followed', url: 'wss://hosted-other.hive.example/contribute', want: null },
+      { name: 'plain-http entry is not followed', url: 'wss://hosted-clear.hive.example/contribute', want: null },
+      { name: 'spoke-domain lookalike is not followed', url: 'wss://hosted-lookalike.hive.example/contribute', want: null },
+      { name: 'no registry', url: 'wss://hosted-plain.hive.example/contribute', registry: null, want: null },
+      { name: 'registry without hives array', url: 'wss://hosted-plain.hive.example/contribute', registry: { hives: 'x' }, want: null },
+    ];
+    for (const c of cases) {
+      assert.strictEqual(relay.currentHiveURLFromRegistry(c.url, 'registry' in c ? c.registry : registry), c.want, c.name);
+    }
+  } finally { teardown(relay); }
+});
+
+// hubOnMismatch sets up a single hub whose saved URL survives relocation (a
+// hivecommons.dev host that the certificate nevertheless does not cover — the
+// shape the NEXT domain move would have) and returns the pieces the mismatch
+// tests drive.
+function hubOnMismatch(relay, url) {
+  const hub = relay.getHubs()[0];
+  hub.url = relay.hubWsURL(url);
+  hub.sourceURL = relay.hubPublicURL(url);
+  hub.reconnectDelay = 16000;
+  relay.__wsInstances.length = 0;
+  relay.connectHub(hub);
+  const ws = relay.__wsInstances[0];
+  assert.ok(ws, 'setup: connectHub must open a socket');
+  return { hub, ws };
+}
+
+const ALTNAME_ERR = Object.assign(
+  new Error("Hostname/IP does not match certificate's altnames: Host: hosted-x.hive.hivecommons.dev. is not in the cert's altnames: DNS:*.hive.example"),
+  { code: 'ERR_TLS_CERT_ALTNAME_INVALID' });
+
+test('tls-mismatch: a certificate that does not cover the host parks the hub — no reconnect timer, one remediation line', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  const logged = []; const errored = [];
+  console.log = (...a) => logged.push(a.join(' ')); console.error = (...a) => errored.push(a.join(' ')); console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    // Standalone hive: no hub to ask, so the relay has nothing better to try.
+    const { hub, ws } = hubOnMismatch(relay, 'wss://hive.example.org/contribute');
+    relay.__setRegistryFetch(() => { throw new Error('must not be consulted for a standalone hive'); });
+    const genBefore = hub.connectGeneration;
+
+    ws.emit('error', ALTNAME_ERR);
+    ws.emit('close', 1006, '');
+
+    assert.strictEqual(hub.tlsHostMismatch, true);
+    assert.strictEqual(hub.connectGeneration, genBefore, 'no redial of the same host');
+    assert.deepStrictEqual(scheduled, [], `no reconnect timer may be armed, got ${JSON.stringify(scheduled)}`);
+    const remediation = errored.filter(l => /saved URL is stale/.test(l));
+    assert.strictEqual(remediation.length, 1, `exactly one remediation line, got: ${errored.join(' | ')}`);
+    assert.ok(/contributor\.env/.test(remediation[0]) && /Not retrying/.test(remediation[0]) && /contribute-setup/.test(remediation[0]),
+      `the line must name the stale file, say it stopped, and say how to re-join: ${remediation[0]}`);
+    assert.ok(logged.some(l => /Not reconnecting/.test(l)), 'the close line must say why it is not reconnecting');
+    assert.ok(!logged.some(l => /Reconnecting in/.test(l)), 'the "Reconnecting in" line is exactly what looped before');
+
+    const status = JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+    assert.strictEqual(status.subscriptions[0].readiness, 'hive-moved', 'relay-status.json must surface the parked state');
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
+  }
+});
+
+test('tls-mismatch: a hosted hive is re-resolved through the hub registry and redialed at its current URL exactly once', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  const errored = [];
+  console.log = () => {}; console.error = (...a) => errored.push(a.join(' ')); console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    const { hub, ws } = hubOnMismatch(relay, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+    const asked = [];
+    relay.__setRegistryFetch((url, cb) => {
+      asked.push(url);
+      // Synchronous callback: the test needs no timer and no network.
+      cb({ hives: [{ id: 'hosted-x', dashboardUrl: 'https://hosted-x-moved.hive.hivecommons.dev' }] });
+    });
+    const genBefore = hub.connectGeneration;
+
+    ws.emit('error', ALTNAME_ERR);
+    ws.emit('close', 1006, '');
+
+    assert.deepStrictEqual(asked, ['https://hive.hivecommons.dev/api/registry']);
+    assert.strictEqual(hub.url, 'wss://hosted-x-moved.hive.hivecommons.dev/api/contribute/ws', 'the hub now dials the registry URL');
+    assert.strictEqual(hub.sourceURL, 'wss://hosted-x-moved.hive.hivecommons.dev/contribute');
+    assert.strictEqual(hub.relocatedFrom, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+    assert.strictEqual(hub.connectGeneration, genBefore + 1, 'exactly one redial');
+    assert.strictEqual(hub.tlsHostMismatch, false, 'the redial clears the parked flag so a success can authenticate');
+    assert.strictEqual(hub.reconnectDelay, 1000, 'backoff resets for the new host');
+    assert.deepStrictEqual(scheduled, [], 'the redial is immediate, not a backoff timer');
+    assert.ok(errored.some(l => /retrying there once/.test(l) && /hosted-x-moved/.test(l)), `the remediation names the resolved URL: ${errored.join(' | ')}`);
+    assert.strictEqual(relay.__wsInstances.length, 2, 'one socket for the stale host, one for the resolved one');
+
+    // The resolved host ALSO mismatching must not loop: one lookup per hub.
+    asked.length = 0; errored.length = 0;
+    const ws2 = relay.__wsInstances[1];
+    const genAfter = hub.connectGeneration;
+    ws2.emit('error', ALTNAME_ERR);
+    ws2.emit('close', 1006, '');
+    assert.deepStrictEqual(asked, [], 'the registry is asked at most once per hub');
+    assert.strictEqual(hub.connectGeneration, genAfter, 'no further redial');
+    assert.strictEqual(hub.tlsHostMismatch, true);
+    assert.deepStrictEqual(scheduled, []);
+    assert.ok(errored.some(l => /Not retrying/.test(l)));
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
+  }
+});
+
+test('tls-mismatch: a registry that does not know the hive (or is unreachable) parks the hub instead of guessing', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  console.log = () => {}; console.error = () => {}; console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    for (const body of [null, { hives: [] }, { hives: [{ id: 'other', dashboardUrl: 'https://other.hive.hivecommons.dev' }] }]) {
+      const { hub, ws } = hubOnMismatch(relay, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+      hub.relocationAttempted = false;
+      relay.__setRegistryFetch((url, cb) => cb(body));
+      const genBefore = hub.connectGeneration;
+      ws.emit('error', ALTNAME_ERR);
+      ws.emit('close', 1006, '');
+      assert.strictEqual(hub.connectGeneration, genBefore, `no redial for registry body ${JSON.stringify(body)}`);
+      assert.strictEqual(hub.tlsHostMismatch, true);
+      assert.deepStrictEqual(scheduled, []);
+    }
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
+  }
+});
+
+test('tls-mismatch: an ordinary error still reconnects with backoff — only the altname mismatch parks', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  console.log = () => {}; console.error = () => {}; console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    const { hub, ws } = hubOnMismatch(relay, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+    ws.emit('error', Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }));
+    ws.emit('close', 1006, '');
+    assert.strictEqual(hub.tlsHostMismatch, false);
+    assert.deepStrictEqual(scheduled, [16000], 'the usual reconnect timer is armed');
+    assert.strictEqual(hub.reconnectDelay, 32000, 'and backoff doubles as before');
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
+  }
 });

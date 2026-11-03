@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+An **earned reset** is a rate-limit reset already banked on the contributor's
+account, not a credit purchase. **Idempotent** means retrying the same
+redemption cannot consume another reset for that logical attempt.
+
 ## Context
 
 [#6833](https://github.com/hivecommons/hive/issues/6833) and

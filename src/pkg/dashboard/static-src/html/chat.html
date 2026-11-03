@@ -1,0 +1,43 @@
+<!-- Hive Chat FAB + Panel -->
+<button type="button" class="hive-chat-fab" id="hiveChatFab" title="Ask Hive" aria-label="Ask Hive chat assistant">💬</button>
+<div class="hive-chat-panel" id="hiveChatPanel">
+  <div class="hive-chat-resize" id="hiveChatResize"></div>
+  <div class="hive-chat-resize-width" id="hiveChatResizeWidth"></div>
+  <div class="hive-chat-header">
+    <span class="chat-title">🐝 Hive Chat</span>
+    <span class="hive-chat-presence" id="hiveChatPresence"><span class="hive-presence-dot"></span><span>local</span></span>
+    <div class="hive-chat-actions">
+      <button class="hive-chat-tool" id="hiveChatCheatToggle" title="Toggle cheat sheet">Hints</button>
+      <button class="hive-chat-tool" id="hiveChatDock" title="Dock to the right edge">Dock</button>
+      <button class="hive-chat-tool" id="hiveChatMax" title="Maximize chat">⛶</button>
+      <button class="hive-chat-close" id="hiveChatClose" title="Close">✕</button>
+    </div>
+  </div>
+  <div class="hive-chat-layout">
+    <aside class="hive-chat-cheatsheet" id="hiveChatCheatsheet" aria-label="Hive Chat examples"></aside>
+    <div class="hive-chat-main">
+      <div class="hive-chat-suggestions" id="hiveChatSuggestions" aria-label="Suggested Hive Chat prompts"></div>
+      <div class="hive-chat-messages" id="hiveChatMessages"></div>
+      <div class="hive-chat-autocomplete" id="hiveChatAutocomplete"></div>
+      <div class="hive-chat-input-row">
+        <textarea class="hive-chat-input" id="hiveChatInput" placeholder="Ask about agents, beads, PRs…" rows="1"></textarea>
+        <button class="hive-chat-send" id="hiveChatSend">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="hive-chat-shortcuts" id="hiveChatShortcuts" role="dialog" aria-modal="true" aria-label="Hive Chat shortcuts">
+  <div class="hive-chat-shortcut-card">
+    <h3>Hive Chat shortcuts</h3>
+    <dl>
+      <dt>⌘/Ctrl+K</dt><dd>Open and focus Hive Chat</dd>
+      <dt>?</dt><dd>Open this shortcut overlay</dd>
+      <dt>Esc</dt><dd>Close overlay or chat</dd>
+      <dt>Tab</dt><dd>Complete slash commands</dd>
+      <dt>↑ / ↓</dt><dd>Cycle command history while preserving your draft</dd>
+      <dt>/search text</dt><dd>Search the transcript</dd>
+      <dt>/history text</dt><dd>Search command history</dd>
+      <dt>/retry / /edit</dt><dd>Retry or edit the last prompt</dd>
+    </dl>
+  </div>
+</div>

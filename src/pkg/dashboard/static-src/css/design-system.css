@@ -1,0 +1,165 @@
+    /* ── Compact agent cards (#1533) ── */
+    .agent-card .agent-card-details { transition: max-height 200ms ease, opacity 200ms ease; overflow-y: auto; overflow-x: hidden; resize: vertical; min-height: 12rem; max-height: 70vh; padding-right: var(--sp-2); }
+    .agent-card.compact .agent-card-details { max-height: 0 !important; min-height: 0 !important; resize: none; opacity: 0; pointer-events: none; }
+    .agent-card .compact-toggle {
+      background: none; border: none; cursor: pointer; font-size: 0.7rem;
+      color: var(--muted); padding: var(--sp-1) var(--sp-3); margin-left: var(--sp-3); border-radius: var(--r-sm);
+    }
+    .agent-card .compact-toggle:hover { background: rgba(255,255,255,0.06); }
+    #kb-graph-container:fullscreen { width: 100vw; height: 100vh; border: none; border-radius: 0; }
+
+    /* Legacy button hooks now carry .hv-btn plus a shared variant in markup.
+       Keep only layout/status aliases here so components.css owns color, size,
+       focus-visible, hover, and disabled states. */
+    .gh-app-install-banner .gh-app-btn { text-decoration: none; white-space: nowrap; }
+    .btn, .btn-sm, .btn-add, .btn-toggle, .layout-toggle, .widget-dl,
+    .terminal-link, .restart-btn, .hive-dialog-btn, .kb-layer-btn,
+    .nous-btn, .nous-config-btn { text-decoration: none; }
+    .layout-toggle { flex: none; }
+    .kb-layer-btn { justify-content: space-between; width: 100%; }
+    .terminal-link { display: inline-flex; }
+    /* Inert chip: an action that exists on the card but cannot work for this
+       agent (see sessionChip). Keeps the chip's shape so the row does not
+       reflow, drops the affordance so it does not read as clickable. */
+    .terminal-link.inert { opacity: var(--opacity-disabled); cursor: not-allowed; }
+    .layout-toggle.active { border-color: var(--brand); color: var(--brand); }
+    .btn-toggle.paused { border-color: var(--status-error); color: var(--status-error); }
+    .btn-toggle.on-demand { border-color: var(--status-info); color: var(--status-info); }
+    .btn-toggle.running { border-color: var(--status-ok); color: var(--status-ok); }
+    .btn-toggle.off { color: var(--text-muted); }
+    .kb-layer-btn.active { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+    /* icon-button variant — bare glyph buttons (.config-gear stays this) */
+    .config-gear, .oc-summary-follow-btn {
+      border: none; cursor: pointer; font-family: var(--font-ui);
+      transition: opacity 0.15s, background 0.15s;
+    }
+
+    /* ══ Chip/badge taxonomy (ADR-0018 A7) ══
+       Existing classes remain as thin aliases for test/JS hooks, but visuals
+       route through the four recipes: entity chips, status badges, action chips,
+       and count badges. Status color comes from --component-status/data-status. */
+    .status-badge, .pause-badge, .off-badge, .on-demand-badge,
+    .summary-age,
+    .model-chip, .token-model-chip, .repo-issue-pill, .repo-pr-pill,
+    .ind-tag, .kb-type-badge, .kb-layer-badge, .kb-src-type,
+    .nous-config-pill, .oc-nav-count {
+      align-items: center; border: 1px solid transparent; border-radius: var(--r-pill);
+      display: inline-flex; font-size: var(--fs-xs); font-weight: 600; gap: var(--sp-2);
+      line-height: 1.5; padding: 1px 8px; text-decoration: none; white-space: nowrap;
+    }
+    .model-chip, .token-model-chip, .repo-issue-pill, .repo-pr-pill,
+    .ind-tag, .kb-type-badge, .kb-layer-badge, .kb-src-type {
+      --component-status: var(--pill-c, var(--status-neutral));
+      background: color-mix(in srgb, var(--component-status) 12%, transparent);
+      border-color: color-mix(in srgb, var(--component-status) 40%, transparent);
+      color: var(--component-status);
+    }
+    .repo-pill-status.repo-issue-pill, .repo-pill-status.repo-pr-pill {
+      display: inline-block; text-align: center; min-width: 4.5rem; max-width: 100%;
+      padding: var(--sp-1) var(--sp-3); font-size: var(--fs-2xs); font-weight: 800; line-height: 1.2;
+      white-space: normal; overflow-wrap: anywhere;
+    }
+    .status-badge, .pause-badge, .off-badge, .on-demand-badge,
+    .summary-age {
+      --component-status: var(--pill-c, var(--status-neutral));
+      background: color-mix(in srgb, var(--component-status) 12%, transparent);
+      border-color: color-mix(in srgb, var(--component-status) 40%, transparent);
+      color: var(--component-status);
+    }
+    .status-badge[data-status="ok"], .pause-badge[data-status="ok"], .off-badge[data-status="ok"], .on-demand-badge[data-status="ok"], .summary-age[data-status="ok"] { --component-status: var(--status-ok); }
+    .status-badge[data-status="warn"], .pause-badge[data-status="warn"], .off-badge[data-status="warn"], .on-demand-badge[data-status="warn"], .summary-age[data-status="warn"] { --component-status: var(--status-warn); }
+    .status-badge[data-status="attention"], .pause-badge[data-status="attention"], .off-badge[data-status="attention"], .on-demand-badge[data-status="attention"], .summary-age[data-status="attention"] { --component-status: var(--status-attention); }
+    .status-badge[data-status="error"], .pause-badge[data-status="error"], .off-badge[data-status="error"], .on-demand-badge[data-status="error"], .summary-age[data-status="error"] { --component-status: var(--status-error); }
+    .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"] { --component-status: var(--status-info); }
+    .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"] { --component-status: var(--status-neutral); }
+    .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
+    /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero.
+       order:1 keeps the pill the last flex child so every row's pill shares one right edge: the
+       hover-revealed hide toggle (⊘) is appended after the pill on hideable rows and would otherwise
+       hold a 20px slot that nudges those pills left of Overview's, which is not hideable. */
+    .oc-nav-count { margin-left: auto; flex: none; order: 1; }
+    /* x/y pills (Overview, Governor) stay hidden until their feed has loaded. */
+    .oc-nav-count[hidden] { display: none; }
+    /* second Activity Monitor badge: items waiting on the operator, attention colour until zero. */
+    .oc-nav-count--waiting:not([data-zero]) + .oc-nav-count { margin-left: var(--sp-1); }
+    .oc-nav-count--waiting:not([data-zero]) { --component-status: var(--status-attention); background: color-mix(in srgb, var(--component-status) 16%, transparent); border-color: color-mix(in srgb, var(--component-status) 50%, transparent); color: var(--component-status); }
+    .oc-nav-count--waiting[data-zero] { display: none; }
+    /* pill size steps */
+    .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
+    .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
+    @media (max-width: 480px) {
+      .pause-badge { font-size: var(--fs-2xs); padding: 0 5px; margin-left: var(--sp-1); }
+    }
+    /* Keep complete model IDs and cadence states inside their cells. The
+       matrix wrapper supplies local horizontal scrolling on narrow screens. */
+    .gov-matrix .status-badge, .gov-matrix .model-chip, .gov-matrix .pause-badge,
+    .gov-matrix .off-badge, .gov-matrix .on-demand-badge, .gov-matrix .ind-tag {
+      max-width: calc(100% - var(--sp-2));
+      min-width: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      display: inline-block;
+    }
+    .gov-matrix td, .gov-matrix th { overflow: hidden; }
+
+    /* ══ Modal system (Phase 2) ══
+       One overlay recipe + one glassy panel recipe (hub identity), applied
+       by restyling the five existing overlay/panel patterns in place —
+       DOM untouched, z-indexes retained at each pattern's rule (they
+       encode stacking intent). The acmm JS-built overlay keeps its inline
+       styles until the Phase 4 template sweep. */
+    /* Scroll lock (#7250): the lock MUST be applied to the root element, not
+       just the body element. `html { overflow-x: hidden }` above makes the
+       root the viewport's scroll container, and the body's overflow only
+       propagates to the viewport while the root's overflow is `visible` — so a
+       body-only rule clips nothing and the dashboard keeps scrolling behind
+       the modal. This is why the #2766 and #4805 containment fixes did not
+       hold on tabs whose content fits the panel: with nothing to scroll in
+       .config-body, the wheel event chains straight to an unlocked root. */
+    html.modal-open, body.modal-open { overflow: hidden; }
+    .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
+      position: fixed; inset: 0;
+      background: var(--overlay-scrim);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+      display: flex; align-items: center; justify-content: center;
+      padding: var(--modal-gap); overflow: auto;
+      animation: config-fade-in 0.15s ease-out;
+    }
+    @media (prefers-reduced-transparency: reduce), (prefers-reduced-motion: reduce) {
+      .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts {
+        background: var(--modal-scrim-strong);
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+      }
+    }
+    /* Glass panel — hub recipe linear-gradient(#17212deb,#0c1219eb) +
+       border #ffffff1a, expressed in tokens so the light-mode remap
+       (panel-strong #eef1f5 → white, near-black text border) just works. */
+    .gh-auth-modal, .gh-setup-modal, .config-modal, .hive-dialog, .nous-config-dialog, .acmm-dialog {
+      background: linear-gradient(
+        color-mix(in srgb, var(--panel-strong) 92%, transparent),
+        color-mix(in srgb, var(--bg-soft) 92%, transparent));
+      border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-modal);
+      max-height: calc(100vh - var(--modal-gap) - var(--modal-gap));
+      overflow: auto;
+    }
+    .config-modal, .feedback-modal, .nous-config-dialog { overflow: hidden; }
+    @media (max-width: 600px) {
+      /* .config-modal already goes fullscreen (incl. border-radius:0) in the
+         600px block above; the duplicate rule that used to live here was dead.
+         The Experiment Lab dialog goes fullscreen here too; its desktop
+         sizing and card layout live on the .nous-lab-dialog modifier. */
+      .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts { padding: var(--sp-0); }
+      .nous-config-dialog {
+        width: 100vw; max-width: 100vw;
+        height: 100vh; max-height: 100vh;
+        border-radius: 0;
+      }
+    }
+    /* Mobile sheet (ADR-0018 token-only): on phones / coarse pointers a
+       long-content .hive-dialog (one that carries a .modal-scroll body —
+       JS adds .modal-sheet via hiveModalSheetDecorate) becomes a
+       full-screen sheet: fixed title + ✕, the .modal-scroll body is the
+       only scroller, fixed footer with the primary action. dvh fixes the
+       iOS toolbar gap; safe-area insets keep the ✕ and footer tappable. */

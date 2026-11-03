@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -44,6 +44,7 @@ type Config struct {
 	Token          string
 	ChannelID      string
 	DashboardURL   string
+	PublicURL      string // user-facing dashboard origin; empty omits notification links
 	DashboardToken string
 	// AllowedUsers is the set of Discord user IDs permitted to issue commands.
 	// Empty = commands disabled (fail closed).
@@ -116,6 +117,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 	}
 	service := chat.NewService(backend, chat.Config{
 		DashboardURL:    cfg.DashboardURL,
+		PublicURL:       cfg.PublicURL,
 		DashboardToken:  cfg.DashboardToken,
 		AllowedUsers:    cfg.AllowedUsers,
 		PersonaStore:    cfg.PersonaStore,
@@ -159,6 +161,22 @@ func (b *discordBackend) Name() string {
 }
 
 func (b *discordBackend) Send(content string) error {
+	return b.sendTo(b.channelID, content)
+}
+
+// SendMessageTo posts content to an arbitrary channel the bot token can
+// write to, bypassing the status channel and the drain queue. It works on a
+// Bot that was never started, so a feature that only needs to post (RFC
+// lifecycle notices, pkg/rfcnotify) can share the token without running the
+// command loops.
+func (b *Bot) SendMessageTo(channelID, content string) error {
+	if strings.TrimSpace(channelID) == "" {
+		return fmt.Errorf("discord send: channel id not configured")
+	}
+	return b.discordBackend.sendTo(channelID, content)
+}
+
+func (b *discordBackend) sendTo(channelID, content string) error {
 	content = logscrub.ScrubString(content)
 	payload := map[string]any{
 		"content":          content,
@@ -170,7 +188,7 @@ func (b *discordBackend) Send(content string) error {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, b.channelID)
+	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return err

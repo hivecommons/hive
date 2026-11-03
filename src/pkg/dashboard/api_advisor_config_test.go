@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -63,6 +64,28 @@ func TestAdvisorSettingsOwnerOnly(t *testing.T) {
 	}
 	if s.deps.Config.Agents["scanner"].Advisor != nil {
 		t.Error("a refused PUT must not change an agent override")
+	}
+}
+
+func TestAdvisorSettingsUnsetFleetEnabledReportsFalse(t *testing.T) {
+	s := newFullServer(t)
+	s.deps.Config.Advisor.Enabled = nil
+
+	rec := advisorSettingsRequest(t, s, http.MethodGet, "/api/config/advisor", "", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var raw struct {
+		Fleet map[string]any `json:"fleet"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if v, ok := raw.Fleet["enabled"]; !ok || v != false {
+		t.Errorf("unset fleet enabled must be reported as false, got %v (present=%v)", v, ok)
+	}
+	if s.deps.Config.Advisor.Enabled != nil {
+		t.Errorf("GET must not mutate the live config: %+v", s.deps.Config.Advisor)
 	}
 }
 
@@ -205,5 +228,83 @@ func TestAdvisorSettingsPersistsToHiveYAML(t *testing.T) {
 	}
 	if loaded.Advisor.Model != "persisted-model" || !loaded.Advisor.IsEnabled() {
 		t.Errorf("advisor block must be written to hive.yaml: %+v", loaded.Advisor)
+	}
+}
+
+// TestAdvisorSettingsFailedSaveLeavesLiveConfigUnchanged covers every advisor
+// PUT: when hive.yaml cannot be written the handler answers 500 and the live
+// config is rolled back, so the dashboard never claims an unsaved value is in
+// force (hivecommons/hive#13371).
+func TestAdvisorSettingsFailedSaveLeavesLiveConfigUnchanged(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"fleet", "/api/config/advisor", `{"enabled":true,"daily_budget_tokens":5000}`},
+		{"roles", "/api/config/advisor/roles", `{"model_roles":{"advisor":{"backend":"claude","model":"claude-haiku-4.5"}}}`},
+		{"agent", "/api/config/advisor/agent/scanner", `{"override":{"enabled":false,"max_consecutive_blocks":3}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newFullServer(t)
+			cfg := s.deps.Config
+			before := advisorSettingsSection(cfg)
+			beforeAgent := cfg.Agents["scanner"]
+			cfg.SourcePath = filepath.Join(t.TempDir(), "missing-dir", "hive.yaml")
+
+			rec := advisorSettingsRequest(t, s, http.MethodPut, tc.path, tc.body, true)
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "failed to save config; no change applied") {
+				t.Errorf("500 body must say no change was applied, got %s", rec.Body.String())
+			}
+
+			if cfg.Advisor.IsEnabled() != before.Fleet.IsEnabled() || cfg.Advisor.DailyBudgetTokens != before.Fleet.DailyBudgetTokens {
+				t.Errorf("failed save leaked into fleet block: before=%+v after=%+v", before.Fleet, cfg.Advisor)
+			}
+			if len(cfg.ModelRoles) != len(before.ModelRoles) {
+				t.Errorf("failed save leaked into model_roles: before=%+v after=%+v", before.ModelRoles, cfg.ModelRoles)
+			}
+			for name, role := range before.ModelRoles {
+				if cfg.ModelRoles[name] != role {
+					t.Errorf("model_roles[%q] changed: before=%+v after=%+v", name, role, cfg.ModelRoles[name])
+				}
+			}
+			if cfg.Agents["scanner"].Advisor != beforeAgent.Advisor {
+				t.Errorf("failed save leaked into agent override: before=%+v after=%+v", beforeAgent.Advisor, cfg.Agents["scanner"].Advisor)
+			}
+
+			after := decodeAdvisorSettings(t, advisorSettingsRequest(t, s, http.MethodGet, "/api/config/advisor", "", true))
+			if after.Fleet.IsEnabled() != before.Fleet.IsEnabled() || len(after.ModelRoles) != len(before.ModelRoles) {
+				t.Errorf("GET after failed save differs: before=%+v after=%+v", before, after)
+			}
+		})
+	}
+}
+
+func TestRestoreAgentAdvisor(t *testing.T) {
+	old := &config.AdvisorOverride{MaxConsecutiveBlocks: intPtr(2)}
+	tests := []struct {
+		name       string
+		agents     map[string]config.AgentConfig
+		wantExists bool
+	}{
+		{"existing agent gets old advisor back", map[string]config.AgentConfig{"scanner": {Backend: "claude", Advisor: &config.AdvisorOverride{}}}, true},
+		{"agent deleted during save is not recreated", map[string]config.AgentConfig{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: tc.agents}}
+			restoreAgentAdvisor(cfg, "scanner", old)
+			got, ok := cfg.Agents["scanner"]
+			if ok != tc.wantExists {
+				t.Fatalf("agent exists = %v, want %v (%+v)", ok, tc.wantExists, got)
+			}
+			if ok && (got.Advisor != old || got.Backend != "claude") {
+				t.Errorf("rollback must restore only Advisor: %+v", got)
+			}
+		})
 	}
 }

@@ -157,6 +157,31 @@ func TestSpekActivityEventArtifactMissing(t *testing.T) {
 	}
 }
 
+func TestDashboardDurationFormattersRemainDistinct(t *testing.T) {
+	tests := []struct {
+		duration time.Duration
+		activity string
+		train    string
+	}{
+		{0, "0s", "0s"},
+		{45 * time.Second, "45s", "45s"},
+		{12 * time.Minute, "12m", "12m"},
+		{time.Hour, "1h 0m", "1h"},
+		{time.Hour + 5*time.Minute, "1h 5m", "1h 05m"},
+		{1600 * time.Millisecond, "1s", "2s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.duration.String(), func(t *testing.T) {
+			if got := shortDuration(int64(tt.duration / time.Second)); got != tt.activity {
+				t.Errorf("activity duration = %q, want %q", got, tt.activity)
+			}
+			if got := mergeTrainShortDuration(tt.duration); got != tt.train {
+				t.Errorf("merge train duration = %q, want %q", got, tt.train)
+			}
+		})
+	}
+}
+
 func TestNewestAgentOutputActivityRejectsSymlink(t *testing.T) {
 	base := time.Date(2026, 9, 26, 19, 14, 0, 0, time.UTC)
 	root, err := os.MkdirTemp(".", "run-activity-symlink-root-*")

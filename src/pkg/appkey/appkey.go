@@ -167,34 +167,69 @@ func (r *Resolver) WritePerAppIDKey(appID int64, pemData string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("app key for app_id %d is unusable: %w", appID, err)
 	}
-	if err := mkdirAll(r.DataDir, 0o700); err != nil {
-		return "", fmt.Errorf("create app key dir: %w", err)
+	if err := r.writeKeyAtomic(path, trimmed); err != nil {
+		return "", err
 	}
-	tmp, err := createTempKey(r.DataDir, "."+filepath.Base(path)+".tmp*")
+	return fp, nil
+}
+
+// WriteKeyFile persists an App private key to path with the same atomic
+// temp-file-then-rename discipline as WritePerAppIDKey, for callers that
+// already chose the destination (the heartbeat's primary-key delivery). The
+// rename replaces whatever is at path even when that file itself is not
+// writable by this process — the case on a root_squash NFS /data holding a
+// root-owned 0600 key from an older build, where a plain os.WriteFile fails
+// with EACCES on every beat. Returns the fingerprint of the written key.
+func (r *Resolver) WriteKeyFile(path, pemData string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("refusing to write app key to an empty path")
+	}
+	trimmed := strings.TrimSpace(pemData)
+	if !strings.HasPrefix(trimmed, "-----BEGIN") {
+		return "", fmt.Errorf("app key for %s is not PEM", path)
+	}
+	fp, err := config.AppKeyFingerprint(trimmed)
 	if err != nil {
-		return "", fmt.Errorf("create temp app key file: %w", err)
+		return "", fmt.Errorf("app key for %s is unusable: %w", path, err)
+	}
+	if err := r.writeKeyAtomic(path, trimmed); err != nil {
+		return "", err
+	}
+	return fp, nil
+}
+
+// writeKeyAtomic writes trimmed PEM to path via a 0600 temp file in the same
+// directory followed by rename, so a reader never observes a half-written key.
+func (r *Resolver) writeKeyAtomic(path, trimmed string) error {
+	dir := filepath.Dir(path)
+	if err := mkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create app key dir: %w", err)
+	}
+	tmp, err := createTempKey(dir, "."+filepath.Base(path)+".tmp*")
+	if err != nil {
+		return fmt.Errorf("create temp app key file: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = removeFile(tmpName) }() // no-op once the rename below succeeds
 	if err := tmp.Chmod(r.FileMode); err != nil {
 		_ = tmp.Close() // best-effort cleanup; the chmod error is what's returned
-		return "", fmt.Errorf("chmod temp app key file: %w", err)
+		return fmt.Errorf("chmod temp app key file: %w", err)
 	}
 	if _, err := tmp.WriteString(trimmed + "\n"); err != nil {
 		_ = tmp.Close() // best-effort cleanup; the write error is what's returned
-		return "", fmt.Errorf("write temp app key file: %w", err)
+		return fmt.Errorf("write temp app key file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close() // best-effort cleanup; the sync error is what's returned
-		return "", fmt.Errorf("sync temp app key file: %w", err)
+		return fmt.Errorf("sync temp app key file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("close temp app key file: %w", err)
+		return fmt.Errorf("close temp app key file: %w", err)
 	}
 	if err := renameFile(tmpName, path); err != nil {
-		return "", fmt.Errorf("rename app key into place: %w", err)
+		return fmt.Errorf("rename app key into place: %w", err)
 	}
-	return fp, nil
+	return nil
 }
 
 // resolveAppKeyFile picks which App private key this process will actually sign

@@ -3,24 +3,26 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
 func TestBuildAgentsIncludesReplicaMetadataAndBaseCadence(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":   {ID: "scanner", Enabled: true, Replicas: 2, ReplicaIndex: 1, ReplicaCount: 2},
-			"scanner-2": {ID: "scanner-2", Enabled: true, ReplicaOf: "scanner", ReplicaIndex: 2, ReplicaCount: 2},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":   {ID: "scanner", Enabled: true, Replicas: 2, ReplicaIndex: 1, ReplicaCount: 2},
+				"scanner-2": {ID: "scanner-2", Enabled: true, ReplicaOf: "scanner", ReplicaIndex: 2, ReplicaCount: 2},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle": {Cadences: map[string]config.Cadence{"scanner": "10m"}},
 		}},
 	}
-	statuses := map[string]*agent.AgentProcess{
-		"scanner":   {Name: "scanner", ID: "scanner", Config: cfg.Agents["scanner"], State: agent.StateRunning},
-		"scanner-2": {Name: "scanner-2", ID: "scanner-2", Config: cfg.Agents["scanner-2"], State: agent.StateRunning},
+	statuses := map[string]*crux.Process{
+		"scanner":   {Name: "scanner", ID: "scanner", Config: cfg.Agents["scanner"], State: crux.StateRunning},
+		"scanner-2": {Name: "scanner-2", ID: "scanner-2", Config: cfg.Agents["scanner-2"], State: crux.StateRunning},
 	}
 	agents := buildAgents(statuses, cfg, governor.State{Mode: governor.ModeIdle})
 	var replica *FrontendAgent

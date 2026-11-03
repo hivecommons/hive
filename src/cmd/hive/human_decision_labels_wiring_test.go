@@ -9,15 +9,19 @@ package main
 // label must not stop the remaining holds from being applied.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport/slogfeed"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -214,5 +218,47 @@ func TestApplyHumanDecisionLabels_MissingRepoLabelIsLoggedAndSkipped(t *testing.
 
 	if got := h.appliedPRs(); len(got) != 0 {
 		t.Fatalf("undefined label must not be applied, got calls for %v", got)
+	}
+}
+
+// More than five distinct holds used to feed the same WARN into the fleet
+// tracker, even after per-PR warning deduplication was added (#13689).
+func TestApplyHumanDecisionLabels_MissingLabelsDoNotFeedSelfReports(t *testing.T) {
+	humanLabelWarn.retain(nil)
+	t.Cleanup(func() { humanLabelWarn.retain(nil) })
+	var logs bytes.Buffer
+	observed := 0
+	logger := slog.New(slogfeed.NewWithObserver(
+		slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		func(_, _, _, _ string) { observed++ },
+	))
+	missing := newHumanLabelServer(t, "")
+	client := github.NewClientForTest(missing.srv.URL, "acme", []string{"widget"}, restoreTestLogger())
+	cfg := humanLabelConfig("queue-triage")
+	plan := humanHoldPlan(1, 2, 3, 4, 5, 6)
+	for i := 0; i < 2; i++ {
+		applyHumanDecisionLabels(context.Background(), cfg, client, nil, plan, logger)
+	}
+	if observed != 0 {
+		t.Fatalf("missing optional labels fed %d fleet observations: %s", observed, &logs)
+	}
+	if strings.Count(logs.String(), "level=INFO") != 6 || strings.Count(logs.String(), "level=DEBUG") != 6 {
+		t.Fatalf("want one notice per PR followed by debug repeats: %s", &logs)
+	}
+	if !strings.Contains(logs.String(), "review marker still stands") || len(missing.appliedPRs()) != 0 {
+		t.Fatalf("missing labels must preserve the marker and skip writes: %s", &logs)
+	}
+
+	// A real failure after a missing-label notice must still warn for the
+	// same PR; the informational condition must not consume its warning.
+	failing := newHumanLabelServer(t, "queue-triage")
+	failing.fail[1] = true
+	client = github.NewClientForTest(failing.srv.URL, "acme", []string{"widget"}, restoreTestLogger())
+	logs.Reset()
+	for i := 0; i < 2; i++ {
+		applyHumanDecisionLabels(context.Background(), cfg, client, nil, humanHoldPlan(1), logger)
+	}
+	if observed != 1 || strings.Count(logs.String(), "level=WARN") != 1 || strings.Count(logs.String(), "level=DEBUG") != 1 {
+		t.Fatalf("real API failure must warn once and feed self-reporting: observations=%d logs=%s", observed, &logs)
 	}
 }

@@ -54,7 +54,7 @@ func TestApplyPackKeepsOperatorModeOnNonPackAgent(t *testing.T) {
 		t.Fatalf("ApplyPack(5): %v", err)
 	}
 
-	_, canOpenPR, _, ok := srv.deps.AgentMgr.AgentCapabilities(nonPackAgentName)
+	_, canOpenPR, _, ok := agentManager(srv.deps.AgentMgr).AgentCapabilities(nonPackAgentName)
 	if !ok {
 		t.Fatal("librarian missing from the manager after ApplyPack")
 	}
@@ -71,7 +71,7 @@ func TestApplyPackKeepsOperatorModeOnNonPackAgent(t *testing.T) {
 
 	// Unchanged contract for PACK agents: their mode is still re-derived from
 	// the level, so a stale lower-level mode does not stick.
-	_, scannerCanOpenPR, _, ok := srv.deps.AgentMgr.AgentCapabilities("scanner")
+	_, scannerCanOpenPR, _, ok := agentManager(srv.deps.AgentMgr).AgentCapabilities("scanner")
 	if !ok {
 		t.Fatal("scanner missing from the manager after ApplyPack")
 	}
@@ -99,7 +99,7 @@ func TestSetLevelKeepsOperatorModeOnNonPackAgent(t *testing.T) {
 	if got := srv.deps.Config.Agents[nonPackAgentName].Mode; got != "ADVISORY" {
 		t.Errorf("persisted librarian Mode after level change = %q, want ADVISORY (#7503)", got)
 	}
-	_, canOpenPR, _, ok := srv.deps.AgentMgr.AgentCapabilities(nonPackAgentName)
+	_, canOpenPR, _, ok := agentManager(srv.deps.AgentMgr).AgentCapabilities(nonPackAgentName)
 	if !ok {
 		t.Fatal("librarian missing from the manager after level change")
 	}

@@ -1,1 +1,0 @@
-- Fixed pull-only cluster health so spokes with configured cluster IDs reported node stats through heartbeats and awaiting-heartbeat clusters rendered as informational instead of errors (#10559)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
 )
 
 // metricsEnabled reports whether the /metrics Prometheus endpoint is turned on.
@@ -62,7 +63,14 @@ func metricsToken() string {
 //	hive_pr_followup_skipped_total{hive_id,reason}         — PRs entering a skipped state (draft, fork, escalated)
 //	hive_pr_followup_deferred_total{hive_id}               — routing attempts deferred on a busy session
 //	hive_pr_followup_handoffs_total{hive_id,state}         — human-feedback handoffs queued / delivered
+//	hive_trajectory_reviews_total{hive_id,decision}        — trajectory lane decisions: reviewed / skipped
+//	hive_trajectory_skipped_total{hive_id,reason}          — trajectory reviews skipped, by reason
+//	hive_trajectory_ran_total{hive_id,reason}              — trajectory reviews that ran, by reason
 //	hive_pr_followup_pointers_pruned_total{hive_id,reason} — pointers deleted by the sweep
+//	hive_stage_derivations_total{hive_id,kind,stage}       — central stage engine derivations (ADR-0025)
+//	hive_stage_transition_anomaly_total{hive_id,kind,from,to}    — transitions the admission table rejected
+//	hive_stage_writer_writes_total{hive_id,kind,op}        — label writes by the single StageWriter
+//	hive_stage_duplicate_pills_healed_total{hive_id,kind}  — duplicate stage pills the writer removed
 //
 // The hive_pr_followup_* series (#9583) appear only once the PR follow-up
 // resume feature has written its counter file.
@@ -165,7 +173,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if verifier, err := s.reviewEvidenceVerifier(); err == nil {
+		writeIssueReopenMetrics(&b, hiveID, verifier)
+	}
 	writePRFollowUpMetrics(&b, hiveID, writeHeader)
+	writeTrajectoryMetrics(&b, hiveID, writeHeader)
+	writeStageEngineMetrics(&b, hiveID, writeHeader, stageengine.DefaultCounters())
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))

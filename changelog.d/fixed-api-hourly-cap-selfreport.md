@@ -1,0 +1,1 @@
+- Agent GitHub API hourly cap now warns once per agent per window instead of on every rejected request (#14118)

@@ -215,6 +215,7 @@ jobs:
       ( github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch' ) &&
       github.event.workflow_run.head_branch == github.ref_name )
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       release: ${{ steps.derive.outputs.release }}
       version: ${{ steps.derive.outputs.version }}
@@ -350,6 +351,7 @@ jobs:
     needs: decide
     if: needs.decide.outputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       proceed: ${{ steps.tip.outputs.proceed }}
       hold_sha: ${{ steps.tip.outputs.hold_sha }}
@@ -397,6 +399,7 @@ jobs:
     needs: [decide, precheck]
     if: needs.decide.outputs.release == 'true' && needs.precheck.outputs.proceed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     # Job-level permissions replace the workflow defaults. Repeat the release
     # job's existing scopes and add statuses:write for the gate/hold statuses
     # plus issues:write to remove the short-lived Tide hold labels (#5356/#10863).
@@ -452,7 +455,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -555,7 +558,7 @@ jobs:
 
       - name: Log in to GHCR as the cross-org publisher
         if: steps.crosspat.outputs.available == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1281,6 +1284,7 @@ jobs:
     needs: [precheck, release]
     if: ${{ always() && needs.precheck.outputs.hold_sha != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       statuses: write
       issues: write

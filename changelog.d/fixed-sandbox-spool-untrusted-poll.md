@@ -1,0 +1,1 @@
+- The review-request watcher no longer polls at its short cadence indefinitely when the sandbox review manifest directory is untrusted (#14993).

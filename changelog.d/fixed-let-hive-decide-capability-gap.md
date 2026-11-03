@@ -1,0 +1,1 @@
+- "Let hive decide" no longer un-parks an item whose blocker is a missing GitHub App permission (such as `workflows`); it recommends granting the permission and keeps the item parked, so the needs-human is not re-applied in a loop (#15099).

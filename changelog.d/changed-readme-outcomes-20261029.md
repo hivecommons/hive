@@ -1,0 +1,1 @@
+- Refresh the README around trust, productivity, efficiency, governance and auditability, with sourced charts and supported work tools. Benchmark regeneration no longer rewrites the root README; redraw its graphics with `node docs/readme/render-charts.mjs`.

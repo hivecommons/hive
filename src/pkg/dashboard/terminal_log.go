@@ -46,7 +46,13 @@ func (s *Server) handleAgentFullLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log = prepareFullLog(log, r.URL.Query().Get("explain"))
+	explain := r.URL.Query().Get("explain")
+	log = prepareFullLog(log, explain)
+	// The explain-only view is a line selection, not the log, so it carries no
+	// header; every other view leads with the same framing as the archive.
+	if explain != "only" {
+		log = redactTokens(s.deps.AgentMgr.FullLogHeader(name)) + log
+	}
 
 	// text/plain so browsers render it as selectable, searchable text (Cmd/Ctrl-F
 	// works, Select-All copies cleanly) rather than trying to interpret it.

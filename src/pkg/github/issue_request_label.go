@@ -1,8 +1,14 @@
 package github
 
 import (
+	"context"
+	"fmt"
 	"sort"
 	"strings"
+	"time"
+
+	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The standalone `label` relay operation (hivecommons/hive#9587).
@@ -29,23 +35,54 @@ var reservedExactLabels = []string{
 	// Human decisions and workflow gates.
 	HumanAckLabel,        // approved-direction: a person endorsed the direction
 	"design-approved",    // config.DefaultDesignApprovedLabel
-	"needs-human",        // escalation to a person
-	"needs-decision",     // blocked on a human decision
+	"needs-human",        // escalation to a person; agents may ADD it (agentMayAddLabel), never remove it
+	"needs-decision",     // retired park label (hivecommons/hive#12683); never written again
+	"needs-direction",    // retired park label (hivecommons/hive#12683); never written again
 	"blocked",            // workflow skip marker
 	AutoMergeQueuedLabel, // lgtm: queues the merge
+	// Hive-managed verification state that no longer lives under hive/
+	// since the 🐝 spelling (#11888); it follows open-PR evidence.
+	CoveredByPRLabel,
 }
 
 // reservedLabelPrefixes are namespaces owned by the hive itself: claim
 // ownership (`hive/claimed-by-<agent>`), the PR-claim bookkeeping labels and
 // most verification state labels are written by hive code paths that read
-// them back as fact.
-var reservedLabelPrefixes = []string{"hive/"}
+// them back as fact, and the `stage/*` family the reconcilers compute.
+var reservedLabelPrefixes = []string{"hive/", stagelabels.Prefix}
 
 // agentRecordableHiveStateLabels are the narrow exceptions agents may add
 // because hive explicitly asks for them as the agent's audited verdict. The
 // relay still refuses removing them and refuses every other hive/* label.
 var agentRecordableHiveStateLabels = []string{
 	VerifiedOpenLabel,
+}
+
+// agentMayAddLabel reports whether an agent may ADD label through the relay
+// even though it is reserved: the recordable hive-state verdicts, the
+// hive's configured needs-decision label (`stage/045-needs-decision` by
+// default, the issue parking bay), the PR-only `stage/085-needs-decision`,
+// and `needs-human`. Parking an item on a maintainer decision is
+// ADR-0019's escalation move (it replaced the retired `needs-direction` and
+// `needs-decision` labels, hivecommons/hive#12683); the issue-request watcher
+// further downgrades Hive-authored non-risk engineering parks under
+// project.agent_issue_decision_policy=resolve. Handing an item to a person
+// with `needs-human` is the same move for work a human must do or consent to.
+// In both cases the agent gives up work; it never decides its own merge.
+// Removing either label — the un-park — stays with people: a maintainer's
+// `/hive approve` / `/hive decision` for the decision label, a person's hand
+// for `needs-human`. The relay does not know whether the target is an issue or
+// a PR, so both parking stages pass; the stage reconcilers then clamp the label
+// to the item's kind (an issue handed 085 is re-staged to 045, a PR handed 045
+// is re-staged to 085).
+func (c *Client) agentMayAddLabel(label string) bool {
+	if agentRecordableHiveStateLabel(label) {
+		return true
+	}
+	name := strings.TrimSpace(label)
+	return strings.EqualFold(name, c.needsDecisionLabel()) ||
+		strings.EqualFold(name, PRNeedsDecisionStageLabel) ||
+		strings.EqualFold(name, issueNeedsHumanLabel)
 }
 
 // reservedLabelForAgents reports whether label is refused to the label relay.
@@ -127,7 +164,7 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 	var bad []string
 	seen := map[string]bool{}
 	for _, label := range add {
-		if agentRecordableHiveStateLabel(label) {
+		if c.agentMayAddLabel(label) {
 			continue
 		}
 		if !reservedLabelForAgents(label, autoMerge) {
@@ -155,7 +192,184 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 		return "", false
 	}
 	sort.Strings(bad)
+	if hint := verifiedOpenResendHint(add, remove, bad); hint != "" {
+		return "label request names hive-controlled label(s) " + strings.Join(bad, ", ") + ": " + hint, true
+	}
 	return "label request names hive-controlled label(s) " + strings.Join(bad, ", ") +
 		": these drive hive automation or record a human decision and cannot be set by an agent. " +
-		"Use the claim relay for ownership, and ask a maintainer for merge, hold and decision labels.", true
+		"Use the claim relay for ownership, and ask a maintainer for merge, hold and decision labels. " +
+		"To park an issue for the owner, comment the step with `hive-open-issue comment --needs-decision`.", true
+}
+
+// verifiedOpenResendHint returns a usable next step when the only refused part
+// of a request is removing hive/likely-done or hive/covered-by-pr alongside an
+// add of hive/verified-open. The request is still refused as a whole. Hive
+// manages both labels itself (likely-done is dropped once hive/verified-open is
+// present; covered-by-pr follows open-PR evidence), so the agent should resend
+// just the add.
+func verifiedOpenResendHint(add, remove, bad []string) string {
+	addsVerified := false
+	for _, label := range add {
+		if strings.EqualFold(strings.TrimSpace(label), VerifiedOpenLabel) {
+			addsVerified = true
+			break
+		}
+	}
+	if !addsVerified {
+		return ""
+	}
+	for _, label := range bad {
+		name := strings.ToLower(label)
+		if name != LikelyDoneLabel && !strings.EqualFold(name, CoveredByPRLabel) {
+			return ""
+		}
+		for _, a := range add {
+			if strings.EqualFold(strings.TrimSpace(a), label) {
+				return ""
+			}
+		}
+		removed := false
+		for _, r := range remove {
+			if strings.EqualFold(strings.TrimSpace(r), label) {
+				removed = true
+				break
+			}
+		}
+		if !removed {
+			return ""
+		}
+	}
+	return "nothing in this request was applied. Hive manages these labels itself, so do not remove them: " +
+		strings.Join(bad, ", ") + ". Resend a label request that adds only " + VerifiedOpenLabel + "."
+}
+
+// reparkDecisionRefusal returns the refusal reason, and true, when a label
+// request would re-park an issue on a maintainer decision that a maintainer
+// has already given (hivecommons/hive#12680 / #12681, 2026-10-17: the owner
+// replied `/hive decision … Agents stand down`, the sweep applied
+// `approved-direction`, and a contributor agent then read that decision and
+// re-parked the issue asking for one). The park is suppressed when the issue
+// carries `approved-direction` AND the hive's own un-park reply
+// (`<!-- hive:unpark-reply:… id=… -->`) is on the timeline with no newer,
+// different `/hive decision` after it — that is, the decision is unchanged.
+// A newer `/hive decision` with new text means direction is changing; the
+// un-park sweep answers it, so the park is allowed through. The reply tells
+// the agent what to do instead: follow the decision, or — when it reserves
+// the work for people — add `needs-human` and unclaim. A lookup failure is
+// returned so the caller retries rather than reading "unknown" as allowed.
+func (c *Client) reparkDecisionRefusal(ctx context.Context, repo string, number int, add []string) (string, bool, error) {
+	if number <= 0 || !containsDecisionParkLabel(add, c.needsDecisionLabel()) {
+		return "", false, nil
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return "", false, fmt.Errorf("checking issue park labels: %w", err)
+	}
+	labels := extractLabels(issue.Labels)
+	if !labelPresent(labels, HumanAckLabel) {
+		return "", false, nil
+	}
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		return "", false, err
+	}
+	decision, at, ok := c.lastRecordedUnparkDecision(comments)
+	if !ok {
+		return "", false, nil
+	}
+	if hasNewerDifferentDecisionCommand(comments, at, decision) {
+		return "", false, nil
+	}
+	return fmt.Sprintf("a maintainer already decided on %s#%d (recorded by Hive: %q) and `%s` is applied; "+
+		"re-parking it on `%s` asks for a decision that has been given. Follow the decision. "+
+		"If it reserves the work for people, add `%s` through this relay and `/unclaim` instead.",
+		repo, number, decision, HumanAckLabel, c.needsDecisionLabel(), issueNeedsHumanLabel), true, nil
+}
+
+func containsDecisionParkLabel(labels []string, configured string) bool {
+	for _, label := range labels {
+		name := strings.TrimSpace(label)
+		if name == "" || strings.EqualFold(name, issueNeedsHumanLabel) {
+			continue
+		}
+		if strings.EqualFold(name, strings.TrimSpace(configured)) {
+			return true
+		}
+		for _, parking := range issueParkingLabels {
+			if strings.EqualFold(name, parking) && !strings.EqualFold(parking, issueNeedsHumanLabel) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// verifyIssueParkLanded re-reads an issue after its Parked fact and returns an
+// error when it still wears a stage other than stage/045-needs-decision, so
+// the relay reports ok:false and retries instead of telling the agent the
+// item is parked when the stage write never reached GitHub
+// (hivecommons/hive#13069: `labels_added` named the park while the issue
+// stayed on stage/010-actionable). No stage at all is accepted: a hold or
+// likely-done issue legitimately derives none. Pull requests and closed
+// items are left to their own derivation.
+func (c *Client) verifyIssueParkLanded(ctx context.Context, repo string, number int, parkLabel string) error {
+	if c == nil || c.client == nil {
+		return ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("verifying park on %s#%d: %w", repo, number, err)
+	}
+	if issue.IsPullRequest() || strings.EqualFold(issue.GetState(), "closed") {
+		return nil
+	}
+	park := stagelabels.IssueNeedsDecision.Label()
+	for _, label := range stagelabels.StageLabels(extractLabels(issue.Labels)) {
+		if !strings.EqualFold(label, park) {
+			return fmt.Errorf("park not applied: %s#%d still carries %s after the %s park was submitted to the stage engine; the request will be retried",
+				repo, number, label, parkLabel)
+		}
+	}
+	return nil
+}
+
+// unparkDecisionLinePrefix is how the hive's accepted un-park reply records
+// the decision text (renderUnparkAcceptedReply).
+const unparkDecisionLinePrefix = "Decision: "
+
+// lastRecordedUnparkDecision reads the decision text out of the newest
+// un-park reply the hive itself posted.
+func (c *Client) lastRecordedUnparkDecision(comments []*gh.IssueComment) (decision string, at time.Time, ok bool) {
+	for i := len(comments) - 1; i >= 0; i-- {
+		cm := comments[i]
+		if cm == nil || !c.markerAuthorTrusted(cm.GetUser()) || !strings.Contains(cm.GetBody(), unparkReplyMarkerPrefix) {
+			continue
+		}
+		for _, line := range strings.Split(cm.GetBody(), "\n") {
+			if idx := strings.Index(line, unparkDecisionLinePrefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(unparkDecisionLinePrefix):]), cm.GetCreatedAt().Time, true
+			}
+		}
+	}
+	return "", time.Time{}, false
+}
+
+// hasNewerDifferentDecisionCommand reports whether a `/hive decision` whose
+// text differs from recorded was posted after the recorded reply.
+func hasNewerDifferentDecisionCommand(comments []*gh.IssueComment, after time.Time, recorded string) bool {
+	for _, cm := range comments {
+		if cm == nil || !cm.GetCreatedAt().Time.After(after) {
+			continue
+		}
+		cmd, ok := parseUnparkCommand(cm.GetBody())
+		if !ok || cmd.Kind != unparkCommandDecision {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(cmd.Decision), strings.TrimSpace(recorded)) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,0 +1,1 @@
+- stagelabels: Owned and Plan now match existing stage labels case-insensitively, consistent with Current (#13909)

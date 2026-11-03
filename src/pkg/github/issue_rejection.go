@@ -142,14 +142,71 @@ func foldBareBasenames(set map[string]bool) map[string]bool {
 	return out
 }
 
+// generatedArtefactDirs are path segments under which nothing is a finding's
+// subject: compiled bundles, coverage output and vendored dependencies. Every
+// coverage finding on a bundled GitHub Action cites `dist/index.js`, and every
+// one of them cites `coverage/lcov.info`, so sharing such a path says nothing
+// about sharing a root cause — one coverage tracker became the sink for 41
+// unrelated findings that way (cncf/prow-github-actions#466, #12733).
+//
+// `build/`, `out/` and `target/` are deliberately absent: in many repos
+// `build/` holds the build SCRIPTS (dakota's build/esp.sh), which are source.
+// Their generated contents are caught by generatedArtefactSuffixes instead.
+var generatedArtefactDirs = map[string]bool{
+	"dist": true, "node_modules": true, "vendor": true, "__pycache__": true,
+	".next": true, ".nuxt": true,
+}
+
+// generatedArtefactBasenames are output files by name, wherever they sit.
+var generatedArtefactBasenames = map[string]bool{
+	"lcov.info": true, "coverage.out": true, "coverage.xml": true,
+	"coverage.json": true, "coverage-final.json": true, "clover.xml": true,
+	"cobertura.xml": true, "junit.xml": true,
+	"package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
+	"Cargo.lock": true, "go.sum": true, "poetry.lock": true, "Gemfile.lock": true,
+	"composer.lock": true, "bun.lockb": true,
+}
+
+// generatedArtefactSuffixes are extensions only a build or a coverage run
+// writes.
+var generatedArtefactSuffixes = []string{".min.js", ".min.css", ".lcov", ".map", ".bundle.js", ".pb.go", ".pyc"}
+
+// isGeneratedArtefactRef reports whether a cited path is a build artefact or
+// generated output rather than a source file: anything under a
+// generatedArtefactDirs segment or a `coverage*` directory, a known coverage
+// or lock basename, or a generated extension. Such paths carry zero weight in
+// citation-based dedupe — the same posture as ubiquitousFileRefs, applied at
+// extraction so file-set equality, the component fold and the rejected-twin
+// gate all ignore them.
+func isGeneratedArtefactRef(p string) bool {
+	lower := strings.ToLower(p)
+	segments := strings.Split(lower, "/")
+	for _, seg := range segments[:len(segments)-1] {
+		if generatedArtefactDirs[seg] || strings.HasPrefix(seg, "coverage") {
+			return true
+		}
+	}
+	base := p[strings.LastIndex(p, "/")+1:]
+	if generatedArtefactBasenames[base] || strings.HasPrefix(strings.ToLower(base), "lcov") {
+		return true
+	}
+	for _, suf := range generatedArtefactSuffixes {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	return false
+}
+
 // issueFileRefSet extracts the normalized set of file paths a finding's text
-// references.
+// references. Generated artefacts (isGeneratedArtefactRef) are dropped: a
+// finding that cites only `dist/index.js` has no citation evidence at all.
 func issueFileRefSet(text string) map[string]bool {
 	text = urlPattern.ReplaceAllString(text, " ")
 	out := make(map[string]bool)
 	for _, tok := range fileRefTokenPattern.FindAllString(text, -1) {
 		tok = lineSuffixPattern.ReplaceAllString(tok, "")
-		if !looksLikeFileRef(tok) {
+		if !looksLikeFileRef(tok) || isGeneratedArtefactRef(tok) {
 			continue
 		}
 		out[tok] = true
@@ -174,15 +231,23 @@ func equalFileRefSets(a, b map[string]bool) bool {
 // findRejectedTwin returns a recently closed, maintainer-rejected, App-bot-
 // filed issue whose file-reference set exactly matches the pending request's,
 // or nil. An error means the lookup could not tell; the caller files anyway.
-func (c *Client) findRejectedTwin(ctx context.Context, owner, repo, title, body string) (*gh.Issue, error) {
-	botLogin := strings.TrimSpace(c.appBotLogin)
-	if botLogin == "" {
-		return nil, nil
-	}
+// ignore, when positive, is a closed issue number that never counts as the
+// twin (see CreateIssueRequest.IgnoreClosedTwin).
+func (c *Client) findRejectedTwin(ctx context.Context, owner, repo, title, body string, ignore int) (*gh.Issue, error) {
 	want := issueFileRefSet(title + "\n" + body)
 	if len(want) == 0 {
 		return nil, nil
 	}
+	for _, botLogin := range c.hiveBotLogins() {
+		twin, err := c.findRejectedTwinBy(ctx, owner, repo, botLogin, want, ignore)
+		if err != nil || twin != nil {
+			return twin, err
+		}
+	}
+	return nil, nil
+}
+
+func (c *Client) findRejectedTwinBy(ctx context.Context, owner, repo, botLogin string, want map[string]bool, ignore int) (*gh.Issue, error) {
 	cutoff := time.Now().Add(-issueRejectionWindow)
 	opts := &gh.IssueListByRepoOptions{
 		State:       "closed",
@@ -203,7 +268,7 @@ func (c *Client) findRejectedTwin(ctx context.Context, owner, repo, title, body 
 				// closed_at ≤ updated_at, so nothing further can qualify.
 				return nil, nil
 			}
-			if is.IsPullRequest() {
+			if is.IsPullRequest() || (ignore > 0 && is.GetNumber() == ignore) {
 				continue
 			}
 			if !rejectedStateReasons[is.GetStateReason()] {

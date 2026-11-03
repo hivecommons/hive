@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/persona"
 )
 
@@ -43,7 +43,7 @@ var aliases = map[string]string{
 	"k": "kick", "p": "pause", "r": "resume",
 	"sc": "scanner", "ar": "architect", "ou": "outreach",
 	"su": "supervisor", "ci": "ci-maintainer", "se": "sec-check",
-	"sg": "strategist", "te": "quality", "qa": "quality",
+	"sg": "strategist", "ex": "experimenter", "te": "quality", "qa": "quality",
 	"tm": "telemetry", "op": "operations",
 }
 
@@ -121,7 +121,10 @@ type CommandRefuser interface {
 }
 
 type Config struct {
-	DashboardURL      string
+	DashboardURL string
+	// PublicURL is the externally reachable dashboard origin used for
+	// user-facing "details" links. DashboardURL is loopback and never linked.
+	PublicURL         string
 	DashboardToken    string
 	AllowedUsers      []string
 	MessageLimit      int
@@ -145,6 +148,7 @@ type Service struct {
 	inbound           recentMessages
 	backend           Backend
 	dashboardURL      string
+	publicURL         string
 	dashboardToken    string
 	allowedUsers      map[string]allowedUser
 	allowedUsersMu    sync.RWMutex
@@ -172,6 +176,7 @@ type Service struct {
 	pendingTopic       string
 	topicTimer         *time.Timer
 	pendingInterviews  map[pendingInterviewKey]*pendingInterview
+	inceptionBuffers   map[string]*inceptionBuffer
 	pendingPersonas    map[pendingPersonaKey]*pendingPersonaSetup
 	pendingCheckpoints map[pendingCheckpointKey]*pendingCheckpoint
 	// expandedRuns and shownSummaries are the per-author, per-run marks the
@@ -211,6 +216,7 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 	return &Service{
 		backend:        backend,
 		dashboardURL:   cfg.DashboardURL,
+		publicURL:      cfg.PublicURL,
 		dashboardToken: cfg.DashboardToken,
 		allowedUsers:   allowed,
 		commands:       make(map[string]CommandHandler),

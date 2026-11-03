@@ -45,6 +45,17 @@ Only a bounded transcript tail is sent (default 120 lines, hard-capped at
 (default every 600 s, floored by the governor eval interval). A cheap reviewer
 model is appropriate — this is a divergence classifier, not a coding model.
 
+A review is **skipped** only when the agent manager's own state proves the
+agent idle (its last kicked turn has ended, or it is parked at the prompt
+waiting on CI), it has produced no output since its last review, and the review
+is not overdue (fewer than 6 intervals since the last review). Otherwise it
+runs. The transcript itself is never used as a skip signal: a stalled tail on an
+agent whose turn is still in progress is exactly what the reviewer should see
+(see [ADR-0009 addendum](adr/0009-trajectory-review.md)). Each skip is logged
+(`trajectory review skipped agent=… reason=idle-no-new-output`), counted in the
+Trajectory Review panel, and exported on `/metrics` as
+`hive_trajectory_reviews_total{decision}` / `hive_trajectory_skipped_total{reason}`.
+
 ## Configuration
 
 **Dashboard:** Governor Config → **Features** tab has a full **Trajectory Review**

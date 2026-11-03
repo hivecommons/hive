@@ -1,0 +1,1 @@
+- Sandbox publish preflight (`publish.verify`) reads its commands from config only; a `<!-- hive:publish.verify … -->` block found in a kick message is logged and ignored instead of run.

@@ -15,48 +15,110 @@ func redObs(number int, sha string, checks ...string) Observation {
 	}
 }
 
-// A check failing on this PR and on at least SharedFailureSiblings others is
-// fleet-wide breakage (the 2026-09-28 /mnt/gocache outage failed every Go job
-// on every PR). Counting it as a failed fix attempt is what escalated twelve
-// unrelated PRs to needs-human in one morning (hivecommons/hive#9473).
-func TestMarkSharedFailures_FlagsFleetWideChecks(t *testing.T) {
+func controlObs(number int, sha string, checks ...string) Observation {
+	o := redObs(number, sha, checks...)
+	o.IndependentControl = true
+	return o
+}
+
+// A shared failure needs independent evidence. One human-authored control
+// failing the same check is enough; requiring four agent PRs let a repo-wide
+// outage consume the first three PRs' fix budgets.
+func TestMarkSharedFailures_IndependentControlConfirmsFailure(t *testing.T) {
 	obs := []Observation{
-		redObs(1, "a", "build-and-test", "golangci-lint"),
-		redObs(2, "b", "build-and-test", "golangci-lint"),
-		redObs(3, "c", "build-and-test", "golangci-lint"),
-		redObs(4, "d", "build-and-test", "golangci-lint"),
-		redObs(5, "e", "build-and-test", "changelog-fragment-guard"),
+		redObs(1, "agent", "build-and-test"),
+		controlObs(2, "human", "build-and-test"),
 	}
+
 	MarkSharedFailures(obs)
 
-	for _, o := range obs[:4] {
-		if !o.Shared {
-			t.Errorf("PR %d: every failing check is fleet-wide, want Shared: %+v", o.Number, o)
-		}
-	}
-	// A mixed PR keeps its PR-local failure countable while recording the
-	// shared subset — #9258's changelog-fragment-guard was a real defect.
-	mixed := obs[4]
-	if mixed.Shared {
-		t.Errorf("PR 5 has a PR-local failure and must not read as wholly shared: %+v", mixed)
-	}
-	if len(mixed.SharedChecks) != 1 || mixed.SharedChecks[0] != "build-and-test" {
-		t.Errorf("PR 5 shared checks = %v, want [build-and-test]", mixed.SharedChecks)
+	if !obs[0].Shared {
+		t.Fatalf("agent PR was not held despite a red independent control: %+v", obs[0])
 	}
 }
 
-// Below the sibling threshold nothing is shared: three PRs failing the same
-// check is two OTHER PRs, not SharedFailureSiblings of them.
-func TestMarkSharedFailures_BelowThresholdIsLocal(t *testing.T) {
+// A mixed PR keeps its PR-local failure countable while recording the shared
+// subset — #9258's changelog-fragment-guard was a real defect.
+func TestMarkSharedFailures_MixedFailureKeepsLocalCheck(t *testing.T) {
+	obs := []Observation{
+		redObs(1, "agent", "build-and-test", "changelog-fragment-guard"),
+		controlObs(2, "human", "build-and-test"),
+	}
+
+	MarkSharedFailures(obs)
+
+	if obs[0].Shared {
+		t.Fatalf("PR-local failure was suppressed: %+v", obs[0])
+	}
+	if len(obs[0].SharedChecks) != 1 || obs[0].SharedChecks[0] != "build-and-test" {
+		t.Fatalf("shared checks = %v, want [build-and-test]", obs[0].SharedChecks)
+	}
+}
+
+// Agent PRs are not independent controls for one another. They may all carry
+// the same bad generated change.
+func TestMarkSharedFailures_AgentPRsAloneAreLocal(t *testing.T) {
 	obs := []Observation{
 		redObs(1, "a", "test"),
 		redObs(2, "b", "test"),
-		redObs(3, "c", "test"),
 	}
+
 	MarkSharedFailures(obs)
+
 	for _, o := range obs {
 		if o.Shared || len(o.SharedChecks) != 0 {
-			t.Errorf("PR %d must read as PR-local below the threshold: %+v", o.Number, o)
+			t.Errorf("PR %d used another agent PR as a control: %+v", o.Number, o)
+		}
+	}
+}
+
+// A green PR is direct counter-evidence to a repo-wide outage. Counting only
+// red PRs suppresses genuine PR-local failures whenever enough unrelated PRs
+// happen to fail the same check.
+func TestMarkSharedFailures_GreenPRDisprovesRepoWideFailure(t *testing.T) {
+	obs := []Observation{
+		redObs(1, "agent", "test"),
+		controlObs(2, "human", "test"),
+		{Repo: "org/repo", Number: 3, HeadSHA: "green"},
+	}
+
+	MarkSharedFailures(obs)
+
+	if obs[0].Shared || len(obs[0].SharedChecks) != 0 {
+		t.Errorf("agent PR read as shared despite a green PR: %+v", obs[0])
+	}
+}
+
+// Pending PRs provide no evidence about whether a failure is repository-wide.
+func TestMarkSharedFailures_PendingPRDoesNotDisproveFailure(t *testing.T) {
+	obs := []Observation{
+		redObs(1, "agent", "test"),
+		controlObs(2, "human", "test"),
+		{Repo: "org/repo", Number: 3, HeadSHA: "pending", Pending: true},
+	}
+
+	MarkSharedFailures(obs)
+
+	if !obs[0].Shared {
+		t.Errorf("pending PR incorrectly disproved shared failure: %+v", obs[0])
+	}
+}
+
+// Identically named checks in different repositories are independent. A
+// failure in one repository must never suppress escalation in another.
+func TestMarkSharedFailures_DoesNotCombineRepos(t *testing.T) {
+	otherRepo := controlObs(2, "human", "test")
+	otherRepo.Repo = "org/other"
+	obs := []Observation{
+		redObs(1, "agent", "test"),
+		otherRepo,
+	}
+
+	MarkSharedFailures(obs)
+
+	for _, o := range obs {
+		if o.Shared || len(o.SharedChecks) != 0 {
+			t.Errorf("%s#%d borrowed failures from another repository: %+v", o.Repo, o.Number, o)
 		}
 	}
 }
@@ -68,13 +130,10 @@ func TestSweep_SharedFailuresNeverAdvanceAttempts(t *testing.T) {
 	for i, sha := range []string{"a", "b", "c", "d"} {
 		obs := []Observation{
 			redObs(1, sha, "build-and-test"),
-			redObs(2, "s1", "build-and-test"),
-			redObs(3, "s2", "build-and-test"),
-			redObs(4, "s3", "build-and-test"),
-			redObs(5, "s4", "build-and-test"),
+			controlObs(2, "human", "build-and-test"),
 		}
 		MarkSharedFailures(obs)
-		r := s.Sweep(obs, DefaultThreshold)[Key("org/repo", 1)]
+		r := s.Sweep(obs[:1], DefaultThreshold)[Key("org/repo", 1)]
 		if r.NewlyEscala {
 			t.Fatalf("pass %d: shared breakage must never escalate: %+v", i+1, r)
 		}
@@ -139,18 +198,14 @@ func TestSweep_LabeledGreenPRIsUnparked(t *testing.T) {
 // the base branch and the runners recovered.
 func TestSweep_SharedIncidentRecoveryUnparks(t *testing.T) {
 	s := Load(filepath.Join(t.TempDir(), "ledger.json"))
-	siblings := func(check string) []Observation {
-		return []Observation{
-			redObs(2, "s1", check), redObs(3, "s2", check),
-			redObs(4, "s3", check), redObs(5, "s4", check),
-		}
-	}
 	// Escalate on a mixed head: one PR-local failure plus a shared one.
-	for i := 0; i < DefaultThreshold; i++ {
-		obs := append([]Observation{redObs(7, string(rune('a'+i)), "changelog-fragment-guard", "build-and-test")},
-			siblings("build-and-test")...)
+	for i := range DefaultThreshold {
+		obs := []Observation{
+			redObs(7, string(rune('a'+i)), "changelog-fragment-guard", "build-and-test"),
+			controlObs(8, "human", "build-and-test"),
+		}
 		MarkSharedFailures(obs)
-		s.Sweep(obs, DefaultThreshold)
+		s.Sweep(obs[:1], DefaultThreshold)
 	}
 	s.MarkEscalated("org/repo", 7)
 	s.MarkLabelApplied("org/repo", 7)

@@ -203,7 +203,7 @@ func (h *ContributeWSHub) actionableAgeMinutes() map[string]int {
 		disabledRepos = h.server.deps.Config.Hub.DisabledRepos
 	}
 	for _, repo := range status.Repos {
-		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
+		if config.RepoMatchesAny(repo.Full, repo.Name, disabledRepos) {
 			continue
 		}
 		for _, raw := range repo.ActionableIssues {

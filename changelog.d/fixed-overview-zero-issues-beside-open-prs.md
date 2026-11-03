@@ -1,0 +1,1 @@
+- Dashboard: a repo whose issue list came back empty beside open pull requests is no longer published as "0 issues · N PRs". The enumeration verifies the empty list against the repository record and serves the last-good enumeration or reports the missing issues as an unlisted, stale remainder; the Overview marks such repos "issues syncing" instead of printing a confident zero.

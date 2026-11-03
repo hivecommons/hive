@@ -1,0 +1,1 @@
+- The dashboard 🔀 "Queue auto-merge when checks pass" button is now enabled for PRs whose checks are still running or that are behind the base branch, with tooltips saying what will happen; it stays disabled only for conflicting (`dirty`) and draft PRs.

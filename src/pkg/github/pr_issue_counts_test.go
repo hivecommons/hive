@@ -63,16 +63,16 @@ func TestComputePRIssueCountsForReposAggregates(t *testing.T) {
 	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		seen[q] = true
+		// Both repos travel in one batched query per outcome kind.
+		if !strings.Contains(q, "repo:org/repo1 repo:other/repo2") {
+			t.Fatalf("query must batch both repos: %q", q)
+		}
 		total := 0
 		switch {
-		case strings.Contains(q, "repo:org/repo1") && strings.Contains(q, "type:pr"):
-			total = 2
-		case strings.Contains(q, "repo:org/repo1") && strings.Contains(q, "type:issue"):
-			total = 3
-		case strings.Contains(q, "repo:other/repo2") && strings.Contains(q, "type:pr"):
-			total = 5
-		case strings.Contains(q, "repo:other/repo2") && strings.Contains(q, "type:issue"):
+		case strings.Contains(q, "type:pr"):
 			total = 7
+		case strings.Contains(q, "type:issue"):
+			total = 10
 		default:
 			t.Fatalf("unexpected search query: %q", q)
 		}
@@ -101,8 +101,124 @@ func TestComputePRIssueCountsForReposAggregates(t *testing.T) {
 	if counts.WindowStart != since.Format(time.RFC3339) {
 		t.Fatalf("WindowStart = %q, want %q", counts.WindowStart, since.Format(time.RFC3339))
 	}
-	if len(seen) != 4 {
-		t.Fatalf("queries = %d, want 4 unique repo/type searches: %#v", len(seen), seen)
+	if len(seen) != 2 {
+		t.Fatalf("queries = %d, want 2 batched searches (one per outcome kind): %#v", len(seen), seen)
+	}
+	if counts.Partial || counts.Error != "" || counts.Status != "fresh" {
+		t.Fatalf("counts = %+v, want a complete fresh result", counts)
+	}
+}
+
+// Nineteen repos (projectbluefin's hive) used to mean 38–76 search calls
+// per refresh — past search's 30/minute — so the count failed every hour
+// and the Cost tile never had a hive-attributed figure. Batched repo:
+// qualifiers keep the whole refresh inside a handful of calls and under
+// GitHub's 256-character query limit.
+func TestComputePRIssueCountsForRepos_BatchesManyReposUnderQueryLimit(t *testing.T) {
+	repos := make([]string, 0, 19)
+	for i := 0; i < 19; i++ {
+		repos = append(repos, "projectbluefin/repository-name-"+strings.Repeat("x", i%4)+string(rune('a'+i)))
+	}
+	calls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		q := r.URL.Query().Get("q")
+		if len(q) > searchQueryMaxLen {
+			t.Fatalf("query exceeds GitHub's %d-char limit (%d): %q", searchQueryMaxLen, len(q), q)
+		}
+		total := 10
+		if strings.Contains(q, "type:issue") {
+			total = 20
+		}
+		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "projectbluefin", repos)
+	counts, err := c.ComputePRIssueCountsForReposSince(context.Background(), repos, "hivecommons-hive[bot]", time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ComputePRIssueCountsForReposSince: %v", err)
+	}
+	batches := len(batchRepoQualifiers(func() []string {
+		out := make([]string, 0, len(repos))
+		for _, r := range repos {
+			out = append(out, "repo:"+r)
+		}
+		return out
+	}(), searchQueryMaxLen-len(" type:issue is:closed closed:>=2006-01-02 ")-len("author:hivecommons-hive[bot]")))
+	if batches < 2 || batches > 5 {
+		t.Fatalf("batches = %d, want a handful for 19 repos", batches)
+	}
+	if calls != 2*batches {
+		t.Fatalf("search calls = %d, want %d (two per batch), not 38+ per-repo calls", calls, 2*batches)
+	}
+	if calls >= 30 {
+		t.Fatalf("search calls = %d, must stay under search's 30/minute", calls)
+	}
+	if counts.MergedPRs != 10*batches || counts.ClosedIssues != 20*batches {
+		t.Fatalf("counts = %+v, want %d merged / %d closed", counts, 10*batches, 20*batches)
+	}
+}
+
+// A rate-limit refusal partway through keeps the batches that did answer,
+// skips the rest instead of burning their calls on the same refusal, and
+// reports the result as partial with the reason — never an error that
+// discards everything.
+func TestComputePRIssueCountsForRepos_RateLimitKeepsPartialResults(t *testing.T) {
+	repos := make([]string, 0, 19)
+	for i := 0; i < 19; i++ {
+		repos = append(repos, "projectbluefin/some-longer-repository-name-"+string(rune('a'+i)))
+	}
+	calls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls > 2 {
+			// No X-RateLimit-* headers: a primary-limit refusal with a reset
+			// would engage the process-wide pacing ledger for every later
+			// test in the binary (see ResetRateLimitPacingForTest).
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"message":"API rate limit exceeded for installation ID 1."}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"total_count": 5, "items": []any{}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	t.Cleanup(ResetRateLimitPacingForTest)
+
+	c := newTestClient(t, server, "projectbluefin", repos)
+	counts, err := c.ComputePRIssueCountsForReposSince(context.Background(), repos, "hivecommons-hive[bot]", time.Time{})
+	if err != nil {
+		t.Fatalf("a partial count must not be an error: %v", err)
+	}
+	if counts.MergedPRs != 5 || counts.ClosedIssues != 5 {
+		t.Fatalf("counts = %+v, want the first batch's 5/5 kept", counts)
+	}
+	if !counts.Partial || !strings.HasPrefix(counts.Status, "partial:") {
+		t.Fatalf("counts = %+v, want partial status", counts)
+	}
+	if !strings.Contains(strings.ToLower(counts.Error), "rate limit") {
+		t.Fatalf("Error = %q, want the rate-limit reason surfaced", counts.Error)
+	}
+	if calls != 3 {
+		t.Fatalf("search calls = %d, want 3 (the refusal stops the remaining queries)", calls)
+	}
+}
+
+func TestBatchRepoQualifiers(t *testing.T) {
+	got := batchRepoQualifiers([]string{"repo:o/a", "repo:o/b", "repo:o/c"}, 17)
+	want := []string{"repo:o/a repo:o/b", "repo:o/c"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("batches = %#v, want %#v", got, want)
+	}
+	if got := batchRepoQualifiers([]string{"repo:o/much-too-long"}, 4); len(got) != 1 {
+		t.Fatalf("an oversize qualifier still gets its own batch: %#v", got)
+	}
+	if got := batchRepoQualifiers(nil, 10); len(got) != 0 {
+		t.Fatalf("no qualifiers → no batches: %#v", got)
 	}
 }
 

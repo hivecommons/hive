@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check-api-reference-citations.sh — verify every `pkg/<file>:<line>` citation
-# in src/docs/api-reference.md still points at the route registration it
-# names (hivecommons/hive#6628).
+# in src/docs/api-reference.md and the per-area pages under
+# src/docs/api-reference/*.md still points at the route registration it names
+# (hivecommons/hive#6628, hivecommons/hive#15299).
 #
 # The doc's Source column cites route-registration sites as `pkg/<file>:<line>`
 # next to the row's Method/Path. Refactors shift line numbers without anyone
@@ -25,14 +26,19 @@
 # `pkg/<file>:<line>` citations are checked or rewritten.
 #
 # Usage:
-#   src/scripts/check-api-reference-citations.sh [--fix] [doc-path]
+#   src/scripts/check-api-reference-citations.sh [--fix] [doc-path ...]
+#
+# With no doc-path the checker walks src/docs/api-reference.md plus every
+# src/docs/api-reference/*.md area page. A doc-path may be a single Markdown
+# file or a directory (every *.md directly inside it is checked).
 #
 # Without --fix: prints every drifted citation and exits non-zero if any
 # citation does not verify.
 #
 # With --fix: for each drifted citation, if the exact `"<METHOD> <path>"`
 # string appears exactly once in the cited file, rewrites the citation's line
-# number in place to match. Citations that cannot be resolved this way (route
+# number in place to match. Only the page containing a drifted citation is
+# rewritten, so a route change in one area touches one area file. Citations that cannot be resolved this way (route
 # moved to a different file, string appears more than once, or the
 # concatenated-constant shape does not resolve) are left as-is and reported;
 # --fix still exits non-zero if anything remains unresolved.
@@ -42,12 +48,12 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 FIX=0
-DOC=""
+DOC_ARGS=()
 for arg in "$@"; do
   case "$arg" in
     --fix) FIX=1 ;;
     -h|--help)
-      sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     -*)
@@ -55,16 +61,33 @@ for arg in "$@"; do
       exit 2
       ;;
     *)
-      DOC="$arg"
+      DOC_ARGS+=("$arg")
       ;;
   esac
 done
 
-DOC="${DOC:-${SRC_ROOT}/docs/api-reference.md}"
-
-if [ ! -f "$DOC" ]; then
-  echo "cannot find api-reference doc at $DOC" >&2
-  exit 2
+# Resolve the pages to check: explicit files/directories, or the default
+# index page plus every per-area page beside it.
+DOCS=()
+add_doc_path() {
+  local p="$1"
+  if [ -d "$p" ]; then
+    local f
+    for f in "$p"/*.md; do
+      [ -f "$f" ] && DOCS+=("$f")
+    done
+  elif [ -f "$p" ]; then
+    DOCS+=("$p")
+  else
+    echo "cannot find api-reference doc at $p" >&2
+    exit 2
+  fi
+}
+if [ "${#DOC_ARGS[@]}" -eq 0 ]; then
+  add_doc_path "${SRC_ROOT}/docs/api-reference.md"
+  [ -d "${SRC_ROOT}/docs/api-reference" ] && add_doc_path "${SRC_ROOT}/docs/api-reference"
+else
+  for p in "${DOC_ARGS[@]}"; do add_doc_path "$p"; done
 fi
 
 # Extract one line per `pkg/<file>:<line>` citation found in a table row:
@@ -105,13 +128,18 @@ drifted=0
 resolved=0
 unresolved=0
 
+check_doc() {
+DOC="$1"
+# Report pages by their path under docs/ (api-reference.md,
+# api-reference/<area>.md) so a drift message names the file to edit.
+DOC_LABEL="${DOC#*/docs/}"
 while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
   [ -n "${doc_line:-}" ] || continue
   target="${SRC_ROOT}/${cited_file}"
   needle="\"${method} ${path}\""
 
   if [ ! -f "$target" ]; then
-    echo "DRIFT doc:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (file does not exist)" >&2
+    echo "DRIFT ${DOC_LABEL}:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (file does not exist)" >&2
     drifted=$((drifted + 1))
     unresolved=$((unresolved + 1))
     continue
@@ -151,7 +179,7 @@ while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
   drifted=$((drifted + 1))
 
   if [ "$FIX" -eq 0 ]; then
-    echo "DRIFT doc:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (line does not register it)" >&2
+    echo "DRIFT ${DOC_LABEL}:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (line does not register it)" >&2
     continue
   fi
 
@@ -159,7 +187,7 @@ while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
   # once in the cited file.
   matches="$(grep -cF -- "$needle" "$target" | tr -d '[:space:]')"
   if [ "$matches" != "1" ]; then
-    echo "UNRESOLVED doc:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (found ${matches} exact matches in ${cited_file}, need exactly 1)" >&2
+    echo "UNRESOLVED ${DOC_LABEL}:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (found ${matches} exact matches in ${cited_file}, need exactly 1)" >&2
     unresolved=$((unresolved + 1))
     continue
   fi
@@ -181,9 +209,14 @@ while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
     { print }
   ' "$DOC" > "${DOC}.tmp" && mv "${DOC}.tmp" "$DOC"
 
-  echo "FIXED doc:${doc_line} ${method} ${path} -> ${old_ref} => ${new_ref}"
+  echo "FIXED ${DOC_LABEL}:${doc_line} ${method} ${path} -> ${old_ref} => ${new_ref}"
   resolved=$((resolved + 1))
 done < <(extract_citations)
+}
+
+for DOC in "${DOCS[@]}"; do
+  check_doc "$DOC"
+done
 
 if [ "$FIX" -eq 1 ]; then
   echo "api-reference citation fix: ${resolved} rewritten, ${unresolved} left unresolved (${drifted} drifted total)."

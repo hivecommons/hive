@@ -57,10 +57,26 @@ const (
 	// auth-url check answered 401 — the hub login page. Only the browser-facing
 	// Ingresses (hive, hive-terminal) carry it; XHR-only ones must 401 instead.
 	ingressAuthSigninAnnotation = "nginx.ingress.kubernetes.io/auth-signin"
+	// ingressCustomHTTPErrorsAnnotation names the upstream statuses nginx
+	// replaces with the error backend's document. An Ingress WITHOUT it
+	// inherits the controller's global list, which on the hosted cluster
+	// includes 403 and 404 — so a JSON 403 from /api/contribute/me came back
+	// to the browser as the error backend's HTML, served as 200 (#12111).
+	// hive-contribute pins it to the two "the hive is not there" statuses.
+	ingressCustomHTTPErrorsAnnotation = "nginx.ingress.kubernetes.io/custom-http-errors"
+	ingressDefaultBackendAnnotation   = "nginx.ingress.kubernetes.io/default-backend"
 
 	// ingressAuthResponseHeaders is the header list every gated Ingress in the
 	// template forwards; hive-contribute carries the same one.
 	ingressAuthResponseHeaders = "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
+
+	// contributeIngressCustomHTTPErrors is what hive-contribute intercepts:
+	// the same two statuses as the page Ingress, and nothing a handler on
+	// that prefix answers on purpose.
+	contributeIngressCustomHTTPErrors = "502,503"
+	// contributeIngressDefaultBackend is the error backend those statuses
+	// are routed to, the same one hive and hive-api-xhr name.
+	contributeIngressDefaultBackend = "hive-error-pages"
 
 	// contributeIngressReconcileInterval throttles the sweep. The drift is
 	// static — an Ingress either carries the annotations or it does not, and
@@ -83,6 +99,8 @@ func contributeIngressAuthAnnotations(hubURL, hiveID string) map[string]string {
 	return map[string]string{
 		ingressAuthURLAnnotation:             hubURL + "/api/saas/auth-check?hive=" + hiveID + "&uri=$request_uri",
 		ingressAuthResponseHeadersAnnotation: ingressAuthResponseHeaders,
+		ingressCustomHTTPErrorsAnnotation:    contributeIngressCustomHTTPErrors,
+		ingressDefaultBackendAnnotation:      contributeIngressDefaultBackend,
 	}
 }
 
@@ -94,6 +112,10 @@ func contributeIngressAuthAnnotations(hubURL, hiveID string) map[string]string {
 func terminalIngressAuthAnnotations(hubURL, hiveID string) map[string]string {
 	want := contributeIngressAuthAnnotations(hubURL, hiveID)
 	want[ingressAuthSigninAnnotation] = hubURL + "/login?redirect=$scheme://$http_host$request_uri"
+	// The error-interception pair is hive-contribute's (#12111); hive-terminal
+	// does not carry it in the template, and the sweep must not add it.
+	delete(want, ingressCustomHTTPErrorsAnnotation)
+	delete(want, ingressDefaultBackendAnnotation)
 	return want
 }
 

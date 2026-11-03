@@ -101,6 +101,28 @@ else
   bad "adoption from existing directory owners failed"
 fi
 
+# A 0-byte persisted map (left behind by an unsynced rename across a node
+# crash) must be treated as absent, not abort the build and leave every
+# later boot on the shared dev UID.
+: > "$HIVE_UID_MAP_PERSISTED"
+rm -f "$HIVE_UID_MAP_RUNTIME"
+if PATH="$WORK/bin:$PATH" hive_build_uid_map >/dev/null 2>"$WORK/empty.err" \
+   && json_assert architect=2001 scanner=2009 adjudicator=2010 \
+   && grep -q 'persisted UID map .* unreadable' "$WORK/empty.err"; then
+  ok "empty persisted map is rebuilt from directory owners with a warning"
+else
+  bad "empty persisted map aborted the UID map build" "$(cat "$WORK/empty.err" 2>/dev/null | tail -3)"
+fi
+
+printf '{"agents":{"architect":' > "$HIVE_UID_MAP_PERSISTED"
+rm -f "$HIVE_UID_MAP_RUNTIME"
+if PATH="$WORK/bin:$PATH" hive_build_uid_map >/dev/null 2>&1 \
+   && json_assert architect=2001 scanner=2009 adjudicator=2010; then
+  ok "truncated persisted map is rebuilt from directory owners"
+else
+  bad "truncated persisted map aborted the UID map build"
+fi
+
 mkdir -p "$WORK/data/home/agents/scanner" "$WORK/data/beads/scanner" "$WORK/data/agents/scanner"
 printf 'token' > "$WORK/tokens/gh-token-scanner.cache"
 cat > "$WORK/owners.tsv" <<EOFOWNERS
@@ -199,6 +221,17 @@ if grep -q -- 'dev:hive-scanner .*gh-token-scanner.cache' "$HIVE_TEST_CHOWN_LOG"
 else
   bad "token cache guard did not repair the expected cache ownership" "chown log: $(tr '\n' ';' < "$HIVE_TEST_CHOWN_LOG") output: $(tr '\n' ';' < "$WORK/token-reown.out")"
 fi
+
+# #13123: an agent whose name is a substring of another must not re-own the other's cache
+printf 'token' > "$WORK/tokens/gh-token-code-scanner.cache"
+: > "$HIVE_TEST_CHOWN_LOG"
+PATH="$WORK/bin:$PATH" hive_reown_agent_token_caches_if_needed scanner hive-scanner > "$WORK/token-reown.out"
+if ! grep -q 'code-scanner' "$HIVE_TEST_CHOWN_LOG" "$WORK/token-reown.out"; then
+  ok "token cache guard ignores other agents whose names contain this agent's name"
+else
+  bad "token cache guard touched another agent's cache" "chown log: $(tr '\n' ';' < "$HIVE_TEST_CHOWN_LOG")"
+fi
+rm -f "$WORK/tokens/gh-token-code-scanner.cache"
 
 # ── #9692: incremental, resumable re-own ─────────────────────────────────────
 # The first boot of the per-agent-UID build re-owned each agent home with a

@@ -1,0 +1,1 @@
+- Repeated merge-request CI gate refusals remain visible in operator logs without generating spurious fleet runtime-defect reports (#14364).

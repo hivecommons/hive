@@ -151,7 +151,26 @@ func TestBundleMatchesSchema(t *testing.T) {
 		CreatedAt:     t0,
 		UpdatedAt:     t0,
 	}
-	for name, b := range map[string]*Bundle{"signed": signed, "unsigned": unsigned, "minimal": minimal} {
+	linked := sample()
+	linked.Author = Author{Login: "hive[bot]", Kind: AuthorAgent, Agent: "coder", Backend: "copilot", Model: "gpt-5.6-luna"}
+	linked.RevertOf = []string{BundleID("hivecommons/hive", 40, "a")}
+	linked.FollowupOf = []string{BundleID("hivecommons/hive", 41, "b")}
+	linked.RevertedBy = []string{BundleID("hivecommons/hive", 43, "c")}
+	linked.FollowedUpBy = []string{BundleID("hivecommons/hive", 44, "d")}
+	linked.Merge.OpenedAt = t0.Add(-26 * time.Hour)
+	if err := Seal(linked, nil); err != nil {
+		t.Fatal(err)
+	}
+	yes, no := true, false
+	shadowed := sample()
+	shadowed.Shadow = &Shadow{
+		ReviewGate: &ShadowGate{WouldHaveHeld: &yes, Reason: "r", Tier: "T2", Confidence: 0.7, EvaluatedAt: t0},
+		Intent:     &ShadowGate{WouldHaveBlocked: &no, Confidence: 0, EvaluatedAt: t0},
+	}
+	if err := Seal(shadowed, nil); err != nil {
+		t.Fatal(err)
+	}
+	for name, b := range map[string]*Bundle{"signed": signed, "unsigned": unsigned, "minimal": minimal, "linked": linked, "shadowed": shadowed} {
 		t.Run(name, func(t *testing.T) {
 			if errs := validateSchema(root, root, toGeneric(t, b), "$"); len(errs) > 0 {
 				t.Fatalf("bundle does not validate against schema/v1.json:\n%s", strings.Join(errs, "\n"))
@@ -180,6 +199,17 @@ func TestSchemaRejectsInvalidBundles(t *testing.T) {
 		{"checks not array", func(m map[string]any) { m["ci"].(map[string]any)["checks"] = "none" }},
 		{"empty string", func(m map[string]any) { m["id"] = "" }},
 		{"policy not object", func(m map[string]any) { m["policy"] = 3 }},
+		{"author model type", func(m map[string]any) { m["author"].(map[string]any)["model"] = 5 }},
+		{"revert_of not array", func(m map[string]any) { m["revert_of"] = "o/r#1@h" }},
+		{"shadow unknown field", func(m map[string]any) { m["shadow"] = map[string]any{"extra": 1} }},
+		{"shadow gate missing verdict", func(m map[string]any) {
+			m["shadow"] = map[string]any{"intent": map[string]any{"confidence": 0.5, "evaluated_at": "2026-10-08T12:00:00Z"}}
+		}},
+		{"shadow gate wrong flag", func(m map[string]any) {
+			m["shadow"] = map[string]any{"review_gate": map[string]any{"would_have_blocked": true, "confidence": 0.5, "evaluated_at": "2026-10-08T12:00:00Z"}}
+		}},
+		{"reverted_by empty id", func(m map[string]any) { m["reverted_by"] = []any{""} }},
+		{"merge opened_at not a timestamp", func(m map[string]any) { m["merge"].(map[string]any)["opened_at"] = "last week" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,5 +223,42 @@ func TestSchemaRejectsInvalidBundles(t *testing.T) {
 				t.Fatal("schema accepted an invalid bundle")
 			}
 		})
+	}
+}
+
+func TestCalibrationConfidenceSchemaRoundTrip(t *testing.T) {
+	b := sample()
+	raw, derived := .82, .75
+	b.Verdicts[0].Confidence, b.Verdicts[0].ConfidenceRaw, b.Verdicts[0].ConfidenceDerived = .85, &raw, &derived
+	if err := b.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	schema := loadSchema(t)
+	if errs := validateSchema(schema, schema, toGeneric(t, b), "bundle"); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Bundle
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if *decoded.Verdicts[0].ConfidenceRaw != raw || *decoded.Verdicts[0].ConfidenceDerived != derived {
+		t.Fatal("confidence fields lost")
+	}
+	derived = 1.1
+	if b.Validate() == nil {
+		t.Fatal("accepted derived score above 1")
+	}
+	if errs := validateSchema(schema, schema, toGeneric(t, b), "bundle"); len(errs) == 0 {
+		t.Fatal("schema accepted derived score above 1")
+	}
+	// Optional fields must not change the canonical JSON of legacy records.
+	b = sample()
+	data, _ = json.Marshal(b)
+	if strings.Contains(string(data), "confidence_derived") || strings.Contains(string(data), "confidence_raw") {
+		t.Fatal("legacy bundle gained fields")
 	}
 }

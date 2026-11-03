@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/taskmcp"
+	"github.com/hivecommons/hive/crux/taskmcp"
 )
 
 // #8348: the task MCP URL and the project context the boot hands to the agent

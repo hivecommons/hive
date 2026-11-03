@@ -1,0 +1,1 @@
+- Dashboard: an issue parked at stage/045-needs-decision (or the older stage/085 spelling) no longer shows "already done" or files under Confirm & close; only 040 covered-by-pr and the PR stages past it count as covered.

@@ -1,0 +1,1 @@
+- When an issue has multiple merged same-repository pull request references, Hive now selects the most recently merged closer instead of depending on GitHub's node order ([#15606](https://github.com/hivecommons/hive/issues/15606)).

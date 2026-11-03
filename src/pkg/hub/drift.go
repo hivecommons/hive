@@ -437,7 +437,7 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 		if !ok || started.IsZero() {
 			add(DriftKindUpgradeStuck, DriftWarn,
 				"Upgrade in flight with no recorded start time — the hub cannot tell how long it has been running")
-		} else if age := now.Sub(started); age > staleUpgradeTimeout {
+		} else if age := now.Sub(started); age > staleUpgradeTimeout && !upgradeDrainActive(h.UpgradeDrainUntil, now) {
 			target := h.UpgradeTarget
 			if target == "" {
 				target = "an unrecorded target"

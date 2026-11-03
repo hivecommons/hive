@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -273,7 +273,7 @@ func (e *SpekHubExecutor) recordInterviewWait(st spekHubStage, taskID, worktree 
 		"interview_asked_at":  askedAt.UTC().Format(time.RFC3339Nano),
 		"interview_dashboard": runInterviewDashboardURL(st.runKey),
 	}
-	e.Server.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, taskID, agent.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", worksource.RunWaitingReasonInterviewQuestions, "pending_questions", len(pending)))
+	e.Server.AgentAuditSink().Record("system", agentaudit.AuditLeaseStageRefused, taskID, agentaudit.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", worksource.RunWaitingReasonInterviewQuestions, "pending_questions", len(pending)))
 	e.Server.LifecycleTimeline().Record(timeline.Event{IssueRef: st.runKey, Kind: timeline.KindBlocked, At: askedAt.UnixMilli(), Attrs: attrs})
 	e.log().Info("[spektacular] hub executor waiting for interview answers", "run", st.runKey, "stage", st.stage, "gen", st.gen, "questions", len(pending))
 }

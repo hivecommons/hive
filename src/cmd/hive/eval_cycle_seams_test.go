@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -246,19 +246,19 @@ func TestMergeResumeKicks_HeldCarriesReason(t *testing.T) {
 }
 
 type fakeResumeKickStatus struct {
-	fast        map[string]*agent.AgentProcess
-	all         map[string]*agent.AgentProcess
+	fast        map[string]*crux.Process
+	all         map[string]*crux.Process
 	allStatuses int
 }
 
-func (f *fakeResumeKickStatus) GetStatusFast(name string) (*agent.AgentProcess, error) {
+func (f *fakeResumeKickStatus) GetStatusFast(name string) (*crux.Process, error) {
 	if st, ok := f.fast[name]; ok {
 		return st, nil
 	}
 	return nil, errors.New("status unavailable")
 }
 
-func (f *fakeResumeKickStatus) AllStatuses() map[string]*agent.AgentProcess {
+func (f *fakeResumeKickStatus) AllStatuses() map[string]*crux.Process {
 	f.allStatuses++
 	return f.all
 }
@@ -271,16 +271,16 @@ func TestResumeKickHeldFacts(t *testing.T) {
 	since := time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
 	kick := since.Add(time.Minute)
 	status := &fakeResumeKickStatus{
-		fast: map[string]*agent.AgentProcess{
+		fast: map[string]*crux.Process{
 			"scanner":  {Name: "scanner", Config: config.AgentConfig{Enabled: true}, LastKick: &kick},
 			"paused":   {Name: "paused", Config: config.AgentConfig{Enabled: true}, Paused: true},
-			"stateP":   {Name: "stateP", Config: config.AgentConfig{Enabled: true}, State: agent.StatePaused},
+			"stateP":   {Name: "stateP", Config: config.AgentConfig{Enabled: true}, State: crux.StatePaused},
 			"disabled": {Name: "disabled"},
 			"busy":     {Name: "busy", Config: config.AgentConfig{Enabled: true}, KicksUndeliverable: 1},
 			"worked":   {Name: "worked", Config: config.AgentConfig{Enabled: true}, LastTranscriptActivity: since.Add(time.Second)},
 			"stale":    {Name: "stale", Config: config.AgentConfig{Enabled: true}, LastTranscriptActivity: since.Add(-time.Second)},
 		},
-		all: map[string]*agent.AgentProcess{
+		all: map[string]*crux.Process{
 			"slow": {Name: "slow", Config: config.AgentConfig{Enabled: true}},
 		},
 	}
@@ -496,6 +496,7 @@ func TestClassifyAdvisoryPostError(t *testing.T) {
 		// #1699: the exact regression — a rate-limited 403 must not reach the banner path.
 		{"403 rate limit is rate-limited, not write-forbidden", "403 API rate limit exceeded for installation ID 1", advisoryPostRateLimited},
 		{"secondary rate limit without a status code is rate-limited", "You have exceeded a secondary Rate Limit", advisoryPostRateLimited},
+		{"403 archived repository is permanent", "PATCH https://api.github.com/repos/o/r/issues/comments/1: 403 Repository was archived so is read-only. []", advisoryPostRepoArchived},
 		// 106a95fc: a 401 must reach the auth probe, not be swallowed.
 		{"401 bad credentials goes to the auth probe", "401 Bad credentials", advisoryPostAuthProbe},
 		{"resource not accessible without 403 goes to the auth probe", "Resource not accessible by integration", advisoryPostAuthProbe},
@@ -523,22 +524,26 @@ func TestPartitionKickableAgents_ReportsSkippedWithReason(t *testing.T) {
 		"ondemand":   {OnDemand: true},
 		"supervisor": {},
 	}
-	paused := map[string]bool{"supervisor": true}
+	paused := map[string]bool{"supervisor": true, "reviewer": true}
+	triggers := map[string]string{"reviewer": "thrash-breaker"}
+	agents["reviewer"] = config.AgentConfig{}
 
 	kickable, skipped := partitionKickableAgents(
-		[]string{"scanner", "ondemand", "supervisor", "architect"},
+		[]string{"scanner", "ondemand", "supervisor", "architect", "reviewer"},
 		agents,
 		map[string]bool{"architect": true},
 		func(n string) bool { return paused[n] },
+		func(n string) string { return triggers[n] },
 	)
 
 	if len(kickable) != 1 || kickable[0] != "scanner" {
 		t.Errorf("kickable = %v, want [scanner]", kickable)
 	}
 	want := map[string]bool{
-		"ondemand (on-demand)":          true,
-		"supervisor (operator-paused)":  true,
-		"architect (on-demand-in-pack)": true,
+		"ondemand (on-demand)":                true,
+		"supervisor (operator-paused)":        true,
+		"architect (on-demand-in-pack)":       true,
+		"reviewer (paused by thrash-breaker)": true,
 	}
 	if len(skipped) != len(want) {
 		t.Fatalf("skipped = %v, want %d entries", skipped, len(want))
@@ -561,5 +566,22 @@ func TestFilterKickableAgents_StillReturnsNilWhenNothingKickable(t *testing.T) {
 	)
 	if got != nil {
 		t.Errorf("filterKickableAgents = %v, want nil", got)
+	}
+}
+
+// TestPausedSkipReason_NamesRealTrigger pins #12015: the eval-cycle
+// agents_skipped label names the real pause trigger instead of blaming an
+// operator for a breaker pause.
+func TestPausedSkipReason_NamesRealTrigger(t *testing.T) {
+	cases := map[string]string{
+		"":                 "operator-paused",
+		"dashboard-api":    "operator-paused",
+		"thrash-breaker":   "paused by thrash-breaker",
+		" login-detector ": "paused by login-detector",
+	}
+	for trigger, want := range cases {
+		if got := pausedSkipReason(trigger); got != want {
+			t.Errorf("pausedSkipReason(%q) = %q, want %q", trigger, got, want)
+		}
 	}
 }

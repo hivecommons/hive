@@ -7,6 +7,12 @@ the trust boundary stated plainly), see [Token mint](../token-mint.md).
 
 ## Context
 
+Hive needs cloud/registry credentials that expire and grant only named actions,
+without handing every agent a shared long-lived secret.
+
+<details>
+<summary>Historical token-handling fixes behind the decision</summary>
+
 Several v4 security fixes tightened token handling, including stopping full
 installation-token exposure to agents, avoiding host CLI/PAT leakage, and
 making shared App-token caches owner-only
@@ -16,7 +22,16 @@ hub`, `fix(security): H3 — shared App-token cache owner-only + fail-loud
 fallbacks`). Hive still needs a way to give agents cloud or registry authority
 without distributing shared long-lived credentials.
 
+</details>
+
 ## Decision
+
+The mint issues credentials that expire quickly and authorize only named
+actions. A **JWT** (JSON Web Token) carries the signed claims; its **TTL**
+(time to live) bounds validity. A **JWKS** (JSON Web Key Set) publishes the
+public verification keys, not the signing secrets.
+**Workload Identity Federation** lets another service exchange a verified
+workload identity for its own scoped credentials.
 
 Introduce the mint as an opt-in short-lived credential issuer
 ([mint package](../../pkg/mint/mint.go)). It signs scoped JWTs with bounded TTLs,

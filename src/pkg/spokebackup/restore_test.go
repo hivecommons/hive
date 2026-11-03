@@ -90,6 +90,21 @@ func TestRestoreRoundTripReproducesDataDir(t *testing.T) {
 	if len(res.BeadDirs) != 5 {
 		t.Errorf("BeadDirs = %v, want 5 agents", res.BeadDirs)
 	}
+
+	// Durable Nous state lands under <dest>/nous (#11694), snapshots excepted.
+	for rel, want := range map[string]string{
+		filepath.Join("governor", "ledger.json"):     `{"iterations":[{"id":"one"}]}`,
+		filepath.Join("governor", "principles.json"): `{"principles":[]}`,
+		"panel-config.json":                          `{"mode":"suggest"}`,
+	} {
+		p := filepath.Join(dest, nousSubdir, rel)
+		if got := mustRead(t, p); got != want {
+			t.Errorf("nous/%s: restored %q, want %q", rel, got, want)
+		}
+	}
+	if res.NousFiles != 3 {
+		t.Errorf("NousFiles = %d, want 3", res.NousFiles)
+	}
 	if !sort.StringsAreSorted(res.BeadDirs) || !sort.StringsAreSorted(res.Files) {
 		t.Errorf("result lists must be sorted for a stable dry-run/restore comparison: %v %v",
 			res.BeadDirs, res.Files)
@@ -109,6 +124,7 @@ func TestRestoreDoesNotResurrectExcludedFiles(t *testing.T) {
 		"audit.jsonl",
 		"hive.yaml", // regenerated from seed + overlay on every boot
 		filepath.Join("nous", "snapshots", "1.json"),
+		filepath.Join("nous", "panel-config.json.tmp"),
 		filepath.Join("logs", "hive.log"),
 		filepath.Join("home", "agent", "creds"),
 	} {

@@ -116,6 +116,7 @@ var localBackendPostures = map[string]localConfinementPosture{
 	"muse":      postureSandboxed,
 	"omp":       postureRefusalGated,
 	"openhands": postureRefusalGated,
+	"omnigent":  postureRefusalGated,
 }
 
 func shellKnownLocalBackends(t *testing.T) []string {
@@ -513,12 +514,49 @@ func TestLocalModeBannerNamesCopilotSandbox(t *testing.T) {
 func TestBackendsConfDocumentsWhyUnconfinedBackendsHaveNoWiring(t *testing.T) {
 	src := backendsConfSource(t)
 	for _, want := range []string{
-		"goose, agy, bob, pi, aider, kilo, omp, and openhands expose no OS-level sandbox",
+		"goose, agy, bob, pi, aider, kilo, omp, openhands, and omnigent expose no OS-level sandbox",
 		"unconfined_local_backend_env_var",
 		"unconfined_local_perm_flag_shell",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("config/backends.conf no longer documents %q", want)
 		}
+	}
+}
+
+// ── omnigent: launch line must reach the agent REPL and stay local ─────
+
+// TestOmnigentLaunchWordsPinRunSubcommandAndLocalServer pins the two words
+// backend_perm_flag emits for omnigent, because every launch path builds
+// `$CMD $PERM_FLAG [$MODEL_FLAG]` from them (contributor-agent.sh tmux line,
+// agent-launch.sh argv, the Justfile local-mode line):
+//
+//   - `run`: a bare `omnigent` on a TTY is rewritten upstream to `omnigent
+//     start` (background server, returns to the shell) and a bare
+//     `omnigent --model X` is a root-level UsageError (exit 2). Only
+//     `omnigent run` opens the agent REPL the relay types tasks into.
+//   - `--server local`: without it `run` falls back to the `server:` default
+//     `omnigent login <url>` persists in ~/.omnigent/config.yaml, moving the
+//     session to a REMOTE server whose runners write to GitHub outside the
+//     Hive container and proxy. Hive's proxy must stay authoritative on
+//     GitHub writes (#14094), so the local sentinel is pinned on every launch.
+func TestOmnigentLaunchWordsPinRunSubcommandAndLocalServer(t *testing.T) {
+	out, code := runBackendsConfFunc(t, "backend_perm_flag", []string{"omnigent"})
+	if code != 0 {
+		t.Fatalf("backend_perm_flag omnigent exited %d: %q", code, out)
+	}
+	if got := strings.TrimSpace(out); got != "run --server local" {
+		t.Fatalf("backend_perm_flag omnigent = %q, want %q", got, "run --server local")
+	}
+
+	// The same words must survive the shell-quoting variant local mode uses
+	// once the operator has accepted the unconfined risk.
+	out, code = runBackendsConfFunc(t, "unconfined_local_perm_flag_shell", []string{"omnigent"},
+		"HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED=1")
+	if code != 0 {
+		t.Fatalf("unconfined_local_perm_flag_shell omnigent exited %d with opt-in set: %q", code, out)
+	}
+	if got := strings.TrimSpace(out); got != "run --server local" {
+		t.Fatalf("unconfined_local_perm_flag_shell omnigent = %q, want %q", got, "run --server local")
 	}
 }

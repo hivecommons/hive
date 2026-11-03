@@ -1,0 +1,1 @@
+- Fix review evidence CI snapshots being written under a short-name path (`evidence/<repo>/unknown`) and rejected as invalid; they now update the PR's bundle at `evidence/<owner>/<repo>/…`, which also stops the repeated "bundle invalid, not written" warnings (#12958).

@@ -1,0 +1,1 @@
+- Owners can set `auto_merge.require_current_base`, `auto_merge.squash_only` and `auto_merge.human_merge_paths` from Settings → Features → Auto-merge → Per-repository merge policy, so a hosted hive no longer needs a hand-edited config overlay for them.

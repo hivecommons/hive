@@ -122,12 +122,16 @@ chat panel and external chat backends. Use `!inception start <idea>` for a
 greenfield run or `!inception scan <repo-url>` for brownfield. When the
 engine enters `clarify`, the spine posts the numbered question list; owner
 allowlisted users can answer with ordinary unprefixed replies, which are
-submitted to the next unanswered question. Explicit commands remain available:
+recorded against the next unanswered question. Explicit commands remain available:
 `!inception state`, `!inception answer <n> <text>`,
+`!inception skip <n>`, `!inception submit`,
 `!inception facts <json-array-of-facts>`, `!inception approve`, and
 `!inception reset`. Owner-only actions still go through the existing
 `/api/inception/*` routes and owner gate; the dashboard form remains available
-as a fallback for this release.
+as a fallback for this release. Both plain replies and `!inception answer`
+buffer each answer and send them in one batch once every question is answered
+or skipped (or on `!inception submit`, with unanswered questions using their
+defaults), because the engine leaves `clarify` on the first submission.
 
 Optional wiki-management calls, usable at any point once an inception has
 produced wiki files:
@@ -219,6 +223,15 @@ unit of work keyed by its stable session/spec id:
   earlier revisions. No second campaign is created and `revision_of` stays
   empty. Revising a Spektacular run updates the archive keyed by the slugified
   run id, or creates one at revision 1 without history.
+- **🗑 Delete** (icon button at the end of each row) calls
+  `DELETE /api/campaigns/{id}` after an in-app confirmation. It removes only
+  the campaign record: the saved Inception state and the archived wiki
+  snapshot under `inception/campaigns/<id>/`. Knowledge-base facts, Jam
+  threads, scaffolded repo files and the other revisions in the chain are
+  kept. Deleting the campaign that is also the live L1 session clears that
+  session. Run-backed Spektacular campaigns return `409 Conflict`; their rows
+  come and go with the run. The deletion is audit-logged as
+  `campaign_delete`.
 
 ## Configuring the brainstorm agent
 

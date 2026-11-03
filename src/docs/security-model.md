@@ -1,223 +1,466 @@
-# Security Model
-
-This page is for the evaluator asking: *is it safe to run hive — to host a hive on the hub, point agents at my repositories, and hand the system my AI subscription or API keys?*
-
-Hive's answer is architectural, not aspirational. The project's core design rule — *if a human would give the same answer every time, it belongs in infrastructure, not in a prompt* — applies doubly to security: the controls below are enforced by code (authentication middleware, a policy proxy, scoped tokens, file permissions), not by asking an LLM to behave. Every mechanism described here is verifiable in the hive source on branch `v4` (the only maintained line).
-
-Two companion pages go deeper along their own axis: [security-threat-model.md](security-threat-model.md) is the attacker-oriented view (assets, trust boundaries, threat actors, residual risks), and [security.md](security.md) documents the log-scrubbing and secret-redaction layer. This page is the operator- and evaluator-facing map of the mechanisms themselves.
-
-New to Hive and asking "who can make Hive do what in my repo?" specifically —
-level, reporter trust, and repo scope working together — start with
-[Securing your hive: a first-time operator's guide](securing-your-hive.md)
-instead; it links back to the mechanism pages below for the details.
-
-## What hive touches
-
-A running hive holds three things you care about:
-
-| Asset | How hive uses it |
-|-------|------------------|
-| **Your GitHub repositories** | Agents read issues/PRs and open branches, issues, and pull requests using a token or GitHub App you provide |
-| **Your AI subscriptions / API keys** | Agent CLIs (Claude, Copilot, Gemini, Goose) authenticate with your provider accounts; self-hosted inference backends (litellm / vllm / llm-d) use a gateway API key you enter |
-| **Your cluster (or the hosted platform)** | The hive pod runs agents, the dashboard, and persistent state on a PVC |
-
-The threats that matter: an unauthorized person reaching your dashboard, an agent (or a prompt-injected agent) exfiltrating credentials or touching repos it shouldn't, one agent reading another's credentials, and the hosted platform mixing tenants. Each layer below addresses one of these.
-
----
-
-## Layer 1 — Dashboard access control (hub route)
-
-Hives hosted on or registered with the Hive Hub are reached through a per-hive hostname (`<hive-id>.<cluster-domain>` — `*.hive.hivecommons.dev` on the default cluster, other domains on vanity/partner clusters), and every request passes the hub's authentication check before it reaches a spoke dashboard:
-
-- **Multi-provider sign-in.** Users sign in to the hub with GitHub OAuth or Google — with IBMid, Red Hat, Microsoft Entra ID, and a generic OIDC provider available via configuration. With more than one provider configured, `/login` shows a provider picker; a single configured provider goes straight through. The GitHub login deliberately requests **no OAuth scope at all** — the hub only needs to learn *who* is logging in, not to act on their behalf. The session cookie is `HttpOnly`, `Secure`, `SameSite=Lax`, and session cookies are **Ed25519-signed**; the legacy symmetric (HMAC) session lane was deleted on v4.
-- **Per-user, per-hive authorization on every request.** The hub's auth-check endpoint (wired as an nginx `auth_request` / `auth-url`) resolves the requesting user, looks up whether that specific hive is in the user's access map, and returns **403 if it isn't**. Only then does the request proceed to the spoke.
-- **Unauthenticated page vs. API requests.** A signed-out (or expired) *page* navigation is redirected to the hub login (`auth-signin`). The dashboard's own XHR routes under `/api/` are served by a separate `hive-api-xhr` Ingress with the same auth gate but **no** login redirect: `fetch()` cannot follow a cross-origin redirect, so an expired session there answers a real `401` with a JSON body (`{"ok":false,"error":"unauthorized",…}`, served by `hive-error-pages`) that the dashboard turns into one *sign in again* prompt instead of rendering empty data. `/api/v1` (bearer-token API) keeps its own ungated Ingress. `/api/contribute` (public) keeps its own Ingress too, but that one *does* ask the hub who is calling (`auth-url`, no `auth-signin`): the hub answers `200` for a public path whether or not the caller is signed in, and when they are it still sets `X-Hive-User` / `X-Hive-Role` / `X-Hive-Proxy-Auth`, so a signed-in visitor's own contribution shows on `/contribute/operations` while anonymous access to the leaderboard and the contributor relay is unchanged (#7453). A signed-in user with no grant on the hive is forwarded with role `read`, which grants nothing beyond anonymous on a public path; gated paths still refuse them. That Ingress is provisioned per hive, so the dashboard does not depend on it: it sends its own same-origin `/api` requests with `redirect: 'manual'` and converts the resulting `opaqueredirect` into a `401 {"error":"session_expired","sign_in":"/"}` itself, which keeps an expired session readable on a hive that predates the Ingress or behind any other redirecting proxy (#7433). The one exemption is `GET /api/gh-user-auth/session`, the device-flow landing, whose own redirect back to `/` is its success path.
-- **Identity injection.** On success, the hub injects the verified identity into the proxied request as `X-Hive-User` and `X-Hive-Role` headers (alongside a proxy-auth proof the spoke re-verifies). The spoke's role-enforcement middleware then blocks all write operations for `read`-role users.
-- **Roles.** The hive owner has full read-write control and can grant other GitHub users access to their hive; grants carry one of the `read` / `read-write` / `merger` / `owner` tiers. A granter-ceiling that forbids granting a role at or above the granter's own applies on the **access-request approval** path (and exempts hub admins); the owner's direct-grant path validates the role but does not itself cap it, so grant access deliberately.
-
-## Layer 2 — Direct-route spoke authentication
-
-Some hives run on clusters the hub cannot proxy (for example, an OpenShift route reached directly). These spokes cannot rely on the hub's auth check, so the dashboard enforces its own per-user authentication:
-
-- **GitHub device-flow login with a per-hive allowlist.** At provisioning, the hub injects the authorized user list (owner plus any grants) into the spoke as `HIVE_AUTHORIZED_USERS`. When someone completes device-flow login, the spoke validates the GitHub identity and checks it against the allowlist — a non-allowlisted user is **rejected before any session or token is persisted** (the device flow returns an explicit denial; the identity is never logged in).
-- **Per-user opaque sessions.** Each authorized visitor gets their own session: a 256-bit cryptographically random session ID in an `HttpOnly` cookie, mapped server-side to their username and role. Two people viewing the same dashboard each see their own identity. The session deliberately does **not** store the user's GitHub token.
-- **Forged identity headers are stripped.** On direct routes there is no trusted hub in front, so incoming `X-Hive-User` / `X-Hive-Role` headers are deleted by the authentication middleware (which runs outermost) before any handler sees them. A client cannot claim an identity by setting headers.
-- **The shared bearer token grants no identity.** On direct-route spokes, the legacy shared dashboard token path is disabled for user authentication, and the endpoint that would expose it returns 404. Possessing the token does not let you impersonate a user.
-- **The device-flow login persists no GitHub write credential — for anyone.** The spoke does not store or install the login token as a hive write identity, so a read-only viewer's login (or logout) can never touch the owner's stored write credentials. The device flow can therefore request no scope at all.
-- **Grant roles are enforced, not flattened.** Each non-owner grant is provisioned into `HIVE_AUTHORIZED_USERS` with the **exact role the hub recorded** (`read`, `read-write`, or `merger`), so a direct-route spoke enforces the same tiers as a hub-proxied one; an unparseable role fails safe to `read`.
-
-## Layer 3 — API keys and credential isolation
-
-The strongest isolation story is around inference-backend API keys — agents literally never possess them:
-
-- **Per-agent placeholder keys.** An agent using a self-hosted inference backend (litellm / vllm / llm-d / watsonx) is launched with `ANTHROPIC_API_KEY=sk-hive-<agent-name>` and `ANTHROPIC_BASE_URL` pointing at a translator proxy bound to `127.0.0.1` inside the pod (with `NO_PROXY` keeping the call loopback-local). The placeholder authenticates the agent only to that in-pod translator. Nothing outside the pod accepts that string.
-- **Server-side key swap.** The translator identifies the agent from its placeholder, converts the request from Anthropic to OpenAI format, and attaches the **real** gateway key server-side (as a `Bearer` header) before forwarding upstream. The real key lives only in the proxy's route table — never in any agent's environment, filesystem view, or prompt.
-- **Same pattern for Linear.** Every ISSUES_ONLY+ agent request to `api.linear.app` passes the tier gate and then has its `Authorization` header replaced with the hive's current Linear credential (the connected app's OAuth token, or the work-source key without one). The token in the agent's environment is a courtesy for SDKs that insist on one; because the OAuth token rotates daily and a running process never sees a later environment push, the proxy's copy is the only one that stays valid.
-- **Secret storage chain.** The real key is resolved from, in order: a configured key file → the Kubernetes Secret mount (`/secrets/litellm_api_key`) → an owner-only PVC file (`/data/secrets/litellm_api_key`, mode `0600` in a `0700` directory) → environment variable. When you enter a key in the dashboard it is written to the PVC file and patched into the hive's own Kubernetes Secret.
-- **Never in config files.** `hive.yaml` only ever records a key file *path* or an environment variable *name* — never a key value. The dashboard's persisted config overlay (`/data/hive.yaml.dashboard`) is secret-free by design: env-derived secrets are collapsed back to `${VAR}` references and the dashboard auth token is blanked before writing.
-- **Obfuscated in the UI.** Key entry uses a password field; after entry the API never returns the value — only whether a key exists, a masked tail hint, and which store it resolved from. A log-scrubbing handler additionally redacts GitHub-token and JWT patterns from all log output (details in [security.md](security.md)).
-- **Inherited process credentials never reach a pane.** The hive process itself holds credentials in its environment — the Linear work-source key it expands from `${LINEAR_API_KEY}`, the Linear OAuth app's client secret and webhook secret, the full App installation token the entrypoint exports — and every per-agent tmux server it starts inherits them into its *global* environment, which tmux copies into every pane. At session creation the hive records a `set-environment -r` removal for each of them (a plain `-u` only deletes the session entry and lets the global value show through), then sets the one credential the agent's tier may hold. An ISSUES_ONLY+ agent therefore sees `LINEAR_ACCESS_TOKEN` (the connected app's grant) and nothing else Linear-related; below that floor it sees no Linear credential at all.
-
-**Honest scope:** this placeholder mechanism applies to inference backends. Agents using cloud CLI backends (Claude, Copilot, Gemini, Goose) authenticate with the provider credential you connected for that purpose — that credential is available to the CLI process, as it must be for the CLI to work. Cross-agent exposure of those credentials is limited by the sandboxing layer below.
-
-## Layer 4 — Agent sandboxing
-
-Agents are unprivileged, separated, and policed at the network layer:
-
-- **Per-agent Unix UIDs.** Each agent runs as its own user (UIDs allocated from base 2001) via `su-exec`, with its own tmux server on a per-agent socket. One agent cannot attach to another's session or signal its processes. `su-exec` is mode `4750 root:hive-launch`, so no agent UID can re-exec it to become root.
-- **Per-agent GitHub tokens, not shared.** Each agent's scoped token is delivered to a per-agent cache file that is not world-readable: the entrypoint pre-creates it owned `dev:hive-<agent>` with mode `0640`, so only that agent's group can read it, and the locally-minted token path additionally writes `0600` and `chown`s to the agent's UID (deleting the file rather than leaving it shared if the chown fails). Agents cannot read each other's GitHub tokens. With [proxy-side credential injection](#proxy-side-github-credential-injection) on (opt-in: `HIVE_PROXY_INJECT_GH_AUTH=true`), that cache holds only an inert placeholder and the real token never leaves the hive process.
-- **Per-agent tool denylists.** Declarative per-agent tool rules in `hive.yaml` become hard CLI flags at launch (`--disallowed-tools` for Claude, `--deny-tool` for Copilot). Separately, GitHub MCP *write* tools are denied for **every** agent in **every** mode — the MCP layer never grants agents a GitHub write path regardless of autonomy level; GitHub writes are instead governed by the token tier and the policy proxy below.
-- **Claude Remote Control is pinned off.** Since Claude Code ~2.1.226 the Remote Control bridge (session publishing to claude.ai/code) auto-starts whenever no explicit `remoteControlAtStartup` value exists — a server-side rollout flag decides, so a routine image upgrade could expose every agent as a remote-controllable session under the shared claude.ai account. Hive writes a durable `"remoteControlAtStartup": false`, re-asserted at every claude-CLI launch: merged into the shared `/data/home/.claude/settings.json` for the plain claude backend, and into the per-agent settings seed for inference-gateway agents. The merge is add-if-missing only — an operator who wants the bridge sets the key to `true` in the same file and hive never clobbers it, logging an Info receipt so an enabled bridge is always explainable — and a launch-time check warns if an agent's session file records `hasUsedRemoteControl` despite the pin.
-- **A default-on GitHub policy proxy.** Every agent's `HTTPS_PROXY` points at an in-pod proxy that intercepts **GitHub API traffic** and enforces, deterministically, what the agent's current ACMM mode allows: REST method/path rules, GraphQL query-vs-mutation gating, and a **repository allowlist** - writes to any repo outside the hive's configured list are blocked with `403` (`X-Hive-Proxy-Blocked`) at the network layer, regardless of what the agent was prompted (or prompt-injected) to do. The proxy MITM-inspects only `api.github.com` (plus every GitHub-family host when [proxy-side credential injection](#proxy-side-github-credential-injection) is on); other destinations are tunneled without inspection. The same proxy attributes traffic to agents by UID (read from `/proc/net/tcp`, unforgeable) for token accounting.
-
-## Layer 5 — GitHub blast-radius controls
-
-What can agents actually do to your repositories? As little as you've dialed in:
-
-- **GitHub App scoping.** The recommended auth is a GitHub App — its reach is inherently limited to the repositories you installed it on. On top of that, hive mints **per-tier installation tokens** matched to each agent's autonomy mode: advisory agents get metadata/PR read-only tokens that *cannot* create issues; mid-tier agents get issues-only tokens with no code access; only trusted tiers get contents/PR write. The shared full-installation token is stripped from every agent's environment.
-- **Repo allowlist, enforced twice.** The configured repo list is enforced in the policy proxy (hard, network-level) and also injected into every agent kick as an explicit `AUTHORIZED REPOS` constraint (a prompt-level reinforcement of the hard control).
-- **ACMM maturity levels gate autonomy.** Six levels (L1–L6) map to per-agent policy modes enforced end-to-end by token tiers and proxy rules: advisory (observe only) → measured (file issues) → hold-gated PRs → full. At **L5**, the PR-request watcher labels every agent PR with literal `hold` so humans batch-review and approve; dashboard manual holds use `hive-pause/<hive-id>`, and `hive/<hive-id>` is provenance only; the underlying guarantee is that **merge permission simply is not granted below L6** — an L5 agent's token tier and proxy rules do not allow merging, whatever its prompt says. The system proposes; humans approve.
-- **Reporter trust (opt-in).** Who *asked* is a control too. With `project.issue_filter.reporter_trust.enabled: true`, issues from reporters outside the trusted set (by default GitHub owners, members and collaborators, plus an explicit login list) are not worked until a maintainer adds a triage label, and a PR whose rationale traces to such an issue without a configured acceptance label is held for a human at **every** level, L6 included. Acceptance supplies maintainer sign-off for both admission and the PR check; it does not auto-release an existing PR hold. Maintainer-filed issues flow as before. Off by default; see [agent-configuration.md](agent-configuration.md#reporter-trust-who-filed-it-not-only-what-it-is-labelled) ([#9665](https://github.com/hivecommons/hive/issues/9665)).
-- **DCO sign-off.** Agent policies require DCO-signed commits (`git commit -s`); pair this with a DCO check on your repos to make it a hard gate.
-- **Proposed gate-integrity invariants.** The [gate-integrity design](design/gate-integrity-invariants.md) proposes that the GitHub App write gate / push proxy refuse agent history rewrites on branches the lane did not create, refuse agent sign-off trailers added to other authors' commits, and treat gate manipulation as an ACMM regression that demotes the lane to hold-gated pending human review.
-
-- **History and attestation invariants.** Agent-authored branch pushes must be fast-forward updates. A lane must not force-push, rebase-and-push, or otherwise rewrite a branch it did not create; conflicts and DCO failures on contributor commits are reported back to the PR instead of being repaired by rewriting history. This invariant protects branches the lane did not create; rebasing or force-with-lease pushing the hive App's own lane-created branch (for example `agent/<lane>` or `<lane>/...`) is permitted when resolving that lane's PR conflict. Likewise, an agent may only add its own `Signed-off-by` trailer to commits it authored, because a sign-off is an attestation by the named identity.
-
-## Layer 6 — Hub↔spoke channel
-
-Registered hives send periodic heartbeats to the hub:
-
-- Heartbeats are authenticated with a **per-hive** bearer key derived from the hub master secret (`HIVE_HEARTBEAT_KEY`, reconciled onto hosted spokes; self-hosted spokes derive it from `HIVE_HUB_SECRET` + `HIVE_ID`), validated with a constant-time comparison. The old fleet-wide shared bearer lane was removed.
-- The outbound payload carries operational telemetry only: health and cluster metrics, version/git info, agent and governor summaries, and 24-hour **token counts**. No API keys, GitHub tokens, or other credentials leave the spoke in heartbeats.
-- The response channel is how the hub delivers configuration to hives it manages (including GitHub App credentials for hub-provisioned hives, scoped to the caller hive's own key) — hub-to-spoke, never spoke-to-hub.
-
-## Layer 7 — Hosted-platform isolation
-
-On the hosted platform, each hive is single-tenant by construction:
-
-- **One namespace, one pod, one PVC per hive.** Provisioning creates a dedicated `hive-hosted-<id>` namespace with its own PVC and a single-replica Deployment. There is no shared runtime between customers' hives.
-- **Least-privilege RBAC.** The per-hive Role is namespace-scoped and limited to the hive's own `hive-secrets` Secret by name — a hive pod cannot read other namespaces' secrets.
-- **Authenticated internal API.** Server-to-server calls inside the pod (the dashboard proxy to the Go API) carry an internal auth token header validated with a constant-time comparison; security headers (CSP, `X-Frame-Options`, etc.) are always active on the dashboard, and an optional bearer `auth_token` can be required on all API endpoints.
-- **Zero-downtime upgrades.** Hosted hives roll updates with `maxSurge=1` / `maxUnavailable=0` on ReadWriteMany PVCs, so upgrades don't create a window where a half-started replacement serves requests.
-
----
-
-## Key material, rotation, and the egress gate — operator detail
-
-The layers above are the evaluator's map; the sections below are the operator's deep-dive into the key and network layer that Layers 1, 6, and the proxy depend on. For the attacker-oriented view of these same controls, see [security-threat-model.md](security-threat-model.md).
-
-### Sessions and SSO are Ed25519-only
-
-Hub-issued session cookies and the hub→spoke SSO handoff are verified with **Ed25519 signatures only**. The legacy symmetric (HMAC) session-cookie lane was deleted, and the fleet-wide shared heartbeat bearer was replaced by per-hive bearers. There is no HMAC fallback for sessions or SSO on v4: a spoke that only holds the retired symmetric `HIVE_SSO_KEY` fails closed.
-
-What that looks like when misconfigured:
-
-- **Spoke has no verification key at all** → SSO renders an error page with HTTP 503: *"This hive has no hub SSO verification key configured…"* and suggests setting `HIVE_HUB_SECRET` (or `HIVE_SSO_PUBLIC_KEY`). Direct GitHub login remains available.
-- **Key present but handoff rejected** → HTTP 401 (*expired, malformed, or issued for a different hive*). The spoke log line `sso handoff rejected` has the specific reason; the response body deliberately does not.
-
-### Per-hive derived keys
-
-Every spoke uses keys derived per hive from the hub master secret. The hub reconciles five env vars onto **hosted** spoke Deployments automatically (a 15-minute sweep):
-
-`HIVE_HEARTBEAT_KEY`, `HIVE_SSO_PUBLIC_KEY`, `HIVE_SESSION_PUBLIC_KEY`, `HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`
-
-**Self-hosted spokes are never touched by that sweep** — and do not need to be. Every resolver falls back to deriving the same domain-separated key from `HIVE_HUB_SECRET` + `HIVE_ID`, so a self-hosted spoke that sets those two is byte-identical to a hub-injected one. Setting the five vars explicitly is the least-privilege alternative (the spoke then never holds the master).
-
-The symmetric `HIVE_SESSION_KEY` that used to sit alongside `HIVE_SESSION_PUBLIC_KEY` is gone (issue [#3234](https://github.com/hivecommons/hive/issues/3234)): every lane that ever verified against it — the legacy HMAC cookie lane ([#3725](https://github.com/hivecommons/hive/pull/3725)), the terminal-key fall-through, and the Node proxy's copy — was already deleted, so shipping it at all was unjustified secret exposure. The sweep now actively **strips** it from any Deployment still carrying one, rather than merely no longer adding it.
-
-Two gotchas:
-
-- **Empty is worse than absent.** The resolvers fall back on empty values just like missing ones, but an empty var can make convergence accounting report the hive as converged when it is not. Unset rather than blank.
-- Per-hive env material derives from the **current** master generation — relevant during rotation, below.
-
-### Provisioning-template changes reach existing spokes only through a reconcile
-
-The provisioning template (`k8sManifestTemplate` in `src/pkg/hub/saas_provision.go`) is `kubectl apply`ed once, when a hive is provisioned. A change to it is born onto every spoke created afterwards and reaches **no spoke that already exists** — those keep whatever object the template rendered on their day. The per-hive env sweep above, the NET_ADMIN sweep, and the vanity-host patch are the reconcilers that close such gaps for the objects they own; a change to any other existing object needs one too, or the PR must say that existing spokes have to be re-provisioned.
-
-The case that made this rule: [#7457](https://github.com/hivecommons/hive/pull/7457) added `auth-url` / `auth-response-headers` to the `hive-contribute` Ingress so a signed-in visitor's identity reaches `/api/contribute/me`. The code half rolled out with the next image; the Ingress half reached only newly provisioned spokes, and `/api/contribute/me` kept answering `401` everywhere else ([#7517](https://github.com/hivecommons/hive/issues/7517)). The hub now reconciles those two annotations onto every hosted spoke's `hive-contribute` Ingress on nginx clusters (a 15-minute sweep, `contribute_ingress_reconcile.go`; a merge patch on the annotations, which rolls no pod). The same sweep converges the `hive-terminal` Ingress (`auth-url`, `auth-signin`, `auth-response-headers`), which drifted when the hub's public host changed and left `/terminal` answering `500` on older spokes. OpenShift-Route clusters have no nginx Ingress and are skipped.
-
-### Proxy-side GitHub credential injection
-
-`HIVE_PROXY_INJECT_GH_AUTH=true` ([#1861](https://github.com/hivecommons/hive/issues/1861)) moves every agent's usable GitHub credential out of the agent's reach. The hive mints each agent's tier-scoped App token as before, but keeps it in an in-memory registry inside the hive process; the agent's readable token cache receives only the placeholder `hive-proxy-injected-<agent>`, and so do the `GH_TOKEN`/`GITHUB_TOKEN` values derived from that cache. Any real `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or `GITHUB_ENTERPRISE_TOKEN` in the hive process's own environment is removed from every agent's tmux session, push-capable agents included, so no agent env var carries a usable GitHub token. The MITM proxy strips whatever `Authorization` an agent sends to a GitHub host and attaches the real token of the agent it identified by UID. A prompt-injected agent that prints its token leaks a string that authenticates nowhere, and a credential smuggled out of a backend CLI's `/proc/<pid>/environ` is stripped at the proxy before GitHub sees it (on spokes where forced egress is enforced, so every GitHub request passes the proxy). The rewrite is limited to GitHub hosts: a request bound for Linear, which the same proxy inspects, never carries an agent's GitHub token ([#9586](https://github.com/hivecommons/hive/issues/9586)).
-
-Who has it on:
-
-- **Nobody by default. Injection is opt-in only.** It is on only on a spoke whose Deployment sets `HIVE_PROXY_INJECT_GH_AUTH=true`. Unset is off on every hive - hosted or self-hosted, GitHub App or PAT, spoke or hub - and the hub renders no value onto newly provisioned spokes. A brief default-on for hosted App spokes ([#9597](https://github.com/hivecommons/hive/pull/9597), [#9625](https://github.com/hivecommons/hive/pull/9625)) was reverted before any spoke ran it ([#9586](https://github.com/hivecommons/hive/issues/9586)).
-- **Opting a spoke in:** set `HIVE_PROXY_INJECT_GH_AUTH=true` on its Deployment. Injection needs GitHub App auth (the App-minted per-agent tokens are what the proxy injects); on a PAT-only spoke there is nothing to inject. The spoke logs one line at boot saying which way it resolved and why, for example `proxy GitHub auth injection: off (opt-in: set HIVE_PROXY_INJECT_GH_AUTH=true)`, and the dashboard Security tab shows the same state (`security.credentialInjection` in `GET /api/config/governor`, and "GitHub auth proxy-injected / agent-held" in the posture strip).
-- **Copilot auth exchange is passed through.** The Copilot CLI trades the user's Copilot OAuth token (`COPILOT_GITHUB_TOKEN` / the device-flow token in `/data/copilot-user-token`) for its session token at `/copilot_internal/` on the GitHub API host (`/api/v3/copilot_internal/` on GHE). An App installation token cannot perform that exchange, so under injection the proxy leaves the agent's own `Authorization` untouched on those paths - nothing stripped, nothing injected. **Residual:** the Copilot user OAuth token remains agent-readable and spendable on those endpoints; moving it server-side too is a follow-up. No hub-held App token is ever attached there.
-- **Explicit opt-out:** `HIVE_PROXY_INJECT_GH_AUTH=false` behaves exactly like unset (off) but records the decision on the pod spec.
-
-Two settings are checked at spoke startup:
-
-- **`true` together with `HIVE_PROXY_ADVISORY_OK=true` is refused** (exit code 19, log line `refusing to start: contradictory GitHub credential configuration`). Advisory mode lets the proxy trust a self-asserted `Proxy-Authorization` agent name when UID identification fails. Under injection that name picks whose real token is attached, so a caller could claim a more privileged agent and receive its token. Restore forced egress, or unset `HIVE_PROXY_INJECT_GH_AUTH` (or set it to `false`).
-- **An unrecognized value** such as `1`, `TRUE`, `yes` or `on` is **not** fatal, because spokes auto-deploy shortly after a merge and a refusal would crash-loop any spoke that already carries one. It keeps its old meaning (off, so the agent still holds its real token) and is reported loudly: an ERROR log line `GitHub credential configuration warning` at boot, and an entry in the dashboard Security tab's coherence warnings (`security.credentialWarnings` in `GET /api/config/governor`). Only unset, `true` and `false` are recognized.
-
-What this does not yet do, tracked in [#9586](https://github.com/hivecommons/hive/issues/9586): the token holder still lives in the hive process rather than a separate signing sidecar on an internal-only network, and the Copilot user OAuth token is not yet injected server-side.
-
-### Master key rotation
-
-The hub master secret supports **generations**: at most two live at once — one CURRENT (mints new material) and one PREVIOUS (verify-only, default window 7 days). Design details: [design/master-key-rotation.md](design/master-key-rotation.md).
-
-- **Trigger:** `POST /api/saas/admin/rotate-master-key` (admin-only; refused while an impersonation grant is active; a second rotation within the 8-hour cooldown returns 409 with `retry_after_seconds`). Inspect with `GET /api/saas/admin/key-generations` and `GET /api/saas/admin/auth-rollout`.
-- **Rotation is not complete when the endpoint returns 200.** Spokes converge via the per-hive env reconcile at 3 Deployment patches per 15-minute cycle — roughly 6 hours for a ~70-spoke fleet — and **each patch rolls that spoke's pod once** (interrupting running agents there). Plan rotations accordingly.
-- **Dual-generation acceptance** during the window: session cookies, heartbeat bearers (bounded trial verification), and SSO/session public keys (current + previous) all verify against both generations. **Terminal and invite keys have no dual lane** — in-flight invite links are invalidated by a rotation.
-- **Alerts:** `warn` means the previous generation expires within 24h while spokes still carry it — convergence can still finish in time. `stranded` means the window already closed while spokes carry the old generation — those spokes are now failing verification; converge or re-provision them. Retirement is never blocked by an unconverged spoke (otherwise one unreachable cluster could pin the old key alive forever); the alerts are what make it loud.
-- **Do not "rotate" by setting a fresh master directly** (new `HIVE_HUB_SECRET` / replacing `/data/saas/hub-secret.key`): that discards all previous generations and strands every spoke at once. The only converging path is the rotate endpoint.
-- Self-hosted spokes converge **manually** — the operator re-derives or re-sets their keys; no sweep reaches them.
-
-### Forced proxy egress and `CAP_NET_ADMIN`
-
-The entrypoint installs an iptables REDIRECT of all outbound `:443` through the MITM proxy, so agents cannot bypass capability enforcement with a raw token. Consequences for deployment:
-
-- **Spokes require `CAP_NET_ADMIN` + usable iptables extensions to start enforcing.** If the chain cannot be created, or any non-optional rule (packet-mark exemption, HTTPS `REDIRECT`, or `OUTPUT` hook) cannot be appended, the entrypoint logs the exact iptables stderr, flushes the partial `HIVE_PROXY` chain, and refuses to start. Grant the capability with `--cap-add NET_ADMIN` (docker/podman) or `securityContext.capabilities.add: ["NET_ADMIN"]` (Kubernetes), and ensure the node has the required netfilter modules. The escape hatch `HIVE_PROXY_ADVISORY_OK=true` starts the spoke with egress enforcement **advisory-only** — agents can bypass the proxy — and logs a WARN saying exactly that. Chain creation retries 5× with jittered backoff so co-scheduled spokes don't fail in lockstep. This FATAL exits with a **distinct exit code, 77** (sysexits.h `EX_NOPERM`) in exactly two cases — the bounding set lacks `CAP_NET_ADMIN`, or the node's kernel is missing a required netfilter module (`xt_mark` or `xt_REDIRECT`; a #6003 preflight probes them in a throwaway chain before building the real ruleset and names the missing module in the FATAL) — so a supervisor can key off it without parsing logs; any other cause of the same FATAL still exits `1`. `xt_owner` is optional (WARN only). For the missing-module case the fix is loading the modules on the node (e.g. a MachineConfig `/etc/modules-load.d/` drop-in), not granting the capability. See [net-admin-requirement.md](net-admin-requirement.md#when-the-container-refuses-to-start-exit-77).
-- **The hive binary carries no file capabilities.** Earlier channel images shipped `/usr/local/bin/hive` with a `cap_net_admin+ep` file capability, which made the kernel refuse `execve()` with a bare `Operation not permitted` wherever the container's bounding set lacked `NET_ADMIN`. The binary now execs everywhere; the entrypoint instead raises `NET_ADMIN` as an **ambient capability** at the privilege drop, gated on the bounding set actually having it. Without the grant you get a one-line NOTICE instead of a crash.
-- **Agent identity is UID-based, not self-asserted.** The proxy reads `/proc/net/tcp` to resolve the calling process's UID against `uid-map.json`, which is unforgeable — a process cannot claim another UID's socket. A `Proxy-Authorization: hive <name>` header sent by the caller is a fallback ONLY, and by default the proxy does not trust it: with no UID map (or no match for this connection), the caller is treated as unidentified (`ADVISORY` mode, writes blocked) rather than as whatever name the header claims. The entrypoint persists the allocation in `/data/.hive/uid-map.json` and writes a runtime copy to `/var/run/hive/uid-map.json`; existing agents keep their UID forever, new agents append after the current maximum UID, and first boot without a persisted map adopts unique existing per-agent directory owners before assigning new IDs. `HIVE_PROXY_ADVISORY_OK=true` also permits the header fallback, for deployments (local dev, native/systemd installs with no per-agent UID separation) that have no UID map to check against.
-- **Rootless podman:** the image runs, but rootless cannot meaningfully grant `NET_ADMIN`, so the egress gate cannot be installed — a rootless spoke only starts with `HIVE_PROXY_ADVISORY_OK=true`, i.e. with the capability model unenforced. Treat rootless as unsupported for enforcing deployments.
-- **Hosted fleet:** the hub sweeps hosted spoke Deployments every 15 minutes and patches `NET_ADMIN` into the container securityContext where missing. The patch replaces the whole `securityContext` object — capabilities hand-added to a hosted spoke will be erased within 15 minutes. (On OpenShift/OVN the podspec request is necessary but not sufficient; the SCC must also allow it.)
-
-### In-container privilege model
-
-- The hive/proxy process runs as user `dev` (UID 1001); each agent runs as its own UID from `HIVE_UID_BASE=2001` upward.
-- `su-exec` is mode **4750 `root:hive-launch`** — only root and members of the pinned `hive-launch` group (GID 1002) can exec it. This closes the earlier world-executable-setuid hole where any agent UID could become root in the pod. `HIVE_LAUNCH_GID=1002` is part of the deployment contract: Kubernetes `fsGroup` and Secret `defaultMode: 0440` rely on the numeric GID, and it must stay in sync across `src/deploy/k8s/*.yaml` and hub provisioning.
-- **`su-exec` is the only setuid binary in the image.** The 4750 mode above restricts the helper Hive ships; it says nothing about the ones the base image ships, and `node:26-slim` (Debian 13) plus the `passwd`/`util-linux` packages leave eleven behind — `chfn`, `chsh`, `gpasswd`, `mount`, `newgrp`, `passwd`, `su`, `umount` (setuid root) and `chage`, `expiry`, `unix_chkpwd` (setgid shadow). All eleven were **world-executable**, so every agent UID could exec them: the same class of surface the 4750 mode exists to remove, sitting next to it. Nothing in Hive uses any of them — the entrypoint creates agent accounts with `useradd`/`groupadd`/`usermod` while still root, and every privilege hop goes through `gosu` (as root) or `su-exec` (as `dev`) — so `src/Dockerfile` strips the bits after the last install layer and **fails the build** if the resulting inventory is anything but `4750 root:hive-launch /usr/local/bin/su-exec`. Only a non-root caller needs a setuid bit, so root keeps full use of `mount`/`su`/`passwd`.
-- **Why the image, and not `allowPrivilegeEscalation: false`.** Setting it would set the kernel's `no_new_privs` bit, which disables *all* setuid binaries — including `su-exec`, which would break agent launch outright. So `no_new_privs` stays off by necessity, and a setuid-root exec from an agent UID would land in a bounding set that still holds `SETUID`, `SETGID` and `DAC_OVERRIDE` — enough to read the MITM CA key whatever mode its directory carries. Removing the binaries is the only lever the deployment leaves. Enforced by `src/scripts/check-suid-contract.sh` (static, every PR) and `src/deploy/test_image_suid_inventory.sh` (boots the image and reads the inventory back; also run against the real built image in `docker.yml`).
-- The MITM CA certificate is readable at `/data/proxy-ca.pem` so agent clients can trust forged certificates, but the CA private key is stored at `/data/.hive/proxy-ca-key.pem` in a `0700` directory with mode `0600`. It is never intentionally kept directly under the shared, agent-writable `/data` namespace. A legacy `/data/proxy-ca-key.pem` causes the old CA pair to be discarded on startup, because its key may already have been copied.
-
-### Supply chain
-
-- **npm:** all global AI-CLI installs (claude-code, codex, copilot, goose-adjacent tooling, etc.) run with `--ignore-scripts`.
-- **Base images digest-pinned:** `golang`, both `node` stages, and the contributor image's `debian:bookworm-slim` are pinned by digest; the vLLM inference image is digest-pinned with a model checksum. Refresh procedure is documented at the top of `src/Dockerfile`.
-- **Tools pinned by SHA:** tmux, ttyd, gh, goose, su-exec (by commit), and friends are checksum-verified at build.
-- **Workflows:** `actions/checkout` is SHA-pinned.
-- **CODEOWNERS:** `.github/CODEOWNERS` covers the security-sensitive paths (Dockerfiles, workflows, deploy manifests, launch scripts, key/cookie code). It is **advisory until "Require review from Code Owners" is enabled** in branch protection — deliberately left off because the repo's automation merges green PRs without human review; enabling it is an operator/repo-settings choice.
-
-### Metrics endpoint
-
-`GET /metrics` (Prometheus text format, on the dashboard port) is off unless `HIVE_METRICS_ENABLED` is truthy (`1|true|yes|on`); disabled means the route is not registered (scrapes 404). Because Prometheus cannot do device-flow auth, an enabled `/metrics` bypasses dashboard auth, so the bearer token is its only guard — and it **fails closed**: `HIVE_METRICS_TOKEN` is mandatory whenever metrics are enabled. Enabled-but-tokenless returns 403 (with an error body naming both variables, plus a startup warning); a wrong/missing bearer returns 401. The exposed series are business-sensitive: cumulative estimated cost per model/agent (`hive_estimated_cost_usd*`) and token totals per model.
-
-### Advisory digests
-
-Agent findings are posted as a single, continuously rewritten tracking-issue comment per repo. Each digest is **pinned to one analyzed commit**: the footer cites `owner/repo@<sha>` (branch included), and any finding whose file path no longer exists at that commit is flagged *"file path not found at analyzed commit — finding may be outdated"* instead of showing a dangling `file:line`. Inconclusive path checks (rate limits, transient errors) fail open — a finding is only flagged on a definitive 404.
-
----
-
-## Scope and limitations, stated plainly
-
-Security documentation that only lists strengths is marketing. The current, deliberate scoping:
-
-- **Rootless containers cannot enforce the egress gate.** The forced-proxy egress redirect needs `CAP_NET_ADMIN` + iptables; a rootless podman spoke only starts with `HIVE_PROXY_ADVISORY_OK=true`, i.e. with network-layer enforcement advisory-only.
-- **The policy proxy inspects GitHub API traffic.** All outbound `:443` is force-redirected through it, but non-`api.github.com` destinations are tunneled without inspection — it is a GitHub-policy enforcement point, not a content firewall for arbitrary hosts. If you need full egress control, apply Kubernetes NetworkPolicies around the hive pod.
-- **The L5 `hold` label is applied by agent policy;** the hard guarantee at L5 is the withheld merge permission (token tier + proxy rules), not the label itself.
-- **Cloud CLI credentials are shared with the CLI.** Claude/Copilot/Gemini/Goose agents necessarily run with the provider credential you connected. The placeholder-key isolation applies to inference-gateway keys.
-- **DCO is policy-driven** inside hive; enforce it repo-side (DCO check) for a hard guarantee.
-- **Shared-container execution remains a material risk.** Per-UID isolation reduces cross-agent access but is not equivalent to per-run containers or microVMs; see the residual-risks discussion in [security-threat-model.md](security-threat-model.md).
-
-Review evidence: the per-PR [review evidence bundle](review-evidence.md) is a hashed, optionally Ed25519-signed record of what Hive reviewed and why it merged. It is evidence, not certification; see the [SOC 2 control mapping](soc2-control-mapping.md) for what it does and does not show.
-
-## Compliance frameworks
-
-Hive holds no SOC 2, FedRAMP, ISO 27001 or other certification. The layers above are the controls an operator's own control owners can point to; [Compliance controls](compliance.md) maps them to framework requirements (SOC 2 Type II today), reports whether the live config is in a profile's recommended posture, and lists the requirements Hive cannot cover.
+# Security model: how Hive keeps autonomous agents from doing damage
+
+Last reviewed: 2026-10-23
+
+Hive runs AI coding agents against real repositories. This page is the
+inventory of the controls that limit what an agent can do, with the file or
+setting behind each one. Hive's design rule is that anything a human would
+decide the same way every time belongs in infrastructure, not in a prompt:
+the controls below are Go, shell and kernel mechanisms, not instructions to a
+model. Where a control is a proposal rather than code, the page says so.
+
+An inventory is not a promise that every running hive has every control on.
+Check the effective configuration before relying on a gate; a dashboard
+toggle alone is not evidence of enforcement.
+
+Companion pages: [security-threat-model.md](security-threat-model.md)
+(attacker view), [security.md](security.md) (log scrubbing),
+[securing-your-hive.md](securing-your-hive.md) (first-time operator guide).
+
+## Choose a reading path
+
+- **First-time operator:** use the guide above for trust choices and who can
+  merge. This page is a technical inventory, not a deployment checklist.
+- **Check a running hive:** start with [Human in the loop](#10-human-in-the-loop)
+  and the inventory's “How to check” column. Dashboard owners can inspect
+  effective settings; file, kernel and network checks need deployment-admin
+  access. Hosted owners should ask their hub operator for those checks.
+- **Audit the implementation:** use the control sections and
+  [verification procedure](#12-how-to-audit-a-running-hive). Do not change production state
+  or print secrets to prove a check.
+
+**Terms used below:** a **UID** is a Unix user ID. A **cgroup** tracks and
+limits a process group's resources. **Egress** means outgoing network traffic.
+**MITM** means man-in-the-middle: Hive's local inspecting proxy. A **PAT** is
+a personal access token. A **JWT** is a JSON Web Token; its **TTL** is its
+time to live. **CSP** is Content Security Policy, a browser restriction on
+page resources and scripts. These names describe mechanisms, not proof they
+are enabled on a given hive.
+
+## 1. Threats
+
+* **Prompt injection.** Issue and pull-request text, labels, comments,
+  cloned repositories and tool output are attacker-controlled and reach the
+  agent's prompt.
+* **Runaway or stuck agents.** Loops, token burn, endless re-dispatch, wedged
+  terminals.
+* **Credential theft.** An agent printing, pushing or sending a GitHub token,
+  provider key or hub secret off host, or reading another agent's.
+* **Bad merges.** Code landing without CI, review or human sign-off, or at a
+  different commit than the one judged.
+* **Over-trusted contributors.** Humans or bots steering agents, claiming work
+  above their trust, adding themselves as owners, or weakening CI.
+* **Cost abuse.** Token burn, API rate-limit exhaustion, label and comment
+  storms.
+* **Platform compromise.** Unauthorized dashboard or terminal access, forged
+  hub-to-spoke messages, cross-tenant exposure on the hosted hub.
+* **Supply chain.** Poisoned base image, npm install script, unpinned Action
+  or vulnerable Go dependency.
+
+## 2. Control inventory
+
+| Control | Mitigates | Where it lives | How to check it is on |
+|---|---|---|---|
+| Fresh context per task (`clear_on_kick`) | injection persistence | `src/crux/agent/manager_kick.go` | `hive.yaml` agent block |
+| Watchdog and crash-loop pause | stuck agents | `src/crux/agent/watchdog_fleet.go` | `conditions[]` in `GET /api/agents` |
+| Per-agent Unix users, `su-exec` 4750 | cross-agent access, privilege escalation | `src/deploy/entrypoint.sh`, `src/Dockerfile` | `/var/run/hive/uid-map.json`; `suid-contract` CI job |
+| Per-agent tool denials; GitHub MCP writes denied | GitHub writes through tools | `src/crux/agent/manager_launch.go` | agent launch command |
+| Credential-free sandbox and push broker (opt-in) | credential theft | `src/crux/sandbox`, `src/crux/pushbroker` | `agentSandboxEnabled` in `GET /api/config/governor` |
+| Work ledger and knowledge store instead of memory | injection persistence | `src/pkg/beads`, `src/pkg/knowledge` | `bd` CLI |
+| `ioscan` scanning and canaries (default on) | prompt injection, secret leakage | `src/pkg/ioscan` | `ioscanEnabled`, `ioscanFailMode` in `GET /api/config/governor` |
+| Trajectory review (default on) | goal drift | `src/crux/trajectory` | `governor.trajectory.enabled` |
+| Policy proxy and repo allowlist | credential theft, out-of-scope writes | `src/crux/proxy/rules.go` | `403` with `X-Hive-Proxy-Blocked` |
+| Forced egress through the proxy (iptables) | proxy bypass | `src/deploy/entrypoint.sh` | boot log; no `HIVE_PROXY_ADVISORY_OK` |
+| Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/crux/agentmode`, `src/crux/agent/manager_tokens.go` | token tier on the agent card |
+| Proxy-side credential injection (opt-in) | token theft | `HIVE_PROXY_INJECT_GH_AUTH` | `security.credentialInjection` in governor config |
+| Inference-key placeholder swap | provider key theft | `src/pkg/apiproxy` | agent env shows `sk-hive-<agent>` |
+| `gh` wrapper with per-agent restrictions | denied commands | `bin/gh-wrapper.sh` | `gh` resolves to `/usr/local/bin/gh` |
+| `hive-open-pr` / `hive-merge` relays | forged authorship, stale-commit merges | `bin/hive-merge.sh`, `bin/hive-open-pr.sh` | `POST /pulls` returns 403 for agents |
+| Automerge gates | bad merges | `src/pkg/github/automerge/automerge_sweep.go` | skip reasons in audit entries |
+| Intent verification | scope creep, guardrail edits | `src/pkg/intent` | `intentEnforce` in governor config |
+| Hold guard | drift after approval | `src/pkg/holdguard` | evidence comment on held PR |
+| Escalation circuit breaker | fix loops | `src/pkg/escalation` | `needs-human` label |
+| Sentinel (eight rules) | malicious PRs, CI weakening | `src/pkg/sentinel` | `sentinel-alert` label |
+| Reporter trust (opt-in) | hostile issue reporters | `src/pkg/config/reporter_trust.go` | `reporter_trust.enabled` |
+| Dashboard roles (`read`/`read-write`/`merger`/`owner`) | unauthorized writes | `src/pkg/dashboard/api_auth.go` | 403 on write as `read` |
+| Audit and token-access logs | unattributed actions | `src/pkg/dashboard/audit.go`, `src/pkg/agentaudit` | `GET /api/audit` |
+| Token budget and per-pass caps | cost abuse | `src/pkg/governor/governor.go` | `governor.budget.*` |
+| Pause switches | emergency stop | `project.paused_repos`, `POST /api/pause/<agent>` | config |
+| Webhook signature check | forged events | `src/pkg/dashboard/api_github_webhook.go` | unsigned request rejected |
+| Hub auth (Ed25519 sessions, per-hive bearers) | platform compromise | `src/pkg/hub/saas_auth.go` | `GET /api/saas/admin/auth-rollout` |
+| Content Security Policy and headers | dashboard XSS | `src/pkg/dashboard/server.go` | response headers |
+| Log scrubbing | secrets in logs | `src/crux/logscrub` | redacted patterns in logs |
+| Supply-chain guards | supply chain | `.github/workflows/*.yml`, `src/Dockerfile` | PR checks |
+| DCO on every commit | unattributed code | `src/scripts/check-dco-trailers.sh` | DCO check on PR |
+
+## 3. Agent runtime isolation
+
+**Bounded runs.** Work arrives as discrete tasks from the governor. By default
+each task starts with a cleared model context, so the agent begins from the
+task text and its instructions file, not from what a previous issue author
+wrote. A resumed pull-request session is the deliberate exception. A turn
+ceiling bounds how long the governor waits on a continuous turn. The watchdog
+classifies every agent pane on each tick, restarts dead panes with backoff
+from one to sixteen minutes, and after five failed restarts pauses the agent
+and raises an alert until a human intervenes. Context reset is not process
+reset: the CLI process and its on-disk session state persist until restart.
+
+**Separation.** Each agent runs as its own Unix user (from UID 2001), in its
+own `tmux` server on its own socket, with its own home directory and token
+file. Token files are owned by the agent's group with mode 0640 or by the
+agent with mode 0600. Agents cannot attach to each other's sessions, signal
+each other's processes or read each other's tokens. Agents coordinate through
+the work ledger and GitHub, never by reading transcripts.
+
+**Tool denials.** Per-agent tool rules in `hive.yaml` become hard CLI flags
+at launch. GitHub MCP write tools are denied for every agent in every mode.
+Claude Code's Remote Control feature is pinned off in every agent's settings
+at each launch.
+
+**Privilege model.** The hive process runs as user `dev` (UID 1001).
+`su-exec` is the only setuid binary in the image, mode 4750 `root:hive-launch`,
+so no agent user can run it. The setuid bits on the eleven setuid or setgid binaries the Debian
+base image ships are stripped at build, and the build fails if the
+inventory is anything but `su-exec`. `allowPrivilegeEscalation: false` is not used
+because it would disable `su-exec` and break agent launch. The proxy CA
+private key is stored with mode 0600 in a 0700 directory.
+
+**Credential-free sandbox (opt-in).** A task can run in a rootless Podman
+container or a Kubernetes Job that holds no credentials. Both the global
+`agent_sandbox.enabled` and the per-agent `sandbox.enabled` must be set. A
+push broker outside the sandbox scans committed diffs for secrets and
+protected-path edits, mints a short-lived token and pushes the branch. See
+[sandbox-isolation.md](sandbox-isolation.md).
+
+## 4. Context and memory
+
+Hive replaces long-lived agent memory with two inspectable stores. The work
+ledger holds typed work items, status and notes as git-backed JSON. The
+knowledge store holds typed facts with sources and confidence. Neither stores
+conversation text. Agents are primed with a bounded set of facts in the task
+prompt; they cannot query the store, so a poisoned fact cannot be amplified.
+Untrusted text is scanned by `ioscan` before it reaches a prompt
+([ioscan.md](ioscan.md)); canaries are planted per task and agent output is
+scanned for them. Session state is pruned and logs are scrubbed
+([security.md](security.md)).
+
+## 5. Network and credentials
+
+**Inference keys.** An agent using a self-hosted inference gateway is
+launched with a placeholder key, `sk-hive-<agent>`, and a base URL pointing
+at a translator proxy on loopback inside the pod. The translator recognises
+the agent from the placeholder and attaches the real key server-side. The
+real key is read from a key file, a Kubernetes Secret mount, or an owner-only
+file on the volume, never from `hive.yaml`, which records only paths and
+variable names. The dashboard never returns a key value. Agents using cloud
+CLI backends (Claude, Copilot, Codex, Goose) run with the provider credential
+you connected, because the CLI needs it.
+
+**GitHub blast radius.** The recommended authentication is a GitHub App,
+whose reach is limited to the repositories it is installed on. Hive mints a
+token per agent matching its mode: advisory agents get read-only tokens,
+measured agents can write issues, hold-gated and full agents can write code.
+The repo allowlist is enforced at the proxy and repeated in every task
+prompt. Below L6, no agent token can merge. Agent policy requires DCO
+sign-off; pair it with a DCO check on your repos for a hard gate.
+
+**The `gh` wrapper and relays.** `/usr/local/bin/gh` is a wrapper that
+applies per-agent restriction rules and injects the agent's token; agents
+never pass tokens themselves. A scrub script runs at the start of every shell
+in the agent's process tree and removes inherited credentials. `POST /pulls`
+and `PUT /pulls/{n}/merge` are denied at the proxy for every mode; agents call
+`hive-open-pr`, `hive-open-issue`, `hive-merge` and `hive-review`, which drop
+a request file that Hive processes as the App. The merge relay requires the
+expected head commit and checks the pull request is on the governor's
+merge-eligible list at that commit.
+
+**Proxy-side credential injection (opt-in).** With
+`HIVE_PROXY_INJECT_GH_AUTH=true`, the agent's token file holds only a
+placeholder and the proxy swaps in the real token on GitHub API requests. It
+requires GitHub App authentication and is refused if advisory proxy mode is
+also set, because advisory mode trusts a self-asserted agent name. A
+default-on version with a signing sidecar was proposed in
+[#9586](https://github.com/hivecommons/hive/issues/9586) and declined in
+September 2026; injection stays opt-in. Rotation of contributor registration
+tokens is a separate open item
+([#13804](https://github.com/hivecommons/hive/issues/13804)).
+
+**Forced egress.** The entrypoint installs an iptables rule redirecting all
+outbound port-443 traffic through the proxy, so agents cannot bypass it with
+a raw token. This needs `CAP_NET_ADMIN`; without it the spoke refuses to
+start unless `HIVE_PROXY_ADVISORY_OK=true` is set, which makes the gate
+advisory only. Rootless Podman cannot grant `NET_ADMIN`, so rootless
+deployments are unsupported for enforcement. The proxy identifies the calling
+agent by the user ID that owns the socket, read from `/proc/net/tcp`, which a
+process cannot forge. Only `api.github.com` is inspected; other hosts are
+tunnelled without inspection. See
+[net-admin-requirement.md](net-admin-requirement.md).
+
+**Plain-HTTP forwards.** The redirect covers port 443 only, so plain HTTP
+reaches the proxy through its explicit proxy port. Those forwards are
+identified like any other request and dialled only when the resolved address
+is globally routable: loopback services beside the proxy, the link-local
+metadata endpoint, RFC 1918/CGNAT cluster addresses and multicast are refused
+with `403` and counted as violations (loopback excepted — agents are handed
+`NO_PROXY` for it, so it is logged as the client misconfiguration it is). The
+check runs at dial time on the resolved address, so a hostname pointed inward
+is refused on the same evidence as a literal IP. Set
+`HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` only where a private-network plain-HTTP
+destination is intended.
+
+**Hub-to-spoke channel.** Heartbeats carry a per-hive bearer key derived from
+the hub master secret and are compared in constant time. The payload is
+telemetry only: health, version, agent and governor summaries and 24-hour
+token counts. No credential leaves a spoke in a heartbeat. The hub delivers
+configuration, including App credentials for hosted spokes, in the response.
+
+## 6. Code admission
+
+A green check is necessary but not sufficient. Between green CI and a merge,
+Hive runs deterministic gates that do not depend on the agent's own claims:
+
+| Gate | Refuses |
+|---|---|
+| Relay authorization | A merge request without an expected commit, or for a pull request not on the merge-eligible list at that commit, or from a user whose mode cannot merge. |
+| Automerge preconditions | Draft, closed, not mergeable, `hold`, `needs-human`, `needs-rebase`, `do-not-merge`, `blocked`, `hive-pause/<hive-id>`; CI not green; a current `CHANGES_REQUESTED` review; a missing reviewer verdict when required. |
+| Fresh fetch | Merging on cached state: the head commit is re-fetched and re-verified immediately before the merge call. |
+| No-CI repositories | Merging where no checks exist unless `auto_merge.no_ci_ok` is explicit. |
+| DCO | Merging a head whose DCO check is not passing. |
+| Trusted-author automerge | Auto-merging a human or bot pull request unless the author is a trusted author with a `merger` or `owner` role and GitHub write access; permission lookup failures fail closed. |
+| Intent verification | A pull request with no linked issue; a feature with no approved plan; any change to workflows, the `gh` wrapper, proxy rules, policies, `hive.yaml`, `OWNERS` or `CODEOWNERS` without maintainer approval. |
+| Hold guard | Lifting a hold onto a head that moved since the human saw it; drift re-applies `hold` and posts one comment naming the new commits. |
+| Review swarm verdicts | A self-asserted approval; verdicts are written by the review relay into a hive-owned directory and aggregated deterministically. |
+| Escalation circuit breaker | A fourth fix attempt after three distinct red commits; the item is labelled and routed to a person. |
+| Stage engine | Any writer of `stage/*` labels other than `src/pkg/stageengine`; an admission test enforces this. |
+| Sentinel label | Hive approval and every automerge lane while `sentinel-alert` is present. |
+| Repo pause | Agent writes, relays and automerge on a paused repo. |
+| GitHub | Hive never force-merges; branch protection and rulesets apply to the App token as to a human. |
+
+Every merge leaves a review evidence bundle: canonical JSON of what was
+reviewed and which checks and verdicts were seen, hashed and optionally
+Ed25519-signed. See [review-evidence.md](review-evidence.md). Check the
+enforcing mode: `intent.enforce: true` blocks; shadow and report-only modes
+do not.
+
+## 7. Contributor trust
+
+* **Reporter trust (opt-in)** withholds issues from authors outside the
+  trusted set until a maintainer adds a triage label, and holds pull requests
+  that trace to unaccepted issues. See
+  [securing-your-hive.md](securing-your-hive.md).
+* **Dashboard roles.** `authorized_users` carries `read`, `read-write`,
+  `merger` or `owner`. Security settings, sandbox toggles and merge-lane
+  releases are owner-only.
+* **Contributor tiers.** Relay contributors move from `newcomer` to
+  `contributor` automatically after five completed pull-request tasks, to
+  `trusted` by operator grant, and to `merger` or `advisor` by maintainer
+  decision. Tiers do not decay. See
+  [contributor-trust-and-roles.md](contributor-trust-and-roles.md).
+* **Claims and leases** are fenced by task generation, so no issue is held
+  by two contributors at once. The lease protocol is formally modelled.
+* **Author kind, not author claim.** Pull-request authors are classified
+  from GitHub identity (Hive App, trusted bot, human, unknown bot).
+* **Issue commands (045).** A human with repo write/maintain/admin access
+  can use `/hive approve` or `/hive decision <direction>` to release decision
+  parking. The command lifts `needs-human`, whoever applied it, but never
+  `hold`. Label-driven repos use their configured acceptance labels instead.
+* **PR commands (085/070).** Bare `/hive approve` is acknowledged only.
+  On an eligible Hive-authored PR, `/hive decision <instruction>` routes
+  the full text to the author/fixer. `/hive decision approve <rationale>`
+  records approval for the current head and can release `requires_human`:
+  on any PR at 085/070, on a workflow-path PR whose fence it releases, and
+  on any other contributor-lane PR whose verdict asks for a person, when a
+  trusted merger posts it after the head (see the review-verdict gate in
+  [hive-merge.md](hive-merge.md#contributor-lane-auto-merge)). An edited comment
+  never counts. This requires repo write access or higher **and**
+  configured merger trust.
+  Other authors use GitHub reviews/manual merging. Commands do not waive
+  CI, holds, author admission or path fences. See
+  [the exact gate contract](running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).
+* **Owner self-nomination** is a sentinel rule: a pull request adding its
+  author to `OWNERS`, `CODEOWNERS` or `MAINTAINERS` is flagged and blocked.
+
+## 8. Detection and response
+
+**Sentinel** (default on) checks every open pull request against eight rules:
+sensitive paths, owner self-nomination, permission escalation in workflows,
+secret exposure, CI gate weakening, test removal, security policy edits, and
+remote code execution patterns. A match applies `sentinel-alert`, posts one
+comment and writes an audit entry. The label blocks Hive approval and every
+automerge lane until a maintainer removes it.
+Whether that label and comment reach GitHub is decided by the **write-back
+containment gate** (`pkg/writeback`): on a PR Hive did not open, sentinel
+writes need ACMM L5 plus the review opt-in label (L6 without it), the repo
+must not be in `issues-only`/`off` mode, and the PR must not predate Hive's
+write access to the repo (backfill guard). Below the gate the finding is
+recorded, audited as `sentinel-finding-suppressed`, and shown in the
+Security tab and `/api/sentinel` — the scan never stops, only the
+unsolicited write does. The same gate fronts hold-gate notices, stage
+labels, supersession and duplicate-fix notices and reporter-trust holds; a
+ratchet test fails on any new direct GitHub write outside the package.
+
+**Trajectory review** runs every 600 seconds by default. A second model
+compares each agent's assigned intent with the last 120 lines of its rendered
+terminal transcript and pauses the agent on divergence. It fails open if the
+reviewer is unavailable.
+
+**Audit trails.** The dashboard audit log records every dashboard and API
+mutation, merge decision, sentinel finding and watchdog action to
+`/data/audit.jsonl`, rotated at 5 MB with three backups and a 90-day
+retention. The token-access log records which agent used a credential for
+which command. Proxy decisions, review evidence bundles and scrubbed agent
+transcripts complete the set. See [audit-log.md](audit-log.md) and
+[token-access-log.md](token-access-log.md).
+
+**Budgets and caps.** A seven-day token budget warns at a configurable
+percentage and suppresses tasks on exhaustion. Fair-share scheduling spreads
+tasks across repositories; every sweep that writes labels or comments has a
+per-pass cap. Fix cycles share a re-engagement limit.
+
+**Alerts.** Sentinel findings, trajectory pauses, crash loops and
+`needs-human` routing appear as dashboard banners and, when configured, as
+notifications.
+
+## 9. Platform and supply chain
+
+**Hub-routed dashboards.** Each hosted hive has its own hostname. The hub
+authenticates every request (GitHub, Google or a configured OIDC provider)
+and returns 403 unless that user has a grant on that hive. On success it
+injects the verified identity as headers that the spoke re-verifies. Grants
+carry `read`, `read-write`, `merger` or `owner`.
+
+**Direct-route spokes** enforce their own authentication: GitHub device-flow
+login against a per-hive allowlist, per-user opaque sessions in `HttpOnly`
+cookies, forged identity headers stripped, and the shared bearer token
+disabled for user login.
+
+**Hosted isolation.** One namespace, one pod and one volume per hive. The
+per-hive Role is namespace-scoped and limited to the hive's own Secret.
+Internal server-to-server calls carry an auth token compared in constant
+time.
+
+**Keys.** Sessions and single sign-on are verified with Ed25519 signatures
+only; there is no symmetric fallback, and a missing key fails closed. Every
+spoke uses keys derived per hive from the hub master secret. The master
+secret supports two generations, current and previous, with a seven-day
+verify-only window; rotation is triggered by an admin endpoint and spokes
+converge through a 15-minute reconcile sweep. Setting a fresh master secret
+directly strands every spoke.
+
+**Webhooks and terminals.** GitHub webhooks are verified with HMAC-SHA256
+against `X-Hub-Signature-256`. Terminal access uses short-lived signed
+assertions. Systemd units refuse to run code from a directory an
+unprivileged user could have created.
+
+**Dashboard headers.** Content Security Policy, `X-Frame-Options` and related
+headers are always set. The metrics endpoint is off unless
+`HIVE_METRICS_ENABLED` is set.
+
+**Supply chain.** Global npm installs run with `--ignore-scripts`. Base
+images are pinned by digest. Tools such as tmux, ttyd, `gh`, goose and
+`su-exec` are checksum-verified at build. Third-party Actions are pinned to
+commit SHAs. CI runs `govulncheck`, `gosec` and `golangci-lint` as separate
+jobs, OpenSSF Scorecard, Dependabot, an Action-pin check, a setuid inventory
+check, DCO trailer checks, a documentation link check and formal-model
+checks. Image attestations are turned off because they broke
+multi-architecture manifests, and a guard workflow keeps them off. An SPDX
+software bill of materials per image is attached to each release
+([releases.md](releases.md)). Container images are not signed.
+`.github/CODEOWNERS` covers the security-sensitive paths but is advisory
+until code-owner review is required in branch protection.
+
+## 10. Human in the loop
+
+* **ACMM** is the autonomy dial. Merge permission is not minted below L6.
+  L5 adds a `hold` label on every agent pull request. See
+  [acmm-policy-matrix.md](acmm-policy-matrix.md).
+* **Issue decision parking is 045.** A person with repository write access or
+  higher answers with `/hive approve` or `/hive decision <text>`, unless the
+  repo uses label-driven acceptance. This releases decision parking and
+  `needs-human`, not `hold`.
+* **PR decision parking is 085.** A trusted merger's GitHub **Approve**
+  review must name the current head to clear the enforcing sweep gate.
+  It can override any swarm outcome, including a request for changes;
+  the audit records who overrode what. A trusted merger's
+  `/hive decision approve` can answer `requires_human` on any PR, while
+  other decision text sends work to the fixer on eligible Hive-authored
+  PRs. Bare `/hive approve` never releases a PR.
+  The detailed [command boundaries](#7-contributor-trust) above still apply.
+* **Owner-only security settings.** Changes to `ioscan`, intent enforcement,
+  review requirements and the agent sandbox require the `owner` role.
+* **Emergency stops are not interchangeable.** To stop merging, disable
+  automerge per repo, apply an item hold, or drop below L6. Pausing an agent
+  or freezing the watchdog does not stop the App from merging existing PRs.
+  Use the [L6 emergency-stop table](running-at-level-6.md#stops-smallest-to-largest)
+  to choose the right boundary.
+* **Hooks** run only vetted actions from a fixed set ([hooks.md](hooks.md)).
+* **Advisory digests** are pinned to one analysed commit; findings whose
+  file no longer exists are dropped.
+
+## 11. What Hive does not do yet
+
+* **Rootless containers cannot enforce the egress gate.**
+* **The proxy inspects GitHub API traffic only.** Other destinations are
+  tunnelled. Use Kubernetes NetworkPolicies for full egress control.
+* **The L5 `hold` label is applied by agent policy.** The hard guarantee at
+  L5 is the withheld merge permission, not the label.
+* **Cloud CLI credentials are shared with the CLI.** The placeholder-key
+  isolation applies to inference-gateway keys only.
+* **DCO is policy-driven inside Hive.** Enforce it repo-side for a hard
+  guarantee.
+* **Agents share one container.** Per-user separation is not per-task
+  containers. The sandbox is opt-in and two-gated. A separate, opt-in
+  contributor-side krun microVM (`HIVE_CONTAINER_OCI_RUNTIME=krun`, see
+  [contributor-relay.md](contributor-relay.md) "Hardened mode") does not
+  change the isolation of the hive's own agents.
+* **Container images are not signed.**
+* **No CodeQL or container CVE scan** runs in this repo's CI.
+* **Branch protection is GitHub's.** Hive does not configure or verify it.
+* **Gate-integrity invariants are a proposal.** Refusing agent force-pushes
+  and history rewrites is designed
+  ([design/gate-integrity-invariants.md](design/gate-integrity-invariants.md)),
+  not enforced.
+* **Hub registration has no review step.** Any spoke with the derived keys
+  can register.
+* **Trust tiers do not decay.**
+* **Trajectory review fails open; the `ioscan` classifier fails open only
+  at L1–L4.** At L5–L6 text is withheld when the classifier cannot answer.
+  The deterministic rules, canaries, proxy and token tiers hold when a model
+  is down.
+
+## 12. How to audit a running hive
+
+Use an owner-authorized session. Keep production inspection read-only. Do not
+paste tokens, environments or Secret contents into reports.
+
+| Question | Check |
+|---|---|
+| Is the egress gate enforcing? | Boot log has no `HIVE_PROXY_ADVISORY_OK` warning; `iptables -t nat -L HIVE_PROXY` in the pod lists the port-443 redirect. |
+| Are agents separated? | `cat /var/run/hive/uid-map.json`; `ls -l /usr/local/bin/su-exec` shows `-rwsr-x--- root hive-launch`; `find / -perm /6000 -type f` lists only `su-exec`. |
+| Does an agent hold a usable token? | `GET /api/config/governor` → `security.credentialInjection`. |
+| Is `ioscan` on, and in which mode? | `GET /api/config/governor` → `security.ioscanEnabled`, `ioscanFailMode`, `ioscanCanaries`. |
+| Is trajectory review on? | `GET /api/config/governor` → `trajectory`. |
+| Is the sentinel on? | `sentinel` config and recent findings with the alert label. |
+| Who merged what, and why? | `GET /api/audit`; `hivectl evidence export --repo <o/r> --since <date>`. |
+| Who used a token? | `/var/run/hive-metrics/token-access.jsonl`. |
+| What is the merge posture per repo? | `hive.yaml` → `acmm_level`, `project.repo_policies[].auto_merge`, `auto_merge.trusted_authors`, `project.paused_repos`. |
+| Are webhooks authenticated? | `GITHUB_WEBHOOK_SECRET` is configured; test unsigned-request rejection only in a disposable hive. |
+| Is the image what CI built? | GHCR digest from the `docker.yml` run equals the running `imageID`. |
+
+To test denials, use a disposable evaluation hive and an operator-owned test
+repository. A write to a repository outside the allowlist must return `403`
+with `X-Hive-Proxy-Blocked`; a request authenticated with a placeholder token
+must fail; an unsigned webhook must be rejected. Never probe production by
+relaxing gates.
+
+## Compliance
+
+Hive holds no SOC 2, FedRAMP, ISO 27001 or other certification.
+[compliance.md](compliance.md) maps the controls above to SOC 2 requirements
+and lists the requirements Hive cannot cover.
 
 ## Reporting vulnerabilities
 
-Do not report suspected vulnerabilities in public issues, pull requests, or discussions. Follow the repository Security Policy: use GitHub private vulnerability reporting from the repository **Security** tab, or contact a maintainer directly if private reporting is unavailable. Include the affected component, branch/commit, impact, reproduction steps, and any relevant logs or configuration.
+Follow [SECURITY.md](../../SECURITY.md): use GitHub private vulnerability
+reporting from the repository's Security tab, or contact a maintainer
+directly. Do not open a public issue.

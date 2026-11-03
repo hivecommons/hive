@@ -22,7 +22,7 @@ func TestTabbedModalShellsStayFixedSize11268(t *testing.T) {
 			shell:    ".config-modal",
 			body:     ".config-body",
 			strip:    ".config-tabs",
-			wants:    []string{"height: min(84vh, 760px)", "display: flex", "flex-direction: column", "overflow: hidden"},
+			wants:    []string{"height: min(calc(100vh - var(--modal-gap) - var(--modal-gap)), var(--config-modal-max-h))", "display: flex", "flex-direction: column", "overflow: hidden"},
 			bodyWant: []string{"flex: 1 1 auto", "min-height: 0", "overflow: auto"},
 		},
 		{
@@ -34,7 +34,7 @@ func TestTabbedModalShellsStayFixedSize11268(t *testing.T) {
 			bodyWant: []string{"flex:1 1 auto", "min-height:0", "overflow:auto"},
 		},
 		{
-			name:     "strategy lab and knowledge modal shell",
+			name:     "experiment lab and knowledge modal shell",
 			shell:    ".nous-config-dialog",
 			body:     ".nous-config-dialog > .nous-config-body",
 			strip:    ".nous-config-output-modes",
@@ -90,20 +90,50 @@ func TestHelpTooltipsUseBodyFixedPortal11269(t *testing.T) {
 		"portal.id = 'config-tooltip-portal'",
 		"document.body.appendChild(portal)",
 		"const rect = info.getBoundingClientRect()",
-		"window.addEventListener('scroll', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); }, true)",
-		"window.addEventListener('resize', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); })",
+		"window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true)",
+		"window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); })",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("tooltip anchoring regression guard missing %q", want)
 		}
 	}
-	portalRule := cssRule(t, html, ".config-tooltip-portal")
+	// The shared ".config-info .config-tooltip, .config-tooltip-portal" rule
+	// also ends in ".config-tooltip-portal {", so match the standalone rule.
+	portalRule := regexp.MustCompile(`(?m)^\s*\.config-tooltip-portal \{[^}]*\}`).FindString(html)
+	if portalRule == "" {
+		t.Fatal("static/index.html has no standalone .config-tooltip-portal CSS rule")
+	}
 	for _, want := range []string{"display: block", "position: fixed"} {
 		if !strings.Contains(portalRule, want) {
 			t.Fatalf("tooltip portal must be body-level fixed positioning, missing %q in %s", want, portalRule)
 		}
 	}
+	// #11705: the author "display: block" above beats the user-agent
+	// "[hidden] { display: none }", so hideConfigTooltip()'s portal.hidden = true
+	// is a no-op on screen unless the portal has its own [hidden] rule.
+	if hiddenRule := cssRule(t, html, ".config-tooltip-portal[hidden]"); !strings.Contains(hiddenRule, "display: none") {
+		t.Fatalf("hidden tooltip portal must be display: none, got %s", hiddenRule)
+	}
 	if strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "pageX") || strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "offsetParent") {
 		t.Fatal("tooltip positioning must use trigger viewport rects, not page coordinates or offset parents")
+	}
+}
+
+// The portal's author `display: block` outranks the UA `[hidden]` rule, so the
+// stylesheet must restate `display: none` for `[hidden]` or tooltips never close.
+func TestHelpTooltipPortalHidesWhenHiddenAttributeSet(t *testing.T) {
+	html := indexHTML(t)
+	rule := cssRule(t, html, ".config-tooltip-portal[hidden]")
+	if !strings.Contains(rule, "display: none") {
+		t.Fatalf(".config-tooltip-portal[hidden] must set display: none, got %s", rule)
+	}
+	for _, want := range []string{
+		"if (typeof hideConfigTooltip === 'function') hideConfigTooltip();",
+		"close: hideConfigTooltip, rank: 40000",
+		"const CONFIG_TOOLTIP_CLOSE_GRACE_MS = 150",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("tooltip dismissal guard missing %q", want)
+		}
 	}
 }

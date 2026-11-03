@@ -30,16 +30,44 @@ func TestCanonicalIssueSubject_CollapsesModelAuthoredQualifiers(t *testing.T) {
 	}
 }
 
+func TestCanonicalIssueSubject_BroadenedForms(t *testing.T) {
+	groups := [][]string{
+		{
+			"[scanner] Split x.ts (1237 lines)",
+			"[sec-check] Split x.ts (1240 lines)",
+			"Split x.ts",
+		},
+		{
+			"[scanner] Split pkg/agent/kagent/kagent.go (1252 lines)",
+			"[scanner] Split pkg/agent/kagent/kagent.go (640 lines)",
+		},
+		{
+			"Split web/src/store/cache.ts into modules: extract helpers",
+			"Split web/src/store/cache.ts into modules: extract types",
+			"[scanner] Split web/src/store/cache.ts into modules",
+		},
+	}
+	for _, g := range groups {
+		want := canonicalIssueSubject(g[0])
+		if want == "" {
+			t.Fatalf("%q produced no canonical subject", g[0])
+		}
+		for _, v := range g[1:] {
+			if got := canonicalIssueSubject(v); got != want {
+				t.Errorf("canonicalIssueSubject(%q) = %q, want %q", v, got, want)
+			}
+		}
+	}
+	if got := canonicalIssueSubject("[scanner] Fix: the thing"); got != "" {
+		t.Errorf("short remainder after colon strip = %q, want \"\"", got)
+	}
+}
+
 func TestCanonicalIssueSubject_KeepsDistinctSubjectsApart(t *testing.T) {
 	cases := [][2]string{
 		{
 			"[scanner] Split pkg/agent/kagent/kagent.go (1252 lines)",
 			"[scanner] Split pkg/agent/kube/client.go (884 lines)",
-		},
-		{
-			// Different line counts are a different finding.
-			"[scanner] Split pkg/agent/kagent/kagent.go (1252 lines)",
-			"[scanner] Split pkg/agent/kagent/kagent.go (640 lines)",
 		},
 		{
 			// A path-qualified title must not collapse onto a bare filename.

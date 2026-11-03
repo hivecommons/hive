@@ -3,9 +3,13 @@ package claims
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 func newTestLedger(t *testing.T, hooks Hooks) (*Ledger, *time.Time) {
@@ -424,7 +428,7 @@ func TestComments(t *testing.T) {
 		}
 	}
 	got = ReleaseComment(prev, "lease --> revoked")
-	if !strings.Contains(got, "reason=lease_revoked -->") || !strings.Contains(got, "🔓 Claim by @relay-bot released") {
+	if !strings.Contains(got, "reason=lease_revoked at=") || !strings.Contains(got, "🔓 Claim by @relay-bot released") {
 		t.Fatalf("ReleaseComment:\n%s", got)
 	}
 	if PreemptedLabel("relay-bot") != "preempted:relay-bot" {
@@ -513,5 +517,110 @@ func TestSetPolicyAppliesToNewAndRenewedClaims(t *testing.T) {
 	res, err = l.Claim(Request{Repo: "o/r", Issue: 4, Holder: "bot", Kind: KindAgent})
 	if err != nil || res.Claim.ExpiresAt != now.Add(DefaultAgentTTL) {
 		t.Fatalf("empty policy must fall back to defaults: expires=%v err=%v", res.Claim.ExpiresAt, err)
+	}
+}
+
+// ClaimMarker carries at= when the claim instant is known, so a reader (and
+// pkg/issueclaim) can tell when work STARTED, not only when the hold lapses.
+func TestClaimMarkerCarriesStartInstant(t *testing.T) {
+	started := time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
+	c := Claim{Repo: "o/r", Issue: 4, Holder: "scanner", HolderID: "scanner", Kind: KindAgent, Hive: "h1",
+		ClaimedAt: started, ExpiresAt: started.Add(2 * time.Hour)}
+	want := "<!-- hive:claim who=scanner kind=agent hive=h1 at=2026-10-14T15:00:00Z until=2026-10-14T17:00:00Z -->"
+	if got := ClaimMarker(c); got != want {
+		t.Fatalf("ClaimMarker = %q, want %q", got, want)
+	}
+	if got := ClaimComment(c); !strings.HasPrefix(got, want+"\n") {
+		t.Fatalf("ClaimComment must open with the marker:\n%s", got)
+	}
+	c.ClaimedAt = time.Time{}
+	if got := ClaimMarker(c); strings.Contains(got, "at=") {
+		t.Fatalf("unknown start must omit at=: %q", got)
+	}
+}
+
+// A contributor marker carries the holder's trust tier and whether the hub
+// had verified the GitHub login, and pkg/issueclaim reads both back. The
+// contributor-lane auto-merge tier gates on these fields (#12041).
+func TestContributorClaimMarkerTierAndVerifiedRoundTrip(t *testing.T) {
+	started := time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
+	c := Claim{Repo: "o/r", Issue: 4, Holder: "alice", HolderID: "c1#s", Kind: KindContributor, Hive: "h1",
+		Tier: "trusted", Verified: true, ClaimedAt: started, ExpiresAt: started.Add(2 * time.Hour)}
+	want := "<!-- hive:claim who=alice kind=contributor id=c1#s hive=h1 tier=trusted verified=true at=2026-10-14T15:00:00Z until=2026-10-14T17:00:00Z -->"
+	if got := ClaimMarker(c); got != want {
+		t.Fatalf("ClaimMarker = %q, want %q", got, want)
+	}
+	parsed, ok := issueclaim.ParseMarker(ClaimComment(c))
+	if !ok || parsed.Tier != "trusted" || !parsed.Verified || parsed.Hive != "h1" {
+		t.Fatalf("round trip = %+v ok=%v", parsed, ok)
+	}
+
+	for name, tier := range map[string]string{"empty": "", "spaces": "trusted verified=true", "marker close": "x-->"} {
+		c := Claim{Holder: "bob", Kind: KindContributor, Tier: tier, ExpiresAt: started}
+		parsed, ok := issueclaim.ParseMarker(ClaimMarker(c))
+		if !ok || parsed.Tier != "newcomer" || parsed.Verified {
+			t.Fatalf("%s tier: parsed %+v ok=%v, want newcomer/unverified", name, parsed, ok)
+		}
+	}
+
+	agent := ClaimMarker(Claim{Holder: "scanner", Kind: KindAgent, Tier: "trusted", ExpiresAt: started})
+	if strings.Contains(agent, "tier=") || strings.Contains(agent, "verified=") {
+		t.Fatalf("non-contributor marker must not carry tier/verified: %q", agent)
+	}
+}
+
+func TestLedgerClaimCarriesContributorTier(t *testing.T) {
+	l, _ := newTestLedger(t, Hooks{})
+	res, err := l.Claim(Request{Repo: "o/r", Issue: 9, Holder: "alice", HolderID: "c1#s", Kind: KindContributor, Tier: "merger", Verified: true})
+	if err != nil || res.Outcome != OutcomeClaimed {
+		t.Fatalf("claim: %+v err=%v", res, err)
+	}
+	if res.Claim.Tier != "merger" || !res.Claim.Verified {
+		t.Fatalf("ledger claim lost tier/verified: %+v", res.Claim)
+	}
+}
+
+func TestReleaseAgentClaimsDropsOnlyThatAgentsClaims(t *testing.T) {
+	var released []string
+	l, _ := newTestLedger(t, Hooks{OnReleased: func(c Claim, reason string) { released = append(released, c.Key()+":"+reason) }})
+	for _, req := range []Request{
+		{Repo: "o/r", Issue: 1, Holder: "scanner", HolderID: "scanner", Kind: KindAgent},
+		{Repo: "o/r", Issue: 2, Holder: "scanner", HolderID: "scanner", Kind: KindAgent},
+		{Repo: "o/r", Issue: 3, Holder: "quality", HolderID: "quality", Kind: KindAgent},
+		// A human whose login spells the agent's name is not the agent.
+		{Repo: "o/r", Issue: 4, Holder: "scanner", HolderID: "scanner", Kind: KindHuman},
+	} {
+		if _, err := l.Claim(req); err != nil {
+			t.Fatalf("Claim %d: %v", req.Issue, err)
+		}
+	}
+	out := l.ReleaseAgentClaims(" scanner ", ReasonHolderRelaunched)
+	if len(out) != 2 {
+		t.Fatalf("released %d claims, want 2: %+v", len(out), out)
+	}
+	sort.Strings(released)
+	want := []string{"o/r#1:" + ReasonHolderRelaunched, "o/r#2:" + ReasonHolderRelaunched}
+	if !reflect.DeepEqual(released, want) {
+		t.Fatalf("OnReleased = %v, want %v", released, want)
+	}
+	for issue, wantHeld := range map[int]bool{1: false, 2: false, 3: true, 4: true} {
+		if _, held := l.Lookup("o/r", issue); held != wantHeld {
+			t.Fatalf("issue %d held=%v want %v", issue, held, wantHeld)
+		}
+	}
+	if l.ReleaseAgentClaims("", "x") != nil || l.ReleaseAgentClaims("nobody", "x") != nil {
+		t.Fatal("no-op releases must return nil")
+	}
+	var nilLedger *Ledger
+	if nilLedger.ReleaseAgentClaims("scanner", "x") != nil {
+		t.Fatal("nil ledger must return nil")
+	}
+	// The release comment carries at= so the forge reader can order it.
+	body := releaseCommentAt(out[0], ReasonHolderRelaunched, time.Date(2026, 10, 20, 15, 35, 0, 0, time.UTC))
+	if !strings.Contains(body, "<!-- hive:release who=scanner kind=agent reason=holding_agent_relaunched at=2026-10-20T15:35:00Z -->") {
+		t.Fatalf("release comment marker:\n%s", body)
+	}
+	if !strings.Contains(ReleaseComment(out[0], "x"), " at=") {
+		t.Fatal("ReleaseComment must stamp at=")
 	}
 }

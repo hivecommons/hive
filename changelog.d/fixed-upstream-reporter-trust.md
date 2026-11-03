@@ -1,0 +1,1 @@
+- Accept verified merged PRs from a repo's enabled `upstream_watch` upstream for reporter-trust, without trusting upstream authors globally; cross-repo associations and acceptance labels no longer grant local reporter trust ([#13348](https://github.com/hivecommons/hive/issues/13348)).

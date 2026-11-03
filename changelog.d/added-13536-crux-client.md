@@ -1,0 +1,2 @@
+- `crux/api` gains a Go client (`api.NewClient`) for `crux serve`: every verb, SSE log following and the runtime event stream, over a unix socket or TCP with a bearer token (#13536).
+- The `crux` CLI gains a remote mode: `--server ADDR` (or `CRUX_SERVER`) with `--token` (or `CRUX_TOKEN`) makes `run`, `ps`, `logs`, `kick` and `stop` drive a `crux serve` over the API instead of an in-process runtime; `logs -f` follows the agent's output (#13536).

@@ -38,11 +38,43 @@ import (
 // gate. The exempt/hold checks keep their own looser matching; this filter
 // does not change them.
 const (
-	DefaultNeedsHumanLabel     = "needs-human"
-	DefaultNeedsDirectionLabel = "needs-direction"
-	DefaultNeedsDecisionLabel  = "needs-decision"
+	DefaultNeedsHumanLabel = "needs-human"
+	// DefaultNeedsDecisionLabel is the single "issue parked for a human
+	// ruling" signal (hivecommons/hive#12683): the issue-side stage label
+	// itself, stage/045-needs-decision. It replaced the `needs-decision` and
+	// `needs-direction` labels, which said the same thing twice next to it,
+	// and (owner decision) the shared stage/085 spelling, which is PR-only
+	// now. Kept as constants for callers; stagelabels contract tests pin
+	// the spellings together.
+	DefaultNeedsDecisionLabel = "stage/045-needs-decision"
+	// PRNeedsDecisionStageLabel is the PR parking stage, stage/085-needs-
+	// decision. On an ISSUE it is the retired pre-045 spelling: every reader
+	// treats it as the decision bucket until the stage reconciler (or the
+	// one-shot migration) has swapped it for DefaultNeedsDecisionLabel. It
+	// is deliberately NOT in LegacyNeedsDecisionLabels: that list drives
+	// repo label-definition deletion, and 085 stays defined for PRs.
+	PRNeedsDecisionStageLabel = "stage/085-needs-decision"
+	// DefaultNeedsDirectionLabel is the RETIRED spelling the `needs_direction`
+	// bucket defaulted to; it is now a legacy alias of the decision bucket.
+	DefaultNeedsDirectionLabel = LegacyNeedsDirectionLabel
 	DefaultNeedsSpecLabel      = "needs-spec"
+	// PossiblyExistsStageLabel is the prior-art gate's park signal: the
+	// issue stage label itself, stage/017-possible-existing, exactly as
+	// stage/045 is the decision park (hivecommons/hive#13575). It is a hard
+	// suppress — no agent claims a parked issue — and it is not configurable:
+	// the stage table owns the spelling (stagelabels contract tests pin it).
+	PossiblyExistsStageLabel = "stage/017-possible-existing"
+
+	// LegacyNeedsDecisionLabel and LegacyNeedsDirectionLabel are the retired
+	// park labels. Every hive still reads them as the decision bucket so an
+	// issue never un-parks before the stage reconciler has migrated it to
+	// DefaultNeedsDecisionLabel and removed them.
+	LegacyNeedsDecisionLabel  = "needs-decision"
+	LegacyNeedsDirectionLabel = "needs-direction"
 )
+
+// LegacyNeedsDecisionLabels are the retired spellings of the decision bucket.
+var LegacyNeedsDecisionLabels = []string{LegacyNeedsDecisionLabel, LegacyNeedsDirectionLabel}
 
 // HardSuppressLabelsConfig names label buckets that remove issues from the
 // actionable queue because a maintainer must supply input first. Empty slices
@@ -136,6 +168,12 @@ func (f IssueFilterConfig) Admits(labels []string) bool {
 	return anyLabelMatches(f.RequireLabels, labels)
 }
 
+// RequireLabelsForNotice returns the require_labels allow-list, so a reply
+// can name the labels that would admit an issue Admits refuses.
+func (f IssueFilterConfig) RequireLabelsForNotice() []string {
+	return append([]string(nil), f.RequireLabels...)
+}
+
 // AdmitsReporter is the reporter-trust half of admission (#9665). With the
 // gate off it admits everyone; with it on, a trusted reporter passes and any
 // other reporter's issue must carry one of the untrusted-require labels. The
@@ -224,9 +262,11 @@ func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 				return DefaultNeedsHumanLabel
 			}
 		}
+		// The retired needs_direction bucket and the legacy spellings are
+		// the decision bucket (hivecommons/hive#12683).
 		for _, configured := range f.HardSuppressLabels.EffectiveNeedsDirection() {
 			if labelMatches(configured, actual) {
-				return DefaultNeedsDirectionLabel
+				return DefaultNeedsDecisionLabel
 			}
 		}
 		for _, configured := range f.HardSuppressLabels.EffectiveNeedsDecision() {
@@ -234,10 +274,25 @@ func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 				return DefaultNeedsDecisionLabel
 			}
 		}
+		// The stage label is the park signal whatever the bucket is
+		// configured to, and the legacy spellings (including the pre-045
+		// stage/085 on an issue) stay recognised until the reconciler has
+		// migrated them.
+		if labelMatches(DefaultNeedsDecisionLabel, actual) || labelMatches(PRNeedsDecisionStageLabel, actual) {
+			return DefaultNeedsDecisionLabel
+		}
+		for _, legacy := range LegacyNeedsDecisionLabels {
+			if labelMatches(legacy, actual) {
+				return DefaultNeedsDecisionLabel
+			}
+		}
 		for _, configured := range f.HardSuppressLabels.EffectiveNeedsSpec() {
 			if labelMatches(configured, actual) {
 				return DefaultNeedsSpecLabel
 			}
+		}
+		if labelMatches(PossiblyExistsStageLabel, actual) {
+			return PossiblyExistsStageLabel
 		}
 	}
 	return ""

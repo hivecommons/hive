@@ -11,7 +11,7 @@ func TestOverviewCSVExportStaticWiring9056(t *testing.T) {
 		`class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" data-action="overviewOpenExport"`,
 		`data-arg0="${esc(overviewExportURL(csvKind))}" title="${esc(csvTitle)}" aria-label="${esc(csvTitle)}"`,
 		`class="overview-band-download" data-action="overviewOpenExport"`,
-		`data-arg0="${esc(overviewExportURL(kind, s.key))}"`,
+		`data-arg0="${esc(overviewExportURL(kind, s.key, 'slice'))}"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("missing export link %q", want)

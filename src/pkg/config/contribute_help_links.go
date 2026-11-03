@@ -15,6 +15,7 @@ const (
 var DefaultContributeHelpLinks = []ContributeHelpLink{
 	{Label: "Contributor docs", URL: "https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md"},
 	{Label: "Open a Hive issue", URL: "https://github.com/hivecommons/hive/issues"},
+	{Label: "Watch the hive live on Twitch", URL: "https://www.twitch.tv/hivecommons"},
 }
 
 func NormalizeContributeHelpLinks(in []ContributeHelpLink) ([]ContributeHelpLink, error) {

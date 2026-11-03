@@ -10,18 +10,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/taskmcp"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/planning"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 func TestContributeMCPContextBundleUsesActiveAssignment(t *testing.T) {
 	s := newTestServer()
 	s.authToken = "secret"
-	s.deps = &Dependencies{Config: &config.Config{Agents: map[string]config.AgentConfig{"lane": {Standby: &config.StandbyConfig{Enabled: true, DailyCapPerContributor: 2}}}}}
+	s.deps = &Dependencies{Config: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"lane": {Standby: &config.StandbyConfig{Enabled: true, DailyCapPerContributor: 2}}}}}}
 	s.contributeHub = NewContributeWSHub(s.logger, s)
 	s.contributeHub.connections["alice"] = &ContributorConnection{
 		currentTask:    &WSTaskAssign{TaskID: "task-1", Kind: "issue", Repo: "owner/repo", Number: 42, Title: "do work", Key: "owner/repo#42", FromFork: true, HeadRepo: "alice/repo", Held: true, HoldReason: "waiting on review"},
@@ -274,7 +274,7 @@ func TestContributeMCPLeaseBearerStageMismatchRefusesAndAudits(t *testing.T) {
 	}
 	foundAudit := false
 	for _, entry := range s.audit.Recent(10) {
-		if entry.Action == agent.AuditTaskMCPStageMismatch && strings.Contains(entry.Detail, "reason=stage_mismatch") {
+		if entry.Action == agentaudit.AuditTaskMCPStageMismatch && strings.Contains(entry.Detail, "reason=stage_mismatch") {
 			foundAudit = true
 			break
 		}

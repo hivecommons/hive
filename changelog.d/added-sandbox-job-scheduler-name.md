@@ -1,0 +1,1 @@
+- `agents.<name>.sandbox.job.scheduler_name` sets the Job pod's `schedulerName`, for clusters whose admission webhook requires a custom scheduler for device-requesting pods (e.g. `spyre-scheduler`)

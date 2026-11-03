@@ -1,0 +1,29 @@
+# Opt-in monitoring component: needs the Prometheus Operator ServiceMonitor CRD
+# and an overlay that includes the k8s/ base (it patches the Deployment).
+# HIVE_METRICS_TOKEN comes from the dedicated hive-metrics-token Secret, the
+# same one the k8s/ base Deployment reads, so the scraper never needs read
+# access to hive-secrets. The ref is optional, so a missing key fails closed
+# with 403 (pkg/dashboard/metrics_prometheus.go) instead of crashing the pod.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+
+patches:
+  - path: patch-deployment.yaml
+
+# Grafana dashboard, imported by the kube-prometheus-stack sidecar (it watches
+# ConfigMaps labelled grafana_dashboard: "1"). The hash suffix is disabled so the
+# name stays stable for Grafana provisioning and for patches.
+configMapGenerator:
+  - name: hive-grafana-dashboard
+    namespace: hive
+    files:
+      - hive-metrics.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+        app.kubernetes.io/name: hive

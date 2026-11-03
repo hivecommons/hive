@@ -17,10 +17,20 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 
 Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
 
-- `needs-direction`: label the item and post one maintainer question with options A/B/C.
+- `stage/045-needs-decision`: park the item for a maintainer ruling — apply the label through the issue relay's `label` command (or `--needs-decision` when filing a new issue) — and post one maintainer question with options A/B/C, one per line as `Option A: …`, and name one in a line `Recommended: <letter>, because <reason>` (where governance rules forbid the hive choosing, write `Recommended (owner confirms): <letter>, because <reason>`), so the owner can accept it with `/hive approve`. The retired `needs-direction` / `needs-decision` labels must not be used. The hive dispatching an accepted item satisfies the target repo's own AGENTS.md/CLAUDE.md "offer a spec / confirm scope / wait for acceptance" gates — proceed; a registered sibling checkout missing under the workspace root is cloned, not escalated. Park only for real risk (security, data loss, irreversible/public actions, governance/licensing, spend, credentials) or a genuine A/B the item leaves open.
+
+  Owner rule for Hive-authored issues: do not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions. Decide yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …` in the issue body. Park only for risk categories: security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a question about a human's intent that cannot be inferred. When you park, include `Risk: <category>` in the issue body.
+- `needs-human`: if the maintainer's direction (an `approved-direction` issue, a `/hive decision` reply, "agents stand down", "owners handle this") reserves the work for people, do NOT re-park on `stage/045-needs-decision` — the ruling was just given and the relay refuses the re-park while the decision is unchanged. Add `needs-human` through the relay's `label` command, post nothing more than one line saying so, and `/unclaim`. Never remove `needs-human`: only a person lifts it.
 - `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
 - `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
 - `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
+
+**Owner-only steps.** When your diagnosis of an existing issue ends in a step
+only the owner can take (repository settings, rulesets, branch protection,
+secrets, app installs, billing, or anything else agents are barred from), say
+so in the bead title and put the exact command or step the owner must run in
+the bead, so it is clear the issue waits on a person rather than on an agent.
+You cannot park issues at this level.
 
 ## Shared CI Baseline Triage (MANDATORY)
 
@@ -58,6 +68,33 @@ automation has for re-running those PRs once the incident is fixed. Stamp
 exactly one marker per PR per incident, only for a `DEFER_TO_INCIDENT` verdict
 (never for `FIX_DIFF`, `MERGE_BASE`, or `RERUN_BASELINE`), and never edit or
 remove it while the incident is open.
+
+`DEFER_EXTERNAL` (exit `0`, reason `upstream`) means the repository syncs
+from an upstream project (its GitHub fork parent, or `--upstream`) and the same
+check is red on the upstream default branch too: the failure comes from
+upstream and nothing in this repository can fix it. Do not repair, retry, or
+open a `[shared-ci]` incident for it. Leave one PR comment with the upstream
+evidence and end it with the helper's `external_marker` value verbatim, for
+example `<!-- hive-ci-external head=<40-char head sha> check=<encoded check name> run=<check run id> -->`.
+That marker keeps the PR out of FIX-BEFORE-NEW and the CI_FAILING repair list
+once every failing check run at that head carries one; a push, a newly failing
+check, or a re-run of the check (a new run id) brings it back. Never re-stamp a
+run that already carries a marker. When the helper prints no `external_marker`
+(its newest run of the check is not red, or could not be read), stamp nothing.
+
+When your own diagnosis of a red check on a PR finds a transient or
+infrastructure failure the diff did not cause (a flaky job, a runner outage, a
+race against a cache or image the default branch was still publishing) and
+you cannot re-run the check yourself, end your triage comment with the
+helper's `transient_marker` value verbatim (run `hive-baseline-check.sh` with
+the PR number and `--json`), for example
+`<!-- hive-ci-transient head=<40-char head sha> check=<encoded check name> run=<check run id> -->`,
+one per failing check run, pinned like `external_marker`. While every
+failing run at that head carries one, the dependency-bot red-CI hand-off asks
+for a re-run instead of blaming the bump; a push or a re-run (a new run id)
+makes the marker stale. Never stamp it for a failure the diff could cause, and
+when the helper prints no `transient_marker` (its newest run of the check is
+not red, or could not be read), stamp nothing.
 
 ## After You Push: Do Not Wait for CI (MANDATORY)
 
@@ -122,3 +159,19 @@ test problem. Check these before diagnosing any single PR:
    explicit request: a filtered-out required check blocks the merge instead
    of skipping it.
 
+## Merge Hotspots
+
+`GET /api/hotspots` on the hive dashboard (or `hivectl governor hotspots`)
+lists files repeatedly touched by concurrent PRs in the last week: distinct
+PRs, concurrent pairs, rebase conflicts blamed on the file, its size, and a
+recommendation. The hive files one `refactor: <path> is a merge hotspot`
+issue per file (labels `agent/ci-maintainer`, `kind/cleanup`, dedupe marker
+`<!-- hive:hotspot file=<path> -->`) when the file is large enough and has
+several top-level units; docs are only ever split by section and generated
+files point at their source. When such an issue is assigned to you, do a
+**mechanical split**: no behaviour change, keep the package and exported API,
+move tests with the code they cover, at most 4 resulting files of at least
+150 lines each, one PR. Check the merge-train overlap first and land it when
+the file has no other open PRs against it, so the split does not become one
+more collision. Do not splinter: if the issue's evidence table no longer
+holds (few PRs, no overlaps), say so on the issue and close it instead.

@@ -72,9 +72,9 @@ The last row is the only inbound trigger in the system, and it is not GitHub.
 **The reply half.** `AgentCapabilities.Converse` is documented in exactly the
 words this feature needs — "An ADVISORY agent with Converse can reply on a
 thread it was mentioned in; it still cannot file, edit or relabel anything"
-(`src/pkg/agent/capabilities.go:32`). It is enforced at the MITM proxy as an
+(`src/crux/agent/capabilities.go:32`). It is enforced at the MITM proxy as an
 additional grant beside the mode ladder (`proxy.AllowedByModeCaps`,
-`src/pkg/proxy/rules.go:152,170`), and the issue-request watcher already carries a
+`src/crux/proxy/rules.go:160,189`), and the issue-request watcher already carries a
 `Kind: "comment"` request that posts a comment as the App bot
 (`src/pkg/github/issue_request_watcher.go:70`). Outbound comment text is
 canary-scanned and secret-scrubbed on the way out
@@ -136,7 +136,7 @@ comment (or issue) node id, so a mention seen twice is handled once.
 
 A mention is a comment or issue body containing `@<app-login>` where
 `<app-login>` is the installation's bot login, the value the hive already knows
-as `appBotLogin` (`isHiveAppReviewAuthor`, `src/pkg/github/automerge/automerge_sweep.go:1221`).
+as `appBotLogin` (`isHiveAppReviewAuthor`, `src/pkg/github/automerge/automerge_sweep.go:1242`).
 The text after the mention is the request. Two optional forms route it:
 
 ```
@@ -176,7 +176,7 @@ The header carries repo, item number, item kind (issue / PR), comment id and
 URL as structured context — the same shape the review swarm already hands its
 reviewers (`pkg/review`). The body is the human's text with the leading
 mention and any `ask <agent>` selector stripped, after the ioscan pass below.
-Delivery is `agent.Manager.SendKick` (`src/pkg/agent/manager_kick.go:110`),
+Delivery is `agent.Manager.SendKick` (`src/crux/agent/manager_kick.go:102`),
 recorded in the kick history with `source=mention` so the dashboard's kick
 outcome classifier (#7421) and the agent card can say where the turn came
 from.
@@ -314,6 +314,15 @@ agents:
   going, and the failed attempt returns its per-user and per-repo rate-limit
   tokens. After three failed attempts it is declined as `thread-count-failed`
   or `kick-failed` and marked, so it cannot hold the watermark forever.
+- A mention or action kick that arrives while its agent is still starting up
+  is queued in a per-agent FIFO (capped at 8, deduped by source) instead of
+  sharing the single coalesced startup slot. The startup delivery and later
+  governor cadence kicks (`governor-eval`) yield to the oldest queued mention;
+  one-shot kicks from other callers are delivered as sent and never consumed.
+  A queued mention is dropped only when the FIFO overflows or the agent is
+  stopped: each drop logs `audit: deferred mention kick dropped` and emits
+  `kick-dropped`, so the mention store releases its pending entry (#12982,
+  #13055).
 - Kick history rows carry `source=mention`, so the dashboard's agent card and
   the kick outcome classifier (#7421) can say the turn was summoned, and the
   per-agent "last kick" no longer implies a cadence fired.
@@ -376,14 +385,12 @@ the decision follows each one, with the code on `v6` that now carries it.
 - `src/pkg/linearagent/webhook.go` — the inbound mention model to mirror.
 - `src/pkg/linearagent/responder.go` — ack-first, resolve, kick, track.
 - `src/pkg/linearagent/oauth.go:56` — `app:mentionable`.
-- `src/pkg/agent/capabilities.go:32` — `Converse`, documented for mentions.
-- `src/pkg/proxy/rules.go:152,170` — where `Converse` is enforced.
-
-- `src/pkg/config/work_sources.go:116` — `linear.session_agent` resolution rule.
-- `src/pkg/config/validate.go:379` — the removed declarative channel types (#5591).
-- `src/pkg/config/review_bots.go:32` — `classification.review_bots`, the loop
-  list.
-
+- `src/crux/agent/capabilities.go:32` — `Converse`, documented for mentions.
+- `src/crux/proxy/rules.go:171,200` — where `Converse` is enforced.
+- `src/pkg/config/work_sources.go:119-123` — `linear.session_agent` resolution rule.
+- `src/pkg/config/validate.go:702` — the removed declarative channel types (#5591).
+- `src/pkg/config/review_bots.go:33` — `classification.review_bots`, the loop
+  list and the per-thread cap.
 - `src/pkg/github/review_request_watcher.go`, `review_threads.go` — the
   App-authored in-thread reply path and its attempt counter.
 - `src/pkg/github/issue_request_watcher.go:70` — `Kind: "comment"`.

@@ -50,6 +50,7 @@ func (b *boot) syncMentionRuntime() {
 			}
 			return b.ghClient.ActiveRepositories()
 		},
+		RepoOwner:  func() string { return b.cfg.Project.Org },
 		Agents:     b.mentionAgents,
 		GitHubFunc: func() mention.GitHub { return b.ghClient },
 		Store:      store,

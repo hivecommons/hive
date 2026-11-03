@@ -6,7 +6,7 @@ This directory contains Kubernetes/LXC manifests plus runtime helper scripts use
 
 ### `ttyd-tmux.sh`
 
-`ttyd` serves the browser terminal websocket, but agent tmux sessions may be owned by per-agent UIDs. Because tmux only lets the socket owner attach, `ttyd-tmux.sh <session>` finds the matching `/tmp/tmux-*/<session>` socket, waits for it when an agent is still being launched (default `900` seconds, override with `HIVE_TTYD_WAIT_SEC`; poll interval `HIVE_TTYD_POLL_SEC`, default `2`), derives its numeric UID/GID, and uses `su-exec` to attach as that owner. While attached it enables tmux mouse mode (so the scroll wheel drives copy-mode scrollback instead of just reflowing the viewport — issue #3694) and raises the session `history-limit` (default `50000`, override with `HIVE_TTYD_HISTORY_LIMIT`) for panes created later in the session. Both options are restored to their previous values on detach. Note that tmux reads `history-limit` at pane creation, so the attach-time raise cannot deepen an already-created pane — the authoritative deep-scrollback depth is set when the agent manager creates the session (`newSessionCommands` in `src/pkg/agent/manager.go`, default `50000`, override with `HIVE_TMUX_HISTORY_LIMIT`).
+`ttyd` serves the browser terminal websocket, but agent tmux sessions may be owned by per-agent UIDs. Because tmux only lets the socket owner attach, `ttyd-tmux.sh <session>` finds the matching `/tmp/tmux-*/<session>` socket, waits for it when an agent is still being launched (default `900` seconds, override with `HIVE_TTYD_WAIT_SEC`; poll interval `HIVE_TTYD_POLL_SEC`, default `2`), derives its numeric UID/GID, and uses `su-exec` to attach as that owner. While attached it enables tmux mouse mode (so the scroll wheel drives copy-mode scrollback instead of just reflowing the viewport — issue #3694) and raises the session `history-limit` (default `50000`, override with `HIVE_TTYD_HISTORY_LIMIT`) for panes created later in the session. Both options are restored to their previous values on detach. Note that tmux reads `history-limit` at pane creation, so the attach-time raise cannot deepen an already-created pane — the authoritative deep-scrollback depth is set when the agent manager creates the session (`newSessionCommands` in `src/crux/agent/manager_tmux.go`, default `50000`, override with `HIVE_TMUX_HISTORY_LIMIT`).
 
 Use it indirectly through the dashboard terminal link. If a terminal pane says it is waiting for an agent to start, the dashboard reached ttyd before that agent's tmux session existed; it should attach automatically when the socket appears. If it gives up and says no tmux socket was found, check that the agent session name exists and that the socket is present under `/tmp/tmux-*` in the container. The dashboard opens ttyd's bundled terminal page rather than owning the terminal WebSocket client, so reconnect throttling for that page lives in ttyd; this wrapper prevents reconnect storms by keeping the ttyd child alive while the socket is legitimately pending.
 
@@ -28,7 +28,9 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says i
 
 ## Other directories
 
+- `kustomize/components/`: opt-in Kustomize components such as `monitoring` (Prometheus Operator `ServiceMonitor` for `/metrics` plus a `PrometheusRule` with `HiveMetricsDown`, `HiveCostBurnHigh` and `HiveStageTransitionAnomalies` alerts; the scrape token lives in its own `hive-metrics-token` Secret). See [its README](kustomize/components/monitoring/README.md).
 - `kustomize/overlays/`: the `standalone` (self-hosted, hub-less), `openshift`, `openshift-netadmin` and `backup-exec-restriction` overlays on top of `k8s/` and `inference/`. See the [standalone overlay README](kustomize/overlays/standalone/README.md).
+- `stream/`: the headless Twitch streamer that puts the dashboard's Activity Monitor on a 24/7 stream (Xvfb + Chromium + ffmpeg image, Kustomize base and the `hive-hosted` overlay). See [its README](stream/README.md) and [Streaming the Activity Monitor](../docs/streaming-the-activity-monitor.md).
 - `ci-runners/`: manifests for the self-hosted GitHub Actions runners that serve this repository. See [its README](ci-runners/README.md).
 - `legacy-redirect/`: the hub legacy-host redirect that keeps the request path and query (#6430). See [its README](legacy-redirect/README.md).
 - `dibs-domain-cutover/`: staged manifests for moving dibs to `dibs.hivecommons.dev` (#5925). See [its README](dibs-domain-cutover/README.md).
@@ -95,4 +97,4 @@ Why these binaries are removed in the image rather than switched off in the
 pod: `allowPrivilegeEscalation: false` would set `no_new_privs` and disable
 every setuid binary, `su-exec` included, which breaks agent launch. The
 trade-off is spelled out in the C6 comment in `k8s/deployment.yaml` and in
-[security-model.md](../docs/security-model.md#in-container-privilege-model).
+[security-model.md](../docs/security-model.md#3-agent-runtime-isolation).

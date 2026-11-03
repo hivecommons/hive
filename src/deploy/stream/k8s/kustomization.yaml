@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hive-stream
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - networkpolicy.yaml
+# secret.yaml is deliberately NOT a resource: it documents the two Secrets the
+# operator creates with `kubectl create secret` (see the file header).

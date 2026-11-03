@@ -182,6 +182,17 @@ channel hives keep the slower soak/cadence rules. Operators who deliberately
 want candidate hives to obey their stored cadence can set
 `HIVE_CANDIDATE_RESPECT_AUTO_UPGRADE_SCHEDULE=true` on the hub.
 
+The hub itself does **not** follow the hosted-hive daily/weekly cadence: when
+hub auto-upgrade is enabled and not paused, the hub rolls itself **instantly**
+once a newer `hive-hub` image is published for its branch (the SHA poller logs
+`audit: hub auto-upgrade triggered`), independently of any in-flight fleet
+wave. To keep those rolls from disturbing fleet alerting, the hub persists its
+alert bookkeeping (observed spoke start times, upgrade marks and each
+condition's first-seen time) to `/data/saas/hub-alert-state.json`, and for the
+first 10 minutes after it (re)starts it does not raise a *new* crash-loop or
+offline alert — a condition already firing before the restart keeps firing
+([#11826](https://github.com/hivecommons/hive/issues/11826)).
+
 If a spoke was asked to upgrade to an immutable SHA whose image never appears
 (for example because a superseded build was cancelled), the visible upgrade
 attempt no longer stays "queued" indefinitely. After the

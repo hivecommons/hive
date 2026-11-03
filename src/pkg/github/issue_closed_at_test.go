@@ -96,6 +96,26 @@ func TestIssueClosedAt_NotFoundIsNotClosedAndNotAnError(t *testing.T) {
 	}
 }
 
+// A deleted issue (410) is a terminal, permanent answer like 404: it must not
+// surface as an error, or the digest WARNs and re-queries it every sweep.
+func TestIssueClosedAt_GoneIsNotClosedAndNotAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGone)
+		fmt.Fprint(w, `{"message":"This issue was deleted"}`)
+	}))
+	defer server.Close()
+
+	c := newTestClient(t, server, "acme", []string{"acme/widgets"})
+	got, closed, err := c.IssueClosedAt(context.Background(), "acme", "widgets", 418)
+	if err != nil {
+		t.Fatalf("410 must not surface as an error, got: %v", err)
+	}
+	if closed || !got.IsZero() {
+		t.Fatalf("410 = (%v, %v), want (zero, false)", got, closed)
+	}
+}
+
 // Non-404 failures must be returned, not swallowed: "open" and "could not
 // tell" are different answers to the digest.
 func TestIssueClosedAt_ServerErrorIsReturned(t *testing.T) {

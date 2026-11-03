@@ -216,3 +216,26 @@ func TestHandleChatMessagesEnvelope(t *testing.T) {
 		t.Fatalf("epoch/next drifted within one process: %v", body)
 	}
 }
+
+// #13223: the body field is `query`; `message` is accepted as an alias and the
+// missing-field error names `query`.
+func TestHandleChatQueryFieldAndMessageAlias(t *testing.T) {
+	s, bot := chatTestServer(t)
+	rec := doPost(s, "/api/chat", map[string]interface{}{"message": "!status"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST message alias = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := bot.Drain(0); len(got) != 1 || got[0].Text != "!status" {
+		t.Fatalf("message alias outbox = %+v", got)
+	}
+
+	for _, body := range []map[string]interface{}{{}, {"query": "  "}, {"message": ""}} {
+		rec = doPost(s, "/api/chat", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("POST %v = %d, want 400", body, rec.Code)
+		}
+		if got := decodeJSON(t, rec)["error"]; got != "query is required" {
+			t.Fatalf("POST %v error = %v, want %q", body, got, "query is required")
+		}
+	}
+}

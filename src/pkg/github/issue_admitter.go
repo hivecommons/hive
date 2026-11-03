@@ -55,6 +55,19 @@ type ReporterTrustClankerConfig interface {
 	ReporterTrustTrusts(login, association string) bool
 }
 
+// issueFilterReason is the work-detail reason (bucket "filtered") of an
+// issue the IssueAdmitter refuses. Like every filtered reason other than the
+// park labels it derives no stage label: the filter is the admission gate,
+// and a refused issue is outside the pipeline until a required label lands.
+const issueFilterReason = "Project issue filter"
+
+// IssueFilterNoticeConfig is the optional user-facing side of Admits: the
+// labels that would admit an issue the filter refuses, named in a reply.
+// config.IssueFilterConfig implements it.
+type IssueFilterNoticeConfig interface {
+	RequireLabelsForNotice() []string
+}
+
 // HardSuppressClassifier is the optional configurable form of the issue
 // escalation labels that park an issue outside the actionable queue. It returns
 // the canonical bucket label (needs-human, needs-direction, needs-decision, or

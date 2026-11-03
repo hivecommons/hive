@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // ── #7254: GET /api/watchdog/activity ────────────────────────────────────────
@@ -322,7 +322,7 @@ func condAt(typ watchdog.ConditionType, status watchdog.ConditionStatus, reason,
 func TestWatchdogAgentLivenessFromConditions(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	enabled := config.AgentConfig{Enabled: true}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {Name: "scanner", Config: enabled, WatchdogConditions: []watchdog.Condition{
 			condAt(watchdog.ConditionReady, watchdog.ConditionTrue, string(watchdog.ClassReady), "ready marker present", now.Add(-2*time.Hour)),
 			condAt(watchdog.ConditionAuthenticated, watchdog.ConditionTrue, "ProbeOK", "", now),
@@ -378,12 +378,12 @@ func TestWatchdogAgentLivenessFromConditions(t *testing.T) {
 
 func TestWatchdogAgentLivenessLiveConfigWins(t *testing.T) {
 	now := time.Now().UTC()
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {Name: "scanner", Config: config.AgentConfig{Enabled: true}, WatchdogConditions: []watchdog.Condition{
 			condAt(watchdog.ConditionReady, watchdog.ConditionTrue, "ready", "", now),
 		}},
 	}
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"scanner": {Enabled: false}}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"scanner": {Enabled: false}}}}
 	if rows := watchdogAgentLiveness(statuses, cfg); len(rows) != 0 {
 		t.Errorf("agent disabled in LIVE config must be omitted, got %+v", rows)
 	}

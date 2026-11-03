@@ -13,6 +13,8 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"gopkg.in/yaml.v3"
+
+	"github.com/hivecommons/hive/pkg/cistatus"
 )
 
 const (
@@ -96,8 +98,29 @@ type CommitCIState struct {
 	// exists on the SHA. A required check that has not been created yet is
 	// "expected" in GitHub's vocabulary: not failed, not passed, not present.
 	MissingRequired []string
+	// SkippedByDesign lists required names that no check run reported but that
+	// CommitCIOptions.SkippedByDesign vouched for; they do not block.
+	SkippedByDesign []string
 	// Observed names every status context/check-run name seen on the SHA.
 	Observed map[string]bool
+	// FailingNonRequired names the completed-red statuses/check runs on the
+	// SHA that the required-only gate skipped (RequiredKnown and not in the
+	// required set; meta contexts excepted), sorted. They never block the
+	// merge, but a PR carrying one is not "all green" to a reader of the
+	// check rollup, so the stage engine keeps it out of the merge-queue
+	// stage (hivecommons/hive#12457).
+	FailingNonRequired []string
+	// InFlight counts every pending commit status and every not-yet-completed
+	// check run on the SHA, gating or not. Unlike Reason it includes the
+	// non-required checks skipped when RequiredKnown, so a caller can tell
+	// "a required check is missing while CI is still running" from "a
+	// required check is missing and nothing on the head will ever report".
+	InFlight int
+	// EarliestActivity is the earliest status created_at / check-run
+	// started_at observed on the SHA (zero when none carries a timestamp).
+	// Every one of them postdates the push, so it is a safe lower bound on
+	// how long the head has existed.
+	EarliestActivity time.Time
 }
 
 // CommitCIOptions carries policy facts that are known to callers before the
@@ -112,9 +135,17 @@ type CommitCIOptions struct {
 	// checks when the required set cannot be discovered. In that mode,
 	// completed failures do not block locally; pending checks still do.
 	UnknownRequiredChecksServerEnforced bool
-	MinHeadAge                          time.Duration
-	HeadPushedAt                        time.Time
-	Now                                 func() time.Time
+	// FailOnAnyFailedCheck makes a completed failure or timed_out check run
+	// block even when it is not in the known required set (ignorable and meta
+	// checks excepted), so a red non-required check cannot be merged past (#12101).
+	FailOnAnyFailedCheck bool
+	// SkippedByDesign names required contexts the caller verified are skipped
+	// by their workflow on this head; when one has no check run it is treated
+	// as satisfied rather than missing (#12004).
+	SkippedByDesign map[string]bool
+	MinHeadAge      time.Duration
+	HeadPushedAt    time.Time
+	Now             func() time.Time
 	// RequireEvidence fails closed when no real successful CI check-run evidence
 	// exists. It is used when GitHub reports a known empty required-check set or
 	// the set is unknown, so Hive still requires positive CI evidence instead of
@@ -134,9 +165,12 @@ func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, 
 }
 
 // RequiredStatusCheckContextsDetailed returns the branch-protection-required
-// status/check contexts. GitHub branch protection is authoritative; the
-// non-admin branch and rules endpoints are fallbacks when protection cannot be
-// read, and the config set is the final operator-declared fallback.
+// status/check contexts. GitHub branch protection is authoritative when it
+// lists required checks; the non-admin branch and rules endpoints are
+// fallbacks when protection cannot be read, and the config set is the final
+// operator-declared fallback. A classic "nothing required" answer defers to
+// the branch's rulesets when they list required checks
+// (rulesetRequiredWhenClassicEmpty).
 func RequiredStatusCheckContextsDetailed(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool) {
 	required, known, fromConfig, fallback, _ = RequiredStatusCheckContextsDetailedWithSource(ctx, client, owner, repo, branch, configSet, configKnown)
 	return required, known, fromConfig, fallback
@@ -153,13 +187,21 @@ func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *
 	if !sharedRequiredChecksForbiddenCache.get(cacheKey) {
 		rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
 		if err == nil {
-			if rsc == nil {
+			if rsc != nil {
+				required = requiredContextsFromRequiredStatusChecks(rsc.Contexts, rsc.Checks)
+			}
+			if len(required) == 0 {
+				if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+					return rules, true, false, false, "rules"
+				}
 				return map[string]bool{}, true, false, false, "protection"
 			}
-			required = requiredContextsFromRequiredStatusChecks(rsc.Contexts, rsc.Checks)
 			return required, true, false, false, "protection"
 		}
 		if errors.Is(err, gh.ErrBranchNotProtected) {
+			if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+				return rules, true, false, false, "rules"
+			}
 			return map[string]bool{}, true, false, false, "protection-unprotected"
 		}
 		if isRequiredChecksForbiddenCacheable(err) {
@@ -168,6 +210,11 @@ func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *
 	}
 
 	if branchRequired, branchKnown, err := requiredStatusChecksFromBranchEndpoint(ctx, client, owner, repo, branch); err == nil && branchKnown {
+		if len(branchRequired) == 0 {
+			if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+				return rules, true, false, false, "rules"
+			}
+		}
 		return branchRequired, true, false, false, "branch"
 	}
 	if rulesRequired, rulesKnown, err := requiredStatusChecksFromRulesEndpoint(ctx, client, owner, repo, branch); err == nil && rulesKnown {
@@ -177,6 +224,23 @@ func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *
 		return configSet, true, true, true, "config"
 	}
 	return nil, false, false, false, "none"
+}
+
+// rulesetRequiredWhenClassicEmpty reads the ruleset required checks for a
+// branch whose classic answer was "nothing required": an unprotected branch,
+// or protection (or the branch payload's protection, `enabled:false`) without
+// required checks. Classic protection never lists ruleset rules, so on a
+// rulesets-only repository that answer is not authoritative; GitHub still
+// enforces the ruleset's checks at merge time (projectbluefin/testsuite and
+// bluefin-bling read as known-empty and their held fork runs were never
+// approved). It reports false when the rules endpoint fails or lists no
+// required check, leaving the classic answer standing.
+func rulesetRequiredWhenClassicEmpty(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool) {
+	rules, known, err := requiredStatusChecksFromRulesEndpoint(ctx, client, owner, repo, branch)
+	if err != nil || !known || len(rules) == 0 {
+		return nil, false
+	}
+	return rules, true
 }
 
 func requiredContextsFromRequiredStatusChecks(contexts *[]string, checks *[]*gh.RequiredStatusCheck) map[string]bool {
@@ -345,6 +409,37 @@ func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Dur
 	return func() { sharedRequiredChecksForbiddenCache = old }
 }
 
+// HeadCommitPushedAt is the CommitCIOptions.HeadPushedAt source for the
+// min_head_age gate (hivecommons/hive#12557): the committer date of the head
+// commit sha, never the PR's updated_at. updated_at bumps on every label,
+// comment and review — including the hive's own stage-regressed comments — so
+// measuring head age from it let the gate reset its own clock forever.
+//
+// A committer date can predate the push (an old branch opened as a PR), so
+// the result is clamped to no earlier than the PR's created_at. A lookup
+// failure or a commit without a committer date returns an error and the zero
+// time; callers choose their own fallback.
+func HeadCommitPushedAt(ctx context.Context, client *gh.Client, owner, repo, sha string, pr *gh.PullRequest) (time.Time, error) {
+	if client == nil {
+		return time.Time{}, ErrNoGitHubClient
+	}
+	if strings.TrimSpace(sha) == "" {
+		return time.Time{}, errors.New("head commit time: empty head SHA")
+	}
+	commit, _, err := client.Git.GetCommit(ctx, owner, repo, sha)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("head commit time for %s/%s@%s: %w", owner, repo, shortSHA(sha), err)
+	}
+	at := commit.GetCommitter().GetDate().Time
+	if at.IsZero() {
+		return time.Time{}, fmt.Errorf("head commit time for %s/%s@%s: commit has no committer date", owner, repo, shortSHA(sha))
+	}
+	if created := pr.GetCreatedAt().Time; at.Before(created) {
+		at = created
+	}
+	return at, nil
+}
+
 // EvaluateCommitCI walks every commit status and check run on sha and reports
 // the CommitCIState. required/requiredKnown come from
 // RequiredStatusCheckContexts. When requiredKnown is false and
@@ -367,11 +462,23 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	required := opts.Required
 	requiredKnown := opts.RequiredKnown
 	serverEnforcedUnknown := opts.UnknownRequiredChecksServerEnforced
+	// Metadata contexts are skipped whenever the required set is not a concrete
+	// list: either the server will enforce it, or it is known to be empty.
+	ignoreMetaContexts := serverEnforcedUnknown || opts.RequiredKnownEmpty
 	blockCompletedFailures := !serverEnforcedUnknown || opts.RequiredKnownEmpty
 	seen := make(map[string]bool)
 	requiredSuccess := make(map[string]bool)
 	ignoredMeta := make(map[string]bool)
 	st.Observed = seen
+	failingNonRequired := make(map[string]bool)
+	rememberFailingNonRequired := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || failingNonRequired[name] || isMetaCheck(name) {
+			return
+		}
+		failingNonRequired[name] = true
+		st.FailingNonRequired = append(st.FailingNonRequired, name)
+	}
 	rememberIgnoredMeta := func(name string) {
 		name = strings.TrimSpace(name)
 		if name == "" || ignoredMeta[name] {
@@ -420,17 +527,30 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 
 	dcoSatisfied := dcoContextSucceeded(allStatuses, allCheckRuns)
 
+	noteActivity := func(at time.Time) {
+		if !at.IsZero() && (st.EarliestActivity.IsZero() || at.Before(st.EarliestActivity)) {
+			st.EarliestActivity = at
+		}
+	}
+
 	for _, s := range allStatuses {
 		ctxName := s.GetContext()
 		st.Evidence++
 		seen[ctxName] = true
+		noteActivity(s.GetCreatedAt().Time)
+		if s.GetState() == "pending" {
+			st.InFlight++
+		}
 		if requiredKnown {
 			// Required-checks-only gating: skip anything not on the
 			// branch's actual required list, no matter its state.
 			if !required[ctxName] {
+				if state := s.GetState(); state == "failure" || state == "error" {
+					rememberFailingNonRequired(ctxName)
+				}
 				continue
 			}
-		} else if shouldIgnoreMetaContextForServerEnforcement(ctxName, serverEnforcedUnknown, dcoSatisfied) {
+		} else if shouldIgnoreMetaContextForServerEnforcement(ctxName, ignoreMetaContexts, dcoSatisfied) {
 			if s.GetState() != "success" {
 				rememberIgnoredMeta(ctxName)
 			}
@@ -462,11 +582,23 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		name := cr.GetName()
 		st.Evidence++
 		seen[name] = true
+		noteActivity(cr.GetStartedAt().Time)
+		if cr.GetStatus() != "completed" {
+			st.InFlight++
+		}
 		if requiredKnown {
 			if !required[name] {
+				if cr.GetStatus() == "completed" && checkConclusionIsRed(cr.GetConclusion()) {
+					rememberFailingNonRequired(name)
+				}
+				if opts.FailOnAnyFailedCheck && cr.GetStatus() == "completed" && !isIgnorableCICheck(name) {
+					if c := cr.GetConclusion(); c == "failure" || c == "timed_out" {
+						block("check-failing:" + name)
+					}
+				}
 				continue
 			}
-		} else if shouldIgnoreMetaContextForServerEnforcement(name, serverEnforcedUnknown, dcoSatisfied) {
+		} else if shouldIgnoreMetaContextForServerEnforcement(name, ignoreMetaContexts, dcoSatisfied) {
 			if cr.GetStatus() != "completed" || (cr.GetConclusion() != "success" && cr.GetConclusion() != "neutral" && cr.GetConclusion() != "skipped") {
 				rememberIgnoredMeta(name)
 			}
@@ -505,11 +637,17 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 
 	if requiredKnown {
 		for name := range required {
-			if !seen[name] {
-				st.MissingRequired = append(st.MissingRequired, name)
+			if seen[name] {
+				continue
 			}
+			if opts.SkippedByDesign[name] {
+				st.SkippedByDesign = append(st.SkippedByDesign, name)
+				continue
+			}
+			st.MissingRequired = append(st.MissingRequired, name)
 		}
 		sort.Strings(st.MissingRequired)
+		sort.Strings(st.SkippedByDesign)
 		if len(st.MissingRequired) > 0 {
 			block("required-check-missing:" + st.MissingRequired[0])
 		}
@@ -532,6 +670,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		block("ci-unverified")
 	}
 	sort.Strings(st.IgnoredMetaContexts)
+	sort.Strings(st.FailingNonRequired)
 
 	if st.Reason == "" && opts.MinHeadAge > 0 && !opts.HeadPushedAt.IsZero() {
 		now := opts.Now
@@ -549,6 +688,16 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 	st.Green = st.Reason == ""
 	return st, nil
+}
+
+// checkConclusionIsRed reports whether a completed check-run conclusion
+// renders as a red ✗ in GitHub's check rollup.
+func checkConclusionIsRed(conclusion string) bool {
+	switch conclusion {
+	case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+		return true
+	}
+	return false
 }
 
 func dcoContextSucceeded(statuses []*gh.RepoStatus, checkRuns []*gh.CheckRun) bool {
@@ -579,9 +728,15 @@ func isDCOContext(name string) bool {
 	return strings.EqualFold(strings.TrimSpace(name), "dco")
 }
 
-func commitCIReasonIsPending(reason string) bool {
-	return strings.HasSuffix(reason, "-pending") || strings.HasPrefix(reason, "pending: ") || strings.HasPrefix(reason, "required-check-missing:")
-}
+// IsDCOContext reports whether a status context / check-run name is a DCO
+// gate (`dco` from Prow's plugin, `DCO` from the DCO GitHub App).
+func IsDCOContext(name string) bool { return isDCOContext(name) }
+
+// CommitCIReasonIsPending reports whether a commit-CI skip reason means the
+// checks are still running or not yet reported, as opposed to failing.
+func CommitCIReasonIsPending(reason string) bool { return commitCIReasonIsPending(reason) }
+
+func commitCIReasonIsPending(reason string) bool { return cistatus.ReasonIsPending(reason) }
 
 // ExpectedCommitChecksFromRef returns the check-run names that should appear on
 // a candidate commit when the required-checks set is not known. It intentionally

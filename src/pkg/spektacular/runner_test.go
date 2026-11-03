@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/crux/agentparse"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/planengine"
 )

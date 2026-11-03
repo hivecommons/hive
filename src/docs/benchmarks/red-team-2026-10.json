@@ -1,0 +1,8 @@
+{
+  "attacks": 63,
+  "caught": 61,
+  "benign": 12,
+  "false_alarms": 1,
+  "source": "src/docs/ioscan-red-team.md (Results table; 61 blocked of 63 attack payloads, 1 of 12 benign controls wrongly redacted)",
+  "run_at": "2026-10-23T00:00:00Z"
+}

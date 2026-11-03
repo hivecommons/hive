@@ -1,0 +1,1 @@
+- Crux stage 4: hive now serves the inference usage ledger to a sidecar runtime over the hive callback's `usage` capability (it was `not_configured`), so a proxy whose `Accounting`/`Usage`/`Canary` seams are the callback adapters records usage and REST traffic into hive's ledgers, refuses GitHub writes while hive is unreachable and resumes when it returns.

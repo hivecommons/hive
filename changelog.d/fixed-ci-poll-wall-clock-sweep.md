@@ -1,0 +1,1 @@
+- Stop the CI-poll wall-clock nudge from interrupting a long scanner sweep that reads each PR once; a lone poll or a repeated read past the wall clock is still nudged ([#14066](https://github.com/hivecommons/hive/issues/14066)).

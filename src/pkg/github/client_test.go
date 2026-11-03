@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -79,7 +80,9 @@ type wireIssue struct {
 	Labels    []wireLabel `json:"labels"`
 	Assignees []wireUser  `json:"assignees"`
 	CreatedAt string      `json:"created_at"`
+	UpdatedAt string      `json:"updated_at,omitempty"`
 	HTMLURL   string      `json:"html_url,omitempty"`
+	Body      string      `json:"body,omitempty"`
 	// State is GitHub's open/closed; the #9840 parent check reads it.
 	State string `json:"state,omitempty"`
 	// AuthorAssociation is GitHub's author_association (OWNER, MEMBER, ...);
@@ -89,6 +92,8 @@ type wireIssue struct {
 	PullRequest *struct{} `json:"pull_request,omitempty"`
 	// IssueDependenciesSummary is GitHub's "blocked by" count block (#9839).
 	IssueDependenciesSummary *wireDepsSummary `json:"issue_dependencies_summary,omitempty"`
+	// SubIssuesSummary is GitHub's sub-issue progress block (#12857).
+	SubIssuesSummary *IssueChildren `json:"sub_issues_summary,omitempty"`
 }
 
 type wireDepsSummary struct {
@@ -1266,6 +1271,10 @@ func TestEnforceSHAHold_HoldWhenNoSHA(t *testing.T) {
 		w.Write([]byte(`[]`))
 	})
 
+	oldSources := HoldSourcesPath
+	HoldSourcesPath = filepath.Join(t.TempDir(), HoldSourcesFile)
+	t.Cleanup(func() { HoldSourcesPath = oldSources })
+
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -1286,6 +1295,14 @@ func TestEnforceSHAHold_HoldWhenNoSHA(t *testing.T) {
 	}
 	if !commentPosted {
 		t.Error("SHA hold comment was not posted")
+	}
+	// The SHA hold leaves no marker the status snapshot can read, so the
+	// hold's source lands in Hive's local record (#11564).
+	holdSourcesMu.Lock()
+	ledger := readHoldSourceLedgerLocked(HoldSourcesPath)
+	holdSourcesMu.Unlock()
+	if _, ok := ledger.Applied[holdSourceKey(HoldKindIssue, org+"/"+repo, 100)][HoldSourceSHAHold]; !ok {
+		t.Errorf("hold-source record = %v, want issue testorg/console#100 -> %s", ledger.Applied, HoldSourceSHAHold)
 	}
 }
 

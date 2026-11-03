@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive-stream
+  namespace: hive-stream
+  labels:
+    app.kubernetes.io/name: hive-stream
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  # Twitch accepts ONE publisher per key; two pods would fight for it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hive-stream
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hive-stream
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: stream
+          image: ghcr.io/hivecommons/hive-stream:v5-latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: hive-stream
+            - secretRef:
+                name: twitch-stream
+            - secretRef:
+                name: dashboard-token
+          # Chromium's own sandbox needs user namespaces the pod does not get,
+          # so the entrypoint passes --no-sandbox; the pod sandbox (non-root,
+          # no caps, seccomp, no SA token) is the boundary instead. The page is
+          # first-party.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: run
+              mountPath: /run/stream
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        # Chromium renderers share memory through /dev/shm; the 64Mi container
+        # default makes tabs crash at 1080p.
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+        - name: run
+          emptyDir:
+            sizeLimit: 256Mi

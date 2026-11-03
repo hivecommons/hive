@@ -353,3 +353,65 @@ func (h *ContributeWSHub) recentFailureCountKey(key string) int {
 	defer h.completedMu.Unlock()
 	return h.consecutiveFailures[key]
 }
+
+// reclaimCooldownKey is the reclaimCooldowns map key for one contributor
+// identity and one item key.
+func reclaimCooldownKey(identity, itemKey string) string {
+	return identity + "\x00" + itemKey
+}
+
+// configuredReclaimCooldown is governor.claims.reclaim_cooldown_s with its
+// default; a hub built without a Config uses the default.
+func (h *ContributeWSHub) configuredReclaimCooldown() time.Duration {
+	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return config.DefaultReclaimCooldown
+	}
+	return h.server.deps.Config.Governor.Claims.EffectiveReclaimCooldown()
+}
+
+// bookReclaimCooldown stamps the moment identity released itemKey without
+// shipping (hivecommons/hive#13093), so selectTask keeps that pair apart for
+// configuredReclaimCooldown. Other contributors are unaffected.
+func (h *ContributeWSHub) bookReclaimCooldown(identity, itemKey string) {
+	h.bookReclaimCooldownAt(identity, itemKey, time.Now())
+}
+
+func (h *ContributeWSHub) bookReclaimCooldownAt(identity, itemKey string, at time.Time) {
+	if identity == "" || itemKey == "" {
+		return
+	}
+	h.completedMu.Lock()
+	if h.reclaimCooldowns == nil {
+		h.reclaimCooldowns = make(map[string]time.Time)
+	}
+	h.reclaimCooldowns[reclaimCooldownKey(identity, itemKey)] = at
+	h.completedMu.Unlock()
+}
+
+// inReclaimCooldown reports whether identity released itemKey within the
+// reclaim window. Expired entries are dropped on read.
+func (h *ContributeWSHub) inReclaimCooldown(identity, itemKey string) bool {
+	return h.inReclaimCooldownAt(identity, itemKey, time.Now())
+}
+
+func (h *ContributeWSHub) inReclaimCooldownAt(identity, itemKey string, now time.Time) bool {
+	if identity == "" || itemKey == "" {
+		return false
+	}
+	window := h.configuredReclaimCooldown()
+	if window <= 0 {
+		return false
+	}
+	key := reclaimCooldownKey(identity, itemKey)
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	at, ok := h.reclaimCooldowns[key]
+	if !ok {
+		return false
+	}
+	if now.Sub(at) > window {
+		delete(h.reclaimCooldowns, key)
+		return false
+	}
+	return true
+}

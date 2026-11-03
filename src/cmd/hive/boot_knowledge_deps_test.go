@@ -11,30 +11,36 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/nousstore"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 type bootKnowledgeFake struct {
 	deps bootKnowledgeDeps
 
-	inited, seeded   []string
-	initErr, seedErr error
-	gitSyncer        *knowledge.GitSyncer
-	beadSynthStarted bool
-	promotionStarted bool
-	graphStore       *knowledge.GraphStore
-	graphErr         error
-	graphWired       bool
-	cleanupAudit     *dashboard.AuditLog
-	nousDirs         int
-	inceptionDir     string
-	restarts         []string
-	restartErr       error
+	inited, seeded    []string
+	initErr, seedErr  error
+	gitSyncer         *knowledge.GitSyncer
+	beadSynthStarted  bool
+	promotionStarted  bool
+	graphStore        *knowledge.GraphStore
+	graphErr          error
+	graphWired        bool
+	cleanupAudit      *dashboard.AuditLog
+	nousDirs          int
+	nousLayout        nousstore.Layout
+	gateWatchState    *dashboard.NousState
+	gateWatchInterval time.Duration
+	inceptionDir      string
+	restarts          []string
+	restartErr        error
 }
 
 func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
@@ -60,12 +66,17 @@ func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
 			wire(f.graphStore, f.graphErr)
 		},
 		startWorkspaceCleanup: func(_ context.Context, _ *slog.Logger, a *dashboard.AuditLog) { f.cleanupAudit = a },
-		ensureNousDirs:        func(*slog.Logger) { f.nousDirs++ },
-		loadNousState:         func(*slog.Logger) *dashboard.NousState { return &dashboard.NousState{Mode: "observe"} },
+		ensureNousDirs:        func(l nousstore.Layout, _ *slog.Logger) { f.nousDirs++; f.nousLayout = l },
+		loadNousState: func(nousstore.Layout, *slog.Logger) *dashboard.NousState {
+			return &dashboard.NousState{Mode: "observe"}
+		},
+		startNousGateWatch: func(_ context.Context, st *dashboard.NousState, interval time.Duration, _ *slog.Logger) {
+			f.gateWatchState, f.gateWatchInterval = st, interval
+		},
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(f.inceptionDir, api, logger)
 		},
-		restartBrainstorm: func(_ context.Context, _ *agent.Manager, msg string) error {
+		restartBrainstorm: func(_ context.Context, _ crux.Runtime, msg string) error {
 			f.restarts = append(f.restarts, msg)
 			return f.restartErr
 		},
@@ -91,7 +102,7 @@ func newBootKnowledgeBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.sched = scheduler.New(cfg, b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	b.beadStores = map[string]*beads.Store{}
 	return b
@@ -137,8 +148,15 @@ func TestBootKnowledgeWithMinimalConfigAutoEnablesFileAPI(t *testing.T) {
 	if !f.graphWired || f.cleanupAudit != b.dashSrv.GetAudit() || f.nousDirs != 1 {
 		t.Fatalf("background wiring: graph=%v cleanup=%v nous=%d", f.graphWired, f.cleanupAudit != nil, f.nousDirs)
 	}
-	if b.nousState == nil || b.nousState.SnapshotDir != nousSnapshotDir {
-		t.Fatalf("nous state = %+v", b.nousState)
+	wantLayout := nousstore.Resolve(b.cfg.Data.NousDir, os.Getenv)
+	if f.nousLayout != wantLayout {
+		t.Fatalf("nous layout = %+v, want %+v (resolved from data.nous_dir)", f.nousLayout, wantLayout)
+	}
+	if b.nousState == nil || b.nousState.SnapshotDir != wantLayout.SnapshotDir() || b.nousState.PersistPanel == nil {
+		t.Fatalf("nous state = %+v, want snapshot dir %s and a PersistPanel seam", b.nousState, wantLayout.SnapshotDir())
+	}
+	if b.nousState.GateStore == nil || f.gateWatchState != b.nousState || f.gateWatchInterval != b.cfg.Nous.GatePollInterval() {
+		t.Fatalf("gate wiring: store=%v watched=%v interval=%v", b.nousState.GateStore != nil, f.gateWatchState == b.nousState, f.gateWatchInterval)
 	}
 	if b.inceptionEngine == nil || b.sched.GetInception() != b.inceptionEngine {
 		t.Fatal("inception engine not wired into scheduler")

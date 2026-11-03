@@ -29,14 +29,14 @@ ones to:
 
 1. **A truncated list must say it is truncated.** Every kick list that is cut
    ends with an explicit "… and N more" line
-   (`prListOverflowLine`, `src/pkg/scheduler/kickmessage.go:250-252`). A silent slice
+   (`prListOverflowLine`, `src/pkg/scheduler/kickmessage.go:416`). A silent slice
    reads to the agent as "this is the complete list".
 2. **Truncation must preserve the prioritization signal, not cut an arbitrary slice.**
    This holds today and is easy to assume backwards:
    - Issues are sorted by actionable rank tier, then **oldest first** within each tier before any cap is applied
-     (`RankActionableIssues`, `src/pkg/github/client.go:3625-3635`, descending `AgeMinutes`).
+     (`RankActionableIssues`, `src/pkg/github/client.go:5087-5097`, descending age in minutes within each tier).
    - PRs are sorted by **review class then oldest-first within class**
-     (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:181`;
+     (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:334`;
      fixes → refactors/docs → tests).
 
    Render caps then fair-share membership across repos while preserving that
@@ -82,6 +82,42 @@ what made the restart-during-delivery loop of
 That is the general shape of scale failure here: an unbounded list does not fail
 by being big, it fails by widening a timing window somewhere else.
 
+## Kick layout: static prefix first
+
+Provider prompt caching (Anthropic, OpenAI) only reuses a **byte-identical
+prefix**, so the typed kick is laid out static-first
+([#12125](https://github.com/hivecommons/hive/issues/12125)). The order is fixed
+in `src/pkg/scheduler/kick_layout.go` and asserted by
+`TestKickLayoutStaticPrefixIsCacheable`:
+
+| # | Block | Varies |
+|---|---|---|
+| 1 | `SECURITY CANARY` preamble | every kick (random, opt-in `ioscan.canaries`; always first — [ADR-0008](adr/0008-ioscan-untrusted-input.md)) |
+| 2 | `[agent:<name>]` header | never |
+| 3 | governor work-source rule | never |
+| 4 | independent review section | per agent config |
+| 5 | workflow push ceiling | per agent mode |
+| 6 | formal quality capability | per role + config |
+| 7 | work tracker section | per work-source config |
+| 8 | resolved policy body (`${GH_AUTH}` is a constant; `${ISSUE_LIST}`/`${PR_LIST}`/… stay where the template puts them) | from the first list on |
+| 9 | `REPO-SCOPED CADENCE TARGET` | per cadence target |
+| 10 | `AUTHORIZED REPOS` | when repos are paused/scoped |
+| 11–14 | hold-gated PR coordination, red-PR and review-thread fix-before-new, PR follow-up handoff | every kick (data-bearing) |
+| 15–17 | guide flow line, in-flight note, question answer contract | every kick |
+| 18 | in-progress claim rule | whenever the kick lists issues |
+| 19 | closing instruction (`Begin now:`) | never; always last |
+
+So for a hive without canaries the cacheable prefix runs from byte 0 through
+the header, every static seam and the policy core up to the template's first
+dynamic list; with canaries it starts after one short random line. What did
+**not** change: `/clear` still precedes every kick, the canary is neither
+stabilised nor moved, the full contract is typed on every kick (no
+`--append-system-prompt-file`, no cached policy state), and every seam is still
+an unconditional post-resolution injection a customized template cannot omit —
+only the order moved. The data-bearing preflights (11–14) used to sit directly
+under the header, ahead of the policy body; they now sit at the tail, directly
+ahead of the closing instruction, so the body in front of them stays cacheable.
+
 ## Inventory of cap-triggered behaviours
 
 Every entry below was read in the tree at the cited symbol. "Tunable" means an
@@ -89,19 +125,19 @@ operator can change it without rebuilding.
 
 | Cap | Where | Default | Tunable | Behaviour when exceeded |
 | --- | --- | --- | --- | --- |
-| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/kickmessage.go:230-235` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Fair-share across repos while preserving oldest-first order; list is cut silently in `formatIssueListWithPolicy` (`kickmessage.go:40`) and with an explicit note in the scanner/work lists |
-| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/kickmessage.go:240-245` | 50 | **Yes** (same block/UI) | Fair-share across repos while preserving review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
-| Ceiling on either cap | `config.MaxKickListCap`, `src/pkg/config/kick_limits.go:18` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:39-51`). An absent key or a negative value means "use the default"; an explicit `0` is the operator's opt-out of capping (`KickListUnlimited`, `kick_limits.go:27`) — the render path then lists every item (`repofilter.go:143-149`) |
-| Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/policy_overlays.go:446` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
-| Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/policy_overlays.go:180` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
-| Review-thread fix-before-new detail | same constant, used at `src/pkg/scheduler/policy_overlays.go:403-405` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more PRs (full list: `<path>`)" |
-| CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/policy_overlays.go:181` | 400 runes | **No** | Truncate with "…" |
-| Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/kick_priming.go:119` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
-| Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/kick_priming.go:12` | 5 | **No** | Truncate |
-| Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge/automerge_sweep.go:146` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
+| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/kickmessage.go:361` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Fair-share across repos while preserving oldest-first order; list is cut silently in `formatIssueListWithPolicy` (`kickmessage.go:40`) and with an explicit note in the scanner/work lists |
+| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/kickmessage.go:371` | 50 | **Yes** (same block/UI) | Fair-share across repos while preserving review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
+| Ceiling on either cap | `config.MaxKickListCap`, `src/crux/config/kick_limits.go:18` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:39-53`). An absent key or a negative value means "use the default"; an explicit `0` is the operator's opt-out of capping (`KickListUnlimited`, `kick_limits.go:27`) — the render path then lists every item (`repofilter.go:143-149`) |
+| Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/policy_overlays.go:507` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
+| Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/policy_overlays.go:175` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
+| Review-thread fix-before-new detail | same constant, used at `src/pkg/scheduler/policy_overlays.go:452` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more PRs (full list: `<path>`)" |
+| CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/policy_overlays.go:176` | 400 runes | **No** | Truncate with "…" |
+| Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/kick_priming.go:138` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
+| Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/kick_priming.go:13` | 5 | **No** | Truncate |
+| Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge/automerge_sweep.go:505` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:20` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
-| Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:80` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
-| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:983`, `src/pkg/github/client.go:1160` | **no cap** | n/a | Pages to completion; cost grows with backlog |
+| Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:67` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
+| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:1653`, `src/pkg/github/client.go:1920` | **no cap** | n/a | Pages to completion; cost grows with backlog |
 
 ### The inconsistency this inventory exposes
 

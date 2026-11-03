@@ -1,0 +1,1 @@
+- tmux is now invoked outside `pkg/agent` only through the new `pkg/agent/tmux` funnel (`LookPath`, `Command`, `Attach`, `HasSession`); the TUI attach path uses it and the Crux boundary ratchet holds the tmux call-site count at zero elsewhere (RFC #13536).

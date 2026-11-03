@@ -245,6 +245,84 @@ env:
   # Accepted by maintainer disposition in #11412: the maintainer merging the PR
   # that adds this entry IS that disposition.
 
+  # a9200f3d278fcdbf6291f37f921845113814686e — the squash of #12707 (closes
+  # #12690), on v5. author=James Reilly <jreilly1821@gmail.com>, but the squash
+  # retained only the scanner <scanner@hive.kubestellar.io> Signed-off-by
+  # instead of the author's. #12707 was maintainer-reviewed and merged. v5
+  # history is protected and is not rewritten. Accepted by maintainer
+  # disposition in #12727 (@clubanderson): per-commit waiver for this exact SHA.
+
+  # fb153585e6dab7b6f6808cb328e706d691f9be79 — the squash of #13548 (review:
+  # decision agent reconciles review heads, part 2; Refs #13542), on v5,
+  # reported by the monitor in #13607. Missing-signoff caused by the squash
+  # template dropping the trailer: both branch commits (70ebdae5, 3a109af4)
+  # carried `Signed-off-by: Gregory Hunt <greg@on-board.ai>` matching the
+  # author, and the PR was reviewed and squash-merged by maintainer
+  # clubanderson. Protected v5 history cannot be rewritten to restore the
+  # trailer, so the correct instrument is this per-commit waiver. Accepted by
+  # maintainer disposition from clubanderson in #13607: the maintainer merging
+  # the PR that adds this entry IS that disposition.
+
+  # 00070300002c88fda6850278edaea2498e8ca941 — the squash of #13794 (review:
+  # one review kick in flight per agent; count load in kicks), on v5, reported
+  # by the monitor in #13903. Missing-signoff caused by the trailer being
+  # dropped when the squash message was edited: both branch commits
+  # (a99e07712, 8ff464a98) carried `Signed-off-by: Gregory Hunt
+  # <greg@on-board.ai>` matching the author, and the PR was reviewed and
+  # squash-merged by maintainer clubanderson. Protected v5 history cannot be
+  # rewritten to restore the trailer, so the correct instrument is this
+  # per-commit waiver. Accepted by maintainer disposition from clubanderson in
+  # #13904, which added the SHA to DCO_WAIVED_COMMITS; this entry completes the
+  # rationale block the waiver integrity self-test requires.
+
+  # 511027d8174be02b1dd77c25e9f8d5265f7fb7d4 — the squash of #13997 (fix:
+  # preserve diagnostic and CI fields in process snapshots), on v5, reported
+  # by the monitor in #14064. Missing-signoff caused by the squash body being
+  # dropped at merge time: the single branch commit (b101cd0e) carried
+  # `Signed-off-by: thatguywob <thatguywob@users.noreply.github.com>`
+  # matching its author, the PR was reviewed (51/51 checks, DCO yes) and
+  # squash-merged by maintainer clubanderson with a subject-only message.
+  # Every App-merged PR in the same window kept its trailer, so this is a
+  # one-off from the human merge path, not a hive defect. Protected v5
+  # history cannot be rewritten to restore the trailer, so the correct
+  # instrument is this per-commit waiver. Accepted by maintainer disposition
+  # from clubanderson in #14064: the maintainer merging the PR that adds
+  # this entry IS that disposition.
+
+  # 687c3cb006d7559135f5f2fb0db13476d1af2a43 — the squash of #15315 (fix: stop
+  # filing the pre-restart kick-undeliverable warning as a fleet issue), on
+  # v5, reported by the monitor in #15401. mismatched-signoff of a NEW shape:
+  # same person: author uses GitHub noreply (id 91499691, @odttlnt), sign-off
+  # uses verified work email; pre-merge DCO passed (#15315). GitHub's squash
+  # wrote the PR author's private-email identity, Sachin Naik
+  # <91499691+odttlnt@users.noreply.github.com>, over a branch commit
+  # (97a705ca) authored AND signed off as SACHIN NAIK <sachin.naik@ibm.com>;
+  # probot DCO and the squash-attribution gate both accepted it because the
+  # commits API resolves that address to @odttlnt. The checker now accepts
+  # this shape on its own (same-person-noreply, #15401) when v5 history
+  # carries local evidence of the link; for this first commit from the
+  # contributor there is none on v5 yet (the only prior commit under the work
+  # address is the PR branch commit itself), so it is waived. Protected v5
+  # history cannot be re-signed in place. Accepted by maintainer disposition
+  # in #15401: the maintainer merging the PR that adds this entry IS that
+  # disposition. Expect STALE-WAIVER once the contributor's next commit lands
+  # under the work address; remove the entry then.
+
+  # 003144299b952e53290088e7637ac12f6d5d20e9 — v5 squash with the same
+  # mismatched-signoff shape and the same person as 687c3cb0 above: author
+  # Sachin Naik <91499691+odttlnt@users.noreply.github.com>, sign-off
+  # sachin.naik@ibm.com. Reported by the monitor in #15542. Protected v5
+  # history cannot be re-signed in place and no sign-off is added on the
+  # contributor's behalf, so it is waived per commit. Accepted by maintainer
+  # disposition in #15542: the maintainer merging the PR that adds this entry
+  # IS that disposition. Reversible: remove the entry.
+
+  # 8eb7267d3302bb3f68e718f4caf57826efb88ae3 — same shape, person and
+  # disposition as 003144299b above (#15542). Reversible: remove the entry.
+
+  # 3fedd0f3cbf5703a306157411a7136ecff738f5c — same shape, person and
+  # disposition as 003144299b above (#15542). Reversible: remove the entry.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -256,7 +334,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda a9200f3d278fcdbf6291f37f921845113814686e fb153585e6dab7b6f6808cb328e706d691f9be79 00070300002c88fda6850278edaea2498e8ca941 511027d8174be02b1dd77c25e9f8d5265f7fb7d4 687c3cb006d7559135f5f2fb0db13476d1af2a43 003144299b952e53290088e7637ac12f6d5d20e9 8eb7267d3302bb3f68e718f4caf57826efb88ae3 3fedd0f3cbf5703a306157411a7136ecff738f5c'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
@@ -270,7 +348,7 @@ jobs:
   # runs on every PR that touches the checker, its tests, or this workflow.
   checker-selftest:
     name: Self-test the DCO checker
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -285,7 +363,7 @@ jobs:
     # (the PR's own commits are covered by the pre-merge DCO check), so the
     # monitor half sits out and only the self-test above runs.
     if: github.event_name != 'pull_request'
-    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false

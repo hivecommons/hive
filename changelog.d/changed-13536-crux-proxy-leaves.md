@@ -1,0 +1,1 @@
+- The inference-gateway health store and the issue/comment shape validators moved into the Crux ring as the stdlib-only `pkg/crux/inferencehealth` and `pkg/crux/issueshape`; `pkg/inferencehealth` and `pkg/issueshape` alias every symbol, so hub, dashboard, github and classify callers are unchanged and the proxy no longer imports either Hive package (Stage 2 prerequisite 3, #13536)

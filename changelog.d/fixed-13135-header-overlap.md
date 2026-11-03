@@ -1,0 +1,1 @@
+- The dashboard header's feedback, theme and other right-hand buttons no longer overlap the project title or ACMM badge at window widths between 769px and 900px; those widths now show icon-only Settings, Health and Guide chips ([#13135](https://github.com/hivecommons/hive/issues/13135)).

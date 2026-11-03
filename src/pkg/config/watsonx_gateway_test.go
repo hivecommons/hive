@@ -76,16 +76,20 @@ func TestWatsonxGatewayNameValidAsBackend(t *testing.T) {
 	c := &Config{
 		Project: ProjectConfig{Org: "acme"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents: map[string]AgentConfig{
-			"granite-scanner": {Backend: "watsonx"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"granite-scanner": {Backend: "watsonx"},
+			},
 		},
 		Governor: GovernorConfig{
-			Gateways: []GatewayConfig{
-				{
-					Name:      "watsonx",
-					Kind:      GatewayKindWatsonx,
-					Endpoint:  "https://us-south.ml.cloud.ibm.com/ml/gateway",
-					ProjectID: "proj-1",
+			AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+				Gateways: []GatewayConfig{
+					{
+						Name:      "watsonx",
+						Kind:      GatewayKindWatsonx,
+						Endpoint:  "https://us-south.ml.cloud.ibm.com/ml/gateway",
+						ProjectID: "proj-1",
+					},
 				},
 			},
 		},

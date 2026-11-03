@@ -105,3 +105,15 @@ func TestSanitizeLogFilename(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleAgentFullLog_NoHeaderWithoutAgentSession(t *testing.T) {
+	s, _ := apiServer(t)
+	s.captureFullLogFn = func(string) (string, error) { return "ordinary\n", nil }
+	rec := doGet(s, "/api/agents/scanner/log")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "ordinary\n" {
+		t.Fatalf("body = %q, want unframed log when the agent has no session", got)
+	}
+}

@@ -119,6 +119,9 @@ func TestReissueToken_BearerSuccessRotatesStoredHash(t *testing.T) {
 	if got.RegistrationToken == newPlain {
 		t.Fatal("profile stores the PLAINTEXT token — must store only its sha256")
 	}
+	if got.GitHubVerifiedAt == "" {
+		t.Fatal("reissue proved the GitHub login but GitHubVerifiedAt was not recorded (#12041)")
+	}
 }
 
 func TestReissueToken_LegacyTokenSchemeAccepted(t *testing.T) {

@@ -1,7 +1,7 @@
 package hub
 
 // Branch tests for small pure helpers whose edge branches had no coverage:
-// hexVal's letter/invalid classes, clampScore's actual clamps, percentileRank's
+// hexVal's letter/invalid classes, clampScore's actual clamps,
 // small-fleet floor, medianOf's empty/odd cases, the effective* nil-cluster and
 // override branches, truncateReachRunes's truncation, isFailingCheckStatus's
 // full status table, overallHealthStatus's critical threshold, and
@@ -42,18 +42,6 @@ func TestClampScoreBounds(t *testing.T) {
 		if got := clampScore(c.in); got != c.want {
 			t.Errorf("clampScore(%d) = %d, want %d", c.in, got, c.want)
 		}
-	}
-}
-
-// A fleet smaller than minFleetForPercentile must score 0, not a percentile
-// computed over a statistically meaningless population.
-func TestPercentileRankSmallFleetReturnsZero(t *testing.T) {
-	small := make([]float64, minFleetForPercentile-1)
-	for i := range small {
-		small[i] = float64(i)
-	}
-	if got := percentileRank(10, small, true); got != 0 {
-		t.Errorf("percentileRank(small fleet) = %d, want 0", got)
 	}
 }
 

@@ -75,10 +75,6 @@ const (
 // ValidReviewBacklogDestinations lists the accepted destinations in UI order.
 var ValidReviewBacklogDestinations = []string{ReviewBacklogGitHubIssue, ReviewBacklogGitHubProject, ReviewBacklogLinear, ReviewBacklogJira}
 
-// DefaultReviewBacklogLabel is the label applied when review.backlog.labels
-// is unset; it matches the out-of-scope backlog filer's label.
-const DefaultReviewBacklogLabel = "from-review"
-
 // DefaultReviewBacklogMaxPerPRPerDay caps backlog items filed per PR per day
 // when review.backlog.max_per_pr_per_day is unset.
 const DefaultReviewBacklogMaxPerPRPerDay = 10
@@ -101,7 +97,9 @@ type ReviewBacklogConfig struct {
 	// JiraStatus is the Jira status new items are transitioned to; empty
 	// leaves the project's initial status.
 	JiraStatus string `yaml:"jira_status,omitempty" json:"jira_status,omitempty"`
-	// Labels are applied to every backlog item. nil means [from-review].
+	// Labels are applied to every backlog item. nil means [agent/reviewer];
+	// the retired from-review, origin/review and origin/reviewer names are
+	// accepted and mapped to agent/reviewer.
 	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty"`
 	// MaxPerPRPerDay caps backlog items filed per PR per day. 0 means
 	// DefaultReviewBacklogMaxPerPRPerDay.
@@ -153,12 +151,26 @@ func (b ReviewBacklogConfig) EffectiveDestination(workSourceType string) string 
 	return d
 }
 
-// EffectiveLabels returns labels with the default applied.
+// EffectiveLabels returns labels with the default applied. Retired provenance
+// names (from-review, origin/review, origin/reviewer) are mapped to
+// agent/reviewer and the result is de-duplicated case-insensitively, so a
+// config that still lists the old name never double-labels an item.
 func (b ReviewBacklogConfig) EffectiveLabels() []string {
 	if b.Labels == nil {
 		return []string{DefaultReviewBacklogLabel}
 	}
-	return b.Labels
+	out := make([]string, 0, len(b.Labels))
+	seen := map[string]bool{}
+	for _, l := range b.Labels {
+		l, _ = CanonicalOriginLabel(l)
+		key := strings.ToLower(l)
+		if l == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, l)
+	}
+	return out
 }
 
 // EffectiveMaxPerPRPerDay returns max_per_pr_per_day with the default applied.

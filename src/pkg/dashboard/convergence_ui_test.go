@@ -47,7 +47,7 @@ func TestConvergenceUIHasNoUndefinedCallees(t *testing.T) {
 		"_inceptionAuthHeaders",
 	} {
 		defined := regexp.MustCompile(`(?:function\s+` + regexp.QuoteMeta(fn) + `\s*\(|(?:const|let|var)\s+` + regexp.QuoteMeta(fn) + `\s*=)`)
-		if !defined.MatchString(html) {
+		if !jsDeclaredNear(html, fn, defined) {
 			t.Errorf("index.html calls %s() from the convergence UI but never defines it", fn)
 		}
 	}

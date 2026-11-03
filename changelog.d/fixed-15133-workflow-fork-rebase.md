@@ -1,0 +1,1 @@
+- Rebase-then-merge refuses workflow-changing fork rebases before dispatching a fixer push the App cannot complete, and asks for a human rebase instead of timing out ([#15133](https://github.com/hivecommons/hive/issues/15133)).

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,16 +70,29 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 		name       string
 		labels     []string
 		body       string
+		prBody     string
 		marker     bool
 		unmerged   bool
+		external   bool
+		mergedBy   string
+		lookup     bool
+		wantReason string
 		wantAction CloseOnMergeAction
 		wantPatch  bool
 	}{
-		{name: "plain open issue closes completed", wantAction: CloseOnMergeClosed, wantPatch: true},
-		{name: "needs confirmation marker gets likely done comment", body: "body\n\nhive: needs-confirmation", labels: []string{"bug"}, wantAction: CloseOnMergeAwaiting},
-		{name: "needs reporter gets likely done comment", labels: []string{"needs-reporter-confirmation"}, wantAction: CloseOnMergeAwaiting},
-		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, wantAction: CloseOnMergeAwaiting},
-		{name: "epic gets likely done comment", labels: []string{"Epic"}, wantAction: CloseOnMergeAwaiting},
+		{name: "plain open issue closes completed", prBody: "Fixes #7", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "refs-only PR on a plain issue is partially addressed, not closed", wantAction: CloseOnMergeSkipped},
+		{name: "external PR merged by someone else stays open", external: true, mergedBy: "maintainer", prBody: "Fixes #7", wantAction: CloseOnMergeSkipped, wantReason: "untrusted_author"},
+		{name: "external PR missing merge actor stays open", external: true, lookup: true, prBody: "Fixes #7", wantAction: CloseOnMergeSkipped, wantReason: "untrusted_author"},
+		{name: "external PR merged by hive closes", external: true, mergedBy: "hive[bot]", prBody: "Fixes #7", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "external PR merge actor resolved from API", external: true, mergedBy: "hive[bot]", lookup: true, prBody: "Fixes #7", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "hive merge still respects confirmation", external: true, mergedBy: "hive[bot]", labels: []string{"needs-human"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "hive merge still requires merged PR", external: true, mergedBy: "hive[bot]", unmerged: true, wantAction: CloseOnMergeNoop},
+		{name: "needs confirmation marker gets likely done comment", body: "body\n\nhive: needs-confirmation", labels: []string{"bug"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "needs reporter gets likely done comment", labels: []string{"needs-reporter-confirmation"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "epic gets likely done comment", labels: []string{"Epic"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "refs-only PR is partially addressed, no awaiting comment", labels: []string{"needs-human"}, wantAction: CloseOnMergeSkipped},
 		{name: "existing marker noops", marker: true, wantAction: CloseOnMergeAlreadyDone},
 		{name: "unmerged PR noops", unmerged: true, wantAction: CloseOnMergeNoop},
 	} {
@@ -88,6 +102,10 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/42" && tc.lookup:
+					pr := mergedTestPR(42, "contributor", "topic", "Fixes #7")
+					pr.MergedBy = &gh.User{Login: gh.Ptr(tc.mergedBy)}
+					_ = json.NewEncoder(w).Encode(pr)
 				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
 					labels := make([]map[string]string, 0, len(tc.labels))
 					for _, l := range tc.labels {
@@ -129,7 +147,24 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := newTestClient(t, srv, "o", []string{"r"})
-			pr := mergedTestPR(42, "hive[bot]", "scanner/fix-7", "Refs #7")
+			prBody := tc.prBody
+			if prBody == "" {
+				prBody = "Refs #7"
+			}
+			pr := mergedTestPR(42, "hive[bot]", "scanner/fix-7", prBody)
+			pr.Base.Ref = gh.Ptr("v6")
+			if tc.external {
+				pr.User = &gh.User{Login: gh.Ptr("contributor")}
+			}
+			if !tc.lookup {
+				pr.MergedBy = &gh.User{Login: gh.Ptr(tc.mergedBy)}
+			}
+			if tc.lookup {
+				restore := resetPRDetailCacheForTest(time.Now, 0)
+				defer restore()
+				c.SetPRDetailTTLFunc(func() time.Duration { return time.Hour })
+				c.storePRDetail("o/r", 42, pr)
+			}
 			if tc.unmerged {
 				pr.Merged = gh.Ptr(false)
 				pr.MergedAt = nil
@@ -149,12 +184,22 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 			if tc.wantAction == CloseOnMergeAwaiting && (len(posted) != 1 || !strings.Contains(posted[0], "awaiting confirmation")) {
 				t.Fatalf("awaiting comment = %#v", posted)
 			}
+			if tc.wantAction == CloseOnMergeSkipped {
+				wantReason := tc.wantReason
+				if wantReason == "" {
+					wantReason = "partially_addressed"
+				}
+				if res.Reason != wantReason || len(posted) != 0 {
+					t.Fatalf("skipped result = %+v, posted = %#v, want %s without comments", res, posted, wantReason)
+				}
+			}
 		})
 	}
 }
 
 func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 	var patched bool
+	var stageStripped []string
 	var issueDetailGets int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -175,9 +220,10 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"number": 42, "title": "fix", "body": "Refs #7", "merged": true,
 				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
-				"user": map[string]string{"login": "hive[bot]"},
-				"head": map[string]string{"ref": "scanner/fix-7", "sha": "headsha"},
-				"base": map[string]any{"repo": map[string]string{"full_name": "o/r"}},
+				"user":      map[string]string{"login": "contributor"},
+				"merged_by": map[string]string{"login": "hive[bot]"},
+				"head":      map[string]string{"ref": "scanner/fix-7", "sha": "headsha"},
+				"base":      map[string]any{"ref": "v6", "repo": map[string]string{"full_name": "o/r"}},
 			})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
 			issueDetailGets++
@@ -189,6 +235,9 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
 		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/needs-reporter-confirmation"):
 			w.WriteHeader(http.StatusNotFound)
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/stage/"):
+			stageStripped = append(stageStripped, path.Base(r.URL.Path))
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -204,6 +253,9 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 	}
 	if issueDetailGets != 1 {
 		t.Fatalf("backfill issue detail GETs = %d, want 1 from final close only", issueDetailGets)
+	}
+	if len(stageStripped) != 1 || stageStripped[0] != path.Base(CoveredByPRLabel) {
+		t.Fatalf("stage labels stripped on close = %v, want the covered-by-PR stage (#12436)", stageStripped)
 	}
 }
 
@@ -341,7 +393,10 @@ func TestCloseOnMergeReopenedAfterMergeLedgerSkipsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := newTestClient(t, srv, "o", []string{"r"})
-	opts := CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}}
+	// RecheckAfter 0 would mean the default; a one-nanosecond window makes
+	// every sweep re-verify so this test exercises the per-PR comment marker
+	// rather than the ledger's settled marker.
+	opts := CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}, RecheckAfter: time.Nanosecond}
 	for sweep := 1; sweep <= 2; sweep++ {
 		results := c.CloseOnMergeForLedger(context.Background(), ledger, opts)
 		if len(results) != 1 || results[0].Action != CloseOnMergeSkipped || results[0].Reason != "reopened_after_merge" {
@@ -490,5 +545,37 @@ func TestCloseOnMergeReopenDecision(t *testing.T) {
 				assertReopenedMarkerComment(t, f.posted, tc.pr.GetNumber())
 			}
 		})
+	}
+}
+
+func TestCloseOnMergeSkipsClaimedPullRequestTarget(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	var writes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writes = append(writes, r.Method+" "+r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Path == "/repos/o/r/issues/14730" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number":       14730,
+				"state":        "open",
+				"pull_request": map[string]any{"url": "https://api.github.com/repos/o/r/pulls/14730"},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"r"})
+	pr := mergedTestPR(25, "hive[bot]", "fix", "the fix is made in o/r#14730")
+	opts := CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}}
+	res := c.closeIssueForMergedPRClaim(context.Background(), "o/r", 14730, pr, true, opts)
+	if res.Action != CloseOnMergeSkipped || res.Reason != "target_is_pull_request" {
+		t.Fatalf("result = %+v, want target_is_pull_request skip", res)
+	}
+	if len(writes) != 0 {
+		t.Fatalf("unexpected write requests: %v", writes)
 	}
 }

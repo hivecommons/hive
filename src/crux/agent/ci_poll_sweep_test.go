@@ -1,0 +1,206 @@
+package agent
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+// ci_poll_sweep_test.go pins #14016: the scanner's merge sweep and CI-repair
+// pass read `gh pr checks` once for each of many PRs. That is a sweep, not a
+// wait on one PR, so only command lines run more than once count toward the
+// nudge threshold and the fleet self-report, and the wall-clock trigger
+// leaves a sweep alone (#14066).
+
+func TestCountRepeatedCIPollCommands(t *testing.T) {
+	tests := []struct {
+		name string
+		pane string
+		want int
+	}{
+		{
+			name: "distinct PRs read once each",
+			pane: "gh pr checks 1\ngh pr checks 2\ngh pr checks 3\ngh pr checks 4",
+			want: 0,
+		},
+		{
+			name: "same PR polled counts every read",
+			pane: "gh pr checks 7\ngh pr checks 8\ngh pr checks 7\ngh pr checks 7",
+			want: 3,
+		},
+		{
+			name: "pane padding and box rule do not split one target",
+			pane: "● gh run watch 42   ┃\n  gh run watch  42\n",
+			want: 2,
+		},
+		{
+			name: "quoted prohibition is not a read",
+			pane: "no `gh pr checks` loops\ngh pr checks 5",
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countRepeatedCIPollCommands(tt.pane, nil); got != tt.want {
+				t.Errorf("countRepeatedCIPollCommands(%q) = %d, want %d", tt.pane, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCountRepeatedCIPollCommandsSinceBaseline(t *testing.T) {
+	const poll = "gh pr checks 7\n"
+	for _, tt := range []struct {
+		name     string
+		baseline string
+		pane     string
+		want     int
+	}{
+		{name: "one old and one new read", baseline: poll, pane: poll + poll, want: 0},
+		{name: "old repeated reads and one new read", baseline: poll + poll, pane: poll + poll + poll, want: 0},
+		{name: "two new reads after old singleton", baseline: poll, pane: strings.Repeat(poll, 3), want: 2},
+		{name: "two new reads after old repeats", baseline: poll + poll, pane: strings.Repeat(poll, 4), want: 2},
+		{name: "unchanged scrollback", baseline: poll + poll, pane: poll + poll, want: 0},
+		{name: "old target scrolled out, new target repeats", baseline: poll + poll, pane: "gh pr checks 8\ngh pr checks 8\n", want: 2},
+		{name: "old reads scrolled out, same target read again", baseline: poll + poll + "gh pr checks 8\n", pane: poll + poll, want: 2},
+		{name: "partial scroll-out keeps only new reads", baseline: "gh pr checks 1\ngh pr checks 2\ngh pr checks 3\n", pane: "gh pr checks 3\ngh pr checks 4\ngh pr checks 4\n", want: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countRepeatedCIPollCommands(tt.pane, ciPollCommands(tt.baseline)); got != tt.want {
+				t.Errorf("repeated reads since baseline = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// A scanner revisits the same PRs on successive kicks. Each sweep reads each
+// PR only once; historical reads must not cause a count nudge or fleet report.
+func TestNudgeIfPollingCISuccessiveSweeps(t *testing.T) {
+	var sweep string
+	for pr := range ciPollNudgeThreshold + 3 {
+		sweep += fmt.Sprintf("gh pr checks %d --repo acme/widgets\n", 100+pr)
+	}
+	for _, tt := range []struct {
+		name       string
+		kickAge    time.Duration
+		wantNudged bool
+	}{
+		{name: "young kick", kickAge: 2 * time.Minute},
+		{name: "past wall clock", kickAge: 11 * time.Minute},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
+			tr := recordConditions(t, m)
+			scrollback := sweep
+			for kick := range 3 {
+				m.mu.Lock()
+				m.recordDeliveredKickLocked(a, "inspect PRs", "test")
+				*a.LastKick = time.Now().Add(-tt.kickAge)
+				m.mu.Unlock()
+
+				m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
+				scrollback += sweep
+				m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
+
+				if a.ciPollNudgeSent != tt.wantNudged || a.AwaitingCI != tt.wantNudged {
+					t.Fatalf("kick %d: nudged=%v awaiting=%v, want %v", kick, a.ciPollNudgeSent, a.AwaitingCI, tt.wantNudged)
+				}
+				if ev := ciPollEvidence(tr); len(ev) != 0 {
+					t.Fatalf("kick %d: sweep produced CI-poll evidence: %#v", kick, ev)
+				}
+			}
+		})
+	}
+}
+
+func TestNudgeIfPollingCISweepIsNotPolling(t *testing.T) {
+	sweep := ""
+	for pr := range ciPollNudgeThreshold + 3 {
+		sweep += fmt.Sprintf("gh pr checks %d --repo acme/widgets\n", 100+pr)
+	}
+	for _, tt := range []struct {
+		name       string
+		kickAge    time.Duration
+		wantNudged bool
+	}{
+		{name: "sweep, kick young: no nudge", kickAge: 2 * time.Minute, wantNudged: false},
+		{name: "sweep past wall clock: no nudge (#14066)", kickAge: 11 * time.Minute, wantNudged: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
+			tr := recordConditions(t, m)
+
+			m.nudgeIfPollingCI(a, "", ciPollIdlePane)
+			m.nudgeIfPollingCI(a, sweep, ciPollIdlePane)
+
+			if a.AwaitingCI != tt.wantNudged {
+				t.Errorf("AwaitingCI = %v, want %v", a.AwaitingCI, tt.wantNudged)
+			}
+
+			if a.ciPollNudgeSent != tt.wantNudged {
+				t.Errorf("ciPollNudgeSent = %v, want %v", a.ciPollNudgeSent, tt.wantNudged)
+			}
+			if ev := ciPollEvidence(tr); len(ev) != 0 {
+				t.Errorf("ci_poll_nudge evidence = %d for a sweep, want 0: %#v", len(ev), ev)
+			}
+		})
+	}
+}
+
+// TestNudgeIfPollingCIWallClockSweepWithRepeat pins #14066's boundary: past
+// the wall clock a sweep is left alone, but one PR read twice inside it is a
+// wait on that PR, so the wall-clock nudge still fires.
+func TestNudgeIfPollingCIWallClockSweepWithRepeat(t *testing.T) {
+	sweep := "gh pr checks 100\ngh pr checks 101\ngh pr checks 102\n"
+	for _, tt := range []struct {
+		name       string
+		pane       string
+		wantNudged bool
+	}{
+		{name: "distinct reads", pane: sweep, wantNudged: false},
+		{name: "one target re-read", pane: sweep + "gh pr checks 101\n", wantNudged: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, a := ciPollManager(t, ciPollIdlePane, 11*time.Minute)
+
+			m.nudgeIfPollingCI(a, "", ciPollIdlePane)
+			m.nudgeIfPollingCI(a, tt.pane, ciPollIdlePane)
+
+			if a.ciPollNudgeSent != tt.wantNudged || a.AwaitingCI != tt.wantNudged {
+				t.Errorf("nudged=%v awaiting=%v, want %v", a.ciPollNudgeSent, a.AwaitingCI, tt.wantNudged)
+			}
+		})
+	}
+}
+
+func TestCIPollSweep(t *testing.T) {
+	for _, tt := range []struct {
+		polls, repeats int
+		want           bool
+	}{
+		{polls: 0, repeats: 0, want: false},
+		{polls: 1, repeats: 0, want: false},
+		{polls: 2, repeats: 0, want: true},
+		{polls: 3, repeats: 2, want: false},
+	} {
+		if got := ciPollSweep(tt.polls, tt.repeats); got != tt.want {
+			t.Errorf("ciPollSweep(%d, %d) = %v, want %v", tt.polls, tt.repeats, got, tt.want)
+		}
+	}
+}
+
+func TestRepeatedCIPollCommandLines(t *testing.T) {
+	pane := "hive-gh pr checks 7\ngh pr checks 8\ngh pr checks 9\nhive-gh pr checks 7\ngh pr checks 9\nhive-gh pr checks 7\ngh pr view 1"
+	got := repeatedCIPollCommandLines(pane, nil)
+	// ciPollCommands captures from the regex match, so the hive-gh wrapper
+	// prefix is not part of the recorded command line.
+	want := []string{"3× gh pr checks 7", "2× gh pr checks 9"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := repeatedCIPollCommandLines("gh pr checks 1\ngh pr checks 2", nil); len(got) != 0 {
+		t.Fatalf("sweep listed as repeated: %q", got)
+	}
+}

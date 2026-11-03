@@ -1,0 +1,62 @@
+  <!-- Hive activity monitor (#12599): one Domino's-style tracker strip per
+       open issue / PR, grouped by current stage, fed by GET /api/stage-tracker.
+       Row/segment/caption markup is built by stageTrackerRowHtml() so a node
+       test can run it; guarded by stage_tracker_ui_rows_test.go. -->
+  <div class="mt-6 mb-8" id="activity-monitor-section" data-dashboard-section="activity-monitor-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="activity-monitor-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Hive activity monitor section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📍 Hive activity monitor</h2>
+    <div class="config-overlay hidden" id="activity-monitor-settings-overlay">
+      <div class="config-modal overview-settings-modal" id="activity-monitor-settings" role="dialog" aria-modal="true" aria-labelledby="activity-monitor-settings-title">
+        <div class="config-header">
+          <h2 class="config-title" id="activity-monitor-settings-title">Hive activity monitor settings</h2>
+          <button type="button" class="config-close" data-action="closeStageTrackerSettings" aria-label="Close Hive activity monitor settings">&times;</button>
+        </div>
+        <div class="config-body overview-settings-body modal-scroll" id="activity-monitor-settings-body"></div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="ham-toolbar" id="activity-monitor-toolbar">
+        <span class="ham-chips" role="group" aria-label="Item kind">
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="all" aria-pressed="true">All</button>
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="pr" aria-pressed="false">Pull requests</button>
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
+        </span>
+        <label class="ham-repo-filter"><span>Repo</span><select id="activity-monitor-repo" class="ham-select" data-change-action="hamFilter" data-arg0="repo" data-arg-types="s,v"><option value="">All repos</option></select></label>
+        <input id="activity-monitor-q" class="ham-input" type="search" placeholder="Search # or title…" autocomplete="off" spellcheck="false" aria-label="Search by number or title" data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w">
+        <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
+        <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
+        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, unauthorized, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
+        <button type="button" class="ham-chip ham-chip--waiting" id="activity-monitor-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="false" title="Only items parked on you: a decision asked at 045 / 085, a PR ready for a human merge at 090, an approval the hive cannot give, or a contributor offline past their grace so you are the fallback. Same rows as the sidebar's orange badge and the topbar's Waiting on you pill">Waiting on you</button>
+        <label class="ham-repo-filter"><span>Decisions</span><select id="activity-monitor-acted" class="ham-select" data-change-action="hamFilter" data-arg0="acted" data-arg-types="s,v" aria-label="Filter by whether you acted on the row" title="Awaiting my decision: parked on a person, no action recorded yet. I acted: an action was recorded from this dashboard (history badge). Acted, still stuck: acted, but the item has not moved past that stage (amber history badge)"><option value="any">Any</option><option value="awaiting">Awaiting my decision</option><option value="acted">I acted</option><option value="stuck">Acted, still stuck</option></select></label>
+        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option><option value="finisher" title="Rows Hive can finish on its own first, then rows waiting on someone else, then rows that need a person. Reverse the direction for rows that need a person first.">Hive end to end first</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
+        <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
+        <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+        <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
+        <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Sound off — turn on (merge zap + new-item buzz; plays a test of each)" title="Sound off — turn on (merge zap + new-item buzz; plays a test of each)">🔇</button>
+      </div>
+      <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
+      <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
+      <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
+      <div class="ham-sticky" id="activity-monitor-sticky">
+        <span class="ham-sticky-live" id="activity-monitor-merged-live" role="status" aria-live="polite"></span>
+        <button type="button" class="ham-chip ham-merged-count" id="activity-monitor-merged" data-action="hamMergedToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-merged-pop" title="Merged: 0 all time"><svg class="ham-merged-ico" viewBox="0 0 18 12" focusable="false" aria-hidden="true"><ellipse class="oc-version-bee-wing" cx="7" cy="3.6" rx="3" ry="1.5" transform="rotate(-18 7 3.6)"/><ellipse class="oc-version-bee-wing" cx="11" cy="3.4" rx="3" ry="1.5" transform="rotate(18 11 3.4)"/><ellipse class="oc-version-bee-body" cx="9.2" cy="7" rx="5.8" ry="3.3"/><path class="oc-version-bee-stripe" d="M7.2 4.2v5.6M10 3.8v6.4"/><circle class="oc-version-bee-head" cx="15" cy="7" r="1.7"/></svg>Merged <span class="ham-merged-n">0</span><span class="ham-merged-sub">0 today · 0 this week</span></button>
+        <div class="ham-merged-pop" id="activity-monitor-merged-pop" role="dialog" aria-label="Recent merges" hidden></div>
+        <button type="button" class="ham-chip ham-queue-chip" id="activity-monitor-queue" data-action="hamQueueToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-queue-pop" title="Merge queue: empty" hidden>⛓ Merge queue <span class="ham-queue-n">0</span></button>
+        <div class="ham-merged-pop ham-queue-pop" id="activity-monitor-queue-pop" role="dialog" aria-label="Merge queue" hidden></div>
+      </div>
+      <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
+      <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
+    </div>
+  </div>
+
+  <div class="mt-6 mb-8" id="agent-activity-section" data-dashboard-section="agent-activity-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="agent-activity-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent activity section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📡 Agent activity</h2>
+    <div class="section-body">
+      <div id="agent-activity-panel"></div>
+    </div>
+  </div>
+
+  <!-- FAQ — intentionally NOT ACMM-gated (no entry in applyACMMVisibility's
+       sidebarItems list and no display:none default), because the audience for
+       it is a confused L1/L2 user. Static content plus a client-side filter
+       (faqFilter); no fetch. Every answer links to its source doc — the panel
+       is a map, not a second source of truth. Guarded by faq_ui_test.go. -->

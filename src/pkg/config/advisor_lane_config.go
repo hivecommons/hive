@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 )
 
 // This file carries the advisor-lane configuration (hivecommons/hive#9722,
@@ -22,18 +24,18 @@ const ModelRoleRefPrefix = "@"
 // (phase 1). AdvisorCopilotBackend and AdvisorCodexBackend are the Copilot
 // CLI `agentStop` and Codex CLI `Stop` adapters (phase 3, #9724).
 const (
-	AdvisorClaudeBackend  = "claude"
-	AdvisorCopilotBackend = "copilot"
-	AdvisorCodexBackend   = "codex"
+	AdvisorClaudeBackend  = cruxconfig.AdvisorClaudeBackend
+	AdvisorCopilotBackend = cruxconfig.AdvisorCopilotBackend
+	AdvisorCodexBackend   = cruxconfig.AdvisorCodexBackend
 )
 
 // AdvisorOMPBackend is the backend of the phase-2 adapter (the OMP
 // `session_stop` extension and `--config` roles overlay).
-const AdvisorOMPBackend = "omp"
+const AdvisorOMPBackend = cruxconfig.AdvisorOMPBackend
 
 // AdvisorSupportedBackendList names the supported backends for operator-facing
 // messages.
-const AdvisorSupportedBackendList = AdvisorClaudeBackend + ", " + AdvisorOMPBackend + ", " + AdvisorCopilotBackend + ", " + AdvisorCodexBackend
+const AdvisorSupportedBackendList = cruxconfig.AdvisorSupportedBackendList
 
 // AdvisorCopilotBlockBound is the smallest bound a supported backend imposes
 // on forced continuations: Copilot CLI force-ends a turn after 8 consecutive
@@ -54,24 +56,9 @@ const (
 	DefaultAdvisorMaxConsecutiveBlocks = 3
 )
 
-// ModelRole is one entry of the named model-roles map: a small set of names
-// ("advisor", "cheap-reader", ...) an operator defines once in hive.yaml and
-// references as "@<role>" wherever hive asks for a model, instead of pinning
-// a model in each of the places that ask. Resolution of the model id for a
-// concrete backend still goes through the per-backend model-name
-// normalization the launch path already performs.
-type ModelRole struct {
-	// Backend the role's model runs on. Optional; when empty the consumer's
-	// own backend applies.
-	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
-	// Model is the model id. Required.
-	Model string `yaml:"model" json:"model"`
-	// ReasoningEffort for backends that expose an effort control. Optional.
-	// Not validated when Backend is empty (the consumer's backend applies at
-	// launch); for omp it must be one of OMPThinkingLevels; otherwise it is
-	// validated against ReasoningEffortsByBackend.
-	ReasoningEffort string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
-}
+// ModelRole is one `model_roles` entry; defined in crux/config so the agent
+// runtime can project roles at launch.
+type ModelRole = cruxconfig.ModelRole
 
 // AdvisorConfig is the fleet-wide advisor block: one second model that
 // reviews every finished turn of every hub-launched agent with the advisor
@@ -105,18 +92,6 @@ type AdvisorConfig struct {
 // trajectory lane the advisor is OPT-IN: nil (key omitted) means off.
 func (a AdvisorConfig) IsEnabled() bool {
 	return a.Enabled != nil && *a.Enabled
-}
-
-// AdvisorOverride is the per-agent advisor override: every field is a pointer
-// so an agent may change any part of the fleet default — or opt out entirely
-// with enabled: false — while omitted fields inherit the fleet value.
-type AdvisorOverride struct {
-	Enabled              *bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Model                *string `yaml:"model,omitempty" json:"model,omitempty"`
-	Instructions         *string `yaml:"instructions,omitempty" json:"instructions,omitempty"`
-	DailyBudgetTokens    *int    `yaml:"daily_budget_tokens,omitempty" json:"daily_budget_tokens,omitempty"`
-	TimeoutS             *int    `yaml:"timeout_s,omitempty" json:"timeout_s,omitempty"`
-	MaxConsecutiveBlocks *int    `yaml:"max_consecutive_blocks,omitempty" json:"max_consecutive_blocks,omitempty"`
 }
 
 // EffectiveAdvisor returns the advisor configuration in effect for one agent:
@@ -158,14 +133,9 @@ func (c *Config) AdvisorEnabledFor(agentName string) bool {
 }
 
 // AdvisorSupportedBackend reports whether the advisor lane has an adapter for
-// the backend: the Claude Code, Copilot CLI and Codex CLI turn-end hooks and
-// the OMP `session_stop` extension.
+// the backend; see crux/config.
 func AdvisorSupportedBackend(backend string) bool {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case AdvisorClaudeBackend, AdvisorOMPBackend, AdvisorCopilotBackend, AdvisorCodexBackend:
-		return true
-	}
-	return false
+	return cruxconfig.AdvisorSupportedBackend(backend)
 }
 
 // AdvisorActiveForAgent reports whether the advisor actually reviews the

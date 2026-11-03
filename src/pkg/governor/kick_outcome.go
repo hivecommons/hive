@@ -32,6 +32,10 @@ const (
 	KickOutcomeStandDown = "stand-down"
 	KickOutcomeNoOp      = "no-op"
 	KickOutcomeEnded     = "ended"
+	// KickOutcomePresumedEnded is governor-internal: continuous mode waited
+	// past the agent's turn ceiling for a turn-end signal that never came and
+	// presumed the turn over so the next kick could be re-armed.
+	KickOutcomePresumedEnded = "presumed-ended"
 )
 
 // questionRekickDelay is how long after a question-ended turn the agent is
@@ -110,6 +114,55 @@ func (g *Governor) RecordKickOutcome(agentName, kind, reason string, kickAt, at 
 	}
 }
 
+// presumeStaleTurnEndedLocked closes the continuous-mode liveness hole where
+// a missed turn-end signal left the agent idle forever: the kick zeroes
+// NextKick, the only re-arm path is RecordKickOutcome, and every other
+// recovery (kick-failure backoff, busy-no-activity restart) is keyed off kick
+// ATTEMPTS, which never happen while NextKick is unset. When the most recent
+// kick on cadenceKey has had no outcome for at least the agent's continuous
+// turn ceiling, a synthetic presumed-ended outcome is recorded so the normal
+// idle check passes. It returns true when it did so. Re-arming only schedules
+// a kick attempt; delivery still refuses to type into a Working pane, so a
+// genuinely long turn is never interrupted. Caller holds g.mu.
+func (g *Governor) presumeStaleTurnEndedLocked(agentName, cadenceKey string, now time.Time) bool {
+	ac, ok := g.agents[agentName]
+	if !ok {
+		return false
+	}
+	ceiling := ac.EffectiveContinuousTurnCeiling()
+	if ceiling <= 0 {
+		return false
+	}
+	lastKick := g.state.LastKick[cadenceKey]
+	if lastKick.IsZero() || now.Sub(lastKick) < ceiling {
+		return false
+	}
+	if rec, ok := g.kickOutcomes[agentName]; ok && !rec.At.Before(lastKick) {
+		return false
+	}
+	g.kickOutcomes[agentName] = KickOutcomeRecord{
+		Agent:  agentName,
+		Kind:   KickOutcomePresumedEnded,
+		Reason: "no turn-end signal within continuous_turn_ceiling " + ceiling.String(),
+		At:     now,
+		KickAt: lastKick,
+	}
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	st := g.state.Continuous[agentName]
+	st.PresumedTurnEnds++
+	g.state.Continuous[agentName] = st
+	if g.logger != nil {
+		g.logger.Warn("continuous turn never reported an end; presuming it over and re-arming",
+			"agent", agentName, "cadence_key", cadenceKey,
+			"kick_at", lastKick.UTC().Format(time.RFC3339),
+			"since_kick", now.Sub(lastKick).Round(time.Second).String(),
+			"ceiling", ceiling.String())
+	}
+	return true
+}
+
 func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time) {
 	ac, ok := g.agents[agentName]
 	if !ok || !g.agentContinuousInCurrentModeLocked(agentName) {
@@ -138,6 +191,7 @@ func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time)
 	cooldown := ac.EffectiveContinuousCooldown()
 	st := g.state.Continuous[agentName]
 	st.NextKick = endedAt.Add(cooldown)
+	st.LastKickEnd = endedAt
 	st.BackoffUntil = time.Time{}
 	st.Backoff = 0
 	st.Failures = 0
@@ -244,4 +298,44 @@ func (g *Governor) seedKickOutcomesFromHistoryLocked() {
 			At: rec.Timestamp, KickAt: rec.Timestamp, Rekicked: true,
 		}
 	}
+}
+
+// NextContinuousKickAt returns the earliest pending continuous re-kick across
+// agents that are continuous in the current mode, and the agent it belongs to.
+// A zero time means nothing is scheduled. The run loop arms a wake timer on
+// it so a continuous agent is re-kicked when its cooldown elapses instead of
+// at the next cadence eval tick — on a spoke with eval_interval_webhook_s=900
+// the reviewer otherwise sat idle at its prompt for 7–15 minutes after every
+// "kick turn ended", which an operator read as "continuous mode is broken".
+// Backed-off agents are included: their NextKick already equals BackoffUntil.
+func (g *Governor) NextContinuousKickAt() (time.Time, string) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	var earliest time.Time
+	var who string
+	for name, st := range g.state.Continuous {
+		if st.NextKick.IsZero() || st.Blocked != "" {
+			continue
+		}
+		if _, ok := g.agents[name]; !ok || !g.agentContinuousInCurrentModeLocked(name) {
+			continue
+		}
+		if earliest.IsZero() || st.NextKick.Before(earliest) {
+			earliest, who = st.NextKick, name
+		}
+	}
+	return earliest, who
+}
+
+// SeedContinuousNextKickForTest overrides a continuous agent's NextKick so a
+// test can make its re-kick due without a sleeping clock.
+func (g *Governor) SeedContinuousNextKickForTest(agentName string, at time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	st := g.state.Continuous[agentName]
+	st.NextKick = at
+	g.state.Continuous[agentName] = st
 }

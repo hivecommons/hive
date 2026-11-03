@@ -50,8 +50,13 @@ func advisorSettingsSection(cfg *config.Config) advisorSettingsResponse {
 	for name, role := range cfg.ModelRoles {
 		roles[name] = role
 	}
+	// Report the effective boolean so an unset enabled key reads as off
+	// (the lane is opt-in) instead of being omitted from the JSON.
+	fleet := cfg.Advisor
+	fleetEnabled := fleet.IsEnabled()
+	fleet.Enabled = &fleetEnabled
 	resp := advisorSettingsResponse{
-		Fleet:      cfg.Advisor,
+		Fleet:      fleet,
 		ModelRoles: roles,
 		Defaults: advisorSettingsDefaults{
 			TimeoutS:             config.DefaultAdvisorTimeoutS,
@@ -82,8 +87,8 @@ func advisorLaneCandidate(cfg *config.Config) *config.Config {
 	candidate := &config.Config{
 		Advisor:    cfg.Advisor,
 		ModelRoles: make(map[string]config.ModelRole, len(cfg.ModelRoles)),
-		Agents:     make(map[string]config.AgentConfig, len(cfg.Agents)),
 	}
+	candidate.Agents = make(map[string]config.AgentConfig, len(cfg.Agents))
 	for name, role := range cfg.ModelRoles {
 		candidate.ModelRoles[name] = role
 	}
@@ -106,12 +111,17 @@ func (s *Server) advisorSettingsReady(w http.ResponseWriter) bool {
 // answers with the refreshed section. A failed save is reported, never
 // swallowed: the dashboard must not claim a value is in force for the next
 // launch when hive.yaml still says otherwise.
-func (s *Server) persistAdvisorSettings(w http.ResponseWriter, r *http.Request, detail ...string) {
+//
+// apply installs the edit on the live config and returns its undo; a failed
+// save undoes it, so the live config never holds an unsaved advisor value.
+func (s *Server) persistAdvisorSettings(w http.ResponseWriter, r *http.Request, apply func() (undo func()), detail ...string) {
+	undo := apply()
 	if err := s.saveConfig(); err != nil {
+		undo()
 		if s.logger != nil {
 			s.logger.Error("failed to persist config after advisor settings update", "error", err)
 		}
-		jsonError(w, "failed to save config: "+err.Error(), http.StatusInternalServerError)
+		jsonError(w, "failed to save config; no change applied: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.auditFromRequest(r, "config_advisor", auditDetail(append([]string{"section", "advisor"}, detail...)...), "")
@@ -161,6 +171,8 @@ func (s *Server) handleAdvisorSettingsPut(w http.ResponseWriter, r *http.Request
 	if !s.advisorSettingsReady(w) {
 		return
 	}
+	s.advisorWriteMu.Lock()
+	defer s.advisorWriteMu.Unlock()
 	var body advisorFleetBody
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -200,8 +212,12 @@ func (s *Server) handleAdvisorSettingsPut(w http.ResponseWriter, r *http.Request
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.deps.Config.Advisor = next
-	s.persistAdvisorSettings(w, r, "scope", "fleet", "enabled", fmt.Sprint(next.IsEnabled()), "model", next.Model)
+	cfg := s.deps.Config
+	s.persistAdvisorSettings(w, r, func() func() {
+		prev := cfg.Advisor
+		cfg.Advisor = next
+		return func() { cfg.Advisor = prev }
+	}, "scope", "fleet", "enabled", fmt.Sprint(next.IsEnabled()), "model", next.Model)
 }
 
 // handleAdvisorRolesPut serves PUT /api/config/advisor/roles: replaces the
@@ -214,6 +230,8 @@ func (s *Server) handleAdvisorRolesPut(w http.ResponseWriter, r *http.Request) {
 	if !s.advisorSettingsReady(w) {
 		return
 	}
+	s.advisorWriteMu.Lock()
+	defer s.advisorWriteMu.Unlock()
 	var body struct {
 		ModelRoles map[string]config.ModelRole `json:"model_roles"`
 	}
@@ -252,8 +270,12 @@ func (s *Server) handleAdvisorRolesPut(w http.ResponseWriter, r *http.Request) {
 	if len(roles) == 0 {
 		roles = nil
 	}
-	s.deps.Config.ModelRoles = roles
-	s.persistAdvisorSettings(w, r, "scope", "model_roles", "roles", fmt.Sprint(len(roles)))
+	cfg := s.deps.Config
+	s.persistAdvisorSettings(w, r, func() func() {
+		prev := cfg.ModelRoles
+		cfg.ModelRoles = roles
+		return func() { cfg.ModelRoles = prev }
+	}, "scope", "model_roles", "roles", fmt.Sprint(len(roles)))
 }
 
 // handleAdvisorAgentPut serves PUT /api/config/advisor/agent/{name}: sets or
@@ -267,6 +289,8 @@ func (s *Server) handleAdvisorAgentPut(w http.ResponseWriter, r *http.Request) {
 	if !s.advisorSettingsReady(w) {
 		return
 	}
+	s.advisorWriteMu.Lock()
+	defer s.advisorWriteMu.Unlock()
 	name := r.PathValue("name")
 	agent, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -308,11 +332,28 @@ func (s *Server) handleAdvisorAgentPut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	agent.Advisor = o
-	s.deps.Config.Agents[name] = agent
 	scope := "agent-override"
 	if o == nil {
 		scope = "agent-inherit"
 	}
-	s.persistAdvisorSettings(w, r, "scope", scope, "agent", name)
+	cfg := s.deps.Config
+	s.persistAdvisorSettings(w, r, func() func() {
+		prev := cfg.Agents[name]
+		updated := prev
+		updated.Advisor = o
+		cfg.Agents[name] = updated
+		// Restore only .Advisor so a concurrent non-advisor edit to this
+		// agent landing during saveConfig is not undone.
+		return func() { restoreAgentAdvisor(cfg, name, prev.Advisor) }
+	}, "scope", scope, "agent", name)
+}
+
+// restoreAgentAdvisor puts old back on the named agent's Advisor field. An
+// agent removed concurrently while saveConfig ran is left removed rather than
+// recreated as an empty AgentConfig (hivecommons/hive#13442).
+func restoreAgentAdvisor(cfg *config.Config, name string, old *config.AdvisorOverride) {
+	if cur, ok := cfg.Agents[name]; ok {
+		cur.Advisor = old
+		cfg.Agents[name] = cur
+	}
 }

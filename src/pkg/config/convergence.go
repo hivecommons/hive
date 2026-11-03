@@ -34,6 +34,28 @@ type ConvergenceConfig struct {
 	// future build -- still resolves to "off": an unparseable setting must
 	// never select a posture the operator did not ask for.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Mutation tunes the external-mutation boundary (pkg/convergence/mutation).
+	Mutation *ConvergenceMutationConfig `yaml:"mutation,omitempty" json:"mutation,omitempty"`
+}
+
+// ConvergenceMutationConfig tunes the external-mutation boundary's claim
+// ledger.
+type ConvergenceMutationConfig struct {
+	// MaxWritersPerTarget is how many external mutations may be in flight at
+	// once against one issue or pull request (owner/repo#N); mutations with
+	// no number (branch pushes, issue/PR creation) share one pool per repo.
+	// Zero or unset selects the default, 1 (hivecommons/hive#14645).
+	MaxWritersPerTarget int `yaml:"max_writers_per_target,omitempty" json:"max_writers_per_target,omitempty"`
+}
+
+// MutationMaxWritersPerTarget returns the configured
+// convergence.mutation.max_writers_per_target, or 0 (the ledger default) when
+// unset, non-positive, or c is nil.
+func (c *Config) MutationMaxWritersPerTarget() int {
+	if c == nil || c.Convergence.Mutation == nil || c.Convergence.Mutation.MaxWritersPerTarget <= 0 {
+		return 0
+	}
+	return c.Convergence.Mutation.MaxWritersPerTarget
 }
 
 const (

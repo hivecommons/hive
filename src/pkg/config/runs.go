@@ -6,11 +6,14 @@ import "strings"
 // RunsConfig.External block (runs_config.go). Flue is the batch-engine pilot
 // selected by the #8201 Gate 0 decision (#8302) and implemented by #8361; OMP
 // is the second, interactive host behind the same adapter (#8361 step 9,
-// answering #6899). Both default off and are independent of each other.
+// answering #6899); VibeKanban is the local board host; Claude Managed
+// Agents is the private-spoke hosted prototype. All default off and are
+// independent of each other.
 type ExternalRunsConfig struct {
-	Flue       FlueBindingConfig       `yaml:"flue,omitempty" json:"flue,omitempty"`
-	OMP        OMPBindingConfig        `yaml:"omp,omitempty" json:"omp,omitempty"`
-	VibeKanban VibeKanbanBindingConfig `yaml:"vibe_kanban,omitempty" json:"vibe_kanban,omitempty"`
+	Flue                FlueBindingConfig                `yaml:"flue,omitempty" json:"flue,omitempty"`
+	OMP                 OMPBindingConfig                 `yaml:"omp,omitempty" json:"omp,omitempty"`
+	VibeKanban          VibeKanbanBindingConfig          `yaml:"vibe_kanban,omitempty" json:"vibe_kanban,omitempty"`
+	ClaudeManagedAgents ClaudeManagedAgentsBindingConfig `yaml:"claude_managed_agents,omitempty" json:"claude_managed_agents,omitempty"`
 }
 
 // OMPBindingConfig is the operator toggle for the report-only OMP workbench
@@ -40,6 +43,31 @@ type VibeKanbanBindingConfig struct {
 	ProjectID       string `yaml:"project_id,omitempty" json:"project_id,omitempty"`
 	StateDir        string `yaml:"state_dir,omitempty" json:"state_dir,omitempty"`
 	WorkflowVersion string `yaml:"workflow_version,omitempty" json:"workflow_version,omitempty"`
+}
+
+// ClaudeManagedAgentsBindingConfig is the private-spoke hosted prototype.
+// It is DEFAULT OFF, shadow when enabled with no mode, and dispatches only in
+// report-only mode. The environment must be Claude's self_hosted type behind
+// forced egress; APIKeyEnv/APIKeyFile are references only, never secret
+// values. DailyBudgetCents is hard-capped at USD 25 by the adapter.
+type ClaudeManagedAgentsBindingConfig struct {
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	Mode              string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Endpoint          string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	WorkflowVersion   string `yaml:"workflow_version,omitempty" json:"workflow_version,omitempty"`
+	AgentID           string `yaml:"agent_id,omitempty" json:"agent_id,omitempty"`
+	AgentVersion      int    `yaml:"agent_version,omitempty" json:"agent_version,omitempty"`
+	ToolsetVersion    string `yaml:"toolset_version,omitempty" json:"toolset_version,omitempty"`
+	EnvironmentID     string `yaml:"environment_id,omitempty" json:"environment_id,omitempty"`
+	EnvironmentType   string `yaml:"environment_type,omitempty" json:"environment_type,omitempty"`
+	NetworkPolicy     string `yaml:"network_policy,omitempty" json:"network_policy,omitempty"`
+	APIKeyEnv         string `yaml:"api_key_env,omitempty" json:"api_key_env,omitempty"`
+	APIKeyFile        string `yaml:"api_key_file,omitempty" json:"api_key_file,omitempty"`
+	Model             string `yaml:"model,omitempty" json:"model,omitempty"`
+	StateDir          string `yaml:"state_dir,omitempty" json:"state_dir,omitempty"`
+	DailyBudgetCents  int64  `yaml:"daily_budget_cents,omitempty" json:"daily_budget_cents,omitempty"`
+	GitHubWritePath   string `yaml:"github_write_path,omitempty" json:"github_write_path,omitempty"`
+	DirectGitHubWrite bool   `yaml:"direct_github_write,omitempty" json:"direct_github_write,omitempty"`
 }
 
 // FlueBindingConfig is the operator toggle for the report-only Flue binding.
@@ -126,6 +154,25 @@ func (o OMPBindingConfig) EffectiveMode() string {
 // EffectiveMode resolves the mode in force for the vibe-kanban host.
 func (v VibeKanbanBindingConfig) EffectiveMode() string {
 	return effectiveBindingMode(v.Enabled, v.Mode)
+}
+
+// EffectiveMode resolves the mode in force for the Claude Managed Agents
+// private-spoke host.
+func (m ClaudeManagedAgentsBindingConfig) EffectiveMode() string {
+	return effectiveBindingMode(m.Enabled, m.Mode)
+}
+
+// ClaudeManagedAgentsBindingMode is the nil-safe accessor for the hosted host.
+func (c *Config) ClaudeManagedAgentsBindingMode() string {
+	if c == nil {
+		return FlueBindingModeOff
+	}
+	return c.Runs.External.ClaudeManagedAgents.EffectiveMode()
+}
+
+// ClaudeManagedAgentsBindingEnabled reports whether the hosted binding is on.
+func (c *Config) ClaudeManagedAgentsBindingEnabled() bool {
+	return c.ClaudeManagedAgentsBindingMode() != FlueBindingModeOff
 }
 
 // VibeKanbanBindingMode is the nil-safe accessor for the vibe-kanban host.

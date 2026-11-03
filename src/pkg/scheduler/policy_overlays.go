@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const (
@@ -26,9 +28,9 @@ func (s *Scheduler) addHeldPRCoordination(agentName string, actionable *github.A
 	}
 	claims, failClosed := s.formatHeldPRClaimsWithPolicy(actionable)
 	if failClosed {
-		if s.logger != nil {
-			s.logger.Warn("ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
-		}
+		// Persists every tick while the held PR stays open; warn once per agent
+		// like the main fail-closed kick path, then demote repeats to Debug.
+		s.warnOnce("blocked-held-pr-kick:"+agentName, "ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
 		return ""
 	}
 
@@ -62,12 +64,8 @@ Before choosing work:
    human review before the hold is lifted again.
 5. Make each new PR title and body name the exact files/functions/cluster it
    claims so the next kick can make the same comparison.
-
 `
-	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
-		return message[:newline+1] + "\n" + section + message[newline+1:]
-	}
-	return section + message
+	return appendKickSection(message, section)
 }
 
 func (s *Scheduler) isHoldGatedPRAgent(agentName string) bool {
@@ -126,18 +124,16 @@ When a fix belongs in a workflow file:
 2. File the issue with the exact replacement text, so applying it is mechanical.
 3. Say plainly in the issue that the change needs a human or an
    ISSUES_PRS_MERGE agent to land, and why — otherwise "issue, no PR" reads as
-   a judgement call you did not make.
+   a judgement call you did not make. Park it in the same request with
+   ` + "`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`" + `
+   (or ` + "`--needs-decision`" + ` on the create), since you cannot add the park label yourself.
 4. If part of the fix lives outside ` + "`.github/workflows/`" + `, PR that part and say
    in both the issue and the PR which part is still waiting.
 
 Everything else is pushable as normal, including composite actions under
 ` + "`.github/actions/`" + ` — GitHub's restriction covers the workflows directory only.
-
 `
-	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
-		return message[:newline+1] + "\n" + section + message[newline+1:]
-	}
-	return section + message
+	return insertAfterKickHeader(message, section)
 }
 
 // agentEffectiveMode returns the agent's configured mode, preferring the
@@ -184,9 +180,9 @@ const (
 	redPRFixExcerptRunes = 400
 )
 
-// addRedPRFixFirst prepends a fix-before-new section listing the agent's OWN
-// red-CI or conflicted PRs, with the failing checks and raw CI evidence, right
-// below the kick header. It reads ci-failing.json (written by writeMergeEligible each
+// addRedPRFixFirst appends a fix-before-new section listing the agent's OWN
+// red-CI or conflicted PRs, with the failing checks and raw CI evidence, in
+// the dynamic tail of the kick (see kick_layout.go). It reads ci-failing.json (written by writeMergeEligible each
 // eval tick), which attributes each PR to the agent whose relay request opened
 // it. Unattributed rows default to scanner — the fleet's primary PR creator.
 // Escalated (needs-human) PRs are never listed: they belong to a human.
@@ -194,20 +190,52 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 	if message == "" || !s.isPRCapableAgent(agentName) {
 		return message
 	}
-	data, err := os.ReadFile(ciFailingPath)
-	if err != nil {
-		return message
-	}
-	section := formatRedPRFixData(data, s.cfg.BaseAgentName(agentName))
+	section := s.redPRFixSection(agentName)
 	if section == "" {
 		return message
 	}
-	// Insert directly after the "[agent:x]" header line when present, so the
-	// section is the first thing the agent reads; otherwise prefix.
-	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
-		return message[:idx+1] + section + message[idx+1:]
+	return appendKickSection(message, section)
+}
+
+// markAdoptedFixerAttempt records that a fixer kick carried an adopted row, so
+// the 074 stall clock stops waiting for the fixer to reach it
+// (hivecommons/hive#15036). A var so tests can observe it.
+var markAdoptedFixerAttempt = func(repo string, number int, head string) {
+	if head != "" {
+		stagelabels.Shared().MarkFixerAttempted(stagelabels.Key(repo, number), head)
 	}
-	return section + message
+}
+
+// redPRFixSection renders the agent's fix-before-new section from
+// ci-failing.json merged with the webhook CI-failure signals attributed to
+// it (github.CIFailureSignals), so a check that went red seconds ago is
+// listed — with its name and log pointer — before the next eval tick
+// rewrites the file. Empty when the agent has nothing to repair.
+func (s *Scheduler) redPRFixSection(agentName string) string {
+	base := s.cfg.BaseAgentName(agentName)
+	data, err := os.ReadFile(ciFailingPath)
+	if err != nil {
+		data = nil
+	}
+	return formatRedPRFixDataWithSignals(data, base, github.CIFailureSignals().ForAgent(base))
+}
+
+// CIFailureKickMessage is the targeted kick a webhook CI-failure signal
+// sends to the owning agent: the same fix-before-new section a regular kick
+// would carry, under a one-line header naming the trigger. Empty when the
+// agent is not PR-capable or has no red PR to repair (e.g. every failing
+// check is red on the base branch too).
+func (s *Scheduler) CIFailureKickMessage(agentName string, sig github.CIFailureSignal) string {
+	if s == nil || !s.isPRCapableAgent(agentName) {
+		return ""
+	}
+	section := s.redPRFixSection(agentName)
+	if section == "" {
+		return ""
+	}
+	header := fmt.Sprintf("CI failed on %s#%d (%s) — repair it now. Detection was out-of-band (webhook); do not watch or poll CI yourself.\n",
+		sig.Repo, sig.Number, sig.Check)
+	return header + section
 }
 
 // heldRedPRNote is appended to a held PR's entry in the fix-before-new
@@ -217,9 +245,11 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 const heldRedPRNote = "held for human review — fix CI, do not remove the hold"
 
 // heldRedPRExemptAgent is the one agent whose held PRs are NOT routed back
-// for repair: the level-hold comment tells humans that outreach PRs are
-// always held for their review, so an outreach PR must not be edited after a
-// human may have started reading it.
+// for repair: the level-hold comment tells humans that cross-repo outreach
+// PRs are held for their review, so a held outreach PR must not be edited
+// after a human may have started reading it. A same-repo outreach PR carries
+// no outreach hold (hivecommons/hive, operator decision 2026-10-16) and so is
+// routed for repair like any other lane's red PR.
 const heldRedPRExemptAgent = "outreach"
 
 // formatRedPRFixData renders the fix-before-new section for one agent from
@@ -227,10 +257,36 @@ const heldRedPRExemptAgent = "outreach"
 // non-escalated red or conflicted PRs it can repair. A held red PR
 // (hivecommons/hive#7438) is listed like any other — with heldRedPRNote —
 // except for outreach's. A red PR already deferred to a still-open shared-CI
-// incident (deferred_incident, hivecommons/hive#10528) has nothing to repair:
-// it is named in one line without repair instructions, and when every red PR
-// the agent owns is deferred there is no section — and no banner — at all.
+// incident (deferred_incident, hivecommons/hive#10528), or triaged as failing
+// upstream at its current head (deferred_external, hivecommons/hive#11609),
+// has nothing to repair: it is named in one line without repair instructions,
+// and when every red PR the agent owns is deferred there is no section — and
+// no banner — at all.
 func formatRedPRFixData(data []byte, agent string) string {
+	return formatRedPRFixDataWithSignals(data, agent, nil)
+}
+
+// ciFailureSignalEvidence is the evidence line a webhook signal contributes:
+// the check name plus the log pointer, so the agent can open the run
+// without listing checks itself.
+func ciFailureSignalEvidence(sig github.CIFailureSignal) string {
+	line := "webhook: " + sig.Check + " failed"
+	if sig.Conclusion != "" && sig.Conclusion != "failure" {
+		line += " (" + sig.Conclusion + ")"
+	}
+	if sig.DetailsURL != "" {
+		line += " — log: " + sig.DetailsURL
+	}
+	return line
+}
+
+// formatRedPRFixDataWithSignals is formatRedPRFixData with the agent's
+// webhook CI-failure signals folded in: a signal for a PR the file already
+// lists adds its check and log pointer to that row; a signal for a PR the
+// file does not know yet (the file is rewritten per eval tick) becomes its
+// own row. A signal whose check the file reports red on the base branch is
+// dropped like any other base-red failure.
+func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.CIFailureSignal) string {
 	type ciFailingRow struct {
 		Number           int      `json:"number"`
 		Repo             string   `json:"repo"`
@@ -240,27 +296,79 @@ func formatRedPRFixData(data []byte, agent string) string {
 		Excerpt          string   `json:"excerpt"`
 		Escalated        bool     `json:"escalated"`
 		FromFork         bool     `json:"from_fork"`
+		ReachableAction  string   `json:"reachable_action"`
+		Adopted          bool     `json:"adopted"`
+		HeadSHA          string   `json:"head_sha"`
+		SentinelAlert    bool     `json:"sentinel_alert"`
 		HeadRepo         string   `json:"head_repo"`
 		Held             bool     `json:"held"`
 		MergeableState   string   `json:"mergeable_state"`
 		Conflict         bool     `json:"conflict"`
 		ReroutedFrom     string   `json:"rerouted_from"`
 		DeferredIncident int      `json:"deferred_incident"`
+		DeferredExternal bool     `json:"deferred_external"`
+		BaseRedChecks    []string `json:"base_red_checks"`
+		BaseRed          bool     `json:"base_red"`
+		RebaseAttempt    int      `json:"rebase_attempt"`
+		RebaseMax        int      `json:"rebase_attempts_max"`
+		BaseRef          string   `json:"base_ref"`
+		TrustedAuthor    bool     `json:"trusted_author"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
 	}
-	if json.Unmarshal(data, &payload) != nil {
+	if len(data) > 0 && json.Unmarshal(data, &payload) != nil {
 		return ""
 	}
-	var mine, deferred []ciFailingRow
+	if len(signals) > 0 {
+		known := map[string]int{}
+		for i, r := range payload.Items {
+			known[fmt.Sprintf("%s#%d", strings.ToLower(r.Repo), r.Number)] = i
+		}
+		for _, sig := range signals {
+			key := fmt.Sprintf("%s#%d", strings.ToLower(sig.Repo), sig.Number)
+			if i, ok := known[key]; ok {
+				r := &payload.Items[i]
+				if slices.Contains(r.BaseRedChecks, sig.Check) {
+					continue
+				}
+				if r.BaseRed {
+					// The file says every failing check is base-red; a new
+					// check the file has not seen yet changes that.
+					r.BaseRed = false
+				}
+				if !slices.Contains(r.FailingChecks, sig.Check) {
+					r.FailingChecks = append(r.FailingChecks, sig.Check)
+				}
+				r.Excerpt = strings.TrimSpace(r.Excerpt + "\n" + ciFailureSignalEvidence(sig))
+				continue
+			}
+			row := ciFailingRow{
+				Number:        sig.Number,
+				Repo:          sig.Repo,
+				Title:         sig.Title,
+				Agent:         sig.Agent,
+				FailingChecks: []string{sig.Check},
+				Excerpt:       ciFailureSignalEvidence(sig),
+			}
+			if row.Title == "" {
+				row.Title = "(title pending)"
+			}
+			payload.Items = append(payload.Items, row)
+			known[key] = len(payload.Items) - 1
+		}
+	}
+	var mine, deferred, external, baseRed []ciFailingRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
 			continue // needs-human: hands off for agents
 		}
-		if pr.FromFork {
-			// A fork PR can never be "yours": the hive pushes only to the base
+		if pr.FromFork && !pr.Adopted {
+			// A fork PR can never be "yours" — unless the hive adopted it in
+			// place (stage 074): then maintainer_can_modify lets the fixer
+			// push to the contributor's branch and the row is listed.
+			// Otherwise: the hive pushes only to the base
 			// repository, so it did not open this PR and cannot repair it.
 			// Unattributed rows default to scanner below, which is exactly how
 			// 66 contributor PRs from forks became one scanner's FIX-BEFORE-NEW
@@ -282,6 +390,17 @@ func formatRedPRFixData(data []byte, agent string) string {
 			deferred = append(deferred, pr)
 			continue
 		}
+		if pr.DeferredExternal {
+			external = append(external, pr)
+			continue
+		}
+		if pr.BaseRed {
+			// Every failing check is red on the base branch too: no fix
+			// the agent pushes can turn it green, so it is named but never
+			// listed for repair (base_branch_red.go).
+			baseRed = append(baseRed, pr)
+			continue
+		}
 		mine = append(mine, pr)
 	}
 	if len(mine) == 0 {
@@ -300,6 +419,20 @@ func formatRedPRFixData(data []byte, agent string) string {
 		}
 		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already deferred to a still-open shared-CI incident — do not repair or re-triage them; they return here when the incident closes: %s)\n", len(deferred), strings.Join(refs, ", ")))
 	}
+	if len(external) > 0 {
+		refs := make([]string, 0, len(external))
+		for _, pr := range external {
+			refs = append(refs, fmt.Sprintf("%s#%d", pr.Repo, pr.Number))
+		}
+		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already triaged as failing upstream at their current head — do not repair or re-triage them; they return here when the head changes, another check fails, or the check fails again in a new run: %s)\n", len(external), strings.Join(refs, ", ")))
+	}
+	if len(baseRed) > 0 {
+		refs := make([]string, 0, len(baseRed))
+		for _, pr := range baseRed {
+			refs = append(refs, fmt.Sprintf("%s#%d (%s)", pr.Repo, pr.Number, strings.Join(pr.BaseRedChecks, ", ")))
+		}
+		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: their only failing checks are red on the base branch too — not your PR's fault; do not push, retry or re-triage them; they return here if still red once the base recovers: %s)\n", len(baseRed), strings.Join(refs, ", ")))
+	}
 	b.WriteString("These PRs are YOURS and they are red or conflicted. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")
 	b.WriteString("  gh pr checkout <number> → fix using the evidence below → commit -s → git push\n")
@@ -313,12 +446,21 @@ func formatRedPRFixData(data []byte, agent string) string {
 			break
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		if pr.Adopted {
+			markAdoptedFixerAttempt(pr.Repo, pr.Number, pr.HeadSHA)
+			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
+			b.WriteString(adoptedPRStatusRule)
+			if pr.SentinelAlert {
+				b.WriteString("    " + adoptedSentinelNote + "\n")
+			}
+		}
 		if pr.Conflict {
 			state := strings.TrimSpace(pr.MergeableState)
 			if state == "" {
 				state = "dirty"
 			}
 			b.WriteString("    conflict: mergeable_state=" + state + " — merge the base branch or rebase the PR branch\n")
+			b.WriteString("    " + rebaseResolveInstructions(pr.BaseRef, pr.RebaseAttempt, pr.RebaseMax, pr.TrustedAuthor) + "\n")
 			if from := strings.TrimSpace(pr.ReroutedFrom); from != "" {
 				b.WriteString("    rerouted from paused/unavailable lane: " + from + "\n")
 			}
@@ -351,10 +493,9 @@ var reviewThreadsPath = github.ReviewThreadsPath
 // the bot's finding. It reads review-threads.json (written by the governor's
 // eval tick), which — exactly like ci-failing.json — attributes each PR to the
 // agent whose relay request opened it; unattributed rows default to scanner.
-// Escalated (needs-human) PRs are never listed. Inserted at the same
-// below-the-header seam as the red-CI block (which runs first, so this block
-// lands directly above it) so the two stuck-PR lists sit together at the top
-// of the kick, ahead of the work list.
+// Escalated (needs-human) PRs are never listed. Appended to the dynamic tail
+// directly after the red-CI block (kick_layout.go) so the two stuck-PR lists
+// sit together.
 func (s *Scheduler) addReviewThreadFixFirst(agentName string, message string) string {
 	if message == "" || !s.isPRCapableAgent(agentName) {
 		return message
@@ -363,14 +504,11 @@ func (s *Scheduler) addReviewThreadFixFirst(agentName string, message string) st
 	if err != nil {
 		return message
 	}
-	section := formatReviewThreadFixData(data, s.cfg.BaseAgentName(agentName), s.reviewBotsResolveAfterFix())
+	section := formatReviewThreadFixDataScanned(data, s.cfg.BaseAgentName(agentName), s.reviewBotsResolveAfterFix(), s.reviewThreadEnforcer())
 	if section == "" {
 		return message
 	}
-	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
-		return message[:idx+1] + section + message[idx+1:]
-	}
-	return section + message
+	return appendKickSection(message, section)
 }
 
 // reviewBotsResolveAfterFix reads classification.review_bots.resolve_after_fix
@@ -385,10 +523,22 @@ func (s *Scheduler) reviewBotsResolveAfterFix() bool {
 	return s.cfg.Classification.ReviewBots.ResolveAfterFixEnabled()
 }
 
-// formatReviewThreadFixData renders the review-thread fix-before-new section
-// for one agent from raw review-threads.json bytes. Empty result means the
-// agent has no open, non-escalated PR with an actionable bot thread.
+// formatReviewThreadFixData is formatReviewThreadFixDataScanned with no
+// ioscan enforcement, for formatting tests.
 func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) string {
+	return formatReviewThreadFixDataScanned(data, agent, resolveAfterFix, nil)
+}
+
+// formatReviewThreadFixDataScanned renders the review-thread fix-before-new
+// section for one agent from raw review-threads.json bytes. Empty result means
+// the agent has no open, non-escalated PR with an actionable bot thread.
+//
+// Each PR's title and thread bodies are external text about to be injected
+// into a kick, so they go through enforce as ONE conversation (F11,
+// hivecommons/hive#6685): a withheld finding is replaced by the redaction
+// marker, and a PR whose thread trips the fail-closed policy is left out of
+// the section entirely rather than injected in part.
+func formatReviewThreadFixDataScanned(data []byte, agent string, resolveAfterFix bool, enforce threadEnforcer) string {
 	var report github.ReviewThreadsReport
 	if json.Unmarshal(data, &report) != nil || !report.Enabled {
 		return ""
@@ -406,8 +556,12 @@ func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) 
 		if owner != agent {
 			continue
 		}
-		mine = append(mine, pr)
-		threads += len(pr.Threads)
+		scanned, failClosed := scanReviewThreadPR(pr, enforce)
+		if failClosed {
+			continue
+		}
+		mine = append(mine, scanned)
+		threads += len(scanned.Threads)
 	}
 	if len(mine) == 0 {
 		return ""
@@ -449,9 +603,14 @@ func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) 
 		// resolveAfterFix (the global setting) already covers every PR when
 		// pr.HumanOpened is false; only a human-opened PR (hivecommons/
 		// hive#9361) can DISAGREE with the global setting, and only in the
-		// direction of withholding resolution, never granting it.
-		if pr.HumanOpened && resolveAfterFix {
-			b.WriteString("    step 3: DO NOT resolve — this PR is not yours (fix_human_prs), a person closes its threads (hivecommons/hive#9361). Reply and push the fix only.\n")
+		// direction of withholding resolution, never granting it. Nor is
+		// step 1's push allowed there: a hive-signed commit on someone
+		// else's PR fails the squash sign-off gate (hivecommons/hive#12897).
+		if pr.HumanOpened {
+			b.WriteString("    step 1: DO NOT check out, commit to, or push this branch — this PR is not yours (fix_human_prs), and a commit signed off by the hive fails its squash sign-off gate (hivecommons/hive#12897). Put the fix in your in-thread reply as a ```suggestion block (or a ```diff patch) for the author to apply.\n")
+			if resolveAfterFix {
+				b.WriteString("    step 3: DO NOT resolve — a person closes its threads (hivecommons/hive#9361).\n")
+			}
 		}
 		for _, t := range pr.Threads {
 			loc := t.Path
@@ -469,6 +628,37 @@ func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) 
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// reviewThreadEnforcer binds enforceThread to the review surface.
+func (s *Scheduler) reviewThreadEnforcer() threadEnforcer {
+	return func(segments []string) ([]string, bool) { return s.enforceThread(segments, reviewSource) }
+}
+
+// scanReviewThreadPR runs one PR's title and thread bodies through enforce as
+// an ordered conversation and returns a copy with withheld text replaced. The
+// input is never mutated: the report is shared with other readers.
+func scanReviewThreadPR(pr github.ReviewThreadPR, enforce threadEnforcer) (github.ReviewThreadPR, bool) {
+	if enforce == nil {
+		return pr, false
+	}
+	segments := make([]string, 0, len(pr.Threads)+1)
+	segments = append(segments, pr.Title)
+	for _, t := range pr.Threads {
+		segments = append(segments, t.Body)
+	}
+	scanned, failClosed := enforce(segments)
+	if failClosed {
+		return pr, true
+	}
+	out := pr
+	out.Title = scanned[0]
+	out.Threads = make([]github.ReviewThread, len(pr.Threads))
+	for i, t := range pr.Threads {
+		t.Body = scanned[i+1]
+		out.Threads[i] = t
+	}
+	return out, false
 }
 
 // maxHeldPRsPerRepoPerKick bounds the held-PR snapshot per repository instead
@@ -518,7 +708,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 			limit = maxHeldPRsPerRepoPerKick
 		}
 		for _, item := range items[:limit] {
-			title, verdict := s.enforceIssueTextVerdict(item.Title)
+			title, verdict := s.enforceTextFrom(item.Title, prSource(heldPRs[fmt.Sprintf("%s#%d", item.Repo, item.Number)]))
 			failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
 			const maxHeldPRTitleRunes = 70
 			if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
@@ -576,7 +766,7 @@ func (s *Scheduler) independentReviewSection(agentName string) string {
 	if !ok || !agentCfg.ReviewModels.Configured() {
 		return ""
 	}
-	return "## Independent review\n\nFor each PR whose list line includes `review_with=<backend>/<model>`, launch a sub-agent (Agent tool) with `model` set to the PR's `review_with` model value. Give the sub-agent the PR URL plus the review checklist, and have it probe author-model failure modes: invented APIs, tests that assert the implementation rather than the requirement, and swallowed errors. Record the sub-agent's verdict and model in the verdict artifact as `review_model`. Never review a PR yourself with the author's model."
+	return review.QueueIndependentReviewSection()
 }
 
 func (s *Scheduler) addIndependentReviewSection(agentName, msg string) string {
@@ -584,7 +774,7 @@ func (s *Scheduler) addIndependentReviewSection(agentName, msg string) string {
 		return msg
 	}
 	if section := s.independentReviewSection(agentName); section != "" && !strings.Contains(msg, "## Independent review") {
-		return section + "\n\n" + msg
+		return insertAfterKickHeader(msg, section)
 	}
 	return msg
 }
@@ -610,4 +800,44 @@ func (s *Scheduler) reviewPerspectivesSection() string {
 		fmt.Fprintf(&b, "- `%s` — %s\n", p, set.Focus(p))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// adoptedSentinelNote follows an adopted-PR line whose PR still carries the
+// sentinel alert: the alert is a merge checkpoint for a maintainer, not a
+// repair checkpoint, so the fixer repairs the head and leaves the label.
+const adoptedSentinelNote = "sentinel-alert: repair CI / rebase as usual, but do NOT remove the sentinel-alert label — a maintainer clears it before the merge"
+
+// adoptedPRStatusRule follows every adopted-PR line in a fix kick: the
+// stage label, not the check list, says what the hive still owes, and a
+// pending `tide` or a missing lgtm is never the hive's blocker below stage
+// 080 (hivecommons/hive#12858).
+const adoptedPRStatusRule = "    ADOPTED BRANCH: when needs-rebase/conflicting, fetch the contributor's actual fork branch and the PR base, rebase onto the base, preserve original authors and Signed-off-by trailers (never --reset-author), and push back to that fork with --force-with-lease against the observed head. Stop if the contributor moved it; never overwrite their new work. Sign only your own new commits.\n    STATUS RULE: green CI is not done on a 074 PR. Read the stage comment/lane reason: an open review-swarm finding (reviewer-verdict:changes_requested) is YOUR blocker — fix it and let the swarm re-review. Never report \"only tide remains\" or \"needs maintainer lgtm/approve\" unless the stage label is already >= stage/080; below that, a pending tide check means the lane has not admitted the head yet, not that a person owes an approval.\n"
+
+// rebaseResolveInstructions is the fixer's rebase-resolve task for a
+// conflicting PR (hivecommons/hive#15103): rebase onto the base branch,
+// resolve, force-with-lease to the PR's own branch, never open a new PR.
+// attempt/max is the loop guard the fixer sees so it knows a second dirty
+// head ends the hive's attempts.
+func rebaseResolveInstructions(baseRef string, attempt, max int, trustedAuthor bool) string {
+	base := strings.TrimSpace(baseRef)
+	if base == "" {
+		base = "the base branch"
+	} else {
+		base = "origin/" + base
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	if max < attempt {
+		max = attempt
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "rebase-resolve (attempt %d/%d): `gh pr checkout`, `git rebase %s`, resolve every conflict keeping both sides' intent, re-run the build and tests, then `git push --force-with-lease` to the PR's OWN branch. Do not open a new PR; do not squash away the author's commits.", attempt, max, base)
+	if trustedAuthor {
+		b.WriteString(" This is a trusted author's PR the hive carries on their behalf — keep their authorship and sign-off intact.")
+	}
+	if attempt >= max {
+		b.WriteString(" Last attempt: if the head is still conflicting after this push the hive stops and asks a person.")
+	}
+	return b.String()
 }

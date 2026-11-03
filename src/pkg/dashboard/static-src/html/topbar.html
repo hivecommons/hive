@@ -1,0 +1,121 @@
+  <!-- Light top bar (hidden by default) -->
+  <header id="oc-topbar" class="oc-topbar">
+    <div class="oc-topbar-left">
+      <button id="oc-drawer-toggle" class="nav-chip nav-chip--icon nav-chip--action" type="button" aria-label="Open menu"
+              aria-expanded="false" aria-controls="oc-sidebar"
+              title="Menu">&#9776;</button>
+      <span id="oc-project-name" class="oc-project-title"></span>
+      <span class="nav-chip-group" aria-label="Hive status">
+        <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="openACMMDialog" aria-haspopup="dialog" aria-controls="acmm-overlay" title="Change the current ACMM autonomy level" aria-label="Change ACMM autonomy level"></button>
+        <span id="background-activity" class="background-activity" role="status" aria-live="polite" aria-label="No background Spek activity"><span class="run-live-dot" aria-hidden="true"></span><span id="background-activity-text">idle</span></span>
+      </span>
+    </div>
+    <div class="oc-topbar-center">
+      <!-- Fleet breaker status chip. Centered with the upcoming-agent cards so
+           the active run state stays visually anchored between balanced sides.
+           State + owner-gating are rendered by _renderFleetBreaker; read-only
+           viewers see the disabled status chip while owners can toggle it. -->
+      <span id="fleet-breaker-wrap" style="display:none">
+        <button type="button" id="fleet-breaker-btn2" class="nav-chip nav-chip--status nav-chip--ok fleet-breaker-chip"
+                data-action="toggleFleetBreaker" data-status="ok" aria-pressed="false"
+                title="Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched."
+                aria-label="Fleet breaker: running — click to pause all agents">
+          <span id="fleet-breaker-dot" class="nav-chip__dot" aria-hidden="true">●</span>
+          <span id="fleet-breaker-pill" class="nav-chip__label">running</span>
+          <span id="fleet-breaker-icon" class="nav-chip__icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
+        </button>
+      </span>
+      <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
+    </div>
+    <div class="oc-topbar-right">
+      <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="submit" title="Report a bug or request a feature" aria-label="Report a bug or request a feature"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
+      <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
+      <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
+      <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
+      <!-- Agent Logs hidden (redundant with per-agent output) -->
+      <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
+      <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
+      <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
+      <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
+      <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
+      <div id="oc-gh-avatar-wrap" hidden>
+        <!-- The avatar sits inside a real <button>: iOS Safari only synthesises
+             a click from a tap on interactive elements, so a bare <img> with a
+             delegated document click handler never opened the menu on phones.
+             The button also gives the menu a keyboard-focusable trigger. -->
+        <button type="button" id="oc-gh-avatar-btn" class="oc-gh-avatar-btn" data-action="toggleGHUserMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-gh-user-menu" aria-label="GitHub account menu">
+          <img id="oc-gh-avatar" class="nav-chip nav-chip--icon" src="" alt="" title="GitHub account menu" aria-label="GitHub account menu">
+        </button>
+        <div id="oc-gh-user-menu" class="avatar-menu" hidden>
+          <div class="avatar-menu-identity"><span id="oc-gh-menu-user"></span><span id="oc-gh-menu-role" class="avatar-menu-role"></span></div>
+          <div class="avatar-menu-label">This hive</div>
+          <div class="avatar-menu-hive-row" title="Hive Instance ID">
+            <span id="oc-hive-id"></span>
+            <button type="button" class="avatar-menu-copy-btn" id="oc-gh-menu-hive-id-copy" data-action="copyHiveIdFromMenu" title="Copy hive ID" aria-label="Copy hive ID">⧉</button>
+          </div>
+          <div class="avatar-menu-hive-row" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('&lt;slug&gt;[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account.">
+            <span class="avatar-menu-hive-field"><span class="avatar-menu-hive-key">PR author</span><span id="oc-gh-menu-pr-author">—</span></span>
+            <button type="button" class="avatar-menu-copy-btn" id="oc-gh-menu-pr-author-copy" data-action="copyPRAuthorFromMenu" title="Copy PR author" aria-label="Copy PR author">⧉</button>
+          </div>
+          <div class="avatar-menu-hive-meta"><span id="oc-ts"></span><span class="status-stale" id="oc-status-stale" hidden></span></div>
+          <div class="avatar-menu-divider"></div>
+          <!-- This nav avatar is NOT a profile link: its click already opens
+               this menu, a different destination, so it keeps that job. The
+               profile gets a menu entry instead, populated by showGHAuthState()
+               once the signed-in login is known. -->
+          <a href="#" id="oc-gh-menu-profile" class="avatar-menu-item" target="_blank" rel="noopener noreferrer" hidden>GitHub profile ↗</a>
+          <!-- Shortcut back to the hub's My Hives list (#9696), for users who
+               switch between several hives. Hidden until /api/config reports a
+               my_hives_url, which the server leaves empty on a standalone hive
+               with no hub link; renderMyHivesMenuItem() wires it up. -->
+          <a href="#" id="oc-gh-menu-my-hives" class="avatar-menu-item" target="_blank" rel="noopener noreferrer" hidden>My hives ↗</a>
+          <a href="/api/docs" target="_blank" class="avatar-menu-item">API Docs ↗</a>
+          <button class="avatar-menu-item" type="button" data-action="openFeedbackModal" data-arg0="submit">Feedback</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-settings" data-action="openConfigDialog" data-arg0="governor">Settings</button>
+          <div class="avatar-menu-divider"></div>
+          <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
+          <button type="button" id="oc-gh-menu-widget" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/widget" data-arg1="hive-widget.json" data-arg-types="s,s" title="View Übersicht widget JSON">⬇ Widget</button>
+          <button type="button" id="oc-gh-menu-iphone-widget" class="avatar-menu-item" data-action="openIPhoneWidgetModal" title="Put this hive on your iPhone Home Screen">📱 iPhone widget</button>
+          <button type="button" id="oc-gh-menu-download" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/download" data-arg1="hive.yaml" data-arg-types="s,s" hidden>View hive.yaml</button>
+          <button type="button" id="oc-gh-menu-config-export" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/export" data-arg1="hive-config.json" data-arg-types="s,s" hidden>Export effective config (JSON)</button>
+          <div class="avatar-menu-divider"></div>
+          <div class="avatar-menu-label">Layout</div>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-save" data-action="saveDashboardLayoutPreset">Save layout</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-saved" data-action="toggleDashboardLayoutPresets" aria-expanded="false">Saved layouts ▸</button>
+          <div class="avatar-menu-layout-list" id="oc-gh-menu-layout-list" hidden></div>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-expand-all" data-action="expandAllDashboardSections">Expand all sections</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-collapse-all" data-action="collapseAllDashboardSections">Collapse all sections</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-reset" data-action="resetDashboardLayout">Reset layout to default</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-export" data-action="exportDashboardLayoutJSON">Export layout (JSON)</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-import" data-action="importDashboardLayoutJSON">Import layout…</button>
+          <div class="avatar-menu-layout-status" id="oc-gh-menu-layout-status">Layout: default</div>
+          <div id="oc-gh-menu-backup-divider" class="avatar-menu-divider" hidden></div>
+          <div id="oc-gh-menu-backup-label" class="avatar-menu-label" hidden>Backup</div>
+          <!-- Owner-only self-service backup. Shown only for role === 'owner',
+               matching the hive.yaml entry above; the server enforces the same
+               check, so hiding this is UX, not the security boundary. -->
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-backup" data-action="downloadHiveBackup" hidden>
+            <span class="avatar-menu-backup-label">Back up this hive</span>
+            <span class="avatar-menu-caption" title="Encrypted · includes beads · needs a backup key (Settings → Security)">Encrypted · needs backup key</span>
+          </button>
+          <div class="avatar-menu-divider"></div>
+          <button class="avatar-menu-item avatar-menu-signout" data-action="ghLogout">Sign out</button>
+        </div>
+      </div>
+      <button class="hv-btn btn-primary gh-auth-btn nav-chip nav-chip--primary" id="oc-gh-login-btn" data-action="startGHLogin" style="display:none" title="Sign in" aria-label="Sign in">Sign in</button>
+    </div>
+  </header>
+
+  <div class="connection live" id="conn">
+    <span class="dot-live">●</span> live
+  </div>
+
+  <h1><span class="bee">🐝</span> KubeStellar Hive Dashboard&nbsp;<span id="project-name">for KubeStellar/Console</span> <span class="timestamp" id="ts"></span><span class="status-stale" id="status-stale" hidden></span>
+    <span class="git-version" id="git-version"></span>
+    <span class="git-version" id="hive-id-badge" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm)" data-action="openConfigDialog" data-arg0="governor"></span>
+    <span class="git-version" id="acmm-main-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" data-action="openACMMDialog"></span>
+    <button class="hv-btn btn-icon btn-sm layout-toggle" id="layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
+  </h1>
+
+  <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
+

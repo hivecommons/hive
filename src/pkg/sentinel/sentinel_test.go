@@ -1,6 +1,7 @@
 package sentinel
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -183,6 +184,59 @@ func TestCIGateWeakening(t *testing.T) {
 	pr = PR{Author: "a", Files: []File{{Path: "cmd/x/main.go", Patch: patch([]string{"// continue-on-error: true"}, nil)}}}
 	if got := Evaluate(pr, Config{}); has(got, RuleCIGateWeakening) {
 		t.Fatalf("non-CI file should not trip: %v", rulesOf(got))
+	}
+}
+
+func TestCIGateWeakeningRemovedLines(t *testing.T) {
+	const wf = ".github/workflows/ci.yml"
+	for _, tc := range []struct {
+		name    string
+		path    string
+		added   []string
+		removed []string
+		want    bool
+	}{
+		{"needs lines", wf, nil, []string{"    needs: [build]", "    needs: test", "    needs:"}, true},
+		{"required checks", wf, nil, []string{"  required_status_checks:", "    required: true", "      required: true"}, true},
+		{"scanner steps", wf, nil, []string{"      - uses: securego/gosec@v2", "        run: gosec ./...", "      - name: gosec"}, true},
+		{"gate words in make recipes", "Makefile", nil, []string{"\t./scripts/gate.sh", "\tgolangci-lint run --strict", "\tgo vet ./..."}, true},
+		{"commented-out gates", wf, []string{"    # needs: [build]", "    # needs: test", "    # needs: lint"}, []string{"    needs: [build]", "    needs: test", "    needs: lint"}, true},
+		{"comment-only workflow lines", wf, nil, []string{"# the gate runs after build", "  # required by the verify gate", "#   needs: lint"}, false},
+		{"comment-only Makefile lines", "Makefile", nil, []string{"# gate: lint", "\t# go vet ./...", "## required"}, false},
+		{"lookalike words", wf, nil, []string{"    run: echo hardcoded", "    url: https://gateway.example", "    run: echo verifying"}, false},
+		{"lookalike words in Jenkinsfile comments", "Jenkinsfile", nil, []string{"// Gateway", "// HARDCODED", "// verifying"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := PR{Author: "a", Files: []File{{Path: tc.path, Patch: patch(tc.added, tc.removed)}}}
+			if got := has(Evaluate(pr, Config{}), RuleCIGateWeakening); got != tc.want {
+				t.Fatalf("ci_gate_weakening = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// Softening additions still fire on their own, including a trailing
+	// "# skip" comment after real code.
+	for _, line := range []string{"      continue-on-error: true", "        run: make test || true", "        run: true # skip"} {
+		pr := PR{Author: "a", Files: []File{{Path: wf, Patch: patch([]string{line}, nil)}}}
+		if !has(Evaluate(pr, Config{}), RuleCIGateWeakening) {
+			t.Errorf("%q should trip ci_gate_weakening", line)
+		}
+	}
+}
+
+// TestCIGateWeakeningCommentOnlyWorkflowEdit replays the workflow patch from
+// projectbluefin/utah-packages#601, which rewrote comments and nothing else.
+func TestCIGateWeakeningCommentOnlyWorkflowEdit(t *testing.T) {
+	p, err := os.ReadFile("testdata/utah-packages-601-workflow.patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := PR{Author: "a", Files: []File{{Path: ".github/workflows/import-rawhide-package.yml", Status: "modified", Additions: 12, Deletions: 15, Patch: string(p)}}}
+	got := Evaluate(pr, Config{})
+	if has(got, RuleCIGateWeakening) {
+		t.Fatalf("comment-only workflow edit should not trip ci_gate_weakening: %v", rulesOf(got))
+	}
+	if !has(got, RuleSensitivePath) {
+		t.Fatalf("workflow edit should still be a sensitive path: %v", rulesOf(got))
 	}
 }
 

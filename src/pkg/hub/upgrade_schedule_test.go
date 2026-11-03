@@ -1,9 +1,11 @@
 package hub
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,10 +46,17 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 		wantFire    string
 	}{
 		{
-			name:        "legacy record with empty mode behaves as instant",
+			name:        "legacy record with empty mode is gated like daily outside the window",
 			mode:        "",
 			now:         mustET(t, 2026, time.July, 15, 3, 0),
+			wantAllowed: false,
+		},
+		{
+			name:        "legacy record with empty mode fires inside the daily window",
+			mode:        "",
+			now:         mustET(t, 2026, time.July, 15, autoUpgradeDailyHour, 0),
 			wantAllowed: true,
+			wantFire:    "2026-07-15",
 		},
 		{
 			name:        "explicit instant is never gated, even at 3am",
@@ -202,17 +211,17 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 	}
 }
 
-func TestCandidateChannelBypassesDailyCadenceByDefault(t *testing.T) {
+func TestCandidateChannelHonorsDailyCadenceByDefault(t *testing.T) {
 	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "")
-	decision := shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-07-15", ReleaseChannelCandidate, mustET(t, 2026, time.July, 15, 9, 0))
-	if !decision.Allowed || decision.Reason != "candidate channel tracks each published image" {
-		t.Fatalf("candidate decision = %+v, want immediate tracking", decision)
+	decision := shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-10-13", ReleaseChannelCandidate, mustET(t, 2026, time.October, 14, 12, 25))
+	if decision.Allowed || decision.Reason != "before the daily window" {
+		t.Fatalf("candidate decision = %+v, want daily schedule honored before 1pm ET", decision)
 	}
 
-	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "true")
-	decision = shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-07-15", ReleaseChannelCandidate, mustET(t, 2026, time.July, 15, 9, 0))
-	if decision.Allowed || decision.Reason != "already upgraded today" {
-		t.Fatalf("override decision = %+v, want daily schedule honored", decision)
+	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "false")
+	decision = shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-10-13", ReleaseChannelCandidate, mustET(t, 2026, time.October, 14, 12, 25))
+	if !decision.Allowed || decision.Reason != "candidate channel tracks each published image" {
+		t.Fatalf("opt-out decision = %+v, want immediate candidate tracking", decision)
 	}
 }
 
@@ -314,7 +323,8 @@ func TestAutoUpgradeModeValidation(t *testing.T) {
 		wantValid bool
 		wantNorm  string
 	}{
-		{mode: "", wantValid: true, wantNorm: AutoUpgradeModeInstant},
+		{mode: "", wantValid: true, wantNorm: AutoUpgradeModeDaily},
+		{mode: "  ", wantValid: false, wantNorm: AutoUpgradeModeDaily},
 		{mode: AutoUpgradeModeInstant, wantValid: true, wantNorm: AutoUpgradeModeInstant},
 		{mode: AutoUpgradeModeDaily, wantValid: true, wantNorm: AutoUpgradeModeDaily},
 		{mode: AutoUpgradeModeWeekly, wantValid: true, wantNorm: AutoUpgradeModeWeekly},
@@ -496,5 +506,71 @@ func TestManualUpgradeUnaffectedByMode(t *testing.T) {
 	// The stored mode must be untouched by a manual upgrade.
 	if got := loadSaaSHive("h1"); got == nil || got.AutoUpgradeMode != AutoUpgradeModeDaily {
 		t.Errorf("manual upgrade changed the schedule: %+v", got)
+	}
+}
+
+func TestEffectiveAutoUpgradeSchedule(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		mode    string
+		channel string
+		want    string
+	}{
+		{"candidate honors daily by default", "", AutoUpgradeModeDaily, ReleaseChannelCandidate, AutoUpgradeModeDaily},
+		{"candidate opt-out bypasses daily", "false", AutoUpgradeModeDaily, ReleaseChannelCandidate, autoUpgradeScheduleCandidateBypass},
+		{"candidate opt-out bypasses weekly", "false", AutoUpgradeModeWeekly, ReleaseChannelCandidate, autoUpgradeScheduleCandidateBypass},
+		{"stable keeps daily when env opts out", "false", AutoUpgradeModeDaily, ReleaseChannelStable, AutoUpgradeModeDaily},
+		{"plain branch keeps daily when env opts out", "false", AutoUpgradeModeDaily, "", AutoUpgradeModeDaily},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(candidateRespectAutoUpgradeScheduleEnv, tc.env)
+			if got := effectiveAutoUpgradeSchedule(tc.mode, tc.channel); got != tc.want {
+				t.Errorf("effectiveAutoUpgradeSchedule(%q, %q) = %q, want %q", tc.mode, tc.channel, got, tc.want)
+			}
+		})
+	}
+}
+
+// The audit line pairs the effective schedule with the decision reason so a
+// candidate bypass is distinguishable from an in-window daily fire.
+func TestAutoUpgradeAuditFieldsBypassVsDailyWindow(t *testing.T) {
+	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "false")
+	now := mustET(t, 2026, time.October, 14, 12, 48)
+
+	bypass := shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-10-13", ReleaseChannelCandidate, now)
+	if !bypass.Allowed || bypass.Reason != "candidate channel tracks each published image" ||
+		effectiveAutoUpgradeSchedule(AutoUpgradeModeDaily, ReleaseChannelCandidate) != autoUpgradeScheduleCandidateBypass {
+		t.Errorf("candidate bypass = %+v, want allowed with bypass reason and schedule", bypass)
+	}
+
+	inWindow := shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-10-13", ReleaseChannelStable, mustET(t, 2026, time.October, 14, 13, 5))
+	if !inWindow.Allowed || inWindow.Reason != "daily window open" ||
+		effectiveAutoUpgradeSchedule(AutoUpgradeModeDaily, ReleaseChannelStable) != AutoUpgradeModeDaily {
+		t.Errorf("in-window daily = %+v, want allowed with daily window reason and schedule", inWindow)
+	}
+}
+
+func TestMyHiveEntryExposesEffectiveSchedule(t *testing.T) {
+	b, err := json.Marshal(MyHiveEntry{AutoUpgradeSchedule: autoUpgradeScheduleCandidateBypass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"autoUpgradeSchedule":"candidate-bypass"`) {
+		t.Errorf("payload %s missing autoUpgradeSchedule", b)
+	}
+}
+
+// TestShouldAutoUpgradeNowEmptyModeIsDaily pins #11822: a legacy record with no
+// auto_upgrade_mode is gated like daily and gets a FireDate, not instant.
+func TestShouldAutoUpgradeNowEmptyModeIsDaily(t *testing.T) {
+	now := mustET(t, 2026, time.July, 15, 9, 0)
+	if got := shouldAutoUpgradeNow("", "", now); got.Allowed || got.FireDate != "" {
+		t.Errorf("empty mode before the window: %+v, want not allowed", got)
+	}
+	now = mustET(t, 2026, time.July, 15, 13, 5)
+	if got := shouldAutoUpgradeNow("", "", now); !got.Allowed || got.FireDate != "2026-07-15" {
+		t.Errorf("empty mode in the window: %+v, want allowed with FireDate 2026-07-15", got)
 	}
 }

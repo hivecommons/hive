@@ -41,7 +41,11 @@ type InferenceSink struct {
 	logger *slog.Logger
 	// now is a clock seam for tests; production uses time.Now.
 	now func() time.Time
+	// rename is a publication seam for tests; production uses os.Rename.
+	rename func(oldpath, newpath string) error
 
+	// mu serializes totals updates through file publication, so an older
+	// snapshot cannot overwrite newer usage or share its temporary file.
 	mu     sync.Mutex
 	totals map[string]*inferenceAgentTotals
 }
@@ -58,6 +62,32 @@ type inferenceAgentTotals struct {
 	LastSeen  string
 	Backend   string
 	Usage     []UsageEvent
+	// ModelTokens is the cumulative token count per model for this
+	// (backend, agent). Model is derived from it (the model with the most
+	// tokens) so an occasional helper call on a cheap model — e.g. the Copilot
+	// CLI's gpt-4o-mini classifier — cannot relabel an agent whose real spend
+	// is on another model. Per-model usage itself lives in Usage.
+	ModelTokens map[string]int64
+}
+
+// addModelTokens credits n tokens to model and re-derives the dominant model.
+func (t *inferenceAgentTotals) addModelTokens(model string, n int64) {
+	if model == "" || n <= 0 {
+		return
+	}
+	if t.ModelTokens == nil {
+		t.ModelTokens = make(map[string]int64)
+	}
+	t.ModelTokens[model] += n
+	best, bestN := t.Model, t.ModelTokens[t.Model]
+	for m, c := range t.ModelTokens {
+		// Ties keep the current model; ties between others break lexically so
+		// map iteration order cannot flip the result.
+		if c > bestN || (c == bestN && best != t.Model && m < best) {
+			best, bestN = m, c
+		}
+	}
+	t.Model = best
 }
 
 // NewInferenceSink returns a sink that writes per-agent usage files into dir.
@@ -75,6 +105,7 @@ func NewInferenceSink(dir string, logger *slog.Logger) *InferenceSink {
 		dir:    dir,
 		logger: logger,
 		now:    time.Now,
+		rename: os.Rename,
 		totals: make(map[string]*inferenceAgentTotals),
 	}
 	s.restoreFromDisk()
@@ -130,7 +161,7 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 		if json.Unmarshal(scanner.Bytes(), &e) != nil {
 			continue
 		}
-		if e.Model != "" {
+		if e.Model != "" && t.Model == "" {
 			t.Model = e.Model
 		}
 		if e.Backend != "" {
@@ -147,6 +178,7 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 		if e.InputTokens > 0 || e.OutputTokens > 0 || e.CacheRead > 0 || e.CacheCreation > 0 {
 			t.InputTokens += e.InputTokens
 			t.OutputTokens += e.OutputTokens
+			t.addModelTokens(e.Model, e.InputTokens+e.OutputTokens+e.CacheRead+e.CacheCreation)
 			t.Usage = append(t.Usage, UsageEvent{
 				TimestampMs: parseTimestampToUnixMilli(e.Timestamp),
 				Model:       e.Model,
@@ -171,7 +203,7 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 // no-op when the sink is disabled, the agent name is empty, or the usage is
 // non-positive, so callers can invoke it unconditionally.
 func (s *InferenceSink) Record(agent, model string, inputTokens, outputTokens int64) {
-	s.record(agent, model, BackendInference, inputTokens, outputTokens)
+	s.record(agent, model, BackendInference, inputTokens, outputTokens, 0, 0)
 }
 
 // RecordCopilot adds one Copilot completion captured live by the MITM proxy.
@@ -179,14 +211,26 @@ func (s *InferenceSink) Record(agent, model string, inputTokens, outputTokens in
 // timestamp, so the collector persists a Usage timeline that /api/repo-cost can
 // join against audited repo activity.
 func (s *InferenceSink) RecordCopilot(agent, model string, inputTokens, outputTokens int64) {
-	s.record(agent, model, BackendCopilot, inputTokens, outputTokens)
+	s.record(agent, model, BackendCopilot, inputTokens, outputTokens, 0, 0)
 }
 
-func (s *InferenceSink) record(agent, model, backend string, inputTokens, outputTokens int64) {
+// RecordCopilotWithCache is RecordCopilot plus prompt-cache token counts, as
+// reported by Anthropic-shaped responses (cache_read_input_tokens /
+// cache_creation_input_tokens). inputTokens excludes cached tokens, matching
+// the Anthropic usage block.
+func (s *InferenceSink) RecordCopilotWithCache(agent, model string, inputTokens, outputTokens, cacheRead, cacheCreation int64) {
+	s.record(agent, model, BackendCopilot, inputTokens, outputTokens, cacheRead, cacheCreation)
+}
+
+func (s *InferenceSink) record(agent, model, backend string, inputTokens, outputTokens, cacheRead, cacheCreation int64) {
 	if s == nil || s.dir == "" || agent == "" {
 		return
 	}
-	if inputTokens <= 0 && outputTokens <= 0 {
+	inputTokens = max(inputTokens, 0)
+	outputTokens = max(outputTokens, 0)
+	cacheRead = max(cacheRead, 0)
+	cacheCreation = max(cacheCreation, 0)
+	if inputTokens+outputTokens+cacheRead+cacheCreation == 0 {
 		return
 	}
 
@@ -197,9 +241,10 @@ func (s *InferenceSink) record(agent, model, backend string, inputTokens, output
 		t = &inferenceAgentTotals{Backend: backend}
 		s.totals[key] = t
 	}
-	if model != "" {
+	if t.Model == "" {
 		t.Model = model
 	}
+	t.addModelTokens(model, inputTokens+outputTokens+cacheRead+cacheCreation)
 	nowFn := s.now
 	if nowFn == nil {
 		nowFn = time.Now
@@ -209,25 +254,22 @@ func (s *InferenceSink) record(agent, model, backend string, inputTokens, output
 		t.FirstSeen = stamp
 	}
 	t.LastSeen = stamp
-	if inputTokens > 0 {
-		t.InputTokens += inputTokens
-	}
-	if outputTokens > 0 {
-		t.OutputTokens += outputTokens
-	}
+	t.InputTokens += inputTokens
+	t.OutputTokens += outputTokens
 	timeline := usageTimeline{events: append([]UsageEvent(nil), t.Usage...)}
 	timeline.add(UsageEvent{
 		TimestampMs: parseTimestampToUnixMilli(stamp),
 		Model:       model,
 		Input:       inputTokens,
 		Output:      outputTokens,
+		CacheRead:   cacheRead,
+		CacheCreate: cacheCreation,
 	})
 	t.Usage, _ = timeline.finish()
-	snapshot := *t
-	snapshot.Usage = append([]UsageEvent(nil), t.Usage...)
+	err := s.writeAgentFile(agent, t)
 	s.mu.Unlock()
 
-	if err := s.writeAgentFile(agent, &snapshot); err != nil && s.logger != nil {
+	if err != nil && s.logger != nil {
 		// Never log token values as sensitive; count magnitudes are fine.
 		s.logger.Warn("inference token sink write failed", "agent", agent, "error", err)
 	}
@@ -238,6 +280,7 @@ func (s *InferenceSink) record(agent, model, backend string, inputTokens, output
 // name), so the Collector's dedup-by-session-ID replaces rather than sums
 // across scans. The first line pins the agent explicitly via SessionEntry.Agent
 // so attribution does not depend on keyword detection.
+// The caller must hold s.mu until publication completes.
 func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return fmt.Errorf("creating metrics dir: %w", err)
@@ -300,7 +343,7 @@ func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) er
 	if err := os.WriteFile(tmp, buf, inferenceFilePerm); err != nil {
 		return fmt.Errorf("writing usage file: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := s.rename(tmp, path); err != nil {
 		return fmt.Errorf("renaming usage file: %w", err)
 	}
 	return nil

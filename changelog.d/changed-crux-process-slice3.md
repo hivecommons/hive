@@ -1,0 +1,1 @@
+- refactor: route Copilot-token and pane-classification helpers through crux ([#13962](https://github.com/hivecommons/hive/issues/13962))

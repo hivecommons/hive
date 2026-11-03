@@ -1,1 +1,0 @@
-- Make dashboard sections share the Cost-style collapsible card header with persisted collapsed summaries.

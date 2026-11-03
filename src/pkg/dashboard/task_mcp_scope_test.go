@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/taskmcp"
+	"github.com/hivecommons/hive/crux/taskmcp"
 )
 
 func TestTaskMCPSnapshotMatchingFallsThroughToActiveLaunches(t *testing.T) {

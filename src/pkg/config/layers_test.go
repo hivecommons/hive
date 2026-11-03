@@ -14,14 +14,18 @@ func intPtr(i int) *int { return &i }
 func baseOverlay() *Config {
 	return &Config{
 		Project: ProjectConfig{Org: "acme"},
-		Agents:  map[string]AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}},
+		},
 	}
 }
 
 func baseSeed() *Config {
 	return &Config{
 		Project: ProjectConfig{Org: "acme"},
-		Agents:  map[string]AgentConfig{"scanner": {}, "guide": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}, "guide": {}},
+		},
 	}
 }
 
@@ -162,7 +166,7 @@ func TestOverlayRejected_NoAgentsIsLoud(t *testing.T) {
 
 func TestOverlayRejected_NoOrgIsLoud(t *testing.T) {
 	seed := baseSeed()
-	overlay := &Config{Agents: map[string]AgentConfig{"scanner": {}}} // no project.org
+	overlay := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {}}}} // no project.org
 
 	_, prov := MergeLayers(seed, overlay)
 

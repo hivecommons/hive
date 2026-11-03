@@ -3,15 +3,20 @@ package github
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueshape"
+	"github.com/hivecommons/hive/pkg/effects"
 )
 
 const (
@@ -20,6 +25,14 @@ const (
 	advisoryLabelDesc = "Pinned advisory report from Hive agents"
 	advisoryLabelClr  = "0e8a16"
 )
+
+// isAdvisoryTitle reports whether title is the advisory issue's, with the
+// leading `[governor]` tag ignored: an advisory issue filed before titles
+// carried the filer is the same standing issue as one filed after, so a
+// hive upgrade never opens a second advisory per repo.
+func isAdvisoryTitle(title string) bool {
+	return issueshape.SameTitle(title, advisoryTitle)
+}
 
 // IssuesDisabledError reports that the advisory issue cannot be created or
 // resolved because the target repo has its Issues feature turned off
@@ -63,6 +76,110 @@ func (c *Client) ProbeIssuesDisabled(ctx context.Context, owner, repo string) (*
 		return &IssuesDisabledError{Repo: owner + "/" + repo, Fork: ghRepo.GetFork()}, nil
 	}
 	return nil, nil
+}
+
+// writeForbiddenMessage is GitHub's 403 body when an installation token may
+// not act on the resource: the comment was authored by another identity, or
+// the repository is outside this installation's scope. Mirrors
+// githubWriteForbiddenText in cmd/hive, which classifies the same text.
+const writeForbiddenMessage = "Resource not accessible by integration"
+
+// RepoMovedError reports that a repository the hive is configured for has been
+// transferred to a different owner (#11791). GitHub follows the rename
+// redirect for every READ, so the hive keeps finding the advisory issue and
+// its digest comment — but an installation token is bound to the ORIGINAL
+// owner's installation, and GitHub refuses every write under the new owner
+// with 403 "Resource not accessible by integration". No change to the old
+// installation can fix it; the remedy is to install the App on the new owner
+// (if it is not already) and repoint the hive.
+type RepoMovedError struct {
+	// Configured is the owner/name the hive is pointed at.
+	Configured string
+	// Current is the owner/name GitHub now reports for the same repository.
+	Current string
+}
+
+func (e *RepoMovedError) Error() string {
+	newOwner := e.Current
+	if i := strings.Index(newOwner, "/"); i > 0 {
+		newOwner = newOwner[:i]
+	}
+	return fmt.Sprintf("%s has been transferred to %s — the hive App's installation on the old owner can read it "+
+		"(GitHub follows the redirect) but every write returns 403 (%s). Install the hive App on '%s' if it is not "+
+		"already, then update this hive's configured repo to %s; nothing under the old owner can be changed to fix this",
+		e.Configured, e.Current, writeForbiddenMessage, newOwner, e.Current)
+}
+
+// ProbeRepoMoved reads owner/repo's metadata and reports whether GitHub now
+// serves it under a different full name — the deterministic signature of an
+// org transfer or rename. It returns a non-nil *RepoMovedError when the
+// canonical full_name differs (case-insensitively) from owner/repo, (nil, nil)
+// when it matches, and the lookup error when the probe itself failed.
+func (c *Client) ProbeRepoMoved(ctx context.Context, owner, repo string) (*RepoMovedError, error) {
+	if c == nil || c.client == nil {
+		return nil, ErrNoGitHubClient
+	}
+	ghRepo, _, err := c.client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	configured := owner + "/" + repo
+	current := ghRepo.GetFullName()
+	if current == "" || strings.EqualFold(current, configured) {
+		return nil, nil
+	}
+	return &RepoMovedError{Configured: configured, Current: current}, nil
+}
+
+// isWriteForbiddenError reports whether err is GitHub's 403 "Resource not
+// accessible by integration". The structured status is preferred; the text
+// match covers errors that were wrapped into plain strings upstream.
+func isWriteForbiddenError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ghErr *gh.ErrorResponse
+	if errors.As(err, &ghErr) && ghErr.Response != nil {
+		return ghErr.Response.StatusCode == http.StatusForbidden &&
+			strings.Contains(ghErr.Message, writeForbiddenMessage)
+	}
+	text := err.Error()
+	return strings.Contains(text, "403") && strings.Contains(text, writeForbiddenMessage)
+}
+
+// isDigestEditUnrecoverable reports whether a failed PATCH of an existing
+// digest comment can never succeed on retry: GitHub refused this identity
+// (403 write-forbidden) or the comment is gone (404). Anything else — rate
+// limit, 5xx, network — is transient and is left to the next cycle's retry.
+func isDigestEditUnrecoverable(err error) bool {
+	if isWriteForbiddenError(err) {
+		return true
+	}
+	var ghErr *gh.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound
+}
+
+// classifyDigestWriteError enriches a failed digest CREATE. A write-forbidden
+// 403 is probed for the one cause the installation cannot see about itself —
+// the repository has moved owners (#11791) — and, when confirmed, wrapped in a
+// *RepoMovedError so the hub health row and dashboard banner name the real
+// remedy instead of "tick the repo in the installation". The probe is a single
+// READ and runs only on the already-failed path, so it costs nothing on a
+// healthy cycle; a failed probe returns the original error unchanged.
+func (c *Client) classifyDigestWriteError(ctx context.Context, owner, repo string, err error) error {
+	if !isWriteForbiddenError(err) {
+		return err
+	}
+	moved, probeErr := c.ProbeRepoMoved(ctx, owner, repo)
+	if probeErr != nil {
+		c.logger.Debug("could not probe repo transfer after write-forbidden digest post",
+			slog.String("repo", owner+"/"+repo), slog.String("error", probeErr.Error()))
+		return err
+	}
+	if moved == nil {
+		return err
+	}
+	return fmt.Errorf("%w: %w", moved, err)
 }
 
 // EnsureAdvisoryIssue finds or creates the pinned advisory issue for a repo.
@@ -130,16 +247,68 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	}
 
 	req := &gh.IssueRequest{
-		Title: gh.Ptr(advisoryTitle),
+		Title: gh.Ptr(issueshape.AgentIssueTitle(config.OriginSourceGovernor, advisoryTitle)),
 		Body:  gh.Ptr(body),
 	}
+	var labels []string
 	if labelExists {
-		req.Labels = &[]string{advisoryLabelName}
+		labels = append(labels, advisoryLabelName)
 	}
-	issue, _, err := c.client.Issues.Create(ctx, owner, repo, req)
-	if err != nil {
-		return 0, fmt.Errorf("creating advisory issue: %w", err)
+	// The governor files this on its own behalf: origin/governor is its
+	// provenance label (hive/advisory stays the standing-issue signal).
+	originLabel := config.OriginLabel(config.OriginSourceGovernor)
+	if err := c.ensureOriginLabel(ctx, owner, repo, originLabel); err != nil {
+		c.logger.Warn("could not ensure origin label, advisory issue will be created without it", slog.String("label", originLabel), slog.String("error", err.Error()))
+	} else {
+		labels = append(labels, originLabel)
 	}
+	if len(labels) > 0 {
+		req.Labels = &labels
+	}
+	// Idempotency across concurrent callers (#11579): findAdvisoryIssue is a
+	// search-then-create with no key, so two EnsureAdvisoryIssue callers
+	// whose searches both came back empty both created. The claim serialises
+	// them on one target per repo and journals the create, so the second
+	// caller is a replay of the first inside issueCreateIdempotencyWindow.
+	// Body and labels are not inputs: the attribution trailer varies and the
+	// label may be missing, and neither changes which issue this is.
+	var issue *gh.Issue
+	claim := effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindIssueCreate,
+		Target: effects.StableDigest("advisory", advisoryTitle),
+		Inputs: map[string]string{
+			"flow":   "advisory",
+			"title":  effects.StableDigest(advisoryTitle),
+			"window": issueCreateIdempotencyBucket(issueCreateNow()),
+		},
+	}
+	res, found := c.priorBucketIssueCreate(ctx, claim)
+	if !found {
+		var err error
+		res, err = effects.Execute(ctx, c.mutationBoundary(), claim, func(ctx context.Context) (effects.Result, error) {
+			var apiErr error
+			issue, _, apiErr = c.client.Issues.Create(ctx, owner, repo, req)
+			if apiErr != nil {
+				return effects.Result{}, apiErr
+			}
+			return effects.Result{Provenance: issue.GetHTMLURL()}, nil
+		})
+		if err != nil {
+			return 0, fmt.Errorf("creating advisory issue: %w", err)
+		}
+	}
+	if issue == nil {
+		number, parseErr := parseIssueNumberFromURL(res.Provenance)
+		if parseErr != nil {
+			return 0, fmt.Errorf("creating advisory issue: replayed as already applied but recorded provenance %q is not an issue URL: %w", res.Provenance, parseErr)
+		}
+		c.logger.Info("advisory issue create replayed as already applied, reusing the journaled issue",
+			slog.String("repo", repo), slog.Int("number", number))
+		c.rememberAdvisoryIssue(owner+"/"+repo, number)
+		return number, nil
+	}
+	c.rememberAdvisoryIssue(owner+"/"+repo, issue.GetNumber())
 	c.recordWriteAudit(AuditActionHiveIssueCreated, meta,
 		WriteTarget{Repo: owner + "/" + repo, Number: issue.GetNumber()},
 		"author", issue.GetUser().GetLogin(),
@@ -205,6 +374,25 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 		return ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
+
+	// Repo pause (#6203) means NO hive write against the repo, and the digest
+	// is a write: an edit of the pinned comment, or a fresh comment when the
+	// pinned one is out of reach. It is checked before the unchanged-skip
+	// below so a paused repo never reaches the forge at all, and nothing
+	// about the process-memory hash state is touched, so the first cycle
+	// after the pause is lifted posts exactly as the first after boot does.
+	if perr, paused := c.repoPausedError(repo); paused {
+		c.logger.Info("advisory digest skipped: repo paused",
+			slog.String("repo", repo), slog.Int("issue", issueNum),
+			slog.String("by", perr.By), slog.String("reason", perr.Reason))
+		c.recordWriteAudit(AuditActionAdvisoryDigestSuppressed, InvocationMeta{Agent: AttributionAgentGovernor},
+			WriteTarget{Repo: owner + "/" + repoName, Number: issueNum},
+			"reason", "repo-paused",
+			"paused_by", perr.By,
+			"pause_reason", perr.Reason,
+			"flow", "advisory-digest")
+		return perr
+	}
 
 	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
 	// (kubestellar/hive#4960): the digest aggregates agent-sourced advisory
@@ -313,16 +501,31 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 		edited, _, err := c.client.Issues.EditComment(ctx, owner, repoName, int64(commentID), &gh.IssueComment{
 			Body: gh.Ptr(digest),
 		})
-		if err != nil {
+		switch {
+		case err == nil:
+			author = edited.GetUser().GetLogin()
+		case isDigestEditUnrecoverable(err):
+			// The existing digest cannot be edited by THIS identity (403:
+			// foreign-authored or outside this installation's scope) or no
+			// longer exists (404). Retrying the PATCH every cycle can never
+			// succeed, so fall through to a fresh comment under the hive's
+			// own identity; every later cycle finds and edits THAT one
+			// (#11791). If the CREATE is refused too, the failure is
+			// classified below so the operator is told the real cause.
+			c.logger.Warn("advisory digest comment cannot be edited by this identity — creating a new one",
+				slog.String("repo", owner+"/"+repoName), slog.Int("issue", issueNum),
+				slog.Int("comment_id", commentID), slog.String("error", err.Error()))
+			commentID = 0
+		default:
 			return fmt.Errorf("updating advisory digest comment on %s#%d: %w", repo, issueNum, err)
 		}
-		author = edited.GetUser().GetLogin()
-	} else {
+	}
+	if commentID == 0 {
 		comment, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNum, &gh.IssueComment{
 			Body: gh.Ptr(digest),
 		})
 		if err != nil {
-			return fmt.Errorf("posting advisory digest to %s#%d: %w", repo, issueNum, err)
+			return fmt.Errorf("posting advisory digest to %s#%d: %w", repo, issueNum, c.classifyDigestWriteError(ctx, owner, repoName, err))
 		}
 		author = comment.GetUser().GetLogin()
 	}
@@ -556,6 +759,27 @@ func digestCommentFrom(comment *gh.IssueComment) digestComment {
 }
 
 func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int, error) {
+	// ForgeState cache first (#13378): a memoized or labelled advisory issue
+	// resolves from the cache with at most one targeted GET, so the search
+	// and the paginated lists below only run when the cache cannot answer.
+	num, err := c.findAdvisoryIssueCached(ctx, owner, repo)
+	if err == nil {
+		c.rememberAdvisoryIssue(owner+"/"+repo, num)
+		return num, nil
+	}
+	if !errors.Is(err, errAdvisoryCacheMiss) {
+		return 0, err
+	}
+	num, err = c.findAdvisoryIssueListed(ctx, owner, repo)
+	if err == nil && num > 0 {
+		c.rememberAdvisoryIssue(owner+"/"+repo, num)
+	}
+	return num, err
+}
+
+// findAdvisoryIssueListed is the search → label list → title scan → closed
+// reuse path that runs when the ForgeState cache cannot answer.
+func (c *Client) findAdvisoryIssueListed(ctx context.Context, owner, repo string) (int, error) {
 	// Use search API to find the advisory issue across all open issues,
 	// regardless of how many issues the repo has.
 	query := fmt.Sprintf(`repo:%s/%s is:issue is:open in:title "%s"`, owner, repo, advisoryTitle)
@@ -564,7 +788,7 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 	})
 	if err == nil {
 		for _, issue := range result.Issues {
-			if issue.GetTitle() == advisoryTitle {
+			if isAdvisoryTitle(issue.GetTitle()) {
 				return issue.GetNumber(), nil
 			}
 		}
@@ -581,7 +805,7 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 	issues, _, listErr := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
 	if listErr == nil {
 		for _, issue := range issues {
-			if issue.GetTitle() == advisoryTitle {
+			if isAdvisoryTitle(issue.GetTitle()) {
 				return issue.GetNumber(), nil
 			}
 		}
@@ -605,7 +829,7 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 			if issue.IsPullRequest() {
 				continue
 			}
-			if issue.GetTitle() == advisoryTitle {
+			if isAdvisoryTitle(issue.GetTitle()) {
 				c.logger.Info("found advisory issue via title scan (missing label)", slog.Int("number", issue.GetNumber()))
 				c.ensureAdvisoryLabel(ctx, owner, repo, issue.GetNumber())
 				return issue.GetNumber(), nil
@@ -659,7 +883,7 @@ func (c *Client) findClosedAdvisoryIssue(ctx context.Context, owner, repo string
 		if issue.IsPullRequest() {
 			continue
 		}
-		if issue.GetTitle() == advisoryTitle {
+		if isAdvisoryTitle(issue.GetTitle()) {
 			return issue.GetNumber(), true
 		}
 	}

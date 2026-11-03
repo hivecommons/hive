@@ -12,7 +12,14 @@ import (
 	"testing"
 )
 
-const dashboardImportPrefix = "github.com/hivecommons/hive/pkg/"
+const (
+	dashboardImportPrefix = "github.com/hivecommons/hive/pkg/"
+	// dashboardCruxImportPrefix is the nested Crux module (hivecommons/hive#13536
+	// Stage 2): github.com/hivecommons/hive/crux is the runtime surface and
+	// github.com/hivecommons/hive/crux/<x> its packages. Each counts as one
+	// top-level dependency the same way pkg/<x> does.
+	dashboardCruxImportPrefix = "github.com/hivecommons/hive/crux"
+)
 
 var (
 	dashboardPackageDir      = filepath.Join("..", "..", "pkg", "dashboard")
@@ -39,8 +46,8 @@ func TestDashboardImportRatchet(t *testing.T) {
 		if len(added) > 0 {
 			b.WriteString("pkg/dashboard gained dependencies not in internal/testutil/dashboard_import_allowlist.txt:\n")
 			for _, path := range added {
-				fmt.Fprintf(&b, "  - pkg/dashboard gained a new dependency on pkg/%s (%s) — route it through an existing seam or add it to the allowlist with justification in the PR.\n",
-					strings.TrimPrefix(path, dashboardImportPrefix), path)
+				fmt.Fprintf(&b, "  - pkg/dashboard gained a new dependency on %s (%s) — route it through an existing seam or add it to the allowlist with justification in the PR.\n",
+					strings.TrimPrefix(path, "github.com/hivecommons/hive/"), path)
 			}
 		}
 		if len(stale) > 0 {
@@ -88,6 +95,16 @@ func dashboardTopLevelImports(t *testing.T, dir string) (map[string]bool, int) {
 }
 
 func dashboardTopLevelPackageImport(importPath string) string {
+	if importPath == dashboardCruxImportPrefix {
+		return importPath
+	}
+	if rest, ok := strings.CutPrefix(importPath, dashboardCruxImportPrefix+"/"); ok {
+		name, _, _ := strings.Cut(rest, "/")
+		if name == "" {
+			return ""
+		}
+		return dashboardCruxImportPrefix + "/" + name
+	}
 	if !strings.HasPrefix(importPath, dashboardImportPrefix) {
 		return ""
 	}
@@ -114,8 +131,8 @@ func readDashboardImportAllowlist(t *testing.T, path string) map[string]bool {
 		if line == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, dashboardImportPrefix) {
-			t.Fatalf("%s:%d: allowlist entry %q must start with %s", path, i+1, line, dashboardImportPrefix)
+		if dashboardTopLevelPackageImport(line) != line {
+			t.Fatalf("%s:%d: allowlist entry %q must be a top-level package under %s or %s", path, i+1, line, dashboardImportPrefix, dashboardCruxImportPrefix)
 		}
 		if allowed[line] {
 			t.Fatalf("%s:%d: duplicate allowlist entry %q", path, i+1, line)

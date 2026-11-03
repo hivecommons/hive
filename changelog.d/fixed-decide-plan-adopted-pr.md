@@ -1,0 +1,1 @@
+- "Let hive decide" no longer calls a PR's CI red when only a non-required context (tide) is pending: the plan reads the head's own checks, derives its WHY from the recorded stage-entry reasons (reviewer requires_human / high-risk), and on a PR the hive adopted in place hands the finding to the hive's fixer instead of "sending it back to its author".

@@ -158,6 +158,51 @@ func TestRunAutoMergeSweepIfDue_LogsCompletionWithSeenAndSkipped(t *testing.T) {
 	}
 }
 
+// TestRunAutoMergeSweepIfDue_TrustedBotHandedToSelfAuthoredLane pins the
+// TrustedBotAuthors wiring: without it the trusted-author tier cannot
+// recognise an allow-listed bot and logs untrusted-author-role for it on every
+// run-loop tick (#12189). With it, the tier hands the PR to the self-authored
+// sweep's trusted-bot lane instead.
+func TestRunAutoMergeSweepIfDue_TrustedBotHandedToSelfAuthoredLane(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/testorg/widget/issues", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/testorg/widget/pulls", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":21,"state":"open","draft":false,"user":{"login":"dependabot[bot]"},"head":{"sha":"abc123"}}]`))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	ghClient := github.NewClientForTest(srv.URL, "testorg", []string{"widget"}, sweepTestLogger(nil))
+
+	level := config.SelfMergeMinACMMLevel
+	cfg := &config.Config{
+		ACMMLevel: &level,
+		AutoMerge: config.AutoMergeConfig{
+			TrustedBotAuthors: []string{"dependabot[bot]"},
+			TrustedAuthors:    config.TrustedAuthorAutoMergeConfig{Enabled: true},
+		},
+	}
+
+	var buf strings.Builder
+	var lastRun time.Time
+	runAutoMergeSweepIfDue(context.Background(), ghClient, cfg, nil, &lastRun, sweepTestLogger(&buf))
+
+	log := buf.String()
+	if strings.Contains(log, "untrusted-author-role") {
+		t.Fatalf("trusted bot must not be judged by the trusted-author role gate, log:\n%s", log)
+	}
+	if !strings.Contains(log, "reason=trusted-bot-lane") {
+		t.Fatalf("trusted bot PR must be handed to the trusted-bot lane, log:\n%s", log)
+	}
+}
+
 // resetClaimLedgerForTest resets the package-level sync.Once and pre-installs
 // a ledger backed by a temp file, so guard tests never touch the hardwired
 // /data ledger path (github.ClaimLedgerPath is a const). Process state is
@@ -258,6 +303,51 @@ func TestApplyDuplicatePRGuard_SuppressesIssueClaimedByHivePR(t *testing.T) {
 	}
 	if _, err := os.Stat(ledgerPath); err != nil {
 		t.Fatalf("guard must persist the reconciled ledger to %s: %v", ledgerPath, err)
+	}
+}
+
+// An issue carrying BOTH a live agent claim and an open hive PR that fixes
+// it is covered by the PR (040), not merely claimed (020). Before the PR
+// guard ran after the live-claim filter, the claim filter withheld the issue
+// first and the ledger never saw it, so every sweep after the PR opened
+// re-bucketed it "claimed" and the stage store recorded a spurious
+// 040 → 020 regression that the dashboard rendered as a red `regressed`
+// chip on almost every claimed issue (hivecommons/hive#13174 and friends).
+func TestApplyDuplicatePRGuard_OpenPROutranksLiveAgentClaim(t *testing.T) {
+	resetClaimLedgerForTest(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/testorg/widget/pulls", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":9,"state":"open","title":"Fixes #12","body":"","user":{"login":"hive-ai"},"head":{"ref":"scanner/fix-12"},"html_url":"pr-9-url"}]`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	ghClient := github.NewClientForTest(srv.URL, "testorg", []string{"widget"}, sweepTestLogger(nil))
+
+	cfg := guardConfig()
+	cfg.Governor.Claims.Enabled = true
+	expires := time.Now().Add(time.Hour)
+	actionable := &github.ActionableResult{
+		Issues: github.IssueResult{Items: []github.Issue{
+			{Repo: "widget", Number: 12, Title: "claimed and covered", ClaimedBy: "scanner", ClaimExpiresAt: &expires, ClaimSource: github.IssueClaimSourceMarker, ClaimKind: "agent"},
+			{Repo: "widget", Number: 13, Title: "only claimed", ClaimedBy: "scanner", ClaimExpiresAt: &expires, ClaimSource: github.IssueClaimSourceMarker, ClaimKind: "agent"},
+		}},
+	}
+	applyDuplicatePRGuard(context.Background(), cfg, ghClient, actionable, sweepTestLogger(nil))
+
+	if len(actionable.Issues.Items) != 0 {
+		t.Fatalf("both issues must leave the actionable set, got %+v", actionable.Issues.Items)
+	}
+	buckets := map[int]string{}
+	for _, row := range actionable.WorkDetailsByRepo["widget"].Issues {
+		buckets[row.Number] = row.Bucket
+	}
+	if got := buckets[12]; got != "claimed_by_pr" {
+		t.Fatalf("issue 12 has an open hive PR: bucket must be claimed_by_pr (stage 040), got %q; rows %+v", got, actionable.WorkDetailsByRepo["widget"].Issues)
+	}
+	if got := buckets[13]; got != "claimed" {
+		t.Fatalf("issue 13 has only a live claim: bucket must be claimed (stage 020), got %q", got)
 	}
 }
 

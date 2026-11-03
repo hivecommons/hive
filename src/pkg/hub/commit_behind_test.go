@@ -18,7 +18,8 @@ import (
 // global swap must drain first.
 func waitForCommitBehindResolvers(t *testing.T) {
 	t.Helper()
-	testutil.Eventually(t, 2*time.Second, func() bool {
+	// An in-flight resolver can legitimately run for its full compare timeout.
+	testutil.Eventually(t, commitBehindCompareTimeout+2*time.Second, func() bool {
 		commitBehindMu.Lock()
 		defer commitBehindMu.Unlock()
 		return len(commitBehindInFlight) == 0
@@ -60,11 +61,14 @@ func resetCommitBehindState(t *testing.T) {
 
 func TestResolveCommitBehindCachesKnownAndUnknown(t *testing.T) {
 	resetCommitBehindState(t)
+	// Pass the head explicitly: the by-branch SHA cache is global and a
+	// background channel refresh can overwrite it, turning the lookup into a
+	// cache miss that dispatches a real compare.
 	key := commitBehindKey{base: "base111", head: "head999"}
 	resolveCommitBehind(key, func(base, head string, logger *slog.Logger) (int, bool, error) {
 		return 12, true, nil
 	}, nil)
-	if got, known := commitsBehindStableLine("base111", fallbackReleaseLine, nil); !known || got != 12 {
+	if got, known := commitsBehindTarget("base111", "head999", nil); !known || got != 12 {
 		t.Fatalf("known cached count = %d,%v; want 12,true", got, known)
 	}
 
@@ -72,7 +76,7 @@ func TestResolveCommitBehindCachesKnownAndUnknown(t *testing.T) {
 	resolveCommitBehind(unknownKey, func(base, head string, logger *slog.Logger) (int, bool, error) {
 		return 0, false, nil
 	}, nil)
-	if _, known := commitsBehindStableLine("fork123", fallbackReleaseLine, nil); known {
+	if _, known := commitsBehindTarget("fork123", "head999", nil); known {
 		t.Fatal("unknown compare result must stay unknown")
 	}
 }

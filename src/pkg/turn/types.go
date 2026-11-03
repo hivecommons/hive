@@ -3,7 +3,7 @@ package turn
 import (
 	"time"
 
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 // Role represents the sender role in a conversation message.

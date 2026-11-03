@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 // handleGovernorSecurity serves PUT /api/config/governor/security. It is
@@ -19,17 +20,46 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		IoscanEnabled        *bool     `json:"ioscanEnabled"`
-		IoscanFailMode       *string   `json:"ioscanFailMode"`
-		IoscanCanaries       *bool     `json:"ioscanCanaries"`
-		IntentEnforce        *bool     `json:"intentEnforce"`
-		IntentAlignmentModel *string   `json:"intentAlignmentModel"`
-		ReviewRequire        *bool     `json:"reviewRequireApproval"`
-		ReviewFanOut         *bool     `json:"reviewFanOut"`
-		ReviewMaxParallel    *int      `json:"reviewMaxParallelReviews"`
-		ReviewReviewerAgents *[]string `json:"reviewReviewerAgents"`
-		ReviewFixerAgent     *string   `json:"reviewFixerAgent"`
-		AgentSandboxEnabled  *bool     `json:"agentSandboxEnabled"`
+		IoscanEnabled  *bool   `json:"ioscanEnabled"`
+		IoscanFailMode *string `json:"ioscanFailMode"`
+		IoscanCanaries *bool   `json:"ioscanCanaries"`
+		// The semantic classifier's switch is "on", "off", or "" to follow
+		// the ACMM level; its fail mode is "open", "closed", or "" to follow
+		// ioscan.fail_mode. Empty is a real choice in both, so they are
+		// strings rather than bools.
+		IoscanClassifierSetting  *string `json:"ioscanClassifierSetting"`
+		IoscanClassifierFailMode *string `json:"ioscanClassifierFailMode"`
+		// The classifier CLI backend ("" = model endpoint) and, for a CLI
+		// backend, its per-pass budget and per-UTC-day quota (0 = default).
+		IoscanClassifierBackend          *string `json:"ioscanClassifierBackend"`
+		IoscanClassifierCLIBudgetPerEval *int    `json:"ioscanClassifierCliBudgetPerEval"`
+		IoscanClassifierCLIDailyQuota    *int    `json:"ioscanClassifierCliDailyQuota"`
+		IntentEnforce                    *bool   `json:"intentEnforce"`
+		IntentShadow                     *bool   `json:"intentShadow"`
+		IntentAlignmentModel             *string `json:"intentAlignmentModel"`
+		// Intent classifier lists. An empty list restores the built-in
+		// defaults (nil), matching how the intent package treats them.
+		IntentTestPathPatterns      *[]string `json:"intentTestPathPatterns"`
+		IntentDocsPathPatterns      *[]string `json:"intentDocsPathPatterns"`
+		IntentGuardrailPathPatterns *[]string `json:"intentGuardrailPathPatterns"`
+		IntentFeatureSignals        *[]string `json:"intentFeatureSignals"`
+		ReviewRequire               *bool     `json:"reviewRequireApproval"`
+		ReviewFanOut                *bool     `json:"reviewFanOut"`
+		ReviewMaxParallel           *int      `json:"reviewMaxParallelReviews"`
+		ReviewReviewerAgents        *[]string `json:"reviewReviewerAgents"`
+		ReviewFixerAgent            *string   `json:"reviewFixerAgent"`
+		AgentSandboxEnabled         *bool     `json:"agentSandboxEnabled"`
+		SandboxImage                *string   `json:"agentSandboxImage"`
+		SandboxEnvAllowlist         *[]string `json:"agentSandboxEnvAllowlist"`
+		SandboxNetworkMode          *string   `json:"agentSandboxNetworkMode"`
+		SandboxTimeoutS             *int      `json:"agentSandboxTimeoutS"`
+		SandboxWorkspaceDir         *string   `json:"agentSandboxWorkspaceDir"`
+		SandboxRuntime              *string   `json:"agentSandboxRuntime"`
+		SandboxJobServiceAccount    *string   `json:"agentSandboxJobServiceAccount"`
+		SandboxJobSchedulerName     *string   `json:"agentSandboxJobSchedulerName"`
+		SandboxJobTTLSeconds        *int      `json:"agentSandboxJobTtlSeconds"`
+		SandboxJobWorkspaceClaim    *string   `json:"agentSandboxJobWorkspaceClaim"`
+		SandboxJobClaimMount        *string   `json:"agentSandboxJobWorkspaceClaimMount"`
 		// Sentinel (suspicious-activity alerts) is pointer-typed per field
 		// so an absent key means "unchanged" — a save that only toggled a
 		// behavior must not wipe the sensitive-path list.
@@ -92,12 +122,39 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 		nextSentinel = &sc
 	}
-	if body.IoscanFailMode != nil {
-		mode := strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
-		if mode != "" && mode != "open" && mode != "closed" {
-			jsonError(w, "ioscan fail_mode must be open or closed", http.StatusBadRequest)
+	if body.IoscanFailMode != nil && !validIoscanFailMode(*body.IoscanFailMode) {
+		jsonError(w, "ioscan fail_mode must be open or closed", http.StatusBadRequest)
+		return
+	}
+	if body.IoscanClassifierFailMode != nil && !validIoscanFailMode(*body.IoscanClassifierFailMode) {
+		jsonError(w, "ioscan classifier fail_mode must be open or closed", http.StatusBadRequest)
+		return
+	}
+	if body.IoscanClassifierSetting != nil {
+		switch strings.ToLower(strings.TrimSpace(*body.IoscanClassifierSetting)) {
+		case "", "on", "off":
+		default:
+			jsonError(w, "ioscan classifier must be on, off or empty", http.StatusBadRequest)
 			return
 		}
+	}
+
+	if body.IoscanClassifierBackend != nil {
+		if b := strings.TrimSpace(*body.IoscanClassifierBackend); b != "" && !ioscan.SupportsToolless(b) {
+			jsonError(w, "ioscan classifier backend must be empty or one of "+strings.Join(ioscan.ToollessBackends(), ", ")+"; "+b+" cannot run without tools", http.StatusBadRequest)
+			return
+		}
+	}
+	nextClassifier := s.deps.Config.Ioscan.Classifier
+	if body.IoscanClassifierCLIBudgetPerEval != nil {
+		nextClassifier.CLIBudgetPerEval = *body.IoscanClassifierCLIBudgetPerEval
+	}
+	if body.IoscanClassifierCLIDailyQuota != nil {
+		nextClassifier.CLIDailyQuota = *body.IoscanClassifierCLIDailyQuota
+	}
+	if err := nextClassifier.ValidateCLI(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	if body.ReviewMaxParallel != nil && (*body.ReviewMaxParallel < 0 || *body.ReviewMaxParallel > 64) {
@@ -110,21 +167,61 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
 	}
+	// "open" is stored as written, not as empty: empty means "follow the
+	// ACMM level", which is closed at L5-L6, so storing open as empty made
+	// the dashboard unable to choose open on those levels.
 	if body.IoscanFailMode != nil {
-		mode := strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
-		if mode == "open" {
-			mode = ""
-		}
-		cfg.Ioscan.FailMode = mode
+		cfg.Ioscan.FailMode = strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
 	}
+	if body.IoscanClassifierFailMode != nil {
+		cfg.Ioscan.Classifier.FailMode = strings.ToLower(strings.TrimSpace(*body.IoscanClassifierFailMode))
+	}
+	if body.IoscanClassifierSetting != nil {
+		switch strings.ToLower(strings.TrimSpace(*body.IoscanClassifierSetting)) {
+		case "on":
+			v := true
+			cfg.Ioscan.Classifier.Enabled = &v
+		case "off":
+			v := false
+			cfg.Ioscan.Classifier.Enabled = &v
+		default:
+			cfg.Ioscan.Classifier.Enabled = nil
+		}
+	}
+	if body.IoscanClassifierBackend != nil {
+		cfg.Ioscan.Classifier.Backend = strings.TrimSpace(*body.IoscanClassifierBackend)
+	}
+	cfg.Ioscan.Classifier.CLIBudgetPerEval = nextClassifier.CLIBudgetPerEval
+	cfg.Ioscan.Classifier.CLIDailyQuota = nextClassifier.CLIDailyQuota
 	if body.IoscanCanaries != nil {
 		cfg.Ioscan.Canaries = body.IoscanCanaries
 	}
 	if body.IntentEnforce != nil {
 		cfg.Intent.Enforce = *body.IntentEnforce
 	}
+	if body.IntentShadow != nil {
+		cfg.Intent.Shadow = *body.IntentShadow
+	}
 	if body.IntentAlignmentModel != nil {
 		cfg.Intent.AlignmentModel = strings.TrimSpace(*body.IntentAlignmentModel)
+	}
+	for _, f := range []struct {
+		in  *[]string
+		dst *[]string
+	}{
+		{body.IntentTestPathPatterns, &cfg.Intent.TestPathPatterns},
+		{body.IntentDocsPathPatterns, &cfg.Intent.DocsPathPatterns},
+		{body.IntentGuardrailPathPatterns, &cfg.Intent.GuardrailPathPatterns},
+		{body.IntentFeatureSignals, &cfg.Intent.FeatureSignals},
+	} {
+		if f.in == nil {
+			continue
+		}
+		list := sanitizeStringSlice(*f.in)
+		if len(list) == 0 {
+			list = nil
+		}
+		*f.dst = list
 	}
 	if body.ReviewRequire != nil {
 		cfg.Review.RequireApproval = *body.ReviewRequire
@@ -144,6 +241,58 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	if body.AgentSandboxEnabled != nil {
 		cfg.AgentSandbox.Enabled = *body.AgentSandboxEnabled
 	}
+	if rt := body.SandboxRuntime; rt != nil {
+		v := strings.TrimSpace(*rt)
+		if v != "" && !config.ValidSandboxRuntimes[v] {
+			http.Error(w, "invalid agentSandboxRuntime", http.StatusBadRequest)
+			return
+		}
+		cfg.AgentSandbox.Runtime = v
+	}
+	if body.SandboxTimeoutS != nil && *body.SandboxTimeoutS < 0 || body.SandboxJobTTLSeconds != nil && *body.SandboxJobTTLSeconds < 0 {
+		http.Error(w, "sandbox timeouts must be >= 0", http.StatusBadRequest)
+		return
+	}
+	for _, f := range []struct {
+		in  *string
+		dst *string
+	}{
+		{body.SandboxImage, &cfg.AgentSandbox.Image},
+		{body.SandboxNetworkMode, &cfg.AgentSandbox.NetworkMode},
+		{body.SandboxWorkspaceDir, &cfg.AgentSandbox.WorkspaceDir},
+	} {
+		if f.in != nil {
+			*f.dst = sanitizeString(strings.TrimSpace(*f.in))
+		}
+	}
+	if body.SandboxEnvAllowlist != nil {
+		cfg.AgentSandbox.EnvAllowlist = sanitizeStringSlice(*body.SandboxEnvAllowlist)
+	}
+	if body.SandboxTimeoutS != nil {
+		cfg.AgentSandbox.TimeoutS = *body.SandboxTimeoutS
+	}
+	if body.SandboxJobServiceAccount != nil || body.SandboxJobSchedulerName != nil || body.SandboxJobTTLSeconds != nil ||
+		body.SandboxJobWorkspaceClaim != nil || body.SandboxJobClaimMount != nil {
+		if cfg.AgentSandbox.Job == nil {
+			cfg.AgentSandbox.Job = &config.SandboxJobConfig{}
+		}
+		job := cfg.AgentSandbox.Job
+		if body.SandboxJobServiceAccount != nil {
+			job.ServiceAccount = sanitizeString(strings.TrimSpace(*body.SandboxJobServiceAccount))
+		}
+		if body.SandboxJobSchedulerName != nil {
+			job.SchedulerName = sanitizeString(strings.TrimSpace(*body.SandboxJobSchedulerName))
+		}
+		if body.SandboxJobWorkspaceClaim != nil {
+			job.WorkspaceClaim = sanitizeString(strings.TrimSpace(*body.SandboxJobWorkspaceClaim))
+		}
+		if body.SandboxJobClaimMount != nil {
+			job.WorkspaceClaimMount = sanitizeString(strings.TrimSpace(*body.SandboxJobClaimMount))
+		}
+		if body.SandboxJobTTLSeconds != nil {
+			job.TTLSeconds = *body.SandboxJobTTLSeconds
+		}
+	}
 	if nextSentinel != nil {
 		cfg.Sentinel = *nextSentinel
 	}
@@ -156,10 +305,31 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// validIoscanFailMode accepts open, closed, or empty (follow the default).
+func validIoscanFailMode(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "open", "closed":
+		return true
+	}
+	return false
+}
+
 func securitySectionResponse(cfg *config.Config) map[string]interface{} {
+	level := cfg.ACMMLevelOrZero()
 	failMode := "open"
-	if cfg.Ioscan.FailClosedAtLevel(cfg.ACMMLevelOrZero()) {
+	if cfg.Ioscan.FailClosedAtLevel(level) {
 		failMode = "closed"
+	}
+	classifierFailMode := "open"
+	if cfg.Ioscan.ClassifierFailClosedAtLevel(level) {
+		classifierFailMode = "closed"
+	}
+	classifierSetting := ""
+	if e := cfg.Ioscan.Classifier.Enabled; e != nil {
+		classifierSetting = "off"
+		if *e {
+			classifierSetting = "on"
+		}
 	}
 	sandboxed := 0
 	reviewCapable := 0
@@ -202,25 +372,50 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 	credentialInjection := config.ResolveProxyInjectGHAuth(os.Getenv)
 
 	return map[string]interface{}{
-		"credentialWarnings":               credentialWarnings,
-		"credentialInjection":              credentialInjection,
-		"ioscanEnabled":                    cfg.Ioscan.IsEnabled(),
-		"ioscanFailMode":                   failMode,
-		"ioscanCanaries":                   cfg.Ioscan.CanariesEnabled(),
-		"intentEnforce":                    cfg.Intent.Enforce,
-		"intentAlignmentModel":             cfg.Intent.AlignmentModel,
-		"reviewRequireApproval":            cfg.Review.RequireApproval,
-		"reviewFanOut":                     cfg.Review.FanOut,
-		"reviewMaxParallelReviews":         cfg.Review.EffectiveMaxParallelReviews(),
-		"reviewReviewerAgents":             cfg.Review.ReviewerAgents,
-		"reviewFixerAgent":                 cfg.Review.FixerAgent,
-		"reviewCapableAgents":              reviewCapable,
-		"reviewSeverityThresholdAvailable": false,
-		"agentSandboxEnabled":              cfg.AgentSandbox.Enabled,
-		"sandboxedAgents":                  sandboxed,
-		"totalAgents":                      len(cfg.Agents),
-		"sandboxWarnings":                  sandboxWarnings,
-		"sentinel":                         sentinelSectionResponse(cfg.Sentinel),
+		"credentialWarnings":                 credentialWarnings,
+		"credentialInjection":                credentialInjection,
+		"ioscanEnabled":                      cfg.Ioscan.IsEnabled(),
+		"ioscanFailMode":                     failMode,
+		"ioscanFailModeSetting":              strings.ToLower(cfg.Ioscan.FailMode),
+		"ioscanClassifierEnabled":            cfg.Ioscan.ClassifierEnabledAtLevel(level),
+		"ioscanClassifierSetting":            classifierSetting,
+		"ioscanClassifierFailMode":           classifierFailMode,
+		"ioscanClassifierFailModeSetting":    strings.ToLower(cfg.Ioscan.Classifier.FailMode),
+		"ioscanClassifierBackend":            cfg.Ioscan.Classifier.Backend,
+		"ioscanClassifierCliBudgetPerEval":   cfg.Ioscan.Classifier.CLIBudgetPerEval,
+		"ioscanClassifierCliDailyQuota":      cfg.Ioscan.Classifier.CLIDailyQuota,
+		"ioscanCanaries":                     cfg.Ioscan.CanariesEnabled(),
+		"intentEnforce":                      cfg.Intent.Enforce,
+		"intentShadow":                       cfg.Intent.Shadow,
+		"intentAlignmentModel":               cfg.Intent.AlignmentModel,
+		"intentTestPathPatterns":             nonNilStrings(cfg.Intent.TestPathPatterns),
+		"intentDocsPathPatterns":             nonNilStrings(cfg.Intent.DocsPathPatterns),
+		"intentGuardrailPathPatterns":        nonNilStrings(cfg.Intent.GuardrailPathPatterns),
+		"intentFeatureSignals":               nonNilStrings(cfg.Intent.FeatureSignals),
+		"intentDefaults":                     intentDefaultsResponse(),
+		"reviewRequireApproval":              cfg.Review.RequireApproval,
+		"reviewFanOut":                       cfg.Review.FanOut,
+		"reviewMaxParallelReviews":           cfg.Review.EffectiveMaxParallelReviews(),
+		"reviewReviewerAgents":               cfg.Review.ReviewerAgents,
+		"reviewFixerAgent":                   cfg.Review.FixerAgent,
+		"reviewCapableAgents":                reviewCapable,
+		"reviewSeverityThresholdAvailable":   false,
+		"agentSandboxEnabled":                cfg.AgentSandbox.Enabled,
+		"agentSandboxImage":                  cfg.AgentSandbox.Image,
+		"agentSandboxEnvAllowlist":           nonNilStrings(cfg.AgentSandbox.EnvAllowlist),
+		"agentSandboxNetworkMode":            cfg.AgentSandbox.NetworkMode,
+		"agentSandboxTimeoutS":               cfg.AgentSandbox.TimeoutS,
+		"agentSandboxWorkspaceDir":           cfg.AgentSandbox.WorkspaceDir,
+		"agentSandboxRuntime":                cfg.AgentSandbox.Runtime,
+		"agentSandboxJobServiceAccount":      sandboxJobOrEmpty(cfg).ServiceAccount,
+		"agentSandboxJobSchedulerName":       sandboxJobOrEmpty(cfg).SchedulerName,
+		"agentSandboxJobTtlSeconds":          sandboxJobOrEmpty(cfg).TTLSeconds,
+		"agentSandboxJobWorkspaceClaim":      sandboxJobOrEmpty(cfg).WorkspaceClaim,
+		"agentSandboxJobWorkspaceClaimMount": sandboxJobOrEmpty(cfg).WorkspaceClaimMount,
+		"sandboxedAgents":                    sandboxed,
+		"totalAgents":                        len(cfg.Agents),
+		"sandboxWarnings":                    sandboxWarnings,
+		"sentinel":                           sentinelSectionResponse(cfg.Sentinel),
 	}
 }
 
@@ -252,6 +447,18 @@ func sentinelSectionResponse(sc config.SentinelConfig) map[string]interface{} {
 		"trustedAuthorsBlock":   sc.TrustedAuthorsBlock,
 		"repos":                 nonNilStrings(sc.Repos),
 		"maxActions":            sc.MaxActionsOrDefault(),
+	}
+}
+
+// intentDefaultsResponse lists the built-in intent patterns an empty
+// intent.* list falls back to, so the UI can show them as placeholders.
+func intentDefaultsResponse() map[string][]string {
+	d := config.DefaultIntentConfig()
+	return map[string][]string{
+		"testPathPatterns":      d.TestPathPatterns,
+		"docsPathPatterns":      d.DocsPathPatterns,
+		"guardrailPathPatterns": d.GuardrailPathPatterns,
+		"featureSignals":        d.FeatureSignals,
 	}
 }
 
@@ -294,4 +501,11 @@ func sanitizedHeaderMap(in map[string]string) map[string]string {
 		out[key] = strings.TrimSpace(v)
 	}
 	return out
+}
+
+func sandboxJobOrEmpty(cfg *config.Config) config.SandboxJobConfig {
+	if cfg.AgentSandbox.Job == nil {
+		return config.SandboxJobConfig{}
+	}
+	return *cfg.AgentSandbox.Job
 }

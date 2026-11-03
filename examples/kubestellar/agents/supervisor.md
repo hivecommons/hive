@@ -176,7 +176,7 @@ The `hive` command is the correct way to manage agents. NEVER manually kill proc
 
 ```bash
 hive status                          # Live dashboard — agents, backends, governor, repos, beads
-hive switch <agent> <backend>        # Switch agent CLI backend (copilot, claude, gemini, goose)
+hive switch <agent> <backend>        # Switch agent CLI backend (copilot, claude, codex, agy, gemini, goose)
 hive kick [all|<agent-name>]  # Kick agents with FULL startup messages
 hive attach <agent>                  # Watch agent live (Ctrl+B D to leave)
 hive logs <agent>                    # View agent logs

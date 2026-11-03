@@ -83,28 +83,74 @@ var inviteTrustTiers = map[string]bool{"trusted": true, "merger": true, "advisor
 // the inviter username. An empty string means the token is invalid, tampered,
 // or expired — the caller must treat that as "no attribution" (a plain
 // self-registration), never as an error.
+// ContributorPoolStatus feeds the sidebar's Contributors "online/total"
+// pill and the section header. Online uses the SAME presence predicate the
+// stage tracker's "waiting on @x (offline 13m)" reads
+// (ContributeWSHub.Presence): a registered contributor whose relay
+// heartbeat landed within governor.labels.stage.presence_window (15m by
+// default). Active is the older "has a live socket" count kept for callers
+// that still read it.
 type ContributorPoolStatus struct {
-	Active     int            `json:"active"`
-	Registered int            `json:"registered"`
-	ByRole     map[string]int `json:"by_role,omitempty"`
+	Active     int `json:"active"`
+	Online     int `json:"online"`
+	Registered int `json:"registered"`
+	// PresenceWindow is the window Online was judged against ("15m").
+	PresenceWindow string         `json:"presence_window"`
+	ByRole         map[string]int `json:"by_role,omitempty"`
 }
 
 func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 	profiles := listContributorProfiles()
-	active := 0
+	active, online := 0, 0
 	var byRole map[string]int
+	window := config.DefaultPresenceWindow
 	if s.contributeHub != nil {
 		active = s.contributeHub.ActiveCount()
 		byRole = s.contributeHub.RoleBreakdown()
+		window = s.contributeHub.presenceWindow()
+		online = countOnlineContributors(profiles, s.contributeHub.LastHeartbeats(), window, time.Now())
 	}
 	return &ContributorPoolStatus{
-		Active:     active,
-		Registered: len(profiles),
-		ByRole:     byRole,
+		Active:         active,
+		Online:         online,
+		Registered:     len(profiles),
+		PresenceWindow: stageTrackerShortDuration(window),
+		ByRole:         byRole,
 	}
 }
 
+// countOnlineContributors counts the registered profiles whose freshest
+// relay heartbeat is within window of now — the tracker's presence
+// predicate (liveConnectionsFor) applied across the registry, so the
+// sidebar pill and the "(offline 13m)" caption never disagree. A profile
+// with no heartbeat, or one exactly older than the window, is offline;
+// a heartbeat landing exactly at the window edge still counts, as in
+// liveConnectionsFor.
+func countOnlineContributors(profiles []ContributorProfile, lastSeen map[string]time.Time, window time.Duration, now time.Time) int {
+	if len(profiles) == 0 || len(lastSeen) == 0 {
+		return 0
+	}
+	byUser := make(map[string]time.Time, len(lastSeen))
+	for user, t := range lastSeen {
+		byUser[strings.ToLower(strings.TrimSpace(user))] = t
+	}
+	n := 0
+	for _, p := range profiles {
+		t, ok := byUser[strings.ToLower(strings.TrimSpace(p.GitHubUsername))]
+		if ok && !t.IsZero() && now.Sub(t) <= window {
+			n++
+		}
+	}
+	return n
+}
+
 func (s *Server) registerContributeRoutes() {
+	// Persist legacy token timestamps at migration, not their original signup.
+	for _, p := range listContributorProfiles() {
+		if err := s.contributorTokenPolicy().migrate(&p, time.Now().UTC()); err != nil {
+			s.logger.Error("contributor token migration failed", "username", p.GitHubUsername, "error", err)
+		}
+	}
 	if s.contributeHub != nil {
 		s.contributeHub.Close()
 	}
@@ -139,7 +185,11 @@ func (s *Server) registerContributeRoutes() {
 	// tier gate cannot be delegated to the middleware. UI hiding is UX only.
 	s.mux.HandleFunc("POST /api/contribute/invite", s.handleContributeInvite)
 	s.mux.HandleFunc("POST /api/contribute/reissue-token", s.handleContributeReissueToken)
+	s.mux.HandleFunc("GET /api/contribute/token", s.handleContributeTokenStatus)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
+	// Contribution-eligible repositories (hivecommons/hive#12805): the ids a
+	// relay may put in a repo_scope. Public like /status; no counts, no PII.
+	s.mux.HandleFunc("GET /api/contribute/repositories", s.handleContributeRepositories)
 	s.mux.HandleFunc("PUT /api/contribute/announcement", s.handleContributeAnnouncement)
 	s.mux.HandleFunc("POST /api/contribute/announcement/dismiss", s.handleContributeAnnouncementDismiss)
 	s.mux.HandleFunc("PUT /api/contribute/help-links", s.handleContributeHelpLinks)
@@ -235,6 +285,8 @@ func (s *Server) registerContributeRoutes() {
 	// above; identity resolved server-side, every field optional. See dossier.go.
 	s.mux.HandleFunc("GET /api/contribute/dossier", s.handleContributeDossier)
 	s.mux.HandleFunc("POST /api/contribute/dossier", s.handleContributeDossier)
+	s.mux.HandleFunc("POST /api/contributors/tokens/revoke-all", s.handleContributorTokenRevoke)
+	s.mux.HandleFunc("POST /api/contributors/{id}/token/revoke", s.handleContributorTokenRevoke)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("POST /api/contributors/{id}/wall-mute", s.handleContributorWallMute)
@@ -411,7 +463,7 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	profile, token := createContributorProfile(username)
+	profile, token := createContributorProfile(username, s.contributorTokenPolicy())
 
 	// Attribution (issue #2598): if a valid trusted invite token accompanies the
 	// registration, record who invited them. This is attribution ONLY — the tier
@@ -585,7 +637,11 @@ func (s *Server) handleContributeReissueToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	newToken := reissueContributorToken(profile)
+	newToken := reissueContributorToken(profile, s.contributorTokenPolicy())
+	if newToken == "" {
+		jsonError(w, "Token update failed; retry reissue-token", http.StatusConflict)
+		return
+	}
 	s.logger.Info("contributor token reissued via GitHub auth", "username", username, "id", profile.ContributorID)
 
 	jsonResponse(w, map[string]string{
@@ -643,6 +699,90 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"served_sha":      versionShort,
 		"announcement":    s.activeContributeAnnouncement(),
 		"help_links":      s.contributeHelpLinks(),
+		// #13458: the relay audit level this hive asks contributors to share,
+		// shown on /contribute before setup. "" requests nothing.
+		"audit_share_requested": s.contributeAuditShareRequest(),
+	})
+}
+
+// contributeRepository is one contribution-eligible repository advertised by
+// GET /api/contribute/repositories (hivecommons/hive#12805). ID is the
+// canonical "{forge}/{host}/{owner}/{name}" a relay names in repo_scope.
+type contributeRepository struct {
+	ID       string `json:"id"`
+	Forge    string `json:"forge"`
+	Host     string `json:"host"`
+	FullName string `json:"full_name"`
+}
+
+// contributeEligibleRepositories lists the repositories contributors may be
+// offered work from: the hub's monitored repositories minus hub.disabled_repos,
+// matched with the same RepoMatchesAny rule selectTask applies. The monitored set
+// is the status snapshot selection reads; before the first snapshot it is the
+// configured project repos, qualified with the org exactly as buildRepos does.
+func (s *Server) contributeEligibleRepositories() []contributeRepository {
+	type monitored struct{ name, full string }
+	var repos []monitored
+	s.statusMu.RLock()
+	if s.status != nil {
+		for _, r := range s.status.Repos {
+			repos = append(repos, monitored{name: r.Name, full: r.Full})
+		}
+	}
+	s.statusMu.RUnlock()
+
+	var cfg *config.Config
+	if s.deps != nil {
+		cfg = s.deps.Config
+	}
+	if repos == nil && cfg != nil {
+		for _, name := range cfg.Project.Repos {
+			full := name
+			if !strings.Contains(name, "/") {
+				full = cfg.Project.Org + "/" + name
+			}
+			repos = append(repos, monitored{name: name, full: full})
+		}
+	}
+
+	host := repoScopeDefaultHost
+	var disabled []string
+	if cfg != nil {
+		host = cfg.GitHub.Forge()
+		disabled = cfg.Hub.DisabledRepos
+	}
+	out := make([]contributeRepository, 0, len(repos))
+	seen := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		full := strings.Trim(strings.TrimSpace(r.full), "/")
+		if full == "" || !strings.Contains(full, "/") {
+			continue
+		}
+		if config.RepoMatchesAny(r.full, r.name, disabled) {
+			continue
+		}
+		id := repoScopeID(repoScopeDefaultForge, host, full)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, contributeRepository{
+			ID:       id,
+			Forge:    repoScopeDefaultForge,
+			Host:     strings.ToLower(host),
+			FullName: full,
+		})
+	}
+	return out
+}
+
+// handleContributeRepositories serves GET /api/contribute/repositories
+// (hivecommons/hive#12805): the contribution-eligible repositories a relay can
+// select for its repo_scope. Public and unauthenticated like /status.
+func (s *Server) handleContributeRepositories(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, map[string]any{
+		"repositories": s.contributeEligibleRepositories(),
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
@@ -991,7 +1131,24 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 	}
 	profile := findContributor(username)
 	if profile == nil {
-		jsonError(w, "You need a contributor profile on this hive before it can show your stats.", http.StatusForbidden)
+		// Signed in, but never registered as a contributor on this hive. That is
+		// a NORMAL state — the hive's own owner is routinely in it, having never
+		// pointed a contributor agent at their own spoke — not a denial, so it
+		// is a 200 with has_profile:false rather than a 403 (#12111). The status
+		// matters beyond semantics: on a hosted spoke the hive-contribute
+		// Ingress inherits the ingress-nginx controller's global
+		// custom-http-errors list, which includes 403, so nginx swallowed the
+		// JSON 403 and handed the browser the error backend's HTML as a 200.
+		// The card then parsed HTML as JSON and told the owner it had hit a
+		// bug. A 2xx is never intercepted, so the empty state always arrives.
+		//
+		// No counters are included: a reader must not mistake "no record" for
+		// "a record of zero". github_username is the caller's own resolved
+		// identity, so the card can address them by name.
+		jsonResponse(w, map[string]any{
+			"github_username": username,
+			"has_profile":     false,
+		})
 		return
 	}
 
@@ -1009,6 +1166,7 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{
 		"github_username":      profile.GitHubUsername,
+		"has_profile":          true,
 		"trust_tier":           profile.TrustTier,
 		"eligible_for_trusted": contributorEligibleForTrusted(profile),
 		// Same field names as ContributorProfile so a reader of one payload can

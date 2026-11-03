@@ -2,7 +2,9 @@ package github
 
 // Tests for the sentinel sweep: label + one comment per head on a finding,
 // nothing on a clean PR, no re-application once a maintainer clears the
-// label for an unchanged head, fail-closed on an incomplete file list.
+// label for an unchanged head (including across a restart, where the
+// clearance is read back from the alert comment), fail-closed on an
+// incomplete file list.
 
 import (
 	"context"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
 
@@ -27,7 +30,32 @@ type sentinelFixture struct {
 	labels      map[int][]string
 	removed     []string
 	comments    map[int][]string
+	// commentUsers[num][i] is the login the fixture reports as the author of
+	// comments[num][i]; absent entries render a comment with no user, which
+	// is how the fixture started and what the any-author fallback tests use.
+	commentUsers map[int][]string
+	// timeline[num] is the PR's issue timeline as GitHub would render it
+	// (label events with actor and created_at, committed events with a
+	// committer date, head_ref_force_pushed events); absent means empty.
+	timeline map[int][]map[string]any
+	// checkSuites[sha] and statuses[sha] are the server-stamped created_at
+	// values of the check suites and commit statuses GitHub holds for that
+	// SHA; absent means none.
+	checkSuites map[string][]string
+	statuses    map[string][]string
 	filesHits   int
+	listHits    int
+	getHits     []int
+}
+
+// prByNumber returns the fixture PR with that number, or nil.
+func (f *sentinelFixture) prByNumber(num int) map[string]any {
+	for _, pr := range f.prs {
+		if n, ok := pr["number"].(int); ok && n == num {
+			return pr
+		}
+	}
+	return nil
 }
 
 func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
@@ -68,10 +96,17 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode([]map[string]string{})
 				return
+			case r.Method == http.MethodGet && rest == "timeline":
+				_ = json.NewEncoder(w).Encode(f.timeline[num])
+				return
 			case r.Method == http.MethodGet && rest == "comments":
 				var out []map[string]any
 				for i, body := range f.comments[num] {
-					out = append(out, map[string]any{"id": num*1000 + i + 1, "body": body})
+					entry := map[string]any{"id": num*1000 + i + 1, "body": body}
+					if users := f.commentUsers[num]; i < len(users) && users[i] != "" {
+						entry["user"] = map[string]string{"login": users[i]}
+					}
+					out = append(out, entry)
 				}
 				_ = json.NewEncoder(w).Encode(out)
 				return
@@ -85,8 +120,41 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 				return
 			}
 		}
+		if r.Method == http.MethodGet && strings.HasPrefix(p, "/repos/o/r/pulls/") && !strings.Contains(strings.TrimPrefix(p, "/repos/o/r/pulls/"), "/") {
+			n := 0
+			for _, ch := range strings.TrimPrefix(p, "/repos/o/r/pulls/") {
+				n = n*10 + int(ch-'0')
+			}
+			f.getHits = append(f.getHits, n)
+			if pr := f.prByNumber(n); pr != nil {
+				_ = json.NewEncoder(w).Encode(pr)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if sha, rest, ok := strings.Cut(strings.TrimPrefix(p, "/repos/o/r/commits/"), "/"); ok && strings.HasPrefix(p, "/repos/o/r/commits/") && r.Method == http.MethodGet {
+			switch rest {
+			case "check-suites":
+				var suites []map[string]any
+				for i, at := range f.checkSuites[sha] {
+					suites = append(suites, map[string]any{"id": i + 1, "head_sha": sha, "created_at": at})
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(suites), "check_suites": suites})
+				return
+			case "statuses":
+				out := []map[string]any{}
+				for i, at := range f.statuses[sha] {
+					out = append(out, map[string]any{"id": i + 1, "state": "success", "context": "ci", "created_at": at})
+				}
+				_ = json.NewEncoder(w).Encode(out)
+				return
+			}
+		}
 		switch {
 		case r.Method == http.MethodGet && p == "/repos/o/r/pulls":
+			f.listHits++
 			_ = json.NewEncoder(w).Encode(f.prs)
 		case r.Method == http.MethodGet && strings.HasPrefix(p, "/repos/o/r/labels/"):
 			if f.labelExists {
@@ -317,25 +385,684 @@ func TestSweepSentinelSkipsLabelledExemptAndNewHeadRecomments(t *testing.T) {
 	}
 }
 
-func TestSweepSentinelExistingMarkerCommentNotReposted(t *testing.T) {
+// A blocking alert comment for the current head with the label absent is a
+// maintainer clearance. A fresh client (empty sentinelHeads, as after a hub
+// restart or on a second replica) must not re-apply the label or touch the
+// comment; the previous behaviour re-labelled #11614 on the first pass after
+// a restart.
+func TestSweepSentinelMaintainerClearanceSurvivesRestart(t *testing.T) {
+	alert := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "h9", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
 	f := &sentinelFixture{
 		prs:         []map[string]any{sentinelPR(9, "eve", "h9")},
 		files:       map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
 		labelExists: true,
-		comments:    map[int][]string{9: {SentinelMarker + " h9\nolder alert"}},
+		comments:    map[int][]string{9: {alert}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	for pass := 0; pass < 2; pass++ {
+		c := newTestClient(t, srv, "o", []string{"o/r"}) // fresh sentinelHeads each time
+		res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+		if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
+			t.Fatalf("pass %d: cleared alert must stay quiet: res=%+v err=%v", pass, res, err)
+		}
+		if got := f.labels[9]; len(got) != 0 {
+			t.Fatalf("pass %d: label re-applied after maintainer removed it: %v", pass, got)
+		}
+		if len(f.comments[9]) != 1 || f.comments[9][0] != alert {
+			t.Fatalf("pass %d: alert comment must be left alone: %v", pass, f.comments[9])
+		}
+	}
+
+	// A new push gets a fresh alert and the label again.
+	f.mu.Lock()
+	f.prs[0] = sentinelPR(9, "eve", "h10")
+	f.mu.Unlock()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" h10") {
+		t.Fatalf("new head must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	}
+}
+
+// sentinelTimelineLabel is a labeled/unlabeled timeline entry for the
+// sentinel label by actor at the RFC3339 time at; actorType is GitHub's
+// user type ("User" or "Bot").
+func sentinelTimelineLabel(kind, actor, actorType, at string) map[string]any {
+	return map[string]any{
+		"event":      kind,
+		"label":      map[string]string{"name": "sentinel-alert"},
+		"actor":      map[string]string{"login": actor, "type": actorType},
+		"created_at": at,
+	}
+}
+
+// sentinelTimelineCommit is a committed timeline entry for sha whose
+// committer date is at. The date is whatever the committer's clock (or
+// GIT_COMMITTER_DATE) said, so the sweep must never read it as a push time.
+func sentinelTimelineCommit(sha, at string) map[string]any {
+	return map[string]any{
+		"event":     "committed",
+		"sha":       sha,
+		"committer": map[string]any{"name": "eve", "date": at},
+	}
+}
+
+// sentinelTimelineForcePush is a head_ref_force_pushed timeline entry that
+// moved the head to sha at the server time at.
+func sentinelTimelineForcePush(sha, at string) map[string]any {
+	return map[string]any{
+		"event":      "head_ref_force_pushed",
+		"commit_id":  sha,
+		"actor":      map[string]string{"login": "renovate[bot]", "type": "Bot"},
+		"created_at": at,
+	}
+}
+
+// A maintainer's clearance on a head the sweep never alerted on (#13602):
+// the alert and marker are for head A, the PR moves to head B, and a human
+// removes the label with B already in place. The next sweep must not
+// re-label or post a new alert; it rewrites the hive's marker comment as
+// the alert for B so the clearance survives a restart (the #11686 path).
+// Every pass here starts a fresh client (empty sentinelHeads), the restart
+// case from the acceptance criteria. The push time of B is read only from
+// server-stamped signals: the force-push event naming B, or for an ordinary
+// push the earliest check suite or commit status GitHub created for B. The
+// committer date on B's commit is always later than the removal here, so a
+// sweep that trusted it would wrongly re-alert.
+func TestSweepSentinelClearanceOnNewerHeadIsHonoured(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	cases := []struct {
+		name        string
+		timeline    []map[string]any
+		checkSuites map[string][]string
+		statuses    map[string][]string
+	}{
+		{"force push", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T23:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:30Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"ordinary push with check suite", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T23:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, map[string][]string{"hB": {"2026-10-22T06:25:31Z", "2026-10-22T06:25:30Z"}}, nil},
+		{"ordinary push with commit status", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T23:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, map[string][]string{"hB": {"2026-10-22T06:25:30Z"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &sentinelFixture{
+				prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+				files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+				labelExists:  true,
+				comments:     map[int][]string{9: {alertA}},
+				commentUsers: map[int][]string{9: {"hive[bot]"}},
+				timeline:     map[int][]map[string]any{9: tc.timeline},
+				checkSuites:  tc.checkSuites,
+				statuses:     tc.statuses,
+			}
+			srv := newSentinelServer(t, f)
+			defer srv.Close()
+			for pass := 0; pass < 2; pass++ {
+				c := newTestClient(t, srv, "o", []string{"o/r"})
+				c.SetAppBotLogin("hive[bot]")
+				res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+				if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
+					t.Fatalf("pass %d: clearance on newer head must stay quiet: res=%+v err=%v", pass, res, err)
+				}
+				if got := f.labels[9]; len(got) != 0 {
+					t.Fatalf("pass %d: label re-applied after maintainer removed it on the current head: %v", pass, got)
+				}
+				if len(f.comments[9]) != 1 {
+					t.Fatalf("pass %d: no new alert comment may be posted: %v", pass, f.comments[9])
+				}
+				if body := f.comments[9][0]; !strings.Contains(body, SentinelMarker+" hB") || !strings.Contains(body, sentinelAlertHeading) || !strings.Contains(body, "@danathar removed the `sentinel-alert` label") {
+					t.Fatalf("pass %d: marker comment must be rewritten as the cleared alert for hB: %q", pass, body)
+				}
+			}
+
+			// A push after the clearance re-alerts: the security property.
+			// The new commit carries a committer date from before the
+			// removal, as a contributor hiding a push behind the clearance
+			// would set it; only GitHub's check-suite timestamp counts.
+			f.mu.Lock()
+			f.prs[0] = sentinelPR(9, "eve", "hC")
+			f.timeline[9] = append(f.timeline[9], sentinelTimelineCommit("hC", "2026-10-22T02:00:00Z"))
+			if f.checkSuites == nil {
+				f.checkSuites = map[string][]string{}
+			}
+			f.checkSuites["hC"] = []string{"2026-10-22T19:00:00Z"}
+			f.mu.Unlock()
+			c := newTestClient(t, srv, "o", []string{"o/r"})
+			c.SetAppBotLogin("hive[bot]")
+			res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hC") {
+				t.Fatalf("push after clearance must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+			}
+		})
+	}
+}
+
+// A dashboard Approve releases the head it names (dibs#510): the alert and
+// marker are for head A, the PR moves to head B without a fresh alert (the
+// label from A still blocks it), and the owner approves B from the
+// dashboard, which takes the label off as the hive's own account and posts
+// the `/lgtm` + `/approve` comments bound to B. The `unlabeled` event is by
+// a hive account and so is not a human clearance on its own; the approval
+// comment is. The sweep must stay quiet for B across restarts, rewrite the
+// marker as the released alert for B, and still re-alert on a later push.
+func TestSweepSentinelDashboardApprovalReleasesHead(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "workflows", Paths: []string{".github/workflows/ci.yml"}}})
+	approvals := func(head string) []string {
+		var out []string
+		for _, command := range PRApprovalCommands {
+			out = append(out, renderPRApprovalCommandComment(command, "clubanderson", head))
+		}
+		return out
+	}
+	timeline := []map[string]any{
+		sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-28T23:30:22Z"),
+		sentinelTimelineCommit("hB", "2026-10-28T23:55:54Z"),
+		sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-29T00:32:07Z"),
+	}
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+		files:        map[int][]map[string]any{9: {{"filename": ".github/workflows/ci.yml", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: append([]string{alertA}, approvals("hB")...)},
+		commentUsers: map[int][]string{9: {"hive[bot]", "hive[bot]", "hive[bot]"}},
+		timeline:     map[int][]map[string]any{9: timeline},
+		checkSuites:  map[string][]string{"hB": {"2026-10-28T23:56:00Z"}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	for pass := 0; pass < 2; pass++ {
+		c := newTestClient(t, srv, "o", []string{"o/r"})
+		c.SetAppBotLogin("hive[bot]")
+		res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+		if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
+			t.Fatalf("pass %d: dashboard-approved head must stay quiet: res=%+v err=%v", pass, res, err)
+		}
+		if got := f.labels[9]; len(got) != 0 {
+			t.Fatalf("pass %d: label re-applied after the owner approved this head: %v", pass, got)
+		}
+		if len(f.comments[9]) != 3 {
+			t.Fatalf("pass %d: no new alert comment may be posted: %d comments", pass, len(f.comments[9]))
+		}
+		if body := f.comments[9][0]; !strings.Contains(body, SentinelMarker+" hB") || !strings.Contains(body, sentinelAlertHeading) || !strings.Contains(body, "@clubanderson approved this head from the Hive dashboard") {
+			t.Fatalf("pass %d: marker comment must be rewritten as the released alert for hB: %q", pass, body)
+		}
+	}
+
+	// New commits re-arm: the approval named hB, not hC.
+	f.mu.Lock()
+	f.prs[0] = sentinelPR(9, "eve", "hC")
+	f.checkSuites["hC"] = []string{"2026-10-29T01:00:00Z"}
+	f.mu.Unlock()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 4 || !strings.Contains(f.comments[9][3], SentinelMarker+" hC") {
+		t.Fatalf("push after the approval must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	}
+}
+
+// An approval comment releases nothing unless the hive wrote it for this
+// head: a forged one by the PR author and the hive's own approval of an
+// earlier head both leave the new head alerted on and labelled.
+func TestSweepSentinelDashboardApprovalNotHonoured(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	approval := func(head string) string { return renderPRApprovalCommandComment("/approve", "clubanderson", head) }
+	for _, tc := range []struct {
+		name   string
+		body   string
+		author string
+	}{
+		{"forged by the author", approval("hB"), "eve"},
+		{"hive approval of an earlier head", approval("hA"), "hive[bot]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &sentinelFixture{
+				prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+				files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+				labelExists:  true,
+				comments:     map[int][]string{9: {alertA, tc.body}},
+				commentUsers: map[int][]string{9: {"hive[bot]", tc.author}},
+				timeline: map[int][]map[string]any{9: {
+					sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+					sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+					sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-22T18:19:00Z"),
+				}},
+			}
+			srv := newSentinelServer(t, f)
+			defer srv.Close()
+			c := newTestClient(t, srv, "o", []string{"o/r"})
+			c.SetAppBotLogin("hive[bot]")
+			res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 3 || !strings.Contains(f.comments[9][2], SentinelMarker+" hB") {
+				t.Fatalf("new head must re-alert: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
+			}
+		})
+	}
+}
+
+// A hive that cannot name its own accounts (no configured identity, GET
+// /user unresolved) keeps the legacy any-author rule for its other once-only
+// markers, but not for the sentinel release: the PR author's forged
+// approval comment for their own head must leave it alerted on and
+// labelled (hivecommons/hive#15262).
+func TestSweepSentinelDashboardApprovalIdentityUnknownForgedNotHonoured(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+		files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: {alertA, renderPRApprovalCommandComment("/approve", "clubanderson", "hB")}},
+		commentUsers: map[int][]string{9: {"hive[bot]", "eve"}},
+		timeline: map[int][]map[string]any{9: {
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-22T18:19:00Z"),
+		}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	if c.knowsOwnAccounts() {
+		t.Fatal("fixture must leave the hive unable to name its own accounts")
+	}
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 3 || !strings.Contains(f.comments[9][2], SentinelMarker+" hB") {
+		t.Fatalf("forged approval must not release the head when identity is unknown: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
+	}
+}
+
+// A hive that cannot name its own accounts records a maintainer's clearance
+// in a comment it posts itself rather than editing the newest marker comment
+// of unverified authorship, which the PR author may have written.
+func TestSweepSentinelClearanceIdentityUnknownPostsOwnRecord(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	forged := SentinelMarker + " hA\nnot the hive's\n"
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+		files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: {alertA, forged}},
+		commentUsers: map[int][]string{9: {"hive[bot]", "eve"}},
+		timeline: map[int][]map[string]any{9: {
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:30Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}},
 	}
 	srv := newSentinelServer(t, f)
 	defer srv.Close()
 	c := newTestClient(t, srv, "o", []string{"o/r"})
 	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 0 || len(f.labels[9]) != 0 {
+		t.Fatalf("maintainer clearance must stay quiet: res=%+v err=%v labels=%v", res, err, f.labels[9])
+	}
+	if len(f.comments[9]) != 3 || f.comments[9][1] != forged || !strings.Contains(f.comments[9][2], SentinelMarker+" hB") {
+		t.Fatalf("clearance must be posted as a new comment, leaving the unverified one alone: %v", f.comments[9])
+	}
+}
+
+// The label removal counts only when it postdates a server-stamped push of
+// the current head and was made by a human who is not one of the hive's
+// accounts. A removal before the push, a removal by a hive account or
+// another bot, a head whose only "push time" is its own committer date, a
+// backdated commit pushed after the removal, and a force push of some
+// other SHA each leave the existing behaviour: the new head is alerted on
+// and labelled.
+func TestSweepSentinelClearanceOnNewerHeadRejected(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	cases := []struct {
+		name        string
+		timeline    []map[string]any
+		checkSuites map[string][]string
+		statuses    map[string][]string
+	}{
+		{"removed before the force push", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T02:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+		}, nil, nil},
+		{"removed before the check suite", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T02:00:00Z"),
+		}, map[string][]string{"hB": {"2026-10-22T06:25:00Z"}}, nil},
+		{"removed by a hive account", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"removed by another bot", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "renovate[bot]", "Bot", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"committer date is not a push time", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"backdated commit pushed after the removal", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, map[string][]string{"hB": {"2026-10-22T19:00:00Z"}}, map[string][]string{"hB": {"2026-10-22T19:00:01Z"}}},
+		{"force push of another sha", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hX", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"no push time known", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"empty timeline", nil, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &sentinelFixture{
+				prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+				files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+				labelExists:  true,
+				comments:     map[int][]string{9: {alertA}},
+				commentUsers: map[int][]string{9: {"hive[bot]"}},
+				timeline:     map[int][]map[string]any{9: tc.timeline},
+				checkSuites:  tc.checkSuites,
+				statuses:     tc.statuses,
+			}
+			srv := newSentinelServer(t, f)
+			defer srv.Close()
+			c := newTestClient(t, srv, "o", []string{"o/r"})
+			c.SetAppBotLogin("hive[bot]")
+			res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+			if err != nil || len(res.Flagged) != 1 {
+				t.Fatalf("new head must re-alert: res=%+v err=%v", res, err)
+			}
+			if got := f.labels[9]; len(got) != 1 || got[0] != "sentinel-alert" {
+				t.Fatalf("label must be applied: %v", got)
+			}
+			if len(f.comments[9]) != 2 || f.comments[9][0] != alertA || !strings.Contains(f.comments[9][1], SentinelMarker+" hB") {
+				t.Fatalf("a fresh alert for hB must be posted and the hA alert left alone: %v", f.comments[9])
+			}
+		})
+	}
+}
+
+const (
+	sentinelOwnersPatch      = "@@ -1,2 +1,3 @@\n approvers:\n   - alice\n+  - eve\n"
+	sentinelOwnersPatchOther = "@@ -1,2 +1,3 @@\n approvers:\n   - alice\n+  - mallory\n"
+)
+
+// sentinelClearedFixture runs the sweep on head hA so the hive posts its own
+// alert (with the flagged-content digest) and labels the PR, then moves the
+// PR to head hB as a push that GitHub stamped at 03:00, after a maintainer
+// removed the label at 02:00 by remover (a "User" unless it ends in [bot]).
+// filesB are hB's PR files. The PR files of hA are one OWNERS change.
+func sentinelClearedFixture(t *testing.T, remover string, filesB []map[string]any) (*sentinelFixture, func() *Client) {
+	t.Helper()
+	f := &sentinelFixture{
+		prs:         []map[string]any{sentinelPR(9, "eve", "hA")},
+		files:       map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatch}}},
+		labelExists: true,
+	}
+	srv := newSentinelServer(t, f)
+	t.Cleanup(srv.Close)
+	client := func() *Client {
+		c := newTestClient(t, srv, "o", []string{"o/r"})
+		c.SetAppBotLogin("hive[bot]")
+		return c
+	}
+	res, err := client().SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], sentinelContentPrefix) {
+		t.Fatalf("hA must be alerted with a content digest: res=%+v err=%v comments=%v", res, err, f.comments[9])
+	}
+	removerType := "User"
+	if strings.HasSuffix(remover, "[bot]") {
+		removerType = "Bot"
+	}
+	f.mu.Lock()
+	f.commentUsers = map[int][]string{9: {"hive[bot]"}}
+	f.prs[0] = sentinelPR(9, "eve", "hB")
+	f.files[9] = filesB
+	f.timeline = map[int][]map[string]any{9: {
+		sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-25T01:00:00Z"),
+		sentinelTimelineLabel("unlabeled", remover, removerType, "2026-10-25T02:00:00Z"),
+	}}
+	f.checkSuites = map[string][]string{"hB": {"2026-10-25T03:00:00Z"}}
+	f.mu.Unlock()
+	return f, client
+}
+
+// A maintainer clears the alert on hA, then a push (here a merge of the base
+// branch) moves the PR to hB. The removal predates hB, so #13602's rule does
+// not apply, but every flagged change on hB is byte-for-byte the one that was
+// reviewed: the clearance carries over, no label and no new alert, and the
+// hive's marker comment is rewritten as the cleared alert for hB so the next
+// pass (a fresh client, as after a restart) stays quiet too. A later push that
+// changes the flagged file re-alerts.
+func TestSweepSentinelClearanceCarriesOverUnchangedFlaggedChanges(t *testing.T) {
+	filesB := []map[string]any{{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatch}}
+	f, client := sentinelClearedFixture(t, "danathar", filesB)
+	for pass := 0; pass < 2; pass++ {
+		res, err := client().SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+		if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
+			t.Fatalf("pass %d: unchanged flagged changes must stay cleared: res=%+v err=%v", pass, res, err)
+		}
+		if got := f.labels[9]; len(got) != 1 {
+			t.Fatalf("pass %d: label must not be re-applied (only hA's alert labelled): %v", pass, got)
+		}
+		if len(f.comments[9]) != 1 {
+			t.Fatalf("pass %d: no new alert comment may be posted: %v", pass, f.comments[9])
+		}
+		body := f.comments[9][0]
+		if !strings.Contains(body, SentinelMarker+" hB") || !strings.Contains(body, sentinelAlertHeading) ||
+			!strings.Contains(body, "@danathar removed the `sentinel-alert` label after reviewing an earlier head") ||
+			!strings.Contains(body, sentinelContentPrefix) {
+			t.Fatalf("pass %d: marker comment must be the carried, cleared alert for hB: %q", pass, body)
+		}
+	}
+
+	f.mu.Lock()
+	f.prs[0] = sentinelPR(9, "eve", "hC")
+	f.files[9] = []map[string]any{{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatchOther}}
+	f.checkSuites["hC"] = []string{"2026-10-25T04:00:00Z"}
+	f.mu.Unlock()
+	res, err := client().SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 2 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hC") {
+		t.Fatalf("a changed flagged file must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	}
+}
+
+// The carry-over needs the same flagged content and a human's removal. A
+// changed patch, an added flagged file, a flagged file GitHub returns with
+// no patch, and a removal by a bot each leave the existing behaviour: hB is
+// alerted on and labelled.
+func TestSweepSentinelClearanceCarryOverRejected(t *testing.T) {
+	owners := map[string]any{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatch}
+	cases := []struct {
+		name    string
+		remover string
+		filesB  []map[string]any
+	}{
+		{"flagged patch changed", "danathar", []map[string]any{{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatchOther}}},
+		{"another flagged file", "danathar", []map[string]any{owners, {"filename": "CODEOWNERS", "status": "added", "patch": "@@ -0,0 +1 @@\n+* @eve\n"}}},
+		{"flagged file has no patch", "danathar", []map[string]any{{"filename": "OWNERS", "status": "modified"}}},
+		{"removed by a bot", "renovate[bot]", []map[string]any{owners}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, client := sentinelClearedFixture(t, tc.remover, tc.filesB)
+			res, err := client().SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+			if err != nil || len(res.Flagged) != 1 {
+				t.Fatalf("hB must re-alert: res=%+v err=%v", res, err)
+			}
+			if got := f.labels[9]; len(got) != 2 {
+				t.Fatalf("label must be applied again: %v", got)
+			}
+			if len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hB") {
+				t.Fatalf("a fresh alert for hB must be posted: %v", f.comments[9])
+			}
+		})
+	}
+}
+
+func TestSentinelFlaggedDigest(t *testing.T) {
+	findings := []sentinel.Finding{{Rule: "sensitive_path", Summary: "x", Paths: []string{"b", "a"}}}
+	files := []sentinel.File{{Path: "a", Status: "modified", Patch: "+1\n"}, {Path: "b", Status: "added", Patch: "+2\n"}, {Path: "c", Patch: "+3\n"}}
+	d := sentinelFlaggedDigest(findings, files)
+	if len(d) != 64 {
+		t.Fatalf("digest = %q", d)
+	}
+	reordered := []sentinel.Finding{{Rule: "sensitive_path", Summary: "other wording", Paths: []string{"a", "b"}}}
+	if got := sentinelFlaggedDigest(reordered, []sentinel.File{files[2], files[1], files[0]}); got != d {
+		t.Fatalf("path order, file order and summary must not matter: %q != %q", got, d)
+	}
+	unflagged := append([]sentinel.File(nil), files...)
+	unflagged[2].Patch = "+changed\n"
+	if got := sentinelFlaggedDigest(findings, unflagged); got != d {
+		t.Fatalf("a change to an unflagged file must not matter")
+	}
+	for name, mutate := range map[string]func([]sentinel.File){
+		"patch":  func(fs []sentinel.File) { fs[0].Patch = "+9\n" },
+		"status": func(fs []sentinel.File) { fs[1].Status = "modified" },
+	} {
+		changed := append([]sentinel.File(nil), files...)
+		mutate(changed)
+		if sentinelFlaggedDigest(findings, changed) == d {
+			t.Fatalf("a flagged file's %s change must change the digest", name)
+		}
+	}
+	if sentinelFlaggedDigest([]sentinel.Finding{{Rule: "other_rule", Paths: []string{"a", "b"}}}, files) == d {
+		t.Fatal("a different rule must change the digest")
+	}
+	for name, tc := range map[string]struct {
+		findings []sentinel.Finding
+		files    []sentinel.File
+	}{
+		"no findings":           {nil, files},
+		"finding with no path":  {[]sentinel.Finding{{Rule: "title"}}, files},
+		"flagged file missing":  {findings, files[:1]},
+		"flagged file no patch": {findings, []sentinel.File{{Path: "a", Patch: "+1\n"}, {Path: "b"}}},
+	} {
+		if got := sentinelFlaggedDigest(tc.findings, tc.files); got != "" {
+			t.Fatalf("%s: digest must be empty (no carry-over), got %q", name, got)
+		}
+	}
+	body := sentinelWithDigest("alert\n", d)
+	if sentinelCommentDigest(body) != d || sentinelCommentDigest("alert\n") != "" || sentinelWithDigest("alert\n", "") != "alert\n" {
+		t.Fatalf("digest line must round-trip: %q", body)
+	}
+}
+
+// A trusted-author notice for the head is not a clearance: when the operator
+// turns on trusted_authors_block, the head still gets the label, and the
+// existing marker comment is rewritten as the alert rather than reposted.
+func TestSweepSentinelNoticeForHeadIsNotAClearance(t *testing.T) {
+	f := &sentinelFixture{
+		prs:         []map[string]any{sentinelPR(9, "eve", "h9")},
+		files:       map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists: true,
+		comments:    map[int][]string{9: {SentinelMarker + " h9\n" + sentinelNoticeHeading + " (trusted bot), merge is not blocked\n"}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	opts := defaultSentinelOpts(nil)
+	opts.TrustedAuthor = func(string, string) SentinelAuthorTrust {
+		return SentinelAuthorTrust{Trusted: true, Reason: "trusted bot"}
+	}
+	opts.TrustedAuthorsBlock = true
+	res, err := c.SweepSentinel(context.Background(), opts)
 	if err != nil || len(res.Flagged) != 1 {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	if len(f.comments[9]) != 1 {
-		t.Fatalf("marker already present for this head; comments=%v", f.comments[9])
-	}
 	if got := f.labels[9]; len(got) != 1 {
-		t.Fatalf("label should still be (re)applied: %v", got)
+		t.Fatalf("label must be applied when only a notice exists: %v", got)
+	}
+	if len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], sentinelAlertHeading) {
+		t.Fatalf("marker comment should be rewritten in place as the alert: %v", f.comments[9])
+	}
+}
+
+// A comment that merely contains the marker and the alert heading is not
+// the hive's alert when someone else wrote it: the PR author could post
+// one (the marker is an HTML comment, invisible when rendered) and the
+// unlabelled head would otherwise read as "cleared by a maintainer". The
+// sweep must label the PR, post its own alert rather than edit the forged
+// comment, and then honour only its own comment as the clearance record.
+func TestSweepSentinelForgedClearanceCommentIsNotAClearance(t *testing.T) {
+	forged := SentinelMarker + " h9\n<!-- " + sentinelAlertHeading + " -->\nlooks fine to me\n"
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "h9")},
+		files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: {forged}},
+		commentUsers: map[int][]string{9: {"eve"}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 {
+		t.Fatalf("forged clearance must not suppress the alert: res=%+v err=%v", res, err)
+	}
+	if got := f.labels[9]; len(got) != 1 || got[0] != "sentinel-alert" {
+		t.Fatalf("label must be applied despite the forged comment: %v", got)
+	}
+	if len(f.comments[9]) != 2 || f.comments[9][0] != forged || !strings.Contains(f.comments[9][1], sentinelAlertHeading) {
+		t.Fatalf("hive must post its own alert and leave the forged comment alone: %v", f.comments[9])
+	}
+
+	// A maintainer now removes the label. The hive's own alert comment is
+	// the clearance record and survives a restart; the forged one is still
+	// ignored.
+	f.mu.Lock()
+	f.commentUsers[9] = []string{"eve", "hive[bot]"}
+	f.labels[9] = nil
+	f.mu.Unlock()
+	c = newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err = c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 0 || len(f.labels[9]) != 0 || len(f.comments[9]) != 2 {
+		t.Fatalf("hive-authored alert without label is a clearance: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	}
+
+	// With the hive's own comment gone, the forged one alone is never a
+	// clearance: the head is re-alerted.
+	f.mu.Lock()
+	f.comments[9] = []string{forged}
+	f.commentUsers[9] = []string{"eve"}
+	f.mu.Unlock()
+	c = newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err = c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 {
+		t.Fatalf("forged comment alone must re-alert: res=%+v err=%v labels=%v", res, err, f.labels[9])
+	}
+}
+
+func TestSentinelClearedByMaintainer(t *testing.T) {
+	alert := &gh.IssueComment{Body: gh.Ptr(SentinelMarker + " h\n" + sentinelAlertHeading + "\n")}
+	notice := &gh.IssueComment{Body: gh.Ptr(SentinelMarker + " h\n" + sentinelNoticeHeading + " (x), merge is not blocked\n")}
+	if !sentinelClearedByMaintainer(alert, true) {
+		t.Fatal("alert comment present without label is a clearance")
+	}
+	if sentinelClearedByMaintainer(alert, false) || sentinelClearedByMaintainer(nil, true) {
+		t.Fatal("no comment is not a clearance")
+	}
+	if sentinelClearedByMaintainer(notice, true) {
+		t.Fatal("a trusted-author notice is not a clearance")
 	}
 }
 

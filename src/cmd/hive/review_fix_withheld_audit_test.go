@@ -54,3 +54,31 @@ func TestAuditWithheldReviewFixesNoEntriesNoAuditor(t *testing.T) {
 	// A nil auditor (no dashboard) must not panic; the log line still fires.
 	auditWithheldReviewFixes(review.DispatchPlan{WithheldFixes: []review.WithheldFix{{Repo: "acme/x", Number: 1, Setting: review.WithheldFixSetting}}}, nil, logger)
 }
+
+// TestAuditWithheldReviewFixesRecordsSettingOn: with fix_human_prs on the
+// push is still withheld (hivecommons/hive#12897), and the audit entry must
+// say the setting was on rather than claim it was off.
+func TestAuditWithheldReviewFixesRecordsSettingOn(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	plan := review.DispatchPlan{WithheldFixes: []review.WithheldFix{
+		{Repo: "acme/chairlift", Number: 303, HeadSHA: "b91fee3", Author: "contributor", Setting: review.WithheldFixSetting, SettingEnabled: true, Withheld: time.Now().UTC()},
+	}}
+	auditor := &recordingFixAuditor{}
+	auditWithheldReviewFixes(plan, auditor, logger)
+	if len(auditor.entries) != 1 || !strings.Contains(auditor.entries[0], "setting=review.fix_human_prs=true") {
+		t.Fatalf("audit entry must record the setting as on: %v", auditor.entries)
+	}
+}
+
+func TestAuditWithheldReviewFixesNotHiveAuthoredExclusionIsNotWarn(t *testing.T) {
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	plan := review.DispatchPlan{FixExclusions: []review.FixDispatchExclusion{
+		{Repo: "acme/x", Number: 1, HeadSHA: "abc", Author: "human", Reason: review.FixDispatchExcludedNotHiveAuthored},
+	}}
+	auditWithheldReviewFixes(plan, nil, logger)
+	out := buf.String()
+	if !strings.Contains(out, "review fix dispatch excluded") || strings.Contains(out, "level=WARN") {
+		t.Fatalf("not-hive-authored exclusion must log below WARN, got: %s", out)
+	}
+}

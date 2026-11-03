@@ -1,0 +1,1 @@
+- CI-poll self-reports now describe observed repeated CI-status commands and distinguish repeated reads from total reads, rather than claiming the agent was polling its own PR when PR ownership is unknown (#14384).

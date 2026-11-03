@@ -1,7 +1,7 @@
 # Release-line branch allow-lists — the single source of truth for which
 # version branches CI is expected to cover.
 #
-# Nine workflows pin their `push` / `pull_request` triggers to an explicit list
+# The workflows below pin their `push` / `pull_request` triggers to an explicit list
 # of version-branch names. That list is hand-maintained, and it has already
 # failed once: podman-contract.yml named `v2` alone, mainline moved to `v4`, and
 # the workflow stopped running entirely (#4339). A guard that never executes
@@ -89,12 +89,30 @@ pinned:
   # GitHub Actions Workflow triage compiles only on the active v5 line; older
   # release lines do not carry the gh-aw automation surface.
   gh-aw-compile.yml: [-v4]
+  # Self-test for the hive-action-smoke dispatch workflow (#12964). Its push
+  # trigger names v5 only: the smoke workflow is registered on v5 and does not
+  # exist on the feature-frozen v4 line, so there is nothing there to test.
+  hive-action-smoke-tests.yml: [-v4]
   go-security-analysis.yml: [v5, v6]
   # Unit gate for the reusable hive action's app-handle helper (#9707). The
   # action and its smoke wiring live only on the v6 development line, so the
   # push filter watches v6 alone; v4 is feature-frozen and v5 never carried
   # the action, hence the explicit exclusions.
   hive-action-tests.yml: [v6, -v4, -v5]
+  # Headless phone-viewport sweep of the Hive Chat panel (#11852). The chat
+  # panel, its chip lists and the sweep script live only on the v6 development
+  # line, so its pull_request filter watches v6 alone; v4 is feature-frozen and
+  # v5 never carried the panel, hence the explicit exclusions.
+  hive-chat-phone-sweep.yml: [v6, -v4, -v5]
+  # promtool check + unit tests for the monitoring component's PrometheusRule
+  # (#15438). The component exists only on the v6 development line; v4 is
+  # feature-frozen and v5 never carried it, hence the explicit exclusions.
+  prometheusrule-check.yml: [v6, -v4, -v5]
+  # Renders every kustomize overlay, plus the monitoring component (#15503).
+  # Same v6-only reasoning as prometheusrule-check.yml: the component exists
+  # only on the v6 development line; v4 is feature-frozen and v5 never
+  # carried it, hence the explicit exclusions.
+  kustomize-render.yml: [v6, -v4, -v5]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []
@@ -151,6 +169,19 @@ pinned:
   # watches (v4 reaches v6 through v5), and v6 is the merge TARGET, not a
   # trigger.
   v6-topup.yml: [v5, -v4]
+  # Publishes src/crux to hivecommons/crux (#14138). It watches the ONE line
+  # the published module is cut from — v5, where the nested module lives and
+  # where `crux/vX.Y.Z` tags are made. v4 is feature-frozen and has no
+  # src/crux; publishing from two lines would race on hivecommons/crux main.
+  crux-sync.yml: [-v4]
+  # Nightly + path-filtered Forgejo smoke (#14116). Its push/pull_request
+  # filters name v5 only: the forge.Merger it exercises lives on v5, and v4 is
+  # feature-frozen.
+  forgejo-smoke.yml: [-v4]
+  # Publishes the headless Twitch streamer image (#15594) from v5 only: the
+  # dashboard's `?kiosk=1` mode it depends on lives on v5 and v4 is
+  # feature-frozen. The image is operator tooling, not a hive release channel.
+  stream-image.yml: [-v4]
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard

@@ -1,0 +1,1 @@
+- Adopted fork PRs are now closed (with a note linking the superseding PR) when the superseder merges, regardless of which stage the original has since moved to; when hive cannot close the original it is marked superseded so the activity monitor drops the row (#14471).

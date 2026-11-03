@@ -18,23 +18,31 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/advisor"
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/review/autoscale"
+	"github.com/hivecommons/hive/pkg/runtimeobs"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 //go:embed static
@@ -89,22 +97,106 @@ func isOwnerRole(role string) bool {
 // A WRONG proof header is ALWAYS rejected regardless of this setting.
 var proxyProofRequired = true
 
+// staleDropStarvationThreshold is the number of consecutive stale-snapshot
+// drops (no publish between) at which the drop is logged at Warn.
+const staleDropStarvationThreshold = 5
+
 type Server struct {
-	port                   int
-	authToken              string
-	statusMu               sync.RWMutex
-	status                 *StatusPayload
-	sseClients             map[chan []byte]struct{}
-	sseMu                  sync.Mutex
-	logger                 *slog.Logger
-	mux                    *http.ServeMux
-	deps                   *Dependencies
+	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
+
+	feedbackRefreshBackoff feedbackBackoff
+
+	// mergeTrains remembers the trains between tracker builds: the hourly
+	// "merge train stalled" activity-log line per train and each member's
+	// first estimate (stage_tracker_merge_train.go).
+	mergeTrains mergeTrainMemory
+
+	// chatGroundedInflight caps concurrent grounded chat turns
+	// (api_chat_grounded.go); created lazily by chatGroundedSlots.
+	chatGroundedOnce     sync.Once
+	chatGroundedInflight chan struct{}
+
+	port       int
+	authToken  string
+	statusMu   sync.RWMutex
+	status     *StatusPayload
+	sseClients map[chan []byte]struct{}
+	sseMu      sync.Mutex
+	logger     *slog.Logger
+	mux        *http.ServeMux
+	deps       *Dependencies
+	// stageStore is the stage-label memory /api/stage-tracker reads; nil
+	// means the process-wide stagelabels.Shared(). Tests inject one.
+	stageStore *stagelabels.Store
+	// presenceLookup overrides the contribute hub as the tracker's author
+	// presence source for 072 rows (stage_tracker_adoption.go); tests only.
+	presenceLookup func(login string) (automerge.ContributorPresence, bool)
+	// fixWorkLookup overrides the contribute hub as the tracker's fix-queue
+	// source for the rework-pickup signal (stage_tracker_rework.go); tests only.
+	fixWorkLookup func(login, repo string, number int) (StageTrackerFixWork, bool)
+	// sweepState overrides the automerge lanes' live sweep state for the
+	// tracker's merge-gate rows (stage_tracker_merge_gate.go); tests only.
+	sweepState func() automerge.SweepState
+	// adoptNowWait / rerouteAfterFunc let tests shorten the Adopt now
+	// sweep wait and run the reroute pickup timer by hand
+	// (api_repo_item_decision_reroute.go); zero/nil use the real clock.
+	adoptNowWait     time.Duration
+	rerouteAfterFunc func(time.Duration, func())
+	// rerouteCandidates overrides the contribute hub as the tracker's
+	// online-clanker source for the Reroute submenu; tests only.
+	rerouteCandidates func(author string) []RerouteCandidate
+	// mergeAttempts overrides the process-wide merge-attempt registry for
+	// the tracker's "Merging" rows (stage_tracker_merge_gate.go); tests only.
+	mergeAttempts func() []github.MergeAttempt
+	// stageTrackerCache is the last /api/stage-tracker payload built from
+	// the status snapshot, served until its TTL lapses (stage_tracker_build.go).
+	stageTrackerCache   stageTrackerCache
+	stageTrackerCacheMu sync.Mutex
+	// stageTrackerBuild is the one rebuild in flight, nil when none; it is
+	// guarded by stageTrackerCacheMu, which is never held across the build.
+	stageTrackerBuild *stageTrackerBuild
+	// stageTrackerGen counts invalidations so a build can tell whether the
+	// status it rendered was superseded while it ran.
+	stageTrackerGen uint64
+	// stageTrackerBuildFn replaces buildStageTracker in tests that need a
+	// build they can hold open; nil in production.
+	stageTrackerBuildFn func(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse
+	// stageTrackerLinks memoises the issue lookups that title the tracker's
+	// untitled links across rebuilds (stage_tracker_links.go).
+	stageTrackerLinks stageTrackerLinkMemo
+	// evidenceHB is the background-refreshed evidence aggregate the hub
+	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
+	evidenceHB evidenceHeartbeatCache
+	// repoHealth serves GET /api/repos/{owner}/{repo}/health
+	// (api_repo_health.go); zero value reports search as disabled.
+	repoHealth repoHealthSource
+	// stageTrackerServed flips once /api/stage-tracker has been built; it
+	// gates the SSE nudge UpdateStatusIfFresh sends after a publish.
+	stageTrackerServed bool
+	// stageTrackerNudge coalesces the SSE nudges to one per ~2s.
+	stageTrackerNudge stageTrackerNudger
+	// webhookRefresh re-reads the PR or issue a GitHub webhook named and
+	// patches its tracker row (webhook_tracker_refresh.go); built lazily.
+	webhookRefresh     *webhookTrackerRefresher
+	webhookRefreshOnce sync.Once
+	// webhookPatches remembers the webhook re-reads applied to the status
+	// snapshot so UpdateStatusIfFresh can re-apply them to a snapshot the
+	// governor built from an older enumeration (webhook_tracker_refresh.go).
+	// Guarded by statusMu.
+	webhookPatches map[string]webhookPatchEntry
+	// closedSweep is the tracker's closed-item backstop
+	// (stage_tracker_closed_sweep.go).
+	closedSweep            closedSweepState
 	sidebar                interface{}
 	sidebarMu              sync.RWMutex
 	actionsJWKSMu          sync.Mutex
 	actionsJWKSUntil       time.Time
 	actionsJWKSLastRefetch time.Time
 	actionsJWKSKeys        map[string]interface{}
+	// merged is the persistent record of merged PRs behind the tracker's
+	// "Merged" chip (merged_ledger.go); built lazily by mergedLedger.
+	merged     *MergedLedger
+	mergedOnce sync.Once
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
@@ -117,6 +209,7 @@ type Server struct {
 	knowledgeMu       sync.Mutex
 	levelMu           sync.Mutex
 	restartMu         sync.Mutex // serializes concurrent agent restart operations
+	advisorWriteMu    sync.Mutex // serializes advisor edits so a rollback cannot undo a concurrent edit
 	gatewayHealthOnce sync.Once
 	gatewayHealth     *serverGatewayHealthStore
 
@@ -135,6 +228,13 @@ type Server struct {
 	repoRescanLast     ReposRescanResult
 	repoHoldPermMu     sync.Mutex
 	repoHoldPermCache  map[string]repoHoldPermissionCacheEntry
+	// delegatedJobs tracks "Let hive decide" jobs by repo#number
+	// (api_repo_item_decide_delegated.go).
+	delegatedJobs delegatedDecisionJobs
+	// operatorActionStore is the owner row-action ledger behind the
+	// activity monitor's ✓ badge (operator_actions.go), opened on first use.
+	operatorActionStore *operatorActionStore
+	operatorActionsOnce sync.Once
 	// acmmLinearBaseURL overrides the Linear GraphQL endpoint the ACMM
 	// "Open Issue" path posts issueCreate to. Empty = production; tests
 	// point it at an httptest server.
@@ -164,6 +264,10 @@ type Server struct {
 	// a live tmux pane.
 	captureFullLogFn func(name string) (string, error)
 
+	// jobTerminal holds the test seams for the sandbox.runtime: job
+	// terminal (job_terminal.go); zero values take in-cluster defaults.
+	jobTerminal jobTerminalDeps
+
 	kickBrainstormSendKickFn func(name, msg string) error
 	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
 	kickBrainstormDoneFn     func()
@@ -177,6 +281,10 @@ type Server struct {
 	tokenHist *collect.TimeSeries[TokenSparklineEntry]
 	factHist  *collect.TimeSeries[FactHistoryEntry]
 	costHist  *collect.TimeSeries[CostHistoryEntry]
+	// costRollup holds per-UTC-day spend folded out of costHist so the Cost
+	// section can reach beyond the ring's ~30 days (see cost_rollup.go).
+	costRollupMu sync.Mutex
+	costRollup   map[string]CostDailyRollup
 	// budgetWindowHist records one row per CLOSED budget window (#4298). Lazily
 	// built like the sparkline rings so a zero-value Server works in tests.
 	budgetWindowOnce sync.Once
@@ -211,6 +319,13 @@ type Server struct {
 	// already been told succeeded. Both guarded by statusMu.
 	statusSeq           uint64
 	statusMutationEpoch uint64
+	// statusStaleDrops counts snapshots UpdateStatusIfFresh refused because
+	// a mutation landed mid-build. Published on the payload so a dashboard
+	// whose snapshot stops advancing shows whether the guard is the reason.
+	statusStaleDrops uint64
+	// statusConsecutiveStaleDrops resets on every publish; reaching
+	// staleDropStarvationThreshold means publishing is starved.
+	statusConsecutiveStaleDrops uint64
 
 	// fact/cost histories were migrated to the generic timeSeries store (#2041);
 	// the trend history (#2039) remains a dedicated buffer for now.
@@ -219,6 +334,11 @@ type Server struct {
 
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
+
+	// stdioBuildMu guards lastSeenStdio and lastSeenStdioAt (#12318).
+	stdioBuildMu    sync.RWMutex
+	lastSeenStdio   string
+	lastSeenStdioAt time.Time
 	// advisoryLastPostedAt / advisoryLastFindings / advisoryLastError record the
 	// outcome of the most recent advisory-digest post ATTEMPT, so the heartbeat
 	// builder can report it to the hub and a hive whose digest has quietly gone
@@ -296,6 +416,10 @@ type Server struct {
 	advisorRecords *advisor.Store
 	advisorStatus  func(agent string) (bool, string)
 
+	// portfolioSearch is the search backend GET /api/search reads (#14637);
+	// nil until the indexer starts. See api_search.go.
+	portfolioSearch searchBackendState
+
 	// presenceEngagedAt maps a username to the last time their browser
 	// reported ENGAGED presence (tab visible + recent input; see presence.go).
 	// Lazily initialized under presenceMu, freshness-pruned on read.
@@ -320,6 +444,10 @@ type Server struct {
 	// one, or forever on a spoke the hub does not manage. Guarded by versionMu.
 	hubUpgradePolicy   *spoke.HeartbeatUpgradePolicy
 	hubUpgradePolicyAt time.Time
+	// upgradeDrain reports the live self-upgrade drain latch (cmd/hive's
+	// selfUpgradeDrain) so /api/status can show the countdown and the agents
+	// holding it (#14856). Guarded by versionMu; nil when not installed.
+	upgradeDrain upgradeDrainSource
 	// hubPushedDashboardURL is the vanity dashboard URL the hub last delivered
 	// on a heartbeat (#7451). Non-empty means the hub owns hub.dashboard_url:
 	// an operator edit would be reverted by the next push, and until then a
@@ -424,6 +552,19 @@ type Server struct {
 	hiveAdviceLoaded bool
 
 	githubAppRecheckFn func() bool
+	// goodFirstIssueStats provides the good-first-issue curation counters
+	// (selected / released / converted) the Features card shows. The value
+	// is JSON-encoded as-is (cmd/hive passes gfi.Stats); typed as any so the
+	// dashboard does not import pkg/gfi (import ratchets).
+	goodFirstIssueStats atomic.Pointer[func() any]
+	// writebackGate is the unsolicited write-back gate (api_writeback.go);
+	// sentinelFindings is the ring behind /api/sentinel.
+	writebackMu      sync.RWMutex
+	writebackGate    *writeback.Gate
+	sentinelFindings sentinelFindings
+	// hotspotSource is the merge-hotspot advisor's store (api_hotspots.go).
+	hotspotMu     sync.RWMutex
+	hotspotSource HotspotSource
 
 	// forgeAppInventoryFn supplies the Forge App tab's key inventory from
 	// cmd/hive (resolved active key path + per-app-id PVC keys, fingerprints
@@ -440,20 +581,61 @@ type Server struct {
 	npsIssueLimiter npsRateLimiter
 	// npsIssueFiler overrides the forge client for detractor issues (tests).
 	npsIssueFiler npsIssueFiler
+	// nousIssueFiler overrides the forge client for promoted Experiment Lab
+	// verdict issues (tests).
+	nousIssueFiler nousIssueFiler
+
+	// requestLog records each dashboard request (hivecommons/hive#11944,
+	// request_log.go). Start() opens it; nil disables recording, as in the
+	// tests built on Handler().
+	requestLog *slog.Logger
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands    *OverviewBands            `json:"overview_bands,omitempty"`
-	OverviewTotals   FrontendOverviewTotals    `json:"overviewTotals"`
-	ActionableNow    FrontendActionableNow     `json:"actionableNow"`
+	OverviewBands *OverviewBands `json:"overview_bands,omitempty"`
+	// OverviewSlices is the Overview charts' slice taxonomy; each issue and
+	// PR row carries its slice as chart_slice (hivecommons/hive#11507).
+	OverviewSlices *OverviewSlices        `json:"overview_slices,omitempty"`
+	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
+	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
+	// OpenItems is the canonical open-items set the Overview tile, its
+	// sidebar pill and the Hive activity monitor all count (open_items.go).
+	OpenItems        FrontendOpenItems         `json:"openItems"`
 	OverviewCoverage *FrontendOverviewCoverage `json:"overviewCoverage,omitempty"`
+	// LabelPresets are the built-in label-filter presets the Projects cards'
+	// faceted filter offers (hivecommons/hive#12172). Served rather than
+	// hard-coded in the page so the "Needs human" preset is the same
+	// hard-suppress / hold label set the enumeration parks on.
+	LabelPresets []FrontendLabelPreset `json:"labelPresets,omitempty"`
+	// StageEngine is the ADR-0025 central stage engine's mode and counters
+	// (governor.labels.stage.engine.mode). Filled at serve time from
+	// Dependencies.StageEngineStatus; absent when the hive has no engine.
+	StageEngine *stageengine.Status `json:"stageEngine,omitempty"`
+	// ReviewerAutoscale is the reviewer-lane autoscaler's snapshot
+	// (hivecommons/hive#14685); absent when autoscale is off.
+	ReviewerAutoscale *autoscale.Status `json:"reviewerAutoscale,omitempty"`
+	// SLA is the fleet-wide Delivery SLA roll-up (spans, 30-day history,
+	// stale in-progress issues, targets); per-repo blocks sit on each repo.
+	SLA *FrontendSLA `json:"sla,omitempty"`
 	// OverviewKPIIncomplete means at least one configured repo did not produce
 	// forge totals for this status snapshot, so Overview KPI history must not
 	// record it as a real point.
-	OverviewKPIIncomplete bool   `json:"overviewKPIIncomplete"`
-	Timestamp             string `json:"timestamp"`
-	TimeZone              string `json:"timeZone,omitempty"`
+	OverviewKPIIncomplete bool `json:"overviewKPIIncomplete"`
+	// StaleSince (RFC 3339) is set when any repo's counts and items are
+	// last-good figures rather than a fresh read: the previous enumeration
+	// kept after GitHub refused the fetch (#13382), or the forgestate cache's
+	// last-good open totals after a failed reconcile (#13376). The Overview
+	// says "stale since <t>" instead of showing zeros. Empty when fresh.
+	StaleSince string `json:"staleSince,omitempty"`
+	// RestartRefresh is set while StaleSince points at the snapshot this
+	// process restored from disk at startup, before its first enumeration
+	// completed. The Overview then says "refreshing after restart · N/M
+	// repos scanned · showing snapshot from <t>" instead of "stale since
+	// <previous process's time>". Nil once a fresh enumeration publishes.
+	RestartRefresh *FrontendRestartRefresh `json:"restartRefresh,omitempty"`
+	Timestamp      string                  `json:"timestamp"`
+	TimeZone       string                  `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -463,7 +645,12 @@ type StatusPayload struct {
 	// Seqs restart at 1 when the spoke restarts; the frontend resets its
 	// guard counters when the instance changes instead of dropping forever.
 	StatusInstance string `json:"statusInstance"`
-	HiveID         string `json:"hiveId"`
+	// StatusStaleDrops is how many full snapshots this process refused to
+	// publish because a state mutation raced their build. A rising count
+	// alongside a static StatusSeq means the guard — not the publisher — is
+	// starving the dashboard.
+	StatusStaleDrops uint64 `json:"statusStaleDrops,omitempty"`
+	HiveID           string `json:"hiveId"`
 	// HiveIDEditable reports whether the Hive ID may be changed from this
 	// dashboard, and HiveIDLockReason explains why not when it may not
 	// (#7247). Computed server-side for the same reason the release-channel
@@ -474,6 +661,10 @@ type StatusPayload struct {
 	HiveIDLockReason string           `json:"hiveIdLockReason,omitempty"`
 	Features         FrontendFeatures `json:"features"`
 	Agents           []FrontendAgent  `json:"agents"`
+	// Providers rolls Agents up per provider into two separate dimensions,
+	// auth_state and availability_state (ADR-0024, #12611). Redacted; the
+	// same block the hub heartbeat carries. Omitted when disabled.
+	Providers []crux.ProviderStatus `json:"providers,omitempty"`
 	// HiddenAgents is diagnostic-only (#6581): agent-manager runtime entries
 	// that were left out of Agents (the dashboard cards), each with the stable
 	// reason category it was omitted for. It exists so an operator whose
@@ -483,12 +674,16 @@ type StatusPayload struct {
 	HiddenAgents     []HiddenAgentInfo         `json:"hiddenAgents,omitempty"`
 	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
 	Governor         FrontendGovernor          `json:"governor"`
-	Tokens           FrontendTokens            `json:"tokens"`
-	Repos            []FrontendRepo            `json:"repos"`
-	Swarm            SwarmStatus               `json:"swarm"`
-	Beads            FrontendBeads             `json:"beads"`
-	Planning         FrontendPlanning          `json:"planning"`
-	Runs             []RunSummary              `json:"runs"`
+	// YourTurn is the hive-wide your-turn count and its collapsed root
+	// causes (computeCriticalPath); the phone widget's YOUR TURN cells read
+	// the root causes.
+	YourTurn *FrontendYourTurn `json:"yourTurn,omitempty"`
+	Tokens   FrontendTokens    `json:"tokens"`
+	Repos    []FrontendRepo    `json:"repos"`
+	Swarm    SwarmStatus       `json:"swarm"`
+	Beads    FrontendBeads     `json:"beads"`
+	Planning FrontendPlanning  `json:"planning"`
+	Runs     []RunSummary      `json:"runs"`
 	// RunHistory is the bounded public run block (#8349): live runs plus the
 	// most recent finished ones, titles scrubbed. Omitted (nil) when the run
 	// registry is unavailable so snapshot consumers render unknown, not zero.
@@ -500,17 +695,24 @@ type StatusPayload struct {
 	// from the shallow /api/health liveness signal or the repo-workflow
 	// Health map above, so the pill can never show "Health OK" while the
 	// spoke's own agents are down (#2465).
-	DeepHealth          map[string]any    `json:"deepHealth,omitempty"`
-	Budget              FrontendBudget    `json:"budget"`
-	CadenceMatrix       []FrontendCadence `json:"cadenceMatrix"`
-	GHRateLimits        map[string]any    `json:"ghRateLimits"`
-	APIBudget           map[string]any    `json:"api_budget"`
-	AgentMetrics        map[string]any    `json:"agentMetrics"`
-	Hold                FrontendHold      `json:"hold"`
-	IssueToMerge        map[string]any    `json:"issueToMerge"`
-	ACMMLevel           int               `json:"acmmLevel"`
-	ACMMLevelConfigured bool              `json:"acmmLevelConfigured"`
-	ACMMPackAgents      []string          `json:"acmmPackAgents"`
+	DeepHealth    map[string]any    `json:"deepHealth,omitempty"`
+	Budget        FrontendBudget    `json:"budget"`
+	CadenceMatrix []FrontendCadence `json:"cadenceMatrix"`
+	GHRateLimits  map[string]any    `json:"ghRateLimits"`
+	APIBudget     map[string]any    `json:"api_budget"`
+	AgentMetrics  map[string]any    `json:"agentMetrics"`
+	Hold          FrontendHold      `json:"hold"`
+	// FleetRun is the governor-strip `running N · $X this hour` figure (#14576).
+	FleetRun            FrontendFleetRun `json:"fleetRun"`
+	IssueToMerge        map[string]any   `json:"issueToMerge"`
+	ACMMLevel           int              `json:"acmmLevel"`
+	ACMMLevelConfigured bool             `json:"acmmLevelConfigured"`
+	ACMMPackAgents      []string         `json:"acmmPackAgents"`
+	// AdmissionLabels are the labels a maintainer adds to admit an untrusted
+	// reporter's issue (project.issue_filter.reporter_trust); the "your turn"
+	// menu for an ADMIT item names them. It is read from configuration, with
+	// no GitHub call.
+	AdmissionLabels []string `json:"admissionLabels,omitempty"`
 	// ACMMAdvice is the advisory level-up recommendation (#5225), derived from
 	// the same live signals the /api/acmm-recommendation endpoint serves so the
 	// two surfaces can never drift. It is ADVISORY ONLY: nothing acts on it
@@ -524,8 +726,13 @@ type StatusPayload struct {
 	SystemResources     *SystemResources            `json:"systemResources,omitempty"`
 	GitHubAppRequired   bool                        `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string                      `json:"githubAppInstallURL,omitempty"`
-	GitHubAppPermIssue  string                      `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState      string                      `json:"githubAppState,omitempty"`
+	// Capabilities summarises the GitHub App permissions tracker items are
+	// blocked on (pkg/blocker ledger): ⚙ → Security/Features reads
+	// "GitHub App permissions: missing `workflows` · N items blocked"
+	// (hivecommons/hive#15099).
+	Capabilities       *FrontendCapabilities `json:"capabilities,omitempty"`
+	GitHubAppPermIssue string                `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState     string                `json:"githubAppState,omitempty"`
 	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
 	// or classification: a real App is named (app_id set, not the placeholder)
 	// but installation_id is 0. That state alone means every token is a
@@ -599,6 +806,12 @@ type FrontendOverviewTotal struct {
 // FrontendFeatures is the secret-free set of dashboard feature flags consumed
 // by the SPA.
 type FrontendFeatures struct {
+	// ExperimentLab gates the Nous / Experiment Lab section.
+	ExperimentLab bool `json:"experiment_lab"`
+	// StrategyLab mirrors ExperimentLab under the pre-rename name so external
+	// snapshot builders keep working for one release (#11695).
+	//
+	// Deprecated: read experiment_lab instead.
 	StrategyLab bool `json:"strategy_lab"`
 }
 
@@ -717,36 +930,44 @@ type FrontendAgent struct {
 	// the prompt. The SPA renders this as "Waiting on CI" instead of
 	// "Working" so a stalled-on-CI agent no longer looks indistinguishable
 	// from one making progress.
-	AwaitingCI        bool   `json:"awaitingCI,omitempty"`
-	Paused            bool   `json:"paused"`
-	PausedAt          string `json:"pausedAt,omitempty"`
-	PausedReason      string `json:"pausedReason,omitempty"`
-	PausedTrigger     string `json:"pausedTrigger,omitempty"`
-	PausedBy          string `json:"pausedBy,omitempty"`
-	OffByCadence      bool   `json:"offByCadence"`
-	NoCadence         bool   `json:"noCadence"`
-	NeedsLogin        bool   `json:"needsLogin"`
-	LoginURL          string `json:"loginURL,omitempty"`
-	AuthAvailable     bool   `json:"authAvailable"`
-	AuthKnown         bool   `json:"authKnown"`
-	CLI               string `json:"cli"`
-	Model             string `json:"model"`
-	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
-	Cadence           string `json:"cadence"`
-	Doing             string `json:"doing"`
-	PinnedCli         bool   `json:"pinnedCli"`
-	PinnedModel       bool   `json:"pinnedModel"`
-	PinnedBoth        bool   `json:"pinnedBoth"`
-	Pinned            bool   `json:"pinned"`
-	LastKick          string `json:"lastKick,omitempty"`
-	LastKickAt        string `json:"lastKickAt,omitempty"`
+	AwaitingCI    bool   `json:"awaitingCI,omitempty"`
+	Paused        bool   `json:"paused"`
+	PausedAt      string `json:"pausedAt,omitempty"`
+	PausedReason  string `json:"pausedReason,omitempty"`
+	PausedTrigger string `json:"pausedTrigger,omitempty"`
+	PausedBy      string `json:"pausedBy,omitempty"`
+	// OperatorStopped is true when the agent was stopped explicitly (not by a
+	// crash), so the governor will not revive it.
+	OperatorStopped bool   `json:"operatorStopped,omitempty"`
+	OffByCadence    bool   `json:"offByCadence"`
+	NoCadence       bool   `json:"noCadence"`
+	NeedsLogin      bool   `json:"needsLogin"`
+	LoginURL        string `json:"loginURL,omitempty"`
+	AuthAvailable   bool   `json:"authAvailable"`
+	AuthKnown       bool   `json:"authKnown"`
+	CLI             string `json:"cli"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Cadence         string `json:"cadence"`
+	Doing           string `json:"doing"`
+	PinnedCli       bool   `json:"pinnedCli"`
+	PinnedModel     bool   `json:"pinnedModel"`
+	PinnedBoth      bool   `json:"pinnedBoth"`
+	Pinned          bool   `json:"pinned"`
+	LastKick        string `json:"lastKick,omitempty"`
+	LastKickAt      string `json:"lastKickAt,omitempty"`
+	// StyleSource is which house style the last kick carried: repo
+	// (HIVE_STYLE.md in the managed repo), hive (project.style /
+	// style_file) or built-in; empty when the agent has not been kicked
+	// since the feature landed.
+	StyleSource       string `json:"styleSource,omitempty"`
 	NextKick          string `json:"nextKick,omitempty"`
 	NextKickAt        string `json:"nextKickAt,omitempty"`
 	NextKickIn        string `json:"nextKickIn,omitempty"`
 	Continuous        bool   `json:"continuous,omitempty"`
 	ContinuousBackoff string `json:"continuousBackoff,omitempty"`
 	FrontendAgentContinuous
-	SubAgentModels []agent.SubAgentModel `json:"subAgentModels,omitempty"`
+	SubAgentModels []crux.SubAgentModel `json:"subAgentModels,omitempty"`
 
 	KicksUndeliverable     int    `json:"kicksUndeliverable,omitempty"`
 	BusySince              string `json:"busySince,omitempty"`
@@ -772,11 +993,28 @@ type FrontendAgent struct {
 	ProxyViolations        int    `json:"proxyViolations"`
 	OnDemand               bool   `json:"onDemand,omitempty"`
 	Sandboxed              bool   `json:"sandboxed,omitempty"`
-	LastError              string `json:"lastError,omitempty"`
-	StallNudges            int    `json:"stallNudges,omitempty"`
-	ActionNudges           int    `json:"actionNudges,omitempty"`
-	TransientNudges        int    `json:"transientNudges,omitempty"`
-	CIPollNudges           int    `json:"ciPollNudges,omitempty"`
+	// SandboxRun is the last sandboxed run and the health verdict derived
+	// from it (sandbox_health.go). Present only for sandboxed agents; the
+	// SPA reads health from here instead of State, which is "idle" between
+	// kicks for an agent that has no session to be down.
+	SandboxRun *FrontendSandboxRun `json:"sandboxRun,omitempty"`
+	// SandboxRuntime is the effective sandbox.runtime for a sandboxed agent
+	// ("podman" or "job"); the SPA routes "▶ terminal" to the Job pod log
+	// viewer for "job" (hivecommons/hive#14798). Empty when not sandboxed.
+	SandboxRuntime  string `json:"sandboxRuntime,omitempty"`
+	LastError       string `json:"lastError,omitempty"`
+	StallNudges     int    `json:"stallNudges,omitempty"`
+	StallRecoveries int    `json:"stallRecoveries,omitempty"`
+	ActionNudges    int    `json:"actionNudges,omitempty"`
+	TransientNudges int    `json:"transientNudges,omitempty"`
+	// SessionRssMb is the resident memory of the agent's CLI process tree
+	// (MiB) and SessionAge how long the current CLI session has been up,
+	// both sampled on the health tick (#14842). SessionRecycles counts
+	// RSS/age-budget recycles since boot.
+	SessionRssMb    int    `json:"sessionRssMb,omitempty"`
+	SessionAge      string `json:"sessionAge,omitempty"`
+	SessionRecycles int    `json:"sessionRecycles,omitempty"`
+	CIPollNudges    int    `json:"ciPollNudges,omitempty"`
 	// LastAction is the last issue or PR the agent acted on through the hive
 	// (#10925); see FrontendAgentLastAction.
 	LastAction *FrontendAgentLastAction `json:"lastAction,omitempty"`
@@ -786,6 +1024,18 @@ type FrontendAgent struct {
 	// the turn is still running. KickOutcomeReason is the deciding pane line.
 	KickOutcome       string `json:"kickOutcome,omitempty"`
 	KickOutcomeReason string `json:"kickOutcomeReason,omitempty"`
+	// RepeatFailureCheck is the repeat-failure check state (#14550): "on",
+	// "not_covered" or "no_data", with RepeatFailureCheckMessage as the row
+	// text. RepeatFailureNote is "Repeating failure: `<command>` failed N
+	// times in M min (exit S)" while a command repeats. All empty while the
+	// check is off, so the row shows nothing. Monitor only: never pauses.
+	RepeatFailureCheck        string `json:"repeatFailureCheck,omitempty"`
+	RepeatFailureCheckMessage string `json:"repeatFailureCheckMessage,omitempty"`
+	RepeatFailureNote         string `json:"repeatFailureNote,omitempty"`
+	// Run is the live per-run figure (#14576): this kick's estimated cost,
+	// tokens, elapsed time, last visible test result and files changed.
+	// Present only while Busy is "working".
+	Run *FrontendAgentRun `json:"run,omitempty"`
 	// BackendAuth* surfaces this agent's backend-auth canary (#6558): derived
 	// from the same classifyProviderError verdict as StructuredStatus's
 	// "blocked: inference" evidence, so the dashboard can render an explicit
@@ -794,6 +1044,17 @@ type FrontendAgent struct {
 	BackendAuthStatus    string `json:"backendAuthStatus,omitempty"`
 	BackendAuthSince     string `json:"backendAuthSince,omitempty"`
 	BackendAuthLastError string `json:"backendAuthLastError,omitempty"`
+	// BackendAuthRefreshable is claude.HasUsableToken over this agent's own
+	// credential (ADR-0024): true = a CLI restart heals an expired access
+	// token, false = a human must log in. Absent for backends with no
+	// verified refresh semantics.
+	BackendAuthRefreshable *bool `json:"backendAuthRefreshable,omitempty"`
+	// InferenceLastError is the full text of the most recent inference error
+	// hive's proxy returned to this agent (#11761), shown while Claude Code's
+	// own retry line is still clipped to one pane row. Empty when unknown,
+	// stale, or cleared by a later successful call.
+	InferenceLastError   string `json:"inferenceLastError,omitempty"`
+	InferenceLastErrorAt string `json:"inferenceLastErrorAt,omitempty"`
 	// Conditions is the watchdog reconciler's observed-truth condition set
 	// (Ready/Authenticated/Producing — RFC #4665), replacing trust in the
 	// State config echo. Empty until the watchdog's first sweep.
@@ -829,6 +1090,18 @@ type FrontendAgent struct {
 	// in surge".
 	UnscheduledInMode bool     `json:"unscheduledInMode"`
 	CadenceModes      []string `json:"cadenceModes,omitempty"`
+
+	// BlockedReason is the operator-facing WHY behind StructuredStatus ==
+	// "BLOCKED" (#14409): StatusEvidence with its "blocked:" prefix stripped,
+	// so Hive Chat and the Agents page read the same reason from the same
+	// payload. BlockedSince is when that block was first observed, where the
+	// underlying record carries a timestamp (auth canary, inference error,
+	// policy stand-down, first restart of a crash loop); empty otherwise.
+	BlockedReason string `json:"blockedReason,omitempty"`
+	BlockedSince  string `json:"blockedSince,omitempty"`
+	// KickOutcomeAt is when the last kicked turn was observed to END — the
+	// "last completed run" the chat answers "which agent completed last" from.
+	KickOutcomeAt string `json:"kickOutcomeAt,omitempty"`
 }
 
 // FrontendConfiguredAgent is the secret-free config inventory used by the
@@ -969,14 +1242,49 @@ type FrontendSession struct {
 	Estimated  bool   `json:"estimated,omitempty"`
 }
 
+// FrontendRestartRefresh describes the post-restart window in which the
+// Overview serves the snapshot restored from disk (FrontendStatus.RestartRefresh).
+type FrontendRestartRefresh struct {
+	// RestoredAt (RFC 3339) is when this process read the snapshot back.
+	RestoredAt string `json:"restoredAt"`
+	// SnapshotAt (RFC 3339) is when the restored snapshot was last read
+	// from GitHub by the previous process.
+	SnapshotAt string `json:"snapshotAt,omitempty"`
+	// ReposScanned is how many unpaused configured repos already have a
+	// fresh read this process; ReposTotal is the unpaused configured count.
+	ReposScanned int `json:"reposScanned"`
+	ReposTotal   int `json:"reposTotal"`
+}
+
 type FrontendRepo struct {
-	Name             string                    `json:"name"`
-	Full             string                    `json:"full"`
-	Issues           int                       `json:"issues"`
-	PRs              int                       `json:"prs"`
-	Mode             string                    `json:"mode,omitempty"`
-	CountsIncomplete bool                      `json:"countsIncomplete,omitempty"`
-	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	Name             string `json:"name"`
+	Full             string `json:"full"`
+	Issues           int    `json:"issues"`
+	PRs              int    `json:"prs"`
+	Mode             string `json:"mode,omitempty"`
+	CountsIncomplete bool   `json:"countsIncomplete,omitempty"`
+	// CountsStale means this repo's counts are last-good figures: either the
+	// previous successful enumeration because GitHub refused this pass's fetch
+	// transiently (rate limit, 5xx; see github.ActionableResult.StaleRepos) or
+	// the forgestate cache's last-good open totals after a failed reconcile
+	// (hivecommons/hive#13376).
+	CountsStale bool `json:"countsStale,omitempty"`
+	// CountsStaleSince (RFC 3339) is when the stale figures were last read
+	// for real; set with CountsStale.
+	CountsStaleSince string `json:"countsStaleSince,omitempty"`
+	// UnlistedIssues / UnlistedPRs are open items the enumeration or the
+	// forgestate cache reported in its totals but could not list as item
+	// rows. Issues/PRs count only listed items (the canonical open-items set,
+	// open_items.go), so these are shown beside the total, not inside it.
+	UnlistedIssues int `json:"unlistedIssues,omitempty"`
+	UnlistedPRs    int `json:"unlistedPrs,omitempty"`
+	// IssuesSyncing means the repo lists open pull requests but no open
+	// issues while its issue side is stale or unlisted: the issue list has
+	// not come back for real yet, so the printed 0 is a pending fetch, not
+	// an empty backlog (hosted hive, 2026-10-22). Set by markIssuesSyncing.
+	IssuesSyncing bool                      `json:"issuesSyncing,omitempty"`
+	WorkBreakdown *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	SLA           *timeline.SLARepoReport   `json:"sla,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the
@@ -1001,6 +1309,28 @@ type FrontendRepo struct {
 	// filtered, reporter triage, and similar named exclusions). They keep the
 	// repo card's total honest without adding anything to the queues.
 	NonActionableIssues []any `json:"nonActionableIssues,omitempty"`
+	// ACMMLevel is the repository's effective ACMM level
+	// (Config.EffectiveACMMLevelForRepo: the hive level, lowered by a
+	// repository-policy override). The card's L5/L6 collapse and the inbox
+	// empty-state wording read it, because the status payload's own
+	// acmmLevel is hive-wide.
+	ACMMLevel int `json:"acmmLevel"`
+	// Ownership is the your-turn decision for every issue and PR row above,
+	// keyed by ownershipKey and computed once per status refresh
+	// (applyOwnershipDecisions). Response copies attach each decision to its
+	// row; it is not serialized here.
+	Ownership map[string]Ownership `json:"-"`
+	// ownershipURLs maps the same keys to each item's GitHub URL, for the
+	// ownership_transition audit entry written by the status refresh.
+	ownershipURLs map[string]string
+	// ownershipDataMissing is set when the snapshot was built without
+	// enumeration data, so the rows cannot show that an item left.
+	ownershipDataMissing bool
+	// NonActionablePrs are display-only github.RepoWorkPR records of the open
+	// PRs the enumeration sidelined (drafts, exempt labels) so the Hive
+	// activity monitor can list every open PR (hivecommons/hive#12682).
+	// Like NonActionableIssues they feed no queue.
+	NonActionablePrs []any `json:"nonActionablePrs,omitempty"`
 	// Paused and its provenance (#6203). A paused repo still gets a card —
 	// that is the point of pause over deleting it from project.repos — so the
 	// card has to say so, or a deliberately quiet repo is indistinguishable
@@ -1011,9 +1341,27 @@ type FrontendRepo struct {
 	PausedBy    string `json:"pausedBy,omitempty"`
 	PausedAt    string `json:"pausedAt,omitempty"`
 	PauseReason string `json:"pauseReason,omitempty"`
-	AutoMerge   bool   `json:"autoMerge"`
+	// RedMain is the repo's red-main circuit breaker fact (#13630) and
+	// RedMainLine its card summary: "main red since <time> on <check>; fix:
+	// #N waiting on <who>". Empty while the default branch is green.
+	RedMain     *github.RedMainFact `json:"redMain,omitempty"`
+	RedMainLine string              `json:"redMainLine,omitempty"`
+	// YourTurn is the repository's your-turn critical path summary
+	// (hivecommons/hive#13646): the your-turn items ordered by how many
+	// others they unblock, the dependents collapsed under their root cause,
+	// the root-cause counts and the red-main banner input. CriticalPath is
+	// the per-row half, keyed by ownershipKey like Ownership; response
+	// copies attach each entry to its row (computeCriticalPath).
+	YourTurn     *RepoYourTurn           `json:"yourTurn,omitempty"`
+	CriticalPath map[string]CriticalPath `json:"-"`
+	AutoMerge    bool                    `json:"autoMerge"`
 	// MergeStrategy is the repo's merge_strategy (direct or hive-serialized).
 	MergeStrategy string `json:"mergeStrategy"`
+	// RequireCurrentBase is the effective current-base gate for this repo
+	// (auto_merge.require_current_base / skip_current_base over the hive-wide
+	// default, hivecommons/hive#15335); the repo card shows a "current-base"
+	// chip when it is on.
+	RequireCurrentBase bool `json:"requireCurrentBase,omitempty"`
 	// Upstream is the upstream a fork repo follows (hivecommons/hive#11433):
 	// the repo's upstream_watch entry, resolved to the fork parent once the
 	// watch has run. Empty for a repo that is not in the watch. UpstreamWatchOn
@@ -1022,6 +1370,14 @@ type FrontendRepo struct {
 	Upstream          string `json:"upstream,omitempty"`
 	UpstreamWatchOn   bool   `json:"upstreamWatchOn,omitempty"`
 	UpstreamLastCheck string `json:"upstreamLastCheck,omitempty"`
+	// Forge is the source forge the repo lives on — "github", "gitlab" or
+	// "gitea" (Gitea and Forgejo) — from the project forge setting (hivecommons/hive#14115),
+	// so the card names the right host instead of always reading github.com.
+	// ForgeURL is the instance web root for a GitLab or Gitea forge, used for
+	// the card's links; it is empty for GitHub, whose host the SPA already reads
+	// from /api/config.
+	Forge    string `json:"forge"`
+	ForgeURL string `json:"forgeUrl,omitempty"`
 }
 
 type FrontendBeads struct {
@@ -1227,18 +1583,25 @@ type TrendHistoryEntry struct {
 	GovPrs    int `json:"govPrs"`
 	GovTotal  int `json:"govTotal"`
 	GovHold   int `json:"govHold"`
+	// YourTurnRootIssues / YourTurnRootPrs are the collapsed your-turn root
+	// causes (FrontendYourTurn) the phone widget plots. Pointers so entries
+	// recorded before they existed omit them instead of reading 0.
+	YourTurnRootIssues *int `json:"yourTurnRootIssues,omitempty"`
+	YourTurnRootPrs    *int `json:"yourTurnRootPrs,omitempty"`
 	// Overview KPI row counts. These are sampled with the same persisted ring as
 	// the governor pressure history so the Admin overview tiles have restart-safe
 	// sparkline data without a second PVC file.
-	OverviewKPI          bool `json:"overviewKPI,omitempty"`
-	OverviewOpenIssues   int  `json:"overviewOpenIssues,omitempty"`
-	OverviewOpenPRs      int  `json:"overviewOpenPrs,omitempty"`
-	OverviewActionable   int  `json:"overviewActionable,omitempty"`
-	OverviewHeld         int  `json:"overviewHeld,omitempty"`
-	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
-	OverviewOutside      int  `json:"overviewOutside,omitempty"`
-	OverviewCoverageOK   bool `json:"overviewCoverageOK,omitempty"`
-	OverviewCoverage     int  `json:"overviewCoverage,omitempty"`
+	OverviewKPI        bool `json:"overviewKPI,omitempty"`
+	OverviewOpenIssues int  `json:"overviewOpenIssues,omitempty"`
+	OverviewOpenPRs    int  `json:"overviewOpenPrs,omitempty"`
+	OverviewActionable int  `json:"overviewActionable,omitempty"`
+	OverviewHeld       int  `json:"overviewHeld,omitempty"`
+	OverviewYourTurn   int  `json:"overviewYourTurn,omitempty"`
+	OverviewWaiting    int  `json:"overviewWaiting,omitempty"`
+	OverviewBlocked    int  `json:"overviewBlocked,omitempty"`
+	OverviewOutside    int  `json:"overviewOutside,omitempty"`
+	OverviewCoverageOK bool `json:"overviewCoverageOK,omitempty"`
+	OverviewCoverage   int  `json:"overviewCoverage,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -1274,6 +1637,18 @@ const overviewKPIHistoryMaxPoints = 96
 
 const sseRetryMs = 3000
 
+// sseKeepaliveInterval is how often an idle /api/events stream emits a
+// `keepalive` event. Status frames only flow when the eval cycle publishes,
+// so without this a connection dropped by a NAT/proxy idle timeout (or a
+// browser that resumed from sleep) looks identical to a quiet hive: the
+// browser's EventSource never fires onerror, the server never notices the
+// dead writer, and the tab keeps painting the last snapshot it received
+// while the "live" dot stays green. The keepalive gives the client a cadence
+// to watch (index.html sseStreamIdle) and gives the server a write that fails
+// on a dead socket so the slot in sseClients is freed. A var so tests can
+// shorten it.
+var sseKeepaliveInterval = 20 * time.Second
+
 // NewServer constructs a dashboard server with no auth token. It is
 // equivalent to NewServerWithAuth(port, "", logger).
 func NewServer(port int, logger *slog.Logger) *Server {
@@ -1300,6 +1675,12 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		startedAt:        time.Now(),
 	}
 	s.registerCoreRoutes()
+	setOwnershipAuditSink(func(at time.Time, repo string, number int, detail string) {
+		s.audit.LogRecordAt(at.UTC().Format(time.RFC3339), "system", ownershipTransitionAction, detail, "", repo, number)
+	})
+	// A merge attempt beginning or ending is a tracker change the next poll
+	// must see (hivecommons/hive#15245).
+	github.DefaultMergeAttempts().SetOnChange(func() { s.invalidateStageTrackerCache() })
 	return s
 }
 
@@ -1391,7 +1772,7 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/status/summary", s.handleStatusSummary)
 	s.mux.HandleFunc("GET /api/classifier/stats", s.handleClassifierStats)
-	s.mux.HandleFunc("POST /api/admin/mcp", s.handleAdminMCP)
+	s.mux.HandleFunc("POST "+adminMCPEndpointPath, s.handleAdminMCP)
 	s.mux.HandleFunc("GET /api/overview/issues.csv", s.handleOverviewIssuesCSV)
 	s.mux.HandleFunc("GET /api/overview/issues.json", s.handleOverviewIssuesJSON)
 	s.mux.HandleFunc("GET /api/overview/prs.csv", s.handleOverviewPRsCSV)
@@ -1463,7 +1844,8 @@ func (s *Server) Start() error {
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
-	handler := s.withServerTiming(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
+	s.openRequestLog()
+	handler := s.withRequestLog(s.withServerTiming(s.noIndex(s.authenticatedMux())))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -1484,6 +1866,16 @@ func (s *Server) Start() error {
 		// answer even when a saturated node is slow to build the static cache.
 		go idx.Precompress()
 	}
+	// Viewer-independent cost sampling (#13483); the ring's throttle is the
+	// same interval, so this is exactly one snapshot per period.
+	costTicker := time.NewTicker(costHistoryMinIntervalMs * time.Millisecond)
+	defer costTicker.Stop()
+	go s.runCostSampler(costTicker.C)
+	// The operator's "Rebase, then merge as maintainer" follow-throughs
+	// (rebase_merge_followthrough.go) poll from here.
+	followCtx, cancelFollow := context.WithCancel(context.Background())
+	defer cancelFollow()
+	s.StartRebaseMergeFollowThrough(followCtx)
 	return srv.Serve(ln)
 }
 
@@ -1751,7 +2143,20 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		if s.isPublicPath(r.URL.Path) {
 			// Public endpoints remain reachable anonymously, but identity headers are
 			// visible to handlers only when backed by the hub's proxy proof.
-			trustProxyIdentity(true)
+			// With no proxy proof (self-hosted hive, no hub in front), resolve the
+			// session cookie so in-handler gates such as requireContributorWrite see
+			// the caller's role. Anonymous requests are never rejected here.
+			if ok, _ := trustProxyIdentity(true); !ok {
+				if sess := s.sessionFromRequest(r); sess != nil {
+					if role, ok := s.liveSessionRole(sess); ok {
+						r.Header.Set("X-Hive-User", sess.Username)
+						r.Header.Set("X-Hive-Role", role)
+						if isOwnerRole(role) {
+							r.Header.Set(ownerRoleVerifiedHeader, "true")
+						}
+					}
+				}
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1964,8 +2369,21 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 		}
 
+		// Read-only widget token (#12147): admits ONLY a GET of the widget
+		// summary path, as a read-role identity. It is never consulted for any
+		// other path, so it cannot reach a mutation or stand in for a session.
+		if !trusted && widgetTokenAuthenticates(r) {
+			trusted = true
+			widgetTokenIdentity(r)
+		}
+
 		if !trusted && r.URL.Path == "/api/knowledge/export" {
-			if profile := s.contributorProfileFromAuthorization(r); profile != nil && profile.TrustTier != "revoked" {
+			profile, reason := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
+			if profile == nil && reason == contributorTokenExpired {
+				jsonError(w, reason, http.StatusUnauthorized)
+				return
+			}
+			if profile != nil && profile.TrustTier != "revoked" {
 				trusted = true
 				r.Header.Set("X-Hive-User", profile.GitHubUsername)
 				r.Header.Set("X-Hive-Role", config.RoleRead)
@@ -2038,6 +2456,12 @@ func (s *Server) configuredOwnerUser() string {
 		}
 	}
 	return ""
+}
+
+// AuthorizedUserEntry splits a dashboard.authorized_users entry
+// ("login" or "login:role") into its login and role.
+func AuthorizedUserEntry(entry string) (name, role string) {
+	return dashboardAuthorizedUserEntry(entry)
 }
 
 func dashboardAuthorizedUserEntry(entry string) (name, role string) {
@@ -2222,6 +2646,7 @@ func isPublicPath(path string) bool {
 const loginPage = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + dashboardRobotsMetaTag + `
 <title>Hive — Sign In</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -2342,7 +2767,7 @@ async function poll(interval,flowId){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
+	return s.withRequestLog(s.noIndex(s.authenticatedMux()))
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {
@@ -2433,10 +2858,12 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		status.Governor.SuspendedStandbys = s.contributeHub.SuspendedStandbyCounts(status.Governor.SuppressedLanes)
 	}
 	status.Swarm = s.SwarmSnapshot()
+	s.attachFleetCostWindows(status, time.Now())
 
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired
 	status.GitHubAppInstallURL = s.githubAppInstallURL
+	status.Capabilities = s.capabilitiesStatus()
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
@@ -2505,9 +2932,19 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		// predate the mutation. Drop it — the mutation's own refresh rebuild
 		// (which began after the epoch bump) publishes the fresh state.
 		curEpoch := s.statusMutationEpoch
+		s.statusStaleDrops++
+		drops := s.statusStaleDrops
+		s.statusConsecutiveStaleDrops++
+		consecutive := s.statusConsecutiveStaleDrops
 		s.statusMu.Unlock()
-		s.logger.Debug("dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch)
+		// A single drop is normal optimistic-concurrency self-healing; only a
+		// run of drops with no publish in between is an anomaly.
+		level := slog.LevelInfo
+		if consecutive >= staleDropStarvationThreshold {
+			level = slog.LevelWarn
+		}
+		s.logger.Log(context.Background(), level, "dropping stale status snapshot built before a mutation",
+			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
 		return false
 	}
 
@@ -2521,13 +2958,15 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		s.AttachHiveAdvice(status, time.Now().UTC())
 	}
 	version, commit := fleetReportBuildInfo()
-	dryRun := true
-	if s.deps != nil && s.deps.Config != nil {
-		dryRun = s.deps.Config.Governor.FleetReport.DryRun()
-	}
-	s.AttachFleetReport(status, version, commit, dryRun)
+	s.AttachFleetReport(status, version, commit, !s.FleetReportFilesUpstream())
+	// The governor built this snapshot from the enumeration its cycle began
+	// with; webhook re-reads that landed since (a PR closed mid-cycle) are
+	// re-applied so the publish cannot bring a gone row back.
+	s.replayWebhookPatchesLocked(status, time.Now())
+	s.statusConsecutiveStaleDrops = 0
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq
+	status.StatusStaleDrops = s.statusStaleDrops
 	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	if status.TimeZone == "" {
@@ -2540,6 +2979,13 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	if s.contributeHub != nil {
 		s.contributeHub.AutoDispatchStandby(status.Governor.SuppressedLanes)
 	}
+	// A new status is new stage truth: drop the memoised /api/stage-tracker
+	// body so the next GET rebuilds from this payload instead of serving the
+	// previous one for the rest of its TTL.
+	nudgeTracker := s.invalidateStageTrackerCache()
+	// Backstop for closed items whose delivery never arrived or whose
+	// confirming read was refused (hivecommons/hive#14159, #14064).
+	s.maybeSweepClosedRows(time.Now().UTC())
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
@@ -2547,13 +2993,20 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// consumption survives the reset that erases the live number.
 	s.ObserveBudgetWindow(status)
 
+	// Hold statusMu through the snapshot: hold moves mutate the published
+	// status under the write lock.
+	s.statusMu.RLock()
 	data, err := json.Marshal(s.statusWithOverviewBands(status, time.Now().UTC()))
+	s.statusMu.RUnlock()
 	if err != nil {
 		s.logger.Warn("failed to marshal status for SSE", "error", err)
 		return true
 	}
 
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
+	if nudgeTracker {
+		s.nudgeStageTracker(status.StatusSeq)
+	}
 	return true
 }
 
@@ -2883,6 +3336,16 @@ func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth)
 	}
 }
 
+// SetGoodFirstIssueStats installs the provider of good-first-issue curation
+// counters; nil removes it.
+func (s *Server) SetGoodFirstIssueStats(fn func() any) {
+	if fn == nil {
+		s.goodFirstIssueStats.Store(nil)
+		return
+	}
+	s.goodFirstIssueStats.Store(&fn)
+}
+
 func (s *Server) SetGitHubAppRecheckFn(fn func() bool) {
 	s.githubAppRecheckFn = fn
 }
@@ -3021,7 +3484,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "starting"})
 		return
 	}
-	jsonResponse(w, map[string]string{"status": "ok"})
+	body := map[string]any{"status": "ok", "runtime": runtimeobs.Take()}
+	if s.deps != nil && s.deps.CruxRuntimeHealth != nil {
+		rt := s.deps.CruxRuntimeHealth()
+		body["crux_runtime"] = rt
+		if !rt.Reachable {
+			body["status"] = "degraded"
+		}
+	}
+	jsonResponse(w, body)
 }
 
 const (
@@ -3195,7 +3666,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 			if proc.Paused {
 				ac["paused"] = true
 				ac["status"] = "skip"
-			} else if proc.State == agent.StateRunning {
+			} else if proc.State == crux.StateRunning {
 				ac["status"] = "pass"
 				if proc.LastKick != nil {
 					ac["last_kick"] = proc.LastKick.Format(time.RFC3339)
@@ -3313,7 +3784,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		const staleOutputThreshold = 30 * time.Minute
 		stalled := []string{}
 		for name, proc := range s.deps.AgentMgr.AllStatuses() {
-			if proc.State != agent.StateRunning || proc.Paused {
+			if proc.State != crux.StateRunning || proc.Paused {
 				continue
 			}
 			if proc.OutputBuffer != nil && proc.OutputBuffer.Count() == 0 && proc.LastKick != nil {
@@ -3392,6 +3863,27 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		checks[healthCheckDataDisk] = diskCheck
 	}
 
+	// Per-agent UID isolation (#11713). Omitted unless the deployment was
+	// expected to isolate agents (see uidIsolationExpected).
+	if st, detail, ok := s.uidIsolationCheck(); ok {
+		checks[healthCheckUIDIsolation] = map[string]any{"status": st, "detail": detail}
+		if st == "fail" {
+			failCount++
+			if overall == "ok" {
+				overall = "degraded"
+			}
+		}
+	}
+
+	// Slot-placeholder project.org with a bare repo (#11846).
+	if st, detail, ok := s.projectOrgCheck(); ok {
+		checks[healthCheckProjectOrg] = map[string]any{"status": st, "detail": detail}
+		failCount++
+		if overall == "ok" {
+			overall = "degraded"
+		}
+	}
+
 	// 12. Queue trend (is work being processed?)
 	s.statusMu.RLock()
 	if s.status != nil {
@@ -3461,26 +3953,57 @@ func (s *Server) inHealthGrace() (bool, time.Duration) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	s.RecordStdioFromRequest(r)
+	// Build the snapshot under statusMu: hold moves mutate the published
+	// status (including repo.Ownership) under the write lock.
 	s.statusMu.RLock()
-	status := s.status
-	s.statusMu.RUnlock()
-
-	if status == nil {
+	if s.status == nil {
+		s.statusMu.RUnlock()
 		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
 		return
 	}
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, time.Now().UTC()), Webhooks: github.WebhookHealthSnapshot()}
+	now := time.Now().UTC()
+	status := s.status
+	snapshot := s.statusWithOverviewBands(status, now)
+	s.statusMu.RUnlock()
+	payload := statusWithWebhooks{StatusPayload: snapshot, Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot()}
+	if s.deps != nil && s.deps.EvalLoop != nil {
+		loop := s.deps.EvalLoop()
+		payload.EvalLoopStatus = &loop
+	}
+	payload.UpgradeProgress = s.upgradeProgress(status, now)
+	payload.Writeback = s.WritebackStatus()
+	payload.Hotspots = s.HotspotStatusBlock()
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
-// statusWithWebhooks adds the live webhook health block (#11177) to the cached
-// status payload at serve time, so it is never a whole eval cycle stale.
+// statusWithWebhooks adds the live webhook health block (#11177) and the
+// governor loop's pacing (evalMode, lastWakeReason) to the cached status
+// payload at serve time, so neither is a whole eval cycle stale.
 type statusWithWebhooks struct {
 	*StatusPayload
 	Webhooks github.WebhookHealth `json:"webhooks"`
+	// CIFailureSignals is the webhook CI-failure signal store: retained
+	// signals, the last one, webhook-triggered kicks and unmatched heads.
+	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
+	*EvalLoopStatus
+	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
+	// machine (scheduled / draining / pulling / … / missed) with the drain
+	// countdown, derived at serve time (#14856). Absent on a hive the hub
+	// does not manage and that has no upgrade in flight.
+	UpgradeProgress *spoke.UpgradeProgress `json:"upgradeProgress,omitempty"`
+	// Writeback is the unsolicited write-back gate's live state: suppressed
+	// writes in the last 24h, per-repo first_seen / writable / mode, and the
+	// banners for repos the hive can now write to but left untouched.
+	Writeback *writeback.Status `json:"writeback,omitempty"`
+	// Hotspots is the merge-hotspot advisor's one-line summary: files hit by
+	// concurrent PRs in the window, how many warrant a split, how many have
+	// a modularize issue filed. Absent when the advisor is not wired.
+	Hotspots *HotspotStatus `json:"hotspots,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
+	s.RecordStdioFromRequest(r)
 	s.statusMu.RLock()
 	status := s.status
 	s.statusMu.RUnlock()
@@ -3493,23 +4016,26 @@ func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func statusJSONResponse(w http.ResponseWriter, r *http.Request, data any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Add("Vary", "Accept-Encoding")
+	body, ok := conditionalJSONBytes(w, r, data)
+	if !ok {
+		return
+	}
 	if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		if err := json.NewEncoder(w).Encode(data); err != nil {
-			slog.Warn("status json encode failed", "error", err)
+		if _, err := w.Write(body); err != nil {
+			slog.Warn("status json write failed", "error", err)
 		}
 		return
 	}
 	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Add("Vary", "Accept-Encoding")
 	gz := gzip.NewWriter(w)
 	defer func() {
 		if err := gz.Close(); err != nil {
 			slog.Warn("status gzip close failed", "error", err)
 		}
 	}()
-	if err := json.NewEncoder(gz).Encode(data); err != nil {
-		slog.Warn("status json gzip encode failed", "error", err)
+	if _, err := gz.Write(body); err != nil {
+		slog.Warn("status json gzip write failed", "error", err)
 	}
 }
 
@@ -3557,6 +4083,9 @@ type StatusSummaryPayload struct {
 	Agents         []StatusSummaryAgent  `json:"agents"`
 	Governor       StatusSummaryGovernor `json:"governor"`
 	Budget         FrontendBudget        `json:"budget"`
+	// YourTurn is StatusPayload.YourTurn: the phone widget's live
+	// your-turn root-cause counts.
+	YourTurn *FrontendYourTurn `json:"yourTurn,omitempty"`
 }
 
 type StatusSummaryAgent struct {
@@ -3586,6 +4115,7 @@ func buildStatusSummary(status *StatusPayload) StatusSummaryPayload {
 	return StatusSummaryPayload{
 		Timestamp: status.Timestamp, StatusSeq: status.StatusSeq, StatusInstance: status.StatusInstance,
 		HiveID: status.HiveID, Agents: agents, Governor: StatusSummaryGovernor{Mode: status.Governor.Mode}, Budget: status.Budget,
+		YourTurn: status.YourTurn,
 	}
 }
 
@@ -3608,6 +4138,8 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Prevent proxies from buffering the stream (nginx honours this).
+	w.Header().Set("X-Accel-Buffering", "no")
 	// No CORS header — SSE is same-origin only.
 	// The dashboard loads from the same host, so no cross-origin needed.
 
@@ -3643,10 +4175,19 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	s.statusMu.RUnlock()
 
+	keepalive := time.NewTicker(sseKeepaliveInterval)
+	defer keepalive.Stop()
 	for {
 		select {
 		case frame := <-ch:
-			_, _ = w.Write(frame)
+			if _, err := w.Write(frame); err != nil {
+				return
+			}
+			flusher.Flush()
+		case now := <-keepalive.C:
+			if _, err := fmt.Fprintf(w, "event: keepalive\ndata: %d\n\n", now.Unix()); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
@@ -3782,7 +4323,64 @@ func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, m
 	if len(models) > 0 {
 		entry.Models = models
 	}
-	s.costSeries().Append(entry)
+	if s.costSeries().Append(entry) {
+		s.foldCostRollups(time.UnixMilli(entry.Timestamp))
+	}
+}
+
+// sampleCostHistory records one estimated-cost snapshot — the same all-time
+// cumulative estimate GET /api/cost returns, with the per-agent map that feeds
+// the agent cards' spend-over-window display and the per-model map that feeds
+// the cost table's mini sparklines (unpriced models included — tokens still
+// trend). The ring's own 5-minute throttle makes extra calls no-ops, so it is
+// safe to call from both the ticker and a viewer's poll. Returns true when a
+// snapshot was actually appended.
+func (s *Server) sampleCostHistory() bool {
+	// Nothing scanned yet (startup, or no collector): do not record a $0 point
+	// that the lineage detector would read as a reset to zero.
+	if s.deps == nil || s.deps.Tokens == nil || s.deps.Tokens.Summary() == nil {
+		return false
+	}
+	est := s.estimatedCost()
+	perAgent := make(map[string]float64, len(est.ByAgent))
+	for _, row := range est.ByAgent {
+		if row.USD > 0 {
+			perAgent[row.Name] = row.USD
+		}
+	}
+	perModel := make(map[string]CostModelSnap, len(est.ByModel))
+	for _, row := range est.ByModel {
+		if row.Input > 0 || row.Output > 0 || row.USD > 0 {
+			perModel[row.Name] = CostModelSnap{Input: row.Input, Output: row.Output, USD: row.USD}
+		}
+	}
+	entry := CostHistoryEntry{
+		Timestamp: collect.NowMillis(),
+		USD:       est.TotalUSD,
+	}
+	if len(perAgent) > 0 {
+		entry.Agents = perAgent
+	}
+	if len(perModel) > 0 {
+		entry.Models = perModel
+	}
+	if !s.costSeries().Append(entry) {
+		return false
+	}
+	s.foldCostRollups(time.UnixMilli(entry.Timestamp))
+	return true
+}
+
+// runCostSampler takes a cost snapshot on every tick until ticks is closed.
+// Before #13483 the only sampler was GET /api/knowledge/stats, i.e. a browser
+// polling the dashboard: with no viewer the history had multi-day holes (296 h
+// on one spoke) that the trend chart drew as "$0 spent" and whose spend then
+// landed as one step the moment someone opened the page. Start() drives this
+// from a real ticker; tests feed the channel directly.
+func (s *Server) runCostSampler(ticks <-chan time.Time) {
+	for range ticks {
+		s.sampleCostHistory()
+	}
 }
 
 // CostHistory returns a copy of the estimated-cost history.
@@ -3793,6 +4391,7 @@ func (s *Server) CostHistory() []CostHistoryEntry {
 // SeedCostHistory restores persisted cost history on startup.
 func (s *Server) SeedCostHistory(entries []CostHistoryEntry) {
 	s.costSeries().Seed(entries)
+	s.foldCostRollups(time.Now())
 }
 
 // AppendTrendHistory samples the governor / per-repo / beads / system-gauge
@@ -3835,6 +4434,10 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 		BeadsWorkers:    status.Beads.Workers,
 		BeadsSupervisor: status.Beads.Supervisor,
 	}
+	if status.YourTurn != nil {
+		entry.YourTurnRootIssues = intPtr(status.YourTurn.RootIssues)
+		entry.YourTurnRootPrs = intPtr(status.YourTurn.RootPRs)
+	}
 	if overviewKPISnapshotComplete(status) {
 		s.attachOverviewKPI(&entry, status, at)
 	}
@@ -3864,74 +4467,34 @@ func overviewKPISnapshotComplete(status *StatusPayload) bool {
 		return false
 	}
 	for _, repo := range status.Repos {
-		if repo.CountsIncomplete {
+		if repo.CountsIncomplete || repo.CountsStale {
 			return false
 		}
 	}
 	return true
 }
 
-func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, now time.Time) {
+func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, _ time.Time) {
 	if e == nil || status == nil {
 		return
 	}
 	e.OverviewKPI = true
-	cfg := config.DashboardIssueBandsConfig{}
-	if s != nil && s.deps != nil && s.deps.Config != nil {
-		cfg = s.deps.Config.Dashboard.IssueBands
-	}
+	// The tiles are the Actionable-now partition's terms, so the samples read
+	// the same classification the equation does (hivecommons/hive#11507).
+	part := overviewPartitionOf(status, s.autoMergeLabel())
 	for _, r := range status.Repos {
-		repoName := overviewRepoName(r)
 		e.OverviewOpenIssues += r.Issues
 		e.OverviewOpenPRs += r.PRs
-		e.OverviewHeld += len(r.HeldIssues) + len(r.HeldPrs)
-		for _, item := range r.ActionableIssues {
-			issue, ok := frontendIssue(item)
-			band := ""
-			if ok {
-				issue.Repo = nonEmpty(issue.Repo, repoName)
-				band = IssueBand(issue, false, cfg, now, s.selfAuthorizationHoldActiveForRepo).Band
-			}
-			if !overviewKPIExcludedBand(band) {
-				e.OverviewActionable++
-			}
-			if band == "waiting" || band == "done" {
-				e.OverviewBlockedHuman++
-			}
-		}
-		for _, item := range r.OpenPrs {
-			entry, ok := frontendPullRequest(item)
-			band := ""
-			if ok {
-				band = prBand(entry.pr, entry.verdict, false, cfg, now, s.autoMergeLabel(), status.HiveID).Band
-			}
-			if !overviewKPIExcludedBand(band) {
-				e.OverviewActionable++
-			}
-			if band == "waiting" || band == "blocked" {
-				e.OverviewBlockedHuman++
-			}
-		}
 	}
-	totals := status.OverviewTotals
-	if totals.Issues.Forge == 0 && totals.PRs.Forge == 0 && len(status.Repos) > 0 {
-		totals = overviewTotals(status)
-	}
-	// Match the tile: needs-human and reporter-confirmation issues are blocked, not outside.
-	e.OverviewBlockedHuman += totals.Issues.Breakdown["needs_human"] + totals.Issues.Breakdown["reporter_confirmation"]
-	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewHeld-e.OverviewBlockedHuman)
+	e.OverviewActionable = part.issues.actionable + part.prs.actionable
+	e.OverviewYourTurn = part.issues.yourTurn + part.prs.yourTurn
+	e.OverviewWaiting = part.issues.waiting + part.prs.waiting
+	e.OverviewHeld = part.issues.held + part.prs.held
+	e.OverviewBlocked = part.prs.blocked
+	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewYourTurn-e.OverviewWaiting-e.OverviewHeld-e.OverviewBlocked)
 	if status.OverviewCoverage != nil {
 		e.OverviewCoverageOK = true
 		e.OverviewCoverage = status.OverviewCoverage.Coverage
-	}
-}
-
-func overviewKPIExcludedBand(band string) bool {
-	switch strings.ToLower(band) {
-	case "waiting", "done", "draft", "blocked":
-		return true
-	default:
-		return false
 	}
 }
 
@@ -3948,14 +4511,16 @@ func (s *Server) TrendHistory() []TrendHistoryEntry {
 // Overview fields are pointers so real zero samples are serialized while old
 // trend-history rows from before KPI sampling omit unavailable KPI data.
 type OverviewKPIHistoryEntry struct {
-	Timestamp            int64 `json:"t"`
-	OverviewOpenIssues   *int  `json:"overviewOpenIssues,omitempty"`
-	OverviewOpenPRs      *int  `json:"overviewOpenPrs,omitempty"`
-	OverviewActionable   *int  `json:"overviewActionable,omitempty"`
-	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
-	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
-	OverviewOutside      *int  `json:"overviewOutside,omitempty"`
-	OverviewCoverage     *int  `json:"overviewCoverage,omitempty"`
+	Timestamp          int64 `json:"t"`
+	OverviewOpenIssues *int  `json:"overviewOpenIssues,omitempty"`
+	OverviewOpenPRs    *int  `json:"overviewOpenPrs,omitempty"`
+	OverviewActionable *int  `json:"overviewActionable,omitempty"`
+	OverviewHeld       *int  `json:"overviewHeld,omitempty"`
+	OverviewYourTurn   *int  `json:"overviewYourTurn,omitempty"`
+	OverviewWaiting    *int  `json:"overviewWaiting,omitempty"`
+	OverviewBlocked    *int  `json:"overviewBlocked,omitempty"`
+	OverviewOutside    *int  `json:"overviewOutside,omitempty"`
+	OverviewCoverage   *int  `json:"overviewCoverage,omitempty"`
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -3968,12 +4533,14 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 	out := make([]OverviewKPIHistoryEntry, 0, len(entries))
 	for _, e := range entries {
 		row := OverviewKPIHistoryEntry{Timestamp: e.Timestamp}
-		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 || e.OverviewOutside != 0 {
+		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewYourTurn != 0 || e.OverviewWaiting != 0 || e.OverviewBlocked != 0 || e.OverviewOutside != 0 {
 			row.OverviewOpenIssues = intPtr(e.OverviewOpenIssues)
 			row.OverviewOpenPRs = intPtr(e.OverviewOpenPRs)
 			row.OverviewActionable = intPtr(e.OverviewActionable)
 			row.OverviewHeld = intPtr(e.OverviewHeld)
-			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
+			row.OverviewYourTurn = intPtr(e.OverviewYourTurn)
+			row.OverviewWaiting = intPtr(e.OverviewWaiting)
+			row.OverviewBlocked = intPtr(e.OverviewBlocked)
 			row.OverviewOutside = intPtr(e.OverviewOutside)
 		}
 		if e.OverviewCoverageOK {
@@ -4141,9 +4708,9 @@ func (s *Server) InferenceAuthState() (errMsg string, since time.Time) {
 // A test seam mirroring SetBackendAuthProvider: AllStatuses returns value
 // snapshots, so tests cannot stage states (running-at-login-prompt) by
 // mutating manager internals — they override this instead. nil ⇒ live manager.
-var healthAgentStatuses func() map[string]*agent.AgentProcess
+var healthAgentStatuses func() map[string]*crux.Process
 
-func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend string) (available, known bool)) bool {
+func agentCLIUnauthenticated(proc *crux.Process, authFn func(backend string) (available, known bool)) bool {
 	if proc.NeedsLogin {
 		return true
 	}
@@ -4151,7 +4718,7 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
 	}
-	if backend == "bob" && proc.StartFailureClass == string(agent.StartFailureCredentialRejected) {
+	if backend == "bob" && proc.StartFailureClass == string(crux.StartFailureCredentialRejected) {
 		return true
 	}
 	// METHOD GATE. An inference backend (litellm/vllm/llm-d) authenticates with
@@ -4160,7 +4727,7 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	// probe stops a shared-credential miss from flagging an inference-backed
 	// agent that is running fine. See pkg/agent/authprobe.go for the full
 	// precedence rule.
-	if agent.IsInferenceBackend(backend) {
+	if config.IsInferenceBackend(backend) {
 		return false
 	}
 	// POSITIVE EVIDENCE beats absence-of-file: a running agent that the pane
@@ -4169,7 +4736,7 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	// reclassify it. Only a non-running agent falls through to the probe. This
 	// is what stopped the empty shared credential path (per-agent-UID layout)
 	// from reporting healthy agents as needing login.
-	if proc.State == agent.StateRunning {
+	if proc.State == crux.StateRunning {
 		return false
 	}
 	if authFn == nil {
@@ -4179,7 +4746,7 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	return known && !available
 }
 
-func agentProviderAuthBlocked(proc *agent.AgentProcess, now time.Time) bool {
+func agentProviderAuthBlocked(proc *crux.Process, now time.Time) bool {
 	return proc != nil &&
 		strings.EqualFold(strings.TrimSpace(proc.ProviderErrorClass), "auth") &&
 		!proc.ProviderErrorBackoffUntil.IsZero() &&
@@ -4201,7 +4768,7 @@ func (s *Server) healthGovernorMode() string {
 	return string(s.deps.Governor.GetState().Mode)
 }
 
-func (s *Server) agentIdleByDesign(name string, proc *agent.AgentProcess, currentMode string, onDemandFromPack map[string]bool) string {
+func (s *Server) agentIdleByDesign(name string, proc *crux.Process, currentMode string, onDemandFromPack map[string]bool) string {
 	if s == nil || s.deps == nil || s.deps.Config == nil || proc == nil {
 		return ""
 	}
@@ -4271,7 +4838,7 @@ func (s *Server) allAgentsPaused() bool {
 			continue
 		}
 		seen = true
-		if !proc.Paused && proc.State != agent.StatePaused {
+		if !proc.Paused && proc.State != crux.StatePaused {
 			return false
 		}
 	}
@@ -4290,10 +4857,10 @@ func (s *Server) noAgentsDue() bool {
 	onDemandFromPack := config.OnDemandAgentsFromPacks()
 	seen := false
 	for name, proc := range statuses {
-		if proc == nil || agentDisabledInConfig(s.deps.Config, name, proc) || proc.Paused || proc.State == agent.StatePaused {
+		if proc == nil || agentDisabledInConfig(s.deps.Config, name, proc) || proc.Paused || proc.State == crux.StatePaused {
 			continue
 		}
-		if proc.State == agent.StateRunning {
+		if proc.State == crux.StateRunning {
 			return false
 		}
 		seen = true
@@ -4320,7 +4887,7 @@ func (s *Server) hasRunningMeteredAgentWithoutLiveCapture() bool {
 		statuses = healthAgentStatuses()
 	}
 	for _, proc := range statuses {
-		if proc == nil || proc.State != agent.StateRunning {
+		if proc == nil || proc.State != crux.StateRunning {
 			continue
 		}
 		backend := strings.ToLower(strings.TrimSpace(proc.BackendOverride))
@@ -4431,7 +4998,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 				providerAuth++
 				providerAuthNames = append(providerAuthNames, name)
 			}
-			if proc.State == agent.StateRunning {
+			if proc.State == crux.StateRunning {
 				// A RUNNING agent sitting at a login prompt is alive but cannot
 				// work — the pane poller has literally seen "/login" on its
 				// terminal (proc.NeedsLogin). Counting it as running rendered a
@@ -4612,6 +5179,22 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		}
 	}
 
+	// Per-agent UID isolation (#11713): a hive that should isolate agents but
+	// booted on the shared dev UID fails here so the hub raises its
+	// health-check-failing alert with the remedy in the detail.
+	if st, detail, ok := s.uidIsolationCheck(); ok {
+		checks = append(checks, check{Name: healthCheckUIDIsolation, Status: st, Detail: detail})
+		if st == "fail" {
+			fails++
+		}
+	}
+
+	// Slot-placeholder project.org with a bare repo (#11846).
+	if st, detail, ok := s.projectOrgCheck(); ok {
+		checks = append(checks, check{Name: healthCheckProjectOrg, Status: st, Detail: detail})
+		fails++
+	}
+
 	// 8. Queue
 	if status != nil {
 		total := 0
@@ -4659,4 +5242,48 @@ type FrontendReleaseLineLag struct {
 	Known        bool   `json:"known"`
 	Threshold    int    `json:"threshold"`
 	Exceeded     bool   `json:"exceeded"`
+}
+
+// RecordStdioBuild records the last-seen stdio client build and the time it was seen (#12318).
+func (s *Server) RecordStdioBuild(build string, at time.Time) {
+	if s == nil {
+		return
+	}
+	build = strings.TrimSpace(build)
+	if build == "" {
+		return
+	}
+	s.stdioBuildMu.Lock()
+	s.lastSeenStdio = build
+	s.lastSeenStdioAt = at
+	s.stdioBuildMu.Unlock()
+}
+
+// RecordStdioFromRequest inspects the User-Agent header of an incoming request
+// and records the stdio build sighting if sent by a stdio client (#12318).
+// It is hooked into /api/version, /api/status and /api/status/summary because
+// the stdio hive-admin-mcp binary serves its read tools from those REST paths
+// through hivectl.Client and never calls /api/admin/mcp itself. Only a
+// validated hive-admin-mcp/<version>+<short> UA is recorded (see
+// parseStdioBuildFromUserAgent), so dashboard sessions and the hivectl CLI
+// polling the same paths cannot clobber a genuine sighting.
+func (s *Server) RecordStdioFromRequest(r *http.Request) {
+	if s == nil || r == nil {
+		return
+	}
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		if build := parseStdioBuildFromUserAgent(ua); build != "" {
+			s.RecordStdioBuild(build, time.Now().UTC())
+		}
+	}
+}
+
+// LastSeenStdio returns the recorded last-seen stdio build and sighting timestamp (#12318).
+func (s *Server) LastSeenStdio() (string, time.Time) {
+	if s == nil {
+		return "", time.Time{}
+	}
+	s.stdioBuildMu.RLock()
+	defer s.stdioBuildMu.RUnlock()
+	return s.lastSeenStdio, s.lastSeenStdioAt
 }

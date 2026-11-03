@@ -119,10 +119,15 @@ func (h *ContributeWSHub) claimIssueForContributor(c *ContributorConnection, rep
 	if holder == "" {
 		holder = c.profile.ContributorID
 	}
+	// tier= and verified= on the marker are what the contributor-lane
+	// auto-merge tier reads to decide whether this holder is vetted (#12041).
+	// A login that was never proven against GitHub is never verified.
 	res, err := l.Claim(claims.Request{
 		Repo: repoFull, Issue: number,
 		Holder: holder, HolderID: identityOf(c), Kind: claims.KindContributor,
-		Session: c.session,
+		Session:  c.session,
+		Tier:     c.profile.TrustTier,
+		Verified: c.profile.GitHubUsername != "" && c.profile.GitHubVerifiedAt != "",
 	})
 	if err != nil {
 		h.logger.Warn("[claims] contributor claim not recorded", "repo", repoFull, "number", number, "holder", holder, "error", err)
@@ -151,7 +156,7 @@ func (h *ContributeWSHub) renewClaimForLease(identity, repo string, number int) 
 		return
 	}
 	if _, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID,
-		Kind: c.Kind, Session: c.Session}); err != nil {
+		Kind: c.Kind, Session: c.Session, Tier: c.Tier, Verified: c.Verified}); err != nil {
 		h.logger.Warn("[claims] contributor claim not renewed", "issue", c.Key(), "holder", c.Holder, "error", err)
 	}
 }
@@ -162,7 +167,7 @@ func (h *ContributeWSHub) releaseClaimForLease(identity, key, reason string) {
 	l := h.claimsLedger()
 	if l == nil || identity == "" {
 		if l == nil && identity != "" {
-			h.removeLegacyClaimLabelForLease(key)
+			h.removeLegacyClaimLabelForLease(identity, key)
 		}
 		return
 	}
@@ -171,7 +176,11 @@ func (h *ContributeWSHub) releaseClaimForLease(identity, key, reason string) {
 	}
 }
 
-func (h *ContributeWSHub) removeLegacyClaimLabelForLease(key string) {
+// removeLegacyClaimLabelForLease tells the stage engine the contributor
+// claim that travelled with a lease is gone (a ClaimReleased fact, ADR-0025)
+// so the issue's stage/020-claimed comes off; the engine re-reads the issue
+// and re-stages it from what GitHub holds now.
+func (h *ContributeWSHub) removeLegacyClaimLabelForLease(identity, key string) {
 	if !h.claimLabelsEnabled() {
 		return
 	}
@@ -179,19 +188,19 @@ func (h *ContributeWSHub) removeLegacyClaimLabelForLease(key string) {
 	if !ok || !ref.IsGitHubIssue() || ref.Repo == "" || ref.Number <= 0 {
 		return
 	}
-	var remover claimLabelRemover
+	var labeler claimLabeler
 	if h.claimCommenter != nil {
-		remover, _ = h.claimCommenter.(claimLabelRemover)
+		labeler, _ = h.claimCommenter.(claimLabeler)
 	}
-	if remover == nil && h.server != nil && h.server.deps != nil && h.server.deps.GHClient != nil {
-		remover = h.server.deps.GHClient
+	if labeler == nil && h.server != nil && h.server.deps != nil && h.server.deps.GHClient != nil {
+		labeler = h.server.deps.GHClient
 	}
-	if remover == nil {
+	if labeler == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), claimCommentTimeout)
 	defer cancel()
-	if err := remover.RemoveLabel(ctx, ref.Repo, ref.Number, claims.LabelClaimed); err != nil {
+	if err := labeler.StageFacts().ClaimReleased(ctx, labeler.IssueStageRef(ref.Repo, ref.Number), identity); err != nil {
 		h.logger.Warn("[claims] legacy claim label not removed after lease release", "issue", key, "error", err)
 	}
 }

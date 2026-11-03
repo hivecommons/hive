@@ -18,6 +18,8 @@ Current maintainers:
 
 Routine changes use lazy consensus through GitHub review. Maintainers may merge when CI and review expectations are satisfied, DCO sign-off is present, and no unresolved objection remains.
 
+A maintainer's role does not shield their hive's work from the hive's stand-in rule: clanker PRs are adoptable on disconnect regardless of the owner's repo role (a PR a contributor's hive opened is adopted like any other when that hive goes away; `governor.labels.stage.adoption.maintainer_policy`, default `adopt`).
+
 ## Decision process
 
 1. Proposals are opened as GitHub issues or pull requests.

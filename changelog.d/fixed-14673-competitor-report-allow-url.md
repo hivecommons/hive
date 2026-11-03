@@ -1,0 +1,1 @@
+- **Weekly competitor report: curl was still refused.** Copilot CLI has a URL approval step separate from the shell tool allowlist and the firewall; without `--allow-url` every `curl <url>` was denied with "no one to approve", so run 40572955859 posted a partial report. The workflow now passes `--allow-url` for every host in `network.allowed` through `engine.args` (#14673).

@@ -1,0 +1,1 @@
+- Fix inference-gateway requests failing with `tool_use ids were found without tool_result blocks` when a Claude Code user turn carries text alongside a tool result: the translator now emits the `tool` messages directly after the assistant `tool_calls`, before the text.

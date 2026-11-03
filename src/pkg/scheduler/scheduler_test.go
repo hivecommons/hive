@@ -790,9 +790,11 @@ func TestFilterByLane_AllMatchingLane(t *testing.T) {
 }
 
 func TestSchedulerLaneDepthsTrackLastActionable(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {},
-		"quality": {},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {},
+			"quality": {},
+		},
 	}}
 	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.SetLastActionable(&github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{

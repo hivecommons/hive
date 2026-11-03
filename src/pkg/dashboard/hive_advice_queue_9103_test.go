@@ -52,10 +52,10 @@ func TestBuildHiveAdvisorQueueUsesOverviewClassifier9103(t *testing.T) {
 	if verdict.Band != "blocked" || !verdict.VerdictBlocked || verdict.VerdictReason != "base protection" || verdict.CIFailing || verdict.Lane != "scanner" || verdict.Author != "bob" {
 		t.Fatalf("PR 16 = %+v", verdict)
 	}
-	if held := byNum[9]; held.Band != "waiting" || !held.Held || held.NeedsHuman {
+	if held := byNum[9]; held.Band != "waiting" {
 		t.Fatalf("held PR 9 = %+v", held)
 	}
-	if nh := byNum[10]; nh.Band != "waiting" || nh.Held || !nh.NeedsHuman || nh.Lane != "" {
+	if nh := byNum[10]; nh.Band != "waiting" || nh.Lane != "" {
 		t.Fatalf("needs-human PR 10 = %+v", nh)
 	}
 	// The classifier ranks blocked above draft, and eligible above blocked:

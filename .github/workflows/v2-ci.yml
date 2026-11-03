@@ -21,6 +21,10 @@ on:
     # Required contexts from this workflow must appear on every PR head. Keep
     # the trigger unfiltered and let required-context-scope below skip the
     # expensive build for out-of-scope diffs.
+  schedule:
+    # Nightly full run: harmless today, and preserves a safety net if the
+    # project later decides to skip duplicate post-merge push runs.
+    - cron: '17 6 * * *'
 
 
 permissions:
@@ -52,6 +56,7 @@ jobs:
   required-context-scope:
     name: required context scope
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       run-ci: ${{ steps.scope.outputs.run-ci }}
     steps:
@@ -106,7 +111,10 @@ jobs:
     needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 50
     defaults:
       run:
         working-directory: src
@@ -114,7 +122,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Ensure PyYAML on self-hosted runners
         working-directory: .
-        run: python3 -c "import yaml" 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml; } || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q && python3 -m pip install --user -q pyyaml; }
+        run: |
+          python3 -c "import yaml" 2>/dev/null && exit 0
+          # A stale or unreachable third-party apt index (e.g. a PPA 503) must not block the install.
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq python3-yaml && exit 0
+          # Noble (Python 3.12) refuses --user installs under PEP 668 without --break-system-packages.
+          python3 -m pip install --user -q --break-system-packages pyyaml \
+            || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -128,6 +143,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -146,6 +166,25 @@ jobs:
       - name: Build
         run: go build ./cmd/hive/
 
+      # The crux binary builds twice (#14138): the root-module host
+      # (./cmd/crux, Hive's hive.yaml loader) and the nested module's own
+      # ./crux/cmd/crux, which must build with GOWORK=off so a checkout of
+      # src/crux alone (or a downstream repo consuming the module) can
+      # `go build ./cmd/crux` without the workspace or the root module.
+      - name: Build crux (root host and standalone module)
+        run: |
+          go build -o /dev/null ./cmd/crux
+          (cd crux && GOWORK=off go build -o /dev/null ./cmd/crux)
+
+      # crux/scripts/smoke.sh (`make -C crux smoke` locally; the self-hosted
+      # runners have no make) starts `crux serve` on a private unix socket
+      # with an empty runtime, drives it with `crux --server … ps` and GET
+      # /v1/health, then stops it. No agents or tmux involved; it fails the
+      # PR if the server stops starting, listening or shutting down cleanly.
+      - name: Crux module smoke (crux serve over a unix socket)
+        working-directory: src/crux
+        run: GOWORK=off bash scripts/smoke.sh
+
       - name: CI install tool apt cache tests
         working-directory: .
         run: bash .github/scripts/test-ci-install-tool-apt-cache.sh
@@ -158,6 +197,14 @@ jobs:
         working-directory: .
         run: bash .github/scripts/test-go-toolcache-guard.sh
 
+      - name: Runner cache prune tests
+        working-directory: .
+        run: python3 .github/scripts/test-runner-cache-prune.py
+
+      - name: Patch coverage script tests
+        working-directory: .
+        run: bash .github/scripts/test-patch-coverage.sh
+
       # Runner-infra classifier, rerun-once guard and rate alert (#9664):
       # hermetic, real 2026-09-29 log excerpts as fixtures, about a second.
       - name: CI infra classifier tests
@@ -165,7 +212,15 @@ jobs:
         run: python3 .github/scripts/test-ci-infra.py
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... ./crux/...
+
+      # The model list-price table behind /api/cost is refreshed weekly by
+      # price-table-refresh.yml (which also re-dates it after 30 quiet days).
+      # If that stops happening the Cost panel silently drifts from reality,
+      # so a table older than 60 days fails here: merge the open
+      # bot/price-table-refresh PR, or run `go run ./internal/tools/pricetable`.
+      - name: Price table staleness guard
+        run: go run ./internal/tools/pricetable --check-age 60
 
       # The entrypoint decides which file a hive boots its config from. The
       # hive.yaml.bak -> hive.yaml.runtime migration must keep reading the
@@ -241,6 +296,12 @@ jobs:
       # the guard repairs mismatched per-agent state before launch.
       - name: Entrypoint stable agent UID allocation (#9592)
         run: bash deploy/test_entrypoint_uid_stable.sh
+
+      # #13166: replicas: copies exist only in memory, so the entrypoint must
+      # derive <agent>-2 .. <agent>-N from the config to give each one a user,
+      # private token group and readable token cache.
+      - name: Entrypoint replica agent names (#13166)
+        run: bash deploy/test_entrypoint_replica_names.sh
 
       # #6287: the token-access audit log (GET /api/token-access) was
       # dev:node 0664 while every agent UID is in group node, so the audited
@@ -503,6 +564,27 @@ jobs:
       - name: issue-classifier contract tests (tiers, lanes, clustering)
         working-directory: .
         run: bash bin/test_issue_classifier.sh
+
+      # bin/nous-hive-gate.py is the agent side of the Nous gate protocol
+      # (RFC #11585 part 3, #11696): it publishes <nous_dir>/gates/pending.json
+      # and waits for the owner's decision.json written by the hive. Before
+      # #11696 it PUT to the owner-only gate-decision endpoint and every gate
+      # silently rejected. Hermetic (temp Nous root, sub-second polling, no
+      # network); 24 assertions, ~5s.
+      - name: nous-hive-gate contract tests (file-based gate protocol)
+        working-directory: .
+        run: bash bin/test_nous_hive_gate.sh
+
+      # bin/hive-gh.sh is the compact `gh --json` projection front for the
+      # common read verbs (#12127). Its one job is to shrink what lands in an
+      # agent's context WITHOUT hiding a field a merge/authorization gate
+      # reads (labels, author, head SHA, mergeable state, review decision,
+      # check conclusions) and WITHOUT closing the explicit full-fetch path.
+      # This EXECUTES the script against a stub gh that applies the real jq
+      # filters and asserts on the argv and the reshaped payload.
+      - name: hive-gh compact projection contract tests
+        working-directory: .
+        run: bash bin/test_hive_gh.sh
 
       # bin/kick-governor.sh (923 lines, called from bin/hive.sh, run every 15
       # min via kick-governor.timer) is the adaptive kick decision engine that
@@ -781,7 +863,7 @@ jobs:
         working-directory: .
         run: bash bin/test_bin_suites_wired.sh
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - name: Guard shared node tool cache (repair a half-written entry)
@@ -807,6 +889,18 @@ jobs:
       - name: Proxy Tests
         run: cd proxy && npm ci && npm test
 
+      # src/pkg/dashboard/*.test.js are node:test helper suites that the
+      # dashboard/ npm test does not cover (#13566).
+      - name: Dashboard helper tests
+        working-directory: .
+        run: node --test src/pkg/dashboard/*.test.js
+
+      # The Commons web page script (src/pkg/hivectl/commands/hives_web_tree.js)
+      # runs in a vm against a fake DOM; keyboard-focus regressions live here.
+      - name: Commons web page tests
+        working-directory: .
+        run: node --test src/pkg/hivectl/commands/*.test.js
+
       # bin/contributor-relay.js used to carry the source under a misleading
       # .sh name (kubestellar/hive#6429), which needed a copy trick for
       # node --check. It is a real .js file now; check it and its lib/ module
@@ -819,6 +913,8 @@ jobs:
           bash bin/contributor-agent.test.sh
           node --check bin/contributor-relay.js
           node --check bin/lib/pane-classifier.js
+          node --check bin/lib/relay-audit.js
+          node --check bin/lib/relay-audit-shim.js
           bash -n bin/contributor-relay.sh
           node bin/contributor-relay.test.js
 
@@ -829,6 +925,13 @@ jobs:
         run: |
           node --check bin/vibe-kanban-mirror.js
           node bin/vibe-kanban-mirror.test.js
+
+      # src/pkg/dashboard/*.test.js lift inline helpers out of
+      # static/index.html and run them under node:test; nothing else
+      # executes them, so run the whole glob here.
+      - name: Dashboard inline JS helper tests
+        working-directory: .
+        run: node --test src/pkg/dashboard/*.test.js
 
       # backend-smoke.yml's failure-issue script runs only on a scheduled
       # failure, in production, and its output is an issue somebody acts on —
@@ -916,6 +1019,19 @@ jobs:
       - name: ttyd keeps --url-arg when credentialed (#4593)
         working-directory: .
         run: bash src/deploy/test_ttyd_url_arg.sh
+
+      # The browser terminal's attach helper falls back to the DEFAULT tmux
+      # socket when agents share one UID. It assumed that socket lived under
+      # dev's passwd uid (/tmp/tmux-1001), but under OpenShift's restricted
+      # SCC the container runs as an arbitrary uid with no passwd entry, so
+      # every session was alive on /tmp/tmux-<arbitrary>/default while the
+      # dashboard polled /tmp/tmux-1001/default for 900s. This stubs `id`,
+      # starts real tmux servers at the paths each uid layout would use, and
+      # asserts the helper attaches to the right one. Skips where tmux is
+      # absent.
+      - name: ttyd finds the default tmux socket under an arbitrary container UID
+        working-directory: .
+        run: bash src/deploy/test_ttyd_default_socket_uid.sh
 
       # #5435: hive-discord.service ran `node bot.js` with
       # WorkingDirectory=/tmp/hive/discord, resolving the executed code out of a
@@ -1139,6 +1255,7 @@ jobs:
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     needs: build-and-test
     permissions:
       contents: read
@@ -1205,6 +1322,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -1235,9 +1353,13 @@ jobs:
         with:
           driver-opts: network=host
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        if: env.skip != 'true'
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build Docker image
         if: env.skip != 'true'
-        run: docker buildx build --load --network host -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
+        run: docker buildx build --load --network host --build-arg BASE_REGISTRY="$BASE_REGISTRY" -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
 
       - name: Smoke test
         if: env.skip != 'true' && matrix.smoke == 'true'
@@ -1277,6 +1399,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1310,6 +1433,9 @@ jobs:
           : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
           echo "value=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build image via buildx (OCI archive, no attestations)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -1321,6 +1447,7 @@ jobs:
           outputs: type=oci,oci-mediatypes=true,dest=/tmp/hive-oci.tar,tar=true
           cache-from: type=gha,scope=tmux-linux-amd64
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ steps.ref_name.outputs.value }}
 
@@ -1401,6 +1528,7 @@ jobs:
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 60
     needs: [build-and-test, docker]
     permissions:
       contents: read
@@ -1409,7 +1537,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1417,6 +1545,9 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
 
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -1435,6 +1566,7 @@ jobs:
             ghcr.io/${{ github.repository }}:nightly
             ghcr.io/${{ github.repository }}:nightly-${{ github.sha }}
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ github.sha }}
             GIT_SHORT=${{ github.sha }}
           cache-from: type=gha

@@ -12,7 +12,11 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/hivecommons/hive-contributor:latest")
+# :edge is the channel this v6 branch publishes (.github/workflows/docker.yml,
+# "v6 false edge"); :latest is v5's channel and lacks v6 entrypoint features
+# such as the krun VM console (#12278), which left interactive krun sessions
+# unreachable (#13248). Pin another tag with HIVE_CONTRIBUTOR_IMAGE.
+hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/hivecommons/hive-contributor:edge")
 # The hosted hub moved to hive.hivecommons.dev on 2026-09-04; the old
 # hive.kubestellar.io host answers every path with a 301 to the new one, which
 # a WebSocket handshake does not follow and `curl -sf` (no -L) reports as
@@ -77,6 +81,17 @@ check-version skip="false":
 contribute-check-backend backend="claude":
     #!/usr/bin/env bash
     set -euo pipefail
+    # config/backends.conf KNOWN_BACKENDS is the single source of truth for the
+    # supported set (#13262, #13263); the case below only adds per-CLI probes.
+    # shellcheck source=config/backends.conf disable=SC1091
+    source "{{justfile_directory()}}/config/backends.conf"
+    case " ${KNOWN_BACKENDS} " in
+      *" {{backend}} "*) ;;
+      *)
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: ${KNOWN_BACKENDS// /, }"
+        exit 1
+        ;;
+    esac
     echo "── Preflight: {{backend}} CLI ──"
     # Say which CLI this probes. It is the HOST's copy, which is what local
     # mode runs and what container mode stages a sign-in from — but container
@@ -110,19 +125,19 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
-      gemini)
-        if command -v gemini &>/dev/null; then
-          echo "Gemini CLI detected — run 'gemini auth login' if not already authenticated."
+      aider)
+        if command -v aider &>/dev/null; then
+          echo "aider detected — export the API key for your chosen provider for containerized runs."
         else
-          echo "ERROR: Gemini CLI not installed."
+          echo "ERROR: aider not found. Install: https://aider.chat/docs/install.html"
           exit 1
         fi
         ;;
       bob)
         if command -v bob &>/dev/null; then
           # Bob's browser SSO flow cannot complete in a container, so the
-          # containerized path needs BOBSHELL_API_KEY exported in your shell.
-          echo "Bob CLI detected — export BOBSHELL_API_KEY for containerized runs."
+          # containerized path needs BOB_API_KEY (or BOBSHELL_API_KEY) exported in your shell.
+          echo "Bob CLI detected — export BOB_API_KEY for containerized runs."
         else
           echo "ERROR: Bob CLI not found."
           exit 1
@@ -303,8 +318,26 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
+      omnigent)
+        if command -v omnigent &>/dev/null; then
+          echo "Omnigent CLI detected ($(omnigent --version 2>&1 | head -1))"
+          echo "  Meta-harness for Claude Code, Codex, Cursor, Pi, and custom agents."
+          echo "  Auth: export ANTHROPIC_API_KEY=..., OPENAI_API_KEY=..., or GEMINI_API_KEY=..."
+          echo "        (persisted ~/.omnigent/auth_tokens.json / config.yaml credentials are staged too)"
+          echo "  Hive launches 'omnigent run --server local': a remote server default from"
+          echo "  'omnigent login <url>' is NOT honoured — remote-server mode is unsupported."
+          echo "  omnigent has NO OS sandbox on the local CLI path; local mode refuses to launch without"
+          echo "  HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED=1."
+          if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" && -z "${GEMINI_API_KEY:-}" && -z "${DATABRICKS_TOKEN:-}" && -z "${OMNIGENT_API_KEY:-}" && ! -s "$HOME/.omnigent/auth_tokens.json" && ! -s "$HOME/.omnigent/config.yaml" && ! -s "$HOME/.databrickscfg" ]]; then
+            echo "  WARNING: no provider API key and no ~/.omnigent credentials found — omnigent may fail at task time."
+          fi
+        else
+          echo "ERROR: omnigent CLI not found. Install: https://github.com/omnigent-ai/omnigent"
+          exit 1
+        fi
+        ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp, openhands"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: ${KNOWN_BACKENDS// /, }"
         exit 1
         ;;
     esac
@@ -884,12 +917,21 @@ contribute-move backend="claude": check-version (contribute-check-backend backen
 # Usage: just contribute-hive              (container, default CLI from setup)
 #        just contribute-hive copilot      (container, copilot backend)
 #        just contribute-hive claude local  (UNCONFINED, on your host — see #4918)
+#        just contribute-hive omp krun     (container in a krun microVM — #12199)
+#
+# Accepted modes: docker (the default container mode), local, krun. `krun` is
+# the same as HIVE_CONTAINER_OCI_RUNTIME=krun and goes through the same
+# preflight. An unknown backend or mode is refused before anything is pulled
+# or started (#13249).
 #
 # Container mode is the default and is the confined one. Local mode runs the
 # backend CLI as your own user on your own machine with permission gating
 # bypassed and no workspace confinement; the recipe warns about that at launch.
 # Runtime: auto-detects docker then podman (discovery order, not posture —
 # see src/docs/podman-rootless-ci.md); force with HIVE_CONTAINER_RUNTIME=podman
+# Hardened mode (opt-in): HIVE_CONTAINER_OCI_RUNTIME=krun runs the container in a
+# krun microVM under rootless podman, failing closed (#12199); interactive
+# sessions are reached through the VM console with podman attach (#12202).
 contribute-hive backend="" mode="docker": check-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -906,10 +948,32 @@ contribute-hive backend="" mode="docker": check-version
     source "{{config_dir}}/gh-auth.env"
     source "{{config_dir}}/contributor.env"
     set +a
+    # Retired hosted-hive apex: a contributor.env written before the
+    # *.hive.kubestellar.io -> *.hive.hivecommons.dev move names a host the
+    # certificate no longer covers. Relocate in-memory (label intact) so the
+    # Hub: line below and a local-mode relay name the live host; the container
+    # path does the same inside bin/contributor-agent.sh.
+    _RETIRED_HUB_HOST="{{legacy_hive_hub}}"; _RETIRED_HUB_HOST="${_RETIRED_HUB_HOST#wss://}"; _RETIRED_HUB_HOST="${_RETIRED_HUB_HOST%%/*}"
+    if [[ "${HIVE_HUB:-}" == *"${_RETIRED_HUB_HOST}"* ]]; then
+      _MOVED_HUB="${HIVE_HUB//.${_RETIRED_HUB_HOST}/.hive.hivecommons.dev}"
+      _MOVED_HUB="${_MOVED_HUB//\/\/${_RETIRED_HUB_HOST}\//\/\/hive.hivecommons.dev\/}"
+      echo "WARNING: HIVE_HUB=${HIVE_HUB} uses the retired ${_RETIRED_HUB_HOST} domain; using ${_MOVED_HUB} instead."
+      echo "         Update the HIVE_HUB line in {{config_dir}}/contributor.env (or re-run 'just contribute-setup') to silence this."
+      export HIVE_HUB="$_MOVED_HUB"
+      unset _MOVED_HUB
+    fi
+    unset _RETIRED_HUB_HOST
     # Handle "just contribute-hive local" (backward compat)
     _BACKEND="{{backend}}"
     _MODE="{{mode}}"
-    if [[ "$_BACKEND" == "local" || "$_BACKEND" == "docker" ]]; then
+    if [[ "$_BACKEND" == "local" || "$_BACKEND" == "docker" || "$_BACKEND" == "krun" ]]; then
+      # The shortcut only stands in for an omitted backend; a second word is
+      # then a second mode (`krun local`, #13249), not something to discard.
+      if [[ "$_MODE" != "docker" ]]; then
+        echo "ERROR: '${_BACKEND}' and '${_MODE}' are both modes; give at most one."
+        echo "  Usage: just contribute-hive [backend] [docker|local|krun]"
+        exit 1
+      fi
       _MODE="$_BACKEND"
       _BACKEND=""
     fi
@@ -918,12 +982,94 @@ contribute-hive backend="" mode="docker": check-version
     else
       BACKEND="${AGENT_BACKEND:-claude}"
     fi
+    # Refuse an unknown backend before the image pull (#13249): the container
+    # would otherwise start and only then report "<backend> CLI not found".
+    # Same list contribute-check-backend accepts.
+    case "$BACKEND" in
+      claude|copilot|gemini|bob|goose|codex|pi|litellm|agy|opencode|kilo|openhands|muse|omp) ;;
+      *)
+        echo "ERROR: Unknown backend '${BACKEND}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp, openhands"
+        echo "  Usage: just contribute-hive [backend] [docker|local|krun]"
+        exit 1
+        ;;
+    esac
+    # Refuse an unknown mode too (#13249): anything but `local` used to fall
+    # through to a plain container, so `claude krun` silently ran without krun.
+    # `krun` as a mode is HIVE_CONTAINER_OCI_RUNTIME=krun (container mode in a
+    # microVM) and goes through the krun preflight below.
+    case "$_MODE" in
+      docker|local) ;;
+      krun)
+        if [[ -n "${HIVE_CONTAINER_OCI_RUNTIME:-}" && "${HIVE_CONTAINER_OCI_RUNTIME}" != "krun" ]]; then
+          echo "ERROR: mode 'krun' conflicts with HIVE_CONTAINER_OCI_RUNTIME=${HIVE_CONTAINER_OCI_RUNTIME}."
+          echo "  Unset HIVE_CONTAINER_OCI_RUNTIME (environment and contributor.env), or drop 'krun'."
+          exit 1
+        fi
+        HIVE_CONTAINER_OCI_RUNTIME=krun
+        _MODE=docker
+        ;;
+      *)
+        echo "ERROR: Unknown mode '${_MODE}'. Accepted: docker (default), local, krun"
+        echo "  Usage: just contribute-hive [backend] [docker|local|krun]"
+        exit 1
+        ;;
+    esac
     export AGENT_BACKEND="$BACKEND"
+    # krun mode (#12199): HIVE_CONTAINER_OCI_RUNTIME=krun runs the contributor
+    # container inside a libkrun microVM. Opt-in only; unset or empty leaves
+    # this launch exactly as it was. Read as a shell variable (not a just
+    # env() call) so a value set only in contributor.env, sourced above,
+    # counts too. Once asked for, krun is never silently dropped: every
+    # unsupported combination is refused here, before anything starts.
+    KRUN_MODE=false
+    if [[ -n "${HIVE_CONTAINER_OCI_RUNTIME:-}" ]]; then
+      if [[ "${HIVE_CONTAINER_OCI_RUNTIME}" != "krun" ]]; then
+        echo "ERROR: HIVE_CONTAINER_OCI_RUNTIME=${HIVE_CONTAINER_OCI_RUNTIME} is not supported."
+        echo "  The only accepted value is 'krun' (a libkrun microVM under rootless podman)."
+        echo "  Kata Containers is not supported here: it does not run under podman."
+        echo "  Unset HIVE_CONTAINER_OCI_RUNTIME (environment and contributor.env) for a plain container."
+        exit 1
+      fi
+      KRUN_MODE=true
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) is not supported on macOS."
+        echo "  On macOS, podman's containers already run inside a Linux VM (podman machine);"
+        echo "  krun mode needs a Linux host with /dev/kvm."
+        exit 1
+      fi
+      if [[ "$_MODE" == "local" ]]; then
+        echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) cannot be combined with local mode."
+        echo "  Local mode runs the backend on this host; krun mode is container mode in a microVM."
+        echo "  Drop 'local', or unset HIVE_CONTAINER_OCI_RUNTIME to run on the host."
+        exit 1
+      fi
+      if [[ "$BACKEND" == "pi" ]]; then
+        echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) does not support backend 'pi'."
+        echo "  pi needs host networking to find a local model server, which a microVM cannot share."
+        exit 1
+      fi
+      # Interactive krun mode (#12202) needs no headless entry: the session
+      # is reached through the VM console (podman attach), never exec.
+      if [[ "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
+        # The relay's own HEADLESS_BACKENDS table is the source of truth (same
+        # extraction bin/test_backend_smoke.sh uses). Empty means the table could
+        # not be read, which refuses rather than guesses.
+        KRUN_HEADLESS_BACKENDS="$(sed -n '/^const HEADLESS_BACKENDS = {$/,/^};$/p' bin/contributor-relay.js 2>/dev/null \
+          | grep -E '^  [a-z]+: \{' | sed -E 's/^  ([a-z]+):.*/\1/' | tr '\n' ' ' || true)"
+        if [[ " ${KRUN_HEADLESS_BACKENDS} " != *" ${BACKEND} "* ]]; then
+          echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) does not support backend '${BACKEND}' headless."
+          echo "  CONTRIBUTOR_MODE=headless and the relay has no headless entry for '${BACKEND}'."
+          echo "  Headless backends: ${KRUN_HEADLESS_BACKENDS:-(could not read bin/contributor-relay.js)}"
+          echo "  Unset CONTRIBUTOR_MODE to run '${BACKEND}' interactively through the VM console."
+          exit 1
+        fi
+      fi
+    fi
     # Bob has no headless credential other than its API key — without it the
     # agent would launch and sit at Bob's key prompt forever. Fail fast.
-    if [[ "$BACKEND" == "bob" && -z "${BOBSHELL_API_KEY:-}" ]]; then
-      echo "ERROR: BOBSHELL_API_KEY not set — Bob cannot authenticate."
-      echo "  export BOBSHELL_API_KEY=your-bob-api-key"
+    if [[ "$BACKEND" == "bob" && -z "${BOB_API_KEY:-}" && -z "${BOBSHELL_API_KEY:-}" ]]; then
+      echo "ERROR: BOB_API_KEY (or legacy BOBSHELL_API_KEY) not set — Bob cannot authenticate."
+      echo "  export BOB_API_KEY=your-bob-api-key"
       echo "  then re-run: just contribute-hive bob"
       exit 1
     fi
@@ -959,6 +1105,15 @@ contribute-hive backend="" mode="docker": check-version
     if [[ "$_MODE" == "local" ]]; then
       # ── Local mode: tmux session + relay (same as container, but on host) ──
       #
+      # One local relay per contributor (#14833): contributor-relay.pid is the
+      # only record of a running local relay. Starting a second one would
+      # connect it under the same contributor ID and overwrite that record,
+      # leaving the first relay taking tasks with nothing able to stop it.
+      source "{{justfile_directory()}}/bin/contributor-local-relay.sh"
+      if ! hive_refuse_if_local_relay_running; then
+        exit 1
+      fi
+
       # SAY WHAT THIS MODE COSTS (#4918). The backend CLI runs as THIS user on
       # THIS machine. Claude-family agents now get Claude Code's native OS
       # sandbox on this path, and Codex keeps its workspace-write sandbox.
@@ -1167,9 +1322,9 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
-        goose|agy|bob|pi|aider|kilo|omp|openhands)
+        goose|agy|bob|pi|aider|kilo|omp|openhands|omnigent)
           # No sandbox, filesystem allowlist, or command deny-list exists for
-          # any of these eight (see the "no confinement mechanism at all"
+          # any of these nine (see the "no confinement mechanism at all"
           # block in backends.conf) — refuse to launch unconfined by
           # default rather than silently grant full host access (#4918).
           if ! PERM_FLAG=$(unconfined_local_perm_flag_shell "$BACKEND"); then
@@ -1201,6 +1356,13 @@ contribute-hive backend="" mode="docker": check-version
             exit 1
           fi
         done
+        # Installed is not the same as usable (#14832). On Ubuntu the AppArmor
+        # user-namespace restriction lets the sandbox start and then fails
+        # every command it runs, so run one sandboxed no-op now, before the
+        # relay connects and advertises readiness.
+        if ! hive_local_sandbox_preflight "$BACKEND"; then
+          exit 1
+        fi
       fi
 
       # LiteLLM: point Claude Code at the contributor's own proxy.
@@ -1215,14 +1377,14 @@ contribute-hive backend="" mode="docker": check-version
         if [[ -n "${HIVE_LITELLM_API_KEY:-}" ]]; then
           LITELLM_ENV="${LITELLM_ENV} ANTHROPIC_API_KEY=${HIVE_LITELLM_API_KEY}"
         fi
-        if [[ -n "${AGENT_MODEL:-}" ]]; then
-          PERM_FLAG="${PERM_FLAG} --model ${AGENT_MODEL}"
-        fi
-      elif [[ "$BACKEND" == "pi" ]]; then
-        # Same canonical selection used by the container entrypoint and every
-        # relay restart. %q keeps model IDs with shell metacharacters one argv.
-        PERM_FLAG="${PERM_FLAG:+${PERM_FLAG} }--model $(printf %q "$AGENT_MODEL")"
       fi
+
+      # Model and effort, exactly as the relay's own launch builder would add
+      # them (#16222). The relay reuses AGENT_LAUNCH_CMD verbatim on every
+      # relaunch, so a flag missing here is missing for the whole session, and
+      # the relay reports a model or effort to the hub only when this line
+      # carries its flag. %q keeps model IDs with shell metacharacters one argv.
+      SELECTION_FLAGS=$(backend_selection_flags_shell "$BACKEND" "${AGENT_MODEL:-}" "${AGENT_REASONING_EFFORT:-}")
 
       # Create tmux session with the CLI.
       #
@@ -1306,7 +1468,40 @@ contribute-hive backend="" mode="docker": check-version
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOTMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV CCACHE_DIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/ccache")"
-      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}"
+      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}${SELECTION_FLAGS:+ $SELECTION_FLAGS}"
+
+      # Registered before anything long-lived is forked below (knowledge
+      # refresh, tmux session, quota publisher, relay); the PID variables it
+      # reads are filled in as each one starts.
+      cleanup() {
+        echo "Shutting down..."
+        [[ -n "${RELAY_PID:-}" ]] && kill "$RELAY_PID" 2>/dev/null || true
+        # Starts and stops with the contributor (#10299): a surviving publisher
+        # keeps refreshing this pool's presence marker and tells the next relay
+        # a reading is coming that nothing will write.
+        [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
+        [[ -n "${KNOWLEDGE_REFRESH_PID:-}" ]] && kill "$KNOWLEDGE_REFRESH_PID" 2>/dev/null || true
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+        exit 0
+      }
+      trap cleanup SIGTERM SIGINT EXIT
+
+      # The relay reads ${HIVE_AGENT_MD:-$HOME/agent.md} and reports a
+      # knowledge error when it is missing (#14521). Only the container
+      # entrypoint used to fetch the export, so local mode never wrote it. Use
+      # the same fetch + 10-minute refresh as bin/contributor-agent.sh; if the
+      # hub cannot serve it the file stays absent and the relay says so.
+      #
+      # This runs BEFORE the CLI is started in tmux, and the export is linked
+      # under the backend's context filenames (CLAUDE.md, AGENTS.md, ...) in
+      # HIVE_AGENT_CWD -- the directory the CLI is launched from -- so the
+      # knowledge is actually read at startup. The container links into $HOME;
+      # here $HOME is the user's real home, which these links must not touch.
+      export HIVE_AGENT_MD="${HIVE_AGENT_MD:-${HOME}/agent.md}"
+      source "${SCRIPT_DIR}/lib/knowledge-export.sh"
+      knowledge_export_sync_start "$HIVE_AGENT_MD"
+      link_backend_knowledge "$BACKEND" "$HIVE_AGENT_MD" "$HIVE_AGENT_CWD"
+
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
       tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $AGENT_LAUNCH_CMD" Enter
@@ -1328,18 +1523,6 @@ contribute-hive backend="" mode="docker": check-version
       export HIVE_CONTRIBUTOR_CLI="$BACKEND"
       export NODE_PATH="${NODE_PATH:-$(pwd)/node_modules}"
       echo "Starting relay + ${BACKEND} in tmux session '${TMUX_SESSION}'..."
-
-      cleanup() {
-        echo "Shutting down..."
-        kill "$RELAY_PID" 2>/dev/null || true
-        # Starts and stops with the contributor (#10299): a surviving publisher
-        # keeps refreshing this pool's presence marker and tells the next relay
-        # a reading is coming that nothing will write.
-        [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
-        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-        exit 0
-      }
-      trap cleanup SIGTERM SIGINT EXIT
 
       # Publish this contributor's quota readings (hivecommons/hive#10299).
       # Local mode runs no `hive` process either, so without this the relay's
@@ -1369,16 +1552,24 @@ contribute-hive backend="" mode="docker": check-version
         echo "      See src/docs/contributor-relay.md → 'How the reading reaches the guard'."
       fi
 
+      export HIVE_RELAY_LOG_FILE="{{config_dir}}/contributor-relay.log"
       node "$RELAY" &
       RELAY_PID=$!
       echo ""
       echo "✓ Contributor running in local mode."
-      echo "  CLI:    $CMD (tmux session: $TMUX_SESSION)"
+      if [[ "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
+        echo "  CLI:    $CMD (headless: no tmux session)"
+      else
+        echo "  CLI:    $CMD (tmux session: $TMUX_SESSION)"
+      fi
       echo "  Relay:  PID $RELAY_PID"
+      echo "  Watch it: just contribute-watch"
       if [[ -n "$QUOTA_PUBLISHER_PID" ]]; then
         echo "  Quota:  publisher PID $QUOTA_PUBLISHER_PID (HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0 to opt out)"
       fi
-      echo "  Attach: tmux attach -t $TMUX_SESSION"
+      if [[ "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
+        echo "  Attach: tmux attach -t $TMUX_SESSION"
+      fi
       echo ""
       echo "Relay logs:"
       wait "$RELAY_PID"
@@ -1401,6 +1592,29 @@ contribute-hive backend="" mode="docker": check-version
       # test-intent seam. We are deliberately NOT re-ordering this detect
       # to prefer Podman (that's Option A) until that CI coverage exists.
       RUNTIME="{{container_runtime}}"
+      if [[ "$KRUN_MODE" == "true" ]]; then
+        # krun runs only under rootless podman. This branch picks podman
+        # before the docker-first detection below, which stays unchanged for
+        # everyone who did not ask for krun.
+        KRUN_REQUESTED_RUNTIME="${RUNTIME:-${HIVE_CONTAINER_RUNTIME:-}}"
+        if [[ -n "$KRUN_REQUESTED_RUNTIME" && "$KRUN_REQUESTED_RUNTIME" != "podman" ]]; then
+          echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) runs only under rootless podman,"
+          echo "  but HIVE_CONTAINER_RUNTIME=${KRUN_REQUESTED_RUNTIME}. Unset it or set it to podman."
+          exit 1
+        fi
+        if ! command -v podman >/dev/null 2>&1; then
+          echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) needs rootless podman, and podman is not installed."
+          exit 1
+        fi
+        RUNTIME=podman
+        KRUN_ROOTLESS="$(podman info --format '{{ "{{" }}.Host.Security.Rootless{{ "}}" }}' 2>/dev/null || true)"
+        if [[ "$KRUN_ROOTLESS" != "true" ]]; then
+          echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) runs only under rootless podman,"
+          echo "  but podman reports Rootless=${KRUN_ROOTLESS:-unknown} (rootful podman, or podman info failed)."
+          echo "  Run as an unprivileged user without sudo."
+          exit 1
+        fi
+      fi
       if [[ -z "$RUNTIME" ]]; then
         if command -v docker >/dev/null 2>&1; then RUNTIME=docker
         elif command -v podman >/dev/null 2>&1; then RUNTIME=podman
@@ -1454,10 +1668,121 @@ contribute-hive backend="" mode="docker": check-version
         # not the Mac). The relay only dials out, so the default network
         # works; reach a localhost LiteLLM proxy via host.containers.internal.
       fi
+      KRUN_GUEST_KERNEL=""
+      KRUN_RAM_MIB=""
+      KRUN_CPUS=""
+      KRUN_NESTED=""
+      # Only krun mode fills this (#12200); a plain launch passes nothing new.
+      KRUN_ENV_ARGS=()
+      if [[ "$KRUN_MODE" == "true" ]]; then
+        # VM sizing. crun's krun handler takes guest RAM from krun.ram_mib,
+        # else the whole OCI memory limit; a guest given the whole limit was
+        # OOM-killed by the host once its page cache filled (#12198 spike),
+        # so the guest gets 75% and the rest is VMM headroom. vCPUs come from
+        # krun.cpus, else every host CPU (capped at 16); --cpus alone is only
+        # a cgroup quota on the VMM.
+        if [[ "$CONTAINER_MEMORY" != "none" && "$CONTAINER_MEMORY" != "0" ]]; then
+          KRUN_RAM_MIB="$(awk -v v="$CONTAINER_MEMORY" 'BEGIN {
+            if (!match(v, /^[0-9]+(\.[0-9]+)?/)) exit 1
+            n = substr(v, 1, RLENGTH) + 0; u = tolower(substr(v, RLENGTH + 1))
+            if (u == "" || u == "b") m = 1 / 1048576
+            else if (u == "k" || u == "kb" || u == "kib") m = 1 / 1024
+            else if (u == "m" || u == "mb" || u == "mib") m = 1
+            else if (u == "g" || u == "gb" || u == "gib") m = 1024
+            else if (u == "t" || u == "tb" || u == "tib") m = 1048576
+            else exit 1
+            r = int(n * m * 3 / 4)
+            if (r < 1) exit 1
+            print r
+          }')" || {
+            echo "ERROR: krun mode cannot size the microVM from HIVE_CONTAINER_MEMORY=${CONTAINER_MEMORY}."
+            echo "  Use a size such as 4g or 4096m, or none/0 for krun's 1 GiB default."
+            exit 1
+          }
+          RUNTIME_FLAGS+=" --annotation krun.ram_mib=${KRUN_RAM_MIB}"
+        fi
+        if [[ "$CONTAINER_CPUS" != "none" && "$CONTAINER_CPUS" != "0" ]]; then
+          if [[ ! "$CONTAINER_CPUS" =~ ^([0-9]+(\.[0-9]*)?|\.[0-9]+)$ ]] \
+            || ! KRUN_CPUS="$(awk -v v="$CONTAINER_CPUS" 'BEGIN {
+              n = v + 0; if (n <= 0) exit 1
+              c = int(n); if (c < n) c++
+              if (c < 1) c = 1; if (c > 16) c = 16
+              print c
+            }')"; then
+            echo "ERROR: krun mode needs HIVE_CONTAINER_CPUS to be none, 0 or a positive number;"
+            echo "  got '${CONTAINER_CPUS}'."
+            exit 1
+          fi
+          RUNTIME_FLAGS+=" --annotation krun.cpus=${KRUN_CPUS}"
+        fi
+        # --runtime krun (not the run.oci.handler annotation) is what makes
+        # podman apply the container_kvm_t SELinux label.
+        RUNTIME_FLAGS+=" --runtime krun"
+        # Interactive krun mode (#12202): the krun handler refuses exec, so the
+        # session is reached through the VM console. Keep stdin open and give
+        # the container a TTY so `podman attach` reaches it.
+        if [[ "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
+          RUNTIME_FLAGS+=" --interactive --tty"
+        fi
+        if ! podman --runtime=krun info >/dev/null 2>&1; then
+          echo "ERROR: krun preflight failed: podman cannot resolve the 'krun' OCI runtime."
+          echo "  'podman --runtime=krun info' failed. Install crun with krun support (Fedora: dnf install crun-krun)"
+          echo "  and make sure 'krun' is registered in containers.conf. No container was started."
+          exit 1
+        fi
+        # Open the device read-write as this user: group membership alone is
+        # not enough when an ACL or SELinux denies the open (crun#1894).
+        KRUN_KVM_DEVICE="${HIVE_KRUN_KVM_DEVICE:-/dev/kvm}"
+        if [[ ! -e "$KRUN_KVM_DEVICE" ]] || ! ( exec 3<>"$KRUN_KVM_DEVICE" ) 2>/dev/null; then
+          echo "ERROR: krun preflight failed: cannot open ${KRUN_KVM_DEVICE} for reading and writing as $(id -un 2>/dev/null || echo 'this user')."
+          echo "  krun needs hardware virtualisation. Check that KVM is enabled and that this user may"
+          echo "  open ${KRUN_KVM_DEVICE} (usually the 'kvm' group; log in again after joining it)."
+          echo "  No container was started."
+          exit 1
+        fi
+        if command -v systemd-detect-virt >/dev/null 2>&1; then
+          KRUN_NESTED="$(systemd-detect-virt --vm 2>/dev/null || true)"
+          if [[ "$KRUN_NESTED" == "none" ]]; then KRUN_NESTED=""; fi
+        fi
+      fi
       if [[ "${HIVE_SKIP_PULL:-}" != "true" ]]; then
         echo "Pulling {{hive_image}} (${RUNTIME})..."
         "$RUNTIME" pull {{hive_image}} 2>/dev/null || echo "Pull failed — using local image"
         echo ""
+      fi
+      if [[ "$KRUN_MODE" == "true" ]]; then
+        # Guest check in a FRESH throwaway krun container — never via exec
+        # into an existing one, because exec runs outside the VM. The
+        # entrypoint is overridden (it needs a registration token) and the
+        # limits are the small fixed ones the #12198 spike ran.
+        KRUN_HOST_KERNEL="$(uname -r)"
+        if ! KRUN_SMOKE_OUT="$(podman run --rm --runtime krun \
+            --memory 1g --memory-swap 1g --cpus 1 \
+            --annotation krun.cpus=1 --annotation krun.ram_mib=768 \
+            --entrypoint sh {{hive_image}} \
+            -c 'uname -r; if test -e /.krun_config.json; then echo krun-marker-present; else echo krun-marker-absent; fi' 2>&1)"; then
+          echo "ERROR: krun preflight failed: the smoke run of {{hive_image}} under krun failed."
+          echo "${KRUN_SMOKE_OUT}" | sed 's/^/  /'
+          echo "  The contributor was not started."
+          exit 1
+        fi
+        KRUN_GUEST_KERNEL="$(printf '%s\n' "$KRUN_SMOKE_OUT" | head -n 1)"
+        if [[ -z "$KRUN_GUEST_KERNEL" || "$KRUN_GUEST_KERNEL" == "$KRUN_HOST_KERNEL" ]]; then
+          echo "ERROR: krun preflight failed: the smoke run reported kernel '${KRUN_GUEST_KERNEL}',"
+          echo "  the same as the host's ('${KRUN_HOST_KERNEL}'), so it did not run in a microVM."
+          echo "  The contributor was not started."
+          exit 1
+        fi
+        if ! grep -qx 'krun-marker-present' <<<"$KRUN_SMOKE_OUT"; then
+          echo "ERROR: krun preflight failed: the krun marker /.krun_config.json is absent in the"
+          echo "  smoke run, so it did not run under krun. The contributor was not started."
+          exit 1
+        fi
+        # #12200: the launcher, not the relay, names the isolation class; the
+        # relay declares it to the hub as the display-only capability
+        # isolation_class. The host's kernel release goes in too, so team
+        # metadata keeps reporting the host's kernel rather than the guest's.
+        KRUN_ENV_ARGS=(-e HIVE_ISOLATION_CLASS=microvm-krun -e "HIVE_TEAM_KERNEL_RELEASE=${KRUN_HOST_KERNEL}")
       fi
       # Mount CLI-specific config directories.
       #
@@ -1756,6 +2081,36 @@ contribute-hive backend="" mode="docker": check-version
             CLI_MOUNTS="-v ${CLI_STAGE}/.openhands:/home/dev/.openhands${VOLSUF}"
           fi
           ;;
+        omnigent)
+          # Stage ONLY Omnigent's credential files, never the directory.
+          # ~/.omnigent also holds omnigent.db (every prior session and turn),
+          # logs/ (full JSON conversation dumps) and debug/ (SSE event tapes)
+          # — the same transcript-exposure problem #7836 closed for ~/.claude.
+          #   auth_tokens.json — persisted server session tokens
+          #   config.yaml      — provider/LLM configuration. Its `server:`
+          #                      default is NOT honoured: the launch line pins
+          #                      `--server local` (backends.conf) so a remote
+          #                      server from `omnigent login <url>` can never
+          #                      take the session out of this container.
+          mkdir -p "${CLI_STAGE}/.omnigent"
+          if [ -d "${HOME}/.omnigent" ]; then
+            staged=""
+            for f in auth_tokens.json config.yaml; do
+              if [ -f "${HOME}/.omnigent/${f}" ] && cp -p "${HOME}/.omnigent/${f}" "${CLI_STAGE}/.omnigent/${f}" 2>/dev/null; then
+                staged="${staged:+${staged} }${f}"
+              fi
+            done
+            echo "Staged:    ${staged:-nothing} from ${HOME}/.omnigent (allowlist: auth_tokens.json config.yaml; omnigent.db, logs/ and debug/ stay on the host)"
+          fi
+          CLI_MOUNTS="-v ${CLI_STAGE}/.omnigent:/home/dev/.omnigent${VOLSUF}"
+          # ~/.databrickscfg is the one credential file outside ~/.omnigent that
+          # detect_cli (bin/contributor-agent.sh) accepts; stage that single
+          # file so the container's verdict matches the host preflight.
+          if [ -s "${HOME}/.databrickscfg" ] && cp -p "${HOME}/.databrickscfg" "${CLI_STAGE}/.databrickscfg" 2>/dev/null; then
+            echo "Staged:    .databrickscfg from ${HOME}"
+            CLI_MOUNTS="${CLI_MOUNTS} -v ${CLI_STAGE}/.databrickscfg:/home/dev/.databrickscfg${VOLSUF}"
+          fi
+          ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
       # Pi receives ONLY the selected provider's official credential variables.
@@ -1774,7 +2129,7 @@ contribute-hive backend="" mode="docker": check-version
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
       else
-        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
+        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GEMINI_API_KEY DATABRICKS_TOKEN OMNIGENT_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOB_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
           add_provider_env "$name"
         done
       fi
@@ -1816,11 +2171,20 @@ contribute-hive backend="" mode="docker": check-version
         oom_killed=$("$RUNTIME" inspect -f '{{ "{{" }}.State.OOMKilled{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "unknown")
         if [[ "$oom_killed" == "true" ]]; then
           echo "  Cause:     the container was OOM-killed after exceeding available memory."
+          if [[ "$KRUN_MODE" == "true" ]]; then
+            echo "             Under krun this is the microVM's VM memory: the guest (${KRUN_RAM_MIB:-krun default 1024} MiB)"
+            echo "             plus the VMM outgrew the container limit."
+          fi
           if [[ "$CONTAINER_MEMORY" == "none" || "$CONTAINER_MEMORY" == "0" ]]; then
             echo "  Memory:    unlimited by Hive (set HIVE_CONTAINER_MEMORY, for example 4g)"
           else
             echo "  Memory:    ${CONTAINER_MEMORY} (raise with HIVE_CONTAINER_MEMORY, for example 6g)"
           fi
+        elif [[ "$exit_code" == "137" && "$KRUN_MODE" == "true" ]]; then
+          # Stop signals do not reach a krun guest (crun#2158), so every stop
+          # ends in SIGKILL: report it as a stop, not as memory pressure.
+          echo "  Cause:     stopped (exit 137). Under krun a stop ends in SIGKILL because the stop"
+          echo "             signal does not reach the guest; podman did not report an out-of-memory kill."
         elif [[ "$exit_code" == "137" ]]; then
           echo "  Cause:     SIGKILL (exit 137); the runtime did not mark an in-container OOM."
           echo "             Check the host's OOM logs for system-wide memory pressure."
@@ -1840,6 +2204,7 @@ contribute-hive backend="" mode="docker": check-version
         -e HIVE_USE_CONTRIBUTOR_GH=true \
         -e HIVE_CONTAINER_NAME="${CONTAINER_NAME}" \
         -e HIVE_CONTAINER_RUNTIME="${RUNTIME}" \
+        "${KRUN_ENV_ARGS[@]}" \
         -e HIVE_CONTRIBUTOR_ENV="/home/dev/.config/hive/contributor.env" \
         "${PROVIDER_ENV_ARGS[@]}" \
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
@@ -1855,6 +2220,22 @@ contribute-hive backend="" mode="docker": check-version
 
       echo "Container: ${CONTAINER_NAME}"
       echo "Limits:    ${CONTAINER_MEMORY} memory, ${CONTAINER_CPUS} CPUs"
+      if [[ "$KRUN_MODE" == "true" ]]; then
+        if [[ -n "$KRUN_RAM_MIB" ]]; then
+          KRUN_MEM_DESC="${KRUN_RAM_MIB} MiB guest of a ${CONTAINER_MEMORY} container limit"
+        else
+          KRUN_MEM_DESC="krun's 1 GiB default (no container memory limit)"
+        fi
+        if [[ -n "$KRUN_CPUS" ]]; then
+          KRUN_CPU_DESC="${KRUN_CPUS} vCPUs"
+        else
+          KRUN_CPU_DESC="vCPUs follow the host's CPU count (at most 16)"
+        fi
+        echo "Isolation: microVM (krun), guest kernel ${KRUN_GUEST_KERNEL}, ${KRUN_MEM_DESC}, ${KRUN_CPU_DESC}"
+        if [[ -n "$KRUN_NESTED" ]]; then
+          echo "WARNING:   this host is itself a virtual machine (${KRUN_NESTED}); nested krun is untested and may be unstable."
+        fi
+      fi
       echo "Waiting for CLI session to start..."
       # Grace period for the container entrypoint to bring up the tmux
       # session before we try to attach to it.
@@ -1947,54 +2328,82 @@ contribute-hive backend="" mode="docker": check-version
         fi
       fi
 
+      echo "Watch it: just contribute-watch"
       # Open the CLI session in a new terminal window
-      ATTACH_CMD="${RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t contributor"
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        # Detect iTerm via System Events rather than pgrep. On macOS the
-        # iTerm process's comm is the full bundle path
-        # (/Applications/iTerm.app/Contents/MacOS/iTerm2), so `pgrep -x iTerm2`
-        # anchors against that path and NEVER matches — every iTerm user
-        # silently fell through to Terminal.app. System Events reports the
-        # application name ("iTerm2"), which is what we actually want.
-        TAB_OPENED=true
-        RUNNING_APPS=$(osascript -e 'tell application "System Events" to get name of every application process whose background only is false' 2>/dev/null || echo "")
-        if [[ "$RUNNING_APPS" == *"iTerm"* ]]; then
-          # iTerm may be running with no open window, in which case
-          # `tell current window` errors — fall back to creating a window.
-          osascript -e "tell application \"iTerm2\"
-            if (count of windows) = 0 then
-              create window with default profile command \"${ATTACH_CMD}\"
-            else
-              tell current window to create tab with default profile command \"${ATTACH_CMD}\"
-            end if
-          end tell" >/dev/null 2>&1 || {
-            TAB_OPENED=false
-            echo "WARNING: could not open an iTerm tab; attach manually with:"
-            echo "  ${ATTACH_CMD}"
-          }
-        else
-          osascript -e "tell application \"Terminal\" to do script \"${ATTACH_CMD}\"" >/dev/null 2>&1 || {
-            TAB_OPENED=false
-            echo "WARNING: could not open a Terminal window; attach manually with:"
-            echo "  ${ATTACH_CMD}"
-          }
-        fi
-        if [[ "$TAB_OPENED" == "true" ]]; then
-          echo ""
-          echo "✓ CLI session opened in a new terminal tab."
-        fi
-      else
+      if [[ "$KRUN_MODE" == "true" && "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
+        # The krun handler refuses `podman exec`, so there is nothing to
+        # attach to; headless status arrives in the relay logs below.
         echo ""
-        echo "Attach to the CLI session with:"
-        echo "  ${ATTACH_CMD}"
+        echo "Attach:    none in krun mode (headless; the krun handler refuses exec). Interactive krun mode: #12202."
+      elif [[ "$KRUN_MODE" == "true" ]]; then
+        # Interactive krun mode (#12202): the entrypoint puts the tmux session
+        # on the VM console, so attach to the container itself. No exec route
+        # and no tmux hint: the krun handler refuses exec.
+        echo ""
+        echo "Attach to the CLI session through the microVM console with:"
+        echo "  ${RUNTIME} attach ${CONTAINER_NAME}"
+        echo "Detach:    Ctrl-P Ctrl-Q (the contributor keeps running; attach again to return)."
+        echo "           Do not leave with Ctrl-C or Ctrl-D: those keys go to the session."
+      elif [[ "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
+        # Headless has no tmux session to attach to; the relay logs below are the view.
+        echo ""
+        echo "Headless mode: no tmux session to attach to."
+      else
+        ATTACH_CMD="${RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t contributor"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          # Detect iTerm via System Events rather than pgrep. On macOS the
+          # iTerm process's comm is the full bundle path
+          # (/Applications/iTerm.app/Contents/MacOS/iTerm2), so `pgrep -x iTerm2`
+          # anchors against that path and NEVER matches — every iTerm user
+          # silently fell through to Terminal.app. System Events reports the
+          # application name ("iTerm2"), which is what we actually want.
+          TAB_OPENED=true
+          RUNNING_APPS=$(osascript -e 'tell application "System Events" to get name of every application process whose background only is false' 2>/dev/null || echo "")
+          if [[ "$RUNNING_APPS" == *"iTerm"* ]]; then
+            # iTerm may be running with no open window, in which case
+            # `tell current window` errors — fall back to creating a window.
+            osascript -e "tell application \"iTerm2\"
+              if (count of windows) = 0 then
+                create window with default profile command \"${ATTACH_CMD}\"
+              else
+                tell current window to create tab with default profile command \"${ATTACH_CMD}\"
+              end if
+            end tell" >/dev/null 2>&1 || {
+              TAB_OPENED=false
+              echo "WARNING: could not open an iTerm tab; attach manually with:"
+              echo "  ${ATTACH_CMD}"
+            }
+          else
+            osascript -e "tell application \"Terminal\" to do script \"${ATTACH_CMD}\"" >/dev/null 2>&1 || {
+              TAB_OPENED=false
+              echo "WARNING: could not open a Terminal window; attach manually with:"
+              echo "  ${ATTACH_CMD}"
+            }
+          fi
+          if [[ "$TAB_OPENED" == "true" ]]; then
+            echo ""
+            echo "✓ CLI session opened in a new terminal tab."
+          fi
+        else
+          echo ""
+          echo "Attach to the CLI session with:"
+          echo "  ${ATTACH_CMD}"
+        fi
       fi
 
       echo ""
-      echo "Relay logs:"
-      # `logs -f` returns when the container stops. Don't let a non-zero
-      # status from it kill the recipe under `set -e` — we want to report the
-      # container's own exit code, which is the useful signal.
-      "$RUNTIME" logs -f "${CONTAINER_NAME}" 2>&1 || true
+      if [[ "$KRUN_MODE" == "true" && "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
+        # The console is a TTY drawn by tmux, so `logs -f` would replay the
+        # session's screen here; wait for the container instead.
+        echo "Waiting for the contributor to stop (Ctrl-C here stops and removes it)..."
+        "$RUNTIME" wait "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      else
+        echo "Relay logs:"
+        # `logs -f` returns when the container stops. Don't let a non-zero
+        # status from it kill the recipe under `set -e` — we want to report the
+        # container's own exit code, which is the useful signal.
+        "$RUNTIME" logs -f "${CONTAINER_NAME}" 2>&1 || true
+      fi
       FINAL_EXIT=$("$RUNTIME" inspect -f '{{ "{{" }}.State.ExitCode{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "unknown")
       if [[ "$FINAL_EXIT" != "0" && "$FINAL_EXIT" != "unknown" ]]; then
         echo ""
@@ -2052,7 +2461,13 @@ contribute-status:
       echo ""
     done
 
-# Open the contributor Hives overlay in the terminal dashboard.
+# Watch and steer your running contributor (session, relay log, attach).
+contribute-watch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    exec ./bin/hivectl-bootstrap.sh tui --watch
+
+# Configure where your contributor works (Hives overlay).
 contribute-tui:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -2124,7 +2539,32 @@ contribute-stop:
         echo "$NAMES" | xargs -r "$RT" stop 2>/dev/null && STOPPED=true
       fi
     done
+    # And a local-mode relay (#14833): it runs no container, and
+    # contributor-relay.pid is the only record that it exists.
+    source "{{justfile_directory()}}/bin/contributor-local-relay.sh"
+    if hive_stop_local_relay; then
+      STOPPED=true
+    fi
     $STOPPED && echo "Stopped." || echo "Not running."
+    # krun contributors (#12199): the stop signal never reaches the guest, so
+    # the relay's SIGTERM cleanup (token cache, PID record) does not run.
+    # Remove every contributor container podman reports ran under krun —
+    # running or stopped — which also ends its VMM and deletes the token
+    # cache with the container, then drop the stale relay PID record.
+    if command -v podman >/dev/null 2>&1; then
+      KRUN_REMOVED=false
+      ALL_NAMES=$(podman ps -a --filter "name=hive-contributor-" --format '{{ "{{" }}.Names{{ "}}" }}' 2>/dev/null || true)
+      for NAME in $ALL_NAMES; do
+        OCI_RT=$(podman inspect --format '{{ "{{" }}.OCIRuntime{{ "}}" }}' "$NAME" 2>/dev/null || true)
+        if [[ "$OCI_RT" == "krun" ]]; then
+          podman rm -f "$NAME" >/dev/null 2>&1 && KRUN_REMOVED=true
+        fi
+      done
+      if $KRUN_REMOVED; then
+        rm -f "{{config_dir}}/contributor-relay.pid"
+        echo "Removed krun contributor containers and the relay PID record."
+      fi
+    fi
 
 # Scoped contributor quota-guard controls (hivecommons/hive#6953).
 #
@@ -2231,6 +2671,20 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     IMAGE_TAG="{{image_tag}}"
     IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
     BACKEND="${AGENT_BACKEND:-claude}"
+
+    # ── RuntimeClass name check (#12227) ──
+    # runtimeClassName must be a DNS-1123 subdomain: lowercase alphanumerics, '-'
+    # and '.', starting and ending alphanumeric, at most 253 characters. Refuse
+    # before any YAML is built so stdout stays empty on a bad value.
+    if [[ -n "${HIVE_K8S_RUNTIME_CLASS:-}" ]]; then
+      if (( ${#HIVE_K8S_RUNTIME_CLASS} > 253 )) \
+        || [[ ! "$HIVE_K8S_RUNTIME_CLASS" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ ]]; then
+        echo "ERROR: HIVE_K8S_RUNTIME_CLASS='${HIVE_K8S_RUNTIME_CLASS}' is not a valid RuntimeClass name." >&2
+        echo "  Use a DNS-1123 subdomain: lowercase letters, digits, '-' and '.', starting and" >&2
+        echo "  ending with a letter or digit, at most 253 characters (e.g. kata-qemu, gvisor)." >&2
+        exit 1
+      fi
+    fi
 
     # ── Headless-backend preflight (#2549 / #2660) ──
     # The workload runs headless. Only the backends in HEADLESS_BACKENDS have a
@@ -2465,6 +2919,11 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # else) — the relay is meant to run forever and reconnect, so this is the
     # right shape. Stated for the reader; not settable here.
     YAML+="      restartPolicy: Always"$'\n'
+    # Optional sandbox runtime (e.g. gvisor, kata-qemu); omitted entirely when unset
+    # so the default manifest is unchanged. The RuntimeClass must already exist.
+    if [[ -n "${HIVE_K8S_RUNTIME_CLASS:-}" ]]; then
+      YAML+="      runtimeClassName: ${HIVE_K8S_RUNTIME_CLASS}"$'\n'
+    fi
     YAML+="      containers:"$'\n'
     YAML+="        - name: contributor"$'\n'
     YAML+="          image: ${IMAGE}"$'\n'

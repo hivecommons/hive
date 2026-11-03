@@ -14,7 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashchat"
@@ -39,8 +40,10 @@ func testDeps(t *testing.T) *Dependencies {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
@@ -56,7 +59,7 @@ func testDeps(t *testing.T) *Dependencies {
 	}
 
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 
 	var refreshCalled atomic.Bool
 	var persistCalled atomic.Bool
@@ -219,6 +222,24 @@ func TestHandleVersion(t *testing.T) {
 	result := decodeJSON(t, rec)
 	if result["version"] != "2.0.0" {
 		t.Errorf("version = %v", result["version"])
+	}
+}
+
+func TestHandleVersionReportsRelease(t *testing.T) {
+	prevVer, prevCommit := fleetReportBuildInfo()
+	t.Cleanup(func() { SetFleetReportBuildInfo(prevVer, prevCommit) })
+
+	SetFleetReportBuildInfo("5.2.1", "e03e3fc")
+	s, _ := apiServer(t)
+	result := decodeJSON(t, doGet(s, "/api/version"))
+	if result["release"] != "5.2.1" {
+		t.Errorf("release = %v, want 5.2.1", result["release"])
+	}
+
+	SetFleetReportBuildInfo("unknown", "e03e3fc")
+	result = decodeJSON(t, doGet(s, "/api/version"))
+	if _, ok := result["release"]; ok {
+		t.Errorf("release = %v, want omitted when unknown", result["release"])
 	}
 }
 
@@ -622,12 +643,14 @@ func TestHandleAgentConfigGet_MultilineDescription(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {
-				Backend:     "claude",
-				Model:       "sonnet",
-				Enabled:     true,
-				Description: multilineDesc,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {
+					Backend:     "claude",
+					Model:       "sonnet",
+					Enabled:     true,
+					Description: multilineDesc,
+				},
 			},
 		},
 		Governor: config.GovernorConfig{
@@ -639,7 +662,7 @@ func TestHandleAgentConfigGet_MultilineDescription(t *testing.T) {
 	}
 
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 
 	s.RegisterAPI(&Dependencies{
 		Config:      cfg,
@@ -764,11 +787,11 @@ func TestHandleChat(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 	result := decodeJSON(t, rec)
-	if result["status"] != "fallback" {
-		t.Errorf("status = %v, want fallback", result["status"])
+	if result["status"] != "responder_unavailable" {
+		t.Errorf("status = %v, want responder_unavailable", result["status"])
 	}
-	if answer, _ := result["answer"].(string); !strings.Contains(answer, "I don't know how to handle") {
-		t.Errorf("answer = %q, want visible fallback diagnostic", answer)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "guide agent") {
+		t.Errorf("answer = %q, want guide agent unavailable message", answer)
 	}
 }
 
@@ -811,7 +834,7 @@ func TestHandleChat_LocalStatusAgentsAndPRs(t *testing.T) {
 		want  string
 	}{
 		{query: "AGENTS!!!", want: "brainstorm: idle (paused)"},
-		{query: "prs?", want: "myorg/repo: 1 open PR"},
+		{query: "prs?", want: "myorg/repo#7"},
 		{query: "status", want: "Hive status: ready"},
 		{query: "Show recent kick failures", want: "No recent kick failures"},
 		{query: "spek: spec runs", want: "No active spec runs"},
@@ -845,6 +868,10 @@ func TestHandleChat_BangCommandsStillUseDashboardBot(t *testing.T) {
 }
 
 func TestHandleChat_SpekCommandsUseRunDataWithoutProbe(t *testing.T) {
+	// Completed runs come from the process-wide lifecycle timeline; journeys
+	// recorded by earlier tests would otherwise leak into the run listing.
+	resetLifecycleStore()
+	t.Cleanup(resetLifecycleStore)
 	s := newFullServer(t)
 	s.SetSpektacularStatus(FrontendSpektacular{Present: false, Binary: "spektacular"})
 	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "spek: spec runs"})
@@ -893,11 +920,13 @@ func TestHandleChat_CommandHintsReturnConcreteAnswers(t *testing.T) {
 		query string
 		want  string
 	}{
-		{query: "/agents stuck", want: "builder: idle (paused: manual maintenance)"},
-		{query: "agents: scanner status", want: "scanner: running"},
-		{query: "Which agent completed last?", want: "completion data is unavailable"},
+		// Agent and PR rows are answered by the v5 deterministic matchers (#14408/#14409);
+		// a paused agent is not "stuck" there.
+		{query: "/agents stuck", want: "No blocked agents right now (2 agents total)"},
+		{query: "agents: scanner status", want: "**scanner** — running"},
+		{query: "Which agent completed last?", want: "No agent has a recorded completed run yet"},
 		{query: "beads: high priority", want: "urgent release blocker"},
-		{query: "prs: waiting on review", want: "myorg/repo: 1 open PR"},
+		{query: "prs: waiting on review", want: "**myorg/repo** (1)"},
 		{query: "Summarize open release blockers", want: "Open release blockers"},
 		{query: "governor: next kick", want: "scanner"},
 		{query: "Why is the governor paused?", want: "manual maintenance"},
@@ -922,7 +951,7 @@ func TestHandleChat_CommandHintsReturnConcreteAnswers(t *testing.T) {
 		}
 		answer, _ := result["answer"].(string)
 		if !strings.Contains(answer, tc.want) {
-			t.Fatalf("%s: answer = %q, want to contain %q", tc.query, answer, tc.want)
+			t.Errorf("%s: answer = %q, want to contain %q", tc.query, answer, tc.want)
 		}
 	}
 }
@@ -1106,7 +1135,7 @@ func TestHandleNousMode_Empty(t *testing.T) {
 func TestHandleNousScope(t *testing.T) {
 	s, deps := apiServer(t)
 	deps.Nous = &NousState{}
-	rec := doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "org"})
+	rec := doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "repo"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d", rec.Code)
 	}
@@ -1846,5 +1875,17 @@ func TestGovernorNotificationsRejectsNonOwner(t *testing.T) {
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestChatKnowledgeSearchTerms(t *testing.T) {
+	for _, tc := range []struct{ query, want string }{
+		{"Search docs for relay setup", "relay setup"},
+		{"What changed in v5?", "v5"},
+		{"search docs for", ""},
+	} {
+		if got := chatKnowledgeSearchTerms(tc.query); got != tc.want {
+			t.Errorf("chatKnowledgeSearchTerms(%q) = %q, want %q", tc.query, got, tc.want)
+		}
 	}
 }

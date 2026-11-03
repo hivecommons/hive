@@ -8,7 +8,7 @@ import (
 )
 
 func TestGitHubAPIBudgetDefaults(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{"scanner": {}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {}}}}
 	cfg.applyDefaults()
 	if got := cfg.AgentGitHubAPIHourlyCap("scanner"); got != DefaultAgentsGitHubAPIHourlyCap {
 		t.Fatalf("AgentGitHubAPIHourlyCap default = %d, want %d", got, DefaultAgentsGitHubAPIHourlyCap)

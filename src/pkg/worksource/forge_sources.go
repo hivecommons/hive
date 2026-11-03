@@ -132,7 +132,7 @@ func (s *forgeWorkSource) AddLabel(ctx context.Context, ref Ref, label string) e
 	if err != nil {
 		return err
 	}
-	return s.client.AddLabels(ctx, repo, number, []string{strings.TrimSpace(label)})
+	return s.client.AddLabels(ctx, repo, number, []string{strings.TrimSpace(label)}) // writeback:solicited design workflow requested this label on its configured Gitea/GitLab source, not GitHub.
 }
 
 func (s *forgeWorkSource) RemoveLabel(ctx context.Context, ref Ref, label string) error {
@@ -140,7 +140,7 @@ func (s *forgeWorkSource) RemoveLabel(ctx context.Context, ref Ref, label string
 	if err != nil {
 		return err
 	}
-	return s.client.RemoveLabel(ctx, repo, number, strings.TrimSpace(label))
+	return s.client.RemoveLabel(ctx, repo, number, strings.TrimSpace(label)) // writeback:solicited design workflow requested this label removal on its configured Gitea/GitLab source, not GitHub.
 }
 
 func (s *forgeWorkSource) AddComment(ctx context.Context, ref Ref, body string) error {
@@ -148,7 +148,7 @@ func (s *forgeWorkSource) AddComment(ctx context.Context, ref Ref, body string) 
 	if err != nil {
 		return err
 	}
-	return s.client.CreateIssueComment(ctx, repo, number, body)
+	return s.client.CreateIssueComment(ctx, repo, number, body) // writeback:solicited requested design run publishes its artifact to the configured Gitea/GitLab source, not GitHub.
 }
 
 func (s *forgeWorkSource) TransitionStatus(ctx context.Context, ref Ref, status string) error {

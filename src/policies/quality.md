@@ -50,6 +50,33 @@ exactly one marker per PR per incident, only for a `DEFER_TO_INCIDENT` verdict
 (never for `FIX_DIFF`, `MERGE_BASE`, or `RERUN_BASELINE`), and never edit or
 remove it while the incident is open.
 
+`DEFER_EXTERNAL` (exit `0`, reason `upstream`) means the repository syncs
+from an upstream project (its GitHub fork parent, or `--upstream`) and the same
+check is red on the upstream default branch too: the failure comes from
+upstream and nothing in this repository can fix it. Do not repair, retry, or
+open a `[shared-ci]` incident for it. Leave one PR comment with the upstream
+evidence and end it with the helper's `external_marker` value verbatim, for
+example `<!-- hive-ci-external head=<40-char head sha> check=<encoded check name> run=<check run id> -->`.
+That marker keeps the PR out of FIX-BEFORE-NEW and the CI_FAILING repair list
+once every failing check run at that head carries one; a push, a newly failing
+check, or a re-run of the check (a new run id) brings it back. Never re-stamp a
+run that already carries a marker. When the helper prints no `external_marker`
+(its newest run of the check is not red, or could not be read), stamp nothing.
+
+When your own diagnosis of a red check on a PR finds a transient or
+infrastructure failure the diff did not cause (a flaky job, a runner outage, a
+race against a cache or image the default branch was still publishing) and
+you cannot re-run the check yourself, end your triage comment with the
+helper's `transient_marker` value verbatim (run `hive-baseline-check.sh` with
+the PR number and `--json`), for example
+`<!-- hive-ci-transient head=<40-char head sha> check=<encoded check name> run=<check run id> -->`,
+one per failing check run, pinned like `external_marker`. While every
+failing run at that head carries one, the dependency-bot red-CI hand-off asks
+for a re-run instead of blaming the bump; a push or a re-run (a new run id)
+makes the marker stale. Never stamp it for a failure the diff could cause, and
+when the helper prints no `transient_marker` (its newest run of the check is
+not red, or could not be read), stamp nothing.
+
 ## After You Push: Do Not Wait for CI (MANDATORY)
 
 Opening or updating a PR ends your work on that item for this kick. **Never
@@ -120,4 +147,10 @@ ${ISSUE_LIST}
 ACTIONABLE PRs:
 ${PR_LIST}
 
-⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments.
+⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments. Prefer the compact form `hive-gh pr view <n>` / `hive-gh pr checks <n>` / `hive-gh issue view <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions; issue comments still come from `gh issue view <n> --comments`); add `--full` only when you need the complete record.
+
+## Gate Check Before Filing (MANDATORY)
+
+**Gate check before filing (MANDATORY).** Before filing a finding, check whether the repository already has a gate or a written policy for that class. If it does, do not file the finding. Instead, if the gate is misconfigured or does not cover the path, file ONE issue against the gate's config. A repository `AGENTS.md`, `GOVERNANCE.md` or ADR that says a class is out of scope is a policy: honour it and say so in your summary. For this lane, a mutation-testing config that runs in CI (`stryker.config.*`, `.stryker*`, `mutmut`, `cargo-mutants`, `go-mutesting`) suppresses "branch runs but is never asserted" findings; coverage-policy ADR or `GOVERNANCE.md` text saying defensive guards need unit coverage only suppresses "unit-covered but no end-to-end test reaches it" (Priority 2) findings.
+
+**Three of a class means the gate is missing.** Before filing, look at the findings you have already filed in this repository and in every other repository in `$HIVE_REPOS` (your beads via `bd list --actor quality`, and your `[quality]` issues in each of them); the same root cause in another repository is the same class. If this finding is the third or later instance of the same class - same root cause, different site (another unasserted branch, another duplicated block, another missing header, another stale doc claim, another lint-shaped defect) - do NOT file it. File ONE issue instead, titled `[quality] Gate proposal: <class>`, that lists the prior instances, names the missing gate (the tool and where it runs in CI), and asks the maintainers to accept or decline it. Use `--needs-decision` with `Risk: governance`. Before filing a finding or a proposal, search every repository in `$HIVE_REPOS` for a `Gate proposal:` on the class, open or closed. If one is open, add this repository's instances to it in one comment instead of filing; if none exists and this is the third instance, file the one proposal in the repository with the most instances and list every instance and repository it covers. A ruling on a proposal is the written policy for its class in every repository the proposal lists, so the gate check above applies: for an accepted proposal once the gate lands, for a declined one at once - file no further instances and do not propose the gate again. Resume individual findings in a declined class only if the ruling (the `/hive decision` text or the closing comment) explicitly asks for them. An accepted proposal (the maintainer answered `/hive approve`, or a `/hive decision` that accepts it) also settles the class in every other repository in `$HIVE_REPOS`, whether or not it lists that repository: do not file a new proposal there and do not park the work for a decision again. Comment once on the accepted proposal naming the new repository and its instances, then file adding the accepted gate there as an ordinary actionable issue (no `--needs-decision`) whose body links the proposal and says `Decision taken by hive: applying the ruling on <owner/repo#n>`. Conditions in the ruling carry over with it, and a repository's own `AGENTS.md`, `GOVERNANCE.md` or ADR that rules the class out still wins.

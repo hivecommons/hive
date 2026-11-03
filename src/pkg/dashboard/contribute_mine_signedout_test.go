@@ -14,10 +14,12 @@ import (
 // .me-signin prompt.
 //
 // The server side of that distinction was never the problem: /api/contribute/me
-// already answers 401 for anonymous and 403 for signed-in-without-a-profile, and
-// TestContributeMeAnonymousRejected / TestContributeMeNoProfileForbidden pin it.
-// What changed is the client, so these tests pin the client wiring in the same
-// strings.Contains style the other Operations-page tests use.
+// already answers 401 for anonymous and, since #12111, a 200 with
+// has_profile:false for signed-in-without-a-profile (it was a 403, which a
+// hosted spoke's Ingress intercepted); TestContributeMeAnonymousRejected /
+// TestContributeMeNoProfileIsAnEmptyState pin it. What changed here is the
+// client, so these tests pin the client wiring in the same strings.Contains
+// style the other Operations-page tests use.
 
 // TestMineCardRendersSignedOutPrompt proves ccLoadMine branches on the two
 // identity statuses instead of returning early on every non-2xx, and that each
@@ -28,15 +30,16 @@ func TestMineCardRendersSignedOutPrompt(t *testing.T) {
 	for _, want := range []string{
 		"r.status===401",               // anonymous is branched on, not swallowed
 		"ccRenderMineSignIn()",         // ...and routed to the sign-in prompt
-		"r.status===403",               // signed in, no profile on this hive
-		"ccRenderMineNoProfile(",       // ...routed to its own wording
+		"r.status===403",               // signed in, no profile — pre-#12111 spokes
+		"d.has_profile===false",        // ...and the 200 shape newer spokes answer
+		"ccRenderMineNoProfile(",       // ...both routed to its own wording
 		"function ccRenderMineSignIn(", // the renderers themselves exist
 		"function ccRenderMineNoProfile(",
 		"function ccRenderMineError(",
 		"function ccRenderMineMessage(",
 		`class="me-signin"`, // the Profile tab's class, reused rather than reinvented
 		"Sign in with GitHub",
-		"Ship a task to start your card.",
+		"connect a contributor agent to get started",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rendered contribute page missing signed-out contribution-card marker %q", want)
@@ -100,7 +103,9 @@ func TestContributeMeStillGatesAnonymous(t *testing.T) {
 	if rec := getAs(s, "/api/contribute/me", ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous GET /api/contribute/me = %d, want 401", rec.Code)
 	}
-	if rec := getAs(s, "/api/contribute/me", "stranger"); rec.Code != http.StatusForbidden {
-		t.Fatalf("profile-less GET /api/contribute/me = %d, want 403", rec.Code)
+	// Profile-less is NOT a gate: it is a readable 200 (#12111), so the only
+	// non-2xx the client has to branch on for identity is the 401.
+	if rec := getAs(s, "/api/contribute/me", "stranger"); rec.Code != http.StatusOK {
+		t.Fatalf("profile-less GET /api/contribute/me = %d, want 200", rec.Code)
 	}
 }

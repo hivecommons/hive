@@ -63,8 +63,10 @@ func TestDashboardOverlayBytesScrubsFileSourcedAuthToken(t *testing.T) {
 	setDashboardAuthTokenFileForTest(t, tokenPath)
 
 	cfg := &Config{
-		Project:   ProjectConfig{Org: "acme"},
-		Agents:    map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		Project: ProjectConfig{Org: "acme"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
 		Dashboard: DashboardConfig{AuthToken: "file-token"},
 	}
 	data, err := cfg.dashboardOverlayBytes()

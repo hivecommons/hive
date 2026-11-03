@@ -1,0 +1,286 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/gfi"
+	"github.com/hivecommons/hive/pkg/github"
+)
+
+func gfiTestConfig() *config.Config {
+	cfg := &config.Config{HiveID: "acme-hive"}
+	cfg.Project.Org = "acme"
+	cfg.Dashboard.PublicURL = "https://acme.hive.example/"
+	return cfg
+}
+
+func TestGFIPublicOrigin(t *testing.T) {
+	if gfiPublicOrigin(nil) != "" {
+		t.Fatal("nil cfg")
+	}
+	cfg := &config.Config{}
+	if gfiPublicOrigin(cfg) != "" {
+		t.Fatal("empty cfg should have no origin")
+	}
+	cfg.Hub.DashboardURL = "https://hub-assigned.example/"
+	if got := gfiPublicOrigin(cfg); got != "https://hub-assigned.example" {
+		t.Fatalf("hub url: %q", got)
+	}
+	cfg.Dashboard.PublicURL = "https://public.example"
+	if got := gfiPublicOrigin(cfg); got != "https://public.example" {
+		t.Fatalf("public url should win: %q", got)
+	}
+}
+
+func TestGFICandidatesProjection(t *testing.T) {
+	now := time.Now()
+	res := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Repo: "widgets", Number: 1, Title: "a", Body: "b", Labels: []string{"Good First Issue"}, CreatedAt: now},
+		{Repo: "acme/other", Number: 2, Title: "c", Labels: []string{"bug"}, CreatedAt: now},
+		{Repo: "widgets", Number: 0, Title: "linear", SourceType: "linear"},
+		{Repo: "widgets", Number: 3, State: "closed"},
+		{Repo: "widgets", Number: 4, SourceType: "linear", ExternalID: "LIN-4"},
+	}}}
+	cands, labelled := gfiCandidates("acme", res, nil)
+	if len(cands) != 2 || cands[0].Repo != "acme/widgets" || cands[1].Repo != "acme/other" {
+		t.Fatalf("cands %+v", cands)
+	}
+	if !labelled["acme/widgets#1"] || labelled["acme/other#2"] {
+		t.Fatalf("labelled %v", labelled)
+	}
+	only, _ := gfiCandidates("acme", res, func(repo string) bool { return repo == "acme/other" })
+	if len(only) != 1 || only[0].Number != 2 {
+		t.Fatalf("filter %+v", only)
+	}
+	if c, l := gfiCandidates("acme", nil, nil); c != nil || len(l) != 0 {
+		t.Fatal("nil result")
+	}
+}
+
+// Filtered rows (blocked, held, parked) still wearing the label are handed
+// to the sweep so it can withdraw them (hivecommons/hive#13267); unlabelled
+// filtered rows and non-filtered rows are not duplicated.
+func TestGFICandidatesIncludeLabelledFilteredRows(t *testing.T) {
+	now := time.Now()
+	res := &github.ActionableResult{
+		Issues: github.IssueResult{Items: []github.Issue{{Repo: "widgets", Number: 1, Title: "a", Body: "b", Labels: []string{"good first issue"}, CreatedAt: now}}},
+		WorkDetailsByRepo: map[string]github.RepoWorkDetails{
+			"widgets": {Issues: []github.RepoWorkIssue{
+				{Repo: "widgets", Number: 1, Labels: []string{"good first issue"}, Bucket: "filtered", Reason: "blocked"},
+				{Repo: "widgets", Number: 13267, Title: "soak", Labels: []string{"good first issue", "help wanted", "blocked"}, Bucket: "filtered", Reason: "blocked", CreatedAt: now},
+				{Repo: "widgets", Number: 7, Labels: []string{"blocked"}, Bucket: "filtered", Reason: "blocked"},
+				{Repo: "widgets", Number: 8, Labels: []string{"good first issue"}, Bucket: "claimed", Reason: "claimed"},
+			}},
+			"other": {Issues: []github.RepoWorkIssue{{Repo: "other", Number: 2, Labels: []string{"good first issue", "hold"}, Bucket: "filtered", Reason: "hold label"}}},
+		},
+	}
+	cands, labelled := gfiCandidates("acme", res, nil)
+	if len(cands) != 3 || cands[0].Number != 1 || cands[1].Number != 2 || cands[2].Number != 13267 {
+		t.Fatalf("cands %+v", cands)
+	}
+	if !labelled["acme/widgets#13267"] || !labelled["acme/other#2"] || len(labelled) != 3 {
+		t.Fatalf("labelled %v", labelled)
+	}
+	if got := cands[2].Labels; len(got) != 3 || cands[2].Title != "soak" {
+		t.Fatalf("filtered row projection %+v", cands[2])
+	}
+	only, _ := gfiCandidates("acme", res, func(repo string) bool { return repo == "acme/other" })
+	if len(only) != 1 || only[0].Number != 2 {
+		t.Fatalf("filter %+v", only)
+	}
+}
+
+// gfiFakeGitHub serves the handful of endpoints the sweep and release touch.
+type gfiFakeGitHub struct {
+	mu       sync.Mutex
+	comments []map[string]any
+	added    []string
+	removed  []string
+	ensured  []string
+	agentsMD bool
+}
+
+func (f *gfiFakeGitHub) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/contents/AGENTS.md"):
+			if !f.agentsMD {
+				http.Error(w, "nope", http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": "file", "encoding": "base64", "content": "IyBBR0VOVFM=", "name": "AGENTS.md", "path": "AGENTS.md"})
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/issues/7"):
+			// The sweep's live-label re-read before labelling.
+			labels := []map[string]any{{"name": "kind/bug"}, {"name": "size/S"}}
+			for _, l := range f.added {
+				labels = append(labels, map[string]any{"name": l})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels})
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/issues/7/comments"):
+			_ = json.NewEncoder(w).Encode(f.comments)
+		case r.Method == http.MethodPost && strings.HasSuffix(p, "/issues/7/comments"):
+			b, _ := io.ReadAll(r.Body)
+			var in struct{ Body string }
+			_ = json.Unmarshal(b, &in)
+			f.comments = append(f.comments, map[string]any{"id": len(f.comments) + 1, "body": in.Body})
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": len(f.comments), "body": in.Body})
+		case r.Method == http.MethodPatch && strings.Contains(p, "/issues/comments/"):
+			b, _ := io.ReadAll(r.Body)
+			var in struct{ Body string }
+			_ = json.Unmarshal(b, &in)
+			f.comments[0]["body"] = in.Body
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1, "body": in.Body})
+		case r.Method == http.MethodGet && strings.Contains(p, "/labels/"):
+			f.ensured = append(f.ensured, p[strings.LastIndex(p, "/")+1:])
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "x"})
+		case r.Method == http.MethodPost && strings.HasSuffix(p, "/issues/7/labels"):
+			b, _ := io.ReadAll(r.Body)
+			var in []string
+			_ = json.Unmarshal(b, &in)
+			f.added = append(f.added, in...)
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodDelete && strings.Contains(p, "/issues/7/labels/"):
+			f.removed = append(f.removed, p[strings.LastIndex(p, "/")+1:])
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, r.Method+" "+p, http.StatusNotFound)
+		}
+	})
+}
+
+func TestGFISweepReleaseAndConvertWiring(t *testing.T) {
+	fake := &gfiFakeGitHub{agentsMD: true}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	logger := slog.New(slog.DiscardHandler)
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, logger)
+	cfg := gfiTestConfig()
+	state := newGFIState()
+	body := strings.Repeat("The last page is dropped when total is a multiple of page size. ", 2) +
+		"\n\n## Acceptance criteria\n- `pkg/paginate.Pages(10, 5)` returns 2\n- add a table test\n"
+	last := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Repo: "widgets", Number: 7, Title: "Fix off-by-one", Body: body, Labels: []string{"kind/bug", "size/S"}, CreatedAt: time.Now().Add(-48 * time.Hour)},
+	}}}
+
+	// Explicit opt-out: nothing happens.
+	off := false
+	cfg.GoodFirstIssue.Enabled = &off
+	var lastRun time.Time
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, last, &lastRun, logger)
+	if len(fake.added) != 0 || !lastRun.IsZero() {
+		t.Fatal("disabled sweep acted")
+	}
+	cfg.GoodFirstIssue.Enabled = nil
+
+	// No public URL: skipped, but the interval is still armed.
+	cfg.Dashboard.PublicURL = ""
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, last, &lastRun, logger)
+	if len(fake.added) != 0 || lastRun.IsZero() {
+		t.Fatal("no-public-url sweep acted or did not arm")
+	}
+	cfg.Dashboard.PublicURL = "https://acme.hive.example"
+
+	// Due → labels + comment, AGENTS.md link detected.
+	lastRun = time.Time{}
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, last, &lastRun, logger)
+	if strings.Join(fake.added, ",") != gfi.Label+","+gfi.HelpWantedLabel || len(fake.comments) != 1 {
+		t.Fatalf("added=%v comments=%d", fake.added, len(fake.comments))
+	}
+	c := fake.comments[0]["body"].(string)
+	if !strings.Contains(c, "https://acme.hive.example/contribute?issue=acme%2Fwidgets%237") || !strings.Contains(c, "AGENTS.md") || !strings.Contains(c, "acme-hive picked") {
+		t.Fatalf("comment: %s", c)
+	}
+	if !state.known("acme/widgets#7") || state.sweeper.Stats().Selected != 1 {
+		t.Fatalf("state: known=%v stats=%+v", state.known("acme/widgets#7"), state.sweeper.Stats())
+	}
+	// Not due again within the interval.
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, last, &lastRun, logger)
+	if len(fake.comments) != 1 {
+		t.Fatal("second comment within interval")
+	}
+
+	// Ledger: a contributor claim on the labelled issue is a conversion; a
+	// claim on some other issue is not.
+	var baseCalled int
+	hooks := gfiClaimHooks(context.Background(), cfg, state, func() *github.Client { return gh }, nil, logger,
+		claims.Hooks{OnClaimed: func(claims.Claim, claims.Outcome) { baseCalled++ }})
+	hooks.OnClaimed(claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "octocat", Kind: claims.KindContributor}, claims.OutcomeClaimed)
+	hooks.OnClaimed(claims.Claim{Repo: "acme/widgets", Issue: 8, Holder: "octocat", Kind: claims.KindContributor}, claims.OutcomeClaimed)
+	hooks.OnClaimed(claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "octocat", Kind: claims.KindContributor}, claims.OutcomeRenewed)
+	if baseCalled != 3 || state.sweeper.Stats().Converted != 1 {
+		t.Fatalf("base=%d stats=%+v", baseCalled, state.sweeper.Stats())
+	}
+
+	// A hive agent start on an unknown issue is ignored without API calls.
+	release := gfiReleaseOnHiveStart(context.Background(), cfg, state, func() *github.Client { return gh }, nil, logger)
+	release("worker", "widgets", 99, github.AgentStartSignalClaim)
+	// On the labelled issue: labels off, comment superseded. The release
+	// runs in a goroutine that talks to the forge first and only then
+	// bumps the Released stat and forgets the labelled key, so wait on the
+	// state transition (the goroutine's last step) rather than on the
+	// forge side effects alone — otherwise the stats assertion below can
+	// observe Released:0 (#13048).
+	release("worker", "widgets", 7, github.AgentStartSignalClaim)
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		return !state.known("acme/widgets#7") && state.sweeper.Stats().Released == 1
+	}, "release did not clear the labelled state")
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if strings.Join(fake.removed, ",") != "good%20first%20issue,help%20wanted" && strings.Join(fake.removed, ",") != gfi.Label+","+gfi.HelpWantedLabel {
+		t.Fatalf("removed %v", fake.removed)
+	}
+	if !strings.Contains(fake.comments[0]["body"].(string), gfi.SupersededMarker) {
+		t.Fatalf("comment not superseded: %v", fake.comments[0]["body"])
+	}
+	if state.known("acme/widgets#7") || state.sweeper.Stats().Released != 1 {
+		t.Fatalf("state after release: %+v", state.sweeper.Stats())
+	}
+}
+
+// A maintainer labels an issue by hand between sweeps; the hive must still
+// know it wears the label when an agent starts it, without waiting for the
+// next sweep interval.
+func TestGFILabelledSetRefreshesEveryCycle(t *testing.T) {
+	fake := &gfiFakeGitHub{}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	logger := slog.New(slog.DiscardHandler)
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, logger)
+	cfg := gfiTestConfig()
+	state := newGFIState()
+
+	lastRun := time.Now() // interval armed: the sweep itself must not run
+	plain := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Repo: "widgets", Number: 9, Title: "Typo in README", Body: "short", CreatedAt: time.Now().Add(-48 * time.Hour)},
+	}}}
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, plain, &lastRun, logger)
+	if state.known("acme/widgets#9") {
+		t.Fatal("unlabelled issue reported as labelled")
+	}
+	handLabelled := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Repo: "widgets", Number: 9, Title: "Typo in README", Body: "short", Labels: []string{gfi.Label}, CreatedAt: time.Now().Add(-48 * time.Hour)},
+	}}}
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, handLabelled, &lastRun, logger)
+	if !state.known("acme/widgets#9") {
+		t.Fatal("hand-labelled issue not tracked between sweeps")
+	}
+	if len(fake.added) != 0 || len(fake.comments) != 0 {
+		t.Fatalf("sweep ran inside the interval: added=%v comments=%d", fake.added, len(fake.comments))
+	}
+}

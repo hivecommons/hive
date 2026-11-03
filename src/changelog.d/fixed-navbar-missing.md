@@ -1,1 +1,0 @@
-- Fixed the dashboard top navbar visibility and Overview KPI layout after v5.136.0.

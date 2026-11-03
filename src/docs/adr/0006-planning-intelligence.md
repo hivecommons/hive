@@ -2,6 +2,10 @@
 
 Status: Accepted (retroactive)
 
+A **kick** is a work prompt sent to an agent. An **epic** groups a large piece
+of work; its child tasks form a **directed acyclic graph (DAG)**, so dependencies
+can be completed before the tasks that need them.
+
 ## Context
 
 Large GitHub issues can be too vague for a single agent kick. Hive needs a way
@@ -23,12 +27,15 @@ dependency edges and execution tags. Decomposition writes `parent_epic`,
 out of ready queues until a human approves them. Reviewers may inspect, retag,
 remove, approve, or reject children before work is released.
 
-The automatic issue-label entry point stays opt-in. `planning.plan_from_label`
-defaults off because the label path can feed attacker-controlled issue text into
-the architect prompt without per-kick review; even when enabled it is inert
-below ACMM L5, where the architect is not scheduled. Approved plans that stop
-making progress are re-kicked for unfinished work only, capped at five replans
-before human escalation.
+The automatic issue-label entry point has three separate limits:
+
+- **Default off:** `planning.plan_from_label` is opt-in because it can feed
+  attacker-controlled issue text into the architect prompt without per-kick review.
+- **Level condition:** even when enabled, it is inert below ACMM L5, where
+  the architect is not scheduled. L6's pack may automatically approve plans;
+  see [the L6 approval boundary](../running-at-level-6.md#hive-settings).
+- **Retry cap:** approved plans that stop making progress are re-kicked for
+  unfinished work only, capped at five replans before human escalation.
 
 ## Consequences
 

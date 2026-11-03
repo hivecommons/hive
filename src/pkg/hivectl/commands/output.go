@@ -53,7 +53,7 @@ func (p printer) printJSONL(value any) error {
 
 func (p printer) printTable(value any) error {
 	if text, ok := value.(string); ok {
-		_, err := fmt.Fprintln(p.out, text)
+		_, err := fmt.Fprintln(p.out, compactString(text))
 		return err
 	}
 	writer := tabwriter.NewWriter(p.out, 0, 4, 2, ' ', 0)
@@ -70,8 +70,9 @@ func (p printer) printTable(value any) error {
 	switch typed := value.(type) {
 	case map[string]any:
 		keys := sortedKeys(typed)
-		for _, key := range keys {
-			_, _ = fmt.Fprintf(writer, "%s\t%s\n", key, compactValue(typed[key])) // buffered by tabwriter; Flush error is captured above
+		labels := disambiguatedLabels(keys)
+		for i, key := range keys {
+			_, _ = fmt.Fprintf(writer, "%s\t%s\n", labels[i], compactValue(typed[key])) // buffered by tabwriter; Flush error is captured above
 		}
 	case []any:
 		rows := make([]map[string]any, 0, len(typed))
@@ -91,7 +92,7 @@ func (p printer) printTable(value any) error {
 			headers = append(headers, key)
 		}
 		sort.Strings(headers)
-		_, _ = fmt.Fprintln(writer, strings.Join(headers, "\t")) // buffered by tabwriter; Flush error is captured above
+		_, _ = fmt.Fprintln(writer, strings.Join(disambiguatedLabels(headers), "\t")) // buffered by tabwriter; Flush error is captured above
 		for _, row := range rows {
 			values := make([]string, len(headers))
 			for index, header := range headers {
@@ -115,7 +116,7 @@ func compactValue(value any) string {
 	}
 	switch typed := value.(type) {
 	case string:
-		return strings.ReplaceAll(typed, "\n", "\\n")
+		return compactString(typed)
 	case float64, bool:
 		return fmt.Sprint(typed)
 	default:
@@ -125,6 +126,54 @@ func compactValue(value any) string {
 		}
 		return string(data)
 	}
+}
+
+// disambiguatedLabels compacts each key for a table cell and suffixes " (n)"
+// onto any label that a previous key already compacted to, so distinct keys
+// that differ only by control characters stay distinguishable in output.
+func disambiguatedLabels(keys []string) []string {
+	labels := make([]string, len(keys))
+	seen := map[string]int{}
+	for i, key := range keys {
+		label := compactString(key)
+		seen[label]++
+		if n := seen[label]; n > 1 {
+			label = fmt.Sprintf("%s (%d)", label, n)
+		}
+		labels[i] = label
+	}
+	return labels
+}
+
+// compactString makes a server- or index-derived string safe for a single
+// terminal table cell: newlines become a literal \n, tabs become spaces so
+// they cannot shift tabwriter columns, and every other C0/C1 control
+// character (ESC, BEL, CR, DEL, ...) is dropped so third-party text indexed
+// into search cannot carry ANSI/OSC sequences into an operator terminal.
+func compactString(s string) string {
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// decodeResult re-encodes a decoded `any` API result into the typed struct v
+// so table printers can work with fields instead of map lookups.
+func decodeResult(result any, v any, what string) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		return fmt.Errorf("decoding %s response: %w", what, err)
+	}
+	return nil
 }
 
 func sortedKeys(values map[string]any) []string {

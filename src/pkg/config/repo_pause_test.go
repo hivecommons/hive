@@ -17,8 +17,10 @@ func newPauseTestConfig(t *testing.T, repos ...string) *Config {
 		SourcePath: filepath.Join(dir, "hive.yaml"),
 		Project:    ProjectConfig{Org: "acme", Repos: repos},
 		GitHub:     GitHubConfig{AppID: 3568013},
-		Agents:     map[string]AgentConfig{"scanner": {Backend: "claude"}},
-		Data:       DataConfig{AgentsDir: t.TempDir()},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		},
+		Data: DataConfig{AgentsDir: t.TempDir()},
 	}
 }
 

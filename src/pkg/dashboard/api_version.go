@@ -16,6 +16,7 @@ import (
 )
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	s.RecordStdioFromRequest(r)
 	imageRef, channel := "", versionChannel
 	imageSource := spoke.SelfImageSourceUnknown
 	if versionImageSource != nil {
@@ -36,6 +37,18 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"tracking":    tracking,
 		"imageSource": imageSource,
 		"deployment":  s.detectDeployment(),
+		"hub_build":   versionShort,
+	}
+	if build, at := s.LastSeenStdio(); build != "" {
+		resp["last_seen_stdio_build"] = build
+		if !at.IsZero() {
+			resp["last_seen_stdio_at"] = at.Format(time.RFC3339)
+		}
+	}
+	// release is the build-stamped semver (`hive --version`); "version" above
+	// is a legacy constant, so the UI reads this field instead (#13130).
+	if release, _ := fleetReportBuildInfo(); release != "" && release != "unknown" {
+		resp["release"] = release
 	}
 	if channel != "" {
 		resp["channel"] = channel
@@ -77,6 +90,25 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		if channel == "" && policy.Channel != "" {
 			channel = policy.Channel
 			resp["channel"] = channel
+		}
+	}
+	// Scheduled-upgrade progress (#14950): the same derived state the hub
+	// card shows, so the version menu can say "draining — 2 agents in turn,
+	// 14m left" instead of just "upgrading", plus the hub-kept history so a
+	// missed window is visible from the spoke too.
+	s.statusMu.RLock()
+	curStatus := s.status
+	s.statusMu.RUnlock()
+	if progress := s.upgradeProgress(curStatus, time.Now()); progress != nil {
+		resp["upgradeProgress"] = progress
+	}
+	if policy != nil && len(policy.UpgradeHistory) > 0 {
+		var upgradedAt time.Time
+		if upgradeOutcomeRec != nil {
+			upgradedAt = upgradeOutcomeRec.CompletedAt
+		}
+		if history := spoke.UpgradeHistoryForDisplay(policy.UpgradeHistory, upgradedAt); len(history) > 0 {
+			resp["upgradeHistory"] = history
 		}
 	}
 
@@ -145,8 +177,15 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			resp["behind"] = false
 			resp["commitsBehind"] = 0
 		} else if targetImageReady {
-			resp["behind"] = true
-			if count, ok := s.commitsBehindStableTip(versionHash, target.SHA); ok {
+			// A differing target is not necessarily newer: right after a
+			// channel promotion the hub's cached target can lag the commit
+			// the spoke already runs. Offering an upgrade then only earns a
+			// "not armed — already at target" refusal from the hub, so treat
+			// a zero-commit distance as up to date, mirroring the hub's
+			// commitAtOrAheadOfTarget check.
+			count, ok := s.commitsBehindStableTip(versionHash, target.SHA)
+			resp["behind"] = !ok || count > 0
+			if ok {
 				resp["commitsBehind"] = count
 			}
 		} else {
@@ -210,10 +249,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		releaseStatus.Channel.Branch = versionBranch
 	}
 	if marker == nil {
-		if manualAttempt := upgradeAttemptFromDashboardState(manualUpgrade); manualAttempt != nil {
-			releaseStatus.Attempt = *manualAttempt
-		}
+		releaseStatus.Attempt = selectUpgradeAttempt(releaseStatus.Attempt, manualUpgrade, upgradeOutcomeRec, versionHash)
 	}
+	releaseStatus.Attempt = enforceRunningCommitInvariant(releaseStatus.Attempt, versionHash)
+	releaseStatus.Attempt = stampRunningSince(releaseStatus.Attempt, s.startedAt)
 	if imageSource != spoke.SelfImageSourcePodmanEnv && s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
 		releaseStatus.Channel.SelectorEnabled = true
 		releaseStatus.Channel.SelectorDetail = "Choose stable, candidate, or edge. The hub records your intent and the current channel changes only after the Deployment image lands."
@@ -864,7 +903,12 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	defer closeHTTPBody(resp.Body)
 	const maxUpgradeResponseBytes = 1 << 16
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxUpgradeResponseBytes))
-	if resp.StatusCode < 300 {
+	if resp.StatusCode < 300 && hubUpgradeBodyIsCurrent(body) {
+		// The hub armed nothing: this spoke is already at its reachable
+		// target. Record neither "started" (nothing will roll) nor "failed"
+		// (nothing went wrong) — leave the attempt record as it was (#12494).
+		s.logger.Info("self-upgrade: already at the reachable target — nothing to do", "target", target, "current", versionHash)
+	} else if resp.StatusCode < 300 {
 		now := time.Now().UTC()
 		s.rememberDashboardUpgradeState(dashboardUpgradeState{
 			State:       dashboardUpgradeStateStarted,
@@ -887,6 +931,20 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
+}
+
+// hubUpgradeStatusCurrent mirrors the hub's upgradeStatusCurrent: the
+// `status` of a 200 from POST /api/saas/hives/{id}/upgrade when the spoke is
+// already at its reachable target and nothing was armed.
+const hubUpgradeStatusCurrent = "current"
+
+// hubUpgradeBodyIsCurrent reports whether a 2xx hub upgrade body is the
+// already-current no-op rather than an armed upgrade.
+func hubUpgradeBodyIsCurrent(body []byte) bool {
+	var parsed struct {
+		Status string `json:"status"`
+	}
+	return json.Unmarshal(body, &parsed) == nil && parsed.Status == hubUpgradeStatusCurrent
 }
 
 func upgradeErrorFromHubBody(body []byte, fallback string) string {
@@ -988,6 +1046,8 @@ func (s *Server) handleReleaseChannelSwitch(w http.ResponseWriter, r *http.Reque
 	setPendingReleaseChannel(channel)
 	s.auditFromRequest(r, "release_channel_switch", channel, current.Channel)
 	rs := buildSpokeReleaseStatus(selfDeploymentImageForDashboard(), "", readUpgradeOutcome(), readUpgradeMarker(), versionHash, time.Time{}, false, dashboardHeartbeatStaleAfter)
+	rs.Attempt = enforceRunningCommitInvariant(rs.Attempt, versionHash)
+	rs.Attempt = stampRunningSince(rs.Attempt, s.startedAt)
 	rs.Channel.SelectorEnabled = true
 	rs.Channel.SelectorDetail = "Switch requested. The hub has recorded intent; the current channel remains the observed Deployment image until the next heartbeat/rollout lands."
 	if rs.Channel.Channel != channel {

@@ -8,9 +8,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 const githubCompareFileLimit = 300
+
+// prRequestMaxScanFiles bounds how many compare files are paged through. The
+// compare API stops listing files at 3000; past that the list is incomplete.
+const prRequestMaxScanFiles = 3000
 
 // prRequestMaxBaseDriftCommits caps how far a candidate head may sit BEHIND
 // its PR base at open time. A working branch cut from the base's own tip is
@@ -90,7 +96,8 @@ func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) er
 		base = resolved
 	}
 	head := strings.TrimSpace(req.Head)
-	comparison, _, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, head, nil)
+	comparison, resp, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, head,
+		&gh.ListOptions{PerPage: githubCompareFileLimit})
 	if err != nil {
 		// #5343: a 404 here means the head ref is not on the remote, which on
 		// this path almost always means the agent's PUSH failed to
@@ -102,19 +109,36 @@ func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) er
 	if comparison == nil {
 		return fmt.Errorf("validating PR content metadata in %s/%s diff %s...%s: GitHub returned an empty comparison", owner, repo, base, head)
 	}
-	// Base-drift gate (hivecommons/hive#6807), checked BEFORE the file-count
-	// cap below: a branch cut from the wrong line usually also blows past the
-	// 300-file scan limit, and that error is retried as transient forever,
-	// while this one is a permanent rejection with the actual cause.
+	// Base-drift gate (hivecommons/hive#6807), checked BEFORE paging the
+	// file list: a branch cut from the wrong line usually also has a huge
+	// diff, and this is a permanent rejection with the actual cause.
 	if behind := comparison.GetBehindBy(); behind > prRequestMaxBaseDriftCommits {
 		return &prBaseDriftError{base: base, head: head, behindBy: behind}
 	}
-	// GitHub exposes changed files only on the first compare page and caps that
-	// list at 300. Do not claim a clean scan when later files may be invisible.
-	if len(comparison.Files) >= githubCompareFileLimit {
-		return fmt.Errorf("validating PR content metadata in %s/%s diff %s...%s: comparison reached GitHub's %d-file scan limit", owner, repo, base, head, githubCompareFileLimit)
+	// The compare endpoint pages its files array (300 per page, commits only on
+	// page 1). Page through it so large diffs, such as a forward-merge, are
+	// fully scanned. Past prRequestMaxScanFiles the list is incomplete on
+	// GitHub's side, so the scan is skipped with a warning rather than failing:
+	// a hard error here can never succeed on retry and would block the PR.
+	files := comparison.Files
+	for resp.NextPage != 0 && len(files) < prRequestMaxScanFiles {
+		next, r, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, head,
+			&gh.ListOptions{PerPage: githubCompareFileLimit, Page: resp.NextPage})
+		if err != nil {
+			return fmt.Errorf("validating PR content metadata: %w", err)
+		}
+		if next == nil || len(next.Files) == 0 {
+			break
+		}
+		files = append(files, next.Files...)
+		resp = r
 	}
-	for _, file := range comparison.Files {
+	if len(files) >= prRequestMaxScanFiles && resp.NextPage != 0 {
+		c.logger.Warn("skipping PR content metadata scan: diff exceeds compare file listing ceiling",
+			"repo", owner+"/"+repo, "base", base, "head", head, "files", len(files))
+		return nil
+	}
+	for _, file := range files {
 		if file == nil || file.GetPatch() == "" {
 			continue
 		}

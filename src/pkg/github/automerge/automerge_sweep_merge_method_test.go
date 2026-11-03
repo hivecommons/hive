@@ -9,6 +9,7 @@ package automerge
 // ("sync/v5-to-v6", "sync/v4-to-v5").
 
 import (
+	"context"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -78,6 +79,21 @@ func TestMergeMethodFor(t *testing.T) {
 			want: "squash",
 		},
 		{
+			name: "topup head branch and top-up title (#13404)",
+			pr:   newPR("topup/v5-into-v6-20261020", "🌱 top-up: merge v5 into v6 (51 commits)"),
+			want: "merge",
+		},
+		{
+			name: "top-up title on an unrelated branch (#13404)",
+			pr:   newPR("feature/x", "🌱 top-up: merge v5 into v6 (3 commits)"),
+			want: "merge",
+		},
+		{
+			name: "sync title on an unrelated branch",
+			pr:   newPR("feature/x", "sync: v5 into v6"),
+			want: "merge",
+		},
+		{
 			name: "plain feature branch squashes",
 			pr:   newPR("feature/add-widget", "Add the widget"),
 			want: "squash",
@@ -86,7 +102,7 @@ func TestMergeMethodFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := mergeMethodFor(tt.pr); got != tt.want {
+			if got := (&Engine{}).mergeMethodFor(context.Background(), "o", "r", tt.pr); got != tt.want {
 				t.Fatalf("mergeMethodFor(%+v) = %q, want %q", tt.pr, got, tt.want)
 			}
 		})

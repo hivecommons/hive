@@ -106,20 +106,23 @@ const OVERVIEW_EXPORT_FORMATS = ['csv', 'json'];
 let token = '';
 const localStorage = {getItem: () => token};
 `)
-	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "repoItemNeedsHuman", "gHasNeedsHuman", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewSliceLabel", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
+	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "repoItemNeedsHuman", "yourTurnOf", "yourTurnFirst", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewSliceSpecs", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewSliceLabel", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
 		script.WriteString(jsFunc(t, html, name))
 		script.WriteByte('\n')
 	}
 	script.WriteString(`
 for (const [kind, slices] of [['issues', overviewIssueBandSlices(window._lastStatus.repos)], ['prs', overviewPRBandSlices(window._lastStatus.repos)]]) {
- const specs = window._lastStatus.overview_bands[kind];
+ // The chart slices are the server's: same keys, labels, rules and counts.
+ const specs = window._lastStatus.overview_slices[kind];
  assert.deepEqual(slices.map(s => ({key:s.key, label:s.label, rule:s.rule, count:s.count})), specs.map(s => ({key:s.key, label:s.label, rule:s.rule, count:s.count})));
+ assert.ok(!slices.some(s => ['waiting', 'agent-filed', 'done'].includes(s.key) && kind === 'issues'));
+ assert.ok(!slices.some(s => s.key === 'waiting' && kind === 'prs'));
  for (const slice of slices) for (const entry of slice.items) {
-  assert.equal(entry.info.band, slice.key);
-  for (const signal of entry.info.signals) assert.ok(prSignalHTML(entry.info).includes(esc(signal.label)));
+  assert.equal(entry.info.chart_slice, slice.key);
+  for (const signal of (entry.info.signals || [])) assert.ok(prSignalHTML(entry.info).includes(esc(signal.label)));
  }
  const legend = overviewLegendHTML(slices, kind);
- assert.ok(legend.includes('/api/overview/' + kind + '.csv?band='));
+ assert.ok(legend.includes('/api/overview/' + kind + '.csv?slice='));
 }
 // The browser must honor the response even when labels/timestamps would
 // produce a different classification if it still ran its old rules.
@@ -132,6 +135,7 @@ assert.equal(overviewIssueBandSlices([]).reduce((n,s) => n+s.count, 0), 0);
 assert.equal(overviewPRBandSlices([]).reduce((n,s) => n+s.count, 0), 0);
 assert.equal(overviewExportURL('issues'), '/api/overview/issues.csv');
 assert.equal(overviewExportURL('pr','waiting'), '/api/overview/prs.csv?band=waiting');
+assert.equal(overviewExportURL('pr','your-turn','slice'), '/api/overview/prs.csv?slice=your-turn');
 token = 'a&b?c';
 const url = new URL(overviewExportURL('prs','in-review'), 'https://hive.test');
 assert.equal(url.searchParams.get('token'), token);

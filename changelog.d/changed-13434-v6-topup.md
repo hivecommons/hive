@@ -1,0 +1,1 @@
+- Changed: the Hive activity monitor lists standing meta issues (Dependency Dashboards, Hive Advisory Report) again, with their bucket, so its total equals the Overview tile's canonical open-items count (#13434 superseding #13257); the Agents section's advisor-spend chip sends the Cost window's exact bounds now that each range has a ± stepper (#13418)

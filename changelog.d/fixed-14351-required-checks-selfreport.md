@@ -1,0 +1,1 @@
+- Stale automerge `required_checks` configuration warnings remain visible in logs without generating repeated runtime-error self-reports; repository protection checks continue to govern merges.

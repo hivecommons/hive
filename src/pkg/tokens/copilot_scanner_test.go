@@ -102,8 +102,10 @@ func TestParseCopilotSessionFile_FullLifecycle(t *testing.T) {
 	if summary.Messages != 2 {
 		t.Errorf("Messages = %d, want 2", summary.Messages)
 	}
-	if summary.InputTokens != 1000 {
-		t.Errorf("InputTokens = %d, want 1000", summary.InputTokens)
+	// usage.inputTokens is the whole prompt including the cache buckets, so
+	// the uncached split is 1000 - 200 - 100 (#13470).
+	if summary.InputTokens != 700 {
+		t.Errorf("InputTokens = %d, want 700", summary.InputTokens)
 	}
 	if summary.OutputTokens != 500 {
 		t.Errorf("OutputTokens = %d, want 500", summary.OutputTokens)
@@ -114,8 +116,8 @@ func TestParseCopilotSessionFile_FullLifecycle(t *testing.T) {
 	if summary.CacheCreate != 100 {
 		t.Errorf("CacheCreate = %d, want 100", summary.CacheCreate)
 	}
-	if summary.TotalTokens != 1800 {
-		t.Errorf("TotalTokens = %d, want 1800", summary.TotalTokens)
+	if summary.TotalTokens != 1500 {
+		t.Errorf("TotalTokens = %d, want 1500", summary.TotalTokens)
 	}
 	if summary.LastActive == 0 {
 		t.Error("LastActive should be set from message timestamps")
@@ -428,8 +430,8 @@ func TestScanCopilotSessions_ByAgentDetail(t *testing.T) {
 	if detail == nil {
 		t.Fatal("ByAgentDetail[quality] is nil")
 	}
-	if detail.Input != 100 {
-		t.Errorf("detail.Input = %d, want 100", detail.Input)
+	if detail.Input != 65 {
+		t.Errorf("detail.Input = %d, want 65 (100 minus the 25+10 cache buckets)", detail.Input)
 	}
 	if detail.Output != 50 {
 		t.Errorf("detail.Output = %d, want 50", detail.Output)

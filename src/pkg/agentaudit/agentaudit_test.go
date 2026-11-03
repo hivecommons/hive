@@ -1,6 +1,9 @@
 package agentaudit
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAuditFieldsDropsEmptyStringsAndOddKey(t *testing.T) {
 	f := Fields("backend", "claude", "model", "", "count", 3, "dangling")
@@ -54,5 +57,56 @@ func TestFormatAuditDetail_ToolApproval(t *testing.T) {
 	want := "acmm_level=4, decision=auto-approve, rationale=read-only inspection tool auto-approved, tool=Read"
 	if got != want {
 		t.Errorf("FormatAuditDetail(tool approval) =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// TestRelayAuditActionVocabulary pins the wire names of the relay_* actions the
+// hub records for the contributor relay (hivecommons/hive#13441). Operators
+// filter the Audit Log on these strings, so a rename is a breaking change.
+func TestRelayAuditActionVocabulary(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"connected", AuditRelayConnected, "relay_connected"},
+		{"rejected", AuditRelayRejected, "relay_rejected"},
+		{"disconnected", AuditRelayDisconnected, "relay_disconnected"},
+		{"task assigned", AuditRelayTaskAssigned, "relay_task_assigned"},
+		{"task accepted", AuditRelayTaskAccepted, "relay_task_accepted"},
+		{"task declined", AuditRelayTaskDeclined, "relay_task_declined"},
+		{"token minted", AuditRelayTokenMinted, "relay_token_minted"},
+		{"mcp lease issued", AuditRelayMCPLeaseIssued, "relay_mcp_lease_issued"},
+		{"mcp lease revoked", AuditRelayMCPLeaseRevoked, "relay_mcp_lease_revoked"},
+		{"task completed", AuditRelayTaskCompleted, "relay_task_completed"},
+		{"task failed", AuditRelayTaskFailed, "relay_task_failed"},
+		{"task revoked", AuditRelayTaskRevoked, "relay_task_revoked"},
+		{"task abandoned", AuditRelayTaskAbandoned, "relay_task_abandoned"},
+		{"task attested", AuditRelayTaskAttested, "relay_task_attested"},
+	}
+	seen := make(map[string]bool, len(tests))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Errorf("action = %q, want %q", tt.got, tt.want)
+			}
+			if !strings.HasPrefix(tt.got, "relay_") || tt.got != strings.ToLower(tt.got) {
+				t.Errorf("action %q must be lower snake_case with the relay_ prefix", tt.got)
+			}
+			if seen[tt.got] {
+				t.Errorf("action %q is declared twice", tt.got)
+			}
+			seen[tt.got] = true
+		})
+	}
+}
+
+func TestFormatAuditDetail_RelayTokenMintedCarriesInstallation(t *testing.T) {
+	got := FormatAuditDetail(Fields(
+		"task", "t-1", "installation", int64(12345), "expires_at", "2026-10-21T22:00:00Z", "scopes", "issues:write",
+	))
+	want := "expires_at=2026-10-21T22:00:00Z, installation=12345, scopes=issues:write, task=t-1"
+	if got != want {
+		t.Errorf("FormatAuditDetail =\n  %q\nwant\n  %q", got, want)
 	}
 }

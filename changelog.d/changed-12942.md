@@ -1,0 +1,1 @@
+- build(deps): bump express from 5.2.1 to 5.3.0 in /src/proxy (#12942)

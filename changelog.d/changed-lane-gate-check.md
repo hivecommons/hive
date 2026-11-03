@@ -1,0 +1,1 @@
+- Lane policies now check for an existing gate or written policy before filing a finding class, and propose the missing gate instead of filing a third same-class finding ([#13427](https://github.com/hivecommons/hive/issues/13427), [#13428](https://github.com/hivecommons/hive/issues/13428)).

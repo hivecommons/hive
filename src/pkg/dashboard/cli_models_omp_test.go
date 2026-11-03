@@ -1,6 +1,12 @@
 package dashboard
 
-import "testing"
+import (
+	"bytes"
+	"errors"
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 func TestOmpProbeRunsUnderGivenHome(t *testing.T) {
 	t.Setenv("HOME", "/data/home/agents/x")
@@ -28,5 +34,45 @@ func TestOmpStaticEffortsMatchCatalog(t *testing.T) {
 	}
 	if got := ompStaticReasoningEfforts["google-antigravity/gemini-3.7-flash"]; !equalStrings(got, []string{"minimal", "low", "medium", "high"}) {
 		t.Errorf("gemini-3.7-flash efforts = %v", got)
+	}
+}
+
+func TestOmpHomeWithoutSignInIsNotAWarning(t *testing.T) {
+	t.Setenv("HOME", "/data/home/agents/unsigned")
+	orig := runOmpModelsProbe
+	t.Cleanup(func() { runOmpModelsProbe = orig })
+	runOmpModelsProbe = func(home string) ([]string, map[string][]string, error) {
+		return nil, nil, errors.New("omp models failed: exit status 1")
+	}
+	var buf bytes.Buffer
+	s := newTestServer()
+	s.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	r := s.discoverOmpModels()
+	if !r.fallback {
+		t.Fatalf("expected static fallback when no HOME has a sign-in: %+v", r)
+	}
+	var sawMiss, sawFallback bool
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "found no models for this HOME") {
+			sawMiss = true
+			if strings.Contains(line, "level=WARN") {
+				t.Fatalf("per-HOME miss must not log at WARN (fleet reporter files it as a defect): %s", line)
+			}
+		}
+		if strings.Contains(line, "omp model discovery unavailable") {
+			sawFallback = true
+			if strings.Contains(line, "level=WARN") {
+				t.Fatalf("all-homes-failed fallback must not log at WARN (fleet reporter files it as a defect): %s", line)
+			}
+		}
+	}
+	if !sawMiss {
+		t.Fatal("per-HOME miss should still be logged below WARN")
+	}
+	if !sawFallback {
+		t.Fatal("all-homes-failed fallback should still be logged below WARN")
+	}
+	if strings.Contains(buf.String(), "level=WARN") {
+		t.Fatalf("discoverOmpModels must not emit any WARN for a HOME without a sign-in: %s", buf.String())
 	}
 }

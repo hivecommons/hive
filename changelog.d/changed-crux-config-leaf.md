@@ -1,0 +1,1 @@
+- Added the stdlib-only `pkg/crux/config` leaf holding the agent runtime's configuration types (`AgentConfig`, `AgentRuntimeConfig`, gateway/LiteLLM/sandbox/watchdog types and their defaults); `pkg/config` now aliases them, so `hive.yaml` loading and every key position are unchanged ([#13536](https://github.com/hivecommons/hive/issues/13536)).

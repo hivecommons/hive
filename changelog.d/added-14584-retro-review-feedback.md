@@ -1,0 +1,1 @@
+- The GitHub client can now return trusted human review feedback (including resolved and outdated review threads) and a rework summary for a reworked hive PR, as an injectable source for the retro lane; the live review follow-up path is unchanged.

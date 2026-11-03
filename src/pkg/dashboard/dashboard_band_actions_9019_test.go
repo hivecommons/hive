@@ -23,7 +23,7 @@ func TestDashboardBandActionsStaticWiring9019(t *testing.T) {
 		// Overview legend rows and slices carry the rule.
 		`<div class="overview-chart-legend-row" data-action="overviewNavigateBand"`,
 		"<title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title>",
-		"hover a band for its rule",
+		"hover a slice for its rule",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)

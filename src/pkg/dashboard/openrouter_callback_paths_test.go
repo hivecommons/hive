@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/openrouter"
+	"github.com/hivecommons/hive/crux/openrouter"
 )
 
 // redirectKeyExchange points openrouter.KeyExchangeURL at a test server and

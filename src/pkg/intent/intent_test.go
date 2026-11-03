@@ -292,3 +292,31 @@ func TestHumanMergePathMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestPathMatchesAnyDoubleStarGlobs(t *testing.T) {
+	tests := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		{"**/*luks*", "files/usr/bin/tunaos-luks-tpm2-enroll", true},
+		{"**/*luks*", "files/usr/share/ublue-os/just/60-tunaos-luks.just", true},
+		{"**/*luks*", "luks.conf", true},
+		{"**/*luks*", "docs/LUKS-TPM.md", false},
+		{"**/*luks*", "luks-dir/README.md", false},
+		{"files/**/*luks*", "files/usr/bin/tunaos-luks-tpm2-enroll", true},
+		{"files/**/*luks*", "other/usr/bin/tunaos-luks-tpm2-enroll", false},
+		{"files/**/*luks*", "files/usr/bin/enroll", false},
+		{"**/*.go", "src/pkg/intent/intent.go", true},
+		{"**/*.go", "main.go", true},
+		{"**/*.go", "src/pkg/intent/intent.md", false},
+		{"**/secrets/**", "config/secrets/token", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.pattern+" "+tc.path, func(t *testing.T) {
+			if got := PathMatchesAny(tc.path, []string{tc.pattern}); got != tc.want {
+				t.Fatalf("PathMatchesAny(%q, %q) = %v, want %v", tc.path, tc.pattern, got, tc.want)
+			}
+		})
+	}
+}

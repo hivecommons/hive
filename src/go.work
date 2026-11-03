@@ -1,0 +1,15 @@
+// Workspace for the two Go modules in src/: the Hive root module (.) and the
+// Crux agent runtime (./crux), hivecommons/hive#13536 Stage 2. With this file
+// present, `./crux/<pkg>` and `./crux/...` are addressable from src/, so one
+// `go build ./... ./crux/...` (or `go test ./... ./crux/...`) covers both
+// modules; a bare `./...` still means the root module only. The root go.mod
+// also carries a `replace github.com/hivecommons/hive/crux => ./crux`, so
+// builds work with GOWORK=off too (Docker, `go install`); the nested module
+// never replaces or requires the root, which is what keeps it consumable on
+// its own.
+go 1.26.10
+
+use (
+	.
+	./crux
+)

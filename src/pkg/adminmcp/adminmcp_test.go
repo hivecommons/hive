@@ -73,6 +73,8 @@ func TestReadPathCoversPhaseTwoReadSurface(t *testing.T) {
 		ToolKnowledgeRead,
 		ToolHiveAdvisor,
 		ToolAdvisorRecords,
+		ToolLogRead,
+		ToolLogSources,
 	} {
 		if !AllowedTool(tool) {
 			t.Fatalf("%s is not allowed", tool)
@@ -407,6 +409,60 @@ func TestWriteConfirmPassesHiveRefusalBodyThrough(t *testing.T) {
 	text = resultText(t, confirm.Body.Bytes())
 	if !strings.Contains(text, `"type":"hive-refusal"`) || !strings.Contains(text, `"error":"owner access required"`) {
 		t.Fatalf("refusal text = %s", text)
+	}
+}
+
+type agentsProvider struct{ agents any }
+
+func (p agentsProvider) Read(context.Context, string, map[string]any) (any, error) {
+	return p.agents, nil
+}
+
+// cappedAgents builds an agents list longer than DefaultResultLimit with the
+// named agent kept inside the first page.
+func cappedAgents(name, owner string) []any {
+	agents := []any{map[string]any{"name": name, "pauseOwner": owner}}
+	for i := 0; i < DefaultResultLimit+5; i++ {
+		agents = append(agents, map[string]any{"name": fmt.Sprintf("other-%d", i)})
+	}
+	return agents
+}
+
+func TestAgentResumePreviewHedgesWhenCappedListHidesAgent(t *testing.T) {
+	agents := cappedAgents("other", "")
+	capped := CapResult(agents, DefaultResultLimit)
+	preview, err := agentResumeOp{}.PreviewWithProvider(context.Background(), map[string]any{"agent": "missing"}, agentsProvider{capped})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effects := strings.Join(preview.Effects, "\n")
+	if !strings.Contains(effects, "resume may claim operator ownership") || strings.Contains(effects, "\nIf the agent is paused, resume claims operator ownership") {
+		t.Fatalf("effects = %v", preview.Effects)
+	}
+}
+
+func TestAgentResumePreviewDisclosesPauseOwnershipClaim(t *testing.T) {
+	args := map[string]any{"agent": "scanner"}
+	claim := "pause_owner: operator"
+	cases := []struct {
+		name     string
+		provider Provider
+		want     bool
+	}{
+		{"unowned", agentsProvider{[]any{map[string]any{"name": "scanner"}}}, true},
+		{"unreadable", errorProvider{fmt.Errorf("boom")}, true},
+		{"owned", agentsProvider{[]any{map[string]any{"name": "scanner", "pauseOwner": "operator"}}}, false},
+		{"capped owned", agentsProvider{CapResult(cappedAgents("scanner", "operator"), DefaultResultLimit)}, false},
+		{"capped unowned", agentsProvider{CapResult(cappedAgents("scanner", ""), DefaultResultLimit)}, true},
+	}
+	for _, tc := range cases {
+		preview, err := agentResumeOp{}.PreviewWithProvider(context.Background(), args, tc.provider)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(strings.Join(preview.Effects, "\n"), claim); got != tc.want {
+			t.Fatalf("%s: claim disclosed = %v, effects = %v", tc.name, got, preview.Effects)
+		}
 	}
 }
 

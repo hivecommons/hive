@@ -141,3 +141,26 @@ func (c *Client) APIBudgetMode() (APIBudgetMode, APIBudgetSnapshot) {
 		SkippedSteps: append([]string(nil), c.apiBudget.skipped...),
 	}
 }
+
+// APIBudgetUnstickSteps are the eval steps that unstick stuck items; they are
+// skipped only in critical mode. APIBudgetEnrichmentSteps are skipped in
+// conserve and critical (and off-cadence in normal).
+var (
+	APIBudgetUnstickSteps = []string{
+		"sha_hold",
+		"supersession_sweep",
+		"shared_ci_rerun",
+		"escalation",
+	}
+	APIBudgetEnrichmentSteps = []string{
+		"advisory_ensure",
+		"recommendations",
+		"duplicate_guard",
+		"review_enrichment",
+		"review_threads",
+		"attribution_collectors",
+		"cost_collectors",
+		"pr_issue_counts_collectors",
+		"bead_synth",
+	}
+)

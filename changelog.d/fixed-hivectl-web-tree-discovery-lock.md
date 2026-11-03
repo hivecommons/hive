@@ -1,0 +1,1 @@
+- `hives web` no longer stalls other requests while page-load auto-discovery waits on an unreachable hub ([#13708](https://github.com/hivecommons/hive/issues/13708)); discovery now runs outside the server lock.

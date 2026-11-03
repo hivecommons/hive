@@ -177,6 +177,21 @@ spec:
                   name: hive-secrets
                   key: dashboard-token
                   optional: true
+            - name: HIVE_METRICS_ENABLED
+              valueFrom:
+                secretKeyRef:
+                  name: hive-secrets
+                  key: HIVE_METRICS_ENABLED
+                  optional: true
+            # Dedicated Secret so the scraper (ServiceMonitor) can be granted read
+            # access to the token alone, never to hive-secrets. Optional: a missing
+            # Secret makes /metrics fail closed with 403 instead of crash-looping.
+            - name: HIVE_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hive-metrics-token
+                  key: HIVE_METRICS_TOKEN
+                  optional: true
             - name: HIVE_LLMD_ENDPOINT
               value: "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"
             - name: HIVE_VLLM_MODELS
@@ -195,14 +210,15 @@ spec:
           # startupProbe holds the liveness clock off until the process has
           # finished booting, so a slow start can never race the liveness
           # timer into a restart loop. failureThreshold x periodSeconds
-          # (30 x 5s = 150s) is the boot budget.
+          # plus initialDelaySeconds (10s + 118 x 5s = 600s) matches
+          # spoke.HostedStartupBudget; keep in sync with its probe constants.
           startupProbe:
             httpGet:
               path: /api/health
               port: dashboard
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 30
+            failureThreshold: 118
           livenessProbe:
             # /api/livez checks that the HTTP server responds AND that the
             # heartbeat loop is still *attempting* sends — i.e. it only fails

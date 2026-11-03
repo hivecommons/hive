@@ -1,0 +1,1 @@
+- The Activity Monitor Twitch streamer now carries the tracker's merge-zap and new-item-buzz sounds: Chromium plays into a PulseAudio null sink that ffmpeg captures (`STREAM_AUDIO=silent` restores the silent track), and kiosk mode (`?kiosk=1`) turns tracker sounds on by default without a gesture or localStorage write (`&sound=off` keeps it quiet).

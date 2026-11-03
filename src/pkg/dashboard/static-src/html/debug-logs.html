@@ -1,0 +1,22 @@
+  <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
+    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="debug-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Diagnostics section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🩺 Diagnostics</h2>
+    <div class="section-body">
+      <div id="debug-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: var(--sp-5);"></div>
+    </div>
+  </div>
+
+  <div id="logs-section" data-dashboard-section="logs-section" style="display: none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
+    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="logs-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent Logs section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📋 Agent Logs</h2>
+    <div class="section-body">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <select id="logs-agent-select" style="padding: var(--sp-3) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-base); background: var(--surface); color: var(--text); cursor: pointer;" title="Filter logs to a specific agent or view all agents combined">
+          <option value="all">All Agents</option>
+        </select>
+        <label style="display: flex; align-items: center; gap: var(--sp-2); font-size: 0.78rem; color: var(--muted); cursor: pointer;" title="When enabled, the log output auto-scrolls to show the most recent entries as they arrive">
+          <input type="checkbox" id="logs-follow" checked> Follow
+        </label>
+      </div>
+      <div id="logs-output" style="font-size: var(--fs-sm); line-height: 1.5; padding: 14px; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;"></div>
+    </div>
+  </div>
+

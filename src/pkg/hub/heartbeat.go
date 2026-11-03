@@ -5,26 +5,32 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 type AgentSummary struct {
-	Name                 string                `json:"name"`
-	State                string                `json:"state"`
-	Mode                 string                `json:"mode,omitempty"`
-	Paused               bool                  `json:"paused,omitempty"`
-	PausedTrigger        string                `json:"pausedTrigger,omitempty"`
-	PausedReason         string                `json:"pausedReason,omitempty"`
-	PausedBy             string                `json:"pausedBy,omitempty"`
-	PausedAt             string                `json:"pausedAt,omitempty"`
-	NeedsLogin           bool                  `json:"needsLogin,omitempty"`
-	QuotaExhausted       bool                  `json:"quotaExhausted,omitempty"`
-	SessionMissing       bool                  `json:"sessionMissing,omitempty"`
-	StartedAt            string                `json:"startedAt,omitempty"`
-	LastActivityAt       string                `json:"lastActivityAt,omitempty"`
-	KickIntervalSec      int64                 `json:"kickIntervalSec,omitempty"`
+	Name            string `json:"name"`
+	State           string `json:"state"`
+	Mode            string `json:"mode,omitempty"`
+	Paused          bool   `json:"paused,omitempty"`
+	PausedTrigger   string `json:"pausedTrigger,omitempty"`
+	PausedReason    string `json:"pausedReason,omitempty"`
+	PausedBy        string `json:"pausedBy,omitempty"`
+	PausedAt        string `json:"pausedAt,omitempty"`
+	NeedsLogin      bool   `json:"needsLogin,omitempty"`
+	QuotaExhausted  bool   `json:"quotaExhausted,omitempty"`
+	SessionMissing  bool   `json:"sessionMissing,omitempty"`
+	StartedAt       string `json:"startedAt,omitempty"`
+	LastActivityAt  string `json:"lastActivityAt,omitempty"`
+	KickIntervalSec int64  `json:"kickIntervalSec,omitempty"`
+	// LaneQueuedWork is the actionable backlog in this agent's own lane, when
+	// the spoke reports it. nil (older spokes) falls back to the hive-wide count.
+	LaneQueuedWork       *int                  `json:"laneQueuedWork,omitempty"`
 	ExpectedActive       bool                  `json:"expectedActive,omitempty"`
 	CanOpenIssue         bool                  `json:"canOpenIssue,omitempty"`
 	CanOpenPR            bool                  `json:"canOpenPR,omitempty"`
@@ -42,6 +48,9 @@ type AgentSummary struct {
 	BackendAuthStatus    string                `json:"backendAuthStatus,omitempty"`
 	BackendAuthSince     string                `json:"backendAuthSince,omitempty"`
 	BackendAuthLastError string                `json:"backendAuthLastError,omitempty"`
+	// BackendAuthRefreshable is claude.HasUsableToken over the agent's own
+	// credential (ADR-0024); nil = unknown (non-Claude backend or old spoke).
+	BackendAuthRefreshable *bool `json:"backendAuthRefreshable,omitempty"`
 }
 
 type AgentRestartTelemetry struct {
@@ -83,6 +92,8 @@ type AgentActivity struct {
 	BackendAuthStatus    string
 	BackendAuthSince     time.Time
 	BackendAuthLastError string
+	// BackendAuthRefreshable — see the matching AgentSummary field.
+	BackendAuthRefreshable *bool
 }
 
 func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
@@ -112,6 +123,8 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		StartFailureSignal:   act.StartFailureSignal,
 		BackendAuthStatus:    act.BackendAuthStatus,
 		BackendAuthLastError: act.BackendAuthLastError,
+
+		BackendAuthRefreshable: act.BackendAuthRefreshable,
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -139,6 +152,8 @@ type GovernorSummary struct {
 	Issues     int    `json:"issues"`
 	PRs        int    `json:"prs"`
 	WorkSource string `json:"work_source,omitempty"`
+	OpenIssues int    `json:"open_issues,omitempty"`
+	OpenPRs    int    `json:"open_prs,omitempty"`
 }
 
 type ContributorSummary struct {
@@ -172,6 +187,19 @@ type LeaderboardEntry struct {
 	StageCredit *int `json:"stage_credit,omitempty"`
 }
 
+// UpgradeDrainReport mirrors spoke.UpgradeDrainReport: the spoke is holding an
+// instructed upgrade on purpose until its in-flight agent kicks finish, and
+// will proceed on its own once RemainingS reaches zero.
+type UpgradeDrainReport struct {
+	Target     string   `json:"target"`
+	InFlight   []string `json:"in_flight,omitempty"`
+	WaitedS    int      `json:"waited_s"`
+	RemainingS int      `json:"remaining_s"`
+	// Turns mirrors spoke.UpgradeDrainReport.Turns: per-agent turn elapsed
+	// for the InFlight agents. Absent from older spokes.
+	Turns []spoke.UpgradeTurn `json:"turns,omitempty"`
+}
+
 // HeartbeatClusterHealthReport contains cluster node and GPU metrics
 // collected by the spoke in-cluster and sent to the hub via heartbeat.
 // This allows the hub to display health data for firewalled clusters
@@ -184,6 +212,10 @@ type HeartbeatClusterHealthReport struct {
 	// NodeHealthError carries the spoke-side reason health is partial or
 	// absent, for example a missing metrics API or forbidden node list.
 	NodeHealthError string `json:"node_health_error,omitempty"`
+	// NodeRBAC is the spoke's verdict on its cluster-scoped Node read access:
+	// "ok" when listing /api/v1/nodes succeeded, "forbidden" on HTTP 403.
+	// Empty from spokes that predate the field (or on any other failure).
+	NodeRBAC string `json:"node_rbac,omitempty"`
 }
 
 type HeartbeatNodeMetric struct {
@@ -259,6 +291,7 @@ type HeartbeatPayload struct {
 	ProviderLimitRebuffs         int                             `json:"provider_limit_rebuffs,omitempty"`
 	ProviderLimitHiveWide        bool                            `json:"provider_limit_hive_wide,omitempty"`
 	ProviderLimitAgents          []string                        `json:"provider_limit_agents,omitempty"`
+	Providers                    []crux.ProviderStatus           `json:"providers,omitempty"`
 	Health                       map[string]any                  `json:"health"`
 	DashboardURL                 string                          `json:"dashboard_url"`
 	LastWriteCapableKickAt       string                          `json:"last_write_capable_kick_at,omitempty"`
@@ -291,8 +324,11 @@ type HeartbeatPayload struct {
 	AutoUpgrade                  bool                            `json:"auto_upgrade,omitempty"`
 	Upgrading                    bool                            `json:"upgrading,omitempty"`
 	UpgradeTargetSHA             string                          `json:"upgrade_target_sha,omitempty"`
+	UpgradeDrainUntil            string                          `json:"upgrade_drain_until,omitempty"`
 	UpgradeFailed                bool                            `json:"upgrade_failed,omitempty"`
 	UpgradeError                 string                          `json:"upgrade_error,omitempty"`
+	UpgradePendingRestart        bool                            `json:"upgrade_pending_restart,omitempty"`
+	UpgradeDrain                 *UpgradeDrainReport             `json:"upgrade_drain,omitempty"`
 	PendingGitHubAppInstall      bool                            `json:"pending_github_app_install,omitempty"`
 	ClusterHealth                *HeartbeatClusterHealthReport   `json:"cluster_health,omitempty"`
 	PRsMerged90d                 *int                            `json:"prs_merged_90d,omitempty"`
@@ -330,6 +366,9 @@ type HeartbeatPayload struct {
 	StatsStale                   bool                            `json:"stats_stale,omitempty"`
 	FreshAgentStats              bool                            `json:"fresh_agent_stats,omitempty"`
 	Compliance                   *HeartbeatCompliance            `json:"compliance,omitempty"`
+	Evidence                     *HeartbeatEvidence              `json:"evidence,omitempty"`
+	// SelfExperimentsOptIn is local consent; absent or false means opted out.
+	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
 }
 
 const (
@@ -410,14 +449,21 @@ type HeartbeatGatewayConfig struct {
 }
 
 type HeartbeatResponse struct {
-	OK                  bool                      `json:"ok"`
-	UpgradeTo           string                    `json:"upgrade_to,omitempty"`
-	HubGitHash          string                    `json:"hub_git_hash,omitempty"`
-	LatestSHA           string                    `json:"latest_sha,omitempty"`
-	LatestTag           string                    `json:"latest_tag,omitempty"`
-	SwitchToTag         string                    `json:"switch_to_tag,omitempty"`
-	RestartSpoke        bool                      `json:"restart_spoke,omitempty"`
-	ResetAgentRestarts  []string                  `json:"reset_agent_restarts,omitempty"`
+	OK        bool   `json:"ok"`
+	UpgradeTo string `json:"upgrade_to,omitempty"`
+	// UpgradeInterrupt rides with UpgradeTo when the owner asked the upgrade
+	// to proceed without draining in-flight agent turns (#14950). The spoke
+	// skips its drain for this instruction only.
+	UpgradeInterrupt   bool     `json:"upgrade_interrupt,omitempty"`
+	HubGitHash         string   `json:"hub_git_hash,omitempty"`
+	LatestSHA          string   `json:"latest_sha,omitempty"`
+	LatestTag          string   `json:"latest_tag,omitempty"`
+	SwitchToTag        string   `json:"switch_to_tag,omitempty"`
+	RestartSpoke       bool     `json:"restart_spoke,omitempty"`
+	ResetAgentRestarts []string `json:"reset_agent_restarts,omitempty"`
+	// Breaker is a one-shot fleet-breaker instruction ("engage"/"release")
+	// queued from the hub's per-hive menu (#15092); empty means none.
+	Breaker             string                    `json:"breaker,omitempty"`
 	GitHubAppConfig     *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 	HubBanner           *HubBanner                `json:"hub_banner,omitempty"`
 	IsPublic            *bool                     `json:"is_public,omitempty"`
@@ -425,11 +471,14 @@ type HeartbeatResponse struct {
 	AuthorizedUserNames map[string]string         `json:"authorized_user_names,omitempty"`
 	ProjectConfig       *HeartbeatProjectConfig   `json:"project_config,omitempty"`
 	PendingGateway      *HeartbeatGatewayConfig   `json:"pending_gateway,omitempty"`
+	ClusterID           string                    `json:"cluster_id,omitempty"`
 	UpgradePolicy       *HeartbeatUpgradePolicy   `json:"upgrade_policy,omitempty"`
 	SigHiveID           string                    `json:"sig_hive_id,omitempty"`
 	SigSeq              int64                     `json:"sig_seq,omitempty"`
 	SigSignedAt         int64                     `json:"sig_ts,omitempty"`
 	SigVersion          int                       `json:"sig_v,omitempty"`
+	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
+	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
@@ -490,6 +539,27 @@ type HeartbeatUpgradePolicy struct {
 	// none, paused, or unknown when the hub can say why there is no timestamp.
 	NextUpdateAt     string `json:"next_update_at,omitempty"`
 	NextUpdateStatus string `json:"next_update_status,omitempty"`
+	// CooldownSeconds is the per-hive minimum interval between automatic
+	// upgrades for a hub-managed instant hive (#11825); omitted when the
+	// cooldown does not apply or is disabled. NextEligibleAt (RFC3339 UTC) is
+	// when the hive may next auto-upgrade, present only while it is inside
+	// that cooldown.
+	CooldownSeconds int    `json:"cooldown_seconds,omitempty"`
+	NextEligibleAt  string `json:"next_eligible_at,omitempty"`
+	// ScheduledHoldReason is why the hub did not apply this hub-managed
+	// daily/weekly hive's upgrade while its window was open (#11196), and
+	// ScheduledHoldAt (RFC3339 UTC) is when that was first recorded. Omitted
+	// when nothing is being held, so a spoke can explain a missed window
+	// instead of only showing the previous upgrade.
+	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
+	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
+	// NextWindowAt is this hive's OWN next daily/weekly window (RFC3339
+	// UTC), sent regardless of channel so a :stable hive can show when it
+	// will next be considered rather than only the channel's promotion ETA.
+	NextWindowAt string `json:"next_window_at,omitempty"`
+	// UpgradeHistory is the hub's persisted record of this hive's recent
+	// upgrade attempts and missed windows, newest last (#14856).
+	UpgradeHistory []spoke.UpgradeAttempt `json:"upgrade_history,omitempty"`
 }
 
 type TaskStatusPayload struct {

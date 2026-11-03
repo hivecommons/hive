@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 // bootHeartbeatFake records what bootHeartbeatWith asked for. The collector
@@ -94,7 +99,7 @@ func newBootHeartbeatBoot(t *testing.T, f *bootHeartbeatFake, cfg *config.Config
 		repoTargetMisconfigured: func() bool { return false },
 		repoTargetIssueMessage:  func() string { return "" },
 		gov:                     governor.New(cfg.Governor, cfg.Agents, logger),
-		agentMgr:                agent.NewManager(cfg.Agents, logger, agent.ProjectContext{}),
+		agentMgr:                cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{}),
 		dashSrv:                 dashboard.NewServer(0, logger),
 		onDemandFromPack:        map[string]bool{},
 	}
@@ -169,12 +174,14 @@ func TestBootHeartbeatWith_PublishesIdentityBeforeTheLoopAndWiresEveryCallback(t
 	heartbeatCallback[spoke.VisibilityCallback](t, f)
 	heartbeatCallback[spoke.SwitchBranchCallback](t, f)
 	heartbeatCallback[spoke.AgentRestartResetCallback](t, f)
+	heartbeatCallback[spoke.BreakerCallback](t, f)
 	heartbeatCallback[spoke.AuthorizedUsersCallback](t, f)
 	heartbeatCallback[spoke.ProjectConfigCallback](t, f)
 	heartbeatCallback[spoke.GatewayConfigCallback](t, f)
+	heartbeatCallback[spoke.ClusterIDCallback](t, f)
 	heartbeatCallback[spoke.FreshStatusCollector](t, f)
-	if len(f.callbacks) != 12 {
-		t.Fatalf("registered %d callbacks, want 12 (one of each)", len(f.callbacks))
+	if len(f.callbacks) != 14 {
+		t.Fatalf("registered %d callbacks, want 14 (one of each)", len(f.callbacks))
 	}
 
 	// The collector honours a runtime hub.enabled=false without being torn
@@ -242,6 +249,84 @@ func TestBootHeartbeatWith_CallbacksReconcileRunningConfig(t *testing.T) {
 	}
 }
 
+// #15092: a hub "Pause hive" / "Resume hive" click reaches the spoke as
+// HeartbeatResponse.Breaker and must drive the same fleet breaker as the
+// dashboard's top-bar ⏸ button; anything else is ignored, never applied.
+func TestBootHeartbeatWith_BreakerCallbackDrivesFleetBreaker(t *testing.T) {
+	f := newBootHeartbeatFake()
+	b := newBootHeartbeatBoot(t, f, bootHeartbeatConfig())
+	b.bootHeartbeatWith(f.deps)
+	apply := heartbeatCallback[spoke.BreakerCallback](t, f)
+
+	apply(spoke.BreakerEngage)
+	if engaged, _ := b.agentMgr.BreakerState(); !engaged {
+		t.Fatal("engage from hub did not engage the fleet breaker")
+	}
+	if !strings.Contains(f.log.String(), "fleet breaker engaged from hub") {
+		t.Fatalf("engage not audited:\n%s", f.log.String())
+	}
+
+	apply("bogus")
+	if engaged, _ := b.agentMgr.BreakerState(); !engaged {
+		t.Fatal("an unknown instruction changed the breaker")
+	}
+	if !strings.Contains(f.log.String(), "unknown breaker instruction from hub") {
+		t.Fatalf("unknown instruction not reported:\n%s", f.log.String())
+	}
+
+	apply(spoke.BreakerRelease)
+	if engaged, _ := b.agentMgr.BreakerState(); engaged {
+		t.Fatal("release from hub did not release the fleet breaker")
+	}
+	if !strings.Contains(f.log.String(), "fleet breaker released from hub") {
+		t.Fatalf("release not audited:\n%s", f.log.String())
+	}
+}
+
+func TestBootHeartbeatWith_ClusterIDCallbackAdoptsAndPersistsWhenEmpty(t *testing.T) {
+	f := newBootHeartbeatFake()
+	cfg := bootHeartbeatConfig()
+	cfg.RemovedAgents = []string{"retired"}
+	cfg.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	b := newBootHeartbeatBoot(t, f, cfg)
+	b.bootHeartbeatWith(f.deps)
+
+	adopt := heartbeatCallback[spoke.ClusterIDCallback](t, f)
+	adopt("vllm-d")
+	if cfg.Hub.ClusterID != "vllm-d" {
+		t.Fatalf("cluster id = %q, want the hub-delivered vllm-d", cfg.Hub.ClusterID)
+	}
+	if !strings.Contains(f.log.String(), "adopted cluster_id from hub heartbeat") {
+		t.Fatalf("adoption not logged:\n%s", f.log.String())
+	}
+	saved, err := os.ReadFile(cfg.SourcePath)
+	if err != nil {
+		t.Fatalf("adopted cluster id not persisted: %v", err)
+	}
+	if !strings.Contains(string(saved), "cluster_id: vllm-d") {
+		t.Fatalf("hive.yaml lacks the adopted cluster id:\n%s", saved)
+	}
+	if !shouldCollectHeartbeatClusterHealth(cfg.Hub.ClusterID) {
+		t.Fatal("adopted cluster id must turn on cluster_health for the next beat")
+	}
+}
+
+func TestBootHeartbeatWith_ClusterIDCallbackKeepsConfiguredID(t *testing.T) {
+	f := newBootHeartbeatFake()
+	cfg := bootHeartbeatConfig()
+	cfg.Hub.ClusterID = "hive-oke"
+	b := newBootHeartbeatBoot(t, f, cfg)
+	b.bootHeartbeatWith(f.deps)
+
+	heartbeatCallback[spoke.ClusterIDCallback](t, f)("vllm-d")
+	if cfg.Hub.ClusterID != "hive-oke" {
+		t.Fatalf("configured cluster id overridden to %q", cfg.Hub.ClusterID)
+	}
+	if strings.Contains(f.log.String(), "adopted cluster_id from hub heartbeat") {
+		t.Fatal("a configured cluster id was reported as adopted")
+	}
+}
+
 func TestBootHeartbeatWith_TaskStatusPayloadCarriesHiveID(t *testing.T) {
 	f := newBootHeartbeatFake()
 	cfg := bootHeartbeatConfig()
@@ -298,3 +383,38 @@ func TestBootHeartbeatWith_TaskStatusSwitchPreservesControlPlane(t *testing.T) {
 }
 
 func heartbeatTaskPushBool(v bool) *bool { return &v }
+
+// #12876: heartbeatAgents must carry the governor's per-lane queue depth on
+// both the full and the inline paths; an agent outside the reviewer lane stays
+// nil so the hub falls back to the hive-wide backlog.
+func TestHeartbeatAgents_CarriesLaneQueuedWork(t *testing.T) {
+	f := newBootHeartbeatFake()
+	cfg := bootHeartbeatConfig()
+	level := 5
+	cfg.ACMMLevel = &level
+	cfg.Agents = map[string]config.AgentConfig{
+		"adjudicator": {Role: "reviewer", Mode: "ISSUES_AND_PRS"},
+		"scanner":     {Mode: "ISSUES_AND_PRS"},
+	}
+	b := newBootHeartbeatBoot(t, f, cfg)
+	b.sched = scheduler.New(cfg, b.logger)
+	b.agentMgr.AddAgent("adjudicator", cfg.Agents["adjudicator"])
+	b.agentMgr.AddAgent("scanner", cfg.Agents["scanner"])
+
+	for _, blocking := range []bool{true, false} {
+		byName := map[string]spoke.AgentSummary{}
+		for _, a := range b.heartbeatAgents(governor.State{}, "busy", blocking) {
+			byName[a.Name] = a
+		}
+		lane, ok := byName["adjudicator"]
+		if !ok {
+			t.Fatalf("blocking=%v: adjudicator missing from heartbeat agents", blocking)
+		}
+		if lane.LaneQueuedWork == nil {
+			t.Errorf("blocking=%v: reviewer-lane agent must report a lane depth", blocking)
+		}
+		if other := byName["scanner"]; other.LaneQueuedWork != nil {
+			t.Errorf("blocking=%v: non-lane agent reported lane depth %d, want nil", blocking, *other.LaneQueuedWork)
+		}
+	}
+}

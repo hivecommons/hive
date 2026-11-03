@@ -25,7 +25,7 @@ func (g GitHubConfig) SelfAuthorizationHoldEnabled() bool {
 
 // SelfAuthorizationHoldEnabledAtLevel reports whether the #5117
 // self-authorization hold is active at the provided live ACMM level. Explicit
-// env/config values win; otherwise L6 fully autonomous defaults the policy off.
+// env/config values win; otherwise L6 autonomous defaults the policy off.
 func (g GitHubConfig) SelfAuthorizationHoldEnabledAtLevel(acmmLevel int) bool {
 	if g.selfAuthorizationHoldEnvOverride != nil {
 		return *g.selfAuthorizationHoldEnvOverride
@@ -43,6 +43,7 @@ func (g GitHubConfig) SelfAuthorizationHoldEnvOverrideSet() bool {
 }
 
 type GitHubConfig struct {
+	SharedUIDReadToken bool                 `yaml:"shared_uid_read_token,omitempty" json:"shared_uid_read_token,omitempty"`
 	AppID              int64                `yaml:"app_id"`
 	InstallationID     int64                `yaml:"installation_id"`
 	DocsInstallationID int64                `yaml:"docs_installation_id"`
@@ -60,6 +61,10 @@ type GitHubConfig struct {
 	// GraphQLPRBatchPageSize controls the pullRequests(first:) page size.
 	// Zero uses DefaultGraphQLPRBatchPageSize.
 	GraphQLPRBatchPageSize int `yaml:"graphql_pr_batch_page_size,omitempty" json:"graphql_pr_batch_page_size,omitempty"`
+	// AdditionalBotLogins lists other App-bot accounts (e.g. a second hive's
+	// "<slug>[bot]") whose issues count as hive-filed for twin, fold and
+	// rejected-twin dedupe. Also the only identity source for PAT-auth hives.
+	AdditionalBotLogins []string `yaml:"additional_bot_logins,omitempty" json:"additional_bot_logins,omitempty"`
 	// AgentReserveFloor reserves hourly GitHub REST calls for the hive itself
 	// before per-agent proxy budgets spend the remainder.
 	AgentReserveFloor int `yaml:"agent_reserve_floor,omitempty" json:"agent_reserve_floor,omitempty"`
@@ -720,7 +725,7 @@ func (c *Config) EffectiveAIAuthor() string {
 	if c.Project.AIAuthor != "" {
 		return c.Project.AIAuthor
 	}
-	if c.GitHub.AppAuthoredPRsEnabled() {
+	if c.GitHubAppAuthoredPRsEnabled() {
 		return c.GitHub.BotLogin()
 	}
 	return ""

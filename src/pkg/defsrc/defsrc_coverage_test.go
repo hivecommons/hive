@@ -331,10 +331,12 @@ func TestApplyToConfig_NilConfigNoop(t *testing.T) {
 func TestApplyToConfig_UnresolvableKeepsBakedAndLogs(t *testing.T) {
 	f := &stubFetcher{err: errors.New("unreachable")}
 	r := NewResolver(f, allowAll, nil)
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"broken": {
-			DisplayName:      "Baked Broken",
-			DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/broken.yaml"},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"broken": {
+				DisplayName:      "Baked Broken",
+				DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/broken.yaml"},
+			},
 		},
 	}}
 
@@ -360,10 +362,12 @@ func (s *stubLogger) Warn(msg string, args ...any) { s.warnCalls++ }
 func TestApplyToConfig_LogsOnSuccess(t *testing.T) {
 	f := &stubFetcher{body: validDef}
 	r := NewResolver(f, allowAll, nil)
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {
-			DisplayName:      "Baked Scanner",
-			DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml"},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {
+				DisplayName:      "Baked Scanner",
+				DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml"},
+			},
 		},
 	}}
 	logger := &stubLogger{}

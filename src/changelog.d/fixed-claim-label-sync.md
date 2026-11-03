@@ -1,1 +1,0 @@
-- Keep issue claim comments canonical while mirroring live claims to the `claimed` label consistently.

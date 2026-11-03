@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -115,7 +117,7 @@ func TestLabelPlanSinkQueuedPlanUnavailable(t *testing.T) {
 func TestPlanFromLabeledIssuesFallbackStore(t *testing.T) {
 	fallback := newPlanTestStore(t)
 	stores := map[string]*beads.Store{"scanner": fallback}
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
 		planLabeledIssue(7, "hive-plan"),
 	}}}
@@ -267,7 +269,7 @@ func TestLabelPlanSinkAuditMethodsNilDashboard(t *testing.T) {
 // store": planFromLabeledIssues returns without panicking.
 func TestPlanFromLabeledIssuesNilStoreValue(t *testing.T) {
 	stores := map[string]*beads.Store{"scanner": nil}
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
 		planLabeledIssue(9, "plan"),
 	}}}

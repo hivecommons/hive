@@ -25,7 +25,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		shown := fairShareByRepo(scannerIssues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
 		for _, issue := range shown {
 			s.enforceIssueTextVerdict(issue.Title)
-			s.enforceLabelsWithPolicy(issue.Labels)
+			s.enforceLabelsWithPolicy(issue.Labels, issueSource(issue))
 			b.WriteString(fmt.Sprintf("  %s\n", issueDisplayRef(issue)))
 		}
 	} else if len(scannerIssues) > 0 {
@@ -43,6 +43,9 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 			if issue.IsTracker {
 				tracker = " [TRACKER]"
 			}
+			if isFoldedTracker(issue) {
+				tracker += " [FOLDED-TRACKER]"
+			}
 			title := issue.Title
 			const maxTitleRunes = 60
 			if runes := []rune(title); len(runes) > maxTitleRunes {
@@ -55,6 +58,11 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 				title, tracker))
 			shown++
 		}
+	}
+
+	if folded := foldedTrackerRefs(scannerIssues); len(folded) > 0 {
+		b.WriteString(fmt.Sprintf("FOLDED-FINDING TRACKERS (%d, issues carrying a <!-- hive-finding-folded --> comment — one structural fix per tracker, not a PR per variant): %s\n",
+			len(folded), strings.Join(folded, ", ")))
 	}
 
 	b.WriteString(fmt.Sprintf("ACTIONABLE PRs (%d):\n", actionable.PRs.Count))
@@ -75,7 +83,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 			if runes := []rune(title); len(runes) > maxPRTitleRunes {
 				title = string(runes[:maxPRTitleRunes])
 			}
-			annotation, _ := s.enforceIssueTextVerdict(prKickAnnotation(pr, "scanner"))
+			annotation, _ := s.enforceTextFrom(prKickAnnotation(pr, "scanner"), prSource(pr))
 			b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, pr.Author, forkAnnotation(pr), annotation, title))
 		}
 	}
@@ -231,6 +239,10 @@ func (s *Scheduler) ghAuthInstructions() string {
     hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" \
       --body "<body citing the issue>" --issues <N>
   --body-file <path> is accepted in place of --body, exactly as gh accepts it.
+  Title convention (the repo's required "PR Type" check reads the first
+  character): ✨ feature, 🐛 fix, 📖 docs, 📝 proposal, ⚠️ breaking, 🌱 chore/other.
+  A docs PR is "📖 docs: …" — 📝 is for proposals only, and the hive corrects an
+  emoji that contradicts the type ("📝 docs:" → "📖 docs:") when it opens the PR.
   Pass --issues <N> naming the issue this PR is for whenever the work started
   from an issue: the hive verifies the body actually references that issue and
   refuses the request otherwise, and it always refuses an empty body.
@@ -541,10 +553,16 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		HeadRef          string   `json:"head_ref"`
 		HeadRepo         string   `json:"head_repo"`
 		FromFork         bool     `json:"from_fork"`
+		ReachableAction  string   `json:"reachable_action"`
+		Adopted          bool     `json:"adopted"`
+		SentinelAlert    bool     `json:"sentinel_alert"`
 		Held             bool     `json:"held"`
 		FailingChecks    []string `json:"failing_checks"`
 		Excerpt          string   `json:"excerpt"`
 		DeferredIncident int      `json:"deferred_incident"`
+		DeferredExternal bool     `json:"deferred_external"`
+		BaseRedChecks    []string `json:"base_red_checks"`
+		BaseRed          bool     `json:"base_red"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -575,7 +593,13 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	// under the repair queue had agents re-derive the DEFER_TO_INCIDENT
 	// verdict on every kick. It is named under its own heading, without
 	// repair instructions, until the incident closes.
-	var deferred []ciFailingRow
+	var deferred, baseRed []ciFailingRow
+	// A red PR an agent already triaged as failing upstream at this head
+	// (hivecommons/hive#11609) is in the same position: nothing in this
+	// repository can fix it, so it is named under its own heading until a
+	// push, a newly failing check or a re-run of the check invalidates the
+	// triage.
+	var external []ciFailingRow
 	kept := payload.Items[:0]
 	for _, pr := range payload.Items {
 		if pr.Held {
@@ -586,19 +610,39 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 			deferred = append(deferred, pr)
 			continue
 		}
+		if pr.DeferredExternal {
+			external = append(external, pr)
+			continue
+		}
+		if pr.BaseRed {
+			// Red only on checks that are red on the base branch too
+			// (base_branch_red.go): nothing to repair on the PR.
+			baseRed = append(baseRed, pr)
+			continue
+		}
 		kept = append(kept, pr)
 	}
 	payload.Items = kept
-	// Two queues, not one (hivecommons/hive#7386): a red PR whose head lives
-	// in a fork is comment-only for every agent — the App token pushes to the
-	// base repository and nowhere else. Rendering the two together as one
-	// "repair queue" sent a scanner through 107 PRs of which 66 were forks;
-	// it found out by pushing, and the push landed a stray branch on the base
-	// repo under the fork's head-ref name. The split keeps the push queue
-	// honest about its size and takes the discovery cost off the agent.
+	// Two queues, not one (hivecommons/hive#7386): a red PR whose head branch
+	// is not reachable by this App token is comment-only. Rendering those
+	// together as one "repair queue" sent a scanner through 107 PRs of which
+	// 66 were unreachable forks; it found out by pushing, and the push landed
+	// a stray branch on the base repo under the fork's head-ref name. The
+	// split keeps the push queue honest about its size and takes the discovery
+	// cost off the agent. reachable_action describes what the token COULD do
+	// (a fork that allows maintainer edits reports push); whether the hive
+	// MAY push is policy, and the only policy that owns a repair on a fork
+	// branch is stage 074 in-place adoption — the same gate FIX-BEFORE-NEW
+	// applies (formatRedPRFixData). A non-adopted fork PR stays comment-only
+	// whatever its reachable_action says, so a contributor PR opened with
+	// GitHub's default "allow edits by maintainers" never becomes a push
+	// instruction, and the CI-Repair step 4 "push a fixup commit to the PR
+	// branch" is never aimed at a branch that only exists in someone's fork.
 	var pushable, forks []ciFailingRow
 	for _, pr := range payload.Items {
-		if pr.FromFork {
+		if pr.FromFork && (!pr.Adopted || pr.ReachableAction != "push") {
+			forks = append(forks, pr)
+		} else if pr.ReachableAction == "comment-only" {
 			forks = append(forks, pr)
 		} else {
 			pushable = append(pushable, pr)
@@ -617,7 +661,24 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 			b.WriteString(prListOverflowLine(len(pushable)-i, limit))
 			break
 		}
-		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, heldMarker(pr.Held), pr.Title))
+		// An adopted fork's head lives in the contributor's repository: name
+		// it so the agent fetches that branch instead of creating a
+		// same-named one on the base repo.
+		origin := ""
+		if pr.FromFork {
+			head := pr.HeadRepo
+			if pr.HeadRef != "" {
+				head += ":" + pr.HeadRef
+			}
+			origin = fmt.Sprintf(" [adopted fork: %s — push to the contributor's branch, never to a same-named base branch]", head)
+		}
+		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, origin, heldMarker(pr.Held), pr.Title))
+		if pr.FromFork {
+			b.WriteString(adoptedPRStatusRule)
+		}
+		if pr.SentinelAlert {
+			b.WriteString("    " + adoptedSentinelNote + "\n")
+		}
 	}
 	if len(deferred) > 0 {
 		b.WriteString(fmt.Sprintf("DEFERRED TO OPEN SHARED-CI INCIDENTS (%d — no repair: the base/infra failure is tracked on the incident issue; do not push, retry, or comment again; each PR returns to the list above when its incident closes):\n", len(deferred)))
@@ -627,6 +688,30 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 				break
 			}
 			b.WriteString(fmt.Sprintf("  #%d %s — deferred to incident #%d — %s\n", pr.Number, pr.Repo, pr.DeferredIncident, pr.Title))
+		}
+	}
+	if len(external) > 0 {
+		b.WriteString(fmt.Sprintf("DEFERRED AS FAILING UPSTREAM (%d — no repair: an agent already found the same check red on the upstream repository at this head; do not push, retry, or comment again; each PR returns to the list above when its head changes, another check fails, or the check fails again in a new run):\n", len(external)))
+		for i, pr := range external {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(external)-i, limit))
+				break
+			}
+			checks := ""
+			if len(pr.FailingChecks) > 0 {
+				checks = " — failing: " + strings.Join(pr.FailingChecks, ", ")
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s (sha:%s) — %s%s\n", pr.Number, pr.Repo, pr.HeadSHA, pr.Title, checks))
+		}
+	}
+	if len(baseRed) > 0 {
+		b.WriteString(fmt.Sprintf("RED ONLY BECAUSE THE BASE BRANCH IS RED (%d — no repair: the same checks fail on the base branch tip, so this is not the PR's fault; do not push, retry, or comment; each PR returns to the list above if it is still red once the base recovers):\n", len(baseRed)))
+		for i, pr := range baseRed {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(baseRed)-i, limit))
+				break
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s — base branch red on %s — %s\n", pr.Number, pr.Repo, strings.Join(pr.BaseRedChecks, ", "), pr.Title))
 		}
 	}
 	if len(forks) > 0 {
@@ -659,4 +744,16 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		}
 	}
 	return b.String()
+}
+
+// foldedTrackerRefs lists the issues that finding folds landed on, in work-list
+// order, so the scanner sees tracker numbers rather than only the prompt text.
+func foldedTrackerRefs(issues []github.Issue) []string {
+	var refs []string
+	for _, issue := range issues {
+		if isFoldedTracker(issue) {
+			refs = append(refs, issueDisplayRef(issue))
+		}
+	}
+	return refs
 }

@@ -1,0 +1,1 @@
+- `/hive approve` on a label-driven repo no longer replies that the hive removed `stage/045-needs-decision` when a kept `needs-human` (added by a person or a lifecycle bot) re-parks the issue there; the reply now says the stage stays until that label is removed.

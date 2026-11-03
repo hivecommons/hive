@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -70,6 +72,31 @@ func TestKickBrainstormFallsBackToRestart(t *testing.T) {
 		}
 	default:
 		t.Fatal("expected RestartWithBootstrap fallback")
+	}
+}
+
+func TestKickBrainstormFailureRecordedOnInceptionState(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Scheduler = scheduler.New(deps.Config, deps.Logger)
+	deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	if _, err := deps.Inception.Start("kick failure idea"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	done := make(chan struct{})
+	s.kickBrainstormDoneFn = func() { close(done) }
+	s.kickBrainstormSendKickFn = func(name, msg string) error {
+		return errors.New("no running session")
+	}
+	s.kickBrainstormRestartFn = func(ctx context.Context, name, prompt string) error {
+		return errors.New("agent brainstorm not found")
+	}
+
+	s.kickBrainstorm()
+	waitForKickBrainstorm(t, done)
+
+	state := deps.Inception.GetState()
+	if state == nil || !strings.Contains(state.KickError, "agent brainstorm not found") {
+		t.Fatalf("KickError = %+v, want restart failure recorded", state)
 	}
 }
 

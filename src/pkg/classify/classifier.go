@@ -412,6 +412,14 @@ func extractClusterKey(titleLower string) string {
 	return ""
 }
 
+// KeywordLane returns the lane the keyword classifier routes issue to. It
+// never consults the active decider, so it makes no network calls; Jev is
+// advisory and never overrides the lane, so this equals the lane ClassifyAll
+// assigns under any backend.
+func KeywordLane(issue github.Issue) string {
+	return string(keywordClassification(issue).Lane)
+}
+
 // ClassifyAll classifies issues in place. ctx bounds any Jev calls the active
 // decider makes; pass the sweep's SweepContext.
 func ClassifyAll(ctx context.Context, issues []github.Issue) []github.Issue {

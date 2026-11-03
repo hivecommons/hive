@@ -1,0 +1,1 @@
+- Prevent routine pending-review expiry retries from creating repeated-error fleet self-reports across unrelated PRs; expiry logs and exhausted-review reporting remain available ([#13850](https://github.com/hivecommons/hive/issues/13850)).

@@ -192,6 +192,80 @@ func TestRequiredStatusCheckContexts(t *testing.T) {
 		}
 	})
 
+	// Rulesets-only branches (projectbluefin/testsuite, bluefin-bling): every
+	// classic source answers "nothing required" while the ruleset requires
+	// checks GitHub enforces at merge time.
+	rulesetOnly := func(protection func(w http.ResponseWriter), branch string, rules string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/protection/required_status_checks"):
+				protection(w)
+			case r.URL.Path == "/repos/o/r/branches/main" && branch != "":
+				_, _ = io.WriteString(w, branch)
+			case r.URL.Path == "/repos/o/r/rules/branches/main" && rules != "":
+				_, _ = io.WriteString(w, rules)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+	}
+	notProtected := func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"message":"Branch not protected"}`)
+	}
+	forbidden := func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+	}
+	noChecks := func(w http.ResponseWriter) {
+		_, _ = io.WriteString(w, `{"strict":false,"contexts":[],"checks":[]}`)
+	}
+	rulesWithChecks := `[{"type":"pull_request"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"pytest"},{"context":"Lint & syntax"}]}}]`
+	// The live answer for a rulesets-only branch: protected, protection
+	// disabled, no contexts.
+	branchDisabled := `{"protected":true,"protection":{"enabled":false,"required_status_checks":{"checks":[],"contexts":[],"enforcement_level":"off"}}}`
+	wantRules := map[string]bool{"pytest": true, "Lint & syntax": true}
+	for _, tc := range []struct {
+		name       string
+		protection func(w http.ResponseWriter)
+		branch     string
+		rules      string
+		want       map[string]bool
+		wantSource string
+	}{
+		{"unprotected classic defers to ruleset checks", notProtected, "", rulesWithChecks, wantRules, "rules"},
+		{"protection without checks defers to ruleset checks", noChecks, "", rulesWithChecks, wantRules, "rules"},
+		{"forbidden protection and disabled branch payload defer to ruleset checks", forbidden, branchDisabled, rulesWithChecks, wantRules, "rules"},
+		{"unprotected with no ruleset checks stays known-empty", notProtected, "", `[{"type":"pull_request"}]`, map[string]bool{}, "protection-unprotected"},
+		{"disabled branch payload with no rulesets stays known-empty", forbidden, branchDisabled, `[]`, map[string]bool{}, "branch"},
+		{"ruleset rule with no contexts does not replace the classic answer", notProtected, "", `[{"type":"required_status_checks","parameters":{"required_status_checks":[]}}]`, map[string]bool{}, "protection-unprotected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			restore := resetRequiredChecksForbiddenCacheForTest(time.Now, time.Hour)
+			defer restore()
+			srv := rulesetOnly(tc.protection, tc.branch, tc.rules)
+			defer srv.Close()
+			c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+			set, known, fromConfig, fallback, source := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, "o", "r", "main", nil, false)
+			if !known || fromConfig || fallback || source != tc.wantSource || !reflect.DeepEqual(set, tc.want) {
+				t.Fatalf("got set=%v known=%v fromConfig=%v fallback=%v source=%q, want %v true false false %q", set, known, fromConfig, fallback, source, tc.want, tc.wantSource)
+			}
+		})
+	}
+
+	t.Run("protection with checks does not read rulesets", func(t *testing.T) {
+		srv := rulesetOnly(func(w http.ResponseWriter) {
+			_, _ = io.WriteString(w, `{"strict":false,"contexts":["build"]}`)
+		}, "", "") // an empty rules answer makes a rules read an unexpected request
+		defer srv.Close()
+		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+		set, known, _, _, source := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, "o", "r", "main", nil, false)
+		if !known || source != "protection" || !reflect.DeepEqual(set, map[string]bool{"build": true}) {
+			t.Fatalf("got set=%v known=%v source=%q, want {build} true protection", set, known, source)
+		}
+	})
+
 	t.Run("other API errors leave the set unknown", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)

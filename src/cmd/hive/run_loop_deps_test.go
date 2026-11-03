@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // fakeTicker is a loopTicker the test fires by hand.
@@ -36,6 +38,7 @@ type loopHarness struct {
 	pending   []*fakeTicker
 	tickers   []*fakeTicker
 	evals     [][]string
+	sources   []evalCycleSource
 	rotations int
 	sweeps    int
 	persists  int
@@ -54,7 +57,10 @@ func (h *loopHarness) deps() runLoopDeps {
 			h.tickers = append(h.tickers, t)
 			return t
 		},
-		runEval:     func(_ *boot, restarted []string) { h.evals = append(h.evals, restarted) },
+		runEval: func(_ *boot, restarted []string, source evalCycleSource) {
+			h.evals = append(h.evals, restarted)
+			h.sources = append(h.sources, source)
+		},
 		runRotation: func(*boot) { h.rotations++ },
 		runSweeps:   func(*boot) { h.sweeps++ },
 		persist: func(*boot) {
@@ -63,7 +69,7 @@ func (h *loopHarness) deps() runLoopDeps {
 				h.persisted <- struct{}{}
 			}
 		},
-		restartCrashed: func(context.Context, *agent.Manager) []string {
+		restartCrashed: func(context.Context, crux.Runtime) []string {
 			out := h.crashed
 			h.crashed = nil
 			return out
@@ -73,7 +79,7 @@ func (h *loopHarness) deps() runLoopDeps {
 
 func newLoopBoot(t *testing.T, evalS, agentPollS int) (*boot, *strings.Builder, context.CancelFunc) {
 	t.Helper()
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"alpha": {Enabled: true}}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"alpha": {Enabled: true}}}}
 	cfg.Governor.EvalIntervalS = evalS
 	cfg.Dashboard.AgentPollIntervalS = agentPollS
 	b, _ := newDepsTestBoot(t, cfg)
@@ -83,7 +89,7 @@ func newLoopBoot(t *testing.T, evalS, agentPollS int) (*boot, *strings.Builder, 
 	t.Cleanup(cancel)
 	b.ctx = ctx
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	return b, &sb, cancel
 }

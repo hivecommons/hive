@@ -119,7 +119,7 @@ hive_run_uid_isolation_migration() {
 
   if [ "${HIVE_HOME_MIGRATION_NEEDED:-false}" = "true" ]; then
     echo "[entrypoint] UID isolation: repairing shared home in background"
-    chown -R dev:node /data/home/.claude /data/home/.codex /data/home/.bob 2>/dev/null \
+    chown -R dev:node /data/home/.claude /data/home/.codex /data/home/.gemini /data/home/.bob 2>/dev/null \
       || echo "[entrypoint] WARN: shared-home chown was incomplete; continuing with the existing fail-open permission policy"
     if [ "${HIVE_HOME_MODE_REPAIR_NEEDED:-false}" = "true" ]; then
       chmod -R g+rwX /data/home 2>/dev/null \
@@ -184,6 +184,15 @@ def load_map(path):
         with open(path) as f:
             raw = json.load(f) or {}
     except FileNotFoundError:
+        return None
+    except (ValueError, OSError) as e:
+        # A 0-byte or truncated map (seen fleet-wide after node crashes on
+        # cephfs-backed /data) must not abort UID isolation for every later
+        # boot; treat it as absent so UIDs are recovered from dir ownership.
+        print('[entrypoint] WARN: persisted UID map %s unreadable (%s); rebuilding' % (path, e), file=os.sys.stderr)
+        return None
+    if not isinstance(raw, dict):
+        print('[entrypoint] WARN: persisted UID map %s is not an object; rebuilding' % path, file=os.sys.stderr)
         return None
     agents = {}
     for name, uid in (raw.get('agents') or {}).items():
@@ -252,6 +261,8 @@ for path in (persisted_path, runtime_path):
     with open(tmp, 'w') as f:
         json.dump(uid_map, f, indent=2)
         f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
 
 print('[entrypoint] UID map written to %s and %s' % (persisted_path, runtime_path), file=os.sys.stderr)
@@ -367,7 +378,9 @@ hive_reown_agent_token_caches_if_needed() {
   _token_group="$2"
   _token_root="${HIVE_AGENT_TOKEN_ROOT:-/var/run/hive-metrics/agent-tokens}"
   _token_expected="$(id -u dev 2>/dev/null || echo 1001):${_token_group}"
-  for _token_path in "$_token_root"/*"${_token_agent}"*; do
+  for _token_path in "$_token_root/gh-token-${_token_agent}.cache" \
+    "$_token_root/gh-token-${_token_agent}.cache".* \
+    "$_token_root/gh-token-${_token_agent}"-[0-9]*.cache; do
     [ -e "$_token_path" ] || continue
     _token_owner="$(stat -c '%u:%G' "$_token_path" 2>/dev/null || echo 0:unknown)"
     if [ "$_token_owner" != "$_token_expected" ]; then
@@ -397,6 +410,148 @@ hive_ensure_agent_user() {
   else
     useradd --system -u "$_agent_uid" -g node -d /data/home -M -s /bin/bash "$_agent_user" 2>/dev/null || true
   fi
+}
+
+# hive_collect_agent_names <config> prints, one per line and sorted, every agent
+# name that needs a per-agent user, private token group and token cache file:
+# the config's agents (map keys or list items), the copies its `replicas:`
+# settings create, and, when HIVE_LEVEL is set, the ACMM pack agents.
+#
+# Replicas (#13166): config.ExpandAgentReplicas derives <agent>-2 ..
+# <agent>-N in memory and MarshalYAML strips them on save, so they never
+# appear as keys here. Without listing them, a replica gets no user, group or
+# pre-created token file: the manager runs it as a bare <uid>:<gid> and the
+# token write creates the cache dev:node 0600, which the replica cannot read,
+# so every gh call is blocked with token_cache_unavailable. The naming and the
+# 2..MaxAgentReplicas (5) bound mirror config.replicaAgentName and
+# ExpandAgentReplicas; an out-of-range count is left for config validation to
+# reject and expands to nothing here.
+#
+# Review heads (#13542): agents.<base>.review_heads derives
+# <base>-<alias>-<n> per head and replica the same way, with alias the head's
+# `alias` or a slug of <backend>-<model>. head_names mirrors
+# config.ReviewHeadAgentName / reviewHeadSlug / ReviewHead.EffectiveAlias.
+#
+# Reviewer autoscale (#14685): review.reviewers.autoscale grows the lane's
+# base agent up to `max` replicas at runtime, so those names are pre-created
+# here too. autoscale_lane mirrors config.ReviewerAutoscaleAgent (the
+# configured agent, else the first name-sorted enabled role:reviewer agent,
+# else review.reviewer_agents[0]) and the default/ceiling mirror
+# DefaultReviewerAutoscaleMax / MaxAgentReplicas.
+hive_collect_agent_names() {
+  HIVE_COLLECT_CONFIG="$1" python3 - <<'PY'
+import glob, os, yaml
+
+MAX_REPLICAS = 5  # config.MaxAgentReplicas
+AUTOSCALE_DEFAULT_MAX = 4  # config.DefaultReviewerAutoscaleMax
+
+def replica_names(name, spec, floor=0):
+    if not isinstance(spec, dict):
+        return []
+    try:
+        n = int(spec.get('replicas') or 0)
+    except (TypeError, ValueError):
+        return []
+    n = max(n, floor)
+    if n < 2 or n > MAX_REPLICAS:
+        return []
+    return ['%s-%d' % (name, i) for i in range(2, n + 1)]
+
+def autoscale_lane(cfg, agent_specs):
+    review = cfg.get('review') if isinstance(cfg.get('review'), dict) else {}
+    reviewers = review.get('reviewers') if isinstance(review.get('reviewers'), dict) else {}
+    auto = reviewers.get('autoscale') if isinstance(reviewers.get('autoscale'), dict) else {}
+    if not auto.get('enabled'):
+        return None, 0
+    try:
+        mx = int(auto.get('max') or 0) or AUTOSCALE_DEFAULT_MAX
+    except (TypeError, ValueError):
+        mx = AUTOSCALE_DEFAULT_MAX
+    mx = min(mx, MAX_REPLICAS)
+    lane = str(auto.get('agent') or '').strip()
+    if lane:
+        return (lane if lane in agent_specs else None), mx
+    for name in sorted(agent_specs):
+        spec = agent_specs[name]
+        if isinstance(spec, dict) and spec.get('enabled', True) is not False and str(spec.get('role') or '').strip().lower() == 'reviewer':
+            return name, mx
+    for name in review.get('reviewer_agents') or []:
+        if name in agent_specs:
+            return name, mx
+    return None, 0
+
+def head_slug(s):
+    out, dash = [], False
+    for ch in str(s or '').strip().lower():
+        if ('a' <= ch <= 'z') or ('0' <= ch <= '9'):
+            out.append(ch)
+            dash = False
+        elif not dash and out:
+            out.append('-')
+            dash = True
+    return ''.join(out).rstrip('-')
+
+def head_alias(h):
+    alias = head_slug(h.get('alias'))
+    if alias:
+        return alias
+    backend, model = head_slug(h.get('backend')), head_slug(h.get('model'))
+    if not backend:
+        return model
+    if model == backend or model.startswith(backend + '-'):
+        return model
+    if not model:
+        return backend
+    return backend + '-' + model
+
+def head_names(name, spec):
+    if not isinstance(spec, dict) or not isinstance(spec.get('review_heads'), list):
+        return []
+    out = []
+    for h in spec['review_heads']:
+        if not isinstance(h, dict) or not str(h.get('backend') or '').strip() or not str(h.get('model') or '').strip():
+            continue
+        alias = head_alias(h)
+        try:
+            n = int(h.get('replicas') or 0) or 1
+        except (TypeError, ValueError):
+            continue
+        if not alias or n < 1 or n > MAX_REPLICAS:
+            continue
+        out += ['%s-%s-%d' % (name, alias, i) for i in range(1, n + 1)]
+    return out
+
+names = set()
+with open(os.environ['HIVE_COLLECT_CONFIG']) as f:
+    cfg = yaml.safe_load(f) or {}
+agents = cfg.get('agents', {})
+agent_specs = {}
+if isinstance(agents, dict):
+    agent_specs = dict(agents)
+elif isinstance(agents, list):
+    agent_specs = {a['name']: a for a in agents if isinstance(a, dict) and 'name' in a}
+lane, lane_max = autoscale_lane(cfg, agent_specs)
+for name, spec in agent_specs.items():
+    names.add(name)
+    names.update(replica_names(name, spec, lane_max if name == lane else 0))
+    names.update(head_names(name, spec))
+# Also check pack YAML if HIVE_LEVEL is set
+if os.environ.get('HIVE_LEVEL', ''):
+    for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):
+        try:
+            with open(p) as pf:
+                pack = yaml.safe_load(pf) or {}
+            pack_agents = pack.get('agents', [])
+            if isinstance(pack_agents, list):
+                for a in pack_agents:
+                    if isinstance(a, dict) and 'name' in a:
+                        names.add(a['name'])
+            elif isinstance(pack_agents, dict):
+                names.update(pack_agents.keys())
+        except Exception:
+            pass
+print('\n'.join(sorted(names)))
+PY
 }
 
 # hive_harden_runtime_config makes $1 readable by the user that reads it, and
@@ -1301,8 +1456,15 @@ if [ "$(id -u)" = "0" ]; then
   # pre-create it group-writable + setgid so every agent UID (node group) can
   # init it, matching .claude/.copilot. Without this, switching an agent to the
   # codex backend fails with "Permission denied" initializing state_N.sqlite.
+  #
+  # Only the directory itself is re-owned here. The recursive pass over the
+  # existing tree (tens of thousands of session/sqlite files on a mature spoke)
+  # runs in hive_run_uid_isolation_migration, off PID 1's startup path: on a
+  # shared NFS server a synchronous `chown -R` here held the fleet's daily
+  # rollout at ~3 min per boot, past the stale 160s startup budget, and 40 LKE
+  # spokes crash-looped in lock-step (2026-10-26).
   chmod 2775 /data/home/.codex 2>/dev/null || true
-  chown -R dev:node /data/home/.codex 2>/dev/null || true
+  chown dev:node /data/home/.codex 2>/dev/null || true
   # Antigravity (`agy`) persists its OAuth session to
   # $HOME/.gemini/antigravity-cli/antigravity-oauth-token. Pre-create the tree
   # group-writable + setgid for the same reason as .codex above.
@@ -1326,7 +1488,9 @@ if [ "$(id -u)" = "0" ]; then
   # watch. Creating it here removes that dependency entirely: the directory is
   # on disk, with the right mode, before any watch is set up.
   chmod 2770 /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
-  chown -R dev:node /data/home/.gemini 2>/dev/null || true
+  # Non-recursive for the same reason as .codex above; the tree is re-owned in
+  # the background worker.
+  chown dev:node /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
   # bob writes installation_id, settings.json, trustedFolders.json and tmp/ under
   # $HOME/.bob, plus custom modes under $HOME/.bob/settings. Pre-create both
   # group-writable + setgid so the FIRST agent to launch (a 2001+ UID in group
@@ -1745,40 +1909,11 @@ BASHRC
   HIVE_UID_BASE=2001
   PROXY_UID=1001
 
-  # Collect agent names from hive.yaml (map keys) and pack YAML (list items)
+  # Collect agent names from hive.yaml (map keys, plus replica names) and
+  # pack YAML (list items).
   AGENT_NAMES=""
   if [ -f "$HIVE_CONFIG" ]; then
-    AGENT_NAMES=$(python3 -c "
-import yaml, sys, os
-names = set()
-with open('$HIVE_CONFIG') as f:
-    cfg = yaml.safe_load(f) or {}
-agents = cfg.get('agents', {})
-if isinstance(agents, dict):
-    names.update(agents.keys())
-elif isinstance(agents, list):
-    for a in agents:
-        if isinstance(a, dict) and 'name' in a:
-            names.add(a['name'])
-# Also check pack YAML if HIVE_LEVEL is set
-level = os.environ.get('HIVE_LEVEL', '')
-if level:
-    import glob
-    for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):
-        try:
-            with open(p) as pf:
-                pack = yaml.safe_load(pf) or {}
-            pack_agents = pack.get('agents', [])
-            if isinstance(pack_agents, list):
-                for a in pack_agents:
-                    if isinstance(a, dict) and 'name' in a:
-                        names.add(a['name'])
-            elif isinstance(pack_agents, dict):
-                names.update(pack_agents.keys())
-        except Exception:
-            pass
-print('\n'.join(sorted(names)))
-" 2>/dev/null) || true
+    AGENT_NAMES=$(hive_collect_agent_names "$HIVE_CONFIG" 2>/dev/null) || true
   fi
 
   # The hub-resident Spektacular executor launches its stage CLI as its own
@@ -1917,7 +2052,9 @@ if spek.get('enabled') and hub.get('enabled') is not False:
       # EACCES on the first agent's token.
       AGENT_TOKEN_GROUP="hive-${agent_name}"
       if ! getent group "$AGENT_TOKEN_GROUP" >/dev/null 2>&1; then
-        groupadd --system "$AGENT_TOKEN_GROUP" 2>/dev/null || true
+        if ! groupadd_err="$(groupadd --system "$AGENT_TOKEN_GROUP" 2>&1)"; then
+          echo "[entrypoint] ERROR: could not create group ${AGENT_TOKEN_GROUP} (${groupadd_err}): ${agent_name} cannot read its token"
+        fi
       fi
       usermod -aG "$AGENT_TOKEN_GROUP" "hive-${agent_name}" 2>/dev/null || true
       AGENT_TOKEN_FILE="/var/run/hive-metrics/agent-tokens/gh-token-${agent_name}.cache"
@@ -2220,9 +2357,8 @@ for path in (os.environ.get('HIVE_UID_MAP_PERSISTED', '/data/.hive/uid-map.json'
     # redirect above, instead of hanging through a timeout on every dial.
     #
     # sysctl net.ipv6.conf.all.disable_ipv6=1 was REJECTED as the mechanism:
-    # the image depends on IPv6 loopback internally (the gateway nginx binds
-    # `listen [::]:PORT` for ::1 clients — gateway_nginx_dualstack_test.go —
-    # and the proxy's self-lookup reads /proc/net/tcp6), and /proc/sys is
+    # the image depends on IPv6 loopback internally (the proxy's self-lookup
+    # reads /proc/net/tcp6), and /proc/sys is
     # read-only in most container runtimes anyway.
     #
     # A kernel with no IPv6 stack at all (/proc/sys/net/ipv6 absent) has no
@@ -2485,7 +2621,7 @@ for path in (os.environ.get('HIVE_UID_MAP_PERSISTED', '/data/.hive/uid-map.json'
       # So do NOT promise it here. Report what is actually in the chain, which is
       # verifiable, instead of asserting a backstop that may not be loaded.
       # The Go proxy logs the unmarked dial once
-      # (src/pkg/proxy/github_proxy.go warnSockMarkOnce).
+      # (src/crux/proxy/github_proxy.go warnSockMarkOnce).
       if iptables -t nat -C HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN 2>/dev/null; then
         _owner_backstop="present (xt_owner loaded) — proxy dials still exempt via owner-UID"
       else

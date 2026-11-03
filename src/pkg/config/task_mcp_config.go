@@ -20,13 +20,6 @@ type TaskMCPConfig struct {
 	LaunchTokenTTL time.Duration `yaml:"launch_token_ttl,omitempty" json:"launch_token_ttl,omitempty"`
 }
 
-type AgentTaskMCPConfig struct {
-	// DropStuffedContext makes task-MCP-enabled kicks render stuffed work
-	// lists as refs only. Default false preserves existing prompts until an
-	// operator opts one lane in and verifies positive token delta.
-	DropStuffedContext bool `yaml:"drop_stuffed_context,omitempty" json:"drop_stuffed_context,omitempty"`
-}
-
 func (c TaskMCPConfig) LeaseRateLimitPerMinuteOrDefault() int {
 	if c.LeaseRateLimitPerMinute > 0 {
 		return c.LeaseRateLimitPerMinute

@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/planning"
 )
@@ -18,7 +20,7 @@ import (
 var _ planning.Kicker = agentKicker{}
 
 func TestAgentKickerUnknownAgentError(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
 	k := agentKicker{mgr: mgr}
 
 	err := k.Kick("ghost", "replan kick")
@@ -31,9 +33,9 @@ func TestAgentKickerUnknownAgentError(t *testing.T) {
 }
 
 func TestAgentKickerNotRunningAgentError(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{
 		"idle-agent": {Enabled: true},
-	}, restoreTestLogger(), agent.ProjectContext{})
+	}, restoreTestLogger(), crux.ProjectContext{})
 	k := agentKicker{mgr: mgr}
 
 	err := k.Kick("idle-agent", "replan kick")

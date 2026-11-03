@@ -145,7 +145,7 @@ func TestDashboardHivesCacheIsBoundedAndVersioned(t *testing.T) {
 		snippet string
 	}{
 		{"cache key", "var LS_HIVES_CACHE = 'hive-my-hives-cache';"},
-		{"schema version", "var HIVES_CACHE_VERSION = 6;"},
+		{"schema version", "var HIVES_CACHE_VERSION = 7;"},
 		{"minimum read version", "var HIVES_CACHE_MIN_READ_VERSION = 5;"},
 		{"named TTL constant", "var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;"},
 		{"named row cap", "var HIVES_CACHE_MAX_ROWS = 200;"},

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -28,10 +29,13 @@ const (
 //
 //   - ioscan            (legacy API compatibility; UI moved to Security)
 //   - otel/tracing      (Config.OTel/Tracing Enabled + advanced exporter fields)
-//   - retro             (Config.Retro enabled + analysis model)
-//   - mint              (Config.Mint.Enabled + Issuer — NOT KeyPath: the signing
-//     key is a secret/PEM path and the dashboard overlay is deliberately
-//     secret-free)
+//   - retro             (Config.Retro enabled, analysis model and the pacing
+//     knobs scan_interval_s, max_fix_attempts, max_kicks, long_stall_days and
+//     recent_closed_window_s; the lane is built at startup, so these take
+//     effect after a restart)
+//   - mint              (Config.Mint.Enabled + Issuer; KeyPath is returned
+//     read-only by featuresPlatformResponse and never written here, and the
+//     key's contents are never read)
 //   - plan_from_label   (Config.Planning.PlanFromLabel, a *bool tri-state)
 //   - quality.formal    (Config.Quality.Formal opt-in, ACMM L5+ effective gate)
 //   - review.plan_match (Config.Review.PlanMatch.Enabled, the plan_match
@@ -41,8 +45,7 @@ const (
 //   - publication       (Config.Publication: the audit campaign's authorized
 //     issue publisher, default off, ACMM L3+ effective gate, plus the private
 //     disclosure channel security-sensitive findings route to)
-//   - runs.external.flue (Enabled + Mode of the report-only Flue binding, #8361;
-//     endpoint and workflow version are yaml-only)
+//   - runs.external.flue (Enabled + Mode of the report-only Flue binding, #8361)
 //   - runs.external.omp  (Enabled + Mode of the report-only OMP workbench host,
 //     #8361 step 9; workflow version is yaml-only)
 //
@@ -82,6 +85,13 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		RetroEnabled       *bool   `json:"retroEnabled"`
 		RetroAnalysisModel *string `json:"retroAnalysisModel"`
+		// Retro pacing knobs. 0 means the built-in default (no window for
+		// recent_closed_window_s); negative values are rejected.
+		RetroScanIntervalS       *int `json:"retroScanIntervalS"`
+		RetroMaxFixAttempts      *int `json:"retroMaxFixAttempts"`
+		RetroMaxKicks            *int `json:"retroMaxKicks"`
+		RetroLongStallDays       *int `json:"retroLongStallDays"`
+		RetroRecentClosedWindowS *int `json:"retroRecentClosedWindowS"`
 
 		MintEnabled *bool   `json:"mintEnabled"`
 		MintIssuer  *string `json:"mintIssuer"`
@@ -119,14 +129,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		PublicationPrivateChannel *string   `json:"publicationPrivateChannel"`
 		PublicationOwner          *string   `json:"publicationOwner"`
 		// #8361: the report-only Flue external-execution binding. Endpoint
-		// and workflow version stay yaml-only; the dialog flips the toggle
-		// and picks the mode.
-		ExtFlueEnabled         *bool   `json:"extFlueEnabled"`
-		ExtFlueMode            *string `json:"extFlueMode"`
-		ExtFlueEndpoint        *string `json:"extFlueEndpoint"`
-		ExtFlueWorkflowVersion *string `json:"extFlueWorkflowVersion"`
+		// and workflow version are in featuresRunsBody.
+		ExtFlueEnabled *bool   `json:"extFlueEnabled"`
+		ExtFlueMode    *string `json:"extFlueMode"`
 		// #8361 step 9: the OMP workbench host, an independent toggle beside
-		// the Flue one. Workflow version stays yaml-only.
+		// the Flue one. Workflow version is in featuresRunsBody.
 		ExtOMPEnabled *bool   `json:"extOmpEnabled"`
 		ExtOMPMode    *string `json:"extOmpMode"`
 
@@ -154,11 +161,28 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		AutonomyMaxLevel     *int    `json:"autonomyMaxLevel"`
 		AutonomyCooldownDays *int    `json:"autonomyCooldownDays"`
 
+		// Nous / Experiment Lab (nous.* in hive.yaml, RFC #11585). A nil
+		// pointer leaves the key alone; an empty fetch allowlist is a real
+		// value (deny every fetch), distinct from the absent default.
+		NousDispatcher                  *string   `json:"nousDispatcher"`
+		NousGatePollSeconds             *int      `json:"nousGatePollSeconds"`
+		NousFetchAllowlist              *[]string `json:"nousFetchAllowlist"`
+		NousArtifactRepo                *string   `json:"nousArtifactRepo"`
+		NousArtifactBranch              *string   `json:"nousArtifactBranch"`
+		NousArtifactPath                *string   `json:"nousArtifactPath"`
+		NousArtifactSyncIntervalSeconds *int      `json:"nousArtifactSyncIntervalSeconds"`
+		NousObservationsEnabled         *bool     `json:"nousObservationsEnabled"`
+		NousObservationsMaxPerWeek      *int      `json:"nousObservationsMaxPerWeek"`
+
 		RotationEnabled            *bool                                     `json:"rotationEnabled"`
 		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
 		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
 		RotationProviders          *map[string]config.ProviderRotationConfig `json:"rotationProviders"`
 		RotationAgents             *map[string]string                        `json:"rotationAgents"`
+
+		featuresOpsBody
+		featuresPlatformBody
+		featuresRunsBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -295,24 +319,71 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	if body.AutonomyPromoteAfter != nil && *body.AutonomyPromoteAfter < 1 {
-		jsonError(w, "autonomy promote_after must be at least 1", http.StatusBadRequest)
+	// Autonomy policy (autonomy.* in hive.yaml): one canonicalising validator
+	// so every path agrees on bounds and case handling. Zero means "use the
+	// default" for the numeric keys, matching AutonomyConfig.Effective*.
+	if body.AutonomyPromoteAfter != nil && *body.AutonomyPromoteAfter < 0 {
+		jsonError(w, "autonomy promote_after must be 0 (default) or greater", http.StatusBadRequest)
 		return
 	}
+	if body.AutonomyCooldownDays != nil && *body.AutonomyCooldownDays < 0 {
+		jsonError(w, "autonomy cooldown_days must be 0 (default) or greater", http.StatusBadRequest)
+		return
+	}
+	if body.AutonomyMaxLevel != nil && *body.AutonomyMaxLevel != 0 &&
+		(*body.AutonomyMaxLevel < config.MinACMMLevel || *body.AutonomyMaxLevel > config.MaxACMMLevel) {
+		jsonError(w, fmt.Sprintf("autonomy max_level must be %d-%d", config.MinACMMLevel, config.MaxACMMLevel), http.StatusBadRequest)
+		return
+	}
+	var autonomyDemoteOn string
 	if body.AutonomyDemoteOn != nil {
-		switch strings.TrimSpace(*body.AutonomyDemoteOn) {
-		case "", "rollback", "rework", "either":
-		default:
-			jsonError(w, "autonomy demote_on must be rollback, rework, or either", http.StatusBadRequest)
+		canonical, ok := config.CanonicalAutonomyDemoteOn(*body.AutonomyDemoteOn)
+		if !ok {
+			jsonError(w, fmt.Sprintf("autonomy demote_on must be one of %s", strings.Join(config.AutonomyDemoteOnValues(), ", ")), http.StatusBadRequest)
+			return
+		}
+		autonomyDemoteOn = canonical
+	}
+	// Nous / Experiment Lab: validate the patched section with the config
+	// package's own rules so the dialog and `hive.yaml` agree on what loads.
+	nousNext, nousErr := patchNousConfig(cfg.Nous, nousPatch{
+		dispatcher: body.NousDispatcher, gatePollSeconds: body.NousGatePollSeconds, fetchAllowlist: body.NousFetchAllowlist,
+		artifactRepo: body.NousArtifactRepo, artifactBranch: body.NousArtifactBranch, artifactPath: body.NousArtifactPath,
+		artifactSyncIntervalSeconds: body.NousArtifactSyncIntervalSeconds,
+		observationsEnabled:         body.NousObservationsEnabled, observationsMaxPerWeek: body.NousObservationsMaxPerWeek,
+	})
+	if nousErr != nil {
+		jsonError(w, nousErr.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, f := range []struct {
+		v    *int
+		name string
+	}{
+		{body.RetroScanIntervalS, "scan_interval_s"},
+		{body.RetroMaxFixAttempts, "max_fix_attempts"},
+		{body.RetroMaxKicks, "max_kicks"},
+		{body.RetroLongStallDays, "long_stall_days"},
+		{body.RetroRecentClosedWindowS, "recent_closed_window_s"},
+	} {
+		if f.v != nil && *f.v < 0 {
+			jsonError(w, fmt.Sprintf("retro %s must be 0 (default) or greater", f.name), http.StatusBadRequest)
 			return
 		}
 	}
-	if body.AutonomyMaxLevel != nil && (*body.AutonomyMaxLevel < config.MinACMMLevel || *body.AutonomyMaxLevel > config.MaxACMMLevel) {
-		jsonError(w, "autonomy max_level must be 1-6", http.StatusBadRequest)
+	applyOps, err := body.featuresOpsBody.prepare(s.deps.Config)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.AutonomyCooldownDays != nil && *body.AutonomyCooldownDays < 1 {
-		jsonError(w, "autonomy cooldown_days must be at least 1", http.StatusBadRequest)
+	applyPlatform, err := body.featuresPlatformBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	applyRuns, err := body.featuresRunsBody.prepare(s.deps.Config)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -325,6 +396,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	// Struct copy of the whole config, restored if the save fails so a 500
 	// does not leave unsaved, unwired changes live (#10122).
 	cfgBefore := *cfg
+	applyOps(cfg)
+	applyPlatform(cfg)
+	applyRuns(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -358,6 +432,20 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.RetroAnalysisModel != nil {
 		cfg.Retro.AnalysisModel = strings.TrimSpace(*body.RetroAnalysisModel)
+	}
+	for _, f := range []struct {
+		src *int
+		dst *int
+	}{
+		{body.RetroScanIntervalS, &cfg.Retro.ScanIntervalS},
+		{body.RetroMaxFixAttempts, &cfg.Retro.MaxFixAttempts},
+		{body.RetroMaxKicks, &cfg.Retro.MaxKicks},
+		{body.RetroLongStallDays, &cfg.Retro.LongStallDays},
+		{body.RetroRecentClosedWindowS, &cfg.Retro.RecentClosedWindowS},
+	} {
+		if f.src != nil {
+			*f.dst = *f.src
+		}
 	}
 	if body.MintEnabled != nil {
 		cfg.Mint.Enabled = *body.MintEnabled
@@ -480,7 +568,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		cfg.Autonomy.PromoteAfter = *body.AutonomyPromoteAfter
 	}
 	if body.AutonomyDemoteOn != nil {
-		cfg.Autonomy.DemoteOn = strings.TrimSpace(*body.AutonomyDemoteOn)
+		cfg.Autonomy.DemoteOn = autonomyDemoteOn
 	}
 	if body.AutonomyMaxLevel != nil {
 		cfg.Autonomy.MaxLevel = *body.AutonomyMaxLevel
@@ -488,17 +576,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.AutonomyCooldownDays != nil {
 		cfg.Autonomy.CooldownDays = *body.AutonomyCooldownDays
 	}
+	cfg.Nous = nousNext
 	if body.ExtFlueEnabled != nil {
 		cfg.Runs.External.Flue.Enabled = *body.ExtFlueEnabled
 	}
 	if body.ExtFlueMode != nil {
 		cfg.Runs.External.Flue.Mode = strings.TrimSpace(*body.ExtFlueMode)
-	}
-	if body.ExtFlueEndpoint != nil {
-		cfg.Runs.External.Flue.Endpoint = strings.TrimSpace(*body.ExtFlueEndpoint)
-	}
-	if body.ExtFlueWorkflowVersion != nil {
-		cfg.Runs.External.Flue.WorkflowVersion = strings.TrimSpace(*body.ExtFlueWorkflowVersion)
 	}
 	if body.ExtOMPEnabled != nil {
 		cfg.Runs.External.OMP.Enabled = *body.ExtOMPEnabled
@@ -621,8 +704,8 @@ func claimsTTLsResponse(c config.ClaimsConfig) map[string]interface{} {
 
 // featuresSectionResponse builds the opt-in-features payload for the governor
 // config GET so the Features dialog can prefill its controls. The mint signing
-// key (Config.Mint.KeyPath) is intentionally never returned — only whether mint
-// is enabled and its issuer, keeping the response secret-free.
+// key path (Config.Mint.KeyPath) is returned read-only; the key itself is
+// never read, keeping the response secret-free.
 //
 // planFromLabel is reported as a tri-state: null when the key is unset (falls
 // back to the ACMM-level gate), otherwise the explicit true/false the operator
@@ -631,8 +714,9 @@ func claimsTTLsResponse(c config.ClaimsConfig) map[string]interface{} {
 // only the server's ExternalExec seam knows (#8361).
 func (s *Server) featuresLinkedView() map[string]interface{} {
 	return map[string]interface{}{
-		"extFlueLinked": s.externalExecLinked(extExecEngineFlue),
-		"extOmpLinked":  s.externalExecLinked(extExecEngineOMP),
+		"extFlueLinked":       s.externalExecLinked(extExecEngineFlue),
+		"extOmpLinked":        s.externalExecLinked(extExecEngineOMP),
+		"extVibeKanbanLinked": s.externalExecLinked(extExecEngineVibeKanban),
 	}
 }
 
@@ -642,6 +726,9 @@ func (s *Server) featuresSectionWithLinked(cfg *config.Config) map[string]interf
 	out := featuresSectionResponse(cfg)
 	for k, v := range s.featuresLinkedView() {
 		out[k] = v
+	}
+	if fn := s.goodFirstIssueStats.Load(); fn != nil && *fn != nil {
+		out["goodFirstIssueStats"] = (*fn)()
 	}
 	return out
 }
@@ -654,6 +741,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	otelCfg := cfg.EffectiveOTel()
 	acmmLevel := cfg.ACMMLevelOrZero()
 	rotationCfg := cfg.Governor.Rotation
+	nousArtifact := cfg.Nous.ArtifactRepo.Resolve(os.Getenv)
 	out := map[string]interface{}{
 		"ioscanEnabled":                       cfg.Ioscan.IsEnabled(),
 		"tracingEnabled":                      otelCfg.Enabled,
@@ -667,6 +755,11 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"otelHasHeaders":                      len(otelCfg.Headers) > 0,
 		"retroEnabled":                        cfg.Retro.Enabled,
 		"retroAnalysisModel":                  cfg.Retro.AnalysisModel,
+		"retroScanIntervalS":                  cfg.Retro.ScanIntervalS,
+		"retroMaxFixAttempts":                 cfg.Retro.MaxFixAttempts,
+		"retroMaxKicks":                       cfg.Retro.MaxKicks,
+		"retroLongStallDays":                  cfg.Retro.LongStallDays,
+		"retroRecentClosedWindowS":            cfg.Retro.RecentClosedWindowS,
 		"mintEnabled":                         cfg.Mint.Enabled,
 		"mintIssuer":                          cfg.Mint.Issuer,
 		"planFromLabel":                       planFromLabel,
@@ -729,6 +822,23 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"autonomyDemoteOn":                    cfg.Autonomy.EffectiveDemoteOn(),
 		"autonomyMaxLevel":                    cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
 		"autonomyCooldownDays":                cfg.Autonomy.EffectiveCooldownDays(),
+		"nousDispatcher":                      cfg.Nous.Dispatcher,
+		"nousDispatcherEffective":             cfg.Nous.ResolvedDispatcher(),
+		"nousDispatcherValues":                config.NousDispatcherValues(),
+		"nousGatePollSeconds":                 cfg.Nous.GatePollSeconds,
+		"nousGatePollSecondsEffective":        int(cfg.Nous.GatePollInterval().Seconds()),
+		"nousFetchAllowlist":                  cfg.Nous.FetchAllowlist,
+		"nousFetchAllowlistEffective":         cfg.Nous.ResolvedFetchAllowlist(),
+		"nousArtifactRepo":                    cfg.Nous.ArtifactRepo.Repo,
+		"nousArtifactBranch":                  cfg.Nous.ArtifactRepo.Branch,
+		"nousArtifactPath":                    cfg.Nous.ArtifactRepo.Path,
+		"nousArtifactSyncIntervalSeconds":     cfg.Nous.ArtifactRepo.SyncIntervalSeconds,
+		"nousArtifactSyncMinSeconds":          int(config.MinNousArtifactSyncInterval.Seconds()),
+		"nousObservationsEnabled":             cfg.Nous.Observations.Enabled,
+		"nousObservationsMaxPerWeek":          cfg.Nous.Observations.ResolvedMaxPerWeek(),
+		"nousObservationsMaxPerWeekDefault":   config.DefaultNousObservationsMaxPerWeek,
+		"nousArtifactEnabled":                 nousArtifact.Enabled,
+		"nousArtifactRepoEffective":           nousArtifact.Repo,
 		"rotationEnabled":                     rotationCfg.Enabled,
 		"rotationThresholdPct":                rotationCfg.EffectiveThreshold(),
 		"rotationHighVolumeCadenceS":          rotationCfg.EffectiveHighVolumeCadenceS(),
@@ -736,6 +846,23 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"rotationAgents":                      rotationCfg.AgentTiers,
 	}
 	for k, v := range claimsTTLsResponse(cfg.Governor.Claims) {
+		out[k] = v
+	}
+	// Built-in values a zero retro pacing knob falls back to, so the dialog
+	// can show them as placeholders.
+	out["retroDefaults"] = map[string]int{
+		"retroScanIntervalS":  retro.DefaultScanIntervalS,
+		"retroMaxFixAttempts": retro.DefaultMaxFixAttempts,
+		"retroMaxKicks":       retro.DefaultMaxKicks,
+		"retroLongStallDays":  retro.DefaultLongStallDays,
+	}
+	for k, v := range featuresOpsResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresPlatformResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresRunsResponse(cfg) {
 		out[k] = v
 	}
 	return out
@@ -849,13 +976,15 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		MaxFindings     *int    `json:"max_findings"`
-		ShowAll         *bool   `json:"show_all"`
-		StalenessDays   *int    `json:"staleness_days"`
-		PRAutoClose     *bool   `json:"pr_autoclose"`
-		UpdateIntervalS *int    `json:"update_interval_s"`
-		Target          *string `json:"target"`
-		LinearIssue     *string `json:"linear_issue"`
+		MaxFindings       *int                              `json:"max_findings"`
+		ShowAll           *bool                             `json:"show_all"`
+		StalenessDays     *int                              `json:"staleness_days"`
+		PRAutoClose       *bool                             `json:"pr_autoclose"`
+		UpdateIntervalS   *int                              `json:"update_interval_s"`
+		PostRetryBackoffS *int                              `json:"post_retry_backoff_s"`
+		Target            *string                           `json:"target"`
+		LinearIssue       *string                           `json:"linear_issue"`
+		QueueHealth       *config.AdvisoryQueueHealthConfig `json:"queue_health"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -891,6 +1020,14 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		jsonError(w, fmt.Sprintf("update_interval_s must be 0 (default cadence) or between %d and %d seconds",
 			config.MinAdvisoryUpdateIntervalS, config.MaxAdvisoryUpdateIntervalS), http.StatusBadRequest)
 		return
+	}
+	if body.QueueHealth != nil {
+		qh := body.QueueHealth
+		if qh.BlockedPRPct < 0 || qh.NeedsHumanPRPct < 0 || qh.NeedsHumanIssuePct < 0 ||
+			qh.StaleBlockedPRs < 0 || qh.LaneSharePct < 0 || qh.CheckSharePct < 0 {
+			jsonError(w, "queue_health thresholds must be zero or greater", http.StatusBadRequest)
+			return
+		}
 	}
 
 	cfg := s.deps.Config
@@ -939,6 +1076,12 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 	if body.UpdateIntervalS != nil {
 		cfg.Governor.Advisory.UpdateIntervalS = *body.UpdateIntervalS
 	}
+	if body.PostRetryBackoffS != nil {
+		cfg.Governor.Advisory.PostRetryBackoffS = *body.PostRetryBackoffS
+	}
+	if body.QueueHealth != nil {
+		cfg.Governor.Advisory.QueueHealth = *body.QueueHealth
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after advisory update", "error", err)
@@ -954,13 +1097,22 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 	a := cfg.Governor.Advisory
 	return map[string]interface{}{
-		"max_findings":      a.MaxFindings,
-		"show_all":          a.ShowAll,
-		"staleness_days":    a.StalenessDays,
-		"pr_autoclose":      a.PRAutoCloseEnabled(),
-		"update_interval_s": a.UpdateIntervalS,
-		"target":            a.ResolvedTarget(),
-		"linear_issue":      a.LinearIssue,
+		"max_findings":         a.MaxFindings,
+		"show_all":             a.ShowAll,
+		"staleness_days":       a.StalenessDays,
+		"pr_autoclose":         a.PRAutoCloseEnabled(),
+		"update_interval_s":    a.UpdateIntervalS,
+		"post_retry_backoff_s": a.PostRetryBackoffS,
+		"queue_health": map[string]interface{}{
+			"blocked_pr_pct":        a.QueueHealth.BlockedPRPct,
+			"needs_human_pr_pct":    a.QueueHealth.NeedsHumanPRPct,
+			"needs_human_issue_pct": a.QueueHealth.NeedsHumanIssuePct,
+			"stale_blocked_prs":     a.QueueHealth.StaleBlockedPRs,
+			"lane_share_pct":        a.QueueHealth.LaneSharePct,
+			"check_share_pct":       a.QueueHealth.CheckSharePct,
+		},
+		"target":       a.ResolvedTarget(),
+		"linear_issue": a.LinearIssue,
 	}
 }
 

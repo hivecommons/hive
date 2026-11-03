@@ -35,7 +35,7 @@ Reverse proxies, Routes, and Ingresses must preserve HTTP upgrade headers and lo
 | --- | --- | --- |
 | GitHub web/API host (`github.com`/`api.github.com` or configured GHE `base_url`/`api_url`) | Issue/PR enumeration, App token minting, git operations, `/gh-setup` verification | Agents may be routed through the local MITM proxy; the hive process itself also calls GitHub APIs. |
 | Hub URL (`hub.url`) | Spokes | Heartbeats and callback polling. Must be reachable from firewalled spokes even when the hub cannot initiate inbound connections. |
-| Model backends and CLI auth endpoints | Agents | Claude/Copilot/Gemini CLIs and OpenAI-compatible gateways (`vllm`, `llm-d`, `litellm`, OpenRouter, custom). |
+| Model backends and CLI auth endpoints | Agents | Claude/Copilot/Codex/Antigravity CLIs and OpenAI-compatible gateways (`vllm`, `llm-d`, `litellm`, OpenRouter, custom). |
 | Notification endpoints | Optional | `ntfy`, Slack webhooks, and Discord webhooks/bot API only when configured. |
 | `discord.com` / Discord webhook hosts | Optional | Required when `notifications.discord.webhook`, `notifications.discord.factory_webhook`, or the Discord bot integration is configured. |
 | Container/image registries | Deployment/auto-update | Pull hive images, watchtower updates, and any inference backend images. |

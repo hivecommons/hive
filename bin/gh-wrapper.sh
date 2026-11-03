@@ -60,16 +60,27 @@ _contributor_mode() {
   [[ -f "$CONTRIBUTOR_MODE_MARKER" ]]
 }
 
+# _deny <code> <message> — the ONE denial format every gate below uses (#12127).
+#
+# Every blocked call used to print a 2–8 line explanation, and every one of
+# those lines landed in the agent's context window. A denial now costs one
+# line: what was blocked, why, and what to do instead, followed by a
+# machine-readable `reason=<code>` so a policy, a test or a log scraper can
+# key on the gate without parsing prose. The codes are stable identifiers
+# (snake_case, no spaces); the prose may be reworded, the code may not.
+#
+# Set HIVE_GH_DENY_VERBOSE=1 to append a second line pointing at the docs —
+# never printed by default, because the one line already says what to do.
+_deny() {
+  local code="$1" msg="$2"
+  echo "⛔ BLOCKED: ${msg} reason=${code}" >&2
+  [ -n "${HIVE_GH_DENY_VERBOSE:-}" ] && echo "   See src/docs/github-write-surface.md and src/docs/troubleshooting.md (reason=${code})." >&2
+  exit 1
+}
+
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
 if [[ ! -x "$REAL_GH" ]]; then
-  echo "⚠️  gh CLI is not available in this environment." >&2
-  echo "   Use the GitHub MCP server instead:" >&2
-  echo "   • create_pull_request, merge_pull_request, get_pull_request" >&2
-  echo "   • create_issue, get_issue, list_issues" >&2
-  echo "   • create_or_update_file, get_file_contents" >&2
-  echo "   • search_code, search_repositories" >&2
-  echo "   Do NOT attempt to install, symlink, or download the gh binary." >&2
-  exit 1
+  _deny gh_unavailable "gh CLI is not available in this environment; use the GitHub MCP server (get_pull_request, get_issue, get_file_contents, search_code) and do NOT install, symlink or download a gh binary."
 fi
 
 # Inject GitHub App token for agent gh calls (15k/hr vs PAT's 5k/hr).
@@ -147,10 +158,7 @@ if ! _contributor_mode; then
     # network failure. Fail loud and instant instead.
     export GH_PROMPT_DISABLED=1
   else
-    echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
-    echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
-    echo "   The hive delivers a scoped token per agent; report this to the operator so token delivery is repaired." >&2
-    exit 1
+    _deny token_cache_unavailable "per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset}); not falling back to the shared App token (audit H3) — report to the operator: on per-UID deployments repair token delivery, on native/shared-UID GitHub Enterprise set GH_HOST (e.g. github.ibm.com) before launch; see src/docs/troubleshooting.md#hive_agent_token_cache-unset-no-read-credential-available."
   fi
   # Write-then-rename so the ingester never sees a half-written event. The
   # subshell pins umask 027: the spool is setgid to the hive's group, so
@@ -184,8 +192,7 @@ if [[ -n "$AGENT_ID" ]]; then
       # shellcheck disable=SC2254
       case "$FULL_CMD" in
         $pattern)
-          echo "⛔ BLOCKED: ${reason:-command not allowed for ${AGENT_ID}}" >&2
-          exit 1
+          _deny agent_restriction "${reason:-command not allowed for ${AGENT_ID}} (per-agent restriction on '${pattern}')."
           ;;
       esac
     done < <(python3 -c "
@@ -307,10 +314,7 @@ done
 # contributor typing `gh auth login` gets this specific message rather than a
 # generic "not on the allowlist".
 if _contributor_mode && [ "$subcmd" = "auth" ]; then
-  echo "⛔ BLOCKED: gh auth is disabled for contributor agents." >&2
-  echo "   This gate matches the 'auth' SUBCOMMAND only — arguments that merely mention" >&2
-  echo "   authentication (a PR body, an issue title) are not blocked (#6659)." >&2
-  exit 1
+  _deny contributor_auth "gh auth is disabled for contributor agents (matches the 'auth' SUBCOMMAND only, #6659); your personal token is already configured — do not re-authenticate."
 fi
 
 # ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840 F6/F7 residual; added in #3854) ─
@@ -377,7 +381,10 @@ _gh_surface_allowed() {
     search)
       case "$a" in issues|prs|repos|code|commits) return 0 ;; esac ;;
     run)
-      case "$a" in list|view|watch) return 0 ;; esac ;;
+      # `watch` is deliberately NOT here: it blocks for the whole CI wait
+      # (#13587/#13594). The tailored ci_watch_blocked gate above this
+      # allowlist refuses it with a specific message before we get here.
+      case "$a" in list|view) return 0 ;; esac ;;
     release)
       case "$a" in list|view) return 0 ;; esac ;;
     cache)
@@ -401,16 +408,38 @@ _gh_surface_allowed() {
   return 1
 }
 
+# ── Blocking CI waits are refused (#13587, #13594, #13596) ───────────────────
+#
+# `gh run watch` and `gh pr checks --watch` block for the whole CI wait and
+# every refresh is an API call; the stop-polling nudge (ci_poll_nudge) only
+# advised, so agents kept looping. Refuse both outright. ORDERING: this gate
+# runs BEFORE the surface allowlist on purpose — `watch` is not in the `run`
+# arm below, so without this gate `gh run watch` would fall through to the
+# generic surface_allowlist denial and lose the tailored reason code/message.
+# This does NOT turn the allowlist into a denylist: the allowlist still decides
+# what is on the map; this only gives one refused verb a better explanation.
+_gh_is_blocking_ci_wait() {
+  if [ "$subcmd" = "run" ] && [ "$action" = "watch" ]; then
+    return 0
+  fi
+  if [ "$subcmd" = "pr" ] && [ "$action" = "checks" ]; then
+    local _a
+    for _a in "${args[@]}"; do
+      case "$_a" in --watch|--watch=*|-w) return 0 ;; esac
+    done
+  fi
+  return 1
+}
+if _gh_is_blocking_ci_wait; then
+  _ci_wait_cmd="gh ${subcmd} ${action}"
+  [ "$action" = "checks" ] && _ci_wait_cmd="${_ci_wait_cmd} --watch"
+  _deny ci_watch_blocked "'${_ci_wait_cmd}' is not allowed: stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup: leave the PR as is (awaiting-ci) and move to the next work-list item. The automerge sweep handles green PRs."
+fi
+
 # `gh` with no arguments prints help — harmless, and denying it produces a
 # confusing error for an agent that is just probing.
 if [ -n "$subcmd" ] && ! _gh_surface_allowed "$subcmd" "$action"; then
-  echo "⛔ BLOCKED: 'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands." >&2
-  echo "The wrapper denies by default: only commands agents are known to need are permitted," >&2
-  echo "so a subcommand nobody reviewed cannot reach GitHub with the App token attached (#3840)." >&2
-  echo "Permitted: issue/pr (list view create edit comment close reopen ...), search, run list|view|watch," >&2
-  echo "           release list|view, label list|create, repo view|list|fork|clone, api, help, version." >&2
-  echo "If this command is genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh." >&2
-  exit 1
+  _deny surface_allowlist "'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands (deny-by-default, #3840); permitted: issue/pr, search, run list|view, release list|view, label list|create, repo view|list|fork|clone, api — if genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh."
 fi
 
 # ── Write-surface enforcement in the sandbox (hivecommons/hive#9587, #9772) ──
@@ -497,11 +526,7 @@ _write_surface_enforced() {
 _write_surface_refuse_direct() {
   local what="$1" instead="$2"
   _write_surface_enforced || return 0
-  echo "⛔ BLOCKED: ${HIVE_AGENT:-${HIVE_AGENT_ID:-this agent}} is under write_surface.enforce — direct GitHub writes from the agent sandbox are refused (${what})." >&2
-  echo "The audited hive relays are this lane's only write path. Every READ still works." >&2
-  echo "Use instead: ${instead}" >&2
-  echo "Do NOT retry, and do NOT route around this with another CLI, a raw curl or the GitHub MCP — the GitHub proxy refuses the same write and records it. See src/docs/github-write-surface.md." >&2
-  exit 1
+  _deny write_surface_enforce "${HIVE_AGENT:-${HIVE_AGENT_ID:-this agent}} is under write_surface.enforce — direct GitHub write '${what}' refused (reads still work); use instead: ${instead}. Do NOT retry or route around via another CLI, curl or the GitHub MCP — the proxy refuses and records the same write."
 }
 
 # The relays, for a refusal that is not tied to one operation.
@@ -634,10 +659,7 @@ if [ "$_gh_author_scoped" = true ]; then
       # staff agents; contributor mode keeps the server-side resolution.
       if ! _contributor_mode; then
         if ! _resolve_self_login >/dev/null; then
-          echo "⛔ BLOCKED: gh $subcmd $action --author @me cannot work with an App installation token (it has no /user identity, #4044)," >&2
-          echo "and no trusted identity is available to substitute: ${BOT_LOGIN_FILE} is missing/empty and 'gh api user' did not resolve." >&2
-          echo "The hive writes that file when it mints agent tokens — report this to the operator so identity delivery is repaired." >&2
-          exit 1
+          _deny author_identity_unresolved "gh $subcmd $action --author @me cannot work with an App installation token (no /user identity, #4044) and no trusted identity is available to substitute (${BOT_LOGIN_FILE} missing/empty, 'gh api user' did not resolve); report to the operator so identity delivery is repaired."
         fi
         _atme_rewritten=()
         _atme_expect=false
@@ -661,17 +683,11 @@ if [ "$_gh_author_scoped" = true ]; then
         set -- "${args[@]}"
       fi
     elif ! _resolve_self_login >/dev/null; then
-      echo "⛔ BLOCKED: gh $subcmd $action --author requires authenticated GitHub identity." >&2
-      echo "Could not resolve the current token identity: no trusted identity file at ${BOT_LOGIN_FILE} (written by the hive when it mints agent tokens)" >&2
-      echo "and 'gh api user --jq .login' did not resolve (expected for App installation tokens, which have no /user identity)." >&2
-      exit 1
+      _deny author_identity_unresolved "gh $subcmd $action --author requires authenticated GitHub identity and none could be resolved (no trusted identity file at ${BOT_LOGIN_FILE}, 'gh api user' did not resolve); report to the operator so identity delivery is repaired."
     elif _author_matches_login "$author_value" "$HIVE_AUTH_LOGIN_CACHED"; then
       : # Match: authenticated login, case-insensitive, with optional [bot] suffix.
     else
-      echo "⛔ BLOCKED: gh $subcmd $action --author must match the authenticated GitHub identity." >&2
-      echo "--author '$author_value' does not match token identity '$HIVE_AUTH_LOGIN_CACHED'." >&2
-      echo "Use --author @me or your authenticated login to list your own items." >&2
-      exit 1
+      _deny author_mismatch "gh $subcmd $action --author must match the authenticated GitHub identity ('$author_value' is not token identity '$HIVE_AUTH_LOGIN_CACHED'); use --author @me or your authenticated login to list your own items."
     fi
   elif _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356).
@@ -692,10 +708,7 @@ if [ "$_gh_author_scoped" = true ]; then
     # and point at whichever work-queue snapshot actually exists here.
     _actionable_hint="/var/run/hive-metrics/actionable.json"
     [ -f /data/last-actionable.json ] && _actionable_hint="/data/last-actionable.json"
-    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents — but ONLY listing/enumeration is blocked." >&2
-    echo "Write commands like 'gh issue create' and PR creation via 'hive-open-pr' are still ALLOWED — do not skip them because of this message." >&2
-    echo "For the pre-filtered issue/PR queue, read ${_actionable_hint} (use a shell command like 'cat', not a workspace file-read tool)." >&2
-    exit 1
+    _deny enumeration_disabled "gh $subcmd list is disabled for agents — ONLY listing/enumeration is blocked, writes like 'gh issue create' and 'hive-open-pr' are still ALLOWED; for the pre-filtered queue run 'cat ${_actionable_hint}' (a shell command, not a workspace file-read tool)."
   fi
 fi
 
@@ -744,14 +757,16 @@ _clanker_pr_create_autoclose() {
     fi
     have_body=true
   fi
+  local default_target=true
   if [[ -n "$base" ]]; then
     local default_branch
     default_branch="$("$REAL_GH" repo view "$repo" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
-    [[ -n "$default_branch" && "$base" = "$default_branch" ]] || return 0
+    [[ -n "$default_branch" && "$base" = "$default_branch" ]] || default_target=false
   fi
 
-  local new_body
-  new_body="$(python3 - "$task_file" "$repo" "$body" <<'PY'
+  local new_body="$body"
+  if $default_target; then
+    new_body="$(python3 - "$task_file" "$repo" "$body" <<'PY'
 import json
 import re
 import sys
@@ -781,12 +796,32 @@ closing = re.compile(
 if closing.search(body):
     print(body, end="")
     raise SystemExit
+# A body that says this PR leaves the issue open must not gain a closing line:
+# GitHub would close the issue on merge with the rest of the work undone
+# (projectbluefin/testsuite#1057: "Refs #1023 — partial … remain open", then
+# the appended "Closes #1023"). A bare "Refs #N" still gets one (#10826).
+num = re.escape(str(issue))
+stays_open = re.compile(
+    r"(?im)(?:#" + num + r"\b[^\n]*\b(?:remains?|stays?)\s+open"
+    + r"|\b(?:leaves?|leaving|leave)\s+#" + num + r"\s+open"
+    + r"|\b(?:does\s*n[o']t|do\s+not|not)\s+close\s+#" + num + r"\b"
+    + r"|^[^\n]*\b(?:refs?|references?|part\s+of)\b[^\n]*#" + num
+    + r"\b[^\n]*\b(?:partial(?:ly)?|remains?|remaining|left\s+open|deferred|follow-?up|not\s+(?:yet\s+)?addressed))"
+)
+if stays_open.search(body):
+    print(body, end="")
+    raise SystemExit
 trimmed = body.rstrip(" \t\r\n")
 line = f"Closes #{issue}"
 print((trimmed + "\n\n" + line) if trimmed else line, end="")
 PY
 )"
-  [[ "$new_body" != "$body" ]] || return 0
+  fi
+  # A body read from a file or stdin is always handed on as --body, changed or
+  # not: stdin is spent now, and _inject_identity would read it again, find
+  # nothing and open the PR with the footer alone (projectbluefin/testsuite
+  # #1036, #1054, #1056).
+  [[ "$new_body" != "$body" || -n "$body_file" ]] || return 0
 
   local -a new_args=()
   next=""
@@ -846,8 +881,7 @@ if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
   fi
   # If the wrapper somehow isn't installed, fail loud rather than silently
   # opening the PR as the wrong identity (hard switch: no gh-pr-create fallback).
-  echo "⛔ hive-open-pr not found — cannot open a PR as the App bot. Do NOT fall back to gh pr create (would author as the login user). Report this to the operator." >&2
-  exit 1
+  _deny relay_missing "hive-open-pr not found — cannot open a PR as the App bot; do NOT fall back to gh pr create (would author as the login user), report this to the operator."
 fi
 
 # Helper: capture advisory finding to JSONL for governor digest
@@ -890,32 +924,26 @@ if [ -n "$AGENT_MODE" ]; then
   case "$AGENT_MODE" in
     NO_GITHUB)
       if [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; then
-        echo "🔇 BLOCKED: ${AGENT_NAME_GW} is in NO_GITHUB mode. No GitHub interaction allowed." >&2
-        exit 1
+        _deny mode_no_github "${AGENT_NAME_GW} is in NO_GITHUB mode — no GitHub interaction allowed; finish with local work."
       fi
       ;;
     ADVISORY)
       if [ "$subcmd" = "issue" ] && [ "$action" = "create" ]; then
         _capture_advisory_finding
-        echo "📝 BLOCKED: ${AGENT_NAME_GW} is in ADVISORY mode. Finding saved to digest." >&2
-        [ -n "$ADVISORY_ISSUE" ] && echo "Will appear in advisory issue #${ADVISORY_ISSUE} at next governor cycle." >&2
-        exit 1
+        _deny mode_advisory "${AGENT_NAME_GW} is in ADVISORY mode — finding saved to the digest${ADVISORY_ISSUE:+ (advisory issue #${ADVISORY_ISSUE}, next governor cycle)}; do not retry the create."
       fi
       if [ "$subcmd" = "pr" ] && { [ "$action" = "create" ] || [ "$action" = "merge" ]; }; then
-        echo "📝 BLOCKED: ${AGENT_NAME_GW} is in ADVISORY mode. No PRs allowed." >&2
-        exit 1
+        _deny mode_advisory "${AGENT_NAME_GW} is in ADVISORY mode — no PRs allowed; record the finding instead."
       fi
       ;;
     ISSUES_ONLY)
       if [ "$subcmd" = "pr" ] && { [ "$action" = "create" ] || [ "$action" = "merge" ]; }; then
-        echo "🎫 BLOCKED: ${AGENT_NAME_GW} is in ISSUES_ONLY mode. No PRs allowed." >&2
-        exit 1
+        _deny mode_issues_only "${AGENT_NAME_GW} is in ISSUES_ONLY mode — no PRs allowed; file an issue instead."
       fi
       ;;
     ISSUES_AND_PRS)
       if [ "$subcmd" = "pr" ] && [ "$action" = "merge" ]; then
-        echo "🔧 BLOCKED: ${AGENT_NAME_GW} is in ISSUES_AND_PRS mode. Merging requires human approval." >&2
-        exit 1
+        _deny mode_issues_and_prs "${AGENT_NAME_GW} is in ISSUES_AND_PRS mode — merging requires human approval; leave the PR for a maintainer."
       fi
       # NOTE (F6): This hold-label block is DEAD for `pr create`. A non-contributor
       # `gh pr create` is redirected far above via `exec hive-open-pr "$@"` (~line
@@ -948,44 +976,35 @@ if [ -n "$AGENT_MODE" ]; then
       # Note an EMPTY mode is different and still safe: it leaves AGENT_MODE=""
       # so the `if [ -n "$AGENT_MODE" ]` above is false and the level-based
       # fallback below applies. Only a non-empty unknown value lands here.
-      echo "⛔ BLOCKED: unrecognized agent mode '${AGENT_MODE}' for ${AGENT_NAME_GW} — refusing to run gh." >&2
-      echo "Valid modes: NO_GITHUB, ADVISORY, ISSUES_ONLY, ISSUES_AND_PRS, ISSUES_PRS_MERGE." >&2
-      echo "If ${MODE_FILE} exists with unexpected contents, it may have been tampered with; report to the operator." >&2
-      exit 1
+      _deny mode_unrecognized "unrecognized agent mode '${AGENT_MODE}' for ${AGENT_NAME_GW} — refusing to run gh (valid: NO_GITHUB, ADVISORY, ISSUES_ONLY, ISSUES_AND_PRS, ISSUES_PRS_MERGE); if ${MODE_FILE} has unexpected contents it may have been tampered with — report to the operator."
       ;;
   esac
 else
   # Fallback: level-based enforcement (for containers without HIVE_AGENT_MODE)
   if [ "$subcmd" = "issue" ] && [ "$action" = "create" ]; then
     if [[ "${AGENT_ID:-}" == "supervisor" || "${HIVE_AGENT:-}" == "supervisor" ]]; then
-      echo "⛔ BLOCKED: supervisor cannot create issues." >&2
-      exit 1
+      _deny supervisor_no_issues "supervisor cannot create issues; delegate the finding to a worker lane."
     fi
   fi
   if [ "$ACMM_LEVEL" -gt 0 ] && [ "$ACMM_LEVEL" -lt 3 ]; then
     if [ "$subcmd" = "issue" ] && [ "$action" = "create" ]; then
       _capture_advisory_finding
-      echo "⛔ BLOCKED: gh issue create is not allowed at ACMM L${ACMM_LEVEL}. Finding saved." >&2
-      exit 1
+      _deny acmm_level "gh issue create is not allowed at ACMM L${ACMM_LEVEL} — finding saved to the digest; do not retry."
     fi
     if [ "$subcmd" = "pr" ] && { [ "$action" = "create" ] || [ "$action" = "merge" ]; }; then
-      echo "⛔ BLOCKED: gh pr ${action} is not allowed at ACMM L${ACMM_LEVEL}." >&2
-      exit 1
+      _deny acmm_level "gh pr ${action} is not allowed at ACMM L${ACMM_LEVEL}; record the finding instead."
     fi
   fi
   if [ "$ACMM_LEVEL" -eq 3 ]; then
     if [ "$subcmd" = "pr" ] && [ "$action" = "merge" ]; then
-      echo "⛔ BLOCKED: gh pr merge is not allowed at ACMM L3." >&2
-      exit 1
+      _deny acmm_level "gh pr merge is not allowed at ACMM L3; leave the PR for a maintainer."
     fi
     if [ "$subcmd" = "issue" ] && [ "$action" = "create" ] && [ "$AGENT_NAME_GW" != "quality" ]; then
       _capture_advisory_finding
-      echo "⛔ BLOCKED: only quality can create issues at ACMM L3. Finding saved." >&2
-      exit 1
+      _deny acmm_level "only quality can create issues at ACMM L3 — finding saved to the digest; do not retry."
     fi
     if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && [ "$AGENT_NAME_GW" != "quality" ]; then
-      echo "⛔ BLOCKED: only quality can create PRs at ACMM L3." >&2
-      exit 1
+      _deny acmm_level "only quality can create PRs at ACMM L3; record the finding instead."
     fi
   fi
 fi
@@ -1063,10 +1082,7 @@ if [ "$subcmd" = "pr" ] && [ "$action" = "merge" ]; then
   # is the thing being gated), so the only safe answer is to require an explicit,
   # checkable identifier.
   if [ -z "$pr_num" ]; then
-    echo "⛔ BLOCKED: 'gh pr merge' needs an explicit PR number or URL." >&2
-    echo "The merge gate verifies the PR against ${MERGE_ELIGIBLE_FILE}, which it cannot do for an implicit current-branch merge." >&2
-    echo "Re-run as: gh pr merge <number> [--repo owner/repo]" >&2
-    exit 1
+    _deny merge_no_identifier "'gh pr merge' needs an explicit PR number or URL (the merge gate verifies against ${MERGE_ELIGIBLE_FILE}, impossible for an implicit current-branch merge); re-run as: gh pr merge <number> [--repo owner/repo]."
   fi
 
   if [ -n "$pr_num" ] && [ -f "$MERGE_ELIGIBLE_FILE" ]; then
@@ -1090,15 +1106,10 @@ except Exception as e:
 " "$pr_num" "$pr_repo" "$MERGE_ELIGIBLE_FILE" 2>/dev/null)
 
     if [ "$is_eligible" != "yes" ]; then
-      echo "⛔ BLOCKED: PR #${pr_num} is NOT in merge-eligible.json." >&2
-      echo "The merge gate requires all CI checks to pass before merging." >&2
-      echo "Run 'cat ${MERGE_ELIGIBLE_FILE} | python3 -m json.tool' to see eligible PRs." >&2
-      exit 1
+      _deny merge_not_eligible "PR #${pr_num} is NOT in merge-eligible.json (all CI checks must pass first); run 'cat ${MERGE_ELIGIBLE_FILE}' to see eligible PRs."
     fi
   elif [ -n "$pr_num" ] && [ ! -f "$MERGE_ELIGIBLE_FILE" ]; then
-    echo "⛔ BLOCKED: ${MERGE_ELIGIBLE_FILE} not found — cannot verify merge eligibility." >&2
-    echo "Run merge-gate.sh first, or wait for the next pipeline cycle." >&2
-    exit 1
+    _deny merge_gate_unavailable "${MERGE_ELIGIBLE_FILE} not found — cannot verify merge eligibility; run merge-gate.sh first or wait for the next pipeline cycle."
   fi
 fi
 
@@ -1139,8 +1150,7 @@ if [ "$subcmd" = "api" ]; then
   # agents — the read/write split opens READS only, never writes. Non-contributor
   # hive agents keep their existing write paths (governed by mode/ACMM gates above).
   if _contributor_mode && [ "$api_method" != "GET" ]; then
-    echo "⛔ BLOCKED: mutating gh api (${api_method}) is disabled for contributor agents." >&2
-    exit 1
+    _deny contributor_api_write "mutating gh api (${api_method}) is disabled for contributor agents; use gh issue/pr subcommands for writes."
   fi
 
   # An enforced lane's direct writes are refused here as well as at the proxy
@@ -1154,8 +1164,7 @@ if [ "$subcmd" = "api" ]; then
     case "$arg" in
       repos/*/issues\?*|repos/*/issues|repos/*/pulls\?*|repos/*/pulls)
         if [ "$api_method" != "GET" ]; then
-          echo "⛔ BLOCKED: mutating gh api (${api_method}) to issues/pulls is disabled for agents." >&2
-          exit 1
+          _deny api_write_issues_pulls "mutating gh api (${api_method}) to issues/pulls is disabled for agents; use hive-open-issue / hive-open-pr / hive-review instead."
         fi
         # GET is a read-only lookup — allowed so agents can check for existing PRs (#2356).
         ;;
@@ -1172,12 +1181,59 @@ HIVE_INSTANCE_ID="${HIVE_ID:-}"
 HIVE_SHA="${HIVE_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')}"
 
 # Build identity footer for injection into issue/comment bodies.
+#
+# The trailing `<!-- hive:origin hive=<id> at=<ts> -->` marker is the
+# machine-readable "which hive wrote this" record that replaced the
+# hive/<id> label (hivecommons/hive#12539); pkg/github.OriginHive reads it.
+# It stays last so pkg/github's attributionIdentityFooter regex keeps
+# matching the whole block.
 _identity_footer() {
   local parts="---\n🐝 **Hive Agent**:"
   [[ -n "$AGENT_DISPLAY_NAME" ]] && parts="${parts} \`${AGENT_DISPLAY_NAME}\`"
   [[ -n "$HIVE_INSTANCE_ID" ]] && parts="${parts} | **Instance:** \`${HIVE_INSTANCE_ID}\`"
   parts="${parts} | **SHA:** \`${HIVE_SHA}\`"
+  [[ -n "$HIVE_INSTANCE_ID" ]] && parts="${parts}\n<!-- hive:origin hive=${HIVE_INSTANCE_ID} at=$(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
   echo -e "$parts"
+}
+
+# Structured blocker marker for needs-human reports (hivecommons/hive#15099).
+#
+# A report that says the App / token / hive *cannot* do something (push to
+# .github/workflows without the `workflows` permission, change branch
+# protection, set a secret, sign a CLA) describes a capability gap no
+# "Let hive decide" can clear. pkg/blocker reads `<!-- hive:blocker kind=… -->`
+# and parks the item on that blocker instead of a bare needs-human, so the
+# dashboard says what is missing and the delegated decision answers
+# "no-effect" with the real options. Prose is classified here with the same
+# narrow rules as pkg/blocker.Infer (mirrored, not shared: this file runs
+# where no Go binary is guaranteed). Only bodies that cite needs-human are
+# marked, a body that already carries a marker is left alone, and anything
+# the rules do not match stays unmarked — a wrong kind is worse than none.
+_blocker_kind() {
+  local body
+  body="$(printf '%s' "$1" | tr '\n' ' ' | tr '[:upper:]' '[:lower:]')"
+  [[ "$body" == *"hive:blocker"* ]] && return 1
+  [[ "$body" =~ needs[-\ ]human|needs\ a\ (human|person|maintainer)|a\ maintainer\ must|a\ person\ must ]] || return 1
+  local cannot="(cannot|can\'t|can not|unable to|not able to|no permission to|not permitted to|is not allowed to)"
+  if [[ "$body" =~ (no|lacks?|lacking|missing|without)\ (the\ )?\`?workflows?\`?(:\ ?write)?\ permission ]] \
+     || [[ "$body" =~ $cannot\ (push|modify|change|edit|write|update|touch|commit)[^.]{0,80}(\.github/workflows|workflow\ files?|workflows?/) ]] \
+     || [[ "$body" =~ workflows?\ permission[^.]{0,40}(missing|lacking|not\ granted|needed|required) ]]; then
+    echo "capability:workflows-permission"; return 0
+  fi
+  if [[ "$body" =~ $cannot[^.]{0,60}(branch[\ -]protection|rulesets?|protected\ branch) ]]; then
+    echo "capability:branch-protection"; return 0
+  fi
+  if [[ "$body" =~ $cannot\ (set|add|create|read|rotate|update|configure)[^.]{0,60}(secrets?|credentials?) ]]; then
+    echo "capability:secret"; return 0
+  fi
+  if [[ "$body" =~ $cannot\ (push|write|commit)[^.]{0,60}(repository|repo|branch|fork) ]] \
+     || [[ "$body" =~ (no|lacks?|missing|without)\ (the\ )?\`?(contents|write|push)\`?(:\ ?write)?\ (permission|access) ]]; then
+    echo "capability:repo-write"; return 0
+  fi
+  if [[ "$body" =~ (sign|signing|signed)[^.]{0,30}(cla|contributor\ license\ agreement) ]]; then
+    echo "human-only:cla"; return 0
+  fi
+  return 1
 }
 
 # Guard Markdown thematic breaks against becoming setext heading underlines.
@@ -1259,7 +1315,30 @@ _guard_markdown_rules() {
 # does `BODY="$(cat "$BODY_FILE")"`). Reading stdin here is also what makes
 # `-F -` work at all: the body must be consumed exactly once, and the process
 # that would otherwise read it is replaced by that same `exec`.
+# _guard_agent_body refuses a body that would post nothing a reader can use:
+# empty once trimmed (the footer alone would land), or only an `@path` (gh does
+# not expand `@file` for --body, so the literal path is posted —
+# projectbluefin/testsuite#908 got "@/tmp/issue_comment_908.txt"). It runs on
+# the agent's own text, before the footer, so the footer cannot hide it.
+# require_body=false (reviews) lets an empty body through: `gh pr review
+# --approve` needs none.
+_guard_agent_body() {
+  local body="$1" require_body="$2" verb="$3"
+  local trimmed="${body#"${body%%[![:space:]]*}"}"
+  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+  if [[ -z "$trimmed" ]]; then
+    $require_body || return 0
+    _deny empty_body "gh ${verb}: the body is empty, so only the hive footer would be posted. Write the text, or pass it with --body-file <path>."
+  fi
+  if [[ "$trimmed" =~ ^@[^[:space:]]+$ ]]; then
+    _deny body_file_reference "gh ${verb}: the body is only '${trimmed}'. gh posts that text literally; pass the file with --body-file ${trimmed#@} instead."
+  fi
+}
+
 _inject_identity() {
+  # $1 = require_body: true for issue/PR create and comments, false for reviews.
+  local require_body="${1:-false}"
+  local verb="${subcmd} ${action}"
   local footer
   footer="$(_identity_footer)"
   local new_args=()
@@ -1314,6 +1393,8 @@ _inject_identity() {
       fi
     fi
 
+    _guard_agent_body "$body_val" "$require_body" "$verb"
+
     # Normalized to the separated `--body` form. gh, hive-open-issue and
     # hive-open-pr all accept it, and emitting one shape keeps the six input
     # spellings from multiplying into six output spellings.
@@ -1325,6 +1406,11 @@ _inject_identity() {
     # the gap is exactly one blank line regardless of how the file ended.
     body_val="$(printf '%s\n' "${body_val}" | _guard_markdown_rules)"
     body_val="${body_val%"${body_val##*[![:space:]]}"}"
+    local blocker_kind
+    if blocker_kind="$(_blocker_kind "$body_val")"; then
+      body_val="${body_val}
+<!-- hive:blocker kind=${blocker_kind} -->"
+    fi
     new_args+=("--body" "${body_val}
 
 ${footer}")
@@ -1332,9 +1418,106 @@ ${footer}")
     i=$((i+consumed))
   done
   if ! $body_found; then
-    new_args+=("--body" "${footer}")
+    # No body flag. A comment would post the footer alone. A contributor's
+    # create goes straight to gh, which refuses a body-less create when not
+    # interactive; adding the footer turned that refusal into a footer-only
+    # issue or PR (projectbluefin/testsuite#838). A lane's create still relays
+    # through hive-open-issue / hive-open-pr as before, unless it asked gh to
+    # fill the body itself.
+    if $require_body && { [[ "$action" = "comment" ]] || _contributor_mode; } && ! _args_fill_body; then
+      _deny empty_body "gh ${verb}: no body was given, so only the hive footer would be posted. Pass --body <text> or --body-file <path>."
+    fi
+    # `--delete-last` removes a comment and posts nothing, and gh refuses any
+    # body alongside it ("should not provide comment body when using
+    # --delete-last"), so the footer must not be added either (#15031).
+    if ! _args_delete_last; then
+      new_args+=("--body" "${footer}")
+    fi
   fi
   args=("${new_args[@]}")
+}
+
+# _settle_edit_body reads an edit's body once and refuses one that would
+# blank the issue or PR. A `--body-file -` body is turned into `--body <text>`
+# before the first gh call, because the labeled try below consumes stdin and
+# its unlabeled retry then sent an empty body: projectbluefin/testsuite#1053
+# was blanked that way a second after its author revised it (the injected
+# `contributor/<user>` label did not exist in the repository, so the first
+# call failed). A file body is read once too, so both calls send the same text.
+_settle_edit_body() {
+  local -a out=()
+  local i=0 arg val ref
+  local verb="${subcmd} ${action}"
+  while [ $i -lt ${#args[@]} ]; do
+    arg="${args[$i]}"
+    ref=""
+    case "$arg" in
+      --body-file|-F)
+        if [ $((i+1)) -lt ${#args[@]} ]; then
+          ref="${args[$((i+1))]}"; i=$((i+1))
+        fi ;;
+      --body-file=*) ref="${arg#--body-file=}" ;;
+      -F?*)          ref="${arg#-F}" ;;
+      --body|-b)
+        if [ $((i+1)) -lt ${#args[@]} ]; then
+          val="${args[$((i+1))]}"; i=$((i+1))
+          _guard_edit_body "$val" "$verb"
+          out+=("--body" "$val")
+        else
+          out+=("$arg")
+        fi
+        i=$((i+1)); continue ;;
+      --body=*) val="${arg#--body=}"; _guard_edit_body "$val" "$verb"; out+=("$arg"); i=$((i+1)); continue ;;
+      -b?*)     val="${arg#-b}";      _guard_edit_body "$val" "$verb"; out+=("$arg"); i=$((i+1)); continue ;;
+      *) out+=("$arg"); i=$((i+1)); continue ;;
+    esac
+    if [ "$ref" = "-" ]; then
+      val="$(cat)"
+    elif ! val="$(cat -- "$ref" 2>/dev/null)"; then
+      # Unreadable: let gh report the missing file in its own words.
+      out+=("--body-file" "$ref"); i=$((i+1)); continue
+    fi
+    _guard_edit_body "$val" "$verb"
+    out+=("--body" "$val")
+    i=$((i+1))
+  done
+  args=("${out[@]}")
+}
+
+# _guard_edit_body refuses an edit body that is empty or only an `@path`.
+_guard_edit_body() {
+  local body="$1" verb="$2"
+  local trimmed="${body#"${body%%[![:space:]]*}"}"
+  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+  if [[ -z "$trimmed" ]]; then
+    _deny blanking_edit "gh ${verb}: the new body is empty and would blank the existing one. Pass the full text with --body or --body-file <path>."
+  fi
+  if [[ "$trimmed" =~ ^@[^[:space:]]+$ ]]; then
+    _deny body_file_reference "gh ${verb}: the body is only '${trimmed}'. gh posts that text literally; pass the file with --body-file ${trimmed#@} instead."
+  fi
+}
+
+# _args_fill_body reports whether gh is asked to build the body itself
+# (`--fill*`, `--template`, `--web`, `--recover`) or needs none at all
+# (`--delete-last`), so a missing body flag is not an empty body.
+_args_fill_body() {
+  local a
+  for a in "${args[@]}"; do
+    case "$a" in
+      --fill|--fill-first|--fill-verbose|-f|--template|--template=*|-T|-T?*|--web|-w|--recover|--recover=*|--delete-last) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# _args_delete_last reports whether a comment is being deleted rather than
+# posted (`gh issue|pr comment --delete-last`); gh rejects any body there.
+_args_delete_last() {
+  local a
+  for a in "${args[@]}"; do
+    [[ "$a" = "--delete-last" ]] && return 0
+  done
+  return 1
 }
 
 if [[ -n "$AGENT_NAME" ]]; then
@@ -1344,9 +1527,10 @@ if [[ -n "$AGENT_NAME" ]]; then
   # produce a label no consumer recognises (#8927). The display name is
   # human-facing only — it goes in the label description and the footer.
   LABELS_CSV="agent/${AGENT_NAME}"
-  # Provenance only. The dashboard hold label is hive-pause/<id>; keeping this
-  # as hive/<id> preserves hub activity attribution without parking work.
-  [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
+  # No hive/<id> label (hivecommons/hive#12539): the origin marker in the
+  # identity footer says which hive wrote the item, and the hive strips the
+  # retired label from open items at boot. The dashboard hold label is
+  # hive-pause/<id>.
   # Contributor labels
   if _contributor_mode; then
     [[ -n "${HIVE_CONTRIBUTOR_USERNAME:-}" ]] && LABELS_CSV="${LABELS_CSV},contributor/${HIVE_CONTRIBUTOR_USERNAME}"
@@ -1358,9 +1542,9 @@ if [[ -n "$AGENT_NAME" ]]; then
   # The cache MUST be keyed per target repo (#4043): a single global flag meant
   # whichever repo an agent touched first got the labels created, and every
   # other repo was skipped for the life of the pod — leaving the injected
-  # hive/<id> label missing there, which made every `gh pr edit`/`gh issue edit`
-  # on those repos fail with "'hive/<id>' not found". Verified live on a fleet
-  # owner's hive: only the first-touched repos carried the current label.
+  # agent/<lane> label missing there, which made every `gh pr edit`/`gh issue
+  # edit` on those repos fail with "'<label>' not found". Verified live on a
+  # fleet owner's hive: only the first-touched repos carried the current label.
   LABEL_CACHE_BASE="/tmp/.hive-labels-ensured"
   _ensure_labels() {
     local repo_flag=""
@@ -1380,9 +1564,6 @@ if [[ -n "$AGENT_NAME" ]]; then
     local rf=""
     [[ -n "$repo_flag" ]] && rf="--repo $repo_flag"
     "$REAL_GH" label create "agent/${AGENT_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
-    if [[ -n "$HIVE_INSTANCE_ID" ]]; then
-      "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance provenance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
-    fi
     touch "$cache"
   }
 
@@ -1408,9 +1589,114 @@ if [[ -n "$AGENT_NAME" ]]; then
     return 0
   }
 
+  # ── PR provenance labels go only on the hive's OWN PRs (#12545) ──
+  # `agent/<lane>` is a ROUTING label (the scheduler's PR-ownership check,
+  # the classifier and the CI-repair router read it as "this lane owns the
+  # work") and `hive/<id>` is "authored by this hive". The pr/edit, pr/comment
+  # and pr/merge arms used to stamp both onto WHATEVER PR the agent touched —
+  # so a review-fix kick that ran `gh pr edit <n> --body` on a contributor's PR
+  # (review.fix_human_prs) re-routed that PR to the scanner and claimed it
+  # for the hive. Ownership is decided by authorship: the PR's author must be
+  # the identity this wrapper authenticates as (the #4044 trusted bot login,
+  # or `gh api user` for a user token — the same oracle the --author gate
+  # uses, so an agent cannot forge it). Adoption (stage/074) opens a NEW App
+  # PR, which is self-authored and gets the labels by this same rule; the
+  # adopted contributor PR keeps its own authorship. Unresolvable author or
+  # identity → no labels: provenance is metadata and must fail closed, never
+  # mislabel.
+  #
+  # The cache under LABEL_CACHE_BASE sits in world-writable /tmp (see the
+  # mode_unrecognized arm for who can write there: any agent UID in the pod,
+  # or a managed-repo PR whose tests run in this sandbox). It therefore only
+  # ever records, and only ever honours, the fail-closed answer: a cached
+  # "no" skips the lookup, anything else — including a planted "yes" — goes
+  # back to the API oracle. A positive verdict is re-verified on every call;
+  # the cost is one `gh pr view` per label stamp on an own PR.
+  _hive_owns_pr() {
+    local num="$1" repo="$2" cache author self owned
+    cache="${LABEL_CACHE_BASE}-owner-${repo//\//_}-${num:-current}"
+    if [[ -f "$cache" ]]; then
+      owned="$(tr -d '[:space:]' < "$cache" 2>/dev/null || true)"
+      if [[ "$owned" = "no" ]]; then
+        return 1
+      fi
+    fi
+    local view_args=(pr view)
+    [[ -n "$num" ]] && view_args+=("$num")
+    [[ -n "$repo" ]] && view_args+=(--repo "$repo")
+    author="$("$REAL_GH" "${view_args[@]}" --json author --jq '.author.login' 2>/dev/null | tr -d '[:space:]' || true)"
+    self="$(_resolve_self_login 2>/dev/null || true)"
+    owned=no
+    if [[ -n "$author" && -n "$self" ]] && _author_matches_login "$author" "$self"; then
+      owned=yes
+    fi
+    if [[ "$owned" = "no" ]]; then
+      printf '%s\n' no >"$cache" 2>/dev/null || true
+    else
+      rm -f "$cache" 2>/dev/null || true
+    fi
+    [[ "$owned" = "yes" ]]
+  }
+
+  # _pr_labels_csv: LABELS_CSV when the hive owns the PR named by the current
+  # argv, empty otherwise. Callers test for emptiness before injecting.
+  _pr_labels_csv() {
+    _extract_item
+    if _hive_owns_pr "$item_num" "$item_repo"; then
+      printf '%s\n' "$LABELS_CSV"
+    fi
+  }
+
+  # _keep_pr_attribution keeps the `— hive: agent=… backend=… model=…` line on
+  # a body edit of the hive's OWN PR. The PR-request watcher appends that line
+  # when it opens the PR, and `gh pr edit --body` replaces the whole body, so
+  # an agent that rewrote its description a few seconds later deleted it
+  # (Danathar/arch-bootc#625, Danathar/atomic-image-builder#795). The line is
+  # the audit trail's "opened by the hive" record and the clanker test
+  # (pkg/github.HasAttributionTrailer); nothing put it back, and the repos'
+  # monthly Agent audit trail then failed on those PRs. The PR's current line
+  # is re-appended, the way ReconcilePRAttribution appends one: only when the
+  # new body carries no `— hive:` line of its own, and nothing when the
+  # current body has none. Callers run it after _settle_edit_body, so a file
+  # or stdin body is already a `--body <text>`, and only on a PR
+  # _pr_labels_csv said the hive owns.
+  _keep_pr_attribution() {
+    local i arg idx=-1 n=0 form="" val="" old trailer
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      arg="${args[$i]}"
+      case "$arg" in
+        --body|-b)
+          ((i + 1 < ${#args[@]})) || return 0
+          idx=$i; form=sep; val="${args[$((i + 1))]}"; n=$((n + 1)); i=$((i + 1)) ;;
+        --body=*) idx=$i; form=eq; val="${arg#--body=}"; n=$((n + 1)) ;;
+        -b?*)     idx=$i; form=short; val="${arg#-b}"; n=$((n + 1)) ;;
+        # An unreadable body file is left for gh to report.
+        --body-file|--body-file=*|-F|-F?*) return 0 ;;
+        -*) if gh_flag_takes_value "$arg"; then i=$((i + 1)); fi ;;
+      esac
+    done
+    ((n == 1)) || return 0
+    [[ "$val" == *"— hive:"* ]] && return 0
+    _extract_item
+    local view_args=(pr view)
+    [[ -n "$item_num" ]] && view_args+=("$item_num")
+    [[ -n "$item_repo" ]] && view_args+=(--repo "$item_repo")
+    old="$("$REAL_GH" "${view_args[@]}" --json body --jq '.body' 2>/dev/null)" || return 0
+    trailer="$(printf '%s\n' "$old" | tr -d '\r' | sed -n 's/^[[:space:]]*\(— hive: [^[:space:]].*\)$/\1/p' | tail -n 1)"
+    trailer="${trailer%"${trailer##*[![:space:]]}"}"
+    [[ -n "$trailer" ]] || return 0
+    val="${val%"${val##*[![:space:]]}"}"
+    val="${val}"$'\n\n'"${trailer}"
+    case "$form" in
+      sep)   args[idx + 1]="$val" ;;
+      eq)    args[idx]="--body=$val" ;;
+      short) args[idx]="-b$val" ;;
+    esac
+  }
+
   case "$subcmd/$action" in
     issue/create|pr/create)
-      _inject_identity
+      _inject_identity true
       # ── Relay issue creation through the hive (issue-request watcher) ──
       # The direct path rode the agent's shell tool: one GHE secondary-rate-
       # limit stall, network blip, or mangled multiline command and the
@@ -1554,9 +1840,8 @@ if [[ -n "$AGENT_NAME" ]]; then
             esac
           fi
           if [ -n "$_re_repo" ]; then
-            # Deliberately NOT the provenance LABELS_CSV: hive/<id> sits in a
-            # namespace the label relay refuses, and the relay's audit entry
-            # already attributes the write to this agent.
+            # Deliberately NOT the provenance LABELS_CSV: the relay's audit
+            # entry already attributes the write to this agent.
             _re_rc=0
             if [ -n "$_re_add" ] || [ -n "$_re_remove" ]; then
               _re_label_args=()
@@ -1575,6 +1860,19 @@ if [[ -n "$AGENT_NAME" ]]; then
       # is exactly what an enforced lane may not do (#9587). Express it as a
       # label / reviewer request the relays can perform, or leave it to a human.
       _write_surface_refuse_direct "gh ${subcmd} edit" "hive-open-issue label (labels), hive-open-issue request-review (reviewers)"
+      # Issues: every hive-touched issue carries the lane's routing label.
+      # PRs: only the hive's OWN PRs do (#12545) — editing a contributor's PR
+      # (review-fix on fix_human_prs, a description touch-up) must not re-route
+      # or re-own it.
+      _settle_edit_body
+      edit_labels="$LABELS_CSV"
+      if [[ "$subcmd" = "pr" ]]; then
+        edit_labels="$(_pr_labels_csv)"
+        if [[ -z "$edit_labels" ]]; then
+          exec "$REAL_GH" "${args[@]}"
+        fi
+        _keep_pr_attribution
+      fi
       _ensure_labels
       # Label injection is provenance metadata, not a security gate. gh applies
       # an edit atomically, so a missing label (repo not yet ensured, create
@@ -1583,17 +1881,18 @@ if [[ -n "$AGENT_NAME" ]]; then
       # (#4043). Mirror the create arm: try labeled, retry unlabeled on failure.
       # `|| rc=$?` keeps the retry alive under `set -e` (see create arm above).
       rc=0
-      "$REAL_GH" "$@" --add-label "$LABELS_CSV" || rc=$?
+      "$REAL_GH" "${args[@]}" --add-label "$edit_labels" || rc=$?
       if [ $rc -ne 0 ]; then
-        exec "$REAL_GH" "$@"
+        exec "$REAL_GH" "${args[@]}"
       fi
       exit $rc
       ;;
     pr/merge)
       _write_surface_refuse_direct "gh pr merge" "hive-merge"
-      _ensure_labels
       _extract_item
-      if [[ -n "$item_num" ]]; then
+      # Only the hive's own PRs get routing/provenance labels (#12545).
+      if [[ -n "$item_num" ]] && _hive_owns_pr "$item_num" "$item_repo"; then
+        _ensure_labels
         local_repo=""
         [[ -n "$item_repo" ]] && local_repo="--repo $item_repo"
         "$REAL_GH" pr edit "$item_num" $local_repo --add-label "$LABELS_CSV" 2>/dev/null || true
@@ -1622,7 +1921,7 @@ if [[ -n "$AGENT_NAME" ]]; then
       exec "$REAL_GH" "${args[@]}"
       ;;
     issue/comment|pr/comment)
-      _inject_identity
+      _inject_identity true
       _extract_item
       # ── Relay comments through the hive (same rationale as issue/create) ──
       # A lost review/triage comment is a lost work product.
@@ -1630,10 +1929,17 @@ if [[ -n "$AGENT_NAME" ]]; then
         exec hive-open-issue comment "${args[@]}"
       fi
       _write_surface_refuse_direct "gh ${subcmd} comment" "hive-open-issue comment"
-      _ensure_labels
+      # Issues always get the lane's routing label; a PR only when the hive
+      # authored it (#12545) — commenting on a contributor's PR is review, not
+      # ownership.
+      post_label=yes
+      if [[ "$subcmd" = "pr" && -n "$item_num" ]] && ! _hive_owns_pr "$item_num" "$item_repo"; then
+        post_label=no
+      fi
+      [[ "$post_label" = "yes" ]] && _ensure_labels
       "$REAL_GH" "${args[@]}"
       exit_code=$?
-      if [[ $exit_code -eq 0 && -n "$item_num" ]]; then
+      if [[ $exit_code -eq 0 && -n "$item_num" && "$post_label" = "yes" ]]; then
         local_repo=""
         [[ -n "$item_repo" ]] && local_repo="--repo $item_repo"
         "$REAL_GH" "$subcmd" edit "$item_num" $local_repo --add-label "$LABELS_CSV" 2>/dev/null || true

@@ -36,7 +36,7 @@ func ReviewEvidenceComment(repo string, number int, id, hash string) string {
 // RecordPRMergedAudit, which every merge path (relay, sweep, queue) calls once
 // GitHub has merged. Like the relay's writes, every failure is logged and
 // swallowed: the merge already happened and must not be reported as failed.
-func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha, path string) {
+func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha, path string, issueAuthors []string) {
 	settings, ok := c.reviewEvidenceSettings(repo)
 	if !ok || number <= 0 {
 		return
@@ -46,15 +46,22 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 	owner, name := c.splitRepo(strings.TrimSpace(repo))
 	full := owner + "/" + name
 
-	var head, actor string
+	var (
+		head, actor, text string
+		opened            time.Time
+		fetched           *gh.PullRequest
+	)
 	if c.client != nil {
 		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_evidence_merge"), owner, name, number)
 		if err != nil {
 			c.logger.Warn("review evidence: could not fetch merged PR",
 				slog.String("repo", full), slog.Int("number", number), slog.String("error", err.Error()))
 		} else {
+			fetched = pr
 			head = pr.GetHead().GetSHA()
 			actor = pr.GetMergedBy().GetLogin()
+			text = pr.GetTitle() + "\n" + pr.GetBody()
+			opened = pr.GetCreatedAt().Time.UTC()
 		}
 	}
 	if actor == "" {
@@ -66,11 +73,19 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 	if sha = strings.TrimSpace(sha); sha == "" {
 		sha = head
 	}
-	merge := evidence.MergeEvent{Actor: actor, Method: method, At: time.Now().UTC(), SHA: sha}
+	merge := evidence.MergeEvent{Actor: actor, Method: method, At: time.Now().UTC(), SHA: sha, IssueAuthors: issueAuthors}
+	// A clock-skewed opened_at later than the merge is dropped rather than
+	// recorded as a negative time to merge.
+	if !opened.IsZero() && !opened.After(merge.At) {
+		merge.OpenedAt = opened
+	}
 	collect := func(b *evidence.Bundle) {
 		c.captureReviewEvidenceMergeContext(ctx, owner, name, b, merge.At)
+		linkReviewEvidenceChanges(b, text, merge.At)
+		c.captureReviewEvidenceClosures(ctx, b, fetched)
 	}
-	b := c.completeReviewEvidenceMerge(full, number, head, merge, settings, collect)
+	b := c.completeReviewEvidenceMerge(full, number, head, merge, settings, collect, fetched)
+	c.recordReviewEvidenceBacklinks(b, settings)
 	if b == nil || c.client == nil {
 		return
 	}
@@ -96,7 +111,18 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 // merge is returned untouched, so a replayed merge never churns its hash.
 // collect, when non-nil, completes the rest of the bundle (CI, human actions)
 // before it is sealed; it runs only when the merge is new.
-func (c *Client) completeReviewEvidenceMerge(repo string, number int, head string, merge evidence.MergeEvent, settings ReviewEvidenceSettings, collect func(*evidence.Bundle)) *evidence.Bundle {
+//
+// When the PR has no bundle at all — the merge outran the swarm review and
+// the CI snapshot (hivecommons/hive#12592) — and pr (the merged PR as
+// fetched) is known, the head's bundle is started here from pr so the merge
+// and its CI are never lost.
+func (c *Client) completeReviewEvidenceMerge(repo string, number int, head string, merge evidence.MergeEvent, settings ReviewEvidenceSettings, collect func(*evidence.Bundle), pr *gh.PullRequest) *evidence.Bundle {
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
 
@@ -106,7 +132,7 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	)
 	if head != "" {
 		path = ReviewEvidencePath("", repo, number, head)
-		got, err := LoadReviewEvidence(path)
+		got, err := LoadVerifiedReviewEvidence(path, reviewEvidenceVerifierForKey(key))
 		switch {
 		case err == nil:
 			b = got
@@ -117,13 +143,17 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 		}
 	}
 	if b == nil {
-		found, err := FindReviewEvidence("", repo, number, "")
-		if err != nil || found.Entry == nil {
+		found, err := FindVerifiedReviewEvidence("", repo, number, "", reviewEvidenceVerifierForKey(key))
+		switch {
+		case err == nil && found.Entry != nil:
+			b, path = found.Entry.Bundle, found.Entry.Path
+		case head != "" && pr != nil:
+			b = c.newReviewEvidenceBundle(repo, number, head, pr, settings.Policy, merge.At)
+		default:
 			c.logger.Info("review evidence: no bundle for merged PR, no merge comment posted",
 				slog.String("repo", repo), slog.Int("number", number), slog.String("head", head))
 			return nil
 		}
-		b, path = found.Entry.Bundle, found.Entry.Path
 	}
 	if b.Merge != nil {
 		return b
@@ -141,12 +171,6 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 			slog.String("path", path), slog.String("error", err.Error()))
 		return nil
 	}
-	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
-	if err != nil {
-		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
-			slog.String("error", err.Error()))
-		key = nil
-	}
 	if err := evidence.Seal(b, key); err != nil {
 		c.logger.Warn("review evidence: could not seal merged bundle",
 			slog.String("path", path), slog.String("error", err.Error()))
@@ -160,6 +184,52 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	c.logger.Info("review evidence: merge recorded",
 		slog.String("id", b.ID), slog.String("merge_sha", merge.SHA), slog.Bool("signed", b.Signed))
 	return b
+}
+
+// recordReviewEvidenceCI stores the CI conclusion when merge eligibility is
+// evaluated, starting the head's bundle from pr when review has not done so
+// yet. It never touches a merged bundle, writes only when the checks or status
+// changed (the capture time of an unchanged verdict stays put, so no hash
+// churn), and logs and swallows every failure: it must not affect a merge
+// decision.
+func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status string, pr *gh.PullRequest, runs []*gh.CheckRun) {
+	if c == nil || head == "" || number <= 0 || len(runs) == 0 {
+		return
+	}
+	settings, ok := c.reviewEvidenceSettings(repo)
+	if !ok {
+		return
+	}
+	owner, name := c.splitRepo(strings.TrimSpace(repo))
+	repo = owner + "/" + name
+	ci := evidenceCIFromRuns(runs, time.Now())
+	if status != "" {
+		ci.Status = status
+	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing CI snapshot unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
+	c.upsertReviewEvidence(repo, number, head, reviewEvidenceUpdate{ci: &ci}, settings.Policy, key,
+		func() *gh.PullRequest { return pr }, ci.CapturedAt)
+}
+
+// sameEvidenceChecks reports whether two check lists carry the same verdicts.
+// URLs are ignored: the GraphQL batch path fills details_url and the REST
+// fallback html_url, so comparing them would reseal the bundle with a new hash
+// every time the batch cache flips, with nothing about CI having changed.
+func sameEvidenceChecks(a, b []evidence.Check) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Conclusion != b[i].Conclusion {
+			return false
+		}
+	}
+	return true
 }
 
 // Human action kinds recorded in Bundle.HumanActions.
@@ -183,6 +253,12 @@ func (c *Client) captureReviewEvidenceMergeContext(ctx context.Context, owner, n
 		c.logger.Warn("review evidence: could not capture CI for merged head",
 			slog.String("id", b.ID), slog.String("error", err.Error()))
 	} else {
+		// The gate's verdict at merge-eligibility time (recordReviewEvidenceCI)
+		// is the one that let the PR merge; keep it over one re-derived after
+		// the fact, which may have moved on.
+		if prior := b.CI.Status; prior != "" {
+			ci.Status = prior
+		}
 		b.CI = ci
 	}
 	actions, err := reviewEvidenceHumanActions(ctx, c.client, owner, name, b.Number, b.HeadSHA, b.CreatedAt)
@@ -222,8 +298,15 @@ func reviewEvidenceCI(ctx context.Context, client *gh.Client, owner, name, head 
 		}
 		opts.Page = resp.NextPage
 	}
-	ci := evidence.CI{CapturedAt: now.UTC()}
-	for _, cr := range latestCheckRunsByNameAndApp(runs) {
+	return evidenceCIFromRuns(runs, now), nil
+}
+
+// evidenceCIFromRuns summarizes the latest run of each check, sorted by name,
+// with the verdict those runs give under the merge gate's rules.
+func evidenceCIFromRuns(runs []*gh.CheckRun, now time.Time) evidence.CI {
+	latest := latestCheckRunsByNameAndApp(runs)
+	ci := evidence.CI{Status: evidenceCIVerdict(latest), CapturedAt: now.UTC()}
+	for _, cr := range latest {
 		checkName := strings.TrimSpace(cr.GetName())
 		if checkName == "" {
 			continue
@@ -237,7 +320,33 @@ func reviewEvidenceCI(ctx context.Context, client *gh.Client, owner, name, head 
 		}
 		ci.Checks = append(ci.Checks, evidence.Check{Name: checkName, Conclusion: conclusion, URL: cr.GetHTMLURL()})
 	}
-	return ci, nil
+	return ci
+}
+
+// evidenceCIVerdict is the merge gate's reading of the latest check runs
+// (same rules as enrichPRCI): "failure" when any real check failed or needs
+// action, "success" when every real check completed clean, otherwise
+// "pending". Meta checks, and DCO once it has passed, do not count.
+func evidenceCIVerdict(latest []*gh.CheckRun) string {
+	dcoSatisfied := dcoContextSucceeded(nil, latest)
+	real, allDone := 0, true
+	for _, cr := range latest {
+		if isMetaCheck(cr.GetName()) || (isDCOContext(cr.GetName()) && dcoSatisfied) {
+			continue
+		}
+		real++
+		if cr.GetStatus() != "completed" {
+			allDone = false
+			continue
+		}
+		if conclusion := cr.GetConclusion(); conclusion == "failure" || conclusion == "action_required" {
+			return "failure"
+		}
+	}
+	if real == 0 || !allDone {
+		return "pending"
+	}
+	return "success"
 }
 
 // reviewEvidenceHumanActions lists the human actions on the PR that the bundle

@@ -175,6 +175,14 @@ partial failure will not gain a second trailer. Do not write a `— hive:` line
 into your own body — the watcher will treat it as an existing trailer and skip
 its own.
 
+A later `gh pr edit <n> --body …` (or `--body-file`, or `-F -`) on a PR the hive
+opened keeps the trailer. gh replaces the whole body, so the `gh` wrapper
+re-appends the PR's current `— hive:` line to the new text when that text has
+none of its own. A PR another account opened is edited exactly as written, and
+a PR whose body has no trailer gets none. An edit made any other way, such as
+`gh api` against the pulls endpoint, bypasses the wrapper and can still drop
+the line.
+
 ### `requested_by` credits the human who asked
 
 Since [#7208](https://github.com/hivecommons/hive/issues/7208), the trailer
@@ -228,6 +236,16 @@ merges, the issue closes by default. Add `hive: needs-confirmation` to the
 issue body or as a label (or enable `issues.reporter_confirmation`) only when
 the reporter genuinely must verify before closure. `hive: reporter-confirmed`
 and `hive: close-on-merge` remain accepted legacy bypass markers.
+
+A Hive-authored PR that implements an issue must make an explicit close/open
+decision in its body. Use `Fixes #N`, `Closes #N`, or `Resolves #N` when the
+merge leaves nothing for the issue to track; GitHub only shows its linked-PR
+sidebar/list icon for those closing keywords on PRs targeting the repository
+default branch. If the PR is deliberately partial or the issue must stay open,
+write `Part of #N` (or `Refs #N`) and the same line must say what remains. The
+issue-stage lane will not convert that partial statement into a closer; it
+adds an issue stage-entry comment with the PR link instead. Hive never edits a
+human-authored PR body to add a closing keyword.
 
 A downgraded tracker reference says so in the PR body it lands in:
 

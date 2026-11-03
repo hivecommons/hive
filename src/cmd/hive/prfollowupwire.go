@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
@@ -65,17 +66,17 @@ func qualifyPRFollowUpRepo(org, repo string) string {
 	return repo
 }
 
-// prFollowUpSessions is the slice of *agent.Manager the PR-opened hook needs.
+// prFollowUpSessions is the slice of crux.Runtime the PR-opened hook needs.
 type prFollowUpSessions interface {
 	SessionID(name string) (string, bool)
 }
 
 // prFollowUpResumeCapturer is the optional half: a session source that can
 // also name the agent's backend-native resume handle (hivecommons/hive#9606).
-// *agent.Manager implements it; a source that does not simply records a
+// crux.Runtime implements it; a source that does not simply records a
 // pointer with no handle, which is the pre-#9606 behaviour.
 type prFollowUpResumeCapturer interface {
-	ResumeHandle(name string) (agent.ResumeHandle, bool)
+	ResumeHandle(name string) (crux.ResumeHandle, bool)
 }
 
 // capturePRFollowUpResume reads the authoring agent's backend resume handle,
@@ -118,9 +119,9 @@ func recordPRFollowUpPointer(cfg *config.Config, sessions prFollowUpSessions, d 
 	}
 }
 
-// prFollowUpResumer adapts *agent.Manager to prfollowup.Resumer, translating
+// prFollowUpResumer adapts crux.Runtime to prfollowup.Resumer, translating
 // the manager's transient refusal into prfollowup.ErrBusy.
-type prFollowUpResumer struct{ mgr *agent.Manager }
+type prFollowUpResumer struct{ mgr crux.Runtime }
 
 func (r prFollowUpResumer) SessionID(name string) (string, bool) {
 	return r.mgr.SessionID(name)
@@ -128,7 +129,7 @@ func (r prFollowUpResumer) SessionID(name string) (string, bool) {
 
 func (r prFollowUpResumer) SendResumeKick(name, message, sessionID string) error {
 	err := r.mgr.SendResumeKick(name, message, sessionID)
-	if errors.Is(err, agent.ErrResumeBusy) {
+	if errors.Is(err, crux.ErrResumeBusy) {
 		return fmt.Errorf("%w: %v", prfollowup.ErrBusy, err)
 	}
 	return err
@@ -138,7 +139,7 @@ func (r prFollowUpResumer) SendResumeKick(name, message, sessionID string) error
 // (the enumerated PRs, the escalation verdicts, review-threads.json), plus
 // the human feedback on PRs with a pointer (a bounded, rate-limited GraphQL
 // read), then runs the pointer sweep.
-func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Client, actionable *github.ActionableResult, escalatedPRs map[string]bool, agentMgr *agent.Manager, logger *slog.Logger) []prfollowup.Outcome {
+func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Client, actionable *github.ActionableResult, escalatedPRs map[string]bool, agentMgr crux.Runtime, logger *slog.Logger) []prfollowup.Outcome {
 	if actionable == nil || !cfg.PRFollowUpResumeEnabled() {
 		return nil
 	}
@@ -310,7 +311,7 @@ func prLifecycleState(st github.PRState) string {
 // sweepPRFollowUps prunes pointers at most once per prFollowUpSweepInterval.
 // PRs in this tick's open list (and hold-gated PRs, which are open too) are
 // known open; any other pointer's PR is looked up, within budget.
-func sweepPRFollowUps(ctx context.Context, cfg *config.Config, client *github.Client, dir string, prs []github.PullRequest, held []github.HoldItem, agentMgr *agent.Manager, now time.Time, logger *slog.Logger) *prfollowup.SweepResult {
+func sweepPRFollowUps(ctx context.Context, cfg *config.Config, client *github.Client, dir string, prs []github.PullRequest, held []github.HoldItem, agentMgr crux.Runtime, now time.Time, logger *slog.Logger) *prfollowup.SweepResult {
 	if !prFollowUpLastSweep.IsZero() && now.Sub(prFollowUpLastSweep) < prFollowUpSweepInterval {
 		return nil
 	}

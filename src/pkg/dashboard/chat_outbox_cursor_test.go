@@ -20,7 +20,7 @@ const store = new Map();
 const localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)) };
 function safeJsonParse(s, fb) { try { return JSON.parse(s); } catch (_) { return fb; } }
 const CHAT_CURSOR_KEY = 'hive-chat-cursor-v1';
-const CHAT_POLL_OPEN_MS = 2000, CHAT_POLL_IDLE_MS = 10000, CHAT_POLL_MAX_BACKOFF_MS = 60000, CHAT_CONTEXT_LIMIT = 6;
+const CHAT_POLL_OPEN_MS = 2000, CHAT_POLL_IDLE_MS = 10000, CHAT_POLL_MAX_BACKOFF_MS = 60000, CHAT_POLL_TIMEOUT_MS = 10000, CHAT_CONTEXT_LIMIT = 6;
 let chatLastSeq = 0, chatEpoch = '', chatPollTimer = null, chatPollFailures = 0, chatContext = [], chatPendingUserEchoes = new Map();
 let panelOpen = false, unread = false;
 const chatPanel = { classList: { contains: c => c === 'open' && panelOpen } };
@@ -29,18 +29,32 @@ const document = { hidden: false, listeners: {}, addEventListener(ev, fn) { this
 function _inceptionAuthHeaders() { return {}; }
 const rendered = [];
 function chatAddMsg(text, cls, opts) { rendered.push({ text: String(text), cls, author: (opts && opts.author) || '', gap: !!(opts && opts.gap) }); }
+// scheduled holds the next-poll delays; pollAborts holds each request's abort timer.
 const scheduled = [];
-globalThis.setTimeout = (fn, ms) => { scheduled.push(ms); return scheduled.length; };
+const pollAborts = [];
+globalThis.setTimeout = (fn, ms) => {
+  if (fn === chatPollMessages) scheduled.push(ms);
+  else pollAborts.push({ fn, ms });
+  return scheduled.length + pollAborts.length;
+};
 globalThis.clearTimeout = () => {};
 const urls = [];
 const responses = [];
-globalThis.fetch = async (url) => {
+globalThis.fetch = async (url, opts) => {
   urls.push(String(url));
   const r = responses.shift();
   if (!r) throw new Error('no response queued for ' + url);
+  if (r.hang) {
+    // A stalled request settles only when the caller aborts it.
+    const signal = opts && opts.signal;
+    return new Promise((_, reject) => {
+      if (signal) signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    });
+  }
   return { ok: r.status < 300, status: r.status, json: async () => r.body };
 };
 function respond(body, status) { responses.push({ status: status || 200, body }); }
+function hang() { responses.push({ hang: true }); }
 function sinceOf(url) { return Number(new URL(url, 'http://h').searchParams.get('since')); }
 function flush() { return new Promise(r => setImmediate(r)); }
 function cursor() { return JSON.parse(store.get(CHAT_CURSOR_KEY) || 'null'); }
@@ -151,11 +165,13 @@ respond({ messages: [
   assert.equal(chatPendingUserEchoes.size, 0);
 
   // Overlapping callers (timer, FAB open, visibilitychange, /api/chat) share
-  // one in-flight poll: the second call must not issue a second fetch.
+  // one in-flight poll: they must not issue parallel fetches, and however many
+  // land mid-flight they collapse into a single follow-up (#15137).
   urls.length = 0;
   respond({ messages: [], next: 7, epoch: 'gen-A', gap: false, viewer: 'bob' });
+  respond({ messages: [], next: 7, epoch: 'gen-A', gap: false, viewer: 'bob' });
   await Promise.all([chatPollMessages(), chatPollMessages(), chatPollMessages()]);
-  assert.equal(urls.length, 1, 'overlapping polls must collapse to one request');
+  assert.equal(urls.length, 2, 'overlapping polls must collapse to one request plus one follow-up');
 `))
 }
 
@@ -205,5 +221,45 @@ respond({ messages: [], next: 0, epoch: 'gen-A', gap: false, viewer: 'bob' });
   await flush();
   assert.equal(urls.length, polls + 1, 'becoming visible must poll at once');
   assert.equal(scheduled[scheduled.length - 1], 2000);
+`))
+}
+
+// After `!inception reset` the reply sat server-side unseen for 99 s: the
+// timer poll had stalled in the network, so the /api/chat completion's poll
+// returned early on the in-flight guard and no timer was armed until the
+// stalled request finally settled (hivecommons/hive#15137).
+func TestHiveChatPollRecoversFromStalledRequest(t *testing.T) {
+	runNodeScript(t, chatPollHarness(t, `
+respond({ messages: [{ seq: 116, role: 'bot', text: 'Inception approved.' }], next: 116, epoch: 'gen-A', gap: false, viewer: 'kanren' });
+`, `
+  await flush();
+  panelOpen = true;
+  assert.equal(chatLastSeq, 116);
+
+  hang();
+  const stalled = chatPollMessages();
+  await flush();
+  assert.equal(urls.length, 2);
+
+  // The operator's command is accepted; chatAskBackend asks for a poll.
+  chatTrackPendingUserEcho('!inception reset', 1);
+  respond({ messages: [
+    { seq: 117, role: 'user', author_id: 'kanren', text: '!inception reset' },
+    { seq: 118, role: 'bot', text: '✅ Inception reset.' },
+  ], next: 118, epoch: 'gen-A', gap: false, viewer: 'kanren' });
+  await chatPollMessages();
+  assert.equal(urls.length, 2, 'a mid-flight call must not issue a parallel request');
+
+  const abort = pollAborts[pollAborts.length - 1];
+  assert.ok(abort, 'the chat poll request has no timeout');
+  assert.ok(abort.ms > 0 && abort.ms <= CHAT_POLL_OPEN_MS * 5, 'poll timeout too long: ' + abort.ms);
+  abort.fn();
+  await stalled;
+
+  assert.equal(urls.length, 3, 'the queued poll must run once the stalled one is abandoned');
+  assert.equal(sinceOf(urls[2]), 116);
+  assert.deepEqual(rendered.map(m => m.text), ['Inception approved.', '✅ Inception reset.']);
+  assert.equal(chatLastSeq, 118);
+  assert.equal(scheduled[scheduled.length - 1], CHAT_POLL_OPEN_MS, 'the loop must resume its open-panel cadence');
 `))
 }

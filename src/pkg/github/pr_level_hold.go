@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -24,7 +25,7 @@ func levelHoldNotice(agent string) string {
 > [!IMPORTANT]
 > **Held for human review by the hive's ACMM level gate.**
 >
-> This PR was opened by the %q agent while Hive policy required a human checkpoint for that agent. Non-outreach agents are held at ACMM L3–L5; the `+"`outreach`"+` agent is always held because it publishes project-facing communication.
+> This PR was opened by the %q agent while Hive policy required a human checkpoint for that agent. Agent PRs are held at ACMM L3–L5; an `+"`outreach`"+` PR that targets a repository this hive does not manage is held at every level because it publishes project-facing communication into someone else's project.
 >
 > Hive will keep the `+"`hold`"+` label until a human removes it. Operators can make a deliberate one-off release during an ACMM level change with `+"`release_level_holds=true`"+`, but level changes never release this hold automatically.`,
 		levelHoldMarker(agent), agent)
@@ -38,6 +39,13 @@ func levelHoldMarker(agent string) string {
 func levelHoldAgentFromNotice(body string) (string, bool) {
 	meta, ok := levelHoldMetadataFromNotice(body)
 	return meta.Agent, ok
+}
+
+// IsLevelHoldNotice reports whether body carries the ACMM level-gate hold
+// marker. Callers must still check the comment was authored by the App.
+func IsLevelHoldNotice(body string) bool {
+	_, ok := levelHoldMetadataFromNotice(body)
+	return ok
 }
 
 func levelHoldMetadataFromNotice(body string) (levelHoldNoticeMetadata, bool) {
@@ -218,7 +226,7 @@ func (c *Client) levelHoldReleaseBlockedByOtherPolicy(ctx context.Context, owner
 		return true, nil
 	}
 	if c.reporterTrustHoldActive(repoRef) {
-		reporter := c.EvaluateReporterTrust(ctx, repoRef, pr.GetTitle(), pr.GetBody(), nil)
+		reporter := c.EvaluateReporterTrust(ctx, repoRef, pr.GetTitle(), pr.GetBody(), nil, pr.GetUser().GetLogin())
 		if reporter.Held {
 			if err := c.AddLabels(ctx, repoRef, number, []string{issueNeedsHumanLabel}); err != nil {
 				return true, fmt.Errorf("applying needs-human for reporter-trust hold on %s#%d: %w", repoRef, number, err)
@@ -269,6 +277,13 @@ func (c *Client) latestHoldLabelEventWasByApp(ctx context.Context, owner, repo s
 // so a caller can pair it with the notice the App posted alongside it. A
 // blank bot login fails closed.
 func (c *Client) latestHoldLabelEventByApp(ctx context.Context, owner, repo string, number int) (bool, gh.Timestamp, error) {
+	return c.latestLabelEventByApp(ctx, owner, repo, number, "hold")
+}
+
+// latestLabelEventByApp is latestHoldLabelEventByApp for any label name: it
+// reports whether the newest labeled/unlabeled event for label is a
+// `labeled` by the App bot, and when it happened.
+func (c *Client) latestLabelEventByApp(ctx context.Context, owner, repo string, number int, label string) (bool, gh.Timestamp, error) {
 	if c == nil || strings.TrimSpace(c.appBotLogin) == "" {
 		return false, gh.Timestamp{}, nil
 	}
@@ -283,7 +298,7 @@ func (c *Client) latestHoldLabelEventByApp(ctx context.Context, owner, repo stri
 			return false, gh.Timestamp{}, fmt.Errorf("listing issue events for %s/%s#%d: %w", owner, repo, number, err)
 		}
 		for _, event := range events {
-			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), "hold") {
+			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), label) {
 				continue
 			}
 			kind := event.GetEvent()
@@ -306,7 +321,16 @@ func (c *Client) latestHoldLabelEventByApp(ctx context.Context, owner, repo stri
 }
 
 func (c *Client) listIssueComments(ctx context.Context, owner, repo string, number int) ([]*gh.IssueComment, error) {
+	return c.listIssueCommentsSince(ctx, owner, repo, number, time.Time{})
+}
+
+// listIssueCommentsSince lists comments updated at or after since; a zero
+// since lists every comment.
+func (c *Client) listIssueCommentsSince(ctx context.Context, owner, repo string, number int, since time.Time) ([]*gh.IssueComment, error) {
 	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	if !since.IsZero() {
+		opts.Since = gh.Ptr(since)
+	}
 	var all []*gh.IssueComment
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, number, opts)

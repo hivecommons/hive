@@ -1,7 +1,12 @@
 name: Greetings
 
 on:
-  pull_request:
+  # pull_request_target, not pull_request: on a fork PR the pull_request
+  # token is read-only whatever `permissions:` says, so the welcome comment
+  # 403s ("Resource not accessible by integration") on exactly the PRs it is
+  # for. The greet job only calls the comment API and never checks out or
+  # runs PR code, so the write-scoped target token is safe here.
+  pull_request_target:
     types: [opened, reopened]
   issues:
     types: [opened, reopened]

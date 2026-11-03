@@ -104,13 +104,16 @@ async function main() {
         host.innerHTML = '<label>' + label + ' <a class="config-info section-help-mark" href="#" aria-describedby="tip-' + label + '">?<span id="tip-' + label + '" class="config-tooltip" role="tooltip">' + label + ' help text</span></a></label>';
         document.getElementById('config-body').appendChild(host);
         const trigger = host.querySelector('.config-info');
-        trigger.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        // focusin opens synchronously; hover waits CONFIG_TOOLTIP_OPEN_DELAY_MS.
+        trigger.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
         const portal = document.getElementById('config-tooltip-portal');
         const tr = trigger.getBoundingClientRect();
         const pr = portal.getBoundingClientRect();
         const verticalGap = pr.top >= tr.bottom ? pr.top - tr.bottom : tr.top - pr.bottom;
         const centerDelta = Math.abs((pr.left + pr.width / 2) - (tr.left + tr.width / 2));
-        return { label, verticalGap: +verticalGap.toFixed(2), centerDelta: +centerDelta.toFixed(2), ok: verticalGap <= MAX_TRIGGER_DISTANCE_PX };
+        trigger.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }));
+        const hiddenAfterLeave = getComputedStyle(portal).display === 'none';
+        return { label, verticalGap: +verticalGap.toFixed(2), centerDelta: +centerDelta.toFixed(2), hiddenAfterLeave, ok: verticalGap <= MAX_TRIGGER_DISTANCE_PX && hiddenAfterLeave };
       }
       document.documentElement.classList.add('modal-open');
       document.body.classList.add('modal-open');
@@ -130,7 +133,7 @@ async function main() {
     if (result.result.exceptionDetails) throw new Error(result.result.exceptionDetails.exception.description);
     const failures = result.result.result.value.filter((row) => !row.ok);
     console.log(JSON.stringify(result.result.result.value, null, 2));
-    if (failures.length) throw new Error('Tooltip too far from trigger: ' + JSON.stringify(failures));
+    if (failures.length) throw new Error('Tooltip too far from trigger or still visible after the pointer left: ' + JSON.stringify(failures));
     socket.close();
   } finally {
     await cleanup();

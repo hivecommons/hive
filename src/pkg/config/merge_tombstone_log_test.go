@@ -20,8 +20,10 @@ func TestMergeAgentOverridesLogsTombstoneSkip(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	cfg := &Config{
-		HiveID:        "hive-test",
-		Agents:        map[string]AgentConfig{},
+		HiveID: "hive-test",
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		},
 		RemovedAgents: []string{"guide"},
 	}
 	cfg.MergeAgentOverrides(map[string]AgentConfig{

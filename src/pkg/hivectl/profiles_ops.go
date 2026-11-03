@@ -24,6 +24,11 @@ import (
 // ErrProfileExists reports that the requested name is already taken.
 var ErrProfileExists = errors.New("hive profile already exists")
 
+// ErrStaleRevision reports that profiles.yml changed after the set being
+// committed was loaded, so the edit was reviewed against a state that no longer
+// exists. Nothing is written; the caller reloads and asks again.
+var ErrStaleRevision = errors.New("hive profiles changed since they were loaded; the change requires renewed review")
+
 // Use marks name as the active profile.
 //
 // It does NOT write: callers pair it with Commit, so a validation failure
@@ -173,9 +178,123 @@ func (set *ProfileSet) SetCommonsStrategy(strategy string) error {
 // projection first and failing to save would leave a contributor.env describing
 // hives no file records — a relay soliciting from a hub the operator can no
 // longer see, rename or remove.
+//
+// Commit holds the store's cross-process lock for the whole read → validate →
+// write, but it does NOT check that set is still based on what is on disk: it
+// is last-writer-wins. Callers that loaded the set they are committing should
+// use CommitExpecting so a concurrent CLI, TUI or Web edit is never lost.
 func (s *ProfileStore) Commit(set *ProfileSet) error {
+	return s.commit(set, nil)
+}
+
+// CommitExpecting is Commit guarded by an expected revision: under the lock it
+// re-reads profiles.yml and refuses with ErrStaleRevision, writing nothing,
+// unless the file is still exactly the one expected was taken from. Pass the
+// Revision of the set as it was loaded ("" expects no profiles.yml at all).
+//
+// A reload before mutating narrows the window but cannot close it — another
+// process can commit between the reload and the write — and an in-process
+// mutex only serialises one process. The lock plus this check is what makes
+// the CLI, the TUI and the Web UI safe to run side by side.
+func (s *ProfileStore) CommitExpecting(set *ProfileSet, expected string) error {
+	return s.commit(set, &expected)
+}
+
+func (s *ProfileStore) commit(set *ProfileSet, expected *string) error {
+	if set == nil {
+		return errors.New("refusing to commit a nil hive profile set")
+	}
+	if err := set.Validate(); err != nil {
+		return err
+	}
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	saved, err := s.Load()
+	if err != nil {
+		return err
+	}
+	if expected != nil {
+		current := ""
+		if saved != nil {
+			current = saved.revision
+		}
+		if current != *expected {
+			return fmt.Errorf("%w: %s", ErrStaleRevision, s.Path())
+		}
+	}
+	// Persist the generation before the env projection, so retries and process
+	// restarts never reuse an older scope version. Save alone is not a mutation.
+	previous := set.RepoScopeVersion
+	version := previous
+	if saved != nil && saved.RepoScopeVersion > version {
+		version = saved.RepoScopeVersion
+	}
+	if version == ^uint64(0) {
+		return errors.New("repository scope version exhausted")
+	}
+	set.RepoScopeVersion = version + 1
 	if err := s.Save(set); err != nil {
+		set.RepoScopeVersion = previous
 		return err
 	}
 	return s.WriteEnvProjection(set)
+}
+
+// FindHive resolves a discovery target by origin, not profile name or path.
+// Legacy users can deliberately have multiple identities at one origin. Never
+// guess which credential to adopt in that case; the caller must ask the user.
+//
+// ValidateHubURL admits hosts the canonical form rejects (compose and k8s
+// service names such as ws://hive_hub:8080). Such a legacy profile can never
+// match a normalizable target, so it is skipped rather than failing every
+// onboarding for the whole set.
+func (set *ProfileSet) FindHive(hub string) (*Profile, error) {
+	id, err := NormalizeHiveID(hub)
+	if err != nil {
+		return nil, err
+	}
+	var found *Profile
+	for i := range set.Profiles {
+		candidate := &set.Profiles[i]
+		candidateID, err := NormalizeHiveID(candidate.Hub)
+		if err != nil {
+			continue
+		}
+		if candidateID != id {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("multiple contributor profiles for hive %s; choose an identity explicitly", id)
+		}
+		found = candidate
+	}
+	return found, nil
+}
+
+// EnsureHive gives preset/hub onboarding set semantics. An existing subscription
+// is returned unchanged, including its endpoint, token and personal consent.
+// Callers merge reviewed recommendations explicitly, never by overwriting it
+// with a publisher's profile. A different origin needs its own registration.
+// Add remains available for intentionally distinct legacy contributor identities.
+func (set *ProfileSet) EnsureHive(profile Profile, activate bool) (target *Profile, added bool, err error) {
+	existing, err := set.FindHive(profile.Hub)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		if activate {
+			set.Active = existing.Name
+		}
+		return existing, false, nil
+	}
+	if err := profile.Selection.Validate(); err != nil {
+		return nil, false, err
+	}
+	if err := set.Add(profile, activate); err != nil {
+		return nil, false, err
+	}
+	return &set.Profiles[len(set.Profiles)-1], true, nil
 }

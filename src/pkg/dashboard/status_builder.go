@@ -7,26 +7,30 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/paneclass"
+	"github.com/hivecommons/hive/crux/skillreg"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/housestyle"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
-	"github.com/hivecommons/hive/pkg/skillreg"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // skillsConventionalDir is the conventional on-disk location the dashboard
@@ -108,10 +112,28 @@ func getAgentAuthFn() func(agentName string) (bool, bool) {
 	return agentAuthFn
 }
 
+// SetAgentRefreshableProvider registers the per-agent "is this credential
+// refreshable without a human login?" probe (agent.Manager's
+// AgentCredentialRefreshable, ADR-0024). known=false leaves
+// backendAuthRefreshable absent.
+func SetAgentRefreshableProvider(fn func(agentName string) (bool, bool)) {
+	backendAuthMu.Lock()
+	defer backendAuthMu.Unlock()
+	agentRefreshableFn = fn
+}
+
+func getAgentRefreshableFn() func(agentName string) (bool, bool) {
+	backendAuthMu.RLock()
+	defer backendAuthMu.RUnlock()
+	return agentRefreshableFn
+}
+
 var (
 	backendAuthMu sync.RWMutex
 	backendAuthFn func(backend string) (bool, bool)
 	agentAuthFn   func(agentName string) (bool, bool)
+
+	agentRefreshableFn func(agentName string) (bool, bool)
 
 	cachedHealth   map[string]any
 	cachedHealthMu sync.RWMutex
@@ -134,6 +156,10 @@ var (
 
 	inferenceAuthMu sync.RWMutex
 	inferenceAuthFn func() (errMsg string, since time.Time)
+	// inferenceLastError* carry the proxy's per-agent most recent inference
+	// error text (#11761) — the full message, not the clipped pane line.
+	inferenceLastErrorMu sync.RWMutex
+	inferenceLastErrorFn func(agent string) (msg string, status int, at time.Time, ok bool)
 	// inferenceBudget* carry the PROVIDER spending-limit signal (#4294) —
 	// distinct from the auth signal above and from the hive's own token budget.
 	inferenceBudgetMu sync.RWMutex
@@ -182,6 +208,76 @@ func getInferenceAuthFn() func() (errMsg string, since time.Time) {
 	inferenceAuthMu.RLock()
 	defer inferenceAuthMu.RUnlock()
 	return inferenceAuthFn
+}
+
+// SetInferenceLastErrorProvider registers a function reporting the most recent
+// inference error the proxy returned to one agent (#11761). Claude Code clips
+// its retry status line to one pane row beside the "Retrying in Ns" countdown,
+// so the pane-derived ProviderErrorLine is truncated until every retry is
+// exhausted; the proxy generated that message and holds it in full. Wired to
+// the proxy's LastInferenceError; nil in tests and on spokes with no proxy,
+// which agentInferenceLastError tolerates (the card then keeps the pane line).
+func SetInferenceLastErrorProvider(fn func(agent string) (msg string, status int, at time.Time, ok bool)) {
+	inferenceLastErrorMu.Lock()
+	defer inferenceLastErrorMu.Unlock()
+	inferenceLastErrorFn = fn
+}
+
+func getInferenceLastErrorFn() func(agent string) (msg string, status int, at time.Time, ok bool) {
+	inferenceLastErrorMu.RLock()
+	defer inferenceLastErrorMu.RUnlock()
+	return inferenceLastErrorFn
+}
+
+// inferenceLastErrorMaxAge bounds how old a proxy-recorded inference error may
+// be and still be shown on an agent card. Claude Code's whole retry ladder
+// (10 attempts, backoff capped near 40s) finishes well inside it, so a live
+// outage stays visible, while an error from an agent that has since gone quiet
+// without a successful call (which would clear it) ages out.
+const inferenceLastErrorMaxAge = 15 * time.Minute
+
+// agentInferenceLastError returns the proxy's full last-inference-error text
+// for proc, or ok=false when it should not be shown. Conservative gating: the
+// entry must be recent (inferenceLastErrorMaxAge) AND relevant to the agent's
+// current state — either hive already classified a provider/backend-auth
+// error from the pane, or the error happened during the current turn (newer
+// than the last kick), which is exactly the mid-retry window #11761 is about.
+// A successful inference call clears the proxy entry, so a recovered agent
+// never shows it.
+func agentInferenceLastError(proc *crux.Process, now time.Time) (msg string, at time.Time, ok bool) {
+	fn := getInferenceLastErrorFn()
+	if fn == nil || proc == nil {
+		return "", time.Time{}, false
+	}
+	m, _, when, found := fn(proc.Name)
+	m = strings.TrimSpace(m)
+	if !found || m == "" || when.IsZero() || now.Sub(when) > inferenceLastErrorMaxAge {
+		return "", time.Time{}, false
+	}
+	providerErr := proc.ProviderErrorClass != "" && now.Before(proc.ProviderErrorBackoffUntil)
+	backendAuthErr := proc.BackendAuth.Status != "" && proc.BackendAuth.Status != crux.BackendAuthOK
+	duringTurn := proc.LastKick != nil && when.After(*proc.LastKick)
+	if !providerErr && !backendAuthErr && !duringTurn {
+		return "", time.Time{}, false
+	}
+	return m, when, true
+}
+
+// preferFullInferenceError returns the proxy's full message in place of a
+// clipped pane-derived line. A pane summary such as "Inference backend
+// rejected credentials (401): <clipped>" keeps its classification prefix —
+// the dashboard keys its backend-auth banner title on it — and only the
+// clipped detail after it is replaced.
+func preferFullInferenceError(paneLine, full string) string {
+	if full == "" {
+		return paneLine
+	}
+	if strings.HasPrefix(paneLine, "Inference backend ") {
+		if i := strings.Index(paneLine, "): "); i >= 0 {
+			return paneLine[:i+len("): ")] + full
+		}
+	}
+	return full
 }
 
 // SetInferenceBudgetProvider registers a function reporting the proxy's current
@@ -247,10 +343,11 @@ type AgentStatusPayload struct {
 // data. No GitHub API calls, no metrics collection — just agent state.
 func BuildAgentOnlyStatus(
 	govState governor.State,
-	agentStatuses map[string]*agent.AgentProcess,
+	agentStatuses map[string]*crux.Process,
 	cfg *config.Config,
 ) *AgentStatusPayload {
 	agents, hidden := buildAgentsWithHidden(agentStatuses, cfg, govState)
+	applyRunMeter(defaultRunMeter, agents, agentStatuses, nil, time.Now())
 	return &AgentStatusPayload{
 		Timestamp:        time.Now().UTC().Format(time.RFC3339),
 		Agents:           agents,
@@ -260,10 +357,45 @@ func BuildAgentOnlyStatus(
 	}
 }
 
+type statusOptions struct {
+	supersededPR         func(repo string, number int) (github.ReviewQueueSuperseded, bool)
+	hub                  *ContributeWSHub
+	mergeVerdicts        map[string]github.MergeVerdict
+	mergeLaneTakesAuthor func(repo, author string) bool
+}
+
+// StatusOption adjusts BuildFrontendStatus.
+type StatusOption func(*statusOptions)
+
+// WithContributeHub lets the your-turn decision see the hub's unexpired task
+// leases.
+func WithContributeHub(hub *ContributeWSHub) StatusOption {
+	return func(o *statusOptions) { o.hub = hub }
+}
+
+// WithMergeVerdicts attaches the merge classifier's per-PR verdicts before the
+// your-turn decision runs, so it reads the same verdict the PR pill paints.
+func WithMergeVerdicts(verdicts map[string]github.MergeVerdict) StatusOption {
+	return func(o *statusOptions) { o.mergeVerdicts = verdicts }
+}
+
+// WithMergeLaneTakesAuthor lets the your-turn decision ask whether a Hive merge
+// lane admits a PR's author (automerge.Engine.MergeLaneTakesAuthor).
+func WithMergeLaneTakesAuthor(takes func(repo, author string) bool) StatusOption {
+	return func(o *statusOptions) { o.mergeLaneTakesAuthor = takes }
+}
+
+// ownershipEnvAdjust hands the options the your-turn decision reads to its
+// environment.
+func (o statusOptions) ownershipEnvAdjust(env *ownershipEnv) {
+	env.mergeLaneTakesAuthor = o.mergeLaneTakesAuthor
+	env.supersededPR = o.supersededPR
+}
+
 func BuildFrontendStatus(
 	govState governor.State,
 	actionable *github.ActionableResult,
-	agentStatuses map[string]*agent.AgentProcess,
+	agentStatuses map[string]*crux.Process,
 	cfg *config.Config,
 	tokenCollector *tokens.Collector,
 	gov *governor.Governor,
@@ -271,7 +403,12 @@ func BuildFrontendStatus(
 	ghClient *github.Client,
 	ctx context.Context,
 	metricsCollector *MetricsCollector,
+	opts ...StatusOption,
 ) *StatusPayload {
+	var options statusOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	agentMetrics := map[string]any{}
 	if metricsCollector != nil {
 		agentMetrics = metricsCollector.Get()
@@ -281,14 +418,26 @@ func BuildFrontendStatus(
 	ghRateLimits := buildGHRateLimits(ghClient, ctx, cfg)
 
 	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
+	fleetRun := applyRunMeter(defaultRunMeter, agents, agentStatuses, tokenCollector, time.Now())
 	health := buildHealth(ghClient, ctx)
 	mergeAgentAuthHealth(health, agents)
 
 	hiveIDLocked, hiveIDLockReason := hiveIDLockedByHub(cfg)
 
-	repos := buildRepos(cfg, actionable, govState)
+	var forge forgeOpenCounter
+	if metricsCollector != nil {
+		if fc := metricsCollector.ForgeCounts(); fc != nil {
+			forge = fc
+		}
+	}
+	repos := buildReposWithForge(cfg, actionable, govState, forge)
+	generatedAt := time.Now().UTC()
+	attachRepoMergeVerdicts(repos, options.mergeVerdicts)
+	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt, options.hub, options.ownershipEnvAdjust)
+	yourTurn := computeCriticalPath(repos)
 	payload := &StatusPayload{
-		Timestamp:             time.Now().UTC().Format(time.RFC3339),
+		YourTurn:              yourTurn,
+		Timestamp:             generatedAt.Format(time.RFC3339),
 		TimeZone:              dashboardTimeZoneName(),
 		HiveID:                cfg.HiveID,
 		HiveIDEditable:        !hiveIDLocked,
@@ -297,10 +446,12 @@ func BuildFrontendStatus(
 		Agents:                agents,
 		HiddenAgents:          hiddenAgents,
 		ConfiguredAgents:      buildConfiguredAgents(cfg),
-		Governor:              buildGovernorWithLaneDepths(govState, cfg, buildLaneQueueDepths(cfg, actionable)),
+		Governor:              buildGovernorWithLaneDepths(govState, cfg, buildLaneQueueDepths(cfg, actionable), apiBudgetFromRateLimits(ghRateLimits)),
 		Tokens:                buildTokens(tokenCollector),
 		Repos:                 repos,
-		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable),
+		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable) || overviewStaleSince(repos) != "",
+		StaleSince:            earliestRFC3339(staleSinceRFC3339(actionable), overviewStaleSince(repos)),
+		RestartRefresh:        restartRefreshInfo(actionable, repos),
 		Beads:                 BuildBeadsFromConfig(beadStores, cfg),
 		Planning:              BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
 		Health:                health,
@@ -311,18 +462,66 @@ func BuildFrontendStatus(
 		AgentMetrics:          agentMetrics,
 		OverviewCoverage:      buildOverviewCoverage(agentMetrics, cfg),
 		Hold:                  buildHold(actionable),
+		FleetRun:              fleetRun,
 		IssueToMerge:          issueToMerge,
 		IssuesDisabledRepos:   metricsCollector.GetIssuesDisabledRepos(),
 		ACMMLevel:             detectACMMLevel(cfg),
+		AdmissionLabels:       cfg.Project.IssueFilter.ReporterTrustRequiredLabelsForNotice(),
 		ACMMLevelConfigured:   cfg.ACMMLevel != nil,
 		ACMMPackAgents:        buildACMMPackAgents(cfg),
 		SystemResources:       collectSystemResources(),
 		Platform:              buildPlatform(cfg),
 		Security:              buildSecurity(cfg),
 		ReleaseLineLag:        buildReleaseLineLag(),
+		Providers:             buildProviderStatus(agents, cfg),
 	}
 
 	return payload
+}
+
+// buildProviderStatus is the ADR-0024 per-provider auth/availability roll-up
+// for /api/status — the same crux.RollUpProviderStatus the hub heartbeat
+// carries, keyed by each agent's effective backend. nil when disabled.
+func buildProviderStatus(agents []FrontendAgent, cfg *config.Config) []crux.ProviderStatus {
+	if cfg == nil || !cfg.Providers.StatusEnabled() {
+		return nil
+	}
+	evidence := make([]crux.ProviderAgentEvidence, 0, len(agents))
+	for _, a := range agents {
+		ac, ok := cfg.Agents[a.Name]
+		if !ok && a.ReplicaBase != "" {
+			ac, ok = cfg.Agents[a.ReplicaBase]
+		}
+		e := crux.ProviderAgentEvidence{
+			Agent:       a.Name,
+			Provider:    a.GovBackend,
+			Enabled:     ok && ac.Enabled,
+			NeedsLogin:  a.NeedsLogin,
+			AuthStatus:  a.BackendAuthStatus,
+			Refreshable: a.BackendAuthRefreshable,
+		}
+		if t, err := time.Parse(time.RFC3339, a.BackendAuthSince); err == nil {
+			e.AuthSince = t
+		}
+		evidence = append(evidence, e)
+	}
+	return crux.RollUpProviderStatus(evidence)
+}
+
+// staleSinceRFC3339 renders the snapshot's stale-since marker; the
+// generation time stands in for an older snapshot that has no marker.
+func staleSinceRFC3339(actionable *github.ActionableResult) string {
+	if !actionable.Stale() {
+		return ""
+	}
+	since := actionable.StaleSince
+	if since.IsZero() {
+		since = actionable.GeneratedAt
+	}
+	if since.IsZero() {
+		return ""
+	}
+	return since.UTC().Format(time.RFC3339)
 }
 
 func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResult) bool {
@@ -330,6 +529,12 @@ func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResu
 		return false
 	}
 	if actionable == nil {
+		return true
+	}
+	// A repo served from its last-good enumeration after a transient GitHub
+	// refusal has counts, but they are not this snapshot's observation; KPI
+	// history must not record them as a fresh point.
+	if actionable.Stale() {
 		return true
 	}
 	for _, repoName := range cfg.Project.Repos {
@@ -411,8 +616,13 @@ func buildFeatures(cfg *config.Config) FrontendFeatures {
 	if cfg == nil {
 		return FrontendFeatures{}
 	}
+	// The deprecated dashboard.strategy_lab alias is normally folded into
+	// ExperimentLab by applyDefaults; honour it here too for configs built
+	// without going through the loader.
+	enabled := cfg.Dashboard.ExperimentLab || cfg.Dashboard.StrategyLab
 	return FrontendFeatures{
-		StrategyLab: cfg.Dashboard.StrategyLab,
+		ExperimentLab: enabled,
+		StrategyLab:   enabled,
 	}
 }
 
@@ -444,7 +654,7 @@ func mergeAgentAuthHealth(health map[string]any, agents []FrontendAgent) {
 // on UpdateConfig/reconcile. Callers must check "running" FIRST: an agent
 // disabled while it is still up keeps running until the next reconcile, and it
 // genuinely does have a session until then.
-func agentDisabledInConfig(cfg *config.Config, name string, proc *agent.AgentProcess) bool {
+func agentDisabledInConfig(cfg *config.Config, name string, proc *crux.Process) bool {
 	if cfg != nil {
 		if liveCfg, ok := cfg.Agents[name]; ok {
 			return !liveCfg.Enabled
@@ -463,15 +673,15 @@ func agentDisabledInConfig(cfg *config.Config, name string, proc *agent.AgentPro
 // wins during config/reconcile races; otherwise enabled and unpaused is the
 // active configuration. Pack-paused or disabled entries remain suppressible as
 // the inactive higher-level "ghost" agents the dashboard filter targets.
-func activeOutsidePack(cfg *config.Config, name string, proc *agent.AgentProcess) bool {
+func activeOutsidePack(cfg *config.Config, name string, proc *crux.Process) bool {
 	if proc == nil {
 		return false
 	}
-	if proc.State == agent.StateRunning {
+	if proc.State == crux.StateRunning {
 		return true
 	}
 	return !agentDisabledInConfig(cfg, name, proc) &&
-		!proc.Paused && proc.State != agent.StatePaused
+		!proc.Paused && proc.State != crux.StatePaused
 }
 
 func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
@@ -497,15 +707,15 @@ func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
 
 	agents := make([]FrontendConfiguredAgent, 0, len(names))
 	for _, name := range names {
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			continue
 		}
 		agentCfg := cfg.Agents[name]
 		// Same resolution buildAgents uses: explicit per-agent Mode wins,
 		// otherwise the ACMM level default for this agent.
-		mode := agent.DefaultAgentMode(name, acmmLevel)
+		mode := crux.DefaultAgentMode(name, acmmLevel)
 		if modeStr := agentCfg.Mode; modeStr != "" {
-			if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+			if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 				mode = parsed
 			}
 		}
@@ -555,23 +765,7 @@ func dashboardAgentReviewCapable(name string, a config.AgentConfig, allowed []st
 	if !a.Enabled || a.Paused || a.OnDemand {
 		return false
 	}
-	if len(allowed) > 0 {
-		for _, n := range allowed {
-			if strings.TrimSpace(n) == name {
-				return true
-			}
-		}
-		return false
-	}
-	fields := append([]string{name, a.Role}, a.Aliases...)
-	fields = append(fields, a.LaneKeywords...)
-	fields = append(fields, a.DetectKeywords...)
-	for _, f := range fields {
-		if strings.Contains(strings.ToLower(f), "review") {
-			return true
-		}
-	}
-	return false
+	return review.ReviewCapable(review.CapabilityFromConfig(name, a), review.ReviewerAgentSet(allowed))
 }
 
 // buildPlatform surfaces the v4 spoke capabilities (forge, mint, skills) from
@@ -651,7 +845,7 @@ func buildSkills() FrontendSkills {
 // to LastRestartReason). Same window the manager's RestartTelemetry reports to
 // the hub heartbeat — buildAgents works from process snapshots, so it counts
 // the cloned RestartEvents directly (#6237).
-func restartsLast24h(proc *agent.AgentProcess, now time.Time) (int, string) {
+func restartsLast24h(proc *crux.Process, now time.Time) (int, string) {
 	cutoff := now.Add(-24 * time.Hour)
 	count := 0
 	reason := ""
@@ -668,6 +862,39 @@ func restartsLast24h(proc *agent.AgentProcess, now time.Time) (int, string) {
 		reason = strings.TrimSpace(proc.LastRestartReason)
 	}
 	return count, reason
+}
+
+// firstRestartSince is the earliest restart event at or after cutoff — the
+// "since" of a crash-loop BLOCKED verdict (#14409). Zero when none.
+func firstRestartSince(proc *crux.Process, cutoff time.Time) time.Time {
+	var first time.Time
+	for _, ev := range proc.RestartEvents {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		if first.IsZero() || ev.At.Before(first) {
+			first = ev.At
+		}
+	}
+	return first
+}
+
+// blockedReasonFromEvidence derives FrontendAgent.BlockedReason: the
+// StatusEvidence prose minus its "blocked:" prefix, only while the structured
+// status is BLOCKED. Empty evidence yields "reason not recorded" so a consumer
+// never has to special-case a BLOCKED agent with no WHY.
+func blockedReasonFromEvidence(structuredStatus, evidence string) string {
+	if structuredStatus != "BLOCKED" {
+		return ""
+	}
+	reason := strings.TrimSpace(evidence)
+	if lower := strings.ToLower(reason); strings.HasPrefix(lower, "blocked:") {
+		reason = strings.TrimSpace(reason[len("blocked:"):])
+	}
+	if reason == "" {
+		return "reason not recorded"
+	}
+	return reason
 }
 
 // HiddenAgentInfo names an entry that IS present in the agent manager's
@@ -691,7 +918,7 @@ const (
 	hiddenReasonDisabled      = "disabled-in-config"
 )
 
-func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
+func buildAgents(statuses map[string]*crux.Process, cfg *config.Config, govState governor.State) []FrontendAgent {
 	agents, _ := buildAgentsWithHidden(statuses, cfg, govState)
 	return agents
 }
@@ -701,7 +928,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 // existing caller (and every existing test) keeps its original single-value
 // signature; only BuildFrontendStatus/BuildAgentOnlyStatus need the second
 // value to publish it on the status payload.
-func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) ([]FrontendAgent, []HiddenAgentInfo) {
+func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config, govState governor.State) ([]FrontendAgent, []HiddenAgentInfo) {
 	currentMode := strings.ToLower(string(govState.Mode))
 
 	// The watchdog's authority is hive-wide, but it rides each agent's payload
@@ -740,7 +967,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// The operability-agent gate is a hard availability boundary, unlike
 		// membership in a pack's default roster. Keep it authoritative even if
 		// a stale manager snapshot still contains one of those processes.
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 			slog.Debug("agent card omitted: below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
 			continue
@@ -766,7 +993,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			// (#6652). "No cards and nothing hidden" is indistinguishable from
 			// "the builder never saw your config", which is what made the
 			// original report impossible to act on.
-			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true
@@ -832,7 +1059,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// seen END is idle, whatever the process state says; liveness is not
 		// evidence of work.
 		busy := "idle"
-		if proc.State == agent.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
+		if proc.State == crux.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
 			busy = "working"
 		}
 		// awaitingCI (#9673 item 3): the manager's CI-poll guard already
@@ -887,10 +1114,10 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// per-mode cadence and the same IsPaused semantics. offByCadence is the
 		// stricter "has a pause/off ENTRY" form (an ABSENT cadence is not off),
 		// which is why it checks the resolved cadence directly rather than
-		// negating ExpectedActive.
+		// negating ExpectedActive. config.OffByCadence is also the watchdog's
+		// not-producing gate (#11910), so the card and the banner agree.
 		modeCadence := cfg.CadenceValueForMode(name, currentMode)
-		offByCadence := modeCadence != "" && modeCadence.IsPaused() &&
-			!proc.Config.OnDemand && !onDemandSet[name]
+		offByCadence := cfg.OffByCadence(name, currentMode, proc.Config.OnDemand || onDemandSet[name])
 
 		// noCadence: NO governor mode names this agent in its cadence map and it
 		// has never been kicked, so nothing will ever schedule it — the silent
@@ -924,14 +1151,14 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		const summaryLines = 20
 		var liveSummary string
 		if pane := proc.PaneLines(summaryLines); len(pane) > 0 {
-			liveSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
+			liveSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
 		}
 		var detailSummary string
 		const maxDetailLines = 50
 		if buf := proc.OutputBuffer; buf != nil && buf.Count() > 0 {
-			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
+			detailSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
 		} else if pane := proc.FilteredPaneLines(0); len(pane) > 0 {
-			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
+			detailSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
 		}
 
 		agentID := proc.ID
@@ -940,6 +1167,16 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		}
 
 		agentCfg := proc.Config
+		var sandboxRun *FrontendSandboxRun
+		if agentCfg.SandboxEnabled(cfg.AgentSandbox) {
+			sr := sandboxRunHealth(proc, cadenceValue, agentCfg.OnDemand || onDemandSet[name], time.Now())
+			sandboxRun = &sr
+			// A sandboxed agent has no pane; after a pod roll its output ring
+			// is empty too, so the persisted run summary is the activity.
+			if detailSummary == "" && sr.Summary != "" {
+				detailSummary = sr.Summary
+			}
+		}
 		continuousModes := cfg.ContinuousModes(name)
 		continuousNow := agentCfg.ContinuousInMode(currentMode, modeCadence)
 		continuousBlocked := continuousState.Blocked
@@ -963,16 +1200,19 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			ReplicaCount:    agentCfg.ReplicaCount,
 			OnDemand:        agentCfg.OnDemand,
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
+			SandboxRun:      sandboxRun,
+			SandboxRuntime:  effectiveSandboxRuntime(agentCfg, cfg),
 			Session:         name,
 			State:           string(proc.State),
-			Starting:        proc.Starting && proc.State != agent.StateRunning,
+			Starting:        proc.Starting && proc.State != crux.StateRunning,
 			Busy:            busy,
 			AwaitingCI:      awaitingCI,
 			Paused:          proc.Paused,
 			PausedAt:        formatOptionalTime(proc.PausedAt),
-			PausedReason:    proc.PausedReason,
+			PausedReason:    redactTokens(proc.PausedReason),
 			PausedTrigger:   proc.PausedTrigger,
 			PausedBy:        proc.PausedBy,
+			OperatorStopped: proc.OperatorStopped,
 			OffByCadence:    offByCadence,
 			NoCadence:       noCadence,
 			CLI:             cli,
@@ -985,6 +1225,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			Pinned:          pinnedCli || pinnedModel,
 			LastKick:        lastKick,
 			LastKickAt:      lastKickAt,
+			StyleSource:     string(housestyle.SourceFromKick(proc.LastKickMessage)),
 			NextKick:        nextKick,
 			NextKickAt:      nextKickAt,
 			NextKickIn:      nextKickIn,
@@ -994,6 +1235,9 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 				ContinuousModes:   continuousModes,
 				ContinuousKicks:   continuousState.Kicks,
 				ContinuousTokens:  continuousState.TokensConsumed,
+				PresumedTurnEnds:  continuousState.PresumedTurnEnds,
+				LastKickEnd:       formatOptionalTime(continuousState.LastKickEnd),
+				IdleSince:         formatOptionalTime(continuousIdleSince(continuousNow, busy, continuousState.LastKickEnd, continuousState.NextKick)),
 			},
 			KicksUndeliverable:     proc.KicksUndeliverable,
 			BusySince:              formatOptionalTime(proc.BusySince),
@@ -1008,9 +1252,13 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			DetailSummary:          detailSummary,
 			SubAgentModels:         proc.SubAgentModels,
 			StatsConfig:            resolveStatsSources(loadStatsConfig(name), cfg),
-			LastError:              proc.LastError,
+			LastError:              redactTokens(proc.LastError),
 			LoginURL:               proc.LoginURL,
 			StallNudges:            proc.StallNudges,
+			StallRecoveries:        proc.StallRecoveries,
+			SessionRssMb:           proc.SessionRSSMB,
+			SessionAge:             formatSessionAge(proc.StartedAt, time.Now()),
+			SessionRecycles:        proc.SessionRecycles,
 			ActionNudges:           proc.ActionNudges,
 			// #4697: transient-API-error retry nudges, surfaced beside the
 			// other two nudge counters.
@@ -1026,28 +1274,58 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			CadenceModes:      cadenceModes,
 		}
 		applyAgentLastAction(&a, proc, busy)
+		// #14550: the repeat-failure note and check state; nothing while
+		// the check is off.
+		a.RepeatFailureCheck = string(proc.RepeatFailure.Check)
+		a.RepeatFailureCheckMessage = proc.RepeatFailure.Check.Message()
+		a.RepeatFailureNote = redactTokens(proc.RepeatFailure.Note)
 		// #7421: how the last kicked turn ended, so the card can say "asked
 		// the operator what to do" or "stood down" instead of implying work.
 		if proc.KickOutcome.Settled(proc.LastKick) {
 			a.KickOutcome = proc.KickOutcome.Kind
 			a.KickOutcomeReason = proc.KickOutcome.Reason
-			if proc.KickOutcome.Kind == agent.KickOutcomeStandDown {
+			a.KickOutcomeAt = formatOptionalTime(proc.KickOutcome.At)
+			if proc.KickOutcome.Kind == crux.KickOutcomeStandDown {
 				a.StructuredStatus = "BLOCKED"
+				a.BlockedSince = a.KickOutcomeAt
 				a.StatusEvidence = "blocked: policy stand-down"
 				if r := strings.TrimSpace(proc.KickOutcome.Reason); r != "" {
 					a.StatusEvidence += ": " + r
 				}
 			}
 		}
-		if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+		// #11761: the proxy's full inference error beats the pane line Claude
+		// Code clips beside its retry countdown.
+		inferenceLastErr, inferenceLastErrAt, hasInferenceLastErr := agentInferenceLastError(proc, time.Now())
+		if hasInferenceLastErr {
+			a.InferenceLastError = inferenceLastErr
+			a.InferenceLastErrorAt = formatOptionalTime(inferenceLastErrAt)
+		}
+		if status := proc.BackendAuth.Status; status != "" && status != crux.BackendAuthOK {
 			a.BackendAuthStatus = status
 			a.BackendAuthSince = formatOptionalTime(proc.BackendAuth.Since)
 			a.BackendAuthLastError = proc.BackendAuth.LastError
+			if hasInferenceLastErr {
+				a.BackendAuthLastError = preferFullInferenceError(a.BackendAuthLastError, inferenceLastErr)
+			}
+		}
+		if refreshableFn := getAgentRefreshableFn(); refreshableFn != nil {
+			if refreshable, known := refreshableFn(name); known {
+				a.BackendAuthRefreshable = &refreshable
+			}
 		}
 		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(proc.BackendAuth.Since)
+			if a.BlockedSince == "" && hasInferenceLastErr {
+				a.BlockedSince = formatOptionalTime(inferenceLastErrAt)
+			}
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
-			if line := strings.TrimSpace(proc.ProviderErrorLine); line != "" {
+			line := strings.TrimSpace(proc.ProviderErrorLine)
+			if hasInferenceLastErr {
+				line = preferFullInferenceError(line, inferenceLastErr)
+			}
+			if line != "" {
 				a.StatusEvidence += ": " + line
 			}
 			if continuousNow && !continuousState.BackoffUntil.IsZero() && time.Now().Before(continuousState.BackoffUntil) {
@@ -1084,6 +1362,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// relaunching carries the more specific reason, so it wins.
 		if n, reason := restartsLast24h(proc, time.Now()); n >= spoke.AgentRestartProblemThreshold() {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(firstRestartSince(proc, time.Now().Add(-24*time.Hour)))
 			a.StatusEvidence = fmt.Sprintf("blocked: crash-looping (%d restarts in 24h)", n)
 			if reason != "" {
 				a.StatusEvidence += ": " + reason
@@ -1097,23 +1376,25 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// and it is the one the operator has to act on first.
 		if proc.StartBlocked {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(proc.StartFailureLastAt)
 			a.StatusEvidence = "blocked: " + strings.TrimSpace(proc.StartFailureReason)
 			if proc.StartFailureCount > 0 {
 				a.StatusEvidence += fmt.Sprintf(" (%d consecutive failed starts)", proc.StartFailureCount)
 			}
 		}
+		a.BlockedReason = blockedReasonFromEvidence(a.StructuredStatus, a.StatusEvidence)
 
 		acmmLevel := 0
 		if cfg.ACMMLevel != nil {
 			acmmLevel = *cfg.ACMMLevel
 		}
-		mode := agent.DefaultAgentMode(name, acmmLevel)
+		mode := crux.DefaultAgentMode(name, acmmLevel)
 		if modeStr := agentCfg.Mode; modeStr != "" {
-			if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+			if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 				mode = parsed
 			}
 		}
-		defaultMode := agent.DefaultAgentMode(name, acmmLevel)
+		defaultMode := crux.DefaultAgentMode(name, acmmLevel)
 		a.Mode = mode.String()
 		a.ModeEmoji = mode.Emoji()
 		a.DefaultMode = defaultMode.String()
@@ -1130,7 +1411,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// method check the auth probe already applies
 		// (BackendRequiresInteractiveAuth) so the badge and control only
 		// ever appear for a backend where a login URL is a real possibility.
-		a.NeedsLogin = proc.NeedsLogin && agent.BackendRequiresInteractiveAuth(cli)
+		a.NeedsLogin = proc.NeedsLogin && crux.BackendRequiresInteractiveAuth(cli)
 		// Per-agent probe FIRST: it resolves this agent's own per-UID HOME and
 		// answers "does this backend even have an interactive login?" before
 		// looking at any file. The backend-level probe (shared legacy path
@@ -1175,13 +1456,13 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 	if cfg.ACMMLevel != nil {
 		acmmLevel = *cfg.ACMMLevel
 	}
-	mode := agent.DefaultAgentMode(name, acmmLevel)
+	mode := crux.DefaultAgentMode(name, acmmLevel)
 	if modeStr := agentCfg.Mode; modeStr != "" {
-		if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+		if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 			mode = parsed
 		}
 	}
-	defaultMode := agent.DefaultAgentMode(name, acmmLevel)
+	defaultMode := crux.DefaultAgentMode(name, acmmLevel)
 
 	backendKind := "backend"
 	if config.IsInferenceBackend(cli) {
@@ -1216,8 +1497,9 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 		ReplicaCount:    agentCfg.ReplicaCount,
 		OnDemand:        onDemand,
 		Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
+		SandboxRuntime:  effectiveSandboxRuntime(agentCfg, cfg),
 		Session:         name,
-		State:           string(agent.StateStopped),
+		State:           string(crux.StateStopped),
 		Busy:            "idle",
 		Paused:          agentCfg.Paused,
 		OffByCadence:    false,
@@ -1250,6 +1532,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			return "BLOCKED"
 		}(),
 		StatusEvidence: evidence,
+		BlockedReason:  blockedReasonFromEvidence("BLOCKED", evidence),
 		LastError:      evidence,
 		Enabled:        agentCfg.Enabled,
 
@@ -1542,11 +1825,18 @@ type FrontendPR struct {
 // mergeable verdict, painted amber — never green — because "the sweep would
 // merge this" is exactly what such a PR has not been shown to satisfy.
 func AttachMergeVerdicts(payload *StatusPayload, verdicts map[string]github.MergeVerdict) {
-	if payload == nil || len(verdicts) == 0 {
+	if payload == nil {
 		return
 	}
-	for ri := range payload.Repos {
-		for pi, entry := range payload.Repos[ri].OpenPrs {
+	attachRepoMergeVerdicts(payload.Repos, verdicts)
+}
+
+func attachRepoMergeVerdicts(repos []FrontendRepo, verdicts map[string]github.MergeVerdict) {
+	if len(verdicts) == 0 {
+		return
+	}
+	for ri := range repos {
+		for pi, entry := range repos[ri].OpenPrs {
 			fp, ok := entry.(FrontendPR)
 			if !ok {
 				continue
@@ -1554,7 +1844,7 @@ func AttachMergeVerdicts(payload *StatusPayload, verdicts map[string]github.Merg
 			if v, ok := verdicts[github.MergeVerdictKey(fp.PullRequest)]; ok {
 				v := v
 				fp.MergeVerdict = &v
-				payload.Repos[ri].OpenPrs[pi] = fp
+				repos[ri].OpenPrs[pi] = fp
 			}
 		}
 	}
@@ -1821,11 +2111,11 @@ func cadenceDisplay(c config.Cadence) string {
 	return c.ShortLabel(time.Now())
 }
 
-func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
-	return buildGovernorWithLaneDepths(state, cfg, nil)
+func buildGovernor(state governor.State, cfg *config.Config, apiBudget ...map[string]any) FrontendGovernor {
+	return buildGovernorWithLaneDepths(state, cfg, nil, apiBudget...)
 }
 
-func buildGovernorWithLaneDepths(state governor.State, cfg *config.Config, laneDepths map[string]int) FrontendGovernor {
+func buildGovernorWithLaneDepths(state governor.State, cfg *config.Config, laneDepths map[string]int, apiBudget ...map[string]any) FrontendGovernor {
 	// The gauge must show the thresholds the governor ACTUALLY laddered on, or
 	// it explains the current mode with numbers that did not produce it. This
 	// used to be a private copy of the defaults plus its own explicit-wins
@@ -1842,12 +2132,12 @@ func buildGovernorWithLaneDepths(state governor.State, cfg *config.Config, laneD
 	nextKick := ""
 	nextKickAt := ""
 	nextKickIn := ""
-	if cfg.Governor.EvalIntervalS > 0 {
+	if interval := governorStatusEvalInterval(cfg, apiBudget...); interval > 0 {
 		base := time.Now()
 		if !state.LastEval.IsZero() {
 			base = state.LastEval
 		}
-		next := base.Add(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
+		next := base.Add(interval)
 		nextKick = formatHumanTime(next)
 		nextKickAt = next.UTC().Format(time.RFC3339)
 		nextKickIn = formatETA(time.Until(next))
@@ -1919,6 +2209,44 @@ func cloneStringStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func governorStatusEvalInterval(cfg *config.Config, apiBudget ...map[string]any) time.Duration {
+	if cfg == nil || cfg.Governor.EvalIntervalS <= 0 {
+		return 0
+	}
+	base := cfg.Governor.EvalIntervalS
+	effective := base
+	switch governorAPIBudgetMode(apiBudget...) {
+	case "critical":
+		effective = base * 4
+	case "conserve":
+		multiplier := cfg.Governor.ConserveIntervalMultiplier
+		if multiplier < 1 {
+			multiplier = 2
+		}
+		effective = base * multiplier
+	}
+	if cfg.Governor.EvalIntervalMaxS > 0 && effective > cfg.Governor.EvalIntervalMaxS {
+		effective = cfg.Governor.EvalIntervalMaxS
+	}
+	if cfg.Governor.EvalIntervalWebhookS > effective && github.WebhookModeSnapshot().Mode == github.WebhookModeWebhook {
+		effective = cfg.Governor.EvalIntervalWebhookS
+		if cfg.Governor.EvalIntervalMaxS > 0 && effective > cfg.Governor.EvalIntervalMaxS {
+			effective = cfg.Governor.EvalIntervalMaxS
+		}
+	}
+	return time.Duration(effective) * time.Second
+}
+
+func governorAPIBudgetMode(apiBudget ...map[string]any) string {
+	if len(apiBudget) == 0 || apiBudget[0] == nil {
+		return ""
+	}
+	if mode, _ := apiBudget[0]["mode"].(string); mode != "" {
+		return strings.ToLower(mode)
+	}
+	return ""
 }
 
 func buildTokens(collector *tokens.Collector) FrontendTokens {
@@ -2034,7 +2362,124 @@ func resolveAgentModels(sessions []tokens.SessionSummary) map[string]string {
 	return out
 }
 
+// forgeOpenCounter is the slice of *forgestate.Counts buildRepos reads: the
+// cache's open issue / PR totals per repo (hivecommons/hive#13376).
+type forgeOpenCounter interface {
+	Open(repo string) (forgestate.OpenCounts, bool)
+	OpenItems(repo string) (forgestate.Snapshot, bool)
+}
+
+// restartRefreshInfo reports the post-restart window: the published
+// snapshot is the one this process restored from disk (RestoredAt set,
+// cmd/hive bootCollectors) and is still marked stale because no
+// enumeration has replaced it. Nil otherwise, including once the first
+// enumeration publishes a fresh result (which carries no RestoredAt), so
+// the Overview's "refreshing after restart" wording clears with the stale
+// badge. The repo tally counts unpaused configured repos whose counts are
+// not stale, so the banner can say "N/M repos scanned".
+func restartRefreshInfo(actionable *github.ActionableResult, repos []FrontendRepo) *FrontendRestartRefresh {
+	if actionable == nil || !actionable.Stale() || actionable.RestoredAt.IsZero() {
+		return nil
+	}
+	out := &FrontendRestartRefresh{RestoredAt: actionable.RestoredAt.UTC().Format(time.RFC3339)}
+	if !actionable.GeneratedAt.IsZero() {
+		out.SnapshotAt = actionable.GeneratedAt.UTC().Format(time.RFC3339)
+	}
+	for _, r := range repos {
+		if r.Paused {
+			continue
+		}
+		out.ReposTotal++
+		if !r.CountsStale {
+			out.ReposScanned++
+		}
+	}
+	return out
+}
+
+// overviewStaleSince is the earliest countsStaleSince over repos, or "" when
+// no repo is serving last-good counts. The Overview shows it as "stale since
+// <t>" instead of zeros, and KPI history skips the snapshot.
+func overviewStaleSince(repos []FrontendRepo) string {
+	earliest := ""
+	for _, r := range repos {
+		if !r.CountsStale || r.CountsStaleSince == "" {
+			continue
+		}
+		if earliest == "" || r.CountsStaleSince < earliest {
+			earliest = r.CountsStaleSince
+		}
+	}
+	return earliest
+}
+
+// applyForgeOpenCounts overlays the forgestate cache's open totals on r. The
+// cache is authoritative for how many issues and PRs are open: the
+// enumeration's TotalByRepo is its own (possibly refused) listing, while the
+// cache keeps last-good items through a 403 and removes closed ones on their
+// webhook. When the enumeration classified fewer items than the cache holds,
+// the difference lands in the breakdown's Other bucket so the Overview's
+// partition still sums to the total; the cache can never lower a bucket the
+// enumeration actually saw. A repo whose cache is not ready yet is left as
+// the enumeration reported it.
+func applyForgeOpenCounts(r *FrontendRepo, open forgestate.OpenCounts) bool {
+	if !open.Ready {
+		return false
+	}
+	r.Issues = open.Issues
+	r.PRs = open.PRs
+	if r.WorkBreakdown != nil {
+		wb := *r.WorkBreakdown
+		classified := wb.Issues.Total() - wb.Issues.Other
+		wb.Issues.Other = max(0, open.Issues-classified)
+		classified = wb.PRs.Total() - wb.PRs.Other
+		wb.PRs.Other = max(0, open.PRs-classified)
+		r.WorkBreakdown = &wb
+	}
+	r.CountsIncomplete = false
+	if open.Stale {
+		r.CountsStale = true
+		if !open.StaleSince.IsZero() {
+			r.CountsStaleSince = earliestRFC3339(r.CountsStaleSince, open.StaleSince.UTC().Format(time.RFC3339))
+		}
+	}
+	return true
+}
+
+// earliestRFC3339 returns the earlier of two RFC 3339 timestamps, ignoring
+// empty ones; RFC 3339 UTC strings order lexically.
+func earliestRFC3339(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	case b < a:
+		return b
+	default:
+		return a
+	}
+}
+
+// repoForge returns the forge kind repo's card carries and, for GitLab and
+// Gitea/Forgejo, the instance web root its links point at. A
+// per-repo forge / forge_url policy wins over the project-wide forge, so one
+// card can name a different forge from the rest. GitHub reports no URL:
+// the SPA takes the GitHub host from /api/config, as it always has.
+func repoForge(cfg *config.Config, repo string) (kind, url string) {
+	kind = cfg.ForgeKindForRepo(repo)
+	switch kind {
+	case config.ForgeGitLab, config.ForgeGitea:
+		url = cfg.ForgeURLForRepo(repo)
+	}
+	return kind, strings.TrimRight(url, "/")
+}
+
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
+	return buildReposWithForge(cfg, actionable, govState, nil)
+}
+
+func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult, govState governor.State, forge forgeOpenCounter) []FrontendRepo {
 	repos := make([]FrontendRepo, 0, len(cfg.Project.Repos))
 	repoRows := make(map[string]string, len(cfg.Project.Repos)*2)
 	for _, repoName := range cfg.Project.Repos {
@@ -2057,6 +2502,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 	heldIssuesByRepo := make(map[string][]any)
 	heldPrsByRepo := make(map[string][]any)
 	nonActionableIssuesByRepo := make(map[string][]any)
+	nonActionablePrsByRepo := make(map[string][]any)
 
 	if actionable != nil {
 		for _, issue := range actionable.Issues.Items {
@@ -2091,6 +2537,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			for _, issue := range details.Issues {
 				nonActionableIssuesByRepo[key] = append(nonActionableIssuesByRepo[key], issue)
 			}
+			for _, pr := range details.PRs {
+				nonActionablePrsByRepo[key] = append(nonActionablePrsByRepo[key], pr)
+			}
 		}
 	}
 
@@ -2121,6 +2570,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 				workBreakdown = &breakdown
 			}
 		}
+		forgeKind, forgeURL := repoForge(cfg, repoName)
 
 		r := FrontendRepo{
 			Name:                repoName,
@@ -2134,8 +2584,12 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			HeldIssues:          heldIssuesByRepo[repoName],
 			HeldPrs:             heldPrsByRepo[repoName],
 			NonActionableIssues: nonActionableIssuesByRepo[repoName],
+			NonActionablePrs:    nonActionablePrsByRepo[repoName],
 			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
 			MergeStrategy:       cfg.RepoMergeStrategy(repoName),
+			RequireCurrentBase:  cfg.AutoMerge.RequireCurrentBaseFor(full),
+			Forge:               forgeKind,
+			ForgeURL:            forgeURL,
 		}
 		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a
 		// paused repo keeps its card and its counts. Dropping it here would
@@ -2147,6 +2601,12 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			r.PauseReason = rp.Reason
 			if rp.At != nil && !rp.At.IsZero() {
 				r.PausedAt = rp.At.UTC().Format(time.RFC3339)
+			}
+		}
+		if actionable != nil {
+			if fact := github.RedMainFactFor(actionable.RedMain, full); fact != nil {
+				r.RedMain = fact
+				r.RedMainLine = fact.CardLine()
 			}
 		}
 		watchKey := repoName
@@ -2170,6 +2630,24 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		if actionable != nil && !r.Paused && !countsPresent {
 			r.CountsIncomplete = true
 		}
+		r.ownershipDataMissing = actionable == nil
+		if actionable != nil && slices.Contains(actionable.StaleRepos, repoName) {
+			r.CountsStale = true
+			r.CountsStaleSince = staleSinceRFC3339(actionable)
+		}
+		if forge != nil {
+			if open, ok := forge.Open(full); ok {
+				applyForgeOpenCounts(&r, open)
+			}
+			if snap, ok := forge.OpenItems(full); ok {
+				seedOpenItemsFromForge(&r, full, snap)
+			}
+		}
+		// The item lists are the one source the tile, the sidebar pill and
+		// the activity monitor count from; TotalByRepo and the cache's
+		// totals only contribute the "unlisted" remainder (open_items.go).
+		reconcileRepoOpenItems(&r)
+		markIssuesSyncing(&r, time.Now().UTC().Format(time.RFC3339))
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
 		}
@@ -2184,6 +2662,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 		if r.NonActionableIssues == nil {
 			r.NonActionableIssues = []any{}
+		}
+		if r.NonActionablePrs == nil {
+			r.NonActionablePrs = []any{}
 		}
 		repos = append(repos, r)
 	}
@@ -2312,7 +2793,7 @@ const planningReplanWindow = 24 * time.Hour
 // architectPausedFromStatuses reads the architect's paused state from the
 // already-collected agent statuses, so the PLANNING tile can flag a queue
 // blocked on a paused architect WITHOUT taking the agent-manager lock.
-func architectPausedFromStatuses(statuses map[string]*agent.AgentProcess) bool {
+func architectPausedFromStatuses(statuses map[string]*crux.Process) bool {
 	if ap, ok := statuses[planning.ArchitectAgentName]; ok && ap != nil {
 		return ap.Paused
 	}
@@ -2502,7 +2983,7 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 	return fb
 }
 
-func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess, currentMode string) []FrontendCadence {
+func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*crux.Process, currentMode string) []FrontendCadence {
 	if cfg == nil {
 		return nil
 	}
@@ -2512,7 +2993,7 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 	}
 	sortedNames := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			continue
 		}
 		sortedNames = append(sortedNames, name)
@@ -2823,6 +3304,13 @@ type SystemResources struct {
 	MemPct      float64 `json:"memPct"`
 	CpuPct      float64 `json:"cpuPct"`
 	CpuCores    int     `json:"cpuCores"`
+	// MemLimit, MemLimitBytes and OOMKillCount are the container's own
+	// memory limit and out-of-memory kill count (hivecommons/hive#11945);
+	// see readMemoryEvidence. They are added beside the fields above, which
+	// the web UI reads and which keep their meaning.
+	MemLimit      string `json:"memLimit,omitempty"`
+	MemLimitBytes int64  `json:"memLimitBytes,omitempty"`
+	OOMKillCount  *int64 `json:"oomKillCount,omitempty"`
 }
 
 const (
@@ -2940,6 +3428,9 @@ func collectSystemResources() *SystemResources {
 
 	res.CpuCores = runtime.NumCPU()
 
+	ev := ReadMemoryEvidence()
+	res.MemLimit, res.MemLimitBytes, res.OOMKillCount = ev.Limit, ev.LimitBytes, ev.OOMKills
+
 	return res
 }
 
@@ -3029,50 +3520,11 @@ func roundTo(f float64, decimals int) float64 {
 	return math.Round(f*shift) / shift
 }
 
-var statusTokenRedactor = regexp.MustCompile(`(ghp_|gho_|ghs_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}`)
-var statusJWTRedactor = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}`)
-var statusBearerRedactor = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b`)
-var deviceCodeRedactor = regexp.MustCompile(`(?i)(one-time code:\s*)[A-Z0-9]{4}-[A-Z0-9]{4}`)
-
-var deviceCodeLineRedactor = regexp.MustCompile(`(?m)^.*(?:login/device|Waiting for authorization|one-time code:|Press any key to copy).*$`)
-
-// apiKeyRedactor matches sk-prefixed API keys: real Anthropic keys (sk-ant-…),
-// the per-agent LiteLLM virtual keys hive itself mints (sk-hive-<agent>, see
-// Manager.agentEnv), and the generic OpenAI-style sk-… form.
-//
-// This surface previously redacted only GitHub tokens, so an agent command line
-// carrying ANTHROPIC_API_KEY='sk-hive-…' reached the pane/full-log endpoints in
-// clear text (observed in the #3852 report). That was survivable only by
-// accident: an 80-column pane frequently clipped the key off the end of the
-// line before it was ever captured. Widening the pane for #3878 removes that
-// accidental cover and makes the exposure reliable, so the redaction has to
-// become real. Truncation is not a security control.
-//
-// The {6,} floor keeps the pattern off ordinary prose ("sk-" alone) while still
-// catching short virtual keys such as sk-hive-qa.
-//
-// The leading (^|[^A-Za-z0-9._-]) guard anchors the match to a real token
-// start. Without it the pattern fires INSIDE ordinary identifiers — a module
-// named "task-sk-flow" was rewritten to "task-[redacted]", which would corrupt
-// the very tool-call text this change exists to make readable. A redactor that
-// eats legitimate output is its own bug, so the boundary is asserted by
-// TestRedactTokensPreservesNonSecretText.
-var apiKeyRedactor = regexp.MustCompile(`(^|[^A-Za-z0-9._-])(sk-[A-Za-z0-9._\-]{6,})`)
-
+// redactTokens delegates to crux.RedactPaneTokens (itself a thin seam over
+// pkg/logscrub) so dashboard applies the runtime's identical pane redaction
+// without importing pkg/logscrub directly.
 func redactTokens(s string) string {
-	s = statusJWTRedactor.ReplaceAllString(s, "[REDACTED]")
-	s = statusBearerRedactor.ReplaceAllString(s, "[REDACTED]")
-	s = statusTokenRedactor.ReplaceAllStringFunc(s, func(m string) string {
-		if len(m) > 7 {
-			return m[:7] + "***"
-		}
-		return "***"
-	})
-	// ${1} preserves the boundary character the pattern had to consume.
-	s = apiKeyRedactor.ReplaceAllString(s, "${1}sk-***REDACTED***")
-	s = deviceCodeRedactor.ReplaceAllString(s, "${1}****-****")
-	s = deviceCodeLineRedactor.ReplaceAllString(s, "[auth flow redacted]")
-	return s
+	return crux.RedactPaneTokens(s)
 }
 
 // SetReleaseLineLagProvider registers a function reporting how far the edge
@@ -3114,10 +3566,12 @@ func apiBudgetMap(snapshot github.APIBudgetSnapshot) map[string]any {
 		mode = "normal"
 	}
 	out := map[string]any{
-		"mode":          mode,
-		"remaining":     snapshot.Remaining,
-		"limit":         snapshot.Limit,
-		"skipped_steps": append([]string(nil), snapshot.SkippedSteps...),
+		"mode":             mode,
+		"remaining":        snapshot.Remaining,
+		"limit":            snapshot.Limit,
+		"skipped_steps":    append([]string(nil), snapshot.SkippedSteps...),
+		"unstick_steps":    append([]string(nil), github.APIBudgetUnstickSteps...),
+		"enrichment_steps": append([]string(nil), github.APIBudgetEnrichmentSteps...),
 	}
 	if !snapshot.Reset.IsZero() {
 		out["reset"] = snapshot.Reset.Format(time.RFC3339)
@@ -3136,4 +3590,30 @@ func apiBudgetFromRateLimits(rateLimits map[string]any) map[string]any {
 		return budget
 	}
 	return map[string]any{"mode": "normal", "skipped_steps": []string{}}
+}
+
+// formatSessionAge renders how long the agent's current CLI session has
+// been up (#14842); "" when the launch time is unknown.
+func formatSessionAge(startedAt *time.Time, now time.Time) string {
+	if startedAt == nil || startedAt.IsZero() {
+		return ""
+	}
+	age := now.Sub(*startedAt)
+	if age < 0 {
+		age = 0
+	}
+	if age < time.Minute {
+		return age.Round(time.Second).String()
+	}
+	return age.Round(time.Minute).String()
+}
+
+// effectiveSandboxRuntime is the agent's resolved sandbox.runtime, or ""
+// when the agent is not sandboxed (a non-sandboxed agent has a tmux
+// terminal whatever the global runtime says).
+func effectiveSandboxRuntime(agentCfg config.AgentConfig, cfg *config.Config) string {
+	if !agentCfg.SandboxEnabled(cfg.AgentSandbox) {
+		return ""
+	}
+	return agentCfg.SandboxRuntime(cfg.AgentSandbox)
 }

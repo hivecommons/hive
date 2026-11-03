@@ -32,8 +32,8 @@ func TestOverviewChartCarouselStaticWiring9025(t *testing.T) {
 		"stacked: renderOverviewStacked",
 		"line: renderOverviewLine",
 		"histogram: renderOverviewHistogram",
-		"className: 'overview-issue-' + band",
-		"className: 'overview-pr-' + band",
+		"className: 'overview-issue-' + spec.key",
+		"className: 'overview-pr-' + spec.key",
 		"<title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title>",
 	} {
 		if !strings.Contains(html, want) {

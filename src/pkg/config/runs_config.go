@@ -67,6 +67,10 @@ const (
 	// DefaultTriageMinBodyChars is the minimum useful issue body size before
 	// the run triage pass asks the reporter for more detail.
 	DefaultTriageMinBodyChars = 80
+	// DefaultClarityGateThreshold is the clarity score (0-100) below which
+	// the clarity gate parks an issue and asks its author for acceptance
+	// criteria instead of letting an agent claim it.
+	DefaultClarityGateThreshold = 60
 )
 
 // RunsConfig tunes long-running runs (spec, plan, implement stages on a lease).
@@ -162,6 +166,146 @@ type TriageConfig struct {
 	MinBodyChars int `yaml:"min_body_chars,omitempty" json:"min_body_chars,omitempty"`
 	// ClarifyComment controls posting the one-shot clarification comment. Nil defaults true.
 	ClarifyComment *bool `yaml:"clarify_comment,omitempty" json:"clarify_comment,omitempty"`
+	// ClarityGate parks a human-filed issue whose clarity score is below the
+	// threshold, asking its author concise questions before any agent claims
+	// it. Independent of Enabled. Default off.
+	ClarityGate ClarityGateConfig `yaml:"clarity_gate,omitempty" json:"clarity_gate,omitempty"`
+	// PriorArt parks a human-filed feature / RFC / epic issue when something
+	// that looks like it already exists (a merged PR, a closed issue, a doc,
+	// a setting, a knowledge bead, a code symbol) scores at or above the
+	// threshold, and asks the author to confirm the gap before any agent
+	// claims it. Independent of Enabled. Default on (hivecommons/hive#13575).
+	PriorArt PriorArtGateConfig `yaml:"prior_art,omitempty" json:"prior_art,omitempty"`
+}
+
+// PriorArtGateConfig is runs.triage.prior_art (hivecommons/hive#13575).
+type PriorArtGateConfig struct {
+	// Enabled turns the gate on. Nil defaults true; set false to turn it off.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Threshold is the confidence (0-100) the best finding needs before the
+	// gate parks the issue. Zero or negative means
+	// DefaultPriorArtGateThreshold; values above 100 are read as 100.
+	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+	// MaxFindings caps the findings listed in the park comment. Zero or
+	// negative means DefaultPriorArtGateMaxFindings.
+	MaxFindings int `yaml:"max_findings,omitempty" json:"max_findings,omitempty"`
+	// Kinds are the issue kinds the gate judges, matched against labels
+	// (case-insensitive, `kind/feature` and `feature` both match "feature")
+	// and against a leading `[RFC]` / `RFC:` / `Epic:` title tag. Empty
+	// means DefaultPriorArtGateKinds. Bug reports are never gated.
+	Kinds []string `yaml:"kinds,omitempty" json:"kinds,omitempty"`
+	// MaxParksPerCycle caps how many issues one enumeration cycle may park,
+	// so turning the gate on against a backlog never floods a repo with
+	// comments. Zero or negative means DefaultPriorArtGateMaxParksPerCycle.
+	MaxParksPerCycle int `yaml:"max_parks_per_cycle,omitempty" json:"max_parks_per_cycle,omitempty"`
+	// BotCloseTTL is how long a parked issue filed by a clanker (another
+	// hive, a contributor CLI, an external bot — `author/clanker` or a bot
+	// login) waits for a reply before the resume sweep closes it as
+	// `already-exists`. Human-filed issues are never auto-closed. Zero
+	// means DefaultPriorArtGateBotCloseTTL; negative disables auto-close.
+	BotCloseTTL time.Duration `yaml:"bot_close_ttl,omitempty" json:"bot_close_ttl,omitempty"`
+}
+
+const (
+	// DefaultPriorArtGateThreshold is deliberately high: the gate parks an
+	// issue on its author, so a false positive costs a person a round trip.
+	// 70 means the best finding covers roughly three quarters of the
+	// issue's weighted key terms, including at least one from the title.
+	DefaultPriorArtGateThreshold = 70
+	// DefaultPriorArtGateMaxFindings bounds the park comment.
+	DefaultPriorArtGateMaxFindings = 5
+	// DefaultPriorArtGateMaxParksPerCycle bounds one cycle's parks.
+	DefaultPriorArtGateMaxParksPerCycle = 5
+	// DefaultPriorArtGateBotCloseTTL is how long a clanker-filed park waits
+	// for a reply before it is closed as already existing.
+	DefaultPriorArtGateBotCloseTTL = 72 * time.Hour
+)
+
+// DefaultPriorArtGateKinds are the issue kinds the gate judges when
+// runs.triage.prior_art.kinds is empty.
+var DefaultPriorArtGateKinds = []string{"feature", "rfc", "epic", "enhancement"}
+
+// IsEnabled is Enabled with the nil-means-true default applied.
+func (g PriorArtGateConfig) IsEnabled() bool {
+	return g.Enabled == nil || *g.Enabled
+}
+
+// EffectiveThreshold is Threshold with the default and the 100 cap applied.
+func (g PriorArtGateConfig) EffectiveThreshold() int {
+	switch {
+	case g.Threshold <= 0:
+		return DefaultPriorArtGateThreshold
+	case g.Threshold > 100:
+		return 100
+	default:
+		return g.Threshold
+	}
+}
+
+// EffectiveMaxFindings is MaxFindings with the default applied.
+func (g PriorArtGateConfig) EffectiveMaxFindings() int {
+	if g.MaxFindings <= 0 {
+		return DefaultPriorArtGateMaxFindings
+	}
+	return g.MaxFindings
+}
+
+// EffectiveKinds is Kinds with the default applied, lower-cased and trimmed.
+func (g PriorArtGateConfig) EffectiveKinds() []string {
+	src := g.Kinds
+	if len(src) == 0 {
+		src = DefaultPriorArtGateKinds
+	}
+	out := make([]string, 0, len(src))
+	for _, k := range src {
+		if k = strings.ToLower(strings.TrimSpace(k)); k != "" {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// EffectiveMaxParksPerCycle is MaxParksPerCycle with the default applied.
+func (g PriorArtGateConfig) EffectiveMaxParksPerCycle() int {
+	if g.MaxParksPerCycle <= 0 {
+		return DefaultPriorArtGateMaxParksPerCycle
+	}
+	return g.MaxParksPerCycle
+}
+
+// EffectiveBotCloseTTL is BotCloseTTL with the default applied; zero
+// (auto-close off) when BotCloseTTL is negative.
+func (g PriorArtGateConfig) EffectiveBotCloseTTL() time.Duration {
+	switch {
+	case g.BotCloseTTL == 0:
+		return DefaultPriorArtGateBotCloseTTL
+	case g.BotCloseTTL < 0:
+		return 0
+	default:
+		return g.BotCloseTTL
+	}
+}
+
+// ClarityGateConfig is runs.triage.clarity_gate (hivecommons/hive#13577).
+type ClarityGateConfig struct {
+	// Enabled turns the gate on. Default false.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Threshold is the minimum clarity score (0-100) an issue needs to stay
+	// in the agent queue. Zero or negative means DefaultClarityGateThreshold;
+	// values above 100 are read as 100.
+	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+}
+
+// EffectiveThreshold is Threshold with the default and the 100 cap applied.
+func (g ClarityGateConfig) EffectiveThreshold() int {
+	switch {
+	case g.Threshold <= 0:
+		return DefaultClarityGateThreshold
+	case g.Threshold > 100:
+		return 100
+	default:
+		return g.Threshold
+	}
 }
 
 // SpektacularConfig is the opt-in for the Spektacular stage runner.

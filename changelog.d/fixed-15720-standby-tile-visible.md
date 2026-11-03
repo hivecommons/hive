@@ -1,0 +1,1 @@
+- Show the standby tile ("scanner — paused, out of budget. 1 waiting, 0 qualify." plus its dispatch button) in the Governor section whenever a lane is paused. It used to render only into the compact governor strip, which CSS always hides, so operators could not see or act on paused lanes from the dashboard ([#15720](https://github.com/hivecommons/hive/issues/15720)).

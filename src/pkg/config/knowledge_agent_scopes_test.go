@@ -77,7 +77,9 @@ func TestKnowledgeAgentScopes_DefaultUnrestricted(t *testing.T) {
 
 func TestKnowledgeAgentScope_ReplicaInheritsBase(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{"scanner-2": {ReplicaOf: "scanner"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner-2": {ReplicaOf: "scanner"}},
+		},
 		Knowledge: KnowledgeConfig{AgentScopes: map[string]KnowledgeAgentScope{
 			"scanner":  {Layers: []string{"org"}},
 			"reviewer": {Layers: []string{"project"}},
@@ -129,7 +131,9 @@ func TestConfigValidate_RejectsBadKnowledgeAgentScope(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "acme"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents:  map[string]AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+		},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("baseline config invalid: %v", err)

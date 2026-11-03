@@ -47,8 +47,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/toolapprove"
 	"github.com/hivecommons/hive/pkg/turn"
 )
 
@@ -699,7 +699,7 @@ func tryOwnerGatedBaseSync(ctx context.Context, env *turn.SessionEnvelope, pr *g
 		Kind: turn.OpFollowUpKick, Repo: pr.Repo, Target: "#" + strconv.Itoa(pr.Number), Body: baseSyncKey(pr),
 	}, now)
 	if err := opts.BranchUpdater.UpdateBranchExpectedHead(ctx, pr.Repo, pr.Number, pr.HeadSHA, pr.BaseSHA); err != nil {
-		if updateBranchStaleHead(err) {
+		if github.IsUpdateBranchStaleHead(err) {
 			env.Variables[varBaseSyncStalePrefix+baseHeadKey(pr)] = "1"
 			env.Journal.Settle(key, turn.OpFailed, "", "update-branch stale head; waiting for next PR snapshot", now)
 			return nil, true
@@ -717,18 +717,6 @@ func tryOwnerGatedBaseSync(ctx context.Context, env *turn.SessionEnvelope, pr *g
 	env.Variables[varBaseSyncSuccessPrefix+baseHeadKey(pr)] = "1"
 	env.Journal.Settle(key, turn.OpSucceeded, "update-branch", "", now)
 	return &Outcome{Repo: pr.Repo, Number: pr.Number, Agent: env.Agent.Name, Route: RouteUpdated}, true
-}
-
-func updateBranchStaleHead(err error) bool {
-	if !isUpdateBranch422(err) {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "expected_head_sha") ||
-		strings.Contains(msg, "expected head") ||
-		strings.Contains(msg, "head sha") ||
-		strings.Contains(msg, "head_sha") ||
-		strings.Contains(msg, "does not match")
 }
 
 func updateBranchConflict(err error) bool {

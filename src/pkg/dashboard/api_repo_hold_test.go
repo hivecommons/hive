@@ -179,6 +179,9 @@ func TestRepoItemHoldToggleUpdatesStatusSnapshotAndReturnsFloor(t *testing.T) {
 	if resp.MinStatusSeq != 4 {
 		t.Fatalf("minStatusSeq = %d, want 4", resp.MinStatusSeq)
 	}
+	if resp.Result == nil || resp.Result.Action != rowActionHeld || resp.Result.Target.Number != 7 || resp.Result.Target.Kind != rowActionTargetIssue || resp.Result.Next == "" {
+		t.Fatalf("result = %+v", resp.Result)
+	}
 	if srv.status.StatusSeq != 4 {
 		t.Fatalf("statusSeq = %d, want bumped snapshot seq 4", srv.status.StatusSeq)
 	}

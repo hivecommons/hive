@@ -118,16 +118,19 @@ type gtPRStub struct {
 
 // gtPull is the subset of a Gitea pull request we map onto ChangeRequest.
 type gtPull struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	State     string    `json:"state"`
-	Labels    []gtLabel `json:"labels"`
-	HTMLURL   string    `json:"html_url"`
-	CreatedAt time.Time `json:"created_at"`
-	Draft     bool      `json:"draft"`
-	User      gtUser    `json:"user"`
-	Head      gtBranch  `json:"head"`
-	Base      gtBranch  `json:"base"`
+	Number         int       `json:"number"`
+	Title          string    `json:"title"`
+	State          string    `json:"state"`
+	Labels         []gtLabel `json:"labels"`
+	HTMLURL        string    `json:"html_url"`
+	CreatedAt      time.Time `json:"created_at"`
+	Draft          bool      `json:"draft"`
+	User           gtUser    `json:"user"`
+	Head           gtBranch  `json:"head"`
+	Base           gtBranch  `json:"base"`
+	Merged         bool      `json:"merged"`
+	MergeCommitSHA string    `json:"merge_commit_sha"`
+	MergedCommitID string    `json:"merged_commit_id"`
 }
 
 // gtBranch is the head/base branch shape on a Gitea pull request.
@@ -354,6 +357,155 @@ func (f *giteaForge) SetHold(ctx context.Context, repo string, number int, hold 
 	return f.RemoveLabel(ctx, repo, number, holdLabel)
 }
 
+// giteaMergeStyles maps forge-neutral merge strategies onto Gitea's "Do"
+// values. It is also the membership test: a strategy absent from this map is
+// refused rather than silently defaulted into a different history shape.
+// Gitea's "rebase-merge" (rebase, then record a merge commit) has no neutral
+// name, so it is reachable only by its Gitea spelling.
+var giteaMergeStyles = map[string]string{
+	"":                          "merge",
+	string(MergeStrategySquash): "squash",
+	string(MergeStrategyMerge):  "merge",
+	string(MergeStrategyRebase): "rebase",
+	"rebase-merge":              "rebase-merge",
+}
+
+// giteaMergePayload is the JSON request body sent to POST /repos/{owner}/{repo}/pulls/{number}/merge.
+type giteaMergePayload struct {
+	Do                     string `json:"Do"`
+	HeadCommitID           string `json:"head_commit_id,omitempty"`
+	DeleteBranchAfterMerge bool   `json:"delete_branch_after_merge,omitempty"`
+}
+
+// getPull fetches a single pull request by number.
+func (f *giteaForge) getPull(ctx context.Context, owner, name string, number int) (*gtPull, error) {
+	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(name), number)
+	var pr gtPull
+	if err := f.getJSON(ctx, endpoint, nil, &pr); err != nil {
+		return nil, err
+	}
+	return &pr, nil
+}
+
+// Merge integrates a pull request via POST
+// /repos/{owner}/{repo}/pulls/{number}/merge, under the shared Merger contract
+// (merge_contract_test.go): an already-merged change reports ErrAlreadyMerged,
+// the hold gate refuses with ErrHoldActive and a head that is not the commit
+// the caller pinned refuses with ErrConflict — both before the merge endpoint
+// is called — and Gitea's own refusals map onto the same sentinels.
+func (f *giteaForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) error {
+	if strings.TrimSpace(repo) == "" {
+		return fmt.Errorf("gitea: merge: repo is required")
+	}
+	if number <= 0 {
+		return fmt.Errorf("gitea: merge: change number must be > 0 (got %d)", number)
+	}
+	style, ok := giteaMergeStyles[strings.ToLower(strings.TrimSpace(opts.Strategy))]
+	if !ok {
+		return fmt.Errorf("gitea: unsupported merge strategy %q", opts.Strategy)
+	}
+	owner, name := f.ownerRepo(repo)
+	slug := owner + "/" + name
+	pr, err := f.getPull(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("gitea: check pull request %s#%d: %w", slug, number, err)
+	}
+	if pr.Merged {
+		return fmt.Errorf("%w: %s#%d", ErrAlreadyMerged, slug, number)
+	}
+	for _, label := range labelNames(pr.Labels) {
+		if strings.EqualFold(strings.TrimSpace(label), holdLabel) {
+			return fmt.Errorf("%w: %s#%d carries %q", ErrHoldActive, slug, number, label)
+		}
+	}
+	expect := strings.TrimSpace(opts.HeadSHA)
+	if have := pr.Head.SHA; expect != "" && have != "" && !strings.EqualFold(have, expect) {
+		return fmt.Errorf("%w: %s#%d head is %s, caller decided on %s", ErrConflict, slug, number, have, expect)
+	}
+
+	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", url.PathEscape(owner), url.PathEscape(name), number)
+	payload := giteaMergePayload{
+		Do:                     style,
+		HeadCommitID:           expect,
+		DeleteBranchAfterMerge: opts.DeleteBranch,
+	}
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("gitea: encoding merge request: %w", err)
+	}
+	u := f.baseURL + giteaAPIPath + endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(buf))
+	if err != nil {
+		return fmt.Errorf("gitea: building merge request: %w", err)
+	}
+	f.setAuth(req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := f.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("gitea: request to %s: %w", endpoint, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	data, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+
+	if resp.StatusCode == http.StatusConflict {
+		// Gitea answers 409 for two different things: a stale head_commit_id
+		// is {"message":"head out of date"}, while a merge/rebase conflict is
+		// a bare ErrMergeConflicts object (Style/StdOut/StdErr/Err) with no
+		// "message" key at all. Both are ErrConflict under this contract, so
+		// the distinction only shapes the message — but it must not be guessed
+		// from "was a pin supplied", which reported every real conflict as a
+		// moved head.
+		var errResp struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(data, &errResp)
+		msg := errResp.Message
+		if msg == "" {
+			msg = truncate(string(data), 200)
+		}
+		detail := "merge conflict"
+		if strings.Contains(strings.ToLower(msg), "head out of date") {
+			detail = "head moved past the pinned commit"
+		} else if expect != "" {
+			// Decide on evidence, not on the presence of a pin: re-read the
+			// change and compare. A failed re-read leaves it as a conflict.
+			if updated, err := f.getPull(ctx, owner, name, number); err == nil && updated.Head.SHA != "" && !strings.EqualFold(updated.Head.SHA, expect) {
+				detail = "head moved past the pinned commit"
+			}
+		}
+		return fmt.Errorf("%w: %s#%d: %s: %s", ErrConflict, slug, number, detail, msg)
+	}
+
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		var errResp struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(data, &errResp)
+		msg := errResp.Message
+		if msg == "" {
+			msg = truncate(string(data), 200)
+		}
+		// Gitea reports an already-merged PR as 405 too, either in the message
+		// or only in the change's state, so the state is the deciding evidence.
+		if strings.Contains(strings.ToLower(msg), "already merged") {
+			return fmt.Errorf("%w: %s#%d", ErrAlreadyMerged, slug, number)
+		}
+		if updated, err := f.getPull(ctx, owner, name, number); err == nil && updated.Merged {
+			return fmt.Errorf("%w: %s#%d", ErrAlreadyMerged, slug, number)
+		}
+		return fmt.Errorf("%w: %s#%d: %s", ErrNotMergeable, slug, number, msg)
+	}
+
+	return fmt.Errorf("gitea: API %s returned status %d: %s", endpoint, resp.StatusCode, truncate(string(data), 200))
+}
+
 // giteaPageFunc processes one page body and returns the number of items it
 // contained (used to detect the last page) and an error.
 type giteaPageFunc func(body []byte) (count int, err error)
@@ -494,3 +646,4 @@ func loginNames(users []gtUser) []string {
 
 // Compile-time assertion that the adapter satisfies the interface.
 var _ Forge = (*giteaForge)(nil)
+var _ Merger = (*giteaForge)(nil)

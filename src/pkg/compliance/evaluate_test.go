@@ -31,6 +31,8 @@ func TestEvaluators(t *testing.T) {
 		{"non_empty meets", EvalNonEmpty, []string{"a", "b"}, recNonEmpty, StatusMeets, "a; b"},
 		{"non_empty off", EvalNonEmpty, []string{}, recNonEmpty, StatusOff, "none"},
 		{"non_empty nil", EvalNonEmpty, nil, recNonEmpty, StatusOff, "none"},
+		{"non_empty string meets", EvalNonEmpty, "/secrets/backup-key", recNonEmpty, StatusMeets, "/secrets/backup-key"},
+		{"non_empty blank string off", EvalNonEmpty, "  ", recNonEmpty, StatusOff, "none"},
 		{"empty meets", EvalEmpty, []string{}, recNone, StatusMeets, "none"},
 		{"empty deviates", EvalEmpty, []string{"test_removal"}, recNone, StatusDeviates, "test_removal"},
 		{"at_least meets", EvalAtLeast, 365, "365", StatusMeets, "365"},
@@ -78,6 +80,26 @@ func soc2Config() *config.Config {
 	return &config.Config{Compliance: config.ComplianceConfig{Frameworks: []string{"soc2-type2"}}}
 }
 
+// testBackupKeyFile is the key_file path hardenedConfig points at; the
+// TestEvaluateSOC2 readKeyFile stub makes it (and only it) resolvable.
+const testBackupKeyFile = "/test/secrets/backup_encryption_key"
+
+// stubKeyFiles swaps readKeyFile so the named paths resolve to a key and
+// every other path is missing, restoring the real reader on cleanup.
+func stubKeyFiles(t *testing.T, present ...string) {
+	t.Helper()
+	prev := readKeyFile
+	readKeyFile = func(path string) ([]byte, error) {
+		for _, p := range present {
+			if p == path {
+				return []byte("0123abcd\n"), nil
+			}
+		}
+		return nil, os.ErrNotExist
+	}
+	t.Cleanup(func() { readKeyFile = prev })
+}
+
 func hardenedConfig() *config.Config {
 	cfg := soc2Config()
 	cfg.Dashboard.AuthorizedUsers = []string{"alice", "bob:merger", "carol:read"}
@@ -89,6 +111,7 @@ func hardenedConfig() *config.Config {
 	cfg.AgentSandbox.Enabled = true
 	cfg.ToolApproval.Enabled = true
 	cfg.ACMMLevel = intPtr(4)
+	cfg.Governor.Backup.KeyFile = testBackupKeyFile
 	return cfg
 }
 
@@ -107,7 +130,22 @@ func statusByID(statuses []ControlStatus) map[string]Status {
 	return out
 }
 
+func soc2ExpectedStatuses(t *testing.T, covered map[string]Status) map[string]Status {
+	t.Helper()
+	out := make(map[string]Status, len(mustProfile(t, "soc2-type2").Controls))
+	for _, control := range mustProfile(t, "soc2-type2").Controls {
+		if control.NotCovered {
+			out[control.ID] = StatusNotCovered
+		}
+	}
+	for id, status := range covered {
+		out[id] = status
+	}
+	return out
+}
+
 func TestEvaluateSOC2(t *testing.T) {
+	stubKeyFiles(t, testBackupKeyFile)
 	cases := []struct {
 		name   string
 		cfg    *config.Config
@@ -118,25 +156,29 @@ func TestEvaluateSOC2(t *testing.T) {
 			name:   "defaults",
 			cfg:    soc2Config(),
 			getenv: func(string) string { return "" },
-			want: map[string]Status{
-				"CC6.1": StatusOff, "CC6.2": StatusOff, "CC6.3": StatusDeviates, "CC6.4": StatusNotCovered,
-				"CC6.6": StatusOff, "CC6.8": StatusMeets, "CC7.1": StatusDeviates, "CC7.2": StatusDeviates,
-				"CC7.3": StatusMeets, "CC7.4": StatusNotCovered, "CC7.5": StatusNotCovered,
-				"CC8.1": StatusDeviates, "CC9.1": StatusOff, "CC9.2": StatusNotCovered,
-			},
+			want: soc2ExpectedStatuses(t, map[string]Status{
+				"CC4.1": StatusDeviates,
+				"CC6.1": StatusOff, "CC6.2": StatusOff, "CC6.3": StatusDeviates,
+				"CC6.6": StatusOff, "CC6.7": StatusOff, "CC6.8": StatusMeets,
+				"CC7.1": StatusDeviates, "CC7.2": StatusDeviates, "CC7.3": StatusMeets,
+				"CC8.1": StatusDeviates, "CC9.1": StatusOff,
+				"A1.2": StatusOff,
+			}),
 		},
 		{
 			name:   "hardened",
 			cfg:    hardenedConfig(),
 			getenv: injectOn,
-			want: map[string]Status{
-				"CC6.1": StatusMeets, "CC6.2": StatusMeets, "CC6.3": StatusMeets, "CC6.4": StatusNotCovered,
-				"CC6.6": StatusMeets, "CC6.8": StatusMeets, "CC7.1": StatusMeets,
+			want: soc2ExpectedStatuses(t, map[string]Status{
+				"CC4.1": StatusMeets,
+				"CC6.1": StatusMeets, "CC6.2": StatusMeets, "CC6.3": StatusMeets,
+				"CC6.6": StatusMeets, "CC6.7": StatusMeets, "CC6.8": StatusMeets,
+				"CC7.1": StatusMeets,
 				// Audit retention is fixed at 90 days until #11077 makes it configurable.
 				"CC7.2": StatusDeviates,
-				"CC7.3": StatusMeets, "CC7.4": StatusNotCovered, "CC7.5": StatusNotCovered,
-				"CC8.1": StatusMeets, "CC9.1": StatusMeets, "CC9.2": StatusNotCovered,
-			},
+				"CC7.3": StatusMeets, "CC8.1": StatusMeets, "CC9.1": StatusMeets,
+				"A1.2": StatusMeets,
+			}),
 		},
 		{
 			name: "risky",
@@ -151,12 +193,14 @@ func TestEvaluateSOC2(t *testing.T) {
 				return c
 			}(),
 			getenv: injectOn,
-			want: map[string]Status{
-				"CC6.1": StatusDeviates, "CC6.2": StatusMeets, "CC6.3": StatusDeviates, "CC6.4": StatusNotCovered,
-				"CC6.6": StatusMeets, "CC6.8": StatusDeviates, "CC7.1": StatusDeviates, "CC7.2": StatusDeviates,
-				"CC7.3": StatusDeviates, "CC7.4": StatusNotCovered, "CC7.5": StatusNotCovered,
-				"CC8.1": StatusDeviates, "CC9.1": StatusDeviates, "CC9.2": StatusNotCovered,
-			},
+			want: soc2ExpectedStatuses(t, map[string]Status{
+				"CC4.1": StatusDeviates,
+				"CC6.1": StatusDeviates, "CC6.2": StatusMeets, "CC6.3": StatusDeviates,
+				"CC6.6": StatusMeets, "CC6.7": StatusMeets, "CC6.8": StatusDeviates,
+				"CC7.1": StatusDeviates, "CC7.2": StatusDeviates, "CC7.3": StatusDeviates,
+				"CC8.1": StatusDeviates, "CC9.1": StatusDeviates,
+				"A1.2": StatusMeets,
+			}),
 		},
 	}
 	for _, tc := range cases {
@@ -173,6 +217,71 @@ func TestEvaluateSOC2(t *testing.T) {
 						t.Errorf("unexpected control %s", id)
 					}
 				}
+			}
+		})
+	}
+}
+
+// TestBackupKeySourceFollowsResolution pins A1.2 to the key source the
+// backup path actually resolves, not the raw key_file setting.
+func TestBackupKeySourceFollowsResolution(t *testing.T) {
+	a12 := func(cfg *config.Config, getenv func(string) string) (Status, string) {
+		for _, cs := range EvaluateWith(cfg, getenv) {
+			if cs.ControlID != "A1.2" {
+				continue
+			}
+			if len(cs.Settings) != 1 {
+				t.Fatalf("A1.2 settings = %d, want 1", len(cs.Settings))
+			}
+			return cs.Status, cs.Settings[0].Current
+		}
+		t.Fatal("A1.2 not evaluated")
+		return "", ""
+	}
+	noEnv := func(string) string { return "" }
+	backupEnv := func(name string) string {
+		if name == config.BackupKeyEnv {
+			return "0123abcd"
+		}
+		return ""
+	}
+	altEnv := func(name string) string {
+		if name == "HIVE_ALT_BACKUP_KEY" {
+			return "0123abcd"
+		}
+		return ""
+	}
+	cases := []struct {
+		name       string
+		keyFile    string
+		keyEnv     string
+		present    []string
+		getenv     func(string) string
+		wantStatus Status
+		wantSource string
+	}{
+		{"unset everywhere is off", "", "", nil, noEnv, StatusOff, recNone},
+		{"key_file pointing at a missing file is off", testBackupKeyFile, "", nil, noEnv, StatusOff, recNone},
+		{"key_file present meets", testBackupKeyFile, "", []string{testBackupKeyFile}, noEnv, StatusMeets, "file:" + testBackupKeyFile},
+		{"default Secret mount meets with key_file unset", "", "", []string{config.DefaultBackupKeyFile}, noEnv, StatusMeets, "file:" + config.DefaultBackupKeyFile},
+		{"dashboard-written PVC file meets with key_file unset", "", "", []string{config.WritableBackupKeyFile}, noEnv, StatusMeets, "file:" + config.WritableBackupKeyFile},
+		{"HIVE_BACKUP_KEY fallback meets with key_file unset", "", "", nil, backupEnv, StatusMeets, "env:" + config.BackupKeyEnv},
+		{"HIVE_BACKUP_KEY fallback meets with key_file missing", testBackupKeyFile, "", nil, backupEnv, StatusMeets, "env:" + config.BackupKeyEnv},
+		{"key_env fallback meets", "", "HIVE_ALT_BACKUP_KEY", nil, altEnv, StatusMeets, "env:HIVE_ALT_BACKUP_KEY"},
+		{"nil getenv falls back safely", "", "", nil, nil, StatusOff, recNone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stubKeyFiles(t, tc.present...)
+			cfg := soc2Config()
+			cfg.Governor.Backup.KeyFile = tc.keyFile
+			cfg.Governor.Backup.KeyEnv = tc.keyEnv
+			status, current := a12(cfg, tc.getenv)
+			if status != tc.wantStatus {
+				t.Errorf("A1.2 status = %s, want %s", status, tc.wantStatus)
+			}
+			if current != tc.wantSource {
+				t.Errorf("A1.2 current = %q, want %q", current, tc.wantSource)
 			}
 		})
 	}
@@ -262,6 +371,7 @@ func TestSummarize(t *testing.T) {
 }
 
 func TestBuildReport(t *testing.T) {
+	stubKeyFiles(t, testBackupKeyFile)
 	cfg := hardenedConfig()
 	cfg.Compliance.Frameworks = append(cfg.Compliance.Frameworks, "not-shipped")
 	r := BuildReport(cfg, injectOn)
@@ -277,8 +387,14 @@ func TestBuildReport(t *testing.T) {
 	if r.PostureCheckInterval != "1h0m0s" || r.PostureChecksPending || r.PostureChecksTracking != "" || r.ProfileLoadError != "" {
 		t.Fatalf("report meta = %+v", r)
 	}
-	if r.Summary != Summarize(r.Controls) || r.Summary.NotCovered != 4 {
-		t.Fatalf("summary = %+v", r.Summary)
+	wantNotCovered := 0
+	for _, c := range mustProfile(t, "soc2-type2").Controls {
+		if c.NotCovered {
+			wantNotCovered++
+		}
+	}
+	if r.Summary != Summarize(r.Controls) || r.Summary.NotCovered != wantNotCovered || r.Summary.Off != 0 {
+		t.Fatalf("summary = %+v, want not_covered=%d off=0", r.Summary, wantNotCovered)
 	}
 	empty := BuildReport(nil, nil)
 	if empty.Controls == nil || empty.Frameworks == nil || len(empty.Controls) != 0 {

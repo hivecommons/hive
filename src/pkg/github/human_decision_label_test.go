@@ -2,9 +2,12 @@ package github
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // The label is borrowed, never minted: a hive reviews other people's repos, so
@@ -47,8 +50,60 @@ func TestApplyHumanDecisionLabel_MissingLabelIsNotCreated(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, "acme", []string{"widget"})
-	if err := c.ApplyHumanDecisionLabel(context.Background(), "acme/widget", 42, "typo-queue"); err == nil {
-		t.Fatal("expected a reported error so the caller can log the botched name")
+	err := c.ApplyHumanDecisionLabel(context.Background(), "acme/widget", 42, "typo-queue")
+	if !errors.Is(err, ErrHumanDecisionLabelMissing) {
+		t.Fatalf("expected a missing-label notice, got %v", err)
+	}
+	var apiErr *gh.ErrorResponse
+	if !errors.As(err, &apiErr) || apiErr.Response.StatusCode != http.StatusNotFound {
+		t.Fatalf("underlying GitHub 404 must remain available, got %v", err)
+	}
+}
+
+func TestApplyHumanDecisionLabel_APIFailuresAreNotMissingLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		lookupStatus int
+		writeStatus  int
+	}{
+		{"lookup forbidden", http.StatusForbidden, 0},
+		{"lookup unavailable", http.StatusServiceUnavailable, 0},
+		{"write not found", http.StatusOK, http.StatusNotFound},
+		{"write forbidden", http.StatusOK, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "GET /repos/acme/widget/labels/queue-triage":
+					w.WriteHeader(tc.lookupStatus)
+				case "POST /repos/acme/widget/issues/42/labels":
+					if tc.writeStatus == 0 {
+						t.Error("must not write after a failed lookup")
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					w.WriteHeader(tc.writeStatus)
+				default:
+					t.Errorf("unexpected API call %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer server.Close()
+			c := newTestClient(t, server, "acme", []string{"widget"})
+			err := c.ApplyHumanDecisionLabel(context.Background(), "acme/widget", 42, "queue-triage")
+			if err == nil || errors.Is(err, ErrHumanDecisionLabelMissing) {
+				t.Fatalf("API failure must remain an error, not a missing-label notice: %v", err)
+			}
+			wantStatus := tc.lookupStatus
+			if tc.writeStatus != 0 {
+				wantStatus = tc.writeStatus
+			}
+			var apiErr *gh.ErrorResponse
+			if !errors.As(err, &apiErr) || apiErr.Response.StatusCode != wantStatus {
+				t.Fatalf("want underlying GitHub status %d, got %v", wantStatus, err)
+			}
+		})
 	}
 }
 

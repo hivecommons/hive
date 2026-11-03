@@ -39,12 +39,12 @@ func TestTimeCadencePausedOffAndCatchUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := timeCadenceGovernor(c, time.Date(2026, 8, 7, 9, 8, 0, 0, time.UTC))
+	g := timeCadenceGovernor(c, time.Date(2026, 8, 7, 9, 31, 0, 0, time.UTC))
 	g.SeedLastKicks(map[string]time.Time{"scanner": time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC)})
 	if due := g.Evaluate(0, 0, 0, 0); len(due) != 1 {
-		t.Fatalf("expected catch-up inside window, got %v", due)
+		t.Fatalf("expected catch-up inside stretched eval window, got %v", due)
 	}
-	g.now = func() time.Time { return time.Date(2026, 8, 7, 9, 11, 0, 0, time.UTC) }
+	g.now = func() time.Time { return time.Date(2026, 8, 7, 9, 46, 0, 0, time.UTC) }
 	if due := g.Evaluate(0, 0, 0, 0); len(due) != 0 {
 		t.Fatalf("expected missed occurrence outside catch-up window to skip, got %v", due)
 	}

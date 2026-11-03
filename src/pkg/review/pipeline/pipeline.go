@@ -129,6 +129,11 @@ type Inputs struct {
 	ReviewLink *ghpkg.ReviewLink
 	// Escalation is the PR's escalation ledger entry, if any.
 	Escalation *escalation.Entry
+	// HoldRelease is the person's release of the review verdict hold the
+	// self-merge sweep recorded for this PR (ghpkg.LoadReviewHoldReleases), if
+	// any. It releases a requires_human or reject verdict recorded before it,
+	// as the sweep does (#12962).
+	HoldRelease *ghpkg.ReviewHoldRelease
 	// FixCycleCap overrides the loop cap when the verdict does not carry one.
 	// Zero means review.DefaultFixCycleCap.
 	FixCycleCap int
@@ -232,12 +237,18 @@ var approvalLabels = []string{ghpkg.AutoMergeQueuedLabel, "approved", escalation
 //  1. merged — merge state is merged or MergedAt is set.
 //  2. abandoned — merge state is closed or ClosedAt is set.
 //  3. human_hold — a hold or needs-human label, the queue's held flag, a
-//     current-head verdict that requires a human or rejects, a dispatch-state
-//     human hold for the head, or an escalated escalation entry.
+//     current-head verdict that requires a human or rejects, an earlier such
+//     verdict no merge-eligible approve has cleared since (a fix push does
+//     not clear it, #12374), a dispatch-state human hold for the head, or an
+//     escalated escalation entry. A person's approving review or
+//     `/hive approve` after the verdict releases a verdict hold and the
+//     dispatch hold that verdict placed on its head, as the self-merge sweep
+//     does (#12962).
 //  4. approved — a merge-eligible approve verdict on the head, an approval
 //     label (lgtm, approved, reviewer-passed), the escalation ledger's
-//     reviewer-passed SHA equal to the head, or an approving hive review on
-//     the head in the review-links ledger.
+//     reviewer-passed SHA equal to the head, an approving hive review on
+//     the head in the review-links ledger, or a person's release of a
+//     requires_human or reject verdict on the head (#12962).
 //  5. fixing — a pending fix dispatched for the head.
 //  6. changes_requested — a changes_requested verdict (or, with no verdict, a
 //     changes-requested hive review) on the head.
@@ -248,6 +259,13 @@ var approvalLabels = []string{ghpkg.AutoMergeQueuedLabel, "approved", escalation
 // A PR that would be fixing or changes_requested with its loop counter at or
 // over the cap is moved to human_hold: another automatic cycle is not coming.
 func Derive(in Inputs) Card {
+	card, _ := derive(in)
+	return card
+}
+
+// derive is Derive that also returns the review-swarm holds behind a
+// human_hold card (ReviewHolds).
+func derive(in Inputs) (Card, []ReviewHold) {
 	pr := in.PR
 	card := Card{
 		Repo:         pr.Repo,
@@ -261,7 +279,7 @@ func Derive(in Inputs) Card {
 		Reasons:      []string{},
 	}
 
-	current, stale := headVerdict(in.Verdicts, pr)
+	current, stale := HeadVerdict(in.Verdicts, pr)
 	pendingReviews := pendingReviewsFor(in.Dispatch, pr)
 	pendingFix := pendingFixFor(in.Dispatch, pr)
 	link := headLink(in.ReviewLink, pr.HeadSHA)
@@ -283,21 +301,22 @@ func Derive(in Inputs) Card {
 		card.Since = in.Merge.MergedAt
 		card.Reasons = append(card.Reasons, "pull request merged")
 		card.NextAction = NextAction{Kind: ActionNone, Label: "Nothing to do", URL: pr.URL}
-		return card
+		return card, nil
 	case strings.EqualFold(in.Merge.State, MergeStateClosed) || !in.Merge.ClosedAt.IsZero():
 		card.Stage = StageAbandoned
 		card.Since = in.Merge.ClosedAt
 		card.Reasons = append(card.Reasons, "pull request closed without merging")
 		card.NextAction = NextAction{Kind: ActionReopen, Label: "Reopen if still wanted", URL: pr.URL}
-		return card
+		return card, nil
 	}
 
-	if reasons, since := holdReasons(in, current, humanHoldFor(in.Dispatch, pr)); len(reasons) > 0 {
+	swarmHolds := reviewSwarmHolds(in, current, humanHoldFor(in.Dispatch, pr))
+	if reasons, since := holdReasons(in, swarmHolds); len(reasons) > 0 {
 		card.Stage = StageHumanHold
 		card.Since = since
 		card.Reasons = append(card.Reasons, reasons...)
 		card.NextAction = NextAction{Kind: ActionHuman, Label: "Human decision needed", URL: pr.URL}
-		return card
+		return card, swarmHolds
 	}
 
 	if reasons, since := approvalReasons(in, current, link); len(reasons) > 0 {
@@ -305,7 +324,7 @@ func Derive(in Inputs) Card {
 		card.Since = since
 		card.Reasons = append(card.Reasons, reasons...)
 		card.NextAction = approvedAction(pr)
-		return card
+		return card, nil
 	}
 
 	switch {
@@ -330,6 +349,13 @@ func Derive(in Inputs) Card {
 		card.Since = earliestDispatch(pendingReviews)
 		card.Reasons = append(card.Reasons, fmt.Sprintf("%d review perspective(s) dispatched for the current head", len(pendingReviews)))
 		card.NextAction = NextAction{Kind: ActionWait, Label: "Wait for reviewers", URL: pr.URL}
+	case current != nil && current.Verdict == review.VerdictIncomplete:
+		// Delivered perspectives all approved; the rest have not reported
+		// and the dispatcher will re-ask for them. Still reviewing, not held.
+		card.Stage = StageReviewing
+		card.Since = current.RecordedAt
+		card.Reasons = append(card.Reasons, current.Reasons...)
+		card.NextAction = NextAction{Kind: ActionWait, Label: "Wait for the missing perspectives", URL: pr.URL}
 	default:
 		card.Stage = StageUnreviewed
 		card.Since = pr.CreatedAt
@@ -344,13 +370,16 @@ func Derive(in Inputs) Card {
 		card.NextAction = NextAction{Kind: ActionReview, Label: "Dispatch review", URL: pr.URL}
 	}
 
+	var holds []ReviewHold
 	if (card.Stage == StageFixing || card.Stage == StageChangesRequested) && card.LoopCount >= card.LoopCap {
-		card.Reasons = append([]string{fmt.Sprintf("fix-cycle cap reached (%d/%d) while %s", card.LoopCount, card.LoopCap, card.Stage)}, card.Reasons...)
+		reason := fmt.Sprintf("fix-cycle cap reached (%d/%d) while %s", card.LoopCount, card.LoopCap, card.Stage)
+		holds = []ReviewHold{{Kind: ReviewHoldLoopCap, Reason: reason, Since: card.Since}}
+		card.Reasons = append([]string{reason}, card.Reasons...)
 		card.Stage = StageHumanHold
 		card.NextAction = NextAction{Kind: ActionHuman, Label: "Human decision needed", URL: pr.URL}
 	}
 	card.LoopWarning = loopWarning(in, card)
-	return card
+	return card, holds
 }
 
 // loopWarning reports the loop-safety state of an open PR that no human has
@@ -390,7 +419,7 @@ func loopWarning(in Inputs, card Card) *LoopWarning {
 	return nil
 }
 
-func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewHold) ([]string, time.Time) {
+func holdReasons(in Inputs, swarm []ReviewHold) ([]string, time.Time) {
 	var reasons []string
 	var since time.Time
 	for _, l := range in.PR.Labels {
@@ -401,20 +430,10 @@ func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewH
 	if in.PR.Held && len(reasons) == 0 {
 		reasons = append(reasons, "held in the review queue")
 	}
-	if current != nil {
-		switch {
-		case current.Verdict == review.VerdictReject:
-			reasons = append(reasons, "review verdict rejects the current head")
-			since = current.RecordedAt
-		case current.RequiresHuman || current.Verdict == review.VerdictRequiresHuman:
-			reasons = append(reasons, "review verdict requires a human")
-			since = current.RecordedAt
-		}
-	}
-	if hold != nil {
-		reasons = append(reasons, "review dispatch parked for a human: "+nonEmpty(hold.Reason, "no reason recorded"))
+	for _, h := range swarm {
+		reasons = append(reasons, h.Reason)
 		if since.IsZero() {
-			since = hold.UpdatedAt
+			since = h.Since
 		}
 	}
 	if e := in.Escalation; e != nil && e.Escalated {
@@ -424,6 +443,12 @@ func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewH
 		}
 	}
 	return reasons, since
+}
+
+// RequiresHuman reports whether a verdict asks for a human decision; on the
+// current head it places the PR in human_hold.
+func RequiresHuman(a *review.Aggregate) bool {
+	return a != nil && (a.RequiresHuman || a.Verdict == review.VerdictRequiresHuman)
 }
 
 func approvalReasons(in Inputs, current *review.Aggregate, link *ghpkg.ReviewLink) ([]string, time.Time) {
@@ -438,6 +463,12 @@ func approvalReasons(in Inputs, current *review.Aggregate, link *ghpkg.ReviewLin
 			if strings.EqualFold(l, want) {
 				reasons = append(reasons, fmt.Sprintf("label %q", l))
 			}
+		}
+	}
+	if r := in.HoldRelease; r != nil && blocksOnHead(current) && ghpkg.ReleasesRecordedReviewHold(current.HeadSHA, current.FirstRecorded(), *r) {
+		reasons = append(reasons, fmt.Sprintf("review verdict hold released by @%s", r.By))
+		if since.IsZero() {
+			since = r.At
 		}
 	}
 	if e := in.Escalation; e != nil && e.ReviewerPassedSHA != "" && e.ReviewerPassedSHA == in.PR.HeadSHA {
@@ -509,9 +540,10 @@ func samePR(repo string, number int, pr ghpkg.ReviewQueueEntry) bool {
 	return number == pr.Number && SameRepo(repo, pr.Repo)
 }
 
-// headVerdict returns the most recent verdict on the PR's head, or (when
-// there is none) the most recent verdict on an older head.
-func headVerdict(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (current, stale *review.Aggregate) {
+// HeadVerdict returns the most recent verdict on the PR's head, or (when
+// there is none) the most recent verdict on an older head. The dashboard's
+// your-turn decision reads the current head the same way (#12329).
+func HeadVerdict(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (current, stale *review.Aggregate) {
 	for i := range items {
 		a := &items[i]
 		if !samePR(a.Repo, a.Number, pr) {

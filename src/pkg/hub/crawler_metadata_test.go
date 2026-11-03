@@ -34,15 +34,14 @@ func TestHubLandingCrawlerMetadata(t *testing.T) {
 }
 
 func TestHubCrawlerTextEndpoints(t *testing.T) {
-	for _, name := range []string{"static/robots.txt", "static/sitemap.xml", "static/llms.txt"} {
+	// robots.txt is generated per host by handleRobotsTxt (robots_test.go), not
+	// embedded; the sitemap and llms.txt remain static documents.
+	for _, name := range []string{"static/sitemap.xml", "static/llms.txt"} {
 		b, err := fs.ReadFile(staticFS, name)
 		if err != nil {
 			t.Fatalf("%s missing from embedded static FS: %v", name, err)
 		}
 		text := string(b)
-		if name == "static/robots.txt" && !strings.Contains(text, "Sitemap: https://hive.hivecommons.dev/sitemap.xml") {
-			t.Fatalf("robots.txt missing sitemap pointer: %q", text)
-		}
 		if name == "static/llms.txt" {
 			for _, want := range []string{"Claude Code", "Spektacular (Spek)", "speks", "vLLM", "Akamai (Linode)", "Bluehost"} {
 				if !strings.Contains(text, want) {

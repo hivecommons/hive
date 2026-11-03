@@ -1,1 +1,0 @@
-- Show stable-channel next-update status on spoke and hub dashboards, including an explicit none-queued state when stable is current.

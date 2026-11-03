@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -54,6 +55,18 @@ const (
 	// like ReviewerPassedLabel; the kick contract instructs the reviewer to
 	// add the label alongside the recommend-close comment.
 	ReviewerRecommendCloseLabel = "reviewer-recommend-close"
+
+	// ReviewerHandoffLabel marks a PR on which the reviewer has delivered a
+	// HAND-OFF verdict: the change is fine, but only a maintainer can unblock
+	// it (a workflow dispatch, a secret, a cache rebuild). needs-human stays in
+	// place and the verdict comment's first line names the maintainer's next
+	// step. The dashboard reads the label to make the PR your turn at once
+	// instead of waiting out the adjudicator timeout (hivecommons/hive#13183),
+	// and the work-list builder excludes labeled rows like the other verdicts.
+	ReviewerHandoffLabel = "reviewer-handoff"
+
+	// ReviewerHandoffNextStepPrefix opens a HAND-OFF verdict comment.
+	ReviewerHandoffNextStepPrefix = "**Next step for a maintainer:**"
 
 	// reviewerLaneTemplate is the shipped kick template for the reviewer LANE
 	// (kubestellar/hive#5617 item 2). It is deliberately a different file from
@@ -122,6 +135,68 @@ func (s *Scheduler) reviewerLaneGate() (level int, workList, idleReason string) 
 	return level, workList, ""
 }
 
+// ReviewerLaneIdleReason reports why the governor will not kick agentName
+// right now because its reviewer lane has nothing to do: reviewerLaneGate's
+// idle reason ("nothing to adjudicate", or the dormant-below-ACMM notice).
+// It is "" unless agentName's kick would actually route to the reviewer lane,
+// so the watchdog's not-producing gate (#11910) asks exactly the question the
+// scheduled-kick skip answers (#11046) and no other agent is excused.
+func (s *Scheduler) ReviewerLaneIdleReason(agentName string) string {
+	if !s.routesToReviewerLane(agentName) {
+		return ""
+	}
+	_, _, idleReason := s.reviewerLaneGate()
+	return idleReason
+}
+
+// ReviewerLaneQueuedWork reports how many escalated PRs await agentName in
+// its reviewer lane, using the same routing and gates as ReviewerLaneIdleReason.
+// nil means the agent's kick does not route to the reviewer lane, so its lane
+// depth is unknown here.
+func (s *Scheduler) ReviewerLaneQueuedWork(agentName string) *int {
+	if !s.routesToReviewerLane(agentName) {
+		return nil
+	}
+	n := 0
+	if level, _, idleReason := s.reviewerLaneGate(); idleReason == "" && level >= reviewerLaneMinACMMLevel {
+		if data, err := os.ReadFile(ciFailingPath); err == nil {
+			n = len(reviewerWorkRows(data))
+		}
+	}
+	return &n
+}
+
+// routesToReviewerLane mirrors buildAgentMessage's resolution chain without
+// its logging: a reviewer-role agent reaches the lane only when no prompt
+// source, config kick_template, ACMM pack template, or convention template
+// resolves first. A configured prompt_source is treated as resolving — it
+// cannot be checked without a network fetch, and the conservative answer
+// keeps the watchdog's alert rather than excusing the agent.
+func (s *Scheduler) routesToReviewerLane(agentName string) bool {
+	if s.agentRole(agentName) != RoleReviewer {
+		return false
+	}
+	baseName := s.cfg.BaseAgentName(agentName)
+	if agentCfg, ok := s.cfg.Agents[baseName]; ok {
+		if agentCfg.PromptSource.IsSet() && s.gitHubPromptResolver() != nil {
+			return false
+		}
+		if agentCfg.KickTemplate != "" && s.loadNamedTemplate(agentCfg.KickTemplate) != "" {
+			return false
+		}
+	}
+	if s.cfg.ACMMLevel != nil && *s.cfg.ACMMLevel > 0 {
+		if pack, err := config.ACMMPackByLevel(*s.cfg.ACMMLevel); err == nil {
+			for _, pa := range pack.Agents {
+				if pa.Name == baseName && pa.KickTemplate != "" && s.loadNamedTemplate(pa.KickTemplate) != "" {
+					return false
+				}
+			}
+		}
+	}
+	return s.loadPromptTemplate(baseName) == ""
+}
+
 // buildReviewerMessage is the hardcoded-fallback kick for reviewer-role
 // agents, mirroring buildQualityMessage's structure. It renders the escalated
 // hive-authored PR work list (from ci-failing.json) and the adjudication
@@ -188,6 +263,8 @@ func (s *Scheduler) renderReviewerLaneTemplate(agentName string, actionable *git
 		"REVIEWER_MAX_PRS":               func() string { return fmt.Sprintf("%d", reviewerMaxPRsPerKick) },
 		"REVIEWER_PASSED_LABEL":          func() string { return ReviewerPassedLabel },
 		"REVIEWER_RECOMMEND_CLOSE_LABEL": func() string { return ReviewerRecommendCloseLabel },
+		"REVIEWER_HANDOFF_LABEL":         func() string { return ReviewerHandoffLabel },
+		"REVIEWER_HANDOFF_PREFIX":        func() string { return ReviewerHandoffNextStepPrefix },
 		"REVIEWER_CLOSE_AUTHORITY":       func() string { return reviewerCloseAuthority(level) },
 	}
 	body, failClosed := s.substituteTemplateWithVars(tmpl, actionable, agentName, nil, extra)
@@ -249,6 +326,16 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 		b.WriteString(fmt.Sprintf("     ⛔ NEVER close the PR yourself: closing is operator-only below ACMM level %d.\n", reviewerCloseACMMLevel))
 		b.WriteString("     The audited recommendation is your entire verdict; leave needs-human in place.\n")
 	}
+	b.WriteString("  4. HAND-OFF — the change is fine, but only a maintainer can unblock it (a\n")
+	b.WriteString("     workflow dispatch with maintainer-only inputs, a secret, a stale shared cache\n")
+	b.WriteString("     rebuild, a repository setting): complete the mandatory audit below using its\n")
+	b.WriteString("     hand-off review body, leave needs-human in place, then mark the verdict\n")
+	b.WriteString("     delivered so the maintainer is told now rather than after a timeout\n")
+	b.WriteString("     (the label is created first because a missing label fails the whole edit):\n")
+	b.WriteString(fmt.Sprintf("        gh label create %s --repo <owner/repo> --description \"Adjudicator handed this PR to a maintainer\" --color d93f0b || true\n", ReviewerHandoffLabel))
+	b.WriteString(fmt.Sprintf("        gh pr edit <number> --add-label %s\n", ReviewerHandoffLabel))
+	b.WriteString("  ⛔ There is NO other verdict (no HOLD, no WAIT): a verdict without its label is\n")
+	b.WriteString("     invisible to Hive and leaves the PR waiting on nobody.\n")
 
 	b.WriteString("\nMANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or closing:\n")
 	b.WriteString("  1. Submit a comment review through Hive's relay so the adjudication is attributed\n")
@@ -257,6 +344,14 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 	b.WriteString("          hive-review <number> --repo <owner/repo> --comment --body \"Reviewer adjudication: <REPAIR|DE-ESCALATE> — evidence: <why>; changes: <what>; tests: <commands/results>; remaining risk: <risk or none>\"\n")
 	b.WriteString("        RECOMMEND-CLOSE (this is the one close-recommend record; do not post a second comment):\n")
 	b.WriteString("          hive-review <number> --repo <owner/repo> --comment --body \"[reviewer] recommend close: <duplicate/superseded/lossy rationale>; evidence: <why>; tests: <checks>; remaining risk: <risk or none>\"\n")
+	b.WriteString("        HAND-OFF (this is the one hand-off record; do not post a second comment). The body's\n")
+	b.WriteString(fmt.Sprintf("        FIRST line is a single `%s <one concrete action>` line, e.g.\n", ReviewerHandoffNextStepPrefix))
+	b.WriteString("        \"Run Build And Promote Main Image with rebuild_akmods=true, then rerun checks\":\n")
+	b.WriteString(fmt.Sprintf("          hive-review <number> --repo <owner/repo> --comment --body \"%s <one concrete action>\n", ReviewerHandoffNextStepPrefix))
+	b.WriteString("\n")
+	b.WriteString("          Reviewer adjudication: HAND-OFF — evidence: <why only a maintainer can act>; remaining risk: <risk or none>\n")
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("          When the step is done, a trusted merger replies /hive approve: Hive lifts its own needs-human, removes %s and adds %s; a needs-human a person added is removed by hand.\"\n", ReviewerHandoffLabel, ReviewerPassedLabel))
 	b.WriteString("     `hive-review` is asynchronous: poll the `.result.json` path it prints and do\n")
 	b.WriteString("     not proceed until that file reports `\"ok\": true`. A queued request is not yet\n")
 	b.WriteString("     an audit record; an error result must leave the PR in `needs-human`.\n")
@@ -264,6 +359,16 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 	b.WriteString(fmt.Sprintf("        bd create --title \"Reviewer adjudication: <owner/repo>#<number> — <outcome>\" --type advisory --priority 2 --actor %s --external-ref \"gh-<owner/repo>#<number>\"\n", agentName))
 	b.WriteString("     If either record fails, leave `needs-human` in place, do not add a reviewer verdict\n")
 	b.WriteString("     label, and do not close; report the audit failure for a later retry.\n")
+
+	b.WriteString("\n## After You Push: Do Not Wait for CI (MANDATORY)\n\n")
+	b.WriteString("Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on\n")
+	b.WriteString("CI** — no `gh run watch`, no `gh run view` loops, no repeated `gh pr checks`,\n")
+	b.WriteString("`gh pr view --json statusCheckRollup`, or `gh pr status`. If you repaired or\n")
+	b.WriteString("pushed to a PR, that ends your work on it for this kick; the automerge sweep\n")
+	b.WriteString("merges it the moment its checks are green. The budget is per KICK, not per PR:\n")
+	b.WriteString("at most **two** CI-status commands in total across every PR on the list, and\n")
+	b.WriteString("none once the kick is ten minutes old — the harness nudges you past either\n")
+	b.WriteString("line. Move to the next PR instead.\n")
 
 	b.WriteString("\nINVARIANTS:\n")
 	b.WriteString(fmt.Sprintf("  ⛔ Adjudicate AT MOST %d PRs this kick, oldest first — the list above is\n", reviewerMaxPRsPerKick))
@@ -290,39 +395,30 @@ func (s *Scheduler) buildReviewerWorkList() string {
 	return formatReviewerWorkList(data)
 }
 
-// formatReviewerWorkList renders the reviewer work list from raw
-// ci-failing.json bytes: the escalated rows of "ci_failing" plus the
-// "escalated" list, which carries escalated PRs that are NOT red — conflicted
-// (CI never runs), green or pending ones (hivecommons/hive#9477). Without it
-// such a PR dropped out of the lane the moment its checks stopped failing.
-// Rows are ESCALATED hive-authored PRs only —
-// writeMergeEligible builds the file exclusively from the hive's own PR
-// enumeration with per-agent attribution, so every row is hive work; rows
-// whose Labels carry ReviewerPassedLabel or ReviewerRecommendCloseLabel are
-// excluded (one reviewer pass per PR, ever — whatever the verdict was).
-// Output is capped at reviewerMaxPRsPerKick rows, oldest first by the PR's
-// real forge creation time; rows written by a hub that recorded none fall back
-// to the old (repo, number) proxy and sort last (#5617 item 4).
-func formatReviewerWorkList(data []byte) string {
-	type ciFailingRow struct {
-		Number        int       `json:"number"`
-		Repo          string    `json:"repo"`
-		Title         string    `json:"title"`
-		Agent         string    `json:"agent"`
-		Labels        []string  `json:"labels"`
-		FailingChecks []string  `json:"failing_checks"`
-		Excerpt       string    `json:"excerpt"`
-		Escalated     bool      `json:"escalated"`
-		CreatedAt     time.Time `json:"created_at"`
-		Mergeable     string    `json:"mergeable"`
-		CIStatus      string    `json:"ci_status"`
-	}
+type ciFailingRow struct {
+	Number        int       `json:"number"`
+	Repo          string    `json:"repo"`
+	Title         string    `json:"title"`
+	Agent         string    `json:"agent"`
+	Labels        []string  `json:"labels"`
+	FailingChecks []string  `json:"failing_checks"`
+	Excerpt       string    `json:"excerpt"`
+	Escalated     bool      `json:"escalated"`
+	CreatedAt     time.Time `json:"created_at"`
+	Mergeable     string    `json:"mergeable"`
+	CIStatus      string    `json:"ci_status"`
+}
+
+// reviewerWorkRows returns the adjudicable escalated rows of raw
+// ci-failing.json bytes, unsorted; formatReviewerWorkList renders them and
+// ReviewerLaneQueuedWork counts them, so the two cannot disagree.
+func reviewerWorkRows(data []byte) []ciFailingRow {
 	var payload struct {
 		Items     []ciFailingRow `json:"ci_failing"`
 		Escalated []ciFailingRow `json:"escalated"`
 	}
 	if json.Unmarshal(data, &payload) != nil {
-		return ""
+		return nil
 	}
 	var rows []ciFailingRow
 	seen := make(map[string]bool, len(payload.Items)+len(payload.Escalated))
@@ -340,8 +436,9 @@ func formatReviewerWorkList(data []byte) string {
 			// One reviewer pass per PR, ever — for EVERY verdict class:
 			// reviewer-passed covers REPAIR/DE-ESCALATE; recommend-close
 			// covers the below-close-authority verdict whose PR stays open
-			// awaiting an operator (#5511, gap G4).
-			if l == ReviewerPassedLabel || l == ReviewerRecommendCloseLabel {
+			// awaiting an operator (#5511, gap G4); handoff covers the
+			// verdict that hands the PR to a maintainer (#13183).
+			if l == ReviewerPassedLabel || l == ReviewerRecommendCloseLabel || l == ReviewerHandoffLabel {
 				adjudicated = true
 				break
 			}
@@ -351,6 +448,24 @@ func formatReviewerWorkList(data []byte) string {
 		}
 		rows = append(rows, pr)
 	}
+	return rows
+}
+
+// formatReviewerWorkList renders the reviewer work list from raw
+// ci-failing.json bytes: the escalated rows of "ci_failing" plus the
+// "escalated" list, which carries escalated PRs that are NOT red — conflicted
+// (CI never runs), green or pending ones (hivecommons/hive#9477). Without it
+// such a PR dropped out of the lane the moment its checks stopped failing.
+// Rows are ESCALATED hive-authored PRs only —
+// writeMergeEligible builds the file exclusively from the hive's own PR
+// enumeration with per-agent attribution, so every row is hive work; rows
+// whose Labels carry ReviewerPassedLabel, ReviewerRecommendCloseLabel or
+// ReviewerHandoffLabel are excluded (one reviewer pass per PR, ever — whatever the verdict was).
+// Output is capped at reviewerMaxPRsPerKick rows, oldest first by the PR's
+// real forge creation time; rows written by a hub that recorded none fall back
+// to the old (repo, number) proxy and sort last (#5617 item 4).
+func formatReviewerWorkList(data []byte) string {
+	rows := reviewerWorkRows(data)
 	if len(rows) == 0 {
 		return ""
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 )
 
@@ -68,8 +69,8 @@ func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
 	snapshotFile := filepath.Join(snapDir, fmt.Sprintf("snapshot-%s.html", mode))
 	info, err := os.Stat(snapshotFile)
 	intervalMin := cfg.Hub.SnapshotIntervalMin
-	if intervalMin < 5 {
-		intervalMin = 15
+	if intervalMin < config.MinSnapshotIntervalMin {
+		intervalMin = config.DefaultSnapshotIntervalMin
 	}
 	staleThreshold := time.Duration(intervalMin) * time.Minute
 	needsRebuild := err != nil || time.Since(info.ModTime()) > staleThreshold

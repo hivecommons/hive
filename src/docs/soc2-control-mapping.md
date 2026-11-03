@@ -19,7 +19,7 @@ Control names are illustrative of common change-management questions; mapping to
 | Is the review documented? | `verdicts[]` with `findings[]` (file, line, severity), `posted_reviews[]` links, `hash` and `signature`. | Verifiable as unaltered since sealing, not as correct. See the reviewer accuracy view for calibration. |
 | Did tests pass before deploy? | `ci.checks[]` conclusions for `head_sha` and `ci.captured_at`, compared with `merge.at`. | Records the check runs GitHub reported, not the quality of the tests. |
 | Is there segregation of duties? | `author`, `verdicts[]`, `human_actions[]` and `merge.actor` are separate recorded identities. | Whether the same person controls several identities is outside Hive's knowledge. |
-| Are emergency or out-of-process changes traceable? | `human_actions[]` (hold lifts, label changes), `sentinel[]` findings, `merge` fields, and the [audit log](audit-log.md). | Changes made outside Hive and GitHub do not appear. |
+| Are emergency or out-of-process changes traceable? | `human_actions[]` (hold lifts, label changes), `sentinel[]` findings, `merge` fields, and the [audit log](audit-log.md). | Changes made outside Hive and GitHub do not appear. Delegated relay work is covered by the `relay_*` audit rows and the `relay_audit_coverage` [posture check](compliance.md#posture-checks-catalogue). |
 | Did the code change after review? | `head_sha`, `previous_bundle_id` chain, `hash`, `signature`. | A new push creates a new bundle; see [what a new push does](review-evidence.md#what-a-new-push-does). |
 
 Related Hive artifacts: the review verdict artifact and verdict flow in [review swarm](review-swarm.md), the [audit log](audit-log.md), and the [security model](security-model.md).

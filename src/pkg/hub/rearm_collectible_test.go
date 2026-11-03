@@ -184,10 +184,11 @@ func TestOrphanSweepDoesNotRearmUncollectible(t *testing.T) {
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	// Old enough for evaluateOrphanedUpgrade() to consider the attempt orphaned,
-	// and — for the ghost — past silentUpgradeDeadline so the silence itself is
-	// the evidence (it has no heartbeat to prove anything with).
-	started := time.Now().Add(-silentUpgradeDeadline - time.Minute)
+	// Old enough for evaluateOrphanedUpgrade() to consider the attempt orphaned:
+	// past the silent-drain hold for the live hive, and — for the ghost — past
+	// silentUpgradeDeadline so the silence itself is the evidence (it has no
+	// heartbeat to prove anything with).
+	started := time.Now().Add(-silentDrainClearAfter - silentUpgradeDeadline)
 
 	ghost := armedHive("sweep-ghost", "")
 	ghost.UpgradeStartedAt = started

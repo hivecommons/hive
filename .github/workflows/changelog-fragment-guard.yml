@@ -75,14 +75,17 @@ concurrency:
 jobs:
   changelog-fragment-guard:
     name: changelog-fragment-guard
-    # Label events only matter when the label is `no-changelog`; every other
-    # label (size/*, dco-signoff, agent/*, hive/*) cannot change the verdict.
-    # A skipped job still reports a check-run, and GitHub treats "skipped" as
-    # passing for a required context, so this keeps the rollup green instead
-    # of adding a redundant run per label (#11250).
-    if: >-
-      (github.event.action != 'labeled' && github.event.action != 'unlabeled')
-      || github.event.label.name == 'no-changelog'
+    # No job-level `if:` on label events — on purpose (#14755). This job used
+    # to skip itself for every label other than `no-changelog`, and a skipped
+    # job still reports a check-run that GitHub scores as *passing* for a
+    # required context. hive's labeler adds three or four labels seconds
+    # after every push, so a genuine failure on the push-triggered run was
+    # superseded by a "skipped" sibling on the same head SHA and tide merged
+    # a malformed fragment (#14629), which then broke the release `decide`
+    # job on v5 and held every open v5 PR behind a red base. The guard is
+    # cheap (git, grep, echo); re-running it on each label event keeps the
+    # reported verdict truthful. Label runs are not cancelled by concurrency
+    # (see above), so they cannot leave CANCELLED check-runs either.
     # Forward-merge sync PRs (v5-topup.yml / v6-topup.yml, and the hand-rolled
     # ones maintainers open when those conflict) live on sync/* branches —
     # or on <lane>/sync-vN-to-vM when an agent opens the top-up, since the
@@ -91,7 +94,10 @@ jobs:
     # re-attributes every src/ change and every release-time CHANGELOG.md
     # compilation edit to the sync PR, so it can never satisfy the guard —
     # each carried change already passed it on its own PR (#7783).
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     steps:
       - name: Detect forward-merge sync branch
         id: sync_branch
@@ -126,9 +132,34 @@ jobs:
           # Read from the event payload, not the API: needs no token scope and
           # therefore behaves identically on fork PRs (#4440's lesson).
           HAS_NO_CHANGELOG_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
+          # The guard copies any src/changelog.d/ fragments it rejected here so
+          # the autofix and comment steps below can act on them (#11919).
+          MISPLACED_OUT: ${{ runner.temp }}/changelog-misplaced.txt
         run: |
           set -euo pipefail
           src/scripts/check-changelog-fragment.sh "$BASE_REF"
+
+
+      # api-reference.md and api-reference/*.md `pkg/<file>:<line>` citations go stale when a PR edits
+      # a route-registering server.go. The `relative links and anchors resolve`
+      # job reports that too, but it is not a required check, so the causing PR
+      # merged red and every later PR inherited the failure (#11866). This
+      # context is required, so the drift fails the PR that caused it. Pure
+      # grep/sed, no toolchain.
+      - name: Route-registering or static page files changed — api-reference citations must be resynced
+        if: ${{ steps.sync_branch.outputs.skip != 'true' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if ! git diff --name-only "origin/${BASE_REF}...HEAD" | grep -Eq '^src/pkg/(hub|dashboard)/server\.go$|^src/pkg/(hub|dashboard)/static/'; then
+            echo "No server.go or hub/dashboard static page change in this PR — nothing to check."
+            exit 0
+          fi
+          if ! bash src/scripts/check-api-reference-citations.sh; then
+            echo "::error::This PR edited a server.go or static pages and src/docs/api-reference.md / api-reference/*.md citations drifted. Run 'bash src/scripts/check-api-reference-citations.sh --fix' and commit the result. If static pages under src/pkg/dashboard/ also changed, lower the matching baseline in src/pkg/dashboard/webstatic/style_ratchet_test.go (styleRatchetBaselines) in the same PR."
+            exit 1
+          fi
 
 
       # Most guard failures are humans who never heard of changelog.d. For
@@ -146,9 +177,20 @@ jobs:
           PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MISPLACED_FILE: ${{ runner.temp }}/changelog-misplaced.txt
         run: |
           set -euo pipefail
           echo "pushed=false" >> "$GITHUB_OUTPUT"
+          # A fragment under src/changelog.d/ is never compiled. Generating a
+          # title-only twin at the root would bury the hand-written entry
+          # (#11919) — fail with the move instruction instead.
+          if [ -s "$MISPLACED_FILE" ]; then
+            while IFS= read -r m; do
+              [ -z "$m" ] && continue
+              echo "::error file=$m::misplaced fragment — not autofixing. Run: git mv $m changelog.d/$(basename "$m")"
+            done < "$MISPLACED_FILE"
+            exit 1
+          fi
           # Only the "no fragment" failure is auto-fixable; a malformed
           # fragment (wrong name / no bullet) is the author's to correct.
           if [ -s fragments.txt ]; then
@@ -215,6 +257,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AUTOFIX_PUSHED: ${{ steps.autofix.outputs.pushed }}
           AUTOFIX_FILE: ${{ steps.autofix.outputs.fragment }}
+          MISPLACED_FILE: ${{ runner.temp }}/changelog-misplaced.txt
         with:
           script: |
             const marker = '<!-- changelog-fragment-guard -->';
@@ -223,7 +266,12 @@ jobs:
             const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: number, per_page: 100 });
             const existing = comments.find(c => c.user?.type === 'Bot' && (c.body || '').includes(marker));
             const failed = process.env.GUARD_OUTCOME === 'failure';
-            if (!failed) {
+            // Misplaced src/changelog.d/ fragments get their own comment with
+            // the exact git mv commands (next step); the generic "fragment
+            // needed" text would be wrong there (#11919).
+            const fs = require('fs');
+            const misplaced = fs.existsSync(process.env.MISPLACED_FILE) && fs.readFileSync(process.env.MISPLACED_FILE, 'utf8').trim() !== '';
+            if (!failed || misplaced) {
               if (existing) {
                 await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
               }
@@ -273,4 +321,65 @@ jobs:
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+            }
+
+      # Fragments under src/changelog.d/ are never compiled (#11919). Fork PRs
+      # cannot be pushed to and are skipped by the steps above, so every PR —
+      # fork or not — gets ONE sticky comment with the exact git mv commands,
+      # removed again once nothing is misplaced. Best-effort: if the token is
+      # read-only (some fork configurations) the commands are still in the job
+      # summary and the guard's ::error annotations.
+      - name: Post or update misplaced-fragment comment
+        if: ${{ always() && steps.sync_branch.outputs.skip != 'true' }}
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MISPLACED_FILE: ${{ runner.temp }}/changelog-misplaced.txt
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- hive-changelog-misplaced -->';
+            const number = Number(process.env.PR_NUMBER);
+            const { owner, repo } = context.repo;
+            const files = fs.existsSync(process.env.MISPLACED_FILE)
+              ? fs.readFileSync(process.env.MISPLACED_FILE, 'utf8').split('\n').map(s => s.trim()).filter(Boolean)
+              : [];
+            const cmds = files.map(f => 'git mv ' + f + ' changelog.d/' + f.split('/').pop());
+            if (cmds.length) {
+              await core.summary
+                .addHeading('Misplaced changelog fragments', 3)
+                .addRaw('Fragments live in `changelog.d/` at the repository root, not under `src/`. Run:\n\n')
+                .addCodeBlock(cmds.join('\n'), 'sh')
+                .write();
+            }
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
+              const existing = comments.find(c => c.user?.type === 'Bot' && (c.body || '').includes(marker));
+              if (!cmds.length) {
+                if (existing) {
+                  await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+                }
+                return;
+              }
+              const body = [
+                marker,
+                '### Changelog fragment in the wrong directory',
+                '',
+                'Fragments live in `changelog.d/` at the **repository root**, not under `src/`. Files under `src/changelog.d/` are never compiled into `CHANGELOG.md`, so the **changelog-fragment-guard** check fails. Move them and push:',
+                '',
+                '```sh',
+                ...cmds,
+                'git commit -s -m "changelog: move fragment to repo-root changelog.d/"',
+                '```',
+                '',
+                'See `changelog.d/README.md` (#5675, #11919). This comment is removed automatically once nothing is misplaced.',
+              ].join('\n');
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+              }
+            } catch (e) {
+              core.warning('could not post the misplaced-fragment comment (' + e.message + '); the git mv commands are in the job summary');
             }

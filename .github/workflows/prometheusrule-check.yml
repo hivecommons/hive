@@ -1,0 +1,59 @@
+name: PrometheusRule Check
+
+# Validates the monitoring component's PrometheusRule (#15438) and Grafana
+# dashboard (#15439): `promtool check rules` on the extracted rule groups, the
+# promtool unit tests that force each alert to fire, and a dashboard JSON check.
+# The logic lives in src/scripts/check-prometheusrule.sh so it runs identically
+# on a laptop.
+
+on:
+  push:
+    branches:
+      - v6
+    paths:
+      - 'src/deploy/kustomize/components/monitoring/**'
+      - 'src/scripts/check-prometheusrule.sh'
+      - 'src/pkg/dashboard/metrics_*.go'
+      - '.github/workflows/prometheusrule-check.yml'
+  pull_request:
+    branches:
+      - v6
+    paths:
+      - 'src/deploy/kustomize/components/monitoring/**'
+      - 'src/scripts/check-prometheusrule.sh'
+      - 'src/pkg/dashboard/metrics_*.go'
+      - '.github/workflows/prometheusrule-check.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PROMETHEUS_VERSION: 3.15.1
+  PROMETHEUS_SHA256: 6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84
+
+jobs:
+  promtool:
+    name: promtool check rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install promtool
+        run: |
+          set -euo pipefail
+          tarball="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/${tarball}" \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${tarball}"
+          echo "${PROMETHEUS_SHA256}  ${RUNNER_TEMP}/${tarball}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/promtool"
+          tar -xzf "${RUNNER_TEMP}/${tarball}" -C "${RUNNER_TEMP}/promtool" \
+            --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          echo "${RUNNER_TEMP}/promtool" >> "$GITHUB_PATH"
+
+      - name: Check and unit-test the PrometheusRule and dashboard
+        run: bash src/scripts/check-prometheusrule.sh

@@ -10,7 +10,7 @@ func TestRepoCardPRBandsStaticWiring(t *testing.T) {
 	for _, want := range []string{
 		"const info = entry.pr;",
 		"function groupedRepoPRs(openPrs, heldPrs)",
-		"const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {",
+		"const prPills = collapseView.prGroups.map(g => {",
 		"repo-pr-band-title",
 		"PR_BAND_ORDER",
 		"prUpdatedAt",

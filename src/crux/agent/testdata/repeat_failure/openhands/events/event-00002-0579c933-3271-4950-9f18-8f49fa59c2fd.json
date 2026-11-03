@@ -1,0 +1,25 @@
+{
+  "id": "0579c933-3271-4950-9f18-8f49fa59c2fd",
+  "timestamp": "2026-10-28T01:31:31.085171",
+  "source": "agent",
+  "thought": [],
+  "thinking_blocks": [],
+  "action": {
+    "command": "ls /nonexistent",
+    "is_input": false,
+    "reset": false,
+    "kind": "TerminalAction"
+  },
+  "tool_name": "terminal",
+  "tool_call_id": "call_rf_1",
+  "tool_call": {
+    "id": "call_rf_1",
+    "name": "terminal",
+    "arguments": "{\"security_risk\": \"LOW\", \"command\": \"ls /nonexistent\"}",
+    "origin": "completion"
+  },
+  "llm_response_id": "rf-stub",
+  "security_risk": "LOW",
+  "summary": "terminal: {\"command\": \"ls /nonexistent\"}",
+  "kind": "ActionEvent"
+}

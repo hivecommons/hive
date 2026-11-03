@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,6 +25,49 @@ func (s *Server) handleReviewConfigGet(w http.ResponseWriter, r *http.Request) {
 type reviewSection struct {
 	config.ReviewConfig
 	BuiltinPerspectives []map[string]string `json:"builtin_perspectives"`
+	// ReviewerCandidates lists every configured agent with the engine it runs
+	// on and whether the review gate would dispatch to it, so the Review Gate
+	// section can offer a pick-list for review.reviewer_agents and warn when a
+	// fan-out would run every review on one engine (#13460).
+	ReviewerCandidates []reviewerCandidate `json:"reviewer_candidates"`
+}
+
+// reviewerCandidate is one row of reviewSection.ReviewerCandidates.
+type reviewerCandidate struct {
+	Name    string `json:"name"`
+	Backend string `json:"backend,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Enabled bool   `json:"enabled"`
+	// Available is false for agents the gate never dispatches to regardless
+	// of selection: disabled, paused or on-demand.
+	Available bool `json:"available"`
+	// KeywordMatch reports whether the agent qualifies by the "review"
+	// keyword scan alone, i.e. what runs when reviewer_agents is empty.
+	KeywordMatch bool `json:"keyword_match"`
+	// ReviewCapable is dashboardAgentReviewCapable under the CURRENT
+	// reviewer_agents list: the agents that actually review today.
+	ReviewCapable bool `json:"review_capable"`
+}
+
+// reviewerCandidates builds the pick-list in stable name order.
+func reviewerCandidates(cfg *config.Config) []reviewerCandidate {
+	if cfg == nil {
+		return []reviewerCandidate{}
+	}
+	out := make([]reviewerCandidate, 0, len(cfg.Agents))
+	for name, a := range cfg.Agents {
+		out = append(out, reviewerCandidate{
+			Name:          name,
+			Backend:       a.Backend,
+			Model:         a.Model,
+			Enabled:       a.Enabled,
+			Available:     a.Enabled && !a.Paused && !a.OnDemand,
+			KeywordMatch:  dashboardAgentReviewCapable(name, a, nil),
+			ReviewCapable: dashboardAgentReviewCapable(name, a, cfg.Review.ReviewerAgents),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // reviewSectionResponse is the review block as the dashboard sees it: the
@@ -39,7 +83,7 @@ func reviewSectionResponse(cfg *config.Config) reviewSection {
 	if cfg != nil {
 		rc = cfg.Review
 	}
-	return reviewSection{rc, builtin}
+	return reviewSection{rc, builtin, reviewerCandidates(cfg)}
 }
 
 // handleReviewConfigPut updates the review-swarm merge-gate settings from the
@@ -57,6 +101,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		RequireApproval    *bool     `json:"require_approval"`
+		Shadow             *bool     `json:"shadow"` // hive.yaml review.shadow
 		FanOut             *bool     `json:"fan_out"`
 		MaxParallelReviews *int      `json:"max_parallel_reviews"`
 		MaxPerspectives    *int      `json:"max_perspectives_per_pr"`
@@ -69,9 +114,30 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		} `json:"contributor_prs"`
 		AcknowledgeNoFind  *bool   `json:"acknowledge_no_findings"`
 		HumanDecisionLabel *string `json:"human_decision_label"`
+		SelfDecisionPolicy *string `json:"self_authored_decision_policy"`
 		ConfidenceScore    *bool   `json:"confidence_score"`
 		PriorityLabels     *bool   `json:"priority_labels"`
-		MaxReviewsPerHead  *int    `json:"max_reviews_per_head"`
+		// RequireLabels replaces review.require_labels whole; an empty list
+		// turns the PR review label gate off.
+		RequireLabels *[]string `json:"require_labels"`
+		// VerdictLabels replaces review.verdict_labels whole: its four keys
+		// only mean something together (one label per state), and an empty
+		// object turns the feature off (hivecommons/hive#13833).
+		VerdictLabels     *config.ReviewVerdictLabelsConfig `json:"verdict_labels"`
+		MaxReviewsPerHead *int                              `json:"max_reviews_per_head"`
+		PostComments      *bool                             `json:"post_comments"`
+		// EventDrivenMode is review.event_driven as auto|on|off: the key is a
+		// *bool whose unset value means "on when signed webhooks arrive", which
+		// a JSON bool cannot express. auto clears it back to unset.
+		EventDrivenMode *string `json:"event_driven_mode"`
+		EventDebounceS  *int    `json:"event_debounce_s"`
+		// PendingTTL is a Go duration; empty or "0" uses the default and a
+		// negative value disables expiry, exactly as the loader reads it.
+		PendingTTL                 *string `json:"pending_ttl"`
+		MaxRedispatch              *int    `json:"max_redispatch"`
+		HeadMaxRetries             *int    `json:"head_max_retries"`
+		OutOfScopeBacklogDisabled  *bool   `json:"out_of_scope_backlog_disabled"`
+		MaxOutOfScopeBacklogIssues *int    `json:"max_out_of_scope_backlog_issues"`
 		// Perspectives and PerspectivePrompts travel together: a hive-defined
 		// perspective is only valid once its prompt exists, so validating one
 		// without the other would reject a correct pair sent in two requests.
@@ -114,6 +180,21 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 			Labels          *[]string `json:"labels"`
 			MaxPerPRPerDay  *int      `json:"max_per_pr_per_day"`
 		} `json:"backlog"`
+		// ReviewerAutoscale is review.reviewers.autoscale
+		// (hivecommons/hive#14685). Pointer fields keep "absent means
+		// unchanged"; the band is validated before anything is mutated.
+		ReviewerAutoscale *struct {
+			Enabled                  *bool    `json:"enabled"`
+			Agent                    *string  `json:"agent"`
+			Min                      *int     `json:"min"`
+			Max                      *int     `json:"max"`
+			TargetBacklogPerReviewer *int     `json:"target_backlog_per_reviewer"`
+			ScaleUpCycles            *int     `json:"scale_up_cycles"`
+			ScaleDownCycles          *int     `json:"scale_down_cycles"`
+			Cooldown                 *string  `json:"cooldown"`
+			CPUPerReviewer           *float64 `json:"cpu_per_reviewer"`
+			MemPerReviewerMB         *int     `json:"mem_per_reviewer_mb"`
+		} `json:"reviewer_autoscale"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -128,6 +209,43 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if body.MaxPerspectives != nil && *body.MaxPerspectives < 0 {
 		jsonError(w, "max_perspectives_per_pr must be >= 0", http.StatusBadRequest)
 		return
+	}
+
+	for _, f := range []struct {
+		v    *int
+		name string
+	}{
+		{body.MaxRedispatch, "max_redispatch"},
+		{body.HeadMaxRetries, "head_max_retries"},
+		{body.MaxOutOfScopeBacklogIssues, "max_out_of_scope_backlog_issues"},
+	} {
+		if f.v != nil && *f.v < 0 {
+			jsonError(w, f.name+" must be >= 0", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if body.VerdictLabels != nil {
+		if err := body.VerdictLabels.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	var eventDriven *bool
+	if body.EventDrivenMode != nil {
+		switch strings.ToLower(strings.TrimSpace(*body.EventDrivenMode)) {
+		case "", "auto":
+		case "on":
+			v := true
+			eventDriven = &v
+		case "off":
+			v := false
+			eventDriven = &v
+		default:
+			jsonError(w, "event_driven_mode must be auto, on or off", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Normalized before any mutation so a bad value rejects the whole
@@ -148,6 +266,43 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	// Validate the loader runs, so the error names the field and a bad value
 	// rejects the whole request before anything is mutated.
 	severity, backlog := cfg.Review.Severity, cfg.Review.Backlog
+	autoscaleCfg := cfg.Review.Reviewers.Autoscale
+	if a := body.ReviewerAutoscale; a != nil {
+		if a.Enabled != nil {
+			autoscaleCfg.Enabled = *a.Enabled
+		}
+		if a.Agent != nil {
+			autoscaleCfg.Agent = sanitizeString(*a.Agent)
+		}
+		if a.Min != nil {
+			autoscaleCfg.Min = *a.Min
+		}
+		if a.Max != nil {
+			autoscaleCfg.Max = *a.Max
+		}
+		if a.TargetBacklogPerReviewer != nil {
+			autoscaleCfg.TargetBacklogPerReviewer = *a.TargetBacklogPerReviewer
+		}
+		if a.ScaleUpCycles != nil {
+			autoscaleCfg.ScaleUpCycles = *a.ScaleUpCycles
+		}
+		if a.ScaleDownCycles != nil {
+			autoscaleCfg.ScaleDownCycles = *a.ScaleDownCycles
+		}
+		if a.Cooldown != nil {
+			autoscaleCfg.Cooldown = sanitizeString(*a.Cooldown)
+		}
+		if a.CPUPerReviewer != nil {
+			autoscaleCfg.CPUPerReviewer = *a.CPUPerReviewer
+		}
+		if a.MemPerReviewerMB != nil {
+			autoscaleCfg.MemPerReviewerMB = *a.MemPerReviewerMB
+		}
+		if err := autoscaleCfg.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if body.Severity != nil {
 		if body.Severity.BlockAt != nil {
 			b, ok := config.NormalizeReviewSeverityBlockAt(*body.Severity.BlockAt)
@@ -207,6 +362,24 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := backlog.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Staged on a copy and checked with the loader's own validators so the
+	// dialog cannot save a value boot would reject.
+	dispatch := cfg.Review
+	if body.EventDebounceS != nil {
+		dispatch.EventDebounceS = *body.EventDebounceS
+	}
+	if body.PendingTTL != nil {
+		dispatch.PendingTTL = strings.TrimSpace(*body.PendingTTL)
+	}
+	if err := dispatch.ValidateReviewEventDispatch(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := dispatch.ValidatePendingReviewTTL(); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -275,6 +448,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if body.RequireApproval != nil {
 		cfg.Review.RequireApproval = *body.RequireApproval
 	}
+	if body.Shadow != nil {
+		cfg.Review.Shadow = *body.Shadow
+	}
 	if body.FanOut != nil {
 		cfg.Review.FanOut = *body.FanOut
 	}
@@ -320,14 +496,57 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if body.HumanDecisionLabel != nil {
 		cfg.Review.HumanDecisionLabel = strings.TrimSpace(*body.HumanDecisionLabel)
 	}
+	if body.SelfDecisionPolicy != nil {
+		policy := strings.ToLower(strings.TrimSpace(*body.SelfDecisionPolicy))
+		switch policy {
+		case "", config.ReviewSelfAuthoredDecisionResolve:
+			cfg.Review.SelfAuthoredDecisionPolicy = ""
+		case config.ReviewSelfAuthoredDecisionEscalate:
+			cfg.Review.SelfAuthoredDecisionPolicy = policy
+		default:
+			jsonError(w, "self_authored_decision_policy must be resolve or escalate", http.StatusBadRequest)
+			return
+		}
+	}
 	if body.ConfidenceScore != nil {
 		cfg.Review.ConfidenceScore = *body.ConfidenceScore
+	}
+	if body.VerdictLabels != nil {
+		v := *body.VerdictLabels
+		v.Reviewing = strings.TrimSpace(v.Reviewing)
+		v.Approve = strings.TrimSpace(v.Approve)
+		v.ChangesRequested = strings.TrimSpace(v.ChangesRequested)
+		v.RequiresHuman = strings.TrimSpace(v.RequiresHuman)
+		cfg.Review.VerdictLabels = v
 	}
 	if body.PriorityLabels != nil {
 		cfg.Review.PriorityLabels = *body.PriorityLabels
 	}
+	if body.RequireLabels != nil {
+		cfg.Review.RequireLabels = config.ReviewConfig{RequireLabels: *body.RequireLabels}.NormalizedRequireLabels()
+	}
 	if body.MaxReviewsPerHead != nil {
 		cfg.Review.MaxReviewsPerHead = *body.MaxReviewsPerHead
+	}
+	if body.PostComments != nil {
+		cfg.Review.PostComments = *body.PostComments
+	}
+	if body.EventDrivenMode != nil {
+		cfg.Review.EventDriven = eventDriven
+	}
+	cfg.Review.EventDebounceS = dispatch.EventDebounceS
+	cfg.Review.PendingTTL = dispatch.PendingTTL
+	if body.MaxRedispatch != nil {
+		cfg.Review.MaxRedispatch = *body.MaxRedispatch
+	}
+	if body.HeadMaxRetries != nil {
+		cfg.Review.HeadMaxRetries = *body.HeadMaxRetries
+	}
+	if body.OutOfScopeBacklogDisabled != nil {
+		cfg.Review.OutOfScopeBacklogDisabled = *body.OutOfScopeBacklogDisabled
+	}
+	if body.MaxOutOfScopeBacklogIssues != nil {
+		cfg.Review.MaxOutOfScopeBacklogIssues = *body.MaxOutOfScopeBacklogIssues
 	}
 	// Repo names are trimmed but NOT validated against the watched set: a
 	// hive's repo list changes underneath a dialog that was opened minutes
@@ -357,6 +576,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 
 	cfg.Review.Severity = severity
 	cfg.Review.Backlog = backlog
+	cfg.Review.Reviewers.Autoscale = autoscaleCfg
 
 	// Written into hive.yaml's review_bots block only; EffectiveReviewBots
 	// lets it override the project file's threshold without copying the

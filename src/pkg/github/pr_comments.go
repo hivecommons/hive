@@ -213,6 +213,18 @@ func (c *Client) isAgentCommentAuthor(author *rawPRCommentAuthor, body string) b
 // comments in resolved or outdated threads are dropped: the conversation
 // there has already moved on.
 func filterHumanPRComments(raw rawPRConversation, since time.Time, isHuman func(*rawPRCommentAuthor) bool) []PRComment {
+	return filterTrustedPRComments(raw, since, isHuman, false)
+}
+
+// filterRetroPRComments is filterHumanPRComments for the retro lane: the same
+// trust rules, but inline comments in resolved and outdated threads are kept.
+// A live follow-up must not re-answer a settled thread; a retro is looking
+// for exactly what those threads asked for (hivecommons/hive#14584, B3).
+func filterRetroPRComments(raw rawPRConversation, since time.Time, isHuman func(*rawPRCommentAuthor) bool) []PRComment {
+	return filterTrustedPRComments(raw, since, isHuman, true)
+}
+
+func filterTrustedPRComments(raw rawPRConversation, since time.Time, isHuman func(*rawPRCommentAuthor) bool, keepSettledThreads bool) []PRComment {
 	var out []PRComment
 	keep := func(rc rawPRComment) bool {
 		if rc.Author == nil || strings.TrimSpace(rc.Body) == "" || rc.CreatedAt.Before(since) {
@@ -249,7 +261,7 @@ func filterHumanPRComments(raw rawPRConversation, since time.Time, isHuman func(
 		}
 	}
 	for _, th := range raw.ReviewThreads.Nodes {
-		if th.IsResolved || th.IsOutdated {
+		if !keepSettledThreads && (th.IsResolved || th.IsOutdated) {
 			continue
 		}
 		line := 0

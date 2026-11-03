@@ -139,6 +139,7 @@ func TestHubModalEscapeRegistryCoversKnownOverlays(t *testing.T) {
 		"banner-modal",
 		"create-modal",
 		"timeline-modal",
+		"evidence-modal",
 		"access-modal",
 	} {
 		if !strings.Contains(body, want) {

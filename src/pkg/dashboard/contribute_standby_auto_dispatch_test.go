@@ -17,15 +17,17 @@ import (
 func standbyAutoDispatchConfig(auto bool, floor string, cap int) *config.Config {
 	return &config.Config{
 		Project: config.ProjectConfig{Org: "alice", Repos: []string{"repo"}},
-		Agents: map[string]config.AgentConfig{"quality": {
-			Mode: "ISSUES_AND_PRS",
-			Standby: &config.StandbyConfig{
-				Enabled:                true,
-				AutoDispatch:           auto,
-				MinModelCapability:     floor,
-				DailyCapPerContributor: cap,
-			},
-		}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"quality": {
+				Mode: "ISSUES_AND_PRS",
+				Standby: &config.StandbyConfig{
+					Enabled:                true,
+					AutoDispatch:           auto,
+					MinModelCapability:     floor,
+					DailyCapPerContributor: cap,
+				},
+			}},
+		},
 		Hub: config.HubConfig{
 			StandbyContributors: []string{"alice"},
 			StandbyModelTiers: []config.StandbyModelTier{{

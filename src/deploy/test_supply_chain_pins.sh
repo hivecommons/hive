@@ -221,6 +221,54 @@ else
        "expected a 'git -C /opt/nous checkout \"\${NOUS_COMMIT}\"' step in $DOCKERFILE"
 fi
 
+# --- 8. Nous runtime fetches go through `hive nous-setup` only (#11700) -------
+# RFC #11585 part 7: a campaign's dependencies are declared with full pins and
+# fetched by `hive nous-setup` from allowlisted hosts, with the resolved
+# versions recorded under /data/nous. bin/nous-runner.sh must therefore run
+# the setup step BEFORE run_campaign.py and must not fetch anything itself —
+# a bare curl/wget/pip/git-clone there would bypass the allowlist and leave
+# no record. bin/nous-install.sh must keep its own full-SHA pin and refuse to
+# pip-install when the checkout does not match it.
+REPO_ROOT="$(cd "$V2_DIR/.." && pwd)"
+NOUS_RUNNER="$REPO_ROOT/bin/nous-runner.sh"
+NOUS_INSTALL="$REPO_ROOT/bin/nous-install.sh"
+
+if [ ! -f "$NOUS_RUNNER" ]; then
+  fail "bin/nous-runner.sh exists" "file not found — guard cannot verify the setup step"
+else
+  runner_fetch="$(grep -nE '^[[:space:]]*(curl|wget|pip3?[[:space:]]+install|uv[[:space:]]+pip|git[[:space:]]+(clone|fetch|pull))\b' "$NOUS_RUNNER" || true)"
+  if [ -n "$runner_fetch" ]; then
+    fail "bin/nous-runner.sh performs no fetch of its own" "found: $(echo "$runner_fetch" | tr '\n' ' ')"
+  else
+    pass "bin/nous-runner.sh performs no fetch of its own"
+  fi
+
+  setup_line="$(grep -nE '"\$HIVE_BIN" nous-setup ' "$NOUS_RUNNER" | head -1 | cut -d: -f1 || true)"
+  run_line="$(grep -n 'run_campaign.py' "$NOUS_RUNNER" | head -1 | cut -d: -f1 || true)"
+  if [ -n "$setup_line" ] && [ -n "$run_line" ] && [ "$setup_line" -lt "$run_line" ]; then
+    pass "bin/nous-runner.sh runs 'hive nous-setup' before run_campaign.py"
+  else
+    fail "bin/nous-runner.sh runs 'hive nous-setup' before run_campaign.py" \
+         "setup at line '${setup_line:-none}', run_campaign.py at line '${run_line:-none}'"
+  fi
+fi
+
+if [ ! -f "$NOUS_INSTALL" ]; then
+  fail "bin/nous-install.sh exists" "file not found — guard cannot verify the install pin"
+else
+  install_pin="$(grep -E '^NOUS_PIN_SHA="\$\{HIVE_NOUS_PIN:-[^}]+\}"' "$NOUS_INSTALL" | sed -E 's/.*:-([^}]+)\}.*/\1/' | head -1 || true)"
+  if echo "$install_pin" | grep -qE '^[0-9a-f]{40}$'; then
+    pass "bin/nous-install.sh NOUS_PIN_SHA default is a full 40-hex commit SHA"
+  else
+    fail "bin/nous-install.sh NOUS_PIN_SHA default is a full 40-hex commit SHA" "got: '$install_pin'"
+  fi
+  if grep -q 'refusing to install Nous' "$NOUS_INSTALL" && grep -q 'git checkout --detach FETCH_HEAD' "$NOUS_INSTALL"; then
+    pass "bin/nous-install.sh verifies the checkout matches the pin before pip install"
+  else
+    fail "bin/nous-install.sh verifies the checkout matches the pin before pip install"
+  fi
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1

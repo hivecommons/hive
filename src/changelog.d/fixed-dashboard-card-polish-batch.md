@@ -1,1 +1,0 @@
-- Polished dashboard card chrome, advisory sub-sections, lifecycle empty states, repository headers, audit log sizing, diagnostics platform facts, Inception Spektacular branding, Knowledge fact summaries, collapsible Governor PRs-by-model details, and pinned notices.

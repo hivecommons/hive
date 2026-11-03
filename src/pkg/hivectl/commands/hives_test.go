@@ -19,13 +19,17 @@ import (
 )
 
 type fakeRegistrar struct {
-	calls  []string
-	result hubRegistration
-	err    error
+	calls        []string
+	result       hubRegistration
+	err          error
+	errorsByBase map[string]error
 }
 
 func (f *fakeRegistrar) Register(_ context.Context, base, user string) (hubRegistration, error) {
 	f.calls = append(f.calls, base+" "+user)
+	if err := f.errorsByBase[base]; err != nil {
+		return hubRegistration{}, err
+	}
 	return f.result, f.err
 }
 
@@ -1223,5 +1227,20 @@ func TestAlreadyRegisteredErrorDefaultsTheMessage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--token-stdin") || !strings.Contains(err.Error(), "contribute-move") {
 		t.Errorf("error should name both ways forward: %v", err)
+	}
+}
+
+func TestHivesListShowsUnsupportedRepositoryScope(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	body := `{"wss://acme.example/contribute":{"last_seen":"2026-10-17T19:00:00Z","subscriptions":{"c1":"unsupported"}}}`
+	if err := os.WriteFile(h.store.HubsSeenPath(), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run(t, "", "hives", "list"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.out.String(), "acme (scope: unsupported)") {
+		t.Fatalf("unsupported scope not visible: %s", h.out.String())
 	}
 }

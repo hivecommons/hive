@@ -130,7 +130,7 @@ func TestCostPanelSeparatesRangesFromBudgetPeriods(t *testing.T) {
 		"no spend recorded in this range",
 		"`${COST_RANGES[_costRange].label} range`",
 		"Budget history — tokens used vs. limit per reset period",
-		": cfg.windowMs;",
+		"const win = costWindow(now);",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("Cost panel is missing clarified range/period copy %q", want)
@@ -151,7 +151,7 @@ func TestCostPanelSeparatesRangesFromBudgetPeriods(t *testing.T) {
 		t.Fatal("could not find Cost panel render template")
 	}
 	render := html[renderStart:]
-	disclaimer := strings.Index(render, "vLLM / self-hosted figures are estimated")
+	disclaimer := strings.Index(render, "self-hosted inference (vLLM) and negotiated rates differ from list price")
 	budget := strings.Index(render, "${costTokenBudgetHtml()}")
 	if disclaimer < 0 || budget < 0 {
 		t.Fatalf("could not find pricing disclaimer (%d) or token budget (%d)", disclaimer, budget)

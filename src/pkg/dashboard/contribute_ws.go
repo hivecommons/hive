@@ -17,9 +17,12 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fixqueue"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -88,10 +91,12 @@ func wsSameOrigin(r *http.Request) bool {
 }
 
 type ContributorConnection struct {
-	ws         *websocket.Conn
-	connID     string
-	profile    *ContributorProfile
-	cliBackend string
+	ws      *websocket.Conn
+	connID  string
+	profile *ContributorProfile
+	// Immutable handshake credential: profile refreshes must not adopt a rotated token.
+	registrationTokenHash string
+	cliBackend            string
 	// session is the OPTIONAL client-declared session label from auth_response
 	// (multi-session-per-account). Empty for a single-session contributor, which
 	// keeps identityOf() at the bare ContributorID. When set, identityOf()
@@ -116,6 +121,13 @@ type ContributorConnection struct {
 	assignedRole  string // owner-selected role; "none" forces general work
 	connectedAt   time.Time
 	currentTask   *WSTaskAssign
+	// fixTasks are the fix-pr tasks in flight on this connection, keyed by
+	// task id (hivecommons/hive#12436). They never replace currentTask: a
+	// spawned fix runs beside the primary task and a preempting one parks it.
+	fixTasks map[string]*WSTaskAssign
+	// fixTasksAt is when each fixTasks entry was dispatched, for the fleet
+	// view's started_at (hivecommons/hive#12502).
+	fixTasksAt map[string]time.Time
 	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
 	// hive#2568, the Gate). It is a monotonically increasing token minted per
 	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
@@ -197,6 +209,16 @@ type ContributorConnection struct {
 	// lastIdleReason (#2546); NEVER used to route, gate, or adjust a work item's
 	// failure cooldown.
 	lastFailure *ContributorFailure
+	// repoScope is the contributor repository scope this hub last ACKNOWLEDGED
+	// on the connection (hivecommons/hive#12805). Nil when the relay never sent
+	// repo_scope: selection is then exactly as before. repoScopeInvalid is set
+	// when the latest repo_scope was malformed; the connection is served
+	// nothing until a valid one arrives (fail closed). readyScopeVersion is the
+	// scope_version the latest ready carried (0 = not stated); a non-zero value
+	// must equal repoScope.version or selection waits. Guarded by mu.
+	repoScope         *contributorRepoScope
+	repoScopeInvalid  bool
+	readyScopeVersion int
 	// pendingToken is the scoped, expiring GitHub credential minted for currentTask
 	// but NOT yet delivered to the relay (kubestellar/hive#2537). The credential no
 	// longer travels inside task_assign; it is held here until the task's acceptance
@@ -220,6 +242,15 @@ type ContributorConnection struct {
 	externalIncarnation      string
 	externalWorkbenchVersion string
 	mu                       sync.Mutex
+	// auditTasks, auditAcceptedTask and auditCloseReason feed the relay_*
+	// audit rows (hivecommons/hive#13441): tasks assigned over this socket,
+	// the last task whose acceptance was audited (a reconnecting relay
+	// re-asserts task_accepted), and why the hub closed the socket (empty
+	// means the client went away). Guarded by mu.
+	auditTasks        int
+	auditAcceptedTask string
+	auditCloseReason  string
+
 	// writeMu serializes ALL writes to this connection's ws. gorilla/websocket
 	// forbids concurrent writes to one connection ("Applications are responsible
 	// for ensuring that no more than one goroutine calls the write methods
@@ -263,6 +294,16 @@ type WSStandbyLane struct {
 	Paused            bool   `json:"paused,omitempty"`
 	QueueDepth        int    `json:"queue_depth,omitempty"`
 	Qualified         bool   `json:"qualified,omitempty"`
+}
+
+// setAuditCloseReason records why the hub is closing this socket, for the
+// relay_disconnected row. The first reason wins; unset means the client left.
+func (c *ContributorConnection) setAuditCloseReason(reason string) {
+	c.mu.Lock()
+	if c.auditCloseReason == "" {
+		c.auditCloseReason = reason
+	}
+	c.mu.Unlock()
 }
 
 // send serializes writes to this connection's websocket with writeMu, satisfying
@@ -483,8 +524,13 @@ func wsMessageFromExternal(msg ExternalExecutionMessage) WSMessage {
 }
 
 type WSMessage struct {
-	Type                         string                      `json:"type"`
-	Seq                          int                         `json:"seq,omitempty"`
+	Type string `json:"type"`
+	Seq  int    `json:"seq,omitempty"`
+	// Priority, Mode and FixPRs mirror WSTaskAssign for Kind "fix-pr"
+	// task_assign messages (hivecommons/hive#12436).
+	Priority                     string                      `json:"priority,omitempty"`
+	Mode                         string                      `json:"mode,omitempty"`
+	FixPRs                       []WSFixPR                   `json:"fix_prs,omitempty"`
 	Nonce                        string                      `json:"nonce,omitempty"`
 	ContributorID                string                      `json:"contributor_id,omitempty"`
 	TrustTier                    string                      `json:"trust_tier,omitempty"`
@@ -547,14 +593,19 @@ type WSMessage struct {
 	// whose task was revoked and reassigned cannot later overwrite the new owner's
 	// state. Additive: an unversioned relay omits it (0), and the hub falls back to the
 	// pre-existing TaskID match for those clients. Never a credential.
-	TaskGen uint64   `json:"task_gen,omitempty"`
-	Stage   string   `json:"stage,omitempty"`
-	Kind    string   `json:"kind,omitempty"`
-	Repo    string   `json:"repo,omitempty"`
-	Number  int      `json:"number,omitempty"`
-	Title   string   `json:"title,omitempty"`
-	URL     string   `json:"url,omitempty"`
-	Labels  []string `json:"labels,omitempty"`
+	TaskGen uint64 `json:"task_gen,omitempty"`
+	Stage   string `json:"stage,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Number  int    `json:"number,omitempty"`
+	Title   string `json:"title,omitempty"`
+	URL     string `json:"url,omitempty"`
+	// Forge and Host identify the forge an assignment's Repo belongs to, in the
+	// same terms as the repository-scope ids this hub advertises
+	// (forge/host/owner/name). Additive and omitempty.
+	Forge  string   `json:"forge,omitempty"`
+	Host   string   `json:"host,omitempty"`
+	Labels []string `json:"labels,omitempty"`
 	// StandbyLane and StandbyTier mark donated standby assignments.
 	StandbyLane string `json:"standby_lane,omitempty"`
 	StandbyTier string `json:"standby_tier,omitempty"`
@@ -702,6 +753,10 @@ type WSMessage struct {
 	// maintainer decision (#8470). A verified PR still wins; otherwise the hub
 	// books the full cooldown and the relay labels the issue when configured.
 	VerdictNeedsDecision bool `json:"verdict_needs_decision,omitempty"`
+	// VerdictTargetBranch carries the branch named by a wrong_base verdict
+	// (#13146). The hub validates it against GitHub before retaining it as the
+	// next dispatch's base; malformed or missing branches park for a maintainer.
+	VerdictTargetBranch string `json:"verdict_target_branch,omitempty"`
 	// VerdictReasonKind is an optional structured classifier for VerdictReason.
 	// "already_done" means the agent found the issue already resolved by landed
 	// evidence and the Evidence field should name the PR or commit to verify.
@@ -741,6 +796,26 @@ type WSMessage struct {
 	// contributor will be rejected outright, so the hub should prefer a
 	// different contributor. See kubestellar/hive#2203.
 	Permanent bool `json:"permanent,omitempty"`
+	// ScopeVersion, Repositories, Accepted and Unknown carry the contributor
+	// repository scope (hivecommons/hive#12805, capability repo_scope_v1).
+	// repo_scope sends scope_version + mode + repositories; repo_scope_ack
+	// answers scope_version + accepted + unknown (+ reason when rejected);
+	// ready may carry scope_version so the hub only selects under the version
+	// it acknowledged. All additive: relays without the capability omit them.
+	ScopeVersion int      `json:"scope_version,omitempty"`
+	Repositories []string `json:"repositories,omitempty"`
+	Accepted     *bool    `json:"accepted,omitempty"`
+	Unknown      []string `json:"unknown,omitempty"`
+	// AuditShareRequested is the relay audit level this hive asks contributors
+	// to share (hub.contribute_audit_share_request, hivecommons/hive#13458),
+	// advertised on auth_ok so a contributor sees it before opting in. Empty
+	// requests nothing. A request only: admission never depends on it.
+	AuditShareRequested string `json:"audit_share_requested,omitempty"`
+	// AuditShare carries the contributor's OPT-IN audit attestation on
+	// task_complete / task_failed (#13458): the local audit rows for the task,
+	// up to the level the contributor consented to share. Additive: old hubs
+	// ignore it and relays without consent never send it.
+	AuditShare *RelayAuditShare `json:"audit_share,omitempty"`
 }
 
 type VerdictEvidence struct {
@@ -786,6 +861,14 @@ type WSTaskAssign struct {
 	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
 	Complexity   string                       `json:"complexity,omitempty"`
 	MCP          *WSTaskMCP                   `json:"mcp,omitempty"`
+	// Priority, Mode and FixPRs are set on Kind "fix-pr" tasks
+	// (hivecommons/hive#12436; docs/contributor-relay.md): Priority is
+	// "interrupt" (push now) or "queued" (handed out at a task boundary); Mode
+	// is "spawn" (parallel sub-session), "preempt" (park the primary task) or
+	// "boundary"; FixPRs lists the red PRs the task covers (coalesced by cause).
+	Priority string    `json:"priority,omitempty"`
+	Mode     string    `json:"mode,omitempty"`
+	FixPRs   []WSFixPR `json:"fix_prs,omitempty"`
 }
 
 type WSTaskMCP struct {
@@ -870,6 +953,28 @@ func (c *ContributorConnection) advisor() advisorInfo {
 type ContributeWSHub struct {
 	connections map[string]*ContributorConnection
 	mu          sync.RWMutex
+	// fixSched is the per-contributor red-PR fix scheduler behind stage 072
+	// (hivecommons/hive#12436; contribute_fixqueue.go). fixOwners maps a
+	// lower-cased username to the PR keys in their queue so Resolve can find
+	// the owner without a GitHub call. fixDispatched is a test hook.
+	fixQueueMu    sync.Mutex
+	fixSched      *fixqueue.Scheduler
+	fixOwners     map[string]map[string]bool
+	fixDispatched func(*ContributorConnection, WSMessage)
+	// fixFailedSig is closed (and replaced) whenever a relay reports a
+	// fix-pr task failed, waking a Nudge that is waiting to learn whether its
+	// dispatch was refused (hivecommons/hive#14668). fixAckGrace overrides
+	// that wait (zero = fixTaskAckGrace); a test hook.
+	// fixWaiters counts those Nudges; fixFailures (task id → relay reason)
+	// is kept only while one waits.
+	fixFailedSig chan struct{}
+	fixWaiters   int
+	fixFailures  map[string]string
+	fixAckGrace  time.Duration
+	// stageStore is the stage-label memory the fleet view reads "PRs returned
+	// to this contributor" from (hivecommons/hive#12502). Nil means the
+	// process-wide stagelabels.Shared(); tests inject an in-memory store.
+	stageStore *stagelabels.Store
 	// claimCommenter is the forge seam issue claims are posted through
 	// (hivecommons/hive#8380). Nil means "use the wired GitHub client"; tests
 	// inject a recorder. See contribute_claims.go.
@@ -882,6 +987,12 @@ type ContributeWSHub struct {
 	unmintableMu    sync.Mutex
 	logger          *slog.Logger
 	seq             int
+	// admissionSkipLogged maps an item key to the last admission refusal
+	// selectTask logged for it, so an unchanged refusal is logged once rather
+	// than on every pass. Its own mutex for the same reason as unmintableMu.
+	// See contribute_admission_log.go.
+	admissionSkipLogged map[string]string
+	admissionSkipMu     sync.Mutex
 	// taskGen is the monotonically increasing source of assignment GENERATION tokens
 	// (kubestellar/hive#2568, the Gate). nextTaskGen() hands out a fresh value for
 	// every assignment and every release, so a generation is never reused across the
@@ -908,6 +1019,9 @@ type ContributeWSHub struct {
 	// upgrade path and from deferred cleanup, and must never contend with or
 	// re-enter h.mu.
 	pendingConns atomic.Int64
+	// lastRelayConnectNanos is when a relay last completed authentication;
+	// the relay_audit_coverage posture check reads it.
+	lastRelayConnectNanos atomic.Int64
 	// handlers tracks live HandleWS invocations so a caller (in practice:
 	// tests) can wait for hijacked websocket handlers to fully unwind.
 	// httptest's Server.Close does not wait for hijacked connections, so a
@@ -951,6 +1065,16 @@ type ContributeWSHub struct {
 	// A permanent failure (msg.Permanent) counts as permanentFailureWeight toward
 	// the threshold. Guarded by completedMu.
 	consecutiveFailures map[string]int
+	// reclaimCooldowns records, per contributor identity (identityOf) and
+	// item key, when that contributor last released the item without
+	// shipping (hivecommons/hive#13093). selectTask refuses to hand the
+	// same item back to the same contributor for
+	// ClaimsConfig.EffectiveReclaimCooldown, whatever the global per-issue
+	// failure cooldown says: the latter is deliberately short so OTHER
+	// contributors can retry at once. In-memory only — a hub restart
+	// forgives it, which is the right default for an environment fault.
+	// Guarded by completedMu.
+	reclaimCooldowns map[string]time.Time
 	// noPRStreaks counts CONSECUTIVE no-PR completions per "repo#number"
 	// (kubestellar/hive#3980). Each one doubles the next no-PR cooldown
 	// (advanceNoPRStreakLocked), so an issue that keeps "completing" with
@@ -1078,6 +1202,27 @@ type ContributeWSHub struct {
 	alreadyDoneMarker func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error
 	// issuePRClaimMarker is the #8876 pending-label seam for verified PR claims.
 	issuePRClaimMarker func(context.Context, string, int, ghpkg.IssueClaim) error
+	// toolingBlockedReleaser is the seam for lifting a `blocked` label a relay
+	// applied on a contributor-tooling-failure verdict (see
+	// contribute_blocked_tooling.go); nil means use GHClient. Tests substitute
+	// a fake.
+	toolingBlockedReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
+	// gateParkReleaser is the seam for lifting the decision label a relay
+	// applied on a needs-decision verdict that cites only the target repo's
+	// own confirmation gate (contribute_gate_park.go); nil means use
+	// GHClient. gateParkRekicks records the one re-kick each issue gets.
+	gateParkReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
+	gateParkRekicks  gateParkRekicks
+	// verdictBlockerRecorder is the seam for recording the blocker a blocked
+	// verdict names (contribute_verdict_blocker.go); nil means use GHClient.
+	// verdictBlockersRecorded dedupes re-delivered verdicts per task.
+	verdictBlockerRecorder  func(ctx context.Context, repo string, number int, blocker ghpkg.VerdictBlocker) (ghpkg.VerdictBlockerOutcome, error)
+	verdictBlockersRecorded sync.Map
+	// wrongBaseBranchChecker validates a wrong_base target against the target
+	// repository; nil means use GHClient.BranchExists. wrongBaseParker is the
+	// mutation seam for the invalid/unverifiable fallback.
+	wrongBaseBranchChecker func(context.Context, string, string) (bool, error)
+	wrongBaseParker        func(context.Context, string, int, string, string, string) error
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task
@@ -1088,6 +1233,9 @@ type ContributeWSHub struct {
 	recentlyFinished map[string]time.Time
 	// graceBookings counts deferred #7838 bookings still pending or running.
 	graceBookings sync.WaitGroup
+	// contributorFlapState counts disconnect releases per issue for the
+	// contributor flap cool-off (hivecommons/hive#13579, contribute_flap.go).
+	contributorFlapState
 	// leases is the hub-owned, server-authoritative registry of the task the hub
 	// ISSUED to each contributor identity (hivecommons/hive C4). It is keyed by
 	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
@@ -1155,6 +1303,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		completedTaskPRURL:        make(map[string]string),
 		failedTasks:               make(map[string]time.Time),
 		consecutiveFailures:       make(map[string]int),
+		reclaimCooldowns:          make(map[string]time.Time),
 		noPRStreaks:               make(map[string]noPRStreakRecord),
 		noWorkVerdicts:            make(map[string]noWorkVerdictRecord),
 		standbyOutcomes:           []standbyOutcomeRecord{},
@@ -1606,6 +1755,56 @@ func (h *ContributeWSHub) reconcilePRAttribution(prURL string, contributor *Cont
 	}
 }
 
+// linkReportedPRToIssue appends `Fixes #N` to a verified contributor PR that
+// does not yet close the issue it was dispatched for, and ensures the GitHub
+// sidebar link (hivecommons/hive#14763). The relay's task prompt only asks the
+// model for the trailer; hivecommons/hive#14701 shipped #14633 with an empty
+// body, the PR-claim ledger (PR text and branch names only) never saw the
+// issue as covered, and it sat at stage/010-actionable for hours while the PR
+// waited in review as "no linked issue".
+//
+// Only GitHub-issue tasks in the task's own repo qualify: a fix-pr task or an
+// external work item has no issue to close. The PR was verified moments ago as
+// open, in this repo and authored by username, and LinkContributorPRToIssue
+// re-checks the author before editing; it never edits a stranger's PR or a
+// body that says the issue stays open. Best-effort and detached like
+// reconcilePRAttribution: it gates nothing.
+func (h *ContributeWSHub) linkReportedPRToIssue(task *WSTaskAssign, prURL, username string) {
+	if task == nil || task.Kind != "issue" || task.Number <= 0 || prURL == "" || username == "" {
+		return
+	}
+	if task.SourceType != "" && task.SourceType != "github" {
+		return
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return
+	}
+	ref, err := ghpkg.ParsePRURL(prURL)
+	if err != nil || !strings.EqualFold(ref.FullName(), task.Repo) {
+		return
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, prAttributionReconcileTimeout)
+	defer cancel()
+	res, err := h.server.deps.GHClient.LinkContributorPRToIssue(ctx, task.Repo, ref.Number, task.Number, username)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] linking reported PR to dispatched issue failed",
+			"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "username", username, "error", err.Error())
+		return
+	}
+	if res.EditedBody || res.SidebarLinked {
+		h.logger.Info("[contribute-ws] linked reported PR to dispatched issue",
+			"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "username", username,
+			"edited_body", res.EditedBody, "sidebar_linked", res.SidebarLinked, "base", res.Base)
+		return
+	}
+	h.logger.Info("[contribute-ws] reported PR already linked to dispatched issue, or left alone",
+		"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "username", username, "skipped", res.Skipped)
+}
+
 // abandonReason is the synthetic reason text written to the run log for a task
 // that ended with no terminal report. Free text like a client-reported reason,
 // but hub-authored, and phrased to say what the hub OBSERVED rather than to
@@ -1795,6 +1994,7 @@ func (h *ContributeWSHub) bookAndRevokeReleased(targets []releaseTarget, reason,
 		// #2568: record the operator's reason in the activity log so the release is
 		// auditable (the reason rides in the Task field alongside the task id).
 		h.addActivity(username, activityVerb+": "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, tgt.task.TaskID)
+		h.auditRelay(tgt.conn, agentaudit.AuditRelayTaskRevoked, &tgt.task, "reason", auditRelayText(reason))
 		// Push the EXISTING task_revoke message so the relay stops cleanly and
 		// re-readies. Best-effort: if the socket is already gone the disconnect path
 		// has (or will) release it anyway; the cooldown above is already booked. The
@@ -1838,6 +2038,7 @@ func (h *ContributeWSHub) DisconnectContributor(contributorID, reason string) in
 		if match {
 			// Revoke any server-issued lease so a reconnect cannot re-adopt the task.
 			h.revokeLease(identityOf(c), taskID)
+			c.setAuditCloseReason("revoked")
 			closing = append(closing, c)
 		}
 	}
@@ -2184,8 +2385,10 @@ func (h *ContributeWSHub) SetContributorTrustTier(contributorID, tier string) {
 		return
 	}
 	version := 0
+	var history []ContributorTierChange
 	if p := findContributor(contributorID); p != nil {
 		version = p.Version
+		history = append([]ContributorTierChange(nil), p.TierHistory...)
 	}
 	h.mu.RLock()
 	var targets []*ContributorConnection
@@ -2202,6 +2405,9 @@ func (h *ContributeWSHub) SetContributorTrustTier(contributorID, tier string) {
 		c.mu.Lock()
 		if c.profile != nil {
 			c.profile.TrustTier = tier
+			if history != nil {
+				c.profile.TierHistory = history
+			}
 			if version != 0 {
 				c.profile.Version = version
 			}
@@ -2303,6 +2509,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				code, reason, source := websocketCloseErrorDetails(err)
+				// 1006 is synthesised by gorilla when the peer's TCP connection
+				// ends without a close frame (relay killed, laptop slept, NAT
+				// timeout). That is the contributor's network, not a hub
+				// defect, and the relay reconnects on its own; logging it at
+				// WARN fed the fleet selfreport as a repeated runtime error
+				// (hivecommons/hive#14163). Keep WARN for close codes that name
+				// a protocol or policy problem.
+				if code == websocket.CloseAbnormalClosure {
+					h.logger.Info("[contribute-ws] contributor connection dropped without close frame",
+						"id", connID,
+						"username", contributorUsername(s.contributor),
+						"close_source", source,
+						"close_code", code,
+						"close_reason", reason,
+						"error", err)
+					return
+				}
 				h.logger.Warn("[contribute-ws] read error",
 					"id", connID,
 					"username", contributorUsername(s.contributor),
@@ -2332,6 +2555,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleTaskAccepted(msg)
 		case "task_declined":
 			s.handleTaskDeclined(msg)
+		case "repo_scope":
+			s.handleRepoScope(msg)
 		case "task_progress":
 			s.handleTaskProgress(msg)
 		case "task_complete":
@@ -2507,6 +2732,14 @@ func (s *wsSession) releaseOnDisconnect() {
 			h.bookAbandonmentAfterGrace(s.contributor, abandonedTask, abandonedTaskAt)
 		}
 		h.logger.Info("[contribute-ws] disconnected", "id", s.connID, "username", s.contributor.profile.GitHubUsername)
+		s.contributor.mu.Lock()
+		closeReason, closedTasks := s.contributor.auditCloseReason, s.contributor.auditTasks
+		s.contributor.mu.Unlock()
+		if closeReason == "" {
+			closeReason = "client"
+		}
+		h.auditRelay(s.contributor, agentaudit.AuditRelayDisconnected, nil,
+			"reason", closeReason, "uptime_s", int(time.Since(s.contributor.connectedAt).Seconds()), "tasks", closedTasks)
 		h.addActivity(s.contributor.profile.GitHubUsername, "left", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, "", s.contributor.advisor())
 	}
 	_ = s.conn.Close()
@@ -2578,7 +2811,13 @@ func (h *ContributeWSHub) bookAbandonmentAfterGrace(c *ContributorConnection, ta
 		}
 		h.addActivity(c.profile.GitHubUsername, "released: connection lost",
 			c.role, c.cliBackend, c.model, c.reasoningEffort, taskDescOf(task))
+		h.auditRelay(c, agentaudit.AuditRelayTaskAbandoned, task)
 		h.appendAbandonedRun(c, task, abandonCauseDisconnect, assignedAt)
+		// The relay did not come back inside the grace window: the issue
+		// claim it carried is released so hive agents can take the issue
+		// on their next eval cycle (hivecommons/hive#13579). The lease is
+		// left in place; a late resume re-asserts the claim.
+		h.releaseContributorClaimOnDisconnect(c, task, time.Now())
 	}
 	grace := disconnectAbandonGrace()
 	if grace <= 0 {
@@ -2625,6 +2864,23 @@ func (h *ContributeWSHub) taskFinishedRecently(taskID string) bool {
 	return ok && time.Since(t) <= recentlyFinishedTTL
 }
 
+// relayTierPermissions is the permission set advertised on auth_ok for a trust
+// tier, and recorded as the scopes of a relay_token_minted audit row.
+func relayTierPermissions(tier string) []string {
+	switch tier {
+	case "newcomer":
+		return []string{"issues:write"}
+	case "contributor":
+		return []string{"issues:write", "contents:write", "pulls:write"}
+	case "trusted", "merger":
+		return []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
+	case "advisor":
+		return []string{"metadata:read", "pulls:read"}
+	default:
+		return []string{"metadata:read"}
+	}
+}
+
 // handleAuthResponse is the handshake phase: it verifies the registration token
 // and challenge signature, admits or refuses the contributor, and registers the
 // connection. It reports stop=true when the socket must close.
@@ -2636,15 +2892,16 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		return true
 	}
 
-	profile := contributorProfileFromRegistrationToken(msg.RegistrationToken)
+	profile, tokenFailure := authenticateContributorToken(msg.RegistrationToken, h.server.contributorTokenPolicy())
 
 	if profile == nil {
-		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: "Invalid registration token"})
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: tokenFailure})
 		closeWithReason(s.conn, websocket.ClosePolicyViolation, "invalid registration token")
 		return true
 	}
 
 	if profile.TrustTier == "revoked" {
+		h.auditRelayAs(profile.GitHubUsername, "", agentaudit.AuditRelayRejected, nil, "reason", "revoked")
 		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: "Access has been revoked"})
 		closeWithReason(s.conn, websocket.ClosePolicyViolation, "access has been revoked")
 		return true
@@ -2657,6 +2914,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		}
 		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: reason, AcceptedModels: acceptedModels})
 		h.logger.Info("[contribute-ws] model rejected", "username", profile.GitHubUsername, "model", msg.Model)
+		h.auditRelayAs(profile.GitHubUsername, "", agentaudit.AuditRelayRejected, nil, "reason", "model_not_accepted")
 		closeWithReason(s.conn, websocket.ClosePolicyViolation, "model not accepted by this hive")
 		return true
 	}
@@ -2670,6 +2928,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		}
 		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: reason, MinReasoningEffort: floor})
 		h.logger.Info("[contribute-ws] reasoning effort rejected", "username", profile.GitHubUsername, "backend", msg.CLIBackend, "effort", msg.ReasoningEffort, "floor", floor)
+		h.auditRelayAs(profile.GitHubUsername, "", agentaudit.AuditRelayRejected, nil, "reason", "effort_below_floor")
 		closeWithReason(s.conn, websocket.ClosePolicyViolation, "reasoning effort below this hive's floor")
 		return true
 	}
@@ -2687,6 +2946,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 			h.logger.Warn("[contribute-ws] agent role claim rejected",
 				"username", profile.GitHubUsername, "tier", profile.TrustTier,
 				"role", requestedRole, "reason", reason)
+			h.auditRelayAs(profile.GitHubUsername, "", agentaudit.AuditRelayRejected, nil, "reason", "role_claim_rejected")
 			closeWithReason(s.conn, websocket.ClosePolicyViolation, "agent role claim rejected")
 			return true
 		}
@@ -2787,23 +3047,24 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	}
 
 	s.contributor = &ContributorConnection{
-		ws:              s.conn,
-		connID:          s.connID,
-		profile:         profile,
-		cliBackend:      msg.CLIBackend,
-		session:         sanitizeSessionLabel(msg.Session),
-		model:           msg.Model,
-		reasoningEffort: msg.ReasoningEffort,
-		knowledgeLoaded: knowledgeLoaded,
-		knowledgeError:  knowledgeError,
-		advisorModel:    advisorModel,
-		advisorEffort:   advisorEffort,
-		role:            requestedRole,
-		clientRole:      clientRole,
-		assignedRole:    assignedRole,
-		connectedAt:     time.Now(),
-		lastPong:        time.Now(),
-		capabilities:    caps,
+		ws:                    s.conn,
+		connID:                s.connID,
+		profile:               profile,
+		registrationTokenHash: sha256Hex(msg.RegistrationToken),
+		cliBackend:            msg.CLIBackend,
+		session:               sanitizeSessionLabel(msg.Session),
+		model:                 msg.Model,
+		reasoningEffort:       msg.ReasoningEffort,
+		knowledgeLoaded:       knowledgeLoaded,
+		knowledgeError:        knowledgeError,
+		advisorModel:          advisorModel,
+		advisorEffort:         advisorEffort,
+		role:                  requestedRole,
+		clientRole:            clientRole,
+		assignedRole:          assignedRole,
+		connectedAt:           time.Now(),
+		lastPong:              time.Now(),
+		capabilities:          caps,
 	}
 
 	// Hand the slot over from the pending counter to h.connections
@@ -2819,21 +3080,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		h.pendingConns.Add(-1)
 	}
 
-	var perms []string
-	switch profile.TrustTier {
-	case "newcomer":
-		perms = []string{"issues:write"}
-	case "contributor":
-		perms = []string{"issues:write", "contents:write", "pulls:write"}
-	case "trusted":
-		perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
-	case "merger":
-		perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
-	case "advisor":
-		perms = []string{"metadata:read", "pulls:read"}
-	default:
-		perms = []string{"metadata:read"}
-	}
+	perms := relayTierPermissions(profile.TrustTier)
 
 	announcement := (*config.ContributeAnnouncement)(nil)
 	needsDecisionLabel := (config.HubConfig{}).ContributeNeedsDecisionLabelOrDefault()
@@ -2861,6 +3108,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		Announcement:                 announcement,
 		ContributeNeedsDecisionLabel: &needsDecisionLabel,
 		HelpLinks:                    h.server.contributeHelpLinks(),
+		AuditShareRequested:          h.server.contributeAuditShareRequest(),
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 		return true
@@ -2872,6 +3120,11 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	}
 
 	s.deliverPendingOperatorMessages()
+
+	h.lastRelayConnectNanos.Store(time.Now().UnixNano())
+	h.auditRelay(s.contributor, agentaudit.AuditRelayConnected, nil,
+		"backend", auditRelayText(msg.CLIBackend), "model", auditRelayText(msg.Model), "tier", profile.TrustTier,
+		"relay_version", auditRelayText(declared.RelayProtocolVersion))
 
 	h.logger.Info("[contribute-ws] authenticated",
 		"id", s.connID,
@@ -3285,6 +3538,7 @@ func cloneContributorProfileForSave(p *ContributorProfile) *ContributorProfile {
 		v := *p.CurrentTask
 		cp.CurrentTask = &v
 	}
+	cp.TierHistory = append([]ContributorTierChange(nil), p.TierHistory...)
 	cp.LabelInterests = append([]string(nil), p.LabelInterests...)
 	cp.AgentRoleGrants = append([]string(nil), p.AgentRoleGrants...)
 	cp.Specializations = append([]string(nil), p.Specializations...)
@@ -3298,6 +3552,7 @@ func refreshConnectionContributorProfile(dst, saved *ContributorProfile) {
 		return
 	}
 	dst.TrustTier = saved.TrustTier
+	dst.TierHistory = append([]ContributorTierChange(nil), saved.TierHistory...)
 	dst.TasksCompleted = saved.TasksCompleted
 	dst.TasksWithPR = saved.TasksWithPR
 	dst.TasksFailed = saved.TasksFailed
@@ -3366,6 +3621,9 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		return false
 	}
 	s.contributor.mu.Lock()
+	// #12805: the scope version this ready was sent under; selection only
+	// proceeds when it matches the acknowledged scope (0 = not stated).
+	s.contributor.readyScopeVersion = msg.ScopeVersion
 	abandoned := s.contributor.currentTask
 	// #7317: captured under the same lock as currentTask so the run record
 	// below can report the task's real wall-clock duration. On the session
@@ -3419,6 +3677,7 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		// Number == 0 and must not poison an issue key.
 		if abandoned.Number > 0 {
 			h.recordTaskFailureForTask(abandoned, false)
+			h.bookReclaimCooldown(identityOf(s.contributor), abandoned.identityKey())
 		}
 		// #7317: and leave a durable trace. Everything above this line is
 		// about ROUTING the abandoned issue (lease, cooldown, activity rail);
@@ -3488,6 +3747,12 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		if task.Role != "" {
 			taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
 		}
+		s.contributor.mu.Lock()
+		s.contributor.auditTasks++
+		s.contributor.mu.Unlock()
+		h.auditRelay(s.contributor, agentaudit.AuditRelayTaskAssigned,
+			&WSTaskAssign{TaskID: task.TaskID, Repo: task.Repo, Number: task.Number},
+			"generation", task.TaskGen, "kind", task.Kind, "mcp", false)
 		h.addActivity(s.contributor.profile.GitHubUsername, "picked up", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, taskDesc, s.contributor.advisor())
 		h.logger.Info("[contribute-ws] task assigned",
 			"username", s.contributor.profile.GitHubUsername,
@@ -3569,15 +3834,37 @@ func (s *wsSession) handleTaskAccepted(msg WSMessage) {
 	// already went out) this is a no-op, and a relay that re-asserts
 	// task_accepted on reconnect cannot re-deliver.
 	if s.contributor != nil {
+		s.auditTaskAccepted(msg.TaskID)
 		h.acceptTaskCredential(s.contributor, msg.TaskID)
 	}
 
+}
+
+// auditTaskAccepted records the relay's first task_accepted for the task this
+// connection holds; a stale task id or a repeat assertion is not audited.
+func (s *wsSession) auditTaskAccepted(taskID string) {
+	c := s.contributor
+	c.mu.Lock()
+	var task *WSTaskAssign
+	if c.currentTask != nil && c.currentTask.TaskID == taskID && c.auditAcceptedTask != taskID {
+		t := *c.currentTask
+		task = &t
+		c.auditAcceptedTask = taskID
+	}
+	c.mu.Unlock()
+	if task != nil {
+		s.h.auditRelay(c, agentaudit.AuditRelayTaskAccepted, task)
+	}
 }
 
 // handleTaskDeclined handles #6833: contributor-local quota preflight may
 // decline an offered task after metadata but before the scoped credential is
 // delivered. This is local capacity, not a task failure: release the lease
 // and connection state without recording failure cooldown or trust impact.
+//
+// A decline with reason out_of_contributor_scope (hivecommons/hive#12805) is
+// "not this contributor's work": it additionally hands back the hourly/daily
+// rate-window slot the claim consumed, so it costs the contributor nothing.
 func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 	h := s.h
 	contributor := s.contributor
@@ -3592,6 +3879,7 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		!contributor.credentialDelivered &&
 		contributor.pendingToken != "" {
 		declined := contributor.currentTask
+		assignedAt := contributor.taskAssignedAt
 		contributor.currentTask = nil
 		contributor.currentTaskGen = h.nextTaskGen()
 		contributor.lastLeaseRenew = time.Time{}
@@ -3603,6 +3891,10 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		contributor.tokenMintedAt = time.Time{}
 		contributor.mu.Unlock()
 		h.revokeLease(identityOf(contributor), msg.TaskID)
+		h.auditRelay(contributor, agentaudit.AuditRelayTaskDeclined, declined, "reason", auditRelayText(msg.Reason))
+		if msg.Reason == taskDeclinedOutOfScope {
+			h.unrecordAssignment(identityOf(contributor), assignedAt)
+		}
 		h.logger.Info("[contribute-ws] task declined by contributor preflight",
 			"username", contributor.profile.GitHubUsername,
 			"task", msg.TaskID,
@@ -3619,6 +3911,90 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		"client_gen", msg.TaskGen,
 	)
 	contributor.mu.Unlock()
+}
+
+// handleRepoScope records a contributor repository scope (hivecommons/hive
+// #12805) and answers with repo_scope_ack. A valid scope replaces the
+// acknowledged one; a malformed scope clears it and fails the connection
+// closed — selectTask serves it nothing until a valid scope arrives. Ids this
+// hub does not offer are echoed back in unknown; they are kept in the scope
+// (harmless: they never match a candidate) so the relay can show them.
+func (s *wsSession) handleRepoScope(msg WSMessage) {
+	h := s.h
+	c := s.contributor
+	if c == nil {
+		return
+	}
+	scope, ids, reason := parseRepoScope(msg)
+	ack := WSMessage{Type: "repo_scope_ack", Seq: h.nextSeq(), ScopeVersion: msg.ScopeVersion}
+	if reason != "" {
+		c.mu.Lock()
+		c.repoScope = nil
+		c.repoScopeInvalid = true
+		c.mu.Unlock()
+		accepted := false
+		ack.Accepted = &accepted
+		ack.Reason = reason
+		h.logger.Warn("[contribute-ws] rejected malformed repo_scope; serving nothing until a valid scope arrives",
+			"username", contributorUsername(c), "scope_version", msg.ScopeVersion, "reason", reason)
+	} else {
+		var unknown []string
+		if scope.restricts() && h.server != nil {
+			offered := make(map[string]struct{})
+			for _, r := range h.server.contributeEligibleRepositories() {
+				offered[r.ID] = struct{}{}
+			}
+			for _, id := range ids {
+				if _, ok := offered[id]; !ok {
+					unknown = append(unknown, id)
+				}
+			}
+		}
+		c.mu.Lock()
+		c.repoScope = scope
+		c.repoScopeInvalid = false
+		c.mu.Unlock()
+		accepted := true
+		ack.Accepted = &accepted
+		ack.Mode = scope.mode
+		ack.Unknown = unknown
+		h.logger.Info("[contribute-ws] repo_scope acknowledged",
+			"username", contributorUsername(c), "scope_version", scope.version,
+			"mode", scope.mode, "repositories", len(ids), "unknown", len(unknown))
+	}
+	if err := c.send(ack); err != nil {
+		h.logger.Warn("[contribute-ws] failed to send repo_scope_ack", "error", err)
+	}
+}
+
+// repoScopeGateReason is the connection-level half of the contributor scope
+// gate (hivecommons/hive#12805), checked before any selection: a connection
+// whose latest scope was malformed is served nothing, and a ready sent under a
+// scope version the hub has not acknowledged waits. "" means proceed.
+func repoScopeGateReason(c *ContributorConnection) string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.repoScopeInvalid {
+		return taskUnavailableRepoScopeInvalid
+	}
+	if c.readyScopeVersion != 0 && (c.repoScope == nil || c.repoScope.version != c.readyScopeVersion) {
+		return taskUnavailableNoSelectedWork
+	}
+	return ""
+}
+
+// acknowledgedRepoScope snapshots the connection's acknowledged scope. Nil
+// means unrestricted.
+func acknowledgedRepoScope(c *ContributorConnection) *contributorRepoScope {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.repoScope
 }
 
 // handleTaskProgress is the lease phase: progress reports renew the lease and
@@ -3649,7 +4025,9 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			lease := h.lookupLease(identity, msg.TaskID, canonRepo, msg.Number, msg.TaskGen, time.Now())
 			if lease == nil {
 				rejectStage := h.leaseStageForDecision(identity, msg.TaskID)
-				h.logger.Warn("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
+				// Expected outcome after a hub restart or lease expiry: the relay is told to
+				// re-ready via task_revoke below, so this is not an error.
+				h.logger.Info("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"repo", canonRepo,
@@ -3669,6 +4047,25 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 				_ = sendJSON(s.conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: "no active lease for this task"})
 				return
 			}
+			// hivecommons/hive#13579: an issue in contributor cool-off is not
+			// resumable either. The lease was issued before the drops that
+			// tripped the cool-off; letting the same relay re-take it now is
+			// exactly the reconnect loop the cool-off exists to break.
+			if co, ok := h.inContributorCoolOff(contributorFlapKey(contributorFlapIdentity(s.contributor), lease.key)); ok {
+				reason := co.Reason()
+				h.recordDecision(s.contributor.profile.GitHubUsername, decisionResumeRejected,
+					msg.TaskID, canonRepo, msg.Number,
+					"refused: "+reason+"; withheld from this contributor until "+co.Until.UTC().Format(time.RFC3339))
+				h.logger.Info("[contribute-ws] task_progress resume refused: issue in contributor cool-off (#13579)",
+					"username", s.contributor.profile.GitHubUsername,
+					"task", msg.TaskID, "repo", canonRepo, "number", msg.Number,
+					"drops", co.Drops, "until", co.Until.UTC().Format(time.RFC3339))
+				h.revokeLease(identity, msg.TaskID)
+				h.auditRelay(s.contributor, agentaudit.AuditRelayTaskRevoked,
+					&WSTaskAssign{TaskID: msg.TaskID, Repo: canonRepo, Number: msg.Number}, "reason", auditRelayText(reason))
+				_ = sendJSON(s.conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: reason})
+				return
+			}
 			// C4: re-run the same admission gates a fresh selectTask assignment
 			// must pass. A task assigned before the operator suspended the queue,
 			// disabled the tier, or revoked the contributor must NOT silently
@@ -3683,6 +4080,8 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 					"reason", reason,
 				)
 				h.revokeLease(identity, msg.TaskID)
+				h.auditRelay(s.contributor, agentaudit.AuditRelayTaskRevoked,
+					&WSTaskAssign{TaskID: msg.TaskID, Repo: canonRepo, Number: msg.Number}, "reason", auditRelayText(reason))
 				_ = sendJSON(s.conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: reason})
 				return
 			}
@@ -3752,6 +4151,15 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			// item on disconnect is the one withdrawn here; the key is "" for
 			// a synthetic task and the helper skips it.
 			h.clearReleaseCooldownKey(rebuilt.identityKey())
+
+			// hivecommons/hive#13579: a disconnect release that outlived the
+			// grace window released the issue claim. The relay is back, so
+			// re-assert it; if a hive agent took the issue meanwhile the
+			// ledger keeps the higher claim and the takeover hook preempts
+			// this relay the usual way.
+			if lease.number > 0 {
+				h.claimIssueForContributor(s.contributor, lease.repo, lease.number)
+			}
 
 			h.logger.Info("[contribute-ws] task resumed from server-issued lease",
 				"username", s.contributor.profile.GitHubUsername,
@@ -3879,6 +4287,12 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 // ledgers, rewards, and releasing the task.
 func (s *wsSession) handleTaskComplete(msg WSMessage) {
 	h := s.h
+	// hivecommons/hive#12436: a fix-pr task settles in the contributor's fix
+	// queue (freeing its slot and refilling it) and never touches currentTask.
+	if s.contributor != nil && msg.TaskID != "" && h.completeFixTask(s.contributor, msg.TaskID) {
+		h.logger.Info("[contribute-ws] fix-pr task done", "username", identityOf(s.contributor), "task", msg.TaskID)
+		return
+	}
 	if s.contributor != nil {
 		s.contributor.mu.Lock()
 		// #2568 (the Gate, critical guarantee): a worker whose task was revoked
@@ -4020,6 +4434,13 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					// push a perfectly healthy contributor to `Stale` in the
 					// fleet view for the sake of a PR-body edit.
 					go h.reconcilePRAttribution(msg.PRURL, s.contributor)
+					// Same detachment, same reasoning: make the PR↔issue link
+					// durable so the claim ledger and the issue list see the
+					// dispatched issue as covered (hivecommons/hive#14763).
+					if completedTask != nil {
+						taskCopy := *completedTask
+						go h.linkReportedPRToIssue(&taskCopy, msg.PRURL, s.contributor.profile.GitHubUsername)
+					}
 					// A MERGED fix retires the finding it addresses, so the
 					// digest stops carrying work that is already done. Gated
 					// on prDetail.Merged, not on verification alone: a PR
@@ -4044,12 +4465,63 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					}
 				}
 			}
-			// #3987: normalize the completion's verdict. A verified PR always
-			// wins (shipped); with none, only an explicit no_work_needed (or
-			// its blocked sibling, #7924) is honoured and everything else —
-			// including the absent field every pre-#3987 relay sends — is
-			// idle, i.e. today's exact semantics.
+			// #3987/#13146: normalize the completion's verdict. A verified PR
+			// always wins; with none, recognized no-work and routing outcomes
+			// are honoured while unknown values remain idle for compatibility.
 			verdict := normalizeCompletionVerdict(msg.Verdict, msg.VerdictBlocked, msg.VerdictNeedsDecision, verifiedPR)
+			verdictReason := strings.TrimSpace(msg.VerdictReason)
+			wrongBaseTarget := ""
+			if verdict == completionVerdictWrongBase {
+				resolved, target, reason, park := h.resolveWrongBaseVerdict(
+					completedTask, verdict, msg.VerdictTargetBranch)
+				verdict, wrongBaseTarget, verdictReason = resolved, target, reason
+				if park && completedTask != nil {
+					taskCopy := *completedTask
+					go h.parkWrongBaseIssue(&taskCopy, s.contributor.profile.GitHubUsername,
+						wrongBaseTarget, verdictReason)
+				}
+			}
+			// A blocked verdict whose reason is the contributor's OWN tooling
+			// failing (push rejected, token scope, credentials) is not
+			// blocked on anything outside the repo: book it idle so the
+			// issue is re-offered, and lift the `blocked` label the relay
+			// applied so the fleet's workflow gate does not park it until a
+			// human notices (hivecommons/hive#11775, #11776).
+			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, verdictReason); ok {
+				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason describes contributor tooling, not an external dependency",
+					"username", s.contributor.profile.GitHubUsername,
+					"task", msg.TaskID,
+					"verdict_reason", verdictReason)
+				verdict = downgraded
+				if completedTask != nil {
+					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
+				}
+			}
+			// A blocked verdict that names its blocker (owner/repo#N, #N, an
+			// issue or PR URL) is recorded as a native "blocked by" link or a
+			// blocked-on PR marker, so the hive lifts `blocked` itself when
+			// the blocker closes (hivecommons/hive#15023).
+			if verdict == completionVerdictBlocked && completedTask != nil {
+				taskCopy := *completedTask
+				go h.recordVerdictBlocker(&taskCopy, verdictReason)
+			}
+			// A needs-decision verdict whose reason is the target repository's
+			// OWN confirmation gate — "AGENTS.md says offer a spec and wait",
+			// "registered sibling checkout missing" — is not a decision a
+			// person must make: the dispatch was the acceptance. Book it idle
+			// so the issue is re-offered once, and lift the decision label the
+			// relay applied (hivecommons/hive#13059). The second such park on
+			// the same issue is left standing for a maintainer.
+			if completedTask != nil {
+				if downgraded, ok := h.reclassifyGateParkVerdict(completedTask.identityKey(), verdict, verdictReason); ok {
+					h.logger.Warn("[contribute-ws] needs-decision verdict reclassified: reason is the repository's own confirmation gate, not a maintainer decision",
+						"username", s.contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"verdict_reason", verdictReason)
+					verdict = downgraded
+					go h.releaseGateParkedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
+				}
+			}
 			if completedTask != nil {
 				// #2393 item 7 + #2565: the full week-long cooldown is applied
 				// only for a VERIFIED PR; an unverified or no-PR completion gets
@@ -4059,7 +4531,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// verdict additionally books the durable offer-suppression
 				// verdict (see markTaskCompletedVerdict).
 				h.markTaskCompletedVerdictKeySignal(completedTask.identityKey(), verifiedPR,
-					verdict, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason),
+					verdict, s.contributor.profile.GitHubUsername, verdictReason,
 					msg.CompletionSignal)
 				// #7871: a no_work_needed reason usually names WHAT settled
 				// the issue. Verify the citation against GitHub and, if it
@@ -4074,7 +4546,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// settlement would be the wrong fact in the claim ledger.
 				if verdict == completionVerdictNoWorkNeeded {
 					go h.settleIssueFromVerdictWithEvidence(completedTask.Repo, completedTask.Number,
-						strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence,
+						verdictReason, msg.VerdictReasonKind, msg.Evidence,
 						taskAssignedAt, s.contributor.profile.GitHubUsername)
 				}
 			}
@@ -4099,8 +4571,8 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				"result", msg.Result,
 				"pr_verified", verifiedPR != "",
 				"verdict", verdict,
-				"verdict_reason", strings.TrimSpace(msg.VerdictReason),
-				// #5376: which signal ended the task. Diagnostic only —
+				"verdict_reason", verdictReason,
+				"verdict_target_branch", wrongBaseTarget,
 				// normalized to a closed vocabulary so a client cannot
 				// inject arbitrary text into the hub's structured logs.
 				"completion_signal", normalizeCompletionSignal(msg.CompletionSignal),
@@ -4115,21 +4587,22 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// normalized fields the slog line above carries, plus the
 			// duration nothing recorded before. DECLARE only.
 			runRec := TaskRunRecord{
-				TaskID:            msg.TaskID,
-				TaskGen:           msg.TaskGen,
-				Username:          s.contributor.profile.GitHubUsername,
-				Backend:           s.contributor.cliBackend,
-				Provider:          provider,
-				Model:             s.contributor.model,
-				Effort:            s.contributor.reasoningEffort,
-				AdvisorModel:      s.contributor.advisorModel,
-				AdvisorEffort:     s.contributor.advisorEffort,
-				Role:              s.contributor.role,
-				Outcome:           "completed",
-				CompletionSignal:  normalizeCompletionSignal(msg.CompletionSignal),
-				Verdict:           verdict,
-				VerdictReason:     strings.TrimSpace(msg.VerdictReason),
-				VerdictReasonKind: strings.TrimSpace(msg.VerdictReasonKind),
+				TaskID:              msg.TaskID,
+				TaskGen:             msg.TaskGen,
+				Username:            s.contributor.profile.GitHubUsername,
+				Backend:             s.contributor.cliBackend,
+				Provider:            provider,
+				Model:               s.contributor.model,
+				Effort:              s.contributor.reasoningEffort,
+				AdvisorModel:        s.contributor.advisorModel,
+				AdvisorEffort:       s.contributor.advisorEffort,
+				Role:                s.contributor.role,
+				Outcome:             "completed",
+				CompletionSignal:    normalizeCompletionSignal(msg.CompletionSignal),
+				Verdict:             verdict,
+				VerdictReason:       verdictReason,
+				VerdictReasonKind:   strings.TrimSpace(msg.VerdictReasonKind),
+				VerdictTargetBranch: wrongBaseTarget,
 				NeedsDecisionLabel: func() string {
 					if verdict == completionVerdictNeedsDecision {
 						return h.configuredNeedsDecisionLabel()
@@ -4141,8 +4614,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				PRVerified:     verifiedPR != "",
 				PRVerifyReason: strings.TrimSpace(prDetail.Reason),
 			}
-			if _, alreadyDone := alreadyDoneVerdictRefs("", 0, strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence); alreadyDone {
-				runRec.VerdictDisposition = verdictDispositionAlreadyDoneUnverified
+			if verdict == completionVerdictNoWorkNeeded {
+				if _, alreadyDone := alreadyDoneVerdictRefs("", 0, verdictReason, msg.VerdictReasonKind, msg.Evidence); alreadyDone {
+					runRec.VerdictDisposition = verdictDispositionAlreadyDoneUnverified
+				}
 			}
 			if completedTask != nil {
 				runRec.Repo = completedTask.Repo
@@ -4170,6 +4645,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			if !taskAssignedAt.IsZero() {
 				runRec.DurationS = time.Since(taskAssignedAt).Seconds()
 			}
+			h.auditRelay(s.contributor, agentaudit.AuditRelayTaskCompleted, completedTask,
+				"pr_url", verifiedPR, "verdict", verdict, "duration_s", int(runRec.DurationS),
+				"model", auditRelayText(s.contributor.model))
+			h.attestRelayAudit(s.contributor, completedTask, msg.AuditShare)
 			h.appendTaskRun(runRec)
 			// #6450: a genuine completion proves the runtime works — clear
 			// the contributor's fast-failure streak.
@@ -4186,6 +4665,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			promotedModel := s.contributor.model
 			promotedEffort := s.contributor.reasoningEffort
 			countCompletion := !isEvidenceLessCompletion(verifiedPR, verdict, msg.CompletionSignal)
+			var promotion ContributorTierChange
 			promotedUser, promoted, saveErr := saveConnectionContributorProfile(s.contributor, func(p *ContributorProfile) bool {
 				if countCompletion {
 					p.TasksCompleted++
@@ -4208,9 +4688,12 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// Completion is self-reported, so counting bare task_complete
 				// messages — or unverified PR URLs — would hand out contents:write
 				// and pulls:write for work that was never shown to exist.
-				if p.TrustTier == "newcomer" && p.TasksWithPR >= contributorAutoPromoteAt {
-					p.TrustTier = "contributor"
-					return true
+				if p.TrustTier == contributorTierNewcomer && p.TasksWithPR >= contributorAutoPromoteAt {
+					ch, changed := applyContributorTierChange(p, contributorTierContributor, tierChangeByAutoPromotion,
+						fmt.Sprintf("%d verified PR tasks reached the auto-promotion threshold (%d)", p.TasksWithPR, contributorAutoPromoteAt),
+						tierChangeSourceAutoPromotion, time.Now())
+					promotion = ch
+					return changed
 				}
 				return false
 			})
@@ -4224,7 +4707,8 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// Read-only signalling — it changes no control behaviour and is
 			// emitted only on the real newcomer -> contributor transition.
 			if promoted {
-				h.logger.Info("[contribute-ws] auto-promoted", "username", promotedUser)
+				h.logger.Info("[contribute-ws] auto-promoted", "username", promotedUser, "tier", promotion.Tier, "prev", promotion.Prev, "reason", promotion.Reason)
+				h.auditTierChange(promotedUser, promotion)
 				h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, promotedEffort, "contributor")
 			}
 		} else {
@@ -4248,6 +4732,13 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 // cooldowns, and releasing the task.
 func (s *wsSession) handleTaskFailed(msg WSMessage) {
 	h := s.h
+	// hivecommons/hive#12436: a fix-pr task settles in the contributor's fix
+	// queue (freeing its slot and refilling it) and never touches currentTask.
+	// hivecommons/hive#14668: a failed fix is requeued with backoff (retried,
+	// then dropped back to the stage engine), not settled as done.
+	if s.contributor != nil && msg.TaskID != "" && h.failFixTask(s.contributor, msg) {
+		return
+	}
 	if s.contributor != nil {
 		s.contributor.mu.Lock()
 		// #2568 (the Gate): reject a STALE worker's failure the same way as its
@@ -4312,6 +4803,11 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 				// back out ahead of the rest of the queue. A permanent failure
 				// counts more toward the quarantine threshold.
 				h.recordTaskFailureForTask(failedTask, msg.Permanent)
+				// hivecommons/hive#13093: and keep THIS contributor off it
+				// for far longer than the global ten minutes, so a relay
+				// whose environment cannot run the task stops re-taking
+				// it (and flapping its claim) while others may still try.
+				h.bookReclaimCooldown(identityOf(s.contributor), failedTask.identityKey())
 			}
 			// #2547: keep the failure reason instead of only logging it, so an
 			// operator can tell a work item that failed on its merits from one
@@ -4387,6 +4883,9 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			if !taskAssignedAt.IsZero() {
 				runRec.DurationS = time.Since(taskAssignedAt).Seconds()
 			}
+			h.auditRelay(s.contributor, agentaudit.AuditRelayTaskFailed, failedTask,
+				"class", failureKind, "duration_s", int(runRec.DurationS))
+			h.attestRelayAudit(s.contributor, failedTask, msg.AuditShare)
 			h.appendTaskRun(runRec)
 			// #6450: book this failure against the CONTRIBUTOR's fast-failure
 			// streak (hub-measured duration; an unknown/adopted-task duration
@@ -4470,10 +4969,16 @@ func (h *ContributeWSHub) heartbeatLoopWithTicks(c *ContributorConnection, ticks
 				"last_pong_age_ms", time.Since(lastPong).Milliseconds(),
 				"heartbeat_timeout_ms", timeout.Milliseconds(),
 			)
+			c.setAuditCloseReason("heartbeat_timeout")
 			closeWithReason(c.ws, websocket.CloseGoingAway, "heartbeat timeout: no pong within the heartbeat window")
 			return
 		}
 
+		if !h.registrationTokenSessionValid(c) {
+			_ = c.send(WSMessage{Type: "auth_failed", Reason: contributorTokenExpired})
+			closeWithReason(c.ws, websocket.ClosePolicyViolation, "registration token expired or revoked")
+			return
+		}
 		h.maybeRefreshToken(c)
 
 		if err := c.send(WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
@@ -4731,6 +5236,11 @@ func (h *ContributeWSHub) cleanupLoop() {
 				username := ""
 				if c.profile != nil {
 					username = c.profile.GitHubUsername
+				}
+				// Hub-initiated close: without this the relay_disconnected row falls
+				// back to reason=client. c.mu is already held, so set it inline.
+				if stale && c.auditCloseReason == "" {
+					c.auditCloseReason = "heartbeat_timeout"
 				}
 				c.mu.Unlock()
 				if stale {
@@ -5034,6 +5544,7 @@ func (h *ContributeWSHub) DrainForShutdown() int {
 		// Nil-guard mirrors cleanupLoop: a registered connection may carry no live
 		// socket (test-injected in-flight entry, or one torn down elsewhere).
 		if c != nil && c.ws != nil {
+			c.setAuditCloseReason("server_shutdown")
 			conns = append(conns, c.ws)
 		}
 	}

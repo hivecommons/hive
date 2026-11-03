@@ -1,0 +1,1 @@
+- Dashboard: the Activity Monitor's Merged counter is a mechanical odometer at rest, always (only the wheels that change roll) — #15409 had sized only the flying glyph and drawn the roll as a transient overlay over plain text.

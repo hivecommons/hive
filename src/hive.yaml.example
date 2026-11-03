@@ -7,18 +7,28 @@
 # Precedence: hive.yaml < config.env < explicit env vars.
 
 project:
+  # Replace your-org, repo-*, and your-bot-user before use.
   org: your-org                          # GitHub organization
   repos:                                 # Repositories to manage
     - repo-one
     - repo-two
   ai_author: your-bot-user               # Login agents author as. Leave unset on App-authenticated hives (the App bot is used). Never a maintainer's own login: Hive treats this account as itself and ignores its /hive commands.
   primary_repo: repo-one                 # Main repo for priority routing
+  # agent_issue_decision_policy: resolve # resolve (default) lets Hive-authored issues stay actionable for non-risk engineering choices; escalate parks every --needs-decision request
   # Optional: host-local directory holding one checkout per repo, as
   # <checkouts_dir>/<repo name>. Supplies the repo root Hive reads AGENTS.md
   # from at kick time (src/docs/agents-md.md). Hive agents work over the API and
   # keep no clones, so without this AGENTS.md injection stays a no-op — which is
   # the default. An absent directory or a repo with no AGENTS.md is also a no-op.
   # checkouts_dir: /data/checkouts
+  # Optional: hive-wide house style — a short how-to-change rule list that
+  # opens every kick on every backend (src/docs/house-style.md). A repo's root
+  # HIVE_STYLE.md (read from checkouts_dir) overrides it; unset both and the
+  # built-in text applies. `style` (inline) wins over `style_file`.
+  # style: |
+  #   - Prefer table-driven tests.
+  # style_file: /etc/hive/HIVE_STYLE.md
+  # style_max_bytes: 4096                # min 512; oversize candidates are skipped, not clipped
   # Optional: quiet ONE repo without stopping the hive (src/docs/repo-pause.md).
   # A paused repo stays in `repos` above — it keeps its dashboard card and its
   # ACMM eval — but agents cannot write to it and are handed no work on it. Only
@@ -49,6 +59,23 @@ project:
 #     - legacy-entry-no-longer-needed
 #   no_ci_ok:
 #     - your-org/docs-only-repo
+#   # One human step per agent PR at ACMM L5 (src/docs/hive-merge.md): a trusted
+#   # merger's Approve review on the current head plus removing the level hold
+#   # queues the PR for auto-merge. Per repo, off by default.
+#   queue_on_approve_and_unhold:
+#     - your-org/your-repo
+#   # Contributor-lane tier (src/docs/hive-merge.md#contributor-lane-auto-merge):
+#   # merges a green, soaked, reviewer-approved PR from a contributor the
+#   # operator trusts. The author is admitted either by holding a require_tiers
+#   # tier on their contributor-registry profile (registry_tiers_sufficient,
+#   # default true) or by closing an issue that carries this hive's verified
+#   # hive:claim marker for them.
+#   contributor_lane:
+#     enabled: true
+#     soak_minutes: 120
+#     require_reviewer_verdict: true
+#     require_tiers: [trusted, merger]
+#     registry_tiers_sufficient: true
 
 # Optional suspicious-activity alerts. Default: enabled, `sentinel-alert` is a
 # hard block for untrusted authors, and trusted authors (Hive App, owner-tier
@@ -56,19 +83,56 @@ project:
 # sentinel:
 #   trusted_authors_block: false  # set true to block trusted authors too
 
+# Hive-curated `good first issue` advertising (default ON; `enabled: false`
+# opts out). A periodic sweep scores open, unclaimed issues; the few that qualify get
+# GitHub's canonical `good first issue` + `help wanted` labels and ONE welcome
+# comment that pitches the issue to contributors bringing their own coding
+# agent and links this hive's relay page (<dashboard.public_url>/contribute?
+# issue=<owner/repo>#<n>). Not a hold: when a hive agent starts the issue the
+# label comes off and the comment is marked superseded. Needs
+# dashboard.public_url (or a hub-assigned dashboard URL).
+# See docs/good-first-issue.md.
+# good_first_issue:
+#   enabled: true           # default; false opts out
+#   interval: 15m           # sweep cadence (short: the scanner claims fresh issues within minutes)
+#   max_per_repo: 5         # issues wearing the label per repo, including hand-labelled
+#   max_per_sweep: 2        # new selections per repo per pass
+#   min_age: 1h             # never advertise an issue younger than this
+#   min_body_chars: 80
+#   max_body_chars: 4000
+#   max_packages: 2         # source directories an issue may mention
+#   min_score: 2            # positive signals required
+#   reselect_cooldown: 168h # a released issue stays out this long
+#   exclude_labels: [kind/epic, epic, meta, security]  # replaces the built-in list
+#   repos: []               # empty = every watched repo
+#   docs_url: https://github.com/hivecommons/hive/blob/v5/src/docs
+#   comment_template: ""    # text/template over gfi.Vars; must contain {{ .Marker }}
+
 # Optional contributor help/community links. Shown on /contribute Onboarding,
 # Operations, and printed by relays when they connect. Empty/omitted defaults to
 # Hive's contributor docs and issue tracker. URLs must be absolute http(s).
 # Prefer discord.gg invites over discord.com/channels URLs for new contributors.
 # contribute:
+#   # Registration tokens: mandatory lifetime; optional inactivity cutoff.
+#   # Env overrides: HIVE_CONTRIBUTE_TOKEN_MAX_AGE / HIVE_CONTRIBUTE_TOKEN_IDLE_MAX.
+#   token_max_age: 2160h # 90 days (Go durations do not accept days)
+#   token_idle_max: 0s # off
 #   help_links:
 #     - label: Contributor docs
 #       url: https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md
 #     - label: Chat with other contributors
 #       url: https://hivecommons.dev/discord
+#   # Stage-072 fix budget (hivecommons/hive#12436): how many red-PR fix-pr
+#   # sub-sessions one contributor's relay may run beside its primary session
+#   # (the relay advertises its own count; the hub clamps to this). 1 forces
+#   # preempt mode. Queued fixes are served before new work.
+#   max_parallel_fixes: 2
+#   # Preempt mode: minimum uninterrupted run time of a resumed primary task
+#   # before the hub may preempt that contributor again.
+#   min_focus_window: 30m
 
 # GitHub App / PR policy. The #5117 self-authorization hold defaults on through
-# ACMM L5 and off at ACMM L6 Fully Autonomous. App-authored PRs whose only
+# ACMM L5 and off at ACMM L6 (Autonomous). App-authored PRs whose only
 # tracked rationale is an unacknowledged hive-filed issue receive `hold` until a
 # human signs off on the direction. Set true to keep that hold at L6; set false
 # below L6 only for hives that are allowed to act on their own findings.
@@ -85,6 +149,19 @@ project:
 #   close_on_merge: true
 #   close_on_merge_backfill_interval: 1h
 #   reporter_confirmation: false
+#   # Trusted reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   sha_hold_trusted_label: needs-sha
+#   # Lift hive-applied hold/blocked once a referencing PR merges (#12002).
+#   lift_hive_hard_suppress: true
+#   hard_suppress_reconcile_interval: 30m
+#   # Comment once on new RFC/feature issues with the existing settings that
+#   # may already cover them; never labels or closes (#13575). Default off.
+#   rfc_existing_check:
+#     enabled: false
+#     post_when_nothing_found: false
+#     labels: [rfc, enhancement, kind/feature]
+#     max_matches: 5
+#     max_age: 168h
 #
 # Optional per-repo override for the same policy. Omit a repo entry (or omit
 # self_authorization_hold in it) to inherit github.self_authorization_hold, then
@@ -103,6 +180,11 @@ project:
 #       # Downgrading to a Hive without this key silently ignores it, and the
 #       # repo goes back to direct.
 #       merge_strategy: hive-serialized
+#     - repo: busy-repo
+#       # Cap on open hive PRs still waiting on a human (#13645). At the cap
+#       # hive-open-pr refuses new PRs here; issue filing is unaffected. 0 means
+#       # the default of 12; omit the key for no cap.
+#       max_open_held_prs: 0
   # Optional: how the issues and PRs your agents file should read. Rendered as
   # ${WRITING_GUIDE} in every default policy that files an issue or PR, right
   # before the body template the agent fills in — next to the template, which
@@ -138,6 +220,9 @@ ioscan:
   classifier:
     enabled: false                        # default: false; optional LLM judge for semantic plain-English injections
     model: ""                             # empty uses governor.litellm default_model, then gpt-4o-mini
+    backend: ""                           # empty = HTTP endpoint; "claude" runs the classifier through the tool-less CLI (copilot/codex/gemini refused at boot)
+    cli_budget_per_eval: 8                # CLI backend only: classifier calls per scheduler pass
+    cli_daily_quota: 500                  # CLI backend only: classifier calls per UTC day
     warn_threshold: 0.55                  # advisory bead/audit threshold
     block_threshold: 0.85                 # open=redact, closed=block kick
 
@@ -379,6 +464,21 @@ agents:
     on_demand: true
     stale_timeout: 7200
 
+# Repeat-failure check (#14550): notice an agent running the same failing shell
+# command again and again. Monitor only — it never pauses the agent. Off by
+# default; while off Hive collects no command records and adds nothing to an
+# agent's environment or home. While on, fresh-bash backends launch with
+# BASH_ENV (a Hive-owned recording script) and SHELL=/bin/bash, so bob runs its
+# commands in bash instead of dash. Values shown are the defaults.
+# repeat_failure:
+#   enabled: false
+#   threshold: 5          # same command, same result, this many times...
+#   window_s: 600         # ...within this many seconds raises a note
+#   no_data_after_s: 900  # shell activity but no record this long = "not receiving data"
+#   exclude:              # command prefixes that fail by design while waiting
+#     - gh pr checks
+#     - gh run watch
+
 # Hub — hive-wide contributor settings. Shown here only for the standby keys
 # (RFC #7629); the contribute admission filters live on the dashboard's
 # Operations tab and are written back here.
@@ -437,8 +537,29 @@ governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
   eval_interval_max_s: 1800               # Cap when API budget mode stretches evals
   eval_interval_webhook_s: 900            # Base interval while GitHub webhooks are healthy (see /api/webhook/github)
+  webhook_wake_debounce_s: 10             # Quiet period after an invalidating webhook before the early eval cycle
+  webhook_wake_min_gap_s: 30              # Minimum gap between webhook-triggered eval cycles
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
+
+  # First-time contributor welcome (see docs/good-first-issue.md#welcoming-first-time-contributors).
+  # When a human whose GitHub author_association is FIRST_TIME_CONTRIBUTOR /
+  # FIRST_TIMER opens a PR, post one comment (per author per repo, marker
+  # <!-- hive:first-timer-welcome -->) inviting them to run their own hive.
+  # Needs dashboard.public_url (or a hub-assigned dashboard URL).
+  # first_timer_welcome:
+  #   enabled: true           # default; false opts out
+  #   template_path: ""       # optional text/template file over firsttimer.Vars; must contain {{ .Marker }}
+
+  # Self-merge review gate (#12592). Immediately before the hive merges its
+  # own (App-authored) PR, read the swarm review verdict for the head SHA:
+  # no-review-bundle / awaiting-review-approval / changes-requested:<perspectives>
+  # hold the merge in enforce mode; shadow (default) only records what the gate
+  # would have held in the evidence bundle and merges as today. The effective
+  # mode is the strictest of this knob, review.require_approval (enforce) and
+  # review.shadow (shadow); all three are re-read on every evaluation.
+  # review_gate:
+  #   mode: shadow            # off | shadow | enforce
 
   # Kick prompt list caps (#7368). Every issue list and every PR list in a
   # kick is cut at these counts, with an explicit "… and N more" line, so a
@@ -501,6 +622,34 @@ governor:
   labels:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
+    stage:                              # Hive-owned stage/NN-* pipeline labels (docs/labels-and-control-signals.md)
+      enabled: true                     # One stage label per open issue/PR, plus author/* and the stage/stalled marker
+      # stalled:                        # stage/stalled = "no activity"; never applied while the item waits on the hive (#12534)
+      #   require_quiet: true           # measure dwell from the last outside activity (push/comment/review/CI); false = from stage entry
+      # dwell:                          # Per-stage "stalled" thresholds by slug; 0 = never
+      #   review-pending: 1h
+      #   needs-author: 24h            # stage/071: human-authored red PR, the author must act
+      #   returned-to-contributor: 24h  # stage/072: clanker red PR handed back to its hive
+      #   awaiting-merge-admission: 30m  # a stall here = the lane, not the author; the hive comments the last skip reason
+      # contributor_nudge:              # stage/072: one @-mention comment per head + relay fix-pr interrupt (#12436)
+      #   enabled: true
+      #   renudge_interval: 24h         # second (and last) nudge; default = the stage dwell
+      # presence_window: 15m            # relay heartbeat this fresh = contributor online → relay interrupt, else comment only
+      # contributor_grace_online: 2h    # nudge unanswered this long (online author) → stage/074 adoption
+      # contributor_grace_offline: 15m  # same for offline / external authors (comment-only nudge)
+      # adoption:                       # stage/074-adopted-by-hive: repair a still-red contributor PR
+      #   enabled: true                 # default true; false leaves the PR in stage/072
+      #   in_place: true                # default true; push to the original branch when GitHub permits
+      #                                 # otherwise supersede with an App PR retaining the author's commits
+      #   strict_attribution: true      # default true; changed in-place heads keep ownership only when
+      #                                 # GitHub links their commits to the App bot (fail closed)
+      #   after_offline: 15m            # default 15m; registered relay offline, measured from the later
+      #                                 # of its last heartbeat and the first stage/072 nudge
+      #   after_unregistered: 15m       # default 15m; no contributor profile, wait after the nudge with no new head
+      #   supersede:
+      #     close_first: true           # default true; close the original (hive/superseded, one note naming the
+      #                                 # copy) in the pass that opens the copy; reopened if the copy fails.
+      #                                 # false: original stays stage/074 and closes when the copy merges
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.
@@ -668,6 +817,8 @@ governor:
 #   long_stall_days: 7
 #   recent_closed_window_s: 604800
 #   analysis_model: ""   # empty disables all LLM calls (default)
+#   lesson_confidence_step: 0.05   # confidence added per recorded repeat of a retro lesson
+#   lesson_confidence_cap: 0.9     # repeats never raise a lesson above this
 
 # Planning intelligence — the `plan`/`epic` issue-label trigger that auto-mints
 # an epic bead and requests architect decomposition (see docs/planning-intelligence.md).
@@ -698,6 +849,9 @@ governor:
 #     fix_labels: [kind/bug, good first issue]
 #     min_body_chars: 80
 #     clarify_comment: true
+#     clarity_gate:          # park unclear human-filed issues with needs-spec and ask the author (#13577)
+#       enabled: false
+#       threshold: 60        # clarity score 0-100 an issue needs to stay in the agent queue
 #   spektacular:
 #     enabled: false
 #     binary: spektacular
@@ -748,6 +902,32 @@ governor:
 #       endpoint: http://127.0.0.1:8585
 #       workflow_version: flue-fixture/1.0.0
 
+# Private-spoke Claude Managed Agents hosted-execution prototype (#14124).
+# OFF by default. The adapter is linked only with the
+# `extwork_claude_managed_agents` build tag; enabled with no mode is shadow,
+# and only explicit report-only dispatches. The environment must be
+# self_hosted behind forced egress or proxy-only, direct GitHub writes are
+# refused, and the durable ledger caps the spoke at USD 25 per UTC day.
+# API key settings below are references, never key values.
+# runs:
+#   external:
+#     claude_managed_agents:
+#       enabled: false
+#       mode: shadow
+#       endpoint: https://api.anthropic.com
+#       workflow_version: claude-managed/2026-04-01
+#       agent_id: agt_private
+#       agent_version: 1
+#       toolset_version: hive-tools/1
+#       environment_id: env_private
+#       environment_type: self_hosted
+#       network_policy: forced-egress
+#       api_key_env: ANTHROPIC_API_KEY
+#       model: claude-sonnet-4-6
+#       state_dir: /data/extwork/claude-managed-agents
+#       daily_budget_cents: 2500
+#       github_write_path: none
+
 # CEL-based agent triggers — declarative rules that kick an agent directly off
 # a normalized source-control event (issue opened, PR opened, a label applied,
 # a comment posted), evaluated with CEL against the `event` variable. This is
@@ -790,10 +970,34 @@ governor:
 # merge-eligible.json requires an aggregate approve in review-verdicts.json.
 # review:
 #   require_approval: false
+#   shadow: false       # evaluate the approval gate without enforcing it; records
+#                       # shadow.review_gate.would_have_held on the evidence bundle (#12104)
 #   fan_out: false
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
+#   reviewers:
+#     autoscale:        # size the reviewer lane to its backlog (#14685); off by default
+#       enabled: false
+#       agent: ""       # base reviewer to scale; default: first role:reviewer agent, else reviewer_agents[0]
+#       min: 1          # floor of active replicas (the base agent is never retired)
+#       max: 4          # ceiling; capped at the agents.<name>.replicas limit (5)
+#       target_backlog_per_reviewer: 2 # PRs waiting per reviewer before the lane is "behind"
+#       scale_up_cycles: 2   # consecutive behind cycles before adding a reviewer
+#       scale_down_cycles: 5 # consecutive idle cycles before draining the top replica
+#       cooldown: 5m         # minimum gap between scaling actions
+#       cpu_per_reviewer: 1.0     # cgroup CPU (cores) reserved per added reviewer
+#       mem_per_reviewer_mb: 2048 # cgroup memory (MiB) reserved per added reviewer
+#   combined_perspectives: true # RECOMMENDED (#12126): one session + one comment covering every
+#                               # perspective; shared review boilerplate is sent once instead of once
+#                               # per perspective. Verdicts stay per-perspective. Default false.
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
+#   pending_ttl: 45m    # re-dispatch a review whose kick posted no verdict after this long
+#                       # (Go duration; default 45m; negative disables expiry)
+#   pending_fix_ttl: 2h # dispatch the next bounded fix attempt when a fixer turn has
+#                       # pushed no new head after this long (Go duration; default 2h;
+#                       # negative disables expiry)
+#   max_redispatch: 3   # expiries per PR head before the planner stops re-kicking and
+#                       # records a requires_human hold (review-dispatch-exhausted)
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
 #   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default
 #   severity:                 # blocking line (#11088); Settings -> Features -> Review Gate
@@ -805,7 +1009,7 @@ governor:
 #     project_column_id: ""     # required for github_project: Projects v2 status option id
 #     linear_state: ""          # linear: workflow state; blank = team default
 #     jira_status: ""           # jira: status; blank = project initial status
-#     labels: [from-review]
+#     labels: [origin/review]   # provenance label; legacy from-review is mapped to it
 #     max_per_pr_per_day: 10    # 0/unset = 10
 
 # Compliance control mapping (#11078) — optional. Selects the framework
@@ -864,6 +1068,10 @@ github:
   #   oidc:
   #     enabled: false
   #     audience: hive-prod
+  # Opt in on shared-UID deployments (e.g. OpenShift restricted-v2).
+  # Gives agents read-only App caches; agents can read each other's caches.
+  # Writes still use the relays. Requires App auth; default false. Restart to apply.
+  # shared_uid_read_token: true
   # agent_reserve_floor: 400              # Keep this many core requests reserved for daemon scan/merge paths.
 
   # Shared GitHub App/PAT core API budget floors. When remaining core quota
@@ -920,6 +1128,8 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # stage_tracker:
+  #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
   # theme_overrides:
   #   tokens: { "--accent": "#e0a33a" } # CSS variables from the dashboard :root allow-list
@@ -941,6 +1151,7 @@ dashboard:
 #   is_public: false
 #   auto_snapshot: true
 #   auto_upgrade: true
+#   upgrade_drain_timeout_s: 2700  # self-upgrade waits up to this long for in-flight agent kicks (new kicks withheld); 0/unset = 45 min, negative disables; a kick unsettled past its agent's continuous_turn_ceiling (default 45m) is treated as wedged and does not hold the drain
 #   task_status_push: true  # HIVE_HUB_TASK_STATUS_PUSH overrides; false stops only the separate task-status loop (restart required)
 #   contribute_labels_mode: deny
 #   contribute_deny_labels: [hold, wontfix]
@@ -953,6 +1164,11 @@ dashboard:
 #       authors_mode: deny
 #       deny_authors: [dependabot[bot]]
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
+#   # Relay audit level this hive ASKS contributors to share (lifecycle |
+#   # commands | reasoning), shown on auth_ok and /contribute. A request only:
+#   # nothing is uploaded without the contributor's `--share-audit` opt-in, and
+#   # admission never depends on it. Empty (default) requests nothing.
+#   contribute_audit_share_request: ""
 #   # Contributor queue: "already done" no_work_needed verdicts are commented
 #   # and labeled so the issue stays out of re-offer until a maintainer removes
 #   # the label. Verified merged-PR evidence runs the normal completed close path.
@@ -978,12 +1194,47 @@ dashboard:
 #       env: EXAMPLE_TOKEN
 #       scope: config
 
-# Strategy Lab (Nous) — controlled experiment framework for the governor.
+# Experiment Lab (Nous) — repo-only controlled experiment framework for
+# your repositories' code (tests, CI config, automation scripts).
+# Formerly the Strategy Lab. The dashboard section is hidden by default; show
+# it with `dashboard.experiment_lab: true` (the old `dashboard.strategy_lab`
+# key is a deprecated alias for one release).
 # There is intentionally NO `nous:` block here: Nous has no YAML config
 # surface. It is configured entirely at runtime through the dashboard
-# (Strategy Lab panel, ACMM level 4+) or the /api/nous/* endpoints.
-# See docs/strategy-lab.md for the experiment lifecycle, mode/scope,
+# (Experiment Lab panel, ACMM level 4+) or the /api/nous/* endpoints.
+# See docs/experiment-lab.md for the experiment lifecycle, trust modes,
 # fast-fail bounds, schedule, and gate-decision flow.
+
+# Hive-self experiments — background-only scheduler for experiments on Hive
+# itself (not the Experiment Lab above; never shown there and never touches
+# governor config). Default off. The tick runs only with enabled: true AND
+# mode: background; it judges each unresolved experiment in the local ledger
+# and durably reverts fast-failed or finished treatments.
+# Experiments are registered by the hub/relay, which is not yet wired, so the
+# ledger (/data/nous/self-experiments.json) stays empty until then.
+# self_experiments:
+#   scheduler:
+#     enabled: false
+#     mode: background   # the only mode that runs
+#     interval_s: 300
+
+# ForgeState — per-repo GitHub issue/PR state cache (#13373). Default off.
+# Three writers keep it current: a slow ETag-conditional full reconcile
+# (authoritative; on failure the last good snapshot is kept and marked
+# stale instead of going empty), webhook patches that re-fetch only the
+# named item, and write-through of the hive's own label/comment/merge/close/
+# claim mutations. Irreversible actions re-read items older than
+# freshness_bound_s and never act on a stale snapshot. With it enabled the
+# governor work source lists each repo's open issues/PRs from the cache
+# (#13375): the store's reconcile is the only full list, webhook wakes
+# decide from the cached snapshot, and the first decision pass waits for
+# the first successful reconcile of every repo.
+# forgestate:
+#   enabled: false
+#   reconcile_interval_s: 900   # full list per repo; shortened while drift is high
+#   freshness_bound_s: 60       # max item age before merge/close/claim/kick re-reads
+#   drift_threshold: 0.05       # fraction of items a reconcile may find wrong in the cache
+#   search_budget: 20           # GitHub search calls per minute (GitHub allows 30)
 
 # Knowledge — 4-layer wiki system powered by llm-wiki (geronimo-iia/llm-wiki)
 # Facts are primed into agent kicks automatically — agents never query the wiki.
@@ -1092,6 +1343,8 @@ knowledge:
                                              # (heuristic classifier emits 0.5–0.8)
     target_layer: personal                   # Layer facts are primed at (default: personal)
     max_facts_per_cycle: 0                   # 0 = unlimited
+    max_api_calls_per_cycle: 40              # Cap on charged GitHub PR GETs per cycle (default 40);
+                                             # HIVE_BEAD_SYNTH_MAX_API_CALLS overrides. 304s are not charged.
     vault_path: /data/vaults/bead-synth-wiki # Auto-created and auto-connected
     retention_policy:                        # Bead lifecycle management (always active)
       max_beads: 5000                        # Archive down to 80% of this when exceeded
@@ -1101,6 +1354,14 @@ knowledge:
                                              # Defaults to true when retention_policy is
                                              # ABSENT, but false when the block is present
                                              # without this key — set it explicitly.
+    # publish:                               # Publish facts to a repo via PR (OFF by default)
+    #   enabled: false                       # The block does nothing until true
+    #   repo: ""                             # owner/name; empty = project.primary_repo
+    #   path: docs/knowledge/                # Or .hive/knowledge/; relative, no ".."
+    #   base_branch: ""                      # Empty = the repo's default branch
+    #   mode: pr                             # pr (default) | commit. ACMM L<=4 hives publish via
+    #                                        # PR only; commit is not honored and opens a PR
+    #   cadence: per_run                     # per_run (default) | daily
   # code_maps:                               # Generated repository code maps (#11106).
   #   enabled: true                          # OPT-IN; absent or false = never generated
   #   schedule: hourly                       # HEAD check cadence: hourly (default) or daily
@@ -1122,6 +1383,29 @@ knowledge:
       - decision
     merge_strategy: precedence               # personal > project > org > community
 
+# Write-back containment — what the platform may say on GitHub unasked.
+# Applies to comments/labels/reviews on PRs and issues hive did not open and
+# nobody opted in on (platform sweeps: sentinel, hold-gate notices, stage
+# labels, supersession, duplicate-fix, reporter-trust …). Never gates hive's
+# own PRs/issues, /hive command replies or dashboard-triggered work.
+# See docs/acmm-policy-matrix.md "What hive will say on GitHub at each level".
+# writeback:
+#   unsolicited:
+#     min_level: 5            # raises every per-kind floor below; never lowers one
+#     require_labels: true    # foreign PRs also need review.require_labels (fallback hive-review)
+#     backfill: false         # never touch items created before hive first saw / could write to the repo
+#   per_repo:
+#     torch-spyre/torch-spyre: { mode: issues-only }   # off | issues-only | labels-only | full
+#   kinds:                    # per-kind overrides; defaults in docs/acmm-policy-matrix.md
+#     sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
+#     hold_gate_notice: { min_level: 4 }               # hive-authored PRs only, always
+#   dedupe:                   # content-aware suppression of duplicate / burst comments (comment kinds with a body only)
+#     enabled: true
+#     same_item_ttl: 24h      # identical body on the same item is held this long
+#     burst_items: 2          # distinct items that may get one body inside burst_window; the rest are held
+#     burst_window: 60s
+#     hourly_cap: 60          # comments per repo per kind per hour; merge-path kinds exempt; -1 disables
+
 # Data directories — all persistent state
 data:
   metrics_dir: /data/metrics
@@ -1129,3 +1413,48 @@ data:
   claude_sessions_dir: /data/home/.claude/projects
   copilot_sessions_dir: /data/home/.copilot/session-state
   agents_dir: /data/agent-configs
+  # Durable root for Nous (Experiment Lab) state; HIVE_NOUS_DATA_DIR overrides.
+  nous_dir: /data/nous
+
+# Nous (Experiment Lab) runtime knobs. Durable state lives under data.nous_dir.
+nous:
+  # How often the hive checks <data.nous_dir>/gates/pending.json for a gate
+  # the experiment agent is waiting on (RFC #11585 part 3, #11696). The
+  # dashboard also checks on every GET /api/nous/gate-pending, so this only
+  # bounds the owner-ping latency. HIVE_NOUS_GATE_POLL_INTERVAL overrides.
+  gate_poll_seconds: 15
+  # How Nous drives model calls (RFC #11585 part 5, #11698). `inline` (the
+  # default) runs the campaign loop in-process through bin/nous-runner.sh;
+  # `sdk` is the legacy agent-SDK mode and stays selectable. Existing configs
+  # without this key get `inline`. HIVE_NOUS_DISPATCHER overrides.
+  dispatcher: inline
+  # Optional GitHub artifact repository (RFC #11585 part 8, #11701). Unset
+  # keeps the mirror off. When set, the hive pushes each finished campaign
+  # folder under data.nous_dir to this repository as a PR using its own App
+  # identity (never the agent, never the owner token), after a filename
+  # denylist, secret scrubbing and size caps. HIVE_NOUS_ARTIFACT_REPO /
+  # _BRANCH / _PATH / _SYNC_INTERVAL override.
+  # artifact_repo:
+  #   repo: my-org/nous-artifacts
+  #   branch: main            # default: the repository's default branch
+  #   path: campaigns
+  #   sync_interval_seconds: 300   # minimum 30
+  # Hive-state observations (#12654). Off by default. When enabled, the
+  # detectors run once per eval cycle over the snapshot series and file at
+  # most max_per_week new observations per rolling 7 days (minimum 1) through
+  # the hub self-report relay. Nothing is filed while a self-upgrade drain is
+  # open. The budget is persisted under data.nous_dir.
+  # observations:
+  #   enabled: false
+  #   max_per_week: 5
+
+# Experimenter role (RFC #11585 part 5). An agent whose name or `role` is
+# `experimenter` runs self-improvement campaigns through an engine implementing
+# pkg/nousengine; `engine` defaults to `nous` and is only valid on this role.
+# The strategist is unchanged and nothing is promoted automatically.
+#
+# agents:
+#   experimenter:
+#     role: experimenter
+#     engine: nous
+#     interval: 24h

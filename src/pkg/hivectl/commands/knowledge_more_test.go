@@ -39,7 +39,7 @@ func TestKnowledgeListWithLayerAndType(t *testing.T) {
 		if r.URL.Path != "/api/knowledge/project" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
-		if r.URL.Query().Get("type") != "regression" {
+		if r.URL.Query().Get("type") != "regression" || r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
 			t.Fatalf("query = %v", r.URL.Query())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -59,6 +59,9 @@ func TestKnowledgeListWithoutLayer(t *testing.T) {
 		if r.URL.Path != "/api/knowledge" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
+		if r.URL.Query().Get("limit") != "50" || r.URL.Query().Get("offset") != "0" {
+			t.Fatalf("query = %v", r.URL.Query())
+		}
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `[]`)
 	}))
@@ -66,6 +69,59 @@ func TestKnowledgeListWithoutLayer(t *testing.T) {
 
 	if _, _, err := execute(t, server, "", "knowledge", "list"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestKnowledgeListPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/knowledge" || r.URL.Query().Get("limit") != "200" ||
+			r.URL.Query().Get("offset") != "200" || r.URL.Query().Get("type") != "pattern" {
+			t.Errorf("unexpected request: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"facts":[{"slug":"page-two"}],"total":401,"limit":200,"offset":200,"has_more":true}`)
+	}))
+	defer server.Close()
+
+	out, _, err := execute(t, server, "", "knowledge", "list", "--limit", "200", "--offset", "200", "--type", "pattern", "--output", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Facts   []struct{ Slug string } `json:"facts"`
+		Total   int                     `json:"total"`
+		Limit   int                     `json:"limit"`
+		Offset  int                     `json:"offset"`
+		HasMore bool                    `json:"has_more"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Facts) != 1 || result.Facts[0].Slug != "page-two" || result.Total != 401 ||
+		result.Limit != 200 || result.Offset != 200 || !result.HasMore {
+		t.Fatalf("unexpected page: %s", out)
+	}
+}
+
+func TestKnowledgeListRejectsInvalidPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("invalid pagination must not send a request: %s", r.URL)
+	}))
+	defer server.Close()
+	for _, flags := range [][]string{
+		{"--limit", "0"},
+		{"--limit", "-1"},
+		{"--limit", "201"},
+		{"--offset", "-1"},
+		{"--layer", "project", "--limit", "50"},
+		{"--layer", "project", "--offset", "0"},
+	} {
+		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			_, _, err := execute(t, server, "", append([]string{"knowledge", "list"}, flags...)...)
+			if err == nil || ExitCode(err) != ExitUsage {
+				t.Fatalf("err = %v", err)
+			}
+		})
 	}
 }
 
@@ -312,6 +368,54 @@ func TestKnowledgeStateSendsLifecycleChange(t *testing.T) {
 			if got[k] != v {
 				t.Fatalf("%v: body[%s] = %v, want %v", tc.args, k, got[k], v)
 			}
+		}
+	}
+}
+
+// TestKnowledgeListStateAndTag: --state and --tag reach the list endpoint,
+// and a server refusal (non-owner asking for drafts) fails the command.
+func TestKnowledgeListStateAndTag(t *testing.T) {
+	refuse := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/api/knowledge" || q.Get("state") != "draft" || q.Get("tag") != "retro,review-feedback" {
+			t.Errorf("unexpected request: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if refuse {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, `{"error":"owner access required"}`)
+			return
+		}
+		io.WriteString(w, `{"facts":[{"slug":"review-draft","state":"draft"}],"total":1}`)
+	}))
+	defer server.Close()
+
+	out, _, err := execute(t, server, "", "knowledge", "list", "--state", "draft", "--tag", "retro", "--tag", "review-feedback", "--output", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "review-draft") {
+		t.Fatalf("output = %s", out)
+	}
+	refuse = true
+	if _, _, err := execute(t, server, "", "knowledge", "list", "--state", "draft", "--tag", "retro,review-feedback"); err == nil {
+		t.Fatal("refused listing must fail")
+	}
+}
+
+func TestKnowledgeListStateTagRejectLayer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("invalid flags must not send a request: %s", r.URL)
+	}))
+	defer server.Close()
+	for _, flags := range [][]string{
+		{"--layer", "project", "--state", "draft"},
+		{"--layer", "project", "--tag", "review-feedback"},
+	} {
+		_, _, err := execute(t, server, "", append([]string{"knowledge", "list"}, flags...)...)
+		if err == nil || ExitCode(err) != ExitUsage {
+			t.Fatalf("%v: err = %v", flags, err)
 		}
 	}
 }

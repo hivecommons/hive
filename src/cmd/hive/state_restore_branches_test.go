@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
@@ -21,11 +23,13 @@ import (
 // creating a phantom agent on the manager.
 func TestRestoreAgentRuntimeState_SkipsAgentNotInConfig(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	restoreAgentRuntimeState(&snapshot.PersistedState{
@@ -48,11 +52,13 @@ func TestRestoreAgentRuntimeState_SkipsAgentNotInConfig(t *testing.T) {
 // pause age survives the restart rather than resetting to boot time.
 func TestRestoreAgentRuntimeState_DefaultPauseProvenance(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	pausedAt := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
@@ -85,11 +91,13 @@ func TestRestoreAgentRuntimeState_DefaultPauseProvenance(t *testing.T) {
 // accounting must all be live on the manager after replay.
 func TestRestoreAgentRuntimeState_PinsAndTelemetry(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	lastKick := time.Now().Add(-time.Hour).Truncate(time.Second)
@@ -171,15 +179,17 @@ func TestRestoreAgentRuntimeState_PinsAndTelemetry(t *testing.T) {
 // while Enabled/ClearOnKick/StaleTimeout/RestartStrategy always replay.
 func TestRestoreAgentRuntimeState_ConfigFieldMerge(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {
-				Backend:     "claude",
-				Enabled:     true,
-				DisplayName: "Config Name", // must win over the persisted one
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {
+					Backend:     "claude",
+					Enabled:     true,
+					DisplayName: "Config Name", // must win over the persisted one
+				},
 			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	enabled := false

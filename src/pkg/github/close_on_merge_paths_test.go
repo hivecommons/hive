@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/fleetreport/slogfeed"
 )
 
 func TestParseCoveredByPRComments(t *testing.T) {
@@ -434,8 +435,11 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 		{name: "untrusted author skipped", author: "stranger", body: "Fixes #7", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "untrusted_author"},
 		{name: "trusted author func admits external author", author: "friend", trusted: func(repo, login string) bool { return repo == "o/r" && login == "friend" }, body: "Fixes #7", claimMetadata: true, wantAction: CloseOnMergeClosed, wantReason: "closed_completed"},
 		{name: "no claim metadata without closing keyword skipped", author: "hive[bot]", body: "unrelated", head: "scanner/other", claimMetadata: false, wantAction: CloseOnMergeSkipped, wantReason: "no_closing_or_claim_metadata"},
-		{name: "refs-only claim flagged wrong refs but still closes", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantWrongRefs: true},
+		{name: "refs-only claim flagged wrong refs and is not closed", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed", wantWrongRefs: true},
+		{name: "closing keyword with remainder paragraph is not closed", author: "hive[bot]", body: "Fixes #7\n\nRecommendation 2 is deliberately left open; what remains needs a maintainer.", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed"},
+		{name: "refs-only claim for closed issue remains informational", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, issueState: "closed", wantAction: CloseOnMergeAlreadyDone, wantReason: "issue_not_open", wantWrongRefs: true},
 		{name: "issue read failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueGetStatus: http.StatusInternalServerError, wantAction: CloseOnMergeNoop, wantReason: "issue_read_failed"},
+		{name: "missing issue skipped without warn", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueGetStatus: http.StatusNotFound, wantAction: CloseOnMergeSkipped, wantReason: "issue_not_found"},
 		{name: "closed issue already done", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueState: "closed", wantAction: CloseOnMergeAlreadyDone, wantReason: "issue_not_open"},
 		{name: "close comment failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, commentStatus: http.StatusForbidden, wantAction: CloseOnMergeNoop, wantReason: "close_comment_failed"},
 		{name: "close patch failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, patchStatus: http.StatusForbidden, wantAction: CloseOnMergeNoop, wantReason: "close_failed"},
@@ -478,6 +482,10 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
 				case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/"):
 					w.WriteHeader(http.StatusNotFound)
+				case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": strings.TrimPrefix(r.URL.Path, "/repos/o/r/labels/")})
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/labels":
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
 				default:
 					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 				}
@@ -485,13 +493,17 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 			defer srv.Close()
 
 			var logBuf strings.Builder
-			logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+			var observed []string
+			logger := slog.New(slogfeed.NewWithObserver(slog.NewTextHandler(&logBuf, nil), func(class, key, message, diagnostics string) {
+				observed = append(observed, message)
+			}))
 			c := newTestClient(t, srv, "o", []string{"r"})
 			head := tc.head
 			if head == "" {
 				head = "scanner/other"
 			}
 			pr := mergedTestPR(42, tc.author, head, tc.body)
+			pr.MergedBy = &gh.User{Login: gh.Ptr("maintainer")}
 			res := c.closeIssueForMergedPRClaim(context.Background(), "o/r", 7, pr, tc.claimMetadata, CloseOnMergeOptions{
 				Identity:      HiveIdentity{AppLogin: "hive[bot]"},
 				TrustedAuthor: tc.trusted,
@@ -503,11 +515,27 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 			if res.WrongRefs != tc.wantWrongRefs {
 				t.Fatalf("WrongRefs = %v, want %v", res.WrongRefs, tc.wantWrongRefs)
 			}
-			if tc.wantWrongRefs && !strings.Contains(logBuf.String(), "non-closing Refs") {
-				t.Fatalf("wrong-refs warning not logged: %s", logBuf.String())
+			if tc.wantWrongRefs {
+				if !strings.Contains(logBuf.String(), "non-closing Refs") {
+					t.Fatalf("wrong-refs diagnostic not logged: %s", logBuf.String())
+				}
+				if len(observed) != 0 {
+					t.Fatalf("PR metadata fed runtime self-report observations: %v", observed)
+				}
 			}
 			if tc.wantReason == "issue_read_failed" && !strings.Contains(logBuf.String(), "reading issue failed") {
 				t.Fatalf("issue read failure not logged: %s", logBuf.String())
+			}
+			if tc.wantReason == "issue_read_failed" && (len(observed) != 1 || observed[0] != "close-on-merge: reading issue failed") {
+				t.Fatalf("issue read failure must still feed runtime self-reports: %v", observed)
+			}
+			if tc.wantReason == "issue_not_found" {
+				if !strings.Contains(logBuf.String(), "referenced issue not found") {
+					t.Fatalf("missing issue not logged: %s", logBuf.String())
+				}
+				if len(observed) != 0 {
+					t.Fatalf("missing issue is a verdict and must not feed runtime self-reports: %v", observed)
+				}
 			}
 		})
 	}
@@ -783,4 +811,94 @@ func TestCloseOnMergeComments(t *testing.T) {
 // Link headers point back at the same httptest server.
 func testServerBase(r *http.Request) string {
 	return "http://" + r.Host
+}
+
+func closeOnMergeCrossRepoServer(t *testing.T, sourceRepo string, patched *bool, reads *[]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"number": 7, "state": "open", "labels": []map[string]string{{"name": CoveredByPRLabel}}},
+			})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/other/issues":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/other/issues":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
+			_ = json.NewEncoder(w).Encode([]map[string]string{})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/timeline":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"event": "cross-referenced",
+				"source": map[string]any{"issue": map[string]any{
+					"number": 42, "pull_request": map[string]any{"url": "u"},
+					"repository": map[string]string{"full_name": sourceRepo},
+				}},
+			}})
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/pulls/"):
+			*reads = append(*reads, r.URL.Path)
+			if r.URL.Path != "/repos/o/other/pulls/42" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number": 42, "title": "fix", "body": "Closes o/r#7", "merged": true,
+				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
+				"user": map[string]string{"login": "hive[bot]"},
+				"head": map[string]string{"ref": "scanner/other", "sha": "headsha"},
+				"base": map[string]any{"repo": map[string]string{"full_name": "o/other"}},
+			})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": []map[string]string{}})
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
+			*patched = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+}
+
+func TestCloseOnMergeBackfillReadsCrossRepoPRInItsOwnRepo(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	var patched bool
+	var reads []string
+	srv := closeOnMergeCrossRepoServer(t, "o/other", &patched, &reads)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"r", "other"})
+	results := c.CloseOnMergeBackfill(context.Background(), CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}})
+	if len(results) != 1 || results[0].Action != CloseOnMergeClosed || results[0].PR != 42 {
+		t.Fatalf("results = %+v, want issue closed by o/other#42", results)
+	}
+	if !patched {
+		t.Fatal("issue was not closed")
+	}
+	if len(reads) != 1 || reads[0] != "/repos/o/other/pulls/42" {
+		t.Fatalf("PR reads = %v, want only the PR's own repo", reads)
+	}
+}
+
+func TestCloseOnMergeBackfillSkipsUnwatchedCrossRepoPR(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	var patched bool
+	var reads []string
+	srv := closeOnMergeCrossRepoServer(t, "o/other", &patched, &reads)
+	defer srv.Close()
+	var logs strings.Builder
+	c := newTestClient(t, srv, "o", []string{"r"})
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	results := c.CloseOnMergeBackfill(context.Background(), CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}, Logger: logger})
+	if len(results) != 1 || results[0].Action != CloseOnMergeSkipped || results[0].Reason != "pr_repo_not_watched" || results[0].PRRepo != "o/other" {
+		t.Fatalf("results = %+v, want settled skip for unwatched PR repo", results)
+	}
+	if len(reads) != 0 || patched {
+		t.Fatalf("reads = %v patched = %v, want no PR read and no close", reads, patched)
+	}
+	if strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "level=INFO") {
+		t.Fatalf("log = %s, want Info and no WARN", logs.String())
+	}
 }

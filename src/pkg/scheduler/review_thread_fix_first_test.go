@@ -122,6 +122,34 @@ func TestFormatReviewThreadFixData_HumanOpenedForcesNoResolve(t *testing.T) {
 	}
 }
 
+// A human-opened PR must never be pushed to: a hive-signed commit fails the
+// squash sign-off gate (hivecommons/hive#12897). Its fix goes into the
+// in-thread reply as a suggestion, whatever resolve_after_fix says, and a
+// hive-mediated PR keeps the ordinary push step.
+func TestFormatReviewThreadFixData_HumanOpenedNeverPushed(t *testing.T) {
+	fixture := `{"generated_at":"2026-10-18T00:00:00Z","enabled":true,"total_threads":2,"prs":[
+  {"repo":"test-org/console","number":501,"title":"fix: nil deref","head_ref":"hive/fix-501","agent":"scanner",
+   "threads":[{"thread_id":"PRRT_a","path":"src/x.go","line":42,"author":"chatgpt-codex-connector[bot]","body":"guard","hive_replies":0}]},
+  {"repo":"test-org/console","number":410,"title":"human PR","head_ref":"human/branch","human_opened":true,
+   "threads":[{"thread_id":"PRRT_h","path":"scripts/quickstart.sh","line":10,"author":"chatgpt-codex-connector[bot]","body":"verify signature first","hive_replies":0}]}
+]}`
+	const noPush = "DO NOT check out, commit to, or push this branch"
+	for _, resolve := range []bool{true, false} {
+		out := formatReviewThreadFixData([]byte(fixture), "scanner", resolve)
+		idx410 := strings.Index(out, "#410 ")
+		if idx410 < 0 {
+			t.Fatalf("resolve=%v: human-opened PR 410 missing:\n%s", resolve, out)
+		}
+		pr501, pr410 := out[strings.Index(out, "#501 "):idx410], out[idx410:]
+		if !strings.Contains(pr410, noPush) || !strings.Contains(pr410, "```suggestion") {
+			t.Errorf("resolve=%v: human-opened PR 410 must be answered with a suggestion, not a push:\n%s", resolve, pr410)
+		}
+		if strings.Contains(pr501, noPush) {
+			t.Errorf("resolve=%v: hive-mediated PR 501 must keep the push step:\n%s", resolve, pr501)
+		}
+	}
+}
+
 // Long findings are truncated and a large PR backlog is capped with a
 // summary line, using the same bounds as the red-CI block.
 func TestFormatReviewThreadFixData_Bounds(t *testing.T) {
@@ -160,18 +188,20 @@ func TestAddReviewThreadFixFirst_Injection(t *testing.T) {
 
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner":  {Mode: "ISSUES_AND_PRS"},
-			"advisor":  {Mode: "ADVISORY"},
-			"outreach": {Mode: "ISSUES_AND_PRS"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":  {Mode: "ISSUES_AND_PRS"},
+				"advisor":  {Mode: "ADVISORY"},
+				"outreach": {Mode: "ISSUES_AND_PRS"},
+			},
 		},
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := New(cfg, logger)
 
 	msg := s.addReviewThreadFixFirst("scanner", "[agent:scanner]\nWORK LIST\n")
-	if !strings.HasPrefix(msg, "[agent:scanner]\n\n## 💬 FIX-BEFORE-NEW") {
-		t.Errorf("section must land directly below the kick header:\n%s", msg[:min(len(msg), 120)])
+	if !strings.HasPrefix(msg, "[agent:scanner]\nWORK LIST\n\n## 💬 FIX-BEFORE-NEW") {
+		t.Errorf("section must land in the dynamic tail after the body (#12125):\n%s", msg[:min(len(msg), 120)])
 	}
 	if got := s.addReviewThreadFixFirst("advisor", "[agent:advisor]\nADVISORY\n"); strings.Contains(got, "review-bot threads") {
 		t.Error("advisory agent must not receive the section")
@@ -183,12 +213,13 @@ func TestAddReviewThreadFixFirst_Injection(t *testing.T) {
 		t.Error("empty (fail-closed) message must stay empty")
 	}
 
-	// Both stuck-PR blocks ride the same seam: red CI first, then threads.
+	// Both stuck-PR blocks ride the same dynamic tail, after the body: red CI
+	// first, then threads (kick_layout.go).
 	both := s.addReviewThreadFixFirst("scanner", s.addRedPRFixFirst("scanner", "[agent:scanner]\nWORK LIST\n"))
 	red := strings.Index(both, "🔴 FIX-BEFORE-NEW")
 	threads := strings.Index(both, "💬 FIX-BEFORE-NEW")
 	work := strings.Index(both, "WORK LIST")
-	if red < 0 || threads < 0 || !(threads < red && red < work) {
-		t.Errorf("expected thread block, then red-CI block, then the work list (thread=%d red=%d work=%d):\n%s", threads, red, work, both)
+	if red < 0 || threads < 0 || !(work < red && red < threads) {
+		t.Errorf("expected the work list, then red-CI block, then thread block (work=%d red=%d thread=%d):\n%s", work, red, threads, both)
 	}
 }

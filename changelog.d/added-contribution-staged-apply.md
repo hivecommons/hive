@@ -1,0 +1,1 @@
+- Add a shared contribution-tree staging layer with reviewed membership and exclusion diffs, shared-Hive effects, guarded Apply retries, and separate persistence, relay notification, and pending-adoption receipts.

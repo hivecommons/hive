@@ -36,6 +36,10 @@ func TestQueuePRAutoMergeApprovesThenLabels(t *testing.T) {
 			sawReview = true
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{"id": 1, "state": "APPROVED"})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/statuses/head7":
+			// The default queued label is lgtm, which also binds a prow/lgtm status.
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1, "state": "success"})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
 			if !sawReview {
 				t.Fatal("label must not be applied before approval succeeds")
@@ -194,5 +198,95 @@ func TestGetPRAuthor(t *testing.T) {
 	}
 	if author != "alice" {
 		t.Fatalf("author = %q, want alice", author)
+	}
+}
+
+// TestQueuePRAutoMergeOnOwnPRCommentsInsteadOfReview (hivecommons/hive#15666):
+// GitHub refuses an App's APPROVE on its own pull request (422 "Can not
+// approve your own pull request"), so on a PR the hive opened no review is
+// attempted: the queue line lands as an issue comment, the label is still
+// applied and the result reports ReviewSubmitted=false.
+func TestQueuePRAutoMergeOnOwnPRCommentsInsteadOfReview(t *testing.T) {
+	var comments []string
+	var sawLabel bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": "head7"}, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/hive/auto-merge":
+			json.NewEncoder(w).Encode(map[string]any{"name": "hive/auto-merge"})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			t.Fatal("the App must not review its own pull request")
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			comments = append(comments, body["body"])
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
+			sawLabel = true
+			json.NewEncoder(w).Encode([]map[string]any{{"name": "hive/auto-merge"}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c.SetAutoMergeLabel("hive/auto-merge")
+	c.SetAppBotLogin("hive[bot]")
+	res, err := c.QueuePRAutoMergeWithNoteResult(context.Background(), "acme/widget", 7, "alice", "note")
+	if err != nil {
+		t.Fatalf("QueuePRAutoMergeWithNoteResult: %v", err)
+	}
+	if res.ReviewSubmitted || !res.SelfAuthored || res.HeadSHA != "head7" {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(comments) != 1 || !strings.HasPrefix(comments[0], "Approved by @alice for Hive auto-merge on green CI.") || !strings.HasSuffix(comments[0], "note") {
+		t.Fatalf("comments = %q", comments)
+	}
+	if !sawLabel {
+		t.Fatal("label must still be applied")
+	}
+}
+
+// TestQueuePRAutoMergeOwnPRRefusalFallsBackToComment: when the hive did not
+// recognise the author as itself and GitHub still answers 422 "Can not
+// approve your own pull request", the refusal is policy, not a fault: the
+// queue falls back to the comment and the label rather than failing.
+func TestQueuePRAutoMergeOwnPRRefusalFallsBackToComment(t *testing.T) {
+	var comments []string
+	var reviews, labels int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": "head7"}, "user": map[string]any{"login": "other-app[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/hive/auto-merge":
+			json.NewEncoder(w).Encode(map[string]any{"name": "hive/auto-merge"})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			reviews++
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"message": "Unprocessable Entity", "errors": []string{"Review Can not approve your own pull request"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			comments = append(comments, body["body"])
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
+			labels++
+			json.NewEncoder(w).Encode([]map[string]any{{"name": "hive/auto-merge"}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c.SetAutoMergeLabel("hive/auto-merge")
+	res, err := c.QueuePRAutoMergeWithNoteResult(context.Background(), "acme/widget", 7, "alice", "")
+	if err != nil {
+		t.Fatalf("QueuePRAutoMergeWithNoteResult: %v", err)
+	}
+	if reviews != 1 || res.ReviewSubmitted || !res.SelfAuthored || labels != 1 || len(comments) != 1 {
+		t.Fatalf("reviews=%d labels=%d comments=%q result=%+v", reviews, labels, comments, res)
 	}
 }

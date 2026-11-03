@@ -1,9 +1,12 @@
 package hub
 
 import (
+	"bytes"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,4 +127,55 @@ func TestGitHubReadsStayAnonymousWithoutToken(t *testing.T) {
 		t.Errorf("blank token must add no Authorization header, got %q", got)
 	}
 	authGitHubRequest(nil) // must not panic
+}
+
+// A failed lookup (e.g. HTTP 403 rate limit) parks the SHA: renders inside
+// the back-off spend no API call and log no WARN, and the SHA is retried
+// once the back-off expires.
+func TestCommitDateFailureBacksOffPerSHA(t *testing.T) {
+	resetChannelCommitDateCache()
+	githubWarnMu.Lock()
+	githubWarnLast = map[string]time.Time{}
+	githubWarnMu.Unlock()
+	now := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
+	githubWarnNow = func() time.Time { return now }
+	calls := 0
+	fail := true
+	orig := fetchCommitDate
+	fetchCommitDate = func(sha string, _ *slog.Logger) (time.Time, error) {
+		calls++
+		if fail {
+			return time.Time{}, fmt.Errorf("commit %s: HTTP 403", sha)
+		}
+		return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil
+	}
+	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
+		fetchCommitDate = orig
+		githubWarnNow = time.Now
+		resetChannelCommitDateCache()
+	})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	for i := 0; i < 16; i++ {
+		if !commitDateForSHA("b535d31", logger).IsZero() {
+			t.Fatalf("render %d: failed lookup must yield the zero time", i)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("commit API called %d times inside the back-off, want 1", calls)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Errorf("WARN lines = %d, want 1", n)
+	}
+
+	now = now.Add(commitDateBackoff + time.Second)
+	fail = false
+	if commitDateForSHA("b535d31", logger).IsZero() {
+		t.Fatal("lookup after the back-off expired must fetch again and succeed")
+	}
+	if calls != 2 {
+		t.Errorf("commit API calls = %d, want 2 after the back-off expired", calls)
+	}
 }

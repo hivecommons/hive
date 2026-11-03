@@ -1,0 +1,1 @@
+- Cost chart and daily rollup keep large session-flush steps that reach a new high instead of discarding them at the $500 discontinuity floor; only restores of already-reached ground are dropped (#13497)

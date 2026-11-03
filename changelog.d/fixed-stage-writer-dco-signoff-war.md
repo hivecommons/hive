@@ -1,0 +1,1 @@
+- Stage writer no longer removes Prow's `dco-signoff: yes|no` labels; it only reconciles its own `dco` / `no-dco` pair, ending the remove/re-add label war with Prow on every open PR (#13125).

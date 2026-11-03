@@ -304,13 +304,27 @@ func (s *HubServer) maybeSnapshotImagePulls(ctx context.Context, now time.Time) 
 //     the runtime source of truth aligned with src/deploy/standalone-images.sh,
 //     which pins standalone deployments to ghcr.io/hivecommons/hive:stable —
 //     when CI promotes v5 to stable, the widget follows with no code change.
-//  2. Fallback (stable unresolved — GHCR blip, or the channel pinned off any
+//  2. Stable resolved to a SHA that is no tracked branch's tip (the normal
+//     state once auto-promotion holds stable a soak behind candidate): the
+//     branch of the channel stable is promoted FROM, walking upstream
+//     (stable → candidate → edge) to the first channel that resolves to a
+//     branch. Without this the fallback below picked the highest-numbered
+//     line (v6/edge) and every stable hive measured "796 behind" a branch
+//     it never tracked (#11439 follow-up).
+//  3. Fallback (nothing resolves — GHCR blip, or the channels pinned off any
 //     tracked branch): the highest-numbered v<N> line that has a resolved SHA.
-//  3. "" when nothing resolves; the caller renders "collecting", never an error.
+//  4. "" when nothing resolves; the caller renders "collecting", never an error.
 func activeReleaseLine(channels []ChannelTarget, branchSHAs map[string]string) string {
+	byChannel := make(map[string]ChannelTarget, len(channels))
 	for _, ch := range channels {
-		if ch.Channel == ReleaseChannelStable && ch.Branch != "" {
-			return ch.Branch
+		byChannel[ch.Channel] = ch
+	}
+	stableResolved := byChannel[ReleaseChannelStable].SHA != "" || byChannel[ReleaseChannelStable].Digest != ""
+	for ch := ReleaseChannelStable; ch != ""; ch = channelUpstream(ch) {
+		if t, ok := byChannel[ch]; ok && t.Branch != "" {
+			if ch == ReleaseChannelStable || stableResolved {
+				return t.Branch
+			}
 		}
 	}
 	best, bestN := "", -1

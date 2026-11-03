@@ -1,0 +1,1 @@
+- Fleet report: repeated 'failed to ingest bead fact', 'fleet report: cleared comment failed' and 'failed to restore inference home mode' and 'failed to tighten inference home mode' WARNs are now classified instead of filed as unclassified_error_repeated (#13922, #13926, #13930, #13935).

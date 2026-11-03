@@ -29,9 +29,14 @@ func TestActionableNowSplitEqualsTotalWithSuppressedItems10561(t *testing.T) {
 		HeldPrs: []any{FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 13, Title: "held pr", Labels: []string{"hold"}}}},
 	}}}
 
+	// L5: the parked needs-human issue and the held PR (unknown hold source)
+	// are your turn; the failing and draft PRs and the held issue are not
+	// actionable; what is left is actionable.
+	decideRepoOwnership(status.Repos, config.DashboardIssueBandsConfig{}, qualityRoutedEnv11592(5))
+
 	got := s.statusWithOverviewBands(status, now).ActionableNow
-	if got.Issues != 1 || got.PRs != 1 || got.Total != 2 {
-		t.Fatalf("actionableNow = %+v, want issues=1 prs=1 total=2", got)
+	if got.Issues != 2 || got.PRs != 1 || got.Total != 3 {
+		t.Fatalf("actionableNow = %+v, want issues=2 prs=1 total=3", got)
 	}
 	if got.Issues+got.PRs != got.Total {
 		t.Fatalf("split does not equal total: %+v", got)
@@ -41,7 +46,7 @@ func TestActionableNowSplitEqualsTotalWithSuppressedItems10561(t *testing.T) {
 func TestOverviewAndGovernorBindSharedActionableNowField10561(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"window._lastStatus?.actionableNow?.total",
+		"const serverActionable = window._lastStatus?.actionableNow;",
 		"const sharedActionable = (data && data.actionableNow) || {};",
 		"sharedActionable.issues",
 		"sharedActionable.prs",

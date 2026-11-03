@@ -28,6 +28,7 @@ func covFInceptionServer(t *testing.T) (*Server, *knowledge.InceptionEngine, *kn
 
 	s := NewServer(0, logger)
 	deps := testDeps(t)
+	enableBrainstormAgent(deps)
 	deps.Inception = eng
 	deps.Knowledge = kapi
 	s.RegisterAPI(deps)

@@ -1,0 +1,1 @@
+- An adopted PR waiting unattempted in the fixer queue no longer runs the stage/074 stall clock toward a needs-decision park; the wait is capped at four dwells and does not apply when the fixer is unavailable (#15036).

@@ -1168,15 +1168,31 @@ reset_request() {
   printf '#!/bin/sh\nexit %s\n' "${1:-0}" >"$FAKE_UPDATE"; chmod +x "$FAKE_UPDATE"
 }
 
-# A pre-planted `<stamp>-<name>.result` symlink, for every second the drain
-# could plausibly run in. Before the fix the result redirect followed it.
+# Pin the archive timestamp for this case so the test does not race the drain
+# against the wall clock. Other date calls (including request-age checks) use
+# the real date command.
+REQUEST_STAMP="20260101T000000Z"
+STAMP_BIN="${TEST_TMP}/request-stamp-bin"
+REAL_DATE="$(command -v date)"
+mkdir -p "$STAMP_BIN"
+cat >"${STAMP_BIN}/date" <<'EOF'
+#!/bin/sh
+if [ "$#" -eq 2 ] && [ "$1" = "-u" ] && [ "$2" = "+%Y%m%dT%H%M%SZ" ]; then
+  printf '%s\n' "20260101T000000Z"
+else
+  exec "$REAL_DATE" "$@"
+fi
+EOF
+chmod +x "${STAMP_BIN}/date"
+
+# A pre-planted `<stamp>-<name>.result` symlink must match the archive stamp,
+# regardless of how long the drain takes.
 reset_request 1
 mkdir -p "$REQ_DIR/failed"
-for i in 0 1 2 3 4 5 6 7 8; do
-  ln -s "$VICTIM" "$REQ_DIR/failed/$(date -u -d "+${i} sec" +%Y%m%dT%H%M%SZ)-evil.json.result"
-done
+ln -s "$VICTIM" "$REQ_DIR/failed/${REQUEST_STAMP}-evil.json.result"
 printf '{"target_ref":"not-an-allowed-ref"}\n' >"$REQ_DIR/evil.json"
-request_expect "a planted .result symlink is not written through" 78 "something already occupied" apply --rootless
+REAL_DATE="$REAL_DATE" PATH="${STAMP_BIN}:${PATH}" \
+  request_expect "a planted .result symlink is not written through" 78 "something already occupied" apply --rootless
 check "the host file behind the planted .result link is untouched" '[ "$(cat "$VICTIM")" = "host file" ]'
 check "the rejected request is still removed from the watched directory" '[ -z "$(find "$REQ_DIR" -maxdepth 1 -name "*.json")" ]'
 

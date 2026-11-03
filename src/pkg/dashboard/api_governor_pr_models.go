@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
 const (
@@ -28,9 +29,16 @@ type governorPRModelsResponse struct {
 	MostReworked []governorPRMostReworkedItem `json:"most_reworked,omitempty"`
 }
 
+// governorPRModelBucket is one canonical model (modelfamily.Canonical folds
+// "openai-codex/gpt-6.1-sol", "gpt-6.1-sol" and "gpt-6.1-sol:high" into one
+// row). Backend lists the distinct backends that drove it, comma-joined;
+// Sources keeps the raw model/backend spellings and their counts so the
+// dashboard can show them in a tooltip.
 type governorPRModelBucket struct {
 	Model          string                       `json:"model"`
 	Backend        string                       `json:"backend"`
+	Backends       []string                     `json:"backends,omitempty"`
+	Sources        []governorPRModelSource      `json:"sources,omitempty"`
 	PRs            int                          `json:"prs"`
 	Merged         int                          `json:"merged"`
 	ClosedUnmerged int                          `json:"closed_unmerged"`
@@ -38,6 +46,14 @@ type governorPRModelBucket struct {
 	Rework         governorPRModelRework        `json:"rework"`
 	Effectiveness  governorPRModelEffectiveness `json:"effectiveness"`
 	Agents         []governorPRModelAgentBucket `json:"agents,omitempty"`
+}
+
+// governorPRModelSource is one raw attribution spelling folded into a bucket.
+type governorPRModelSource struct {
+	Model   string `json:"model"`
+	Backend string `json:"backend"`
+	PRs     int    `json:"prs"`
+	Merged  int    `json:"merged"`
 }
 
 type governorPRModelRework struct {
@@ -56,7 +72,10 @@ type governorPRModelRework struct {
 type governorPRModelEffectiveness struct {
 	Rank               int     `json:"rank,omitempty"`
 	Eligible           bool    `json:"eligible"`
+	Unattributed       bool    `json:"unattributed,omitempty"`
+	Score              float64 `json:"score"`
 	MergedPRs          int     `json:"merged_prs"`
+	FirstPassMerged    int     `json:"first_pass_merged"`
 	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
 	RunCount           int     `json:"runs"`
 	VerifiedPRRunRate  float64 `json:"verified_pr_run_rate"`
@@ -132,8 +151,10 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 
 	type bucketState struct {
 		governorPRModelBucket
-		agents map[string]*governorPRModelAgentBucket
-		rework reworkAccumulator
+		agents   map[string]*governorPRModelAgentBucket
+		sources  map[string]*governorPRModelSource
+		backends map[string]bool
+		rework   reworkAccumulator
 	}
 	buckets := map[string]*bucketState{}
 	resp := governorPRModelsResponse{Window: window, MinMergedPRs: effectiveModelsMinMergedPRs()}
@@ -144,23 +165,36 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		if !cutoff.IsZero() && pr.CreatedAt.Before(cutoff) {
 			continue
 		}
-		model := ghpkg.NormalizeAttributionModel(pr.HiveModel)
+		rawModel := ghpkg.NormalizeAttributionModel(pr.HiveModel)
+		model := modelfamily.Canonical(pr.HiveModel)
 		backend := ghpkg.NormalizeAttributionValue(pr.HiveBackend)
 		agent := ghpkg.NormalizeAttributionValue(pr.HiveAgent)
 		if agent == "unknown" {
 			agent = ""
 		}
-		key := model + "\x00" + backend
-		b := buckets[key]
+		b := buckets[model]
 		if b == nil {
 			b = &bucketState{
-				governorPRModelBucket: governorPRModelBucket{Model: model, Backend: backend},
+				governorPRModelBucket: governorPRModelBucket{Model: model},
 				agents:                map[string]*governorPRModelAgentBucket{},
+				sources:               map[string]*governorPRModelSource{},
+				backends:              map[string]bool{},
 			}
-			buckets[key] = b
+			buckets[model] = b
 		}
+		b.backends[backend] = true
 		outcome := governorPRModelOutcome(pr)
 		addOutcome(&b.PRs, &b.Merged, &b.ClosedUnmerged, &b.Open, outcome)
+		srcKey := rawModel + "\x00" + backend
+		src := b.sources[srcKey]
+		if src == nil {
+			src = &governorPRModelSource{Model: rawModel, Backend: backend}
+			b.sources[srcKey] = src
+		}
+		src.PRs++
+		if outcome == "merged" {
+			src.Merged++
+		}
 		if outcome == "merged" {
 			b.rework.add(pr.Rework)
 		}
@@ -187,7 +221,7 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		}
 		addOutcome(&ab.PRs, &ab.Merged, &ab.ClosedUnmerged, &ab.Open, outcome)
 		resp.Total++
-		if model == "unknown" {
+		if model == modelfamily.Unknown {
 			resp.Unknown++
 		}
 	}
@@ -195,6 +229,19 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 	resp.Buckets = make([]governorPRModelBucket, 0, len(buckets))
 	for _, b := range buckets {
 		b.Rework = b.rework.finish()
+		b.Backends, b.Backend = joinedBackends(b.backends)
+		for _, src := range b.sources {
+			b.Sources = append(b.Sources, *src)
+		}
+		sort.Slice(b.Sources, func(i, j int) bool {
+			if b.Sources[i].PRs != b.Sources[j].PRs {
+				return b.Sources[i].PRs > b.Sources[j].PRs
+			}
+			if b.Sources[i].Model != b.Sources[j].Model {
+				return b.Sources[i].Model < b.Sources[j].Model
+			}
+			return b.Sources[i].Backend < b.Sources[j].Backend
+		})
 		for _, ab := range b.agents {
 			b.Agents = append(b.Agents, *ab)
 		}
@@ -232,6 +279,17 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 	return resp
 }
 
+// joinedBackends returns the sorted distinct backends and their comma-joined
+// display form ("codex, pi").
+func joinedBackends(set map[string]bool) ([]string, string) {
+	out := make([]string, 0, len(set))
+	for b := range set {
+		out = append(out, b)
+	}
+	sort.Strings(out)
+	return out, strings.Join(out, ", ")
+}
+
 func applyGovernorPRModelEffectiveness(resp *governorPRModelsResponse, effective contributeEffectiveModelsResponse, minMergedPRs int) {
 	if resp == nil {
 		return
@@ -239,20 +297,23 @@ func applyGovernorPRModelEffectiveness(resp *governorPRModelsResponse, effective
 	resp.MinMergedPRs = minMergedPRs
 	rows := map[string]contributeEffectiveModelRow{}
 	for _, row := range effective.Ranked {
-		rows[effectiveModelKey(row.Model, row.Backend)] = row
+		rows[row.Model] = row
 	}
 	for _, row := range effective.Insufficient {
-		rows[effectiveModelKey(row.Model, row.Backend)] = row
+		rows[row.Model] = row
 	}
 	for i := range resp.Buckets {
-		row, ok := rows[effectiveModelKey(resp.Buckets[i].Model, resp.Buckets[i].Backend)]
+		row, ok := rows[resp.Buckets[i].Model]
 		if !ok {
 			continue
 		}
 		resp.Buckets[i].Effectiveness = governorPRModelEffectiveness{
 			Rank:               row.EffectivenessRank,
-			Eligible:           row.MergedPRs >= minMergedPRs,
+			Eligible:           row.EffectivenessRank > 0,
+			Unattributed:       row.Unattributed,
+			Score:              row.Score,
 			MergedPRs:          row.MergedPRs,
+			FirstPassMerged:    row.FirstPassMerged,
 			FirstPassMergeRate: row.FirstPassMergeRate,
 			RunCount:           row.RunCount,
 			VerifiedPRRunRate:  row.VerifiedPRRunRate,

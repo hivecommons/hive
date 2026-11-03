@@ -45,15 +45,17 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	var beats atomic.Int32
 	isPublic := true
 	resp := HeartbeatResponse{
-		OK:              true,
-		UpgradeTo:       "deadbeef",
-		GitHubAppConfig: &HeartbeatGitHubAppConfig{AppID: 7, InstallationID: 99},
-		HubBanner:       &HubBanner{ID: "b1", Message: "hi"},
-		IsPublic:        &isPublic,
-		AuthorizedUsers: []string{"alice:owner"},
-		ProjectConfig:   &HeartbeatProjectConfig{Org: "acme", Repos: []string{"r"}},
-		PendingGateway:  &HeartbeatGatewayConfig{Name: "gw", Key: "k"},
-		RestartSpoke:    true,
+		OK:               true,
+		UpgradeTo:        "deadbeef",
+		UpgradeInterrupt: true,
+		GitHubAppConfig:  &HeartbeatGitHubAppConfig{AppID: 7, InstallationID: 99},
+		HubBanner:        &HubBanner{ID: "b1", Message: "hi"},
+		IsPublic:         &isPublic,
+		AuthorizedUsers:  []string{"alice:owner"},
+		ProjectConfig:    &HeartbeatProjectConfig{Org: "acme", Repos: []string{"r"}},
+		PendingGateway:   &HeartbeatGatewayConfig{Name: "gw", Key: "k"},
+		ClusterID:        "vllm-d",
+		RestartSpoke:     true,
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if beats.Add(1) == 1 {
@@ -68,12 +70,14 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	var (
 		mu              sync.Mutex
 		gotUpgrade      string
+		gotInterrupt    bool
 		gotApp          *HeartbeatGitHubAppConfig
 		gotBanner       *HubBanner
 		gotVisibility   *bool
 		gotUsers        []string
 		gotProject      *HeartbeatProjectConfig
 		gotGateway      *HeartbeatGatewayConfig
+		gotClusterID    string
 		gotRestart      bool
 		gotSwitchBranch string
 	)
@@ -81,6 +85,9 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	onUpgrade := UpgradeCallback(func(tag string) {
 		mu.Lock()
 		gotUpgrade = tag
+		// The interrupt flag must already be visible when the upgrade
+		// callback runs — that is when the drain decision reads it.
+		gotInterrupt = UpgradeInterruptRequested()
 		mu.Unlock()
 	})
 	onApp := GitHubAppConfigCallback(func(c *HeartbeatGitHubAppConfig) {
@@ -113,6 +120,11 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		gotGateway = c
 		mu.Unlock()
 	})
+	onClusterID := ClusterIDCallback(func(id string) {
+		mu.Lock()
+		gotClusterID = id
+		mu.Unlock()
+	})
 	onSwitch := SwitchBranchCallback(func(tag string) {
 		mu.Lock()
 		gotSwitchBranch = tag
@@ -136,7 +148,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	go func() {
 		defer close(done)
 		StartHeartbeat(ctx, srv.URL, collect, 50*time.Millisecond, nil2Logger(),
-			onUpgrade, onApp, onBanner, onVis, onUsers, onProject, onGateway, onSwitch, onRestart)
+			onUpgrade, onApp, onBanner, onVis, onUsers, onProject, onGateway, onClusterID, onSwitch, onRestart)
 	}()
 
 	// RestartSpoke is the last dispatch in processHeartbeatResponse, so once it
@@ -158,6 +170,9 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	if gotUpgrade != "deadbeef" {
 		t.Errorf("upgrade callback got %q, want deadbeef", gotUpgrade)
 	}
+	if !gotInterrupt {
+		t.Error("upgrade_interrupt=true was not visible to the upgrade callback")
+	}
 	if gotSwitchBranch != "" {
 		t.Errorf("switch-branch callback fired (%q) though response carried only upgrade_to", gotSwitchBranch)
 	}
@@ -178,6 +193,9 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	}
 	if gotGateway == nil || gotGateway.Name != "gw" {
 		t.Errorf("gateway callback got %+v", gotGateway)
+	}
+	if gotClusterID != "vllm-d" {
+		t.Errorf("cluster-id callback got %q, want vllm-d", gotClusterID)
 	}
 	if !gotRestart {
 		t.Error("restart-spoke callback did not record")

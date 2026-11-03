@@ -42,10 +42,10 @@ func TestIssue9804ModelListRefresh(t *testing.T) {
 			mustAbsent: []string{"gemini-3-pro-preview", "gemini-2.5-pro"},
 		},
 		{
-			name:       "codex fallback matches pinned 0.159.0 snapshot",
+			name:       "codex fallback matches the 0.165.0 snapshot",
 			models:     codexStaticModels,
 			htmlConst:  "CODEX_CLI_MODELS",
-			mustHave:   []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"},
+			mustHave:   []string{"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"},
 			mustAbsent: []string{"gpt-5.4"},
 		},
 		{

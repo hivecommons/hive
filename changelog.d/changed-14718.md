@@ -1,0 +1,1 @@
+- dashboard: rename the overview-export encode-failure log helper from `slogWarnOverviewEncode` to `logOverviewEncodeFailure` to match its Debug-level client-disconnect handling ([#14718](https://github.com/hivecommons/hive/issues/14718)).

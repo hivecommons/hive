@@ -43,6 +43,7 @@ permissions:
 jobs:
   freeze-gate:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write

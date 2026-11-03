@@ -1,1 +1,0 @@
-- Move lightweight PR housekeeping checks to the existing self-hosted runner lane to reduce GitHub-hosted queue starvation (#10650).

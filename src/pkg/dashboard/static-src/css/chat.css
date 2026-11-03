@@ -1,0 +1,197 @@
+    /* Hive Chat Panel */
+    .hive-chat-fab {
+      position: fixed; bottom: 24px; right: 24px; z-index: 9000;
+      width: 48px; height: 48px; border-radius: 50%;
+      background: var(--purple); color: var(--bg); border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.3rem; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      transition: transform 0.15s, background 0.15s, opacity 0.15s;
+      /* The FAB is fixed and follows the scroll, so at full opacity it
+         permanently hides whatever data lands under it (right-aligned value
+         columns on the fleet/progress views — #7160). At rest it is
+         translucent enough to read through; it goes solid on hover/focus and
+         while the panel is open or a reply is unread. */
+      opacity: 0.45;
+    }
+    .hive-chat-fab:hover, .hive-chat-fab:focus-visible,
+    .hive-chat-fab.open, .hive-chat-fab.has-unread { opacity: 1; }
+    .hive-chat-fab:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+    .hive-chat-fab:hover { transform: scale(1.1); background: color-mix(in srgb, var(--purple) 85%, #000); }
+    .hive-chat-fab.has-unread::after {
+      content: ''; position: absolute; top: 2px; right: 2px;
+      width: 10px; height: 10px; border-radius: 50%; background: var(--red);
+    }
+    .hive-chat-panel {
+      --chat-available-height: calc(100dvh - var(--navbar-sticky-height) - 96px);
+      container: hive-chat / inline-size;
+      position: fixed; bottom: 80px; right: 24px; z-index: calc(var(--navbar-sticky-z) + 1);
+      width: 560px; height: 560px; min-width: min(360px, calc(100vw - 32px)); min-height: min(280px, var(--chat-available-height)); max-width: calc(100vw - 32px); max-height: var(--chat-available-height);
+      border-radius: var(--r-lg);
+      background: var(--bg); border: 1px solid var(--border);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      display: none; flex-direction: column; overflow: hidden;
+      /* overflow:hidden makes the panel a scroll container, so containment
+         here stops a wheel over the header/input chrome from scrolling the
+         dashboard behind the floating panel (#4805). */
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
+    }
+    .hive-chat-panel.maximized {
+      inset: 16px; width: auto !important; height: auto !important; max-width: none; max-height: none;
+    }
+    .hive-chat-panel.docked {
+      top: 0; right: 0; bottom: 0; height: 100vh !important; border-radius: 0; max-height: none;
+    }
+    .hive-chat-resize {
+      height: 6px; cursor: ns-resize; background: transparent;
+      position: absolute; top: 0; left: 0; right: 0; z-index: 2;
+    }
+    .hive-chat-resize-width {
+      width: 6px; cursor: ew-resize; background: transparent;
+      position: absolute; top: 0; bottom: 0; left: 0; z-index: 2;
+    }
+    .hive-chat-resize-width:hover { background: var(--purple); }
+    .hive-chat-resize:hover { background: var(--purple); }
+    .hive-chat-panel.open { display: flex; }
+    .hive-chat-header {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2);
+      padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--border);
+      background: var(--surface); font-size: 0.8rem; font-weight: 600;
+    }
+    .hive-chat-header .chat-title { display: flex; align-items: center; gap: var(--sp-3); }
+    .hive-chat-actions { display: flex; align-items: center; gap: var(--sp-2); }
+    .hive-chat-tool, .hive-chat-close { background: none; border: 1px solid transparent; border-radius: var(--r-sm); color: var(--muted); cursor: pointer; font-size: 0.8rem; padding: var(--sp-2); }
+    .hive-chat-tool:hover, .hive-chat-close:hover { color: var(--text); border-color: var(--border); background: var(--panel-strong); }
+    .hive-chat-layout { flex: 1; min-height: 0; display: flex; background: var(--bg); }
+    .hive-chat-cheatsheet {
+      width: 210px; min-width: 170px; max-width: 260px; overflow-y: auto;
+      border-right: 1px solid var(--border); padding: var(--sp-3); background: var(--surface);
+    }
+    .hive-chat-cheatsheet.collapsed { display: none; }
+    .hive-chat-cheat-head { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-2); margin-bottom: var(--sp-3); }
+    .hive-chat-cheat-title { font-size: var(--fs-xs); color: var(--text); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    .hive-chat-cheat-group { margin-bottom: var(--sp-5); }
+    .hive-chat-cheat-group h4 { margin: var(--sp-0) var(--sp-0) var(--sp-2); font-size: var(--fs-2xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .hive-chat-example {
+      display: block; width: 100%; text-align: left; color: var(--text); background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-2);
+      cursor: pointer; font-size: var(--fs-2xs); line-height: 1.35;
+    }
+    .hive-chat-example:hover { border-color: var(--purple); background: var(--panel-strong); }
+    .hive-chat-main { flex: 1; min-width: 0; display:flex; flex-direction:column; position:relative; }
+    .hive-chat-presence { display:flex; gap: var(--sp-2); align-items:center; font-size: var(--fs-2xs); color: var(--muted); }
+    .hive-presence-dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--muted); display:inline-block; }
+    .hive-presence-dot.active { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .hive-chat-autocomplete {
+      display:none; position:absolute; left:14px; right:14px; bottom:58px; z-index:4;
+      border:1px solid var(--border); border-radius:var(--r); background: var(--surface); box-shadow: var(--shadow-lg); overflow:hidden;
+    }
+    .hive-chat-autocomplete.open { display:block; }
+    .hive-chat-completion { display:flex; justify-content:space-between; gap:var(--sp-4); padding:var(--sp-2) var(--sp-3); cursor:pointer; font-size:var(--fs-xs); }
+    .hive-chat-completion.active, .hive-chat-completion:hover { background: var(--panel-strong); }
+    .hive-chat-kbd { color: var(--muted); font-size: var(--fs-2xs); }
+    .hive-chat-search { width:100%; box-sizing:border-box; margin:var(--sp-0) var(--sp-0) var(--sp-3); padding:var(--sp-2) var(--sp-3); border:1px solid var(--border); border-radius:var(--r-sm); background:var(--bg); color:var(--text); font-size:var(--fs-2xs); }
+    .hive-chat-suggestions { display:flex; flex-wrap:wrap; gap:var(--sp-2); padding:var(--sp-3) var(--sp-4) var(--sp-0); }
+    .hive-chat-suggestion { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--surface); color:var(--text); cursor:pointer; padding:var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); }
+    .hive-chat-suggestion:hover { border-color:var(--purple); background:var(--panel-strong); }
+    .hive-chat-messages {
+      flex: 1; overflow-y: auto; padding: var(--sp-5);
+      display: flex; flex-direction: column; gap: 10px;
+      min-height: 100px;
+      /* The chat panel is a floating (non-modal) surface: the body scroll-lock
+         never applies, so containment is the ONLY thing keeping a wheel that
+         passes the top/bottom of the history from scrolling the dashboard
+         behind the panel (#4805). */
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
+    }
+    .chat-msg {
+      max-width: 88%; padding: var(--sp-4) var(--sp-5); border-radius: var(--r);
+      font-size: var(--fs-sm); line-height: 1.5; word-break: break-word; white-space: normal;
+    }
+    .chat-msg .chat-time { display:block; margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-2xs); opacity:.75; }
+    .chat-msg.long.collapsed { max-height: 320px; overflow: hidden; position: relative; }
+    .chat-msg.long.collapsed::after { content:''; position:absolute; left:0; right:0; bottom:0; height:52px; background:linear-gradient(transparent, var(--surface)); }
+    .chat-more-btn, .chat-copy-btn { border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); color:var(--text); cursor:pointer; font-size:var(--fs-2xs); padding:var(--sp-1) var(--sp-2); }
+    .chat-more-btn { align-self:flex-start; margin-top:-4px; }
+    .chat-code-wrap { position: relative; }
+    .chat-copy-btn { position:absolute; top:6px; right:6px; opacity:.82; }
+    .chat-msg pre { white-space: pre-wrap; overflow:auto; background: var(--bg); border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-3); padding-top:var(--sp-6); }
+    .chat-msg code { background: var(--panel-strong); padding:var(--sp-0) var(--sp-1); border-radius:var(--r-xs); font-size:0.85em; }
+    .chat-msg pre code { background: transparent; padding:0; border-radius:0; }
+    .chat-mention, .chat-ref { color:var(--cyan); border-bottom:1px dotted currentColor; text-decoration:none; }
+    .chat-msg h4 { margin: var(--sp-0) var(--sp-0) var(--sp-2); color: var(--amber); }
+    .chat-command-table { width:100%; border-collapse: collapse; font-size: var(--fs-xs); }
+    .chat-command-table td { border-top: 1px solid var(--border); padding: 5px 4px; vertical-align: top; }
+    .chat-command-table code { white-space: nowrap; }
+    .chat-msg.user { align-self: flex-end; background: var(--purple); color: var(--bg); border-bottom-right-radius: 2px; }
+    .chat-msg.system { align-self: flex-start; background: var(--surface); color: var(--text); border-bottom-left-radius: 2px; border: 1px solid var(--border); }
+    .chat-msg.peer { align-self: flex-start; background: var(--panel-strong); color: var(--text); border-bottom-left-radius: 2px; border: 1px solid var(--border); }
+    .chat-msg.peer .chat-author { display:block; margin-bottom: var(--sp-1); color: var(--cyan); font-size: var(--fs-2xs); font-weight: 600; }
+    .chat-msg.system.chat-gap { align-self: center; color: var(--muted); font-style: italic; font-size: var(--fs-xs); border-style: dashed; }
+    .chat-msg.system a { color: var(--cyan); }
+    .chat-msg.thinking { align-self: flex-start; background: var(--surface); color: var(--muted); font-style: italic; border: 1px dashed var(--border); }
+    .hive-chat-input-row {
+      display: flex; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5);
+      border-top: 1px solid var(--border); background: var(--surface);
+    }
+    /* .hive-chat-input — shared input recipe (end of style block) */
+    .hive-chat-input { flex: 1; resize: none; min-height: 36px; max-height: 80px; overscroll-behavior: contain; overscroll-behavior-y: contain; }
+    .hive-chat-send {
+      background: var(--purple); color: var(--bg); border: none; border-radius: var(--r);
+      padding: var(--sp-0) var(--sp-5); cursor: pointer; font-size: 0.8rem; font-weight: 600;
+      transition: background 0.15s;
+    }
+    .hive-chat-send:hover { background: color-mix(in srgb, var(--purple) 85%, #000); }
+    .hive-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+    .chat-sources { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); }
+    .chat-sources span { background: var(--panel-strong); padding: var(--sp-0) var(--sp-2); border-radius: var(--r-xs); margin-right: var(--sp-1); }
+    .chat-raw-details { margin-top: var(--sp-3); font-size: 0.7rem; }
+    .chat-raw-details summary { cursor: pointer; color: var(--muted); font-size: 0.65rem; }
+    .chat-raw-details pre { white-space: pre-wrap; word-break: break-all; font-size: 0.65rem; color: var(--muted); margin-top: var(--sp-2); max-height: 200px; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; }
+    .hive-chat-shortcuts {
+      display:none; position:fixed; z-index:20001; inset:0; background:var(--overlay-scrim);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+      align-items:center; justify-content:center; padding: var(--modal-gap);
+    }
+    .hive-chat-shortcuts.open { display:flex; }
+    .hive-chat-shortcut-card { width:min(460px, calc(100vw - 32px)); background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:var(--sp-6); box-shadow:var(--shadow-lg); }
+    .hive-chat-shortcut-card h3 { margin:var(--sp-0) var(--sp-0) var(--sp-3); }
+    .hive-chat-shortcut-card dl { display:grid; grid-template-columns:max-content 1fr; gap:var(--sp-3) var(--sp-5); margin:var(--sp-0); font-size:var(--fs-sm); }
+    .hive-chat-shortcut-card dt { color:var(--amber); font-family:var(--font-mono); }
+    @container hive-chat (max-width: 500px) {
+      .hive-chat-cheatsheet { display: none; }
+    }
+    @media (max-width: 500px) {
+      .hive-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 72px; }
+      /* Phone: the fixed FAB used to sit on top of in-flow controls at the
+         bottom of the page (audit-log Save button, right edge of the last
+         section). Shrink it into the corner and give the body matching
+         bottom clearance so content can always scroll clear of it.
+         Clearance = FAB size (40) + FAB offset (12) + breathing room (12). */
+      .hive-chat-fab { width: 40px; height: 40px; bottom: 12px; right: 12px; font-size: 1.1rem; }
+      body { padding-bottom: 64px; }
+      /* Audit search controls: keep the Save/clear buttons out of the FAB
+         column entirely. Clearance = FAB size (40) + FAB offset (12). */
+      .audit-controls-row { padding-right: 52px; }
+    }
+    /* Phone: the floating card left ~40% of the screen for the conversation
+       (#11836). Open it as a full-height sheet instead. interactive-widget
+       in the viewport meta makes 100dvh shrink with the keyboard, so the
+       input row stays above it. */
+    @media (max-width: 600px) {
+      .hive-chat-panel, .hive-chat-panel.maximized, .hive-chat-panel.docked {
+        inset: 0; width: 100vw !important; height: 100vh !important; max-width: none; max-height: none;
+        min-width: 0; min-height: 0; border: 0; border-radius: 0; box-shadow: none;
+      }
+      @supports (height: 100dvh) {
+        .hive-chat-panel, .hive-chat-panel.maximized, .hive-chat-panel.docked { height: 100dvh !important; }
+      }
+      .hive-chat-panel .hive-chat-header { padding-top: max(var(--sp-3), env(safe-area-inset-top)); }
+      .hive-chat-panel .hive-chat-input-row { padding-bottom: max(var(--sp-3), env(safe-area-inset-bottom)); }
+      .hive-chat-resize, .hive-chat-resize-width, #hiveChatDock, #hiveChatMax { display: none; }
+      .hive-chat-fab.open { display: none; }
+      body:has(.hive-chat-panel.open) { overflow: hidden; }
+      .hive-chat-main:has(.hive-chat-messages .chat-msg) .hive-chat-suggestions { display: none; }
+    }
+

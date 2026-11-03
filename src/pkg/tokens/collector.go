@@ -189,6 +189,7 @@ type Diagnostics struct {
 	LastClaudeScanError  string `json:"last_claude_scan_error,omitempty"`
 	LastCopilotScanError string `json:"last_copilot_scan_error,omitempty"`
 	LastBobScanError     string `json:"last_bob_scan_error,omitempty"`
+	LastSandboxScanError string `json:"last_sandbox_scan_error,omitempty"`
 	LiveCaptureEnabled   bool   `json:"live_capture_enabled,omitempty"`
 }
 
@@ -206,6 +207,7 @@ type Collector struct {
 	claudeSessionsDir         string
 	copilotSessionsDir        string
 	bobSessionsDir            string
+	sandboxRunHistoryPath     string
 	copilotLiveCaptureSinceMs int64
 	persistPath               string
 	detector                  func(string) string
@@ -218,6 +220,9 @@ type Collector struct {
 	prevSessionCount          int
 	prevTotalTokens           int64
 	prevByAgent               map[string]int64
+	// launchLog, when attached, records which issue/PR/head SHA each delivered
+	// kick was launched for (see launch.go). Attribution only — never a gate.
+	launchLog *LaunchLog
 
 	// loadOnce guards the one-time restore of the persisted snapshot. The
 	// load is deferred until first read (see Summary) instead of happening in
@@ -260,6 +265,13 @@ func (c *Collector) SetClaudeSessionsDir(dir string) {
 
 func (c *Collector) SetCopilotSessionsDir(dir string) {
 	c.copilotSessionsDir = dir
+}
+
+// SetSandboxRunHistoryPath points the collector at the sandbox run history
+// (crux/agent sandbox-runs/runs.jsonl) so usage reported by podman and Job
+// sandbox kicks is attributed to their agents like any other session.
+func (c *Collector) SetSandboxRunHistoryPath(path string) {
+	c.sandboxRunHistoryPath = path
 }
 
 func (c *Collector) SetBobSessionsDir(dir string) {
@@ -334,12 +346,23 @@ func (c *Collector) scan() {
 	}
 
 	if c.copilotSessionsDir != "" {
-		copilotAgg, err := ScanCopilotSessions(c.copilotSessionsDir, c.copilotLiveCaptureSince())
-		if err != nil {
-			c.logger.Warn("copilot session scan failed", "error", err)
-			diag.LastCopilotScanError = err.Error()
-		} else if copilotAgg != nil && copilotAgg.SessionCount > 0 {
-			MergeAggregates(agg, copilotAgg)
+		// The live sink's copilot-live-* files were just scanned into agg, so
+		// the deferral predicate knows exactly which (agent, model) pairs the
+		// proxy really captured; every other model keeps its shutdown totals.
+		captured := copilotLiveCapturedFromAggregate(agg)
+		since := c.copilotLiveCaptureSince()
+		for _, tree := range CopilotSessionTrees(c.copilotSessionsDir) {
+			copilotAgg, err := ScanCopilotSessionTree(tree.Dir, CopilotScanOptions{
+				LiveCaptureSinceMs: since,
+				LiveCaptured:       captured,
+				DefaultAgent:       tree.Agent,
+			})
+			if err != nil {
+				c.logger.Warn("copilot session scan failed", "dir", tree.Dir, "error", err)
+				diag.LastCopilotScanError = err.Error()
+			} else if copilotAgg != nil && copilotAgg.SessionCount > 0 {
+				MergeAggregates(agg, copilotAgg)
+			}
 		}
 	}
 
@@ -359,6 +382,16 @@ func (c *Collector) scan() {
 		c.mu.Lock()
 		c.errorStreaks = streaks
 		c.mu.Unlock()
+	}
+
+	if c.sandboxRunHistoryPath != "" {
+		sandboxAgg, err := ScanSandboxRuns(c.sandboxRunHistoryPath)
+		if err != nil {
+			c.logger.Warn("sandbox run history scan failed", "error", err)
+			diag.LastSandboxScanError = err.Error()
+		} else if sandboxAgg != nil && sandboxAgg.SessionCount > 0 {
+			MergeAggregates(agg, sandboxAgg)
+		}
 	}
 
 	sessionDelta := agg.SessionCount - c.prevSessionCount
@@ -432,6 +465,38 @@ func (c *Collector) AgentErrorStreaks() map[string]int {
 		out[k] = v
 	}
 	return out
+}
+
+// copilotLiveCapturedFromAggregate derives the live-capture predicate for the
+// Copilot session scanner from the metrics-dir scan: an (agent, model) pair is
+// "captured" when the MITM proxy's sink wrote a BackendCopilot session for that
+// agent carrying usage for that model. Returns a predicate that is false for
+// everything when agg holds no live Copilot sessions.
+func copilotLiveCapturedFromAggregate(agg *AggregateSummary) func(agent, model string) bool {
+	seen := map[string]map[string]bool{}
+	if agg != nil {
+		for _, sess := range agg.Sessions {
+			if sess.Backend != BackendCopilot {
+				continue
+			}
+			models := seen[sess.Agent]
+			if models == nil {
+				models = map[string]bool{}
+				seen[sess.Agent] = models
+			}
+			if sess.Model != "" {
+				models[sess.Model] = true
+			}
+			for _, u := range sess.Usage {
+				if u.Model != "" {
+					models[u.Model] = true
+				}
+			}
+		}
+	}
+	return func(agent, model string) bool {
+		return seen[agent][model]
+	}
 }
 
 func CollectFromDir(sessionsDir string, agentDetector func(firstMsg string) string) (*AggregateSummary, error) {

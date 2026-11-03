@@ -1,0 +1,1 @@
+- The contributor-adequacy rail from [#13998](https://github.com/hivecommons/hive/issues/13998) is the owner's standing policy, not a proposal: `prefer-contributor` still prefers the contributor's PR, and the hive's competing PR is closed only after an adequacy review passes. Policy text and docs no longer call it "proposed".

@@ -60,7 +60,7 @@ name and the whole file becomes the body.
 ## Malformed files are tolerated, not rejected
 
 `Registry.Load` skips a file it cannot read or parse and continues
-(`src/pkg/skillreg/skillreg.go:191`). It returns the count it *did* load.
+(`src/crux/skillreg/skillreg.go:191`). It returns the count it *did* load.
 
 This matters for an operator: **a typo in one skill's front matter does not
 fail startup and does not produce a loud error** — that skill is simply absent,

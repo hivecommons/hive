@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -102,6 +103,9 @@ func forEachActionableIssue(logger *slog.Logger, logTag string, repoFull string,
 			if logger != nil {
 				logger.Debug(logTag+" unmarshal fail", "repo", repoFull, "error", err)
 			}
+			continue
+		}
+		if state, _ := issue["state"].(string); strings.EqualFold(state, "closed") {
 			continue
 		}
 		ref := refFromIssueMap(repoFull, issue)

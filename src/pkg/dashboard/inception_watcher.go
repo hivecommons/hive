@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentparse"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -67,6 +67,8 @@ type InceptionWatcher struct {
 	factGraceStart    time.Time
 	captureSeenAt     time.Time // when watcher first saw this inception in capture phase
 	structureSeenAt   time.Time // when watcher first saw this inception in structure phase
+	lastPhase         knowledge.InceptionPhase
+	onPhaseChange     func()
 
 	pollMu              sync.Mutex
 	plukMu              sync.Mutex
@@ -83,7 +85,7 @@ func NewInceptionWatcher(
 	beadStore *beads.Store,
 	inception *knowledge.InceptionEngine,
 	sched SchedulerControl,
-	agentMgr *agent.Manager,
+	agentMgr crux.Runtime,
 	gov *governor.Governor,
 	logger *slog.Logger,
 ) *InceptionWatcher {
@@ -98,6 +100,30 @@ func NewInceptionWatcher(
 		w.agentMgr = agentMgr
 	}
 	return w
+}
+
+// SetPhaseChangeHook registers fn to run (in its own goroutine) whenever a
+// poll observes a different inception phase. The composition root wires it to
+// a dashboard status refresh so the chat spine's SSE bridge sees `clarify`
+// and posts the questions without waiting for the next eval cycle (#13215).
+func (w *InceptionWatcher) SetPhaseChangeHook(fn func()) {
+	w.pollMu.Lock()
+	defer w.pollMu.Unlock()
+	w.onPhaseChange = fn
+}
+
+func (w *InceptionWatcher) notifyPhaseChangeLocked() {
+	var phase knowledge.InceptionPhase
+	if state := w.inception.GetState(); state != nil {
+		phase = state.Phase
+	}
+	if phase == w.lastPhase {
+		return
+	}
+	w.lastPhase = phase
+	if w.onPhaseChange != nil {
+		go w.onPhaseChange()
+	}
 }
 
 // Run starts the polling loop and event subscriber. Blocks until ctx is cancelled.
@@ -148,6 +174,7 @@ func (w *InceptionWatcher) poll(ctx context.Context) {
 	if w.inception == nil || w.beadStore == nil {
 		return
 	}
+	defer w.notifyPhaseChangeLocked()
 
 	if err := w.beadStore.Reload(); err != nil {
 		w.logger.Warn("inception watcher: bead store reload failed", "error", err)
@@ -376,6 +403,10 @@ func (w *InceptionWatcher) checkForQuestions(inceptionBeads []*beads.Bead) {
 		title := b.Title
 		title = strings.TrimPrefix(title, "Clarification: ")
 		title = strings.TrimPrefix(title, "clarification: ")
+
+		if !isUsableQuestionText(title) {
+			continue
+		}
 
 		questions = append(questions, knowledge.Question{
 			ID:       qID,
@@ -849,7 +880,7 @@ var categoryKeywords = map[string]bool{
 }
 
 // parseQuestionTable extracts questions from the agent's │-delimited table
-// output. It is a thin, behavior-preserving adapter over agentparse.ParseTable:
+// output. It filters template scaffolding from agentparse.ParseTable:
 // the generic parser finds the category column and extracts title/default, and
 // this adapter maps each Item into a knowledge.Question (ID == Category, as
 // before).
@@ -857,6 +888,9 @@ func parseQuestionTable(lines []string) []knowledge.Question {
 	items := agentparse.ParseTable(lines, categoryKeywords)
 	questions := make([]knowledge.Question, 0, len(items))
 	for _, it := range items {
+		if !isUsableQuestionText(it.Title) {
+			continue
+		}
 		questions = append(questions, knowledge.Question{
 			ID:       it.Category,
 			Text:     it.Title,
@@ -872,12 +906,15 @@ func parseQuestionTable(lines []string) []knowledge.Question {
 var numberedQuestionRe = agentparse.NumberedListRe()
 
 // parseNumberedQuestions extracts questions from numbered or bulleted lists.
-// Thin, behavior-preserving adapter over agentparse.ParseNumberedList with the
+// Filters template scaffolding from agentparse.ParseNumberedList with the
 // "general" fallback category, mapping each Item into a knowledge.Question.
 func parseNumberedQuestions(lines []string) []knowledge.Question {
 	items := agentparse.ParseNumberedList(lines, categoryKeywords, "general")
 	questions := make([]knowledge.Question, 0, len(items))
 	for _, it := range items {
+		if !isUsableQuestionText(it.Title) {
+			continue
+		}
 		questions = append(questions, knowledge.Question{
 			ID:       it.Category,
 			Text:     it.Title,
@@ -1394,7 +1431,7 @@ func (w *InceptionWatcher) interceptQuestionsFromBuffer(state *knowledge.Incepti
 			}
 		}
 
-		if q != nil {
+		if q != nil && isUsableQuestionText(q.Text) {
 			found := false
 			for _, existing := range w.plukQuestions {
 				if existing.Text == q.Text {
@@ -1420,6 +1457,18 @@ func isTemplatePlaceholder(title string) bool {
 	return agentparse.IsTemplatePlaceholder(title)
 }
 
+// isUsableQuestionText rejects echoed kick scaffolding, including placeholders
+// with trailing instructions caused by wrapped terminal output. Keep this guard
+// inception-specific so other consumers of the shared parsers are unaffected.
+func isUsableQuestionText(text string) bool {
+	text = strings.TrimSpace(text)
+	if len(text) >= len("Clarification:") && strings.EqualFold(text[:len("Clarification:")], "Clarification:") {
+		text = strings.TrimSpace(text[len("Clarification:"):])
+	}
+	return text != "" && !isTemplatePlaceholder(text) &&
+		!(strings.HasPrefix(text, "<") && strings.Contains(text, ">"))
+}
+
 // parseQuestionFromBdCreate extracts a question from a bd create command
 // in the agent's raw output. Works regardless of --type, --actor, or
 // --external-ref values — the title IS the question. Title extraction and
@@ -1427,7 +1476,7 @@ func isTemplatePlaceholder(title string) bool {
 // inference and prefix handling stay here (inception-specific).
 func (w *InceptionWatcher) parseQuestionFromBdCreate(line string) *knowledge.Question {
 	title, ok := agentparse.TitleFromBdCreate(line)
-	if !ok {
+	if !ok || !isUsableQuestionText(title) {
 		return nil
 	}
 
@@ -1475,7 +1524,7 @@ func (w *InceptionWatcher) applyPlukQuestions(state *knowledge.InceptionState) {
 	seen := make(map[string]bool)
 	var unique []knowledge.Question
 	for _, q := range w.plukQuestions {
-		if !seen[q.Text] {
+		if isUsableQuestionText(q.Text) && !seen[q.Text] {
 			seen[q.Text] = true
 			unique = append(unique, q)
 		}

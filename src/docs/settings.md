@@ -6,9 +6,27 @@ Every setting on a Settings tab has a small **?** mark next to its name. Rest th
 
 For the dashboard's other sections, see [Dashboard sections explained](dashboard-sections.md). For which file a saved setting is written to, see [Spoke configuration layering](config-layering.md).
 
+## Linking to a setting
+
+`<dashboard>/#config/governor/<tab>` opens Settings on a tab. Add a search term as a third part, `<dashboard>/#config/governor/<tab>/<query>`, and Settings opens with the search box already holding `<query>`, so the results list the matching settings. For example, `#config/governor/Features/issues.close_on_merge` opens Settings searching for that key.
+
+### Triage: does this RFC already exist?
+
+Many RFCs ask for something a setting already does. With `issues.rfc_existing_check.enabled: true` (default off), Hive checks each new open issue labelled `rfc`, `enhancement` or `kind/feature` against the Settings search index. It compares the issue title and body with each indexed setting's key, label, section and search text by keyword overlap. There is no model call. Hive then posts one comment carrying `<!-- hive:rfc-existing-coverage -->`. The comment lists the best matches. Each match links to Settings with the search set to its key (the link above, built from `dashboard.public_url`) and to a docs search for the key. Hive finds the marker before posting, so it never comments twice, including after a restart. The check only comments: it never adds labels, closes issues, or decides anything.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `issues.rfc_existing_check.enabled` | `false` | Turn the check on. |
+| `issues.rfc_existing_check.post_when_nothing_found` | `false` | Also post a one-time "Nothing found" comment when no setting matches. |
+| `issues.rfc_existing_check.labels` | `[rfc, enhancement, kind/feature]` | Labels that mark an issue as an RFC or feature request. Matching ignores case. |
+| `issues.rfc_existing_check.max_matches` | `5` | Most settings listed in one comment. |
+| `issues.rfc_existing_check.max_age` | `168h` | Skip issues opened longer ago than this, so turning the check on does not comment on the backlog. |
+
+These keys are set in `hive.yaml` only; they have no Settings control yet.
+
 ## General
 
-Hive-wide basics: the hive ID, the ACMM maturity level, how often the governor evaluates the hive, the fleet-wide default for explain mode, and whether agent-created PRs and issues carry an attribution trailer.
+Hive-wide basics: the hive ID, the ACMM maturity level, how often the governor evaluates the hive, the fleet-wide default for explain mode, and whether agent-created PRs and issues carry an attribution trailer. The **Eval loop pacing** block sets the eval-interval cap, the webhook-healthy interval, the conserve-mode multiplier, how often optional sweeps run and the provider spend-limit probe interval; a saved change applies from the next eval cycle. It also shows, read-only, whether the mode thresholds are pack-seeded or operator-owned.
 
 - ACMM levels and the agents each level runs: [ACMM levels](agent-configuration.md#acmm-levels-agent-rosters-as-packs).
 - Explain mode: [Explain mode](agent-configuration.md#explain-mode-debugging-agent-behaviour).
@@ -20,7 +38,7 @@ The issue and PR counts that move the governor between modes, and how those thre
 
 ## Labels
 
-Which labels hold, require, or route work, and the reporter-trust rules for outside PRs. See [Labels and control signals](labels-and-control-signals.md) and [Label policy](agent-configuration.md#label-policy-which-issues-agents-may-work).
+Which labels hold, require, or route work, the label the merger queue applies to queue a PR for auto-merge (applies after a restart), and the reporter-trust rules for outside PRs. See [Labels and control signals](labels-and-control-signals.md) and [Label policy](agent-configuration.md#label-policy-which-issues-agents-may-work).
 
 ## Repos
 
@@ -32,7 +50,18 @@ The token budget and its rolling period, optional dollar and coin caps, the perc
 
 ## Notifications
 
-The ntfy, Discord, and Slack destinations and which hive events are sent to them. See [Notifications](notifications.md#configuration).
+The one-way ntfy, Discord, and Slack webhook destinations, which hive events are sent to them, the Discord hub webhooks, and the GitHub activity feed. See [Notifications](notifications.md#configuration). Two-way chat bots live on the Channels tab.
+
+## Channels
+
+Every inbound surface that can start or steer agent work from outside the dashboard, grouped by surface. Saves go through the owner-only `PUT /api/config/channels` endpoint, which validates the whole body against a copy of the live config and applies nothing on a 400. Secrets are write-only: a configured field shows a masked value, leaving it untouched keeps the stored secret, and saving an empty value clears it.
+
+- **GitHub @-mentions** — `github.mentions.*`: enable, poll interval (Go duration or seconds, at most 24h), default agent, summoner logins (validated as GitHub logins), minimum dashboard role, ack reaction, per-user/per-repo/per-thread limits, and optional webhook acceleration. Below the fields the tab lists which agents are currently mention-eligible (enabled, converse on, a `mention` channel, governor-kicked) and deep-links every agent name to its own Channels tab, where the per-agent `channels` list is edited. Saving hot-reloads the mention poller.
+- **GitHub Actions trigger** — `github.actions.*`: enable, allowed commands (a closed vocabulary: `status`, `review`, `kick`), allow-apply, source label, trusted comment authors, the author→login identity map, and OIDC dispatch (audience, JWKS URL, max skew). See [GitHub Actions trigger](github-actions-trigger.md#hive-configuration). Hot-reloads with the mention runtime.
+- **Chat surfaces** — the two-way Discord bot (`notifications.discord.bot_token`, `channel_id`, `allowed_users`) and the Slack, Matrix, Telegram and Microsoft Teams bots (`notifications.<surface>.*`). An enabled bot must carry its credentials or the save is rejected. Bots connect at startup, so these apply after a restart.
+- **Dashboard chat** — read-only status. The chat panel and inception-via-chat have no server-side settings of their own; who may post comes from `dashboard.authorized_users` on the Security tab and each agent's converse flag. See [Dashboard chat](dashboard-chat.md).
+- **Escalation & on-call** — `escalation.email.*` (SMTP host/port/credentials, from, recipients, digest recipients and time) and `escalation.push.*` (minimum severity, ntfy, Pushover, PagerDuty). Saving rebuilds the escalation dispatcher's sinks. The breaker thresholds stay on the Health tab.
+- **Admin MCP** — read-only status of the `/api/admin/mcp` endpoint. It is always registered and has no `hive.yaml` section; writes are enabled with `HIVE_ADMIN_MCP_ENABLE_WRITES` on the hive process. See [Admin MCP](admin-mcp.md#writes).
 
 ## Health
 
@@ -59,13 +88,17 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Audit publication: [Audit campaign](audit-campaign.md#publication).
 - Token mint: [Token mint](token-mint.md).
 - Spek stage runner: [Spektacular](spektacular.md).
-- Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), and [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge).
+- Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge), and the per-repository merge policy (`auto_merge.require_current_base`, `auto_merge.squash_only`, `auto_merge.human_merge_paths`).
 - Review gate: [Review swarm](review-swarm.md#configuration), [Blocking line and backlog](review-swarm.md#blocking-line-reviewseverity-reviewbacklog), and [external review bot threads](review-bot-threads.md).
 - Trajectory review: [Trajectory-Review Lane](trajectory-review.md#configuration).
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
 
 The other features on this tab (OpenTelemetry export, external execution, auto-plan, issue claims, PR follow-up, long-running runs, provider rotation, merge recommendations, convergence rollout, stall replan, and question auto-close) are explained by their **?** tooltips, and their configuration keys are listed in the [Hive operator reference](operator-reference.md#configuration-blocks).
+
+## Knowledge
+
+Whether the public read-only knowledge MCP endpoint is on, the knowledge pipeline, and the external knowledge connectors. The **Knowledge pipeline** block sets the bead synthesizer (schedule, target layer, minimum confidence, per-cycle fact and GitHub API caps, bead retention), scheduled curator promotion (schedule, threshold, source and target layers), repository code maps (schedule, layer, size cap) and the kick primer's fact and byte caps. Turning the bead synthesizer on or off applies at once; the other pipeline settings apply after a restart, and 0 or empty restores the default. The engine, the vault paths and the primer merge strategy are shown read-only because they are set in `hive.yaml`. The repositories to map and the primer priority list stay yaml-only. See [Knowledge curator](knowledge-curator.md) and [Knowledge connectors](knowledge-connectors.md).
 
 ## Advisory
 
@@ -83,6 +116,8 @@ The link between this hive and its hub: hub registration, public listing, heartb
 - Heartbeat identifiers: [Withholding heartbeat identifiers](telemetry.md#withholding-heartbeat-identifiers).
 - Snapshots: [Public snapshots](snapshots.md).
 - Contributors: [ClankeR contributor relay](contributor-relay.md) and [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
+
+The **Hub settings** block at the bottom of the tab sets explicit task acceptance, the already-done label and hold, contributor wall retention, the contributor announcement (text, level, expiry), the snapshot rebuild interval, the self-upgrade drain timeout, the task-status push loop and the NPS prompt. They save with the rest of the tab; 0 or empty restores the default. The upgrade drain timeout and task-status push apply after a restart. While a self-upgrade is draining, the spoke reports the kicks it is waiting on and the time left in every heartbeat, so the hub holds the upgrade instead of abandoning it as orphaned; the hub timeline and stuck-upgrade alert show the drain. The cluster ID and hive type are shown read-only because hub provisioning writes them, as are the deprecated `contribute_already_done_unverified_hold_days` and `contribute_close_already_done` keys and the announcement ID the dashboard mints. The hub-only provision-request Discord webhook and NPS relay pull secret are write-only: the tab shows only whether each is set.
 
 ## Model Gateways
 

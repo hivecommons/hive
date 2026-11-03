@@ -86,6 +86,11 @@ type ContributorProfileResponse struct {
 	// RegisteredAt is when the contributor first registered (public).
 	RegisteredAt string `json:"registered_at,omitempty"`
 
+	// FixQueue is the contributor's stage-072 red-PR fix budget as the hub
+	// sees it (hivecommons/hive#12436): queued/in-flight counts plus the
+	// queued PRs in dispatch order. Nil when there is nothing to fix.
+	FixQueue *ContributorFixQueue `json:"fix_queue,omitempty"`
+
 	// FoundingPosition is the contributor's REAL 1-based registration order on
 	// this hive, included only when within the founding cohort (first twenty).
 	// Derived from stored RegisteredAt timestamps — never fabricated.
@@ -336,6 +341,7 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 	}
 
 	resp.Found = true
+	resp.FixQueue = s.contributorFixQueue(username)
 	resp.AvatarURL = avatarForUsername(p)
 	resp.TrustTier = p.TrustTier
 	resp.EligibleForTrusted = contributorEligibleForTrusted(p)

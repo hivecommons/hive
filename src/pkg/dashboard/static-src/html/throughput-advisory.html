@@ -1,0 +1,59 @@
+  <div id="runs-section" data-dashboard-section="runs-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="runs-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Runs section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🏃 Runs <span id="runs-summary-badge" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)"></span></h2>
+    <div class="section-body">
+      <div id="runs" class="repo-grid"></div>
+      <div id="run-detail" style="display:none;margin-top:12px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px"></div>
+    </div>
+  </div>
+
+  <div id="pr-throughput-section" data-dashboard-section="pr-throughput-section" hidden>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Throughput section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📈 Throughput <span class="dash-card-subtitle">pull/merge requests across tracked forges</span></h2>
+    <div class="section-body">
+      <div id="pr-throughput-card" class="prt-card advisory-subsection-card"></div>
+      <div id="evidence-card" class="prt-card advisory-subsection-card evidence-card" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div id="advisory-section" data-dashboard-section="advisory-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+    <h2 class="section-label section-group-header section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Advisory section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📣 Advisory</h2>
+    <div class="section-body section-group-body">
+    <div class="advisory-subsection" id="advisory-digest-section">
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-digest-section">
+        <span class="section-chevron">▼</span> 📋 Advisory Digest<span data-section-help="advisory-digest-section"></span>
+      </h2>
+      <div class="section-body">
+        <div id="advisory-digest" class="advisory-subsection-card"></div>
+      </div>
+    </div>
+
+    <div id="hive-advice-section" class="advisory-subsection" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="hive-advice-section"><span class="section-chevron">▼</span> 🧭 Hive Advice <span style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);margin-left:var(--sp-3);background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">picked weekly</span></h2>
+      <div class="section-body">
+        <div id="hive-advice-card" class="advisory-subsection-card"></div>
+      </div>
+    </div>
+
+    <div id="fleet-report-section" class="advisory-subsection" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="fleet-report-section"><span class="section-chevron">▼</span> 📡 Fleet Report Preview <span style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);margin-left:var(--sp-3);background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">dry-run</span></h2>
+      <div class="section-body">
+        <div id="fleet-report-card" class="advisory-subsection-card"></div>
+      </div>
+    </div>
+
+    <div id="acmm-reco-section" class="advisory-subsection" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="acmm-reco-section"><span class="section-chevron">▼</span> ⬆️ Ready to level up? <span style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);margin-left:var(--sp-3);background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">advisory</span></h2>
+      <div class="section-body">
+        <div id="acmm-reco-card" class="advisory-subsection-card"></div>
+      </div>
+    </div>
+
+    <div id="lifecycle-section" class="advisory-subsection" style="display: none;">
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 Lifecycle Timeline</h2>
+      <div class="section-body">
+        <div id="lifecycle-card" class="advisory-subsection-card"></div>
+      </div>
+    </div>
+
+    </div>
+  </div>
+

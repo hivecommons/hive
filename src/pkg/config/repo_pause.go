@@ -62,22 +62,6 @@ type RepoPause struct {
 // Lock order is saveMu → repoPauseMu, never the reverse.
 var repoPauseMu sync.RWMutex
 
-// QualifyRepo returns repo as an "org/name" reference. An entry that already
-// carries a slash is a deliberate cross-org reference and is returned
-// unchanged — prefixing it again is the "laredo/laredo/cuga-agent" bug that has
-// bitten every place this join was written inline.
-func QualifyRepo(org, repo string) string {
-	repo = strings.TrimSpace(repo)
-	if repo == "" || strings.Contains(repo, "/") {
-		return repo
-	}
-	org = strings.TrimSpace(org)
-	if org == "" {
-		return repo
-	}
-	return org + "/" + repo
-}
-
 // repoPauseKey is the comparison key for a repo reference: org-qualified and
 // case-folded, because GitHub repository names are case-insensitive and an
 // operator who pauses "Console" must not find agents still writing to

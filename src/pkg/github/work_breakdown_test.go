@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // TestEnumerateActionable_WorkBreakdown pins classification at the existing
@@ -88,6 +89,50 @@ func TestEnumerateActionable_WorkBreakdown(t *testing.T) {
 	}
 }
 
+// TestEnumerateActionable_IssueFilterRefusalNeverQueued pins that a
+// project.issue_filter refusal stays out of the pipeline whatever the issue
+// already wears: `approved-direction` from a `/hive approve` and a stage
+// label an out-of-cycle write left behind admit nothing. The issue is
+// absent from the actionable items (kick prompts, contribute queue) and the
+// actionable count (governor), and derives no stage, so the sweep takes the
+// stale label off.
+func TestEnumerateActionable_IssueFilterRefusalNeverQueued(t *testing.T) {
+	const org, repo = "testorg", "testrepo"
+	issues := []wireIssue{
+		{Number: 1, Title: "admitted", User: wireUser{"alice"}, Labels: []wireLabel{{Name: "approved"}}, CreatedAt: hoursAgo(3)},
+		{Number: 2, Title: "refused, approved and staged", User: wireUser{"bob"}, Labels: []wireLabel{{Name: "kind/bug"}, {Name: HumanAckLabel}, {Name: stagelabels.Actionable.Label()}}, CreatedAt: hoursAgo(2)},
+		{Number: 3, Title: "refused, exempt", User: wireUser{"carol"}, Labels: []wireLabel{{Name: "no-ai"}}, CreatedAt: hoursAgo(1)},
+	}
+	server := httptest.NewServer(buildMux(t, org, repo, issues, nil))
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetExemptLabels([]string{"no-ai"})
+	c.SetIssueFilter(config.IssueFilterConfig{RequireLabels: []string{"approved"}})
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 || len(result.Issues.Items) != 1 || result.Issues.Items[0].Number != 1 {
+		t.Fatalf("actionable issues = %d %+v, want only #1", result.Issues.Count, result.Issues.Items)
+	}
+	if got := result.WorkBreakdownByRepo[repo].Issues; got.Actionable != 1 || got.Filtered != 2 {
+		t.Fatalf("issue breakdown = %+v, want 1 actionable, 2 filtered", got)
+	}
+	stages := map[int]stagelabels.Stage{}
+	reasons := map[int]string{}
+	for _, in := range IssueStageInputs(result) {
+		stages[in.Number], _, _ = IssueStageFor(in, nil)
+		reasons[in.Number] = in.Reason
+	}
+	if stages[1] != stagelabels.Actionable || stages[2] != stagelabels.None || stages[3] != stagelabels.None {
+		t.Fatalf("stages = %v, want #1 010, #2 and #3 none", stages)
+	}
+	if reasons[2] != issueFilterReason {
+		t.Fatalf("#2 reason = %q, want %q", reasons[2], issueFilterReason)
+	}
+}
+
 func TestStandingMetaIssueReason(t *testing.T) {
 	cases := []struct {
 		name, title, author string
@@ -107,5 +152,33 @@ func TestStandingMetaIssueReason(t *testing.T) {
 				t.Errorf("standingMetaIssueReason() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestNonActionableRowsCarryHumanAcknowledgement11565 pins that exempt and
+// project-filter rows keep a person's acknowledgement (assignment), so the
+// your-turn ownership decision does not treat them as unacknowledged.
+func TestNonActionableRowsCarryHumanAcknowledgement11565(t *testing.T) {
+	const org, repo = "testorg", "testrepo"
+	issues := []wireIssue{
+		{Number: 1, Title: "exempt acked", User: wireUser{"hive[bot]"}, Labels: []wireLabel{{Name: "approved"}, {Name: "no-ai"}}, Assignees: []wireUser{{"dave"}}, CreatedAt: hoursAgo(2)},
+		{Number: 2, Title: "filtered acked", User: wireUser{"hive[bot]"}, Assignees: []wireUser{{"dave"}}, CreatedAt: hoursAgo(1)},
+		{Number: 3, Title: "exempt unacked", User: wireUser{"hive[bot]"}, Labels: []wireLabel{{Name: "approved"}, {Name: "no-ai"}}, CreatedAt: hoursAgo(1)},
+	}
+	server := httptest.NewServer(buildMux(t, org, repo, issues, nil))
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetExemptLabels([]string{"no-ai"})
+	c.SetIssueFilter(config.IssueFilterConfig{RequireLabels: []string{"approved"}})
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	got := map[int]bool{}
+	for _, d := range result.WorkDetailsByRepo[repo].Issues {
+		got[d.Number] = d.HumanAcknowledged
+	}
+	if len(got) != 3 || !got[1] || !got[2] || got[3] {
+		t.Fatalf("HumanAcknowledged by issue = %v, want 1,2 true and 3 false", got)
 	}
 }

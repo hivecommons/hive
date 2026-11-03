@@ -68,7 +68,7 @@ func TestIssueBandChipOnlyForWaitingBand11505(t *testing.T) {
 	if info.Band != "ready" || info.Chip != "" {
 		t.Fatalf("ready issue: band = %q chip = %q, want ready with no chip", info.Band, info.Chip)
 	}
-	if got := issueBandSpec("waiting", config.DashboardIssueBandsConfig{}); got.Label != "Needs human" || got.Short != "needs human" {
+	if got := issueBandSpec("waiting", config.DashboardIssueBandsConfig{}); got.Label != "Parked" || got.Short != "parked" {
 		t.Fatalf("waiting band spec changed: %+v", got)
 	}
 }

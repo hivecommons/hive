@@ -62,7 +62,7 @@ func TestPRRequestWatcher_StartWiresAuthzAndHold(t *testing.T) {
 	done := c.StartPRRequestWatcher(ctx, func(agent string, uid int) error {
 		authzCalled = true
 		return nil
-	}, func(string) bool { return true }, nil)
+	}, func(string, string) bool { return true }, nil)
 	drainAfter(t, cancel, done)
 
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {

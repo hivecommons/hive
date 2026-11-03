@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -121,5 +122,62 @@ func TestGovernorForgeFallsBackOnUnusableConfig(t *testing.T) {
 				t.Fatalf("want untyped nil when there is nothing to fall back to, got %#v", got)
 			}
 		})
+	}
+}
+
+// TestConfigForgeKindsMatchForgeKinds pins the by-value contract between
+// config's forge names and pkg/forge.Kind: config cannot import pkg/forge, so
+// a rename on either side must fail here rather than silently fall back.
+func TestConfigForgeKindsMatchForgeKinds(t *testing.T) {
+	want := []forge.Kind{forge.KindGitHub, forge.KindGitLab, forge.KindGitea}
+	if len(config.KnownForgeKinds) != len(want) {
+		t.Fatalf("config.KnownForgeKinds = %v, want %v", config.KnownForgeKinds, want)
+	}
+	for i, k := range want {
+		if config.KnownForgeKinds[i] != string(k) {
+			t.Fatalf("config.KnownForgeKinds[%d] = %q, want %q", i, config.KnownForgeKinds[i], k)
+		}
+	}
+}
+
+// TestGovernorForgeRoutesPerRepo covers project.repo_policies[].forge
+// (hivecommons/hive#14112): one hive watching a GitHub, a GitLab and a Gitea
+// repo hands each write to the forge its repo lives on.
+func TestGovernorForgeRoutesPerRepo(t *testing.T) {
+	gh := github.NewClient("t", "acme", nil, discardLogger(), "")
+	cfg := &config.Config{}
+	cfg.Project.Org = "acme"
+	cfg.Project.Repos = []string{"app", "lab", "tea"}
+	cfg.Project.RepoPolicies = []config.RepoPolicy{
+		{Repo: "lab", Forge: config.ForgeGitLab, ForgeURL: "https://gitlab.example.com"},
+		{Repo: "tea", Forge: config.ForgeGitea, ForgeURL: "https://codeberg.org"},
+	}
+
+	w := governorForge(cfg, gh, discardLogger())
+	router, ok := w.(*repoForgeRouter)
+	if !ok {
+		t.Fatalf("want a per-repo router when repo_policies set a forge, got %T", w)
+	}
+	cases := map[string]forge.Kind{"acme/app": "", "acme/lab": forge.KindGitLab, "acme/tea": forge.KindGitea}
+	for repo, want := range cases {
+		got, err := router.writerFor(repo)
+		if err != nil {
+			t.Fatalf("writerFor(%q): %v", repo, err)
+		}
+		if want == "" {
+			if got != forge.IssueWriter(gh) {
+				t.Fatalf("writerFor(%q) = %T, want the *github.Client itself", repo, got)
+			}
+			continue
+		}
+		if k := forgeKindOf(t, got); k != want {
+			t.Fatalf("writerFor(%q) kind = %q, want %q", repo, k, want)
+		}
+	}
+
+	// No GitHub client and a GitHub repo: a clean error, never a nil deref.
+	noGH := &repoForgeRouter{cfg: cfg, logger: discardLogger()}
+	if err := noGH.AddLabels(context.Background(), "acme/app", 1, []string{"x"}); err == nil {
+		t.Fatal("want an error for a GitHub repo with no GitHub client")
 	}
 }

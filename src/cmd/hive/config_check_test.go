@@ -130,3 +130,30 @@ func TestRunConfigCheck_BadFlagExitsNonZero(t *testing.T) {
 		t.Fatalf("runConfigCheck() = 0, want non-zero for an unknown flag")
 	}
 }
+
+// A base-config backend/launch_cmd contradiction loads (the loader drops the
+// launch_cmd), but the config does not boot as written, so validate must fail.
+func TestRunConfigCheck_BaseLaunchCmdDegradationFails(t *testing.T) {
+	path := writeCheckConfig(t, nil)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = bytes.Replace(body, []byte("    backend: claude\n"), []byte("    backend: codex\n    launch_cmd: /usr/bin/bob --allow-all --model claude-sonnet-4-6\n"), 1)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := runConfigCheck([]string{"-config", path}, &stdout, &stderr); code == 0 {
+		t.Fatalf("runConfigCheck() = 0, want non-zero\nstdout: %s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "config OK") {
+		t.Errorf("stdout reports OK despite degradation: %s", stdout.String())
+	}
+	for _, want := range []string{"worker", "codex", "/usr/bin/bob"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr missing %q: %s", want, stderr.String())
+		}
+	}
+}

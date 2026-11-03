@@ -1,7 +1,7 @@
 # Moving a self-hosted Kubernetes hive to a new cluster
 
 This guide is for an operator running the **self-hosted, hub-less** Kubernetes
-deployment described in the root README's "Self-Hosted Deployment" section and
+deployment described in the [Kubernetes deployment guide](kubernetes-deployment.md) and
 [`src/deploy/kustomize/overlays/standalone`](https://github.com/hivecommons/hive/tree/v4/src/deploy/kustomize/overlays/standalone)
 — your own hive, your own cluster, no `kubestellar` hub involved.
 

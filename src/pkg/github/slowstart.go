@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,9 +29,9 @@ import (
 //
 // slowStartTransport breaks the loop at the one place all callers converge:
 // the shared HTTP transport. When a REAL secondary-limit 403 passes through
-// (identified by the Retry-After header GitHub attaches to abuse/secondary
-// blocks — permission 403s do not carry it), it enters a caution window
-// extending past the limit's reset. While cautious, requests are globally
+// (a Retry-After header or the "secondary rate limit" body phrase —
+// permission 403s carry neither), it enters a caution window extending past
+// the limit's reset. While cautious, requests are globally
 // serialized with a ~2s jittered gap — the post-reset wave becomes a trickle
 // the secondary limiter tolerates, and normal concurrency resumes when the
 // window ends.
@@ -44,14 +45,37 @@ const (
 	// slowStartJitter is added (0..jitter) per request so even multiple
 	// spokes behind one App key do not phase-lock.
 	slowStartJitter = time.Second
-	// slowStartDefaultRetryAfter is assumed when a secondary 403 carries an
-	// unparseable Retry-After: cover a full secondary window.
-	slowStartDefaultRetryAfter = time.Hour
+	// slowStartSecondaryBackoff is the back-off assumed for a secondary-limit
+	// 403 that names no retry time (no usable Retry-After, and
+	// X-RateLimit-Remaining is not 0). GitHub's documented rule for that case
+	// is "wait for at least one minute before retrying", with exponentially
+	// longer waits if the limit keeps tripping. A flat hour here (the old
+	// default, which hivecommons/hive#4674 applied to every header-less 403)
+	// kept one search 403 after a restart pacing — and shedding low-class
+	// work, including the merge sweep's status reads — for 70 minutes while
+	// the primary quota sat at 87% (projectbluefin hive, 2026-10-28).
+	slowStartSecondaryBackoff = time.Minute
+	// slowStartSecondaryBackoffMax caps the escalation on repeated trips.
+	slowStartSecondaryBackoffMax = 15 * time.Minute
+	// slowStartSecondaryRepeatWithin is how soon after the previous back-off
+	// ended a new header-less secondary 403 counts as a repeat and doubles
+	// the back-off; a trip after a quiet spell this long starts over at
+	// slowStartSecondaryBackoff.
+	slowStartSecondaryRepeatWithin = 30 * time.Minute
 	// slowStartDeadlineMargin preserves time for the actual HTTP round trip once a
 	// paced request reaches its slot.
 	slowStartDeadlineMargin = 500 * time.Millisecond
 	// slowStartLogInterval bounds caution-window logs during repeated extensions.
 	slowStartLogInterval = time.Minute
+
+	// pacingLimitHeader is set on a 403/429 response the pacer recognised as
+	// a rate-limit refusal; its value is "primary" or "secondary". The OTel
+	// transport (otel_transport.go) reads it to count secondary-limit hits.
+	pacingLimitHeader = "X-Hive-Pacing-Limit"
+	// pacingErrPrefix starts every error the pacer returns in place of a
+	// response (deadline-miss refusals today, priority shedding when it
+	// lands); the OTel transport reports those as github.shed.
+	pacingErrPrefix = "github pacing:"
 )
 
 // slowStartState is the shared pacing ledger. It is deliberately SEPARATE
@@ -74,6 +98,11 @@ type slowStartState struct {
 	nextSlot       time.Time
 	abandonedSlots []time.Time
 	lastCautionLog time.Time
+	// secondaryStreak counts back-to-back header-less secondary trips (0 on
+	// the first); secondaryBackoffEnd is when the current one's back-off
+	// ends. See secondaryBackoffLocked.
+	secondaryStreak     int
+	secondaryBackoffEnd time.Time
 }
 
 type slowStartTransport struct {
@@ -92,6 +121,14 @@ func newSlowStartState() *slowStartState {
 
 func newSlowStartTransport(inner http.RoundTripper) *slowStartTransport {
 	return &slowStartTransport{inner: inner, state: newSlowStartState()}
+}
+
+// cautious reports whether the caution window is engaged at now. Optional
+// housekeeping callers use it to stand down instead of queueing for slots.
+func (st *slowStartState) cautious(now time.Time) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return now.Before(st.cautiousUntil)
 }
 
 // sharedSlowStartState is the process-wide pacing ledger every wrapped client
@@ -114,7 +151,33 @@ func ResetRateLimitPacingForTest() {
 		st.nextSlot = time.Time{}
 		st.abandonedSlots = nil
 		st.lastCautionLog = time.Time{}
+		st.secondaryStreak = 0
+		st.secondaryBackoffEnd = time.Time{}
 		st.mu.Unlock()
+	}
+	resetPacingShedLogForTest()
+}
+
+// EngageRateLimitCautionForTest puts the process-wide pacer into a caution
+// window whose queue is already queueDepth ahead of now, with later slots
+// gap apart and no jitter, so a test in another package can check how its
+// callers behave while cautious without minute-long sleeps. The returned
+// func restores the pacer; call it in Cleanup.
+func EngageRateLimitCautionForTest(queueDepth, gap time.Duration) (restore func()) {
+	st := sharedSlowStartState
+	now := time.Now()
+	st.mu.Lock()
+	prevGap, prevJitter := st.gap, st.jitter
+	st.gap, st.jitter = gap, 0
+	st.cautiousUntil = now.Add(time.Hour)
+	st.nextSlot = now.Add(queueDepth)
+	st.abandonedSlots = nil
+	st.mu.Unlock()
+	return func() {
+		st.mu.Lock()
+		st.gap, st.jitter = prevGap, prevJitter
+		st.mu.Unlock()
+		ResetRateLimitPacingForTest()
 	}
 }
 
@@ -156,6 +219,34 @@ func (st *slowStartState) reclaimSlot(slot time.Time) {
 	st.abandonedSlots[i] = slot
 }
 
+// secondaryBackoffLocked returns the back-off for a secondary-limit 403 that
+// named no retry time, following GitHub's guidance: one minute, doubling on
+// each repeat up to slowStartSecondaryBackoffMax. A 403 that arrives while
+// the current back-off is still running is the rest of the same burst (the
+// requests already in flight when the limit tripped all come back refused),
+// so it neither escalates nor extends the back-off. One that arrives within
+// slowStartSecondaryRepeatWithin of the back-off ending is a re-trip and
+// escalates; anything later starts over.
+func (st *slowStartState) secondaryBackoffLocked(now time.Time) time.Duration {
+	switch {
+	case now.Before(st.secondaryBackoffEnd):
+		return st.secondaryBackoffEnd.Sub(now)
+	case !st.secondaryBackoffEnd.IsZero() && now.Before(st.secondaryBackoffEnd.Add(slowStartSecondaryRepeatWithin)):
+		st.secondaryStreak++
+	default:
+		st.secondaryStreak = 0
+	}
+	after := slowStartSecondaryBackoff
+	for i := 0; i < st.secondaryStreak && after < slowStartSecondaryBackoffMax; i++ {
+		after *= 2
+	}
+	if after > slowStartSecondaryBackoffMax {
+		after = slowStartSecondaryBackoffMax
+	}
+	st.secondaryBackoffEnd = now.Add(after)
+	return after
+}
+
 func (st *slowStartState) logCautionLocked(now time.Time, kind string, until time.Time, req *http.Request) {
 	if !st.lastCautionLog.IsZero() && now.Sub(st.lastCautionLog) < slowStartLogInterval {
 		return
@@ -182,6 +273,18 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 		gap := st.gap + time.Duration(rand.Int63n(int64(st.jitter)+1))
 		var fromAbandoned bool
 		slot, fromAbandoned = st.claimSlotLocked(now)
+		// Priority ladder (pacing_priority.go): a request whose class may
+		// not queue this deep is shed without taking a slot, so periodic
+		// housekeeping cannot push the governor's enumeration past its
+		// deadline.
+		class := PacingClassOf(req.Context())
+		if limit, bounded := class.maxQueue(); bounded {
+			if eta := slot.Sub(now); eta > limit {
+				st.mu.Unlock()
+				logPacingShedOnce("transport:"+class.String(), now, "path", req.URL.Path, "queue_eta", eta.Round(time.Millisecond), "limit", limit)
+				return nil, pacingShedError(class, eta, limit)
+			}
+		}
 		deadlineMargin := st.deadlineMargin
 		if deadlineMargin == 0 {
 			deadlineMargin = slowStartDeadlineMargin
@@ -234,16 +337,26 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 	if err == nil && resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) {
 		var until time.Time
 		var kind string
-		if after, secondary := secondaryLimitBackoff(resp); secondary {
-			until = time.Now().Add(after + st.window)
-			kind = "secondary"
-		} else if reset, primary := primaryLimitReset(resp, time.Now()); primary {
-			until = reset.Add(st.window)
-			kind = "primary"
+		after, named, secondary := secondaryLimitBackoff(resp, time.Now())
+		if !secondary {
+			if reset, primary := primaryLimitReset(resp, time.Now()); primary {
+				until = reset.Add(st.window)
+				kind = "primary"
+			}
 		}
-		if !until.IsZero() {
+		if secondary || !until.IsZero() {
+			// Tell the observability layer outside this transport which
+			// limit tripped without it having to re-sniff the body.
 			st.mu.Lock()
 			now := time.Now()
+			if secondary {
+				kind = "secondary"
+				if !named {
+					after = st.secondaryBackoffLocked(now)
+				}
+				until = now.Add(after + st.window)
+			}
+			resp.Header.Set(pacingLimitHeader, kind)
 			if until.After(st.cautiousUntil) {
 				st.cautiousUntil = until
 				st.logCautionLocked(now, kind, until, req)
@@ -285,31 +398,48 @@ func primaryLimitReset(resp *http.Response, now time.Time) (time.Time, bool) {
 // hundred bytes; 2 KiB is generous without buffering real content responses.
 const secondaryLimitSniffBytes = 2048
 
-// secondaryLimitBackoff reports whether resp is a secondary-rate-limit 403 and
-// how long GitHub asked us to back off. Retry-After is honored when present;
-// otherwise the 403 body is peeked (and RESTORED onto resp.Body) for the
-// "secondary rate limit" phrase, with the default backoff covering a full
-// window. A plain permission 403 returns false.
-func secondaryLimitBackoff(resp *http.Response) (time.Duration, bool) {
-	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		after := slowStartDefaultRetryAfter
-		if secs, err := strconv.Atoi(ra); err == nil && secs >= 0 {
-			after = time.Duration(secs) * time.Second
+// secondaryLimitBackoff reports whether resp is a secondary-rate-limit 403 and,
+// when GitHub said, how long to back off. Detection is a Retry-After header
+// or, since GitHub does not reliably attach one, the "secondary rate limit"
+// phrase in the 403 body (peeked and RESTORED onto resp.Body). named is true
+// only when the response names the wait: a parseable Retry-After (seconds or
+// an HTTP date), or X-RateLimit-Remaining: 0 with a future X-RateLimit-Reset
+// (capped at primaryLimitMaxReset). Otherwise the caller picks the back-off
+// (secondaryBackoffLocked). X-RateLimit-Reset is deliberately NOT honoured
+// while Remaining is non-zero: it is the primary bucket's reset, which on a
+// core endpoint can be up to an hour away and has nothing to do with the
+// secondary block — exactly how the old default turned one 403 into an hour.
+// A plain permission 403 returns secondary=false.
+func secondaryLimitBackoff(resp *http.Response, now time.Time) (after time.Duration, named, secondary bool) {
+	ra := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if ra == "" {
+		if resp.Body == nil {
+			return 0, false, false
 		}
-		return after, true
+		peek := make([]byte, secondaryLimitSniffBytes)
+		n, _ := io.ReadFull(resp.Body, peek)
+		rest := resp.Body
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(peek[:n]), rest), rest}
+		if !bytes.Contains(bytes.ToLower(peek[:n]), []byte("secondary rate limit")) {
+			return 0, false, false
+		}
+	} else {
+		if secs, err := strconv.Atoi(ra); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second, true, true
+		}
+		if at, err := http.ParseTime(ra); err == nil {
+			if d := at.Sub(now); d > 0 {
+				return d, true, true
+			}
+			return 0, true, true
+		}
 	}
-	if resp.Body == nil {
-		return 0, false
+	// primaryLimitReset answers only for X-RateLimit-Remaining: 0.
+	if reset, primary := primaryLimitReset(resp, now); primary && reset.After(now) {
+		return reset.Sub(now), true, true
 	}
-	peek := make([]byte, secondaryLimitSniffBytes)
-	n, _ := io.ReadFull(resp.Body, peek)
-	rest := resp.Body
-	resp.Body = struct {
-		io.Reader
-		io.Closer
-	}{io.MultiReader(bytes.NewReader(peek[:n]), rest), rest}
-	if bytes.Contains(bytes.ToLower(peek[:n]), []byte("secondary rate limit")) {
-		return slowStartDefaultRetryAfter, true
-	}
-	return 0, false
+	return 0, false, true
 }

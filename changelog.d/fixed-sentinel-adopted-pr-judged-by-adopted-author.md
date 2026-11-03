@@ -1,0 +1,1 @@
+- Fixed Sentinel posting an "author is trusted (hive agent)" notice instead of a blocking alert on a PR the hive opened to supersede an adopted contributor PR. Such a PR is now judged by the adopted PR's author, since its code is theirs; a maintainer's clearance of the same head on the adopted PR carries over.

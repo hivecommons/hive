@@ -1,0 +1,1 @@
+- The self-authored auto-merge sweep now remembers a base branch that only accepts merges through GitHub's merge queue and stops re-issuing the refused direct merge on every pass, logging the `merge-queue-required` skip once per PR head instead of repeatedly ([#14068](https://github.com/hivecommons/hive/issues/14068)).

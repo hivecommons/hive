@@ -10,6 +10,10 @@ deleting the fragments in the same release commit.
 
 ## Format
 
+- **Location:** this directory, at the repository root. Never `src/changelog.d/`:
+  the compiler does not read it, and the guard rejects fragments there with
+  the `git mv` that fixes it (#11919).
+
 - **Filename:** `<category>-<pr-or-slug>.md`, where `<category>` is one of
   `added`, `changed`, `deprecated`, `fixed`, `security` — it picks the `###`
   subsection your entry lands under, which in turn drives the semver bump
@@ -25,10 +29,13 @@ deleting the fragments in the same release commit.
   `a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker) — it IS the entry; the compiler owns the ### headings`.
 - **What qualifies:** the same rule as always (top of `CHANGELOG.md`):
   user-visible features, fixes, security changes, migrations, deprecations,
-  breaking changes. Routine refactors, test-only changes, and dependency churn
-  need no fragment; docs-only changes are exempt too. Put a `no-changelog`
-  label on the PR if the guard asks for a fragment for a change that is not
-  user-visible.
+  breaking changes. Auto-exempt: anything outside `src/` (root-level docs,
+  this directory, `.github/`), plus `src/docs/`, `*_test.go` files, and
+  `src/{deploy,scripts}/test[-_]*.sh` — `src/scripts/check-changelog-fragment.sh`
+  is the source of truth for the exact set. All other changes
+  need no fragment only if non-user-visible (routine refactors, dependency churn,
+  or test-adjacent code like `testdata/` or non-`_test.go` test helpers) — put
+  a `no-changelog` label on such PRs.
 - The `<!-- release: none|major|minor|patch -->` escape hatch
   (`src/docs/releases.md`) may ride in a fragment as its first line; it is
   compiled into `Unreleased` verbatim and honoured by

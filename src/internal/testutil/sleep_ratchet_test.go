@@ -29,11 +29,14 @@ const sleepBaseline = 203
 const sleepCall = "time.Sleep("
 
 // sleepRatchetRoots are the trees the ratchet walks, relative to this
-// package's directory (src/internal/testutil). src/test is the integration
-// suite, which is not part of the PR gate and is deliberately excluded.
+// package's directory (src/internal/testutil): the root module's pkg and cmd
+// trees and the nested Crux module (src/crux, hivecommons/hive#13536), whose
+// agent tests hold most of the count. src/test is the integration suite,
+// which is not part of the PR gate and is deliberately excluded.
 var sleepRatchetRoots = []string{
 	filepath.Join("..", "..", "pkg"),
 	filepath.Join("..", "..", "cmd"),
+	filepath.Join("..", "..", "crux"),
 }
 
 // TestSleepRatchet fails when the number of time.Sleep calls in the unit-test

@@ -113,6 +113,38 @@ func SemanticVerdict(score InjectionScore, critical bool) Verdict {
 	}}, Blocked: true}
 }
 
+// SemanticClassifierUnavailableRule names the finding recorded when the
+// classifier could not answer and the fail-closed policy withheld the text.
+const SemanticClassifierUnavailableRule = "injection.semantic_classifier_unavailable"
+
+// UnavailableVerdict renders a classifier that could not answer (endpoint
+// down, timeout, bad reply, never configured) as a Critical verdict, so the
+// fail-closed path withholds the text and the audit trail says why.
+func UnavailableVerdict(reason string) Verdict {
+	return Verdict{Findings: []Finding{{
+		Kind:     KindInjection,
+		Severity: SeverityCritical,
+		Snippet:  snippet(reason),
+		Rule:     SemanticClassifierUnavailableRule,
+	}}, Blocked: true}
+}
+
+// UnavailableRedactionMarker is the visible marker used when a fail-closed
+// classifier could not answer.
+func UnavailableRedactionMarker(reason string) string {
+	return strings.Replace(redactionMarker, "%s", SemanticClassifierUnavailableRule+"("+reason+")", 1)
+}
+
+// UnavailableClassifier is installed in place of a real classifier when the
+// hive requires one (fail-closed) but it could not be constructed, so every
+// scan takes the fail-closed path instead of silently running without it.
+type UnavailableClassifier struct{ Err error }
+
+// Score always fails with the construction error.
+func (u UnavailableClassifier) Score(context.Context, string) (InjectionScore, error) {
+	return InjectionScore{}, u.Err
+}
+
 // SemanticRedactionMarker returns the visible marker used when fail-open mode
 // redacts a segment because the semantic classifier crossed the block threshold.
 func SemanticRedactionMarker(score InjectionScore) string {

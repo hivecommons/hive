@@ -106,3 +106,36 @@ func TestBackupResolveKeyNilReceiverIsEnvOnly(t *testing.T) {
 		t.Fatalf("nil-receiver with no env = (%q, %q), want empty", key, source)
 	}
 }
+
+func TestBackupResolveKeySourceWithInjectedReaders(t *testing.T) {
+	t.Setenv(BackupKeyEnv, "")
+	const fakeFile = "/nowhere/backup_encryption_key"
+	readFile := func(path string) ([]byte, error) {
+		if path == fakeFile {
+			return []byte(backupCfgTestKey + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	getenv := func(name string) string {
+		if name == BackupKeyEnv {
+			return backupCfgTestKey
+		}
+		return ""
+	}
+
+	bc := BackupConfig{KeyFile: fakeFile}
+	if got := bc.ResolveKeySourceWith(getenv, readFile); got != "file:"+fakeFile {
+		t.Fatalf("file source = %q, want file:%s", got, fakeFile)
+	}
+	if got := bc.ResolveKeySourceWith(getenv, func(string) ([]byte, error) { return nil, os.ErrNotExist }); got != "env:"+BackupKeyEnv {
+		t.Fatalf("env fallback source = %q, want env:%s", got, BackupKeyEnv)
+	}
+	// Nil readers fall back to the real environment and filesystem.
+	if got := bc.ResolveKeySourceWith(nil, nil); got != "" {
+		t.Fatalf("nil-reader source = %q, want unconfigured", got)
+	}
+	var nilCfg *BackupConfig
+	if key, source := nilCfg.ResolveKeyWithSourceFunc(getenv, readFile); key != backupCfgTestKey || source != "env:"+BackupKeyEnv {
+		t.Fatalf("nil receiver resolve = (%q, %q), want env fallback", key, source)
+	}
+}

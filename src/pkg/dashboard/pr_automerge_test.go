@@ -20,14 +20,22 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 		user       string
 		author     string
 		wantStatus int
+		users      []string
+		wantError  string
 	}{
-		{"merger queues other pr", config.RoleMerger, "alice", "bob", http.StatusOK},
-		{"merger cannot queue own pr", config.RoleMerger, "alice", "ALICE", http.StatusForbidden},
-		{"read write forbidden", config.RoleReadWrite, "alice", "bob", http.StatusForbidden},
-		{"read forbidden", config.RoleRead, "alice", "bob", http.StatusForbidden},
-		{"owner queues other pr", config.RoleOwner, "alice", "bob", http.StatusOK},
-		{"owner cannot queue own pr", config.RoleOwner, "alice", "ALICE", http.StatusForbidden},
-		{"owner needs authenticated user", config.RoleOwner, "", "bob", http.StatusForbidden},
+		{"merger queues other pr", config.RoleMerger, "alice", "bob", http.StatusOK, []string{"alice:owner"}, ""},
+		{"merger cannot queue own pr", config.RoleMerger, "alice", "ALICE", http.StatusForbidden, []string{"alice:owner"}, ""},
+		{"read write forbidden", config.RoleReadWrite, "alice", "bob", http.StatusForbidden, []string{"alice:owner"}, ""},
+		{"read forbidden", config.RoleRead, "alice", "bob", http.StatusForbidden, []string{"alice:owner"}, ""},
+		{"owner queues other pr", config.RoleOwner, "alice", "bob", http.StatusOK, []string{"alice:owner"}, ""},
+		{"owner cannot queue own pr", config.RoleOwner, "alice", "ALICE", http.StatusForbidden, []string{"alice:owner"}, ""},
+		{"owner needs authenticated user", config.RoleOwner, "", "bob", http.StatusForbidden, []string{"alice:owner"}, ""},
+		{"empty allowlist", config.RoleOwner, "alice", "bob", http.StatusForbidden, nil, "dashboard.authorized_users is empty"},
+		{"unlisted internal", config.RoleOwner, "internal", "bob", http.StatusForbidden, []string{"alice:merger"}, "@internal cannot merge"},
+		{"listed internal", config.RoleOwner, "internal", "bob", http.StatusOK, []string{"internal:merger"}, ""},
+		{"listed merger", config.RoleMerger, "ALICE", "bob", http.StatusOK, []string{"alice:merger"}, ""},
+		{"allowlist read cannot use owner request role", config.RoleOwner, "alice", "bob", http.StatusForbidden, []string{"alice:read"}, "@alice cannot merge"},
+		{"unlisted human", config.RoleMerger, "alice", "bob", http.StatusForbidden, []string{"carol:owner"}, "@alice cannot merge"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,6 +62,10 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 					reviewCreated = true
 					w.WriteHeader(http.StatusCreated)
 					json.NewEncoder(w).Encode(map[string]any{"id": 1, "state": "APPROVED"})
+				case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/statuses/head7":
+					// Prow's commit-bound lgtm needs a prow/lgtm status beside the label (hivecommons/hive#13616).
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(map[string]any{"id": 1})
 				default:
 					t.Fatalf("unexpected GitHub API call: %s %s", r.Method, r.URL.Path)
 				}
@@ -63,7 +75,7 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 			s := NewServer(0, slog.Default())
 			s.deps = &Dependencies{
 				GHClient: ghpkg.NewClient("token", "acme", []string{"widget"}, slog.Default(), api.URL),
-				Config:   &config.Config{Project: config.ProjectConfig{Org: "acme", Repos: []string{"widget"}}},
+				Config:   &config.Config{Project: config.ProjectConfig{Org: "acme", Repos: []string{"widget"}}, Dashboard: config.DashboardConfig{AuthorizedUsers: tt.users}},
 			}
 			req := httptest.NewRequest(http.MethodPost, "/api/prs/acme/widget/7/queue-automerge", nil)
 			req.Header.Set("X-Hive-Role", tt.role)
@@ -79,6 +91,12 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("status = %d body %s, want %d", rr.Code, rr.Body.String(), tt.wantStatus)
+			}
+			if tt.wantError != "" && !strings.Contains(rr.Body.String(), tt.wantError) {
+				t.Fatalf("body = %s, want %q", rr.Body.String(), tt.wantError)
+			}
+			if tt.wantStatus != http.StatusOK && (labelAdded || reviewCreated) {
+				t.Fatalf("refused queue mutated GitHub: labelAdded=%v reviewCreated=%v", labelAdded, reviewCreated)
 			}
 			if tt.wantStatus == http.StatusOK {
 				if !labelAdded || !reviewCreated {

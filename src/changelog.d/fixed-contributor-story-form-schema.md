@@ -1,1 +1,0 @@
-- Fix the contributor story issue form schema so GitHub can load the template.

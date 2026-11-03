@@ -1,1 +1,0 @@
-- Changed the default dashboard section order to match the sidebar navigation.

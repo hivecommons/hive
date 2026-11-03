@@ -46,3 +46,9 @@ func readUntrustedFile(path string, maxBytes int64) ([]byte, fs.FileInfo, error)
 	}
 	return data, fi, nil
 }
+
+// untrustedRootOpenFlags are added to every open of a file in a
+// sandbox-owned tree through an os.Root. The Root keeps the open, symlinks
+// included, inside the tree; O_NONBLOCK keeps a FIFO swapped in after the
+// caller's type check from blocking the relay.
+const untrustedRootOpenFlags = syscall.O_NONBLOCK

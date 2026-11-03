@@ -101,7 +101,9 @@ func TestSaveObserverSkipsProgrammaticSaveAndAllowsNextExternalReload(t *testing
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "programmatic-org", Repos: []string{"repo-a"}},
 		GitHub:     GitHubConfig{Token: "ghp_tok"},
-		Agents:     map[string]AgentConfig{"worker": {Backend: "claude", Enabled: true}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"worker": {Backend: "claude", Enabled: true}},
+		},
 	}
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save: %v", err)

@@ -1,0 +1,1 @@
+- Refs-only PR claims now stage their issues as covered instead of actionable; activity rows show refs coverage, the covering PR's base branch, and tracker sub-issue progress when available, while preserving non-closing references for unchecked delegated tasks and watcher-downgraded links ([#13747](https://github.com/hivecommons/hive/issues/13747)).

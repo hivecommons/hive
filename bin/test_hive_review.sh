@@ -163,6 +163,44 @@ else
   echo "  PASS: no .tmp file remains (atomic replace)"; PASS=$((PASS + 1))
 fi
 
+# --- sandbox spool (#14986): HIVE_REVIEW_REQUEST_DIR redirects the request ---
+# Runs the UNMODIFIED script: the override is the script's own behavior.
+echo ""
+echo "--- sandbox spool via HIVE_REVIEW_REQUEST_DIR ---"
+SPOOL_DIR="$TMPDIR_ROOT/workspace/.hive/review-requests"
+env HIVE_AGENT="spoolbot" HIVE_REVIEW_REQUEST_DIR="$SPOOL_DIR" bash "$SCRIPT" --repo "org/repo" 12 --comment --body "ran on the card" >/dev/null 2>&1 || true
+SPOOL_FILES=("$SPOOL_DIR"/spoolbot-*.json)
+if [ -f "${SPOOL_FILES[0]}" ]; then
+  check "spooled request is a comment" "comment" "$(field "${SPOOL_FILES[0]}" event)"
+  check "spooled request names the PR" "12" "$(field "${SPOOL_FILES[0]}" number)"
+else
+  echo "  FAIL: request not written to HIVE_REVIEW_REQUEST_DIR"; FAIL=$((FAIL + 2))
+fi
+
+# --- sandbox spool key: the request is MACed with HIVE_REVIEW_SPOOL_KEY ---
+echo ""
+echo "--- sandbox spool signed with HIVE_REVIEW_SPOOL_KEY ---"
+SIGNED_DIR="$TMPDIR_ROOT/signed/.hive/review-requests"
+SPOOL_KEY="0123456789abcdef0123456789abcdef"
+env HIVE_AGENT="spoolbot" HIVE_REVIEW_REQUEST_DIR="$SIGNED_DIR" HIVE_REVIEW_SPOOL_KEY="$SPOOL_KEY" bash "$SCRIPT" --repo "org/repo" 12 --comment --body "signed" >/dev/null 2>&1 || true
+SIGNED_FILES=("$SIGNED_DIR"/spoolbot-*.json)
+if [ -f "${SIGNED_FILES[0]}" ]; then
+  # The relay recomputes HMAC-SHA256(key, request) over the exact request text.
+  check "envelope MAC verifies under the run key" "ok" "$(python3 -c '
+import hashlib, hmac, json, sys
+env = json.load(open(sys.argv[1]))
+want = hmac.new(sys.argv[2].encode(), env["request"].encode(), hashlib.sha256).hexdigest()
+print("ok" if hmac.compare_digest(env["mac"], want) else "bad")' "${SIGNED_FILES[0]}" "$SPOOL_KEY")"
+  check "signed request is a comment" "comment" "$(python3 -c 'import json,sys; print(json.loads(json.load(open(sys.argv[1]))["request"])["event"])' "${SIGNED_FILES[0]}")"
+  if grep -q "$SPOOL_KEY" "${SIGNED_FILES[0]}"; then
+    echo "  FAIL: the spool key itself was written into the spool"; FAIL=$((FAIL + 1))
+  else
+    echo "  PASS: the spool key is not in the spool file"; PASS=$((PASS + 1))
+  fi
+else
+  echo "  FAIL: signed request not written to HIVE_REVIEW_REQUEST_DIR"; FAIL=$((FAIL + 3))
+fi
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

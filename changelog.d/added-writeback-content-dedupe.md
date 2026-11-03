@@ -1,0 +1,1 @@
+- The write-back gate is content-aware: an identical comment on the same item within 24h, the same notice fanning out to several items within 60s, or more than 60 comments of one kind per repo per hour is suppressed (`writeback.dedupe`), persisted across restarts, counted on `/api/status` and shown in the Write-back containment drill-down as `duplicate`, `burst` or `rate-capped`.

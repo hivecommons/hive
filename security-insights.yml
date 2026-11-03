@@ -1,6 +1,6 @@
 header:
   schema-version: 2.1.0
-  last-updated: '2026-09-22'
+  last-updated: '2026-10-30'
   last-reviewed: '2026-09-22'
   url: https://raw.githubusercontent.com/hivecommons/hive/v5/security-insights.yml
   comment: |
@@ -18,7 +18,7 @@ project:
       social: https://github.com/clubanderson
       primary: true
   documentation:
-    quickstart-guide: https://github.com/hivecommons/hive/blob/v5/README.md#quick-start
+    quickstart-guide: https://github.com/hivecommons/hive/blob/v5/src/docs/what-is-hive.md#run-it
     detailed-guide: https://docs.hivecommons.dev
     code-of-conduct: https://github.com/hivecommons/.github/blob/main/CODE_OF_CONDUCT.md
   repositories:
@@ -28,6 +28,11 @@ project:
         This repository. The Hive orchestrator: governor, agent manager,
         dashboard, hub and contributor relay. Publishes the hive, hive-hub
         and hive-contributor container images.
+    - name: crux
+      url: https://github.com/hivecommons/crux
+      comment: |
+        The governed AI agent runtime from Hive, published for reuse. A synced
+        copy of this repository's src/crux module with its own releases.
     - name: pluk
       url: https://github.com/hivecommons/pluk
       comment: |
@@ -53,7 +58,13 @@ project:
         Codex). Standalone binary. Early development.
     - name: homebrew-hive
       url: https://github.com/hivecommons/homebrew-hive
-      comment: Homebrew tap for the Hive contribute app. Packaging only.
+      comment: Homebrew tap for the Hive contribute app, hotshot and Crux. Packaging only.
+    - name: hive-demo
+      url: https://github.com/hivecommons/hive-demo
+      comment: Template repository for trying Hive on a sample service. Early development.
+    - name: homebrew-repo
+      url: https://github.com/hivecommons/homebrew-repo
+      comment: Homebrew tap for Spektacular. Packaging only.
     - name: docs
       url: https://github.com/hivecommons/docs
       comment: Source for docs.hivecommons.dev. Project docs are synced from their repositories at build time.
@@ -66,12 +77,18 @@ project:
     - name: .github
       url: https://github.com/hivecommons/.github
       comment: Organization profile and community health files.
+    - name: .project
+      url: https://github.com/hivecommons/.project
+      comment: CNCF .project metadata for Hive Commons, read by CNCF services automation.
+    - name: cncf-sandbox-onboarding
+      url: https://github.com/hivecommons/cncf-sandbox-onboarding
+      comment: Tracker for completing CNCF Sandbox onboarding.
     - name: hive-redirect
       url: https://github.com/hivecommons/hive-redirect
       comment: GitHub Pages redirect from hive.hivecommons.dev to the hosted hub. Placeholder.
     - name: hivecommons.github.io
       url: https://github.com/hivecommons/hivecommons.github.io
-      comment: Placeholder site for hivecommons.dev.
+      comment: Source for the hivecommons.dev community website.
   vulnerability-reporting:
     reports-accepted: true
     bug-bounty-available: false

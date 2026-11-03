@@ -43,8 +43,14 @@ Remote wiki layers only carry a `status`, which is mapped the same way.
 - **`GET /api/knowledge/toc`** and **`GET /api/knowledge/entry/{id}`** apply
   the same default and `include_states` opt-in; see
   [Scoped knowledge table of contents](knowledge-toc.md).
-- `GET /api/knowledge` (the dashboard inventory) still lists every fact, and
-  vault facts report their `state`, so operators can review and restore them.
+- `GET /api/knowledge` (the dashboard inventory) applies the same default and
+  `include_states` opt-in, and vault facts report their `state`. An owner can
+  list exactly one set of states with `state`, e.g.
+  `state=draft&tag=retro,review-feedback` lists retro lessons derived from
+  human review that await approval (`hivectl knowledge list --state draft
+  --tag review-feedback`). Asking for any state other than `approved` without
+  the owner role is refused with 403. The dashboard Knowledge section shows
+  the owner "N lessons awaiting approval" when such drafts exist.
 
 ## Changing a fact's state
 

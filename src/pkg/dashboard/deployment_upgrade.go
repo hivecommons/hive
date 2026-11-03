@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 const (
@@ -422,6 +424,11 @@ func (s *Server) runStandaloneUpgrade(r *http.Request, info deploymentInfo) erro
 	args := []string{"upgrade", "--runtime", info.Runtime, "--ref", targetRef}
 	cmd := exec.CommandContext(ctx, helper, args...)
 	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		fleetreport.Observe(fleetreport.ClassUpgradeStalled, info.Runtime,
+			fmt.Sprintf("standalone upgrade helper did not finish within %s", standaloneUpgradeTimeout), string(out))
+		return fmt.Errorf("standalone upgrade helper timed out after %s", standaloneUpgradeTimeout)
+	}
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -429,5 +436,6 @@ func (s *Server) runStandaloneUpgrade(r *http.Request, info deploymentInfo) erro
 		}
 		return fmt.Errorf("standalone upgrade helper failed: %s", msg)
 	}
+	fleetreport.Clear(fleetreport.ClassUpgradeStalled, info.Runtime)
 	return nil
 }

@@ -1,0 +1,1 @@
+- Recurring agent-runtime log lines no longer land in the self-report feed as "unclassified". Self-healing noise (cached GitHub 404s, rate-limited Copilot token validation, permissions repairs) is ignored, while tmux, proxy TLS handshake, per-agent directory setup and review-evidence write failures and feedback issue-refresh failures now report under their own named classes.

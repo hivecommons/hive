@@ -19,16 +19,18 @@ func agentVarsConfig() *Config {
 				"REGION":     {Type: "static", Value: "us-east-1"},
 			},
 		},
-		Agents: map[string]AgentConfig{
-			"scanner": {Variables: map[string]VarDef{
-				"DEPLOY_ENV": {Type: "static", Value: "staging"},
-				"LANE_GOAL":  {Type: "static", Value: "find bugs"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Variables: map[string]VarDef{
+					"DEPLOY_ENV": {Type: "static", Value: "staging"},
+					"LANE_GOAL":  {Type: "static", Value: "find bugs"},
 
-				// Per-agent script defs are never honoured, even when the
-				// seed enables exec for hive-level variables.
-				"PWNED": {Type: "script", Command: []string{"echo", "pwned"}},
-			}},
-			"quality": {},
+					// Per-agent script defs are never honoured, even when the
+					// seed enables exec for hive-level variables.
+					"PWNED": {Type: "script", Command: []string{"echo", "pwned"}},
+				}},
+				"quality": {},
+			},
 		},
 	}
 }

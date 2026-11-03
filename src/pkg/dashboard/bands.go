@@ -2,22 +2,52 @@ package dashboard
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const (
 	defaultStaleDays = 14
 	hoursPerDay      = 24
+	// goodFirstIssueLabel mirrors gfi.Label (asserted equal in gfi_test.go);
+	// kept local so pkg/dashboard does not import pkg/gfi.
+	goodFirstIssueLabel = "good first issue"
 )
 
+// needsDecisionLabel is the issue park signal (hivecommons/hive#12683): the
+// issue stage label itself, stage/045-needs-decision. prNeedsDecisionLabel
+// is the PR parking stage, stage/085-needs-decision (on an issue, the
+// pre-045 spelling). The retired `needs-decision` word stays recognised in
+// the band and signal checks until the reconciler has migrated it.
+const (
+	needsDecisionLabel   = github.NeedsDecisionStageLabel
+	prNeedsDecisionLabel = github.PRNeedsDecisionStageLabel
+)
+
+// labelsNeedDecision reports whether a lower-cased label set says a human
+// decision is owed.
+func labelsNeedDecision(labels map[string]bool) bool {
+	return labels[needsDecisionLabel] || labels[prNeedsDecisionLabel] || labels["needs-decision"] || labels["2-discussing"]
+}
+
 var (
-	defaultIssueWaitingLabels = []string{"blocked", "needs-decision", "2-discussing", "Epic", "needs-human", "needs-triage"}
+	// defaultIssueWaitingLabels are the default parking labels (the
+	// stage/045 issue park signal, the pre-045 stage/085 spelling, the
+	// retired needs-direction / needs-decision spellings, needs-human,
+	// needs-spec, the prior-art park stage/017) plus `blocked`: the waiting band holds parked issues only
+	// (hivecommons/hive#11507), and `blocked` is a gate only a person lifts,
+	// which the un-park sweep answers like the needs-* labels
+	// (hivecommons/hive#12376). static/index.html keeps a copy
+	// (REPO_ISSUE_BAND_DEFAULTS.waitingLabels).
+	defaultIssueWaitingLabels = []string{"needs-human", needsDecisionLabel, prNeedsDecisionLabel, config.PossiblyExistsStageLabel, "needs-direction", "needs-decision", "needs-spec", blockedWorkflowLabel}
 	defaultIssueDoneLabels    = []string{"hive/already-done", "hive/covered-by-pr", "hive/likely-done"}
-	prHumanGateLabels         = []string{"needs-human", "needs-decision", "2-discussing"}
+	prHumanGateLabels         = []string{"needs-human", prNeedsDecisionLabel, "needs-decision", "2-discussing"}
 	issueBandOrder            = []string{"ready", "in-progress", "agent-filed", "waiting", "done"}
 	prBandOrder               = []string{"waiting", "eligible", "blocked", "in-review", "open", "draft"}
 	holdLabelSpellings        = []string{"hold", "on-hold", "hold/review"}
@@ -30,7 +60,7 @@ var (
 var issueLabelChips = []struct{ label, chip string }{
 	{"needs-human", "human"},
 	{"needs-direction", "direction"},
-	{"needs-decision", "decision"},
+	{needsDecisionLabel, "decision"},
 	{"needs-spec", "spec"},
 	{"needs-reporter-confirmation", "reporter"},
 	{"blocked", "blocked"},
@@ -119,7 +149,7 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	role := issueAgentRole(issue.Labels)
 	acknowledged := issue.HumanAcknowledged || labels["approved-direction"]
 	linked := issueLinkedPRState(issue)
-	done := hasAnyLabel(labels, norm.DoneLabels) || linked.merged
+	done := issueDoneLabel(labels, norm.DoneLabels) || linked.merged || issueStageCovered(issue.Labels)
 	waiting := hasAnyLabel(labels, norm.WaitingLabels)
 	inProgress := len(issue.Assignees) > 0 || issueClaimed(issue.Labels) || linked.open
 	selfAuthorizationHeld := true
@@ -141,17 +171,25 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	}
 
 	signals := make([]Signal, 0)
-	if labels["blocked"] {
-		signals = append(signals, Signal{Glyph: "⛔", Label: "blocked"})
+	// The label records no reason; GitHub's native "blocked by" links
+	// (Issue.DependsOn, #9839) are the only structured one. Name the open
+	// ones, and with only the label say plainly that none is recorded.
+	if open := slices.Compact(issue.OpenBlockers()); len(open) > 0 {
+		signals = append(signals, Signal{Glyph: "⛔", Label: "blocked by " + strings.Join(open, ", ")})
+	} else if labels["blocked"] {
+		signals = append(signals, Signal{Glyph: "⛔", Label: "labelled blocked — the label records no reason; see the issue"})
 	}
-	if labels["needs-decision"] || labels["2-discussing"] {
+	if labelsNeedDecision(labels) {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
 	}
 	if labels["needs-human"] {
-		signals = append(signals, Signal{Glyph: "⚠", Label: "needs human review"})
+		signals = append(signals, Signal{Glyph: "⚠", Label: "labelled needs-human"})
 	}
 	if labels["epic"] {
 		signals = append(signals, Signal{Glyph: "◆", Label: "epic"})
+	}
+	if labels[goodFirstIssueLabel] {
+		signals = append(signals, Signal{Glyph: "🌱", Label: "good first issue — curated for new contributors"})
 	}
 	if inProgress {
 		signals = append(signals, Signal{Glyph: "👤", Label: "assigned or claimed"})
@@ -165,6 +203,9 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 			label = "merged PR references this issue"
 		}
 		signals = append(signals, Signal{Glyph: "✓", Label: label})
+	}
+	if cc := issue.ClaimContext; cc != nil && cc.Decision == github.ClaimDecisionReopenedAfterMerge {
+		signals = append(signals, Signal{Glyph: "↺", Label: fmt.Sprintf("reopened after PR #%d merged; re-queued for work", cc.PRNumber)})
 	}
 	if role != "" {
 		ack := ", not yet acknowledged"
@@ -189,7 +230,7 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 // frontend falls back to the band's short label.
 func issueLabelChip(labels map[string]bool) string {
 	for _, entry := range issueLabelChips {
-		if labels[entry.label] {
+		if labels[entry.label] || (entry.label == needsDecisionLabel && (labels[prNeedsDecisionLabel] || labels["needs-decision"])) {
 			return entry.chip
 		}
 	}
@@ -198,7 +239,31 @@ func issueLabelChip(labels map[string]bool) string {
 
 type linkedPRState struct{ open, merged bool }
 
+// issueDoneLabel reports whether a configured done label is set. The agent's
+// hive/verified-open verdict (the referenced PR did not finish the
+// issue) cancels hive/likely-done; every other done label still counts
+// (hivecommons/hive#11722).
+func issueDoneLabel(labels map[string]bool, doneLabels []string) bool {
+	if !labels[github.VerifiedOpenLabel] {
+		return hasAnyLabel(labels, doneLabels)
+	}
+	for _, label := range doneLabels {
+		lower := strings.ToLower(label)
+		if lower != github.LikelyDoneLabel && labels[lower] {
+			return true
+		}
+	}
+	return false
+}
+
 func issueLinkedPRState(github.Issue) linkedPRState { return linkedPRState{} }
+
+// prGateLabels are the labels that put a pull request in the waiting
+// ("Gated") band: the human-gate labels plus the configured waiting labels.
+// The your-turn decision reads the same set (hivecommons/hive#12378).
+func prGateLabels(norm normalizedIssueBandConfig) []string {
+	return append(append([]string{}, prHumanGateLabels...), norm.WaitingLabels...)
+}
 
 func PRBand(pr github.PullRequest, held bool, cfg config.DashboardIssueBandsConfig, now time.Time) PRBandInfo {
 	return prBand(pr, nil, held, cfg, now, github.AutoMergeQueuedLabel, "")
@@ -209,23 +274,12 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	labels := labelSet(pr.Labels)
 	role := prAgentRole(pr)
 	review := prGitHubReview(pr)
-	waiting := held || hasAnyLabel(labels, append(append([]string{}, prHumanGateLabels...), norm.WaitingLabels...)) || len(holdLabels(pr.Labels, hiveID)) > 0
-	eligible := (verdict != nil && verdict.State == github.MergeVerdictEligible) || prQueued(labels, autoMergeLabel)
-	blocked := (verdict != nil && verdict.State == github.MergeVerdictBlocked) || pr.Mergeable == github.MergeableNo || prCIFailing(pr)
-	inReview := (verdict != nil && verdict.State == github.MergeVerdictOutstanding) || pr.ReviewURL != "" || review != nil
+	waiting := held || hasAnyLabel(labels, prGateLabels(norm)) || len(holdLabels(pr.Labels, hiveID)) > 0
+	eligible, blocked, inReview := prBandFlags(pr, verdict, labels, autoMergeLabel, review)
 
-	band := "open"
-	switch {
-	case waiting:
+	band := prMergeStateBand(pr, eligible, blocked, inReview)
+	if waiting {
 		band = "waiting"
-	case eligible:
-		band = "eligible"
-	case blocked:
-		band = "blocked"
-	case inReview:
-		band = "in-review"
-	case pr.Draft:
-		band = "draft"
 	}
 
 	signals := make([]Signal, 0)
@@ -233,13 +287,13 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 		signals = append(signals, Signal{Role: role, Label: "agent-authored by " + role})
 	}
 	if labels["needs-human"] {
-		reason := "needs human review"
+		reason := "labelled needs-human"
 		if pr.ReporterTrustReason != "" {
 			reason = pr.ReporterTrustReason
 		}
 		signals = append(signals, Signal{Glyph: "⚠", Label: reason})
 	}
-	if labels["needs-decision"] || labels["2-discussing"] {
+	if labelsNeedDecision(labels) {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
 	}
 	if held || len(holdLabels(pr.Labels, hiveID)) > 0 {
@@ -286,6 +340,52 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 		signals = append(signals, Signal{Glyph: "🕒", Label: fmt.Sprintf("stale: no activity > %dd", norm.StaleDays)})
 	}
 	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID, pr.ReporterTrustReason), Stale: stale, Signals: signals}
+}
+
+// prBandFlags reports the merge-state facts every PR band is chosen from.
+func prBandFlags(pr github.PullRequest, verdict *github.MergeVerdict, labels map[string]bool, autoMergeLabel string, review *prReviewInfo) (eligible, blocked, inReview bool) {
+	// A hand-merge verdict (the repo's auto-merge is off) is never eligible,
+	// even with the auto-merge label: every sweep, the queued one included,
+	// skips that repo.
+	eligible = (verdict == nil || !verdict.HandMerge) &&
+		((verdict != nil && verdict.State == github.MergeVerdictEligible) || prQueued(labels, autoMergeLabel))
+	blocked = (verdict != nil && verdict.State == github.MergeVerdictBlocked) || pr.Mergeable == github.MergeableNo || prCIFailing(pr)
+	// A hand-merge verdict is outstanding because the repo's switch is off,
+	// not because anyone is reviewing it; it does not earn the in-review band.
+	inReview = (verdict != nil && verdict.State == github.MergeVerdictOutstanding && !verdict.HandMerge) || pr.ReviewURL != "" || review != nil
+	return eligible, blocked, inReview
+}
+
+// prMergeStateBand is the PR band once the waiting rule is out of the way.
+func prMergeStateBand(pr github.PullRequest, eligible, blocked, inReview bool) string {
+	switch {
+	case eligible:
+		return "eligible"
+	case blocked:
+		return "blocked"
+	case inReview:
+		return "in-review"
+	case pr.Draft:
+		return "draft"
+	}
+	return "open"
+}
+
+// prChartBand is the band a PR gets with the waiting rule skipped. The
+// Overview charts and the Actionable-now equation use it for PRs the
+// ownership decision leaves in no slice of its own (hivecommons/hive#11507).
+func prChartBand(pr github.PullRequest, verdict *github.MergeVerdict, autoMergeLabel string) string {
+	eligible, blocked, inReview := prBandFlags(pr, verdict, labelSet(pr.Labels), autoMergeLabel, prGitHubReview(pr))
+	return prMergeStateBand(pr, eligible, blocked, inReview)
+}
+
+// issueChartBand is the band an issue gets with the waiting, agent-filed and
+// done rules skipped: Claimed when someone has it, otherwise Unclaimed.
+func issueChartBand(issue github.Issue) string {
+	if len(issue.Assignees) > 0 || issueClaimed(issue.Labels) || issueLinkedPRState(issue).open {
+		return "in-progress"
+	}
+	return "ready"
 }
 
 type prReviewInfo struct{ glyph, label string }
@@ -358,11 +458,11 @@ func issueBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 	case "in-progress":
 		return BandSpec{Key: key, Label: "Claimed", Short: "claimed", Rule: "assigned or claimed by an agent — nothing needed unless it stalls"}
 	case "agent-filed":
-		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — add the label, assign a human, or close it. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
+		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — agents do not pick it up until it is labelled, assigned to a human, or closed. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
 	case "waiting":
-		return BandSpec{Key: key, Label: "Needs human", Short: "needs human", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + " — a human must unblock or decide before agents continue"}
+		return BandSpec{Key: key, Label: "Parked", Short: "parked", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + " — parked: agents do not continue until the label is removed or the question it names is answered"}
 	case "done":
-		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " — verify the work landed and close the issue"}
+		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " — the agent reports the work as landed, and the issue is still open"}
 	default:
 		return BandSpec{Key: "ready", Label: "Unclaimed", Short: "unclaimed", Rule: "no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up"}
 	}
@@ -373,11 +473,11 @@ func prBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 	switch key {
 	case "waiting":
 		labels := uniqueLowerLabels(append(append([]string{}, prHumanGateLabels...), norm.WaitingLabels...))
-		return BandSpec{Key: key, Label: "Needs human", Rule: "held, or labelled " + strings.Join(labels, ", ") + " — a human must review, decide, or release the hold before automation continues"}
+		return BandSpec{Key: key, Label: "Gated", Rule: "held, or labelled " + strings.Join(labels, ", ") + " — gated: automation does not continue until the hold is released or the label is removed"}
 	case "eligible":
 		return BandSpec{Key: key, Label: "Merge-eligible", Rule: "sweep verdict eligible, or queued for Hive auto-merge — nothing needed; it merges on its own"}
 	case "blocked":
-		return BandSpec{Key: key, Label: "Blocked", Rule: "blocked sweep verdict, merge conflicts, or failing CI — read the verdict, rebase, or fix the checks"}
+		return BandSpec{Key: key, Label: "Blocked", Rule: "blocked sweep verdict, merge conflicts, or failing CI"}
 	case "in-review":
 		return BandSpec{Key: key, Label: "In review", Rule: "outstanding sweep verdict, a Hive review posted, or a GitHub review decision — nothing needed until the review resolves"}
 	case "draft":
@@ -430,10 +530,60 @@ func issueAgentRole(labels []string) string {
 	return ""
 }
 
+// Stage-family ordinals the claimed check needs (hivecommons/hive#12436). The
+// numbers are the `stage/NNN-` prefix of the labels pkg/stagelabels emits;
+// bands_inprogress_test.go pins them to that table. Coverage is NOT an ordinal
+// test: see issueStageCovered.
+const (
+	stageNumberClaimed      = 20
+	stageNumberPRInProgress = 30
+	stageLabelPrefix        = "stage/"
+)
+
+// stageNumber returns the ordinal of a `stage/NNN-slug` label, or 0 for any
+// other label (including the health markers stage/stalled|regressed).
+func stageNumber(label string) int {
+	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(label)), stageLabelPrefix)
+	if !ok {
+		return 0
+	}
+	digits, _, found := strings.Cut(rest, "-")
+	if !found || digits == "" {
+		return 0
+	}
+	n := 0
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+// issueStageCovered reports whether the issue carries stage/040-covered-by-pr
+// (or, until the reconciler's next pass, a PR stage an older build mirrored
+// past it) — the stage successor of the retired covered-by-PR labels, so the
+// issue files under "done" the same way. The parking stages are numbered past
+// 040 but mean the opposite — 045 needs-decision (and 085, its pre-045 issue
+// spelling) is an issue waiting on a person, not one a PR covers — so this
+// asks the stage table (stagelabels.IssueCoveredByPR) instead of comparing
+// ordinals, which marked every parked issue "already done".
+func issueStageCovered(labels []string) bool {
+	return stagelabels.IssueCoveredByPR(labels)
+}
+
+// issueClaimed reports whether labels say someone holds the issue: the
+// stage/020-claimed and stage/030-pr-in-progress stages, the
+// `hive/claimed-by-<who>` modifier, or (migration cycle only) the retired
+// `claimed` / `hive/in-progress` labels.
 func issueClaimed(labels []string) bool {
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		if lower == "claimed" || strings.HasPrefix(lower, "hive/claimed-by-") {
+		if lower == claims.LegacyLabelClaimed || lower == claims.LegacyLabelInProgress || strings.HasPrefix(lower, "hive/claimed-by-") {
+			return true
+		}
+		if n := stageNumber(lower); n == stageNumberClaimed || n == stageNumberPRInProgress {
 			return true
 		}
 	}
@@ -519,7 +669,7 @@ func holdLabels(labels []string, hiveID string) []string {
 	out := make([]string, 0)
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		if lower == canonical || containsAnyHoldLabel(lower, holdLabelSpellings) {
+		if lower == canonical || lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/") || containsAnyHoldLabel(lower, holdLabelSpellings) {
 			out = append(out, label)
 		}
 	}

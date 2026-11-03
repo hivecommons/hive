@@ -33,6 +33,29 @@ else
       "expected recursive repair in the worker and an '&' at its call site"
 fi
 
+# The shared-home preparation (/data/home/.codex, .gemini, .bob, ...) is also
+# on PID 1's startup path and runs on EVERY boot, not just a version flip. A
+# recursive chown there over a mature spoke's tens of thousands of session
+# files on shared NFS pushed boot past the startup budget and crash-looped 40
+# spokes in lock-step (2026-10-26). Only the directories themselves may be
+# re-owned synchronously; the tree belongs to the background worker.
+shared_home="$(sed -n '/Shared CLI auth\/cache lives in \/data\/home/,/ownership marker and perms OK/p' "$ENTRYPOINT")"
+if [ -z "$shared_home" ]; then
+  bad "could not extract the shared-home preparation block from entrypoint.sh"
+elif grep -qE '^[[:space:]]*(chown|chmod|chgrp)[[:space:]]+-[^[:space:]]*R[^[:space:]]*[[:space:]].*/data/home' <<<"$shared_home"; then
+  bad "the synchronous shared-home preparation contains a recursive walk under /data/home" \
+      "$(grep -nE '^[[:space:]]*(chown|chmod|chgrp)[[:space:]]+-[^[:space:]]*R' <<<"$shared_home")"
+else
+  ok "the synchronous shared-home preparation is O(number of directories)"
+fi
+
+if grep -qE 'chown -R dev:node .*/data/home/\.codex' <<<"$worker" \
+   && grep -qE 'chown -R dev:node .*/data/home/\.gemini' <<<"$worker"; then
+  ok "the background worker re-owns the .codex and .gemini trees"
+else
+  bad "the background worker does not cover both /data/home/.codex and /data/home/.gemini"
+fi
+
 if grep -q "isolation_marker_dir" "$ENTRYPOINT" \
    && grep -q "isolation_revision" "$ENTRYPOINT"; then
   ok "uid-map.json carries the marker contract to the Go manager"

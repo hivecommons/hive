@@ -501,10 +501,25 @@ a.nav-chip:active,
   display: inline-block;
   flex: none;
   inline-size: var(--status-dot-size);
+  position: relative;
 }
 
+/* The pulse ring is a pseudo-element that only animates opacity, so it runs
+   on the compositor thread; animating box-shadow on the dot itself forced a
+   main-thread paint of the page every frame. */
 .status-dot[data-status][data-pulse="active"] {
+  box-shadow: var(--shadow-status-pulse-rest);
+}
+
+.status-dot[data-status][data-pulse="active"]::after {
   animation: hv-status-pulse var(--duration-status-pulse) ease-in-out infinite;
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-status-pulse-active);
+  content: '';
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
 }
 
 .toolbar {
@@ -700,6 +715,12 @@ a.nav-chip:active,
   gap: var(--sp-4);
 }
 
+/* Nested group copy inherits the band's max-inline-size but not its
+   justify-items, so it would otherwise sit at the start edge of the group. */
+.hv-integration-group > p {
+  justify-self: center;
+}
+
 .hv-integration-group h3 {
   color: var(--text);
   font-size: var(--fs-md);
@@ -757,10 +778,10 @@ a.nav-chip:active,
 @keyframes hv-status-pulse {
   from,
   to {
-    box-shadow: var(--shadow-status-pulse-rest);
+    opacity: 0;
   }
   50% {
-    box-shadow: var(--shadow-status-pulse-active);
+    opacity: 1;
   }
 }
 
@@ -784,6 +805,7 @@ a.nav-chip:active,
 .text-brand { color: var(--brand); }
 .text-accent { color: var(--accent); }
 .fw-semibold { font-weight: var(--fw-semibold); }
+.break-all { word-break: break-all; }
 .m-0 { margin: var(--sp-0); }
 .mb-0 { margin-bottom: var(--sp-0); }
 .mt-1 { margin-top: var(--sp-1); }

@@ -146,3 +146,93 @@ func TestGatewaysUpsertLeavesLegacyStoreAloneForOtherKinds(t *testing.T) {
 		t.Fatalf("legacy litellm key store written by a custom-kind gateway upsert (err=%v)", err)
 	}
 }
+
+// #9945: repointing the built-in "litellm" gateway at a NEW proxy must carry
+// the legacy governor.litellm block with it. Leaving the legacy endpoint on
+// the OLD proxy is the split that made the Gateways-tab Test pass while agent
+// inference sent the new key to the old proxy and got 401.
+func TestGatewaysUpsertRepointsLegacyLiteLLMEndpoint(t *testing.T) {
+	s, _ := apiServer(t)
+	allowPrivateURLHostsForTest(t, "old-gateway.example", "litellm.cb.example")
+
+	oldDir := gatewaySecretsDir
+	gatewaySecretsDir = t.TempDir()
+	defer func() { gatewaySecretsDir = oldDir }()
+
+	oldLegacy := writableLiteLLMKeyFile
+	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "litellm_api_key")
+	defer func() { writableLiteLLMKeyFile = oldLegacy }()
+
+	s.deps.Config.Governor.LiteLLM.Endpoint = "https://old-gateway.example"
+	s.deps.Config.Governor.LiteLLM.DefaultModel = "old-model"
+
+	rec := doPut(s, "/api/config/governor/gateways", map[string]interface{}{
+		"name":          "litellm",
+		"kind":          "litellm",
+		"endpoint":      "https://litellm.cb.example",
+		"api_key":       "sk-cb-NEW",
+		"default_model": "rits/zai-org/glm-5-3",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	lc := s.deps.Config.Governor.LiteLLM
+	if lc.Endpoint != "https://litellm.cb.example" {
+		t.Fatalf("legacy endpoint = %q, want it repointed to the gateway's endpoint", lc.Endpoint)
+	}
+	if lc.DefaultModel != "rits/zai-org/glm-5-3" {
+		t.Fatalf("legacy default model = %q, want the gateway's default model", lc.DefaultModel)
+	}
+	data, err := os.ReadFile(writableLiteLLMKeyFile)
+	if err != nil {
+		t.Fatalf("legacy key store not synced: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "sk-cb-NEW" {
+		t.Fatalf("legacy key store holds %q, want the new gateway's key", got)
+	}
+}
+
+// A gateway that is not the built-in "litellm" backend's (a second LiteLLM
+// proxy under its own name) must never move the legacy endpoint.
+func TestGatewaysUpsertLeavesLegacyEndpointForOtherLiteLLMGateways(t *testing.T) {
+	s, _ := apiServer(t)
+	allowPrivateURLHostsForTest(t, "old-gateway.example", "second.example")
+
+	oldDir := gatewaySecretsDir
+	gatewaySecretsDir = t.TempDir()
+	defer func() { gatewaySecretsDir = oldDir }()
+
+	s.deps.Config.Governor.LiteLLM.Endpoint = "https://old-gateway.example"
+
+	rec := doPut(s, "/api/config/governor/gateways", map[string]interface{}{
+		"name":     "second-litellm",
+		"kind":     "litellm",
+		"endpoint": "https://second.example",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := s.deps.Config.Governor.LiteLLM.Endpoint; got != "https://old-gateway.example" {
+		t.Fatalf("legacy endpoint = %q, want it untouched by a differently-named gateway", got)
+	}
+}
+
+// The legacy block is only editable from the Model Gateways tab (the
+// standalone LiteLLM tab is gone), so that tab must render its editor — the
+// #9945 reporter was told to set "the legacy endpoint" and found nowhere to.
+func TestModelGatewaysTabRendersLegacyLiteLLMEditor(t *testing.T) {
+	html := indexHTML(t)
+	if !strings.Contains(jsFunc(t, html, "renderGovGateways"), "renderGovLegacyLiteLLM()") {
+		t.Error("renderGovGateways must render the legacy LiteLLM section — the legacy endpoint must be discoverable in Settings → Model Gateways")
+	}
+	legacy := jsFunc(t, html, "renderGovLegacyLiteLLM")
+	for _, want := range []string{"renderGovLiteLLM(", "Legacy LiteLLM endpoint", "governor.litellm"} {
+		if !strings.Contains(legacy, want) {
+			t.Errorf("renderGovLegacyLiteLLM missing %q", want)
+		}
+	}
+	if strings.Contains(html, "Settings → LiteLLM") {
+		t.Error(`index.html still points operators at "Settings → LiteLLM", a tab that no longer exists`)
+	}
+}

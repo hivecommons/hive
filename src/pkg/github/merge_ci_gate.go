@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +37,19 @@ const (
 	// on the head SHA. GitHub has no verdict at all, so neither does the
 	// hive. Refuse (unless the repo is opted in via auto_merge.no_ci_ok).
 	mergeCIUnverified
+	// mergeCINeverCreated: a required check has no status or check run on
+	// the head, nothing else on the head is queued or in progress, and the
+	// head is older than mergeCIMissingRequiredGrace. The check will never
+	// appear (typically the PR was opened with a token that cannot trigger
+	// workflows), so waiting or retrying cannot help, and neither can a code
+	// push from the fix loop. Refuse terminally.
+	mergeCINeverCreated
 )
+
+// mergeCIMissingRequiredGrace is how old a head must be before a required
+// check that was never created, with nothing else in flight, is judged
+// terminal rather than pending. A var so tests can shorten it.
+var mergeCIMissingRequiredGrace = 30 * time.Minute
 
 func (v mergeCIVerdict) String() string {
 	switch v {
@@ -48,16 +61,19 @@ func (v mergeCIVerdict) String() string {
 		return "red"
 	case mergeCIUnverified:
 		return "unverified"
+	case mergeCINeverCreated:
+		return "never-created"
 	}
 	return fmt.Sprintf("mergeCIVerdict(%d)", int(v))
 }
 
-// mergeRequestMaxCIWaits bounds how many consecutive watcher ticks a request
-// may sit in mergeCIPending before it is treated as a failed attempt. A
+// mergeRequestMaxCIWaits bounds how many pending-CI polls a request may sit
+// through in mergeCIPending before it is treated as a failed attempt. A
 // pending verdict deliberately does NOT consume one of the
 // mergeRequestMaxAttempts retries (CI that is merely slow is not a merge
 // failure), but "required check never got created" must not park a request
-// forever either. At the default 10s poll interval this is one hour.
+// forever either. Polls back off per PR+SHA (mergeCIPendingBackoff), so
+// mergeRequestMaxCIWait bounds the same wait in wall-clock time.
 const mergeRequestMaxCIWaits = 360
 
 // workflowRunsPerPage is the page size for the head-SHA workflow-run listing.
@@ -114,11 +130,12 @@ func (c *Client) repoNoCIOK(owner, name string) bool {
 // verifyMergeRequestCI computes the pre-merge CI verdict for a merge request.
 // repo may be "owner/repo" or a bare name (resolved against c.org, like
 // MergePR). expectSHA, when set, is the SHA whose CI is judged; when empty the
-// PR's current head is used. The returned reason is a human-readable
+// PR's current head is used. now is the watcher's clock, used to age the head
+// for the never-created required-check verdict. The returned reason is a human-readable
 // explanation suitable for the result file and the log. A non-nil error means
 // the verdict could not be computed (API failure) and the caller must treat
 // that as a failed attempt, never as a pass.
-func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number int, expectSHA string) (mergeCIVerdict, string, error) {
+func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number int, expectSHA string, now time.Time) (mergeCIVerdict, string, error) {
 	if c == nil || c.client == nil {
 		return mergeCIUnverified, "no GitHub client", ErrNoGitHubClient
 	}
@@ -161,17 +178,31 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	if !requiredKnown {
 		expected, _ = ExpectedCommitChecksFromLatestMergedPR(ctx, c.client, owner, name, baseBranch)
 	}
+	// headPushedAt feeds requiredCheckNeverCreated, whose terminal verdict
+	// must never age a head early, so it stays the never-earlier-than-push
+	// updated_at. updated_at also bumps on every label/comment write, so while
+	// it would hold min_head_age the head commit's committer date is consulted
+	// and wins when earlier (#12557); a failed lookup keeps updated_at, which
+	// can only over-hold.
 	var headPushedAt time.Time
 	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
 		headPushedAt = updatedAt.Time
+	}
+	minHeadAge := c.configuredAutoMergeMinHeadAge()
+	minHeadAgeFrom := headPushedAt
+	if minHeadAge > 0 && !headPushedAt.IsZero() && now.Sub(headPushedAt) < minHeadAge {
+		if at, err := HeadCommitPushedAt(ctx, c.client, owner, name, sha, pr); err == nil && at.Before(minHeadAgeFrom) {
+			minHeadAgeFrom = at
+		}
 	}
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, CommitCIOptions{
 		Required:                required,
 		RequiredKnown:           requiredKnown,
 		RequiredKnownFromConfig: fromConfig,
+		FailOnAnyFailedCheck:    true,
 		ExpectedChecks:          expected,
-		MinHeadAge:              c.configuredAutoMergeMinHeadAge(),
-		HeadPushedAt:            headPushedAt,
+		MinHeadAge:              minHeadAge,
+		HeadPushedAt:            minHeadAgeFrom,
 	})
 	if err != nil {
 		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)
@@ -199,6 +230,11 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
 	case !st.Green && !commitCIReasonIsPending(st.Reason):
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.Reason), nil
+	case requiredCheckNeverCreated(st, opaque, headPushedAt, now):
+		// The reason deliberately avoids GitHub's protection vocabulary so
+		// isRequiredCheckMergeBlocker never routes it to the fix loop: no
+		// code push can create a check whose workflow cannot be triggered.
+		return mergeCINeverCreated, fmt.Sprintf("ci gate: required check %s was never created on %s and nothing on the head is queued or in progress after %s (the PR author's token likely cannot trigger workflows); a human must re-trigger CI or merge it", quotedNames(st.MissingRequired), shortSHA(sha), mergeCIMissingRequiredGrace), nil
 	case !st.Green:
 		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.Reason), nil
 	case len(st.MissingRequired) > 0:
@@ -206,7 +242,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	case len(opaque.pending) > 0:
 		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaque.pending, ", ")), nil
 	case len(opaque.actionRequired) > 0:
-		return mergeCIRed, forkRunApprovalReason(owner, name, opaque.actionRequired), nil
+		return mergeCIRed, forkRunApprovalReason(owner, name, opaque.actionRequired, pullRequestIsFromFork(pr)), nil
 	case st.Evidence == 0:
 		// Per-repo no-CI opt-in (#6281): a repo with genuinely no CI (docs-
 		// only, config-only) can never produce evidence, so "unverified"
@@ -218,7 +254,11 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		}
 		return mergeCIUnverified, fmt.Sprintf("ci gate: no commit statuses, check runs, or workflow runs found on %s - absent CI is not passing", shortSHA(sha)), nil
 	}
-	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha)), nil
+	green := fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha))
+	if len(opaque.heldButVerified) > 0 {
+		green += fmt.Sprintf("; held run(s) %s ignored: the same workflow(s) succeeded on this head under another event", strings.Join(opaque.heldButVerified, ", "))
+	}
+	return mergeCIGreen, green, nil
 }
 
 func (c *Client) warnRequiredChecksMismatch(owner, repo string, declared, actual, observed map[string]bool) {
@@ -266,7 +306,46 @@ func requiredChecksSortedKeys(set map[string]bool) []string {
 type opaqueWorkflowRunResult struct {
 	failed         []string
 	actionRequired []string
-	pending        []string
+	// heldButVerified lists action_required runs whose workflow already
+	// succeeded on the same head under another event; reported, not gating.
+	heldButVerified []string
+	pending         []string
+	// inFlight counts every latest workflow run on the SHA whose status is
+	// not completed, with or without jobs.
+	inFlight int
+	// earliest is the earliest run_started_at/created_at among the listed
+	// runs (zero when none).
+	earliest time.Time
+}
+
+// requiredCheckNeverCreated reports whether a missing required check can be
+// judged terminal: nothing on the head (status, check run of any kind, or
+// workflow run) is still running, and the head has existed for longer than
+// mergeCIMissingRequiredGrace. The head's age is measured from the earliest
+// evidence that postdates the push (CI activity or the PR's updated_at), so
+// it can only be underestimated; with no timestamp at all it is not judged.
+func requiredCheckNeverCreated(st CommitCIState, opaque opaqueWorkflowRunResult, headPushedAt, now time.Time) bool {
+	if len(st.MissingRequired) == 0 || st.InFlight > 0 || opaque.inFlight > 0 || len(opaque.pending) > 0 {
+		return false
+	}
+	var oldest time.Time
+	for _, at := range []time.Time{st.EarliestActivity, opaque.earliest, headPushedAt} {
+		if !at.IsZero() && (oldest.IsZero() || at.Before(oldest)) {
+			oldest = at
+		}
+	}
+	if oldest.IsZero() || now.IsZero() {
+		return false
+	}
+	return now.Sub(oldest) >= mergeCIMissingRequiredGrace
+}
+
+func quotedNames(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, strconv.Quote(name))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // opaqueWorkflowRuns lists the workflow runs for sha and returns those that
@@ -284,11 +363,33 @@ func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string
 		return opaqueWorkflowRunResult{}, nil
 	}
 	var out opaqueWorkflowRunResult
-	for _, run := range latestWorkflowRunsByWorkflowAndEvent(runs.WorkflowRuns) {
+	latest := latestWorkflowRunsByWorkflowAndEvent(runs.WorkflowRuns)
+	succeeded := workflowsWithSuccessfulRun(latest)
+	for _, run := range latest {
 		if run == nil {
 			continue
 		}
 		status, conclusion := run.GetStatus(), run.GetConclusion()
+		if status == "completed" && conclusion == "action_required" && succeeded[run.GetWorkflowID()] {
+			// The held run has a twin on the same head that already ran to
+			// success under another event (a GITHUB_TOKEN-opened PR whose
+			// pull_request runs GitHub holds for approval while the opener
+			// dispatches the same workflows by workflow_dispatch, #13818).
+			// The workflow's verdict is on the head through that twin's
+			// check runs; the held copy adds no evidence and must not block.
+			out.heldButVerified = append(out.heldButVerified, fmt.Sprintf("%q(%d)", run.GetName(), run.GetID()))
+			continue
+		}
+		started := run.GetRunStartedAt().Time
+		if started.IsZero() {
+			started = run.GetCreatedAt().Time
+		}
+		if !started.IsZero() && (out.earliest.IsZero() || started.Before(out.earliest)) {
+			out.earliest = started
+		}
+		if status != "completed" {
+			out.inFlight++
+		}
 		isActionRequired := status == "completed" && conclusion == "action_required"
 		isFailure := status == "completed" && workflowRunFailureConclusions[conclusion] && !isActionRequired
 		isPending := status != "completed"
@@ -362,8 +463,33 @@ func workflowRunIsNewer(candidate, current *gh.WorkflowRun) bool {
 	}
 }
 
-func forkRunApprovalReason(owner, repo string, labels []string) string {
-	return fmt.Sprintf("ci gate: fork PR workflow runs are awaiting maintainer approval (action_required): %s. Approve the runs or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
+// workflowsWithSuccessfulRun returns the workflow IDs that have a completed,
+// successful run among runs (any event).
+func workflowsWithSuccessfulRun(runs []*gh.WorkflowRun) map[int64]bool {
+	out := make(map[int64]bool)
+	for _, run := range runs {
+		if run != nil && run.GetStatus() == "completed" && run.GetConclusion() == "success" {
+			out[run.GetWorkflowID()] = true
+		}
+	}
+	return out
+}
+
+// pullRequestIsFromFork reports whether the PR head lives in a different
+// repository than its base. GitHub holds workflow runs for approval on fork
+// PRs AND on same-repo PRs opened by a bot the approval policy treats as a
+// new contributor (github-actions[bot] via GITHUB_TOKEN), and the operator
+// message must name which it is (#13818).
+func pullRequestIsFromFork(pr *gh.PullRequest) bool {
+	head, base := pr.GetHead().GetRepo().GetFullName(), pr.GetBase().GetRepo().GetFullName()
+	return head != "" && base != "" && !strings.EqualFold(head, base)
+}
+
+func forkRunApprovalReason(owner, repo string, labels []string, fromFork bool) string {
+	if fromFork {
+		return fmt.Sprintf("ci gate: fork PR workflow runs are awaiting maintainer approval (action_required): %s. Approve the runs or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
+	}
+	return fmt.Sprintf("ci gate: same-repo PR workflow runs are awaiting maintainer approval (action_required): %s. The PR is not from a fork; GitHub holds runs for PRs opened by a bot token (GITHUB_TOKEN) under the fork-PR approval policy. Approve the runs, have the opener dispatch the required workflows on the branch, or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
 }
 
 // logCIVerdict records the gate's decision for the operator with the same

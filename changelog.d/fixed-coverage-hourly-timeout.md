@@ -1,0 +1,1 @@
+- CI coverage job now allows 30 minutes for two sequential `go test` passes, up from 20 minutes, to prevent cancellations on green runs (#15266).

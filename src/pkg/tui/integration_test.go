@@ -1695,9 +1695,19 @@ func TestKickHitsTheEscapedEndpointExactlyOnceAndRendersTheQueuedStatus(t *testi
 	h.waitForRoster("scanner")
 
 	// Three presses; only one request may leave, because kickPending bounds it.
+	//
+	// The kick is GATED so the pending window is observable at all: the
+	// fixture otherwise answers instantly, and if the test goroutine is
+	// descheduled between presses the first result can clear kickPending
+	// before the second press is delivered, letting a second request leave
+	// (#13191). Holding the response keeps all three presses inside the window.
+	release := f.gate("/api/kick/scanner")
 	h.key("K")
 	h.key("K")
 	h.key("K")
+	h.waitFor("the kick to be in flight", func(m model) bool { return m.kickPending == "scanner" })
+	h.settle()
+	release()
 
 	h.waitForView("the footer to report the kick was queued", func(v string) bool {
 		return strings.Contains(v, "kick queued for scanner")

@@ -282,6 +282,10 @@ function blockingPromptKey(text, backend) {
   // plain "Skip" would.
   if (/Update available/.test(text) && /Skip until next version/.test(text)) return '3';
   const recent = paneTail(text, 15);
+  // claude: the folder trust prompt opens with the cursor on "No, exit", so a
+  // bare Enter quits the CLI. Down moves to "Yes, I trust this folder"; the
+  // caller appends Enter. A pane whose cursor is already on Yes needs no move.
+  if (backend === 'claude' && /^\s*[❯>]\s*(?:\d+\.\s*)?No, exit/m.test(recent) && /Yes, I trust/.test(recent)) return 'Down';
   // agy: "Terms of Service & Data Use" ends on a [Previous] [Done] button row
   // with focus on the CHECKBOX above it, where Enter toggles consent instead of
   // advancing ("enter Toggle"). A bare Enter therefore never leaves this page.

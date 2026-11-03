@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/apphealth"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // deliveredKeyPath is where a hub-delivered private key for appID is stored.
@@ -75,4 +77,40 @@ func appKeyPaths(appID int64) apphealth.KeyPaths {
 		}
 	}
 	return paths
+}
+
+// applyDeliveredPrimaryKey persists the hub-delivered primary App key at
+// keyPath and reports whether the key on disk changed as a result.
+//
+// The hub redelivers the key on every heartbeat, so the common case is "the
+// file already holds exactly this key": that case writes nothing. It matters
+// beyond churn — on a root_squash NFS /data a root-owned 0600 key left by an
+// older build cannot be opened by this (squashed) uid, and the previous plain
+// os.WriteFile failed with "permission denied" on every beat. When the key
+// does differ (or the existing file is unreadable, which reads as a different
+// fingerprint), it is written atomically — 0600 temp file in the same
+// directory, then rename — which replaces an unwritable file through the
+// directory this process does own, so the next beat finds a readable,
+// identical key and skips.
+func applyDeliveredPrimaryKey(logger *slog.Logger, keyPath, privateKey string) (bool, error) {
+	beforeFP, _ := config.AppKeyFingerprintFromFile(keyPath)
+	deliveredFP, _ := config.AppKeyFingerprint(privateKey)
+	if deliveredFP != "" && deliveredFP == beforeFP {
+		logger.Debug("github app private key from heartbeat unchanged; not rewritten",
+			"path", keyPath, "fingerprint", beforeFP)
+		return false, nil
+	}
+	afterFP, err := appKeys.WriteKeyFile(keyPath, privateKey)
+	if err != nil {
+		return false, err
+	}
+	changed := afterFP != "" && afterFP != beforeFP
+	// Fingerprints only — the key itself is never logged.
+	logger.Info("github app private key written via heartbeat",
+		"path", keyPath,
+		"from_fingerprint", beforeFP,
+		"to_fingerprint", afterFP,
+		"key_changed", changed,
+	)
+	return changed, nil
 }

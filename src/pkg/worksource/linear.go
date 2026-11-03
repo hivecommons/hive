@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
@@ -75,6 +76,10 @@ type LinearConfig struct {
 type LinearSource struct {
 	cfg    LinearConfig
 	client *http.Client
+	// scopeIssues caches review scope-contract issue text per identifier,
+	// keyed on the issue's updatedAt (see ScopeContractIssue).
+	scopeMu     sync.Mutex
+	scopeIssues map[string]linearScopeCacheEntry
 }
 
 // NewLinearSource constructs a LinearSource from cfg. A nil httpClient falls

@@ -65,6 +65,9 @@ governed repos - the actionable list and the held list - whoever opened it.
 The order is computed, never asked of a model, and is total and deterministic
 for the same inputs:
 
+0. **Fixes red main** - while a repo's default branch has had a required
+   check red past its threshold, the PRs that fix it rank ahead of everything
+   else ([red-main circuit breaker](operator-reference.md#red-main-circuit-breaker-red_main_threshold)).
 1. **Triage class** - T0 fixes, then T1 refactors/docs/unclassified, then T2
    tests.
 2. **Confidence band** from the review swarm's 0-5 score
@@ -80,7 +83,10 @@ Each entry carries `reasons` in that order (for example `T0 fix (from title
 prefix)`, `not reviewed at this head: confidence unknown, ranked as needs
 attention`, `CI red: build`, `open 3d`), plus context that does not move the
 rank (`contributor PR (not opened by a hive agent)`, `on hold`, `has merge
-conflicts`).
+conflicts`). An unreviewed entry whose review is dispatched but has posted no
+verdict also carries `pending_since` and `redispatch_count` with a reason such
+as `review dispatched 32m ago, no verdict yet (re-dispatched 1x after expiry)`
+([review-swarm.md](review-swarm.md#pending-review-expiry-reviewpending_ttl-reviewmax_redispatch)).
 
 Where it shows up:
 
@@ -88,10 +94,16 @@ Where it shows up:
   reasons, paged (`limit` 1-200, default 50; `total` and `has_more` for
   walking it). Reads only the last enumeration snapshot and the verdict
   artifact; never calls GitHub.
-  A PR in the supersession sweep's grace window
+  A contributor PR detected as superseded by the sweep
   ([operator-reference.md](operator-reference.md)) also carries a
-  `superseded` object (merged PR, `grace_ends_at`) and a `superseded: ...`
-  reason, read from the sweep's audit entries. Owners act on it with
+  `superseded` object (merged PR) and a `superseded: ...` reason, read from
+  the sweep's audit entries, even when `close_contributor_prs` is off.
+  `grace_started_at` and `grace_ends_at` are present only for an active
+  auto-close countdown. The inbox recommends `CLOSE` with reason code
+  `superseded_recommended_close`; when the PR touches files the merged PR
+  did not, `superseded.reason` is `superseded_extra_files` with
+  `extra_files[]`, and the inbox shows `REVIEW` with reason code
+  `superseded_extra_files_review` (keep open recommended). Owners act on it with
   `POST /api/review/queue/{owner}/{repo}/{number}/superseded/close` or
   `.../superseded/keep-open`.
 - **`last-actionable.json`** - each PR in `prs.items` and `prs.held` carries
@@ -99,9 +111,11 @@ Where it shows up:
   `review_rank_reasons`. The lists keep their existing class-then-age order.
 - **`review-priority/*` labels** - option 2, off by default; see below.
 
-The queue ranks contributor PRs, but ranking is not reviewing: whether the
-review swarm reviews a contributor PR is still governed by
-`review.all_authors` ([review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-versus-fix_human_prs)).
+The queue ranks contributor PRs, but ranking is not reviewing: the review
+swarm reviews every open PR regardless of author whenever review is on
+([review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-and-the-retired-fix_human_prs-push),
+[#12974](https://github.com/hivecommons/hive/issues/12974)); ranking only
+decides the order.
 
 ## Mechanism options (maintainer decision, cheapest first)
 

@@ -14,7 +14,9 @@ import (
 func TestTaskMCPPromptPointerGatedByURL(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "hivecommons", Repos: []string{"hivecommons/hive"}, PrimaryRepo: "hive"},
-		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		},
 	}
 	actionable := &github.ActionableResult{Issues: github.IssueResultFromItems([]github.Issue{{Repo: "hivecommons/hive", Number: 8033, Title: "task MCP scope"}})}
 
@@ -46,15 +48,19 @@ func TestTaskMCPDropStuffedContextGatesRefsOnlyAndIssueRefs(t *testing.T) {
 	canaries := false
 	baseCfg := &config.Config{
 		Project: config.ProjectConfig{Org: "hivecommons", Repos: []string{"hivecommons/hive"}, PrimaryRepo: "hive"},
-		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
-		Ioscan:  config.IoscanConfig{Canaries: &canaries},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		},
+		Ioscan: config.IoscanConfig{Canaries: &canaries},
 	}
 	defaultOff := New(baseCfg, testLogger())
 	defaultOff.SetTaskMCPURL("http://hub/api/contribute/mcp")
 	flagFalse := New(&config.Config{
 		Project: baseCfg.Project,
-		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude", TaskMCP: &config.AgentTaskMCPConfig{DropStuffedContext: false}}},
-		Ioscan:  config.IoscanConfig{Canaries: &canaries},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", TaskMCP: &config.AgentTaskMCPConfig{DropStuffedContext: false}}},
+		},
+		Ioscan: config.IoscanConfig{Canaries: &canaries},
 	}, testLogger())
 	flagFalse.SetTaskMCPURL("http://hub/api/contribute/mcp")
 	defaultMsg := defaultOff.BuildKickMessages(actionable, []string{"scanner"})[0]
@@ -65,8 +71,10 @@ func TestTaskMCPDropStuffedContextGatesRefsOnlyAndIssueRefs(t *testing.T) {
 
 	dropCfg := &config.Config{
 		Project: baseCfg.Project,
-		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude", TaskMCP: &config.AgentTaskMCPConfig{DropStuffedContext: true}}},
-		Ioscan:  config.IoscanConfig{Canaries: &canaries},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", TaskMCP: &config.AgentTaskMCPConfig{DropStuffedContext: true}}},
+		},
+		Ioscan: config.IoscanConfig{Canaries: &canaries},
 	}
 	noURLFull := New(baseCfg, testLogger()).BuildKickMessages(actionable, []string{"scanner"})[0]
 	noURLElisionRequested := New(dropCfg, testLogger()).BuildKickMessages(actionable, []string{"scanner"})[0]
@@ -111,7 +119,9 @@ func TestTaskMCPElidesTemplateMergeEligibleToRefsOnly(t *testing.T) {
 	}
 	s := New(&config.Config{
 		Project: config.ProjectConfig{Org: "hivecommons", Repos: []string{"hivecommons/hive"}, PrimaryRepo: "hive"},
-		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		},
 	}, testLogger())
 	actionable := &github.ActionableResult{}
 	full, failClosed := s.substituteTemplateWithPolicy("${MERGE_ELIGIBLE}", actionable, "scanner", nil)

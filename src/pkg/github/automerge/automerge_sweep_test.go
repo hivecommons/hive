@@ -21,6 +21,7 @@ import (
 const testHiveAppBotLogin = "kubestellar-hive[bot]"
 
 type sweepPR struct {
+	nodeID          string
 	number          int
 	author          string
 	queuedBy        string
@@ -36,6 +37,7 @@ type sweepPR struct {
 	checkStatus     string
 	checkConclusion string
 	headRepo        string
+	baseRef         string
 }
 
 func issueLabels(primary string, extra []string) []map[string]string {
@@ -312,7 +314,7 @@ func TestPrefilterTrustedAuthorPR(t *testing.T) {
 		{name: "ok", pr: pr(), want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := engine.prefilterTrustedAuthorPR(tc.pr, policy); got != tc.want {
+			if got := engine.prefilterTrustedAuthorPR("acme", "widget", tc.pr, policy); got != tc.want {
 				t.Fatalf("prefilterTrustedAuthorPR = %q, want %q", got, tc.want)
 			}
 		})
@@ -425,7 +427,7 @@ func TestExecuteMergeEffectReconcilesUnknownOpenPRBeforeRetry(t *testing.T) {
 		Actor:  "automerge",
 		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "self-authored"},
 	}
-	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, func(context.Context) (effects.Result, error) {
+	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, "", func(context.Context) (effects.Result, error) {
 		return effects.Result{Provenance: "merge-sha"}, nil
 	})
 	if err != nil {
@@ -894,6 +896,8 @@ func TestCommitGreenKnownEmptyRequiredChecksBlocksCompletedFailures(t *testing.T
 						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
 					}
 					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+					json.NewEncoder(w).Encode([]any{}) // no rulesets
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
@@ -1043,6 +1047,55 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
 	if err == nil || reason != "merge-failed" {
 		t.Fatalf("trySweepQueuedPR reason=%q err=%v, want merge-failed error", reason, err)
+	}
+}
+
+func TestTrySweepQueuedPRRequiredChecksExpectedIsRemembered(t *testing.T) {
+	var merges int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{
+				"number": 7, "state": "open", "mergeable_state": "clean", "mergeable": true,
+				"user":   map[string]string{"login": "alice"},
+				"head":   map[string]string{"sha": "sha7"},
+				"labels": []map[string]string{{"name": hgithub.AutoMergeQueuedLabel}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": testHiveAppBotLogin}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{{"name": "build", "status": "completed", "conclusion": "success"}}})
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
+			merges++
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"message": "4 of 4 required status checks are expected."})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	// Two passes against the same head: the first is refused and remembered,
+	// the second must skip the merge call on the memory alone.
+	for pass := 1; pass <= 2; pass++ {
+		_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
+		if err != nil || reason != autoMergeReasonChecksExpected {
+			t.Fatalf("pass %d: trySweepQueuedPR reason=%q err=%v, want %q without error", pass, reason, err, autoMergeReasonChecksExpected)
+		}
+	}
+	if merges != 1 {
+		t.Fatalf("merges = %d, want 1 (the remembered refusal must not be re-PUT)", merges)
+	}
+	attempt := mergeAttempt{owner: "acme", repo: "widget", number: 7, head: "sha7", state: "clean"}
+	if got := c.knownMergeRefusal(attempt); got != autoMergeReasonChecksExpected {
+		t.Fatalf("knownMergeRefusal = %q, want %q for the queued head", got, autoMergeReasonChecksExpected)
+	}
+	// A check reporting moves mergeable_state, which re-arms the merge call.
+	attempt.state = "unstable"
+	if got := c.knownMergeRefusal(attempt); got != "" {
+		t.Fatalf("knownMergeRefusal = %q after mergeable_state changed, want re-armed", got)
 	}
 }
 
@@ -1462,6 +1515,8 @@ func TestCommitGreenUnprotectedBaseIgnoresMetaWithEvidence(t *testing.T) {
 						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
 					}
 					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+					json.NewEncoder(w).Encode([]any{}) // no rulesets
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
@@ -1665,6 +1720,8 @@ func TestCommitGreenKnownEmptyRequiredChecksBlocksFailedCheck(t *testing.T) {
 				{"name": "build", "status": "completed", "conclusion": "failure"},
 				{"name": "lint", "status": "completed", "conclusion": "success"},
 			}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+			json.NewEncoder(w).Encode([]any{}) // no rulesets
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -1779,10 +1836,32 @@ type selfAuthoredPR struct {
 	updateStatus    int
 	mergeStatus     int
 	mergeMessage    string
+	// mergeAttempts, when set, counts PUT /pulls/{n}/merge calls, failed ones included.
+	mergeAttempts *int
 	// headSHAOverride, when set, is returned by the SECOND PR fetch (the
 	// merge-time re-check) instead of the first-fetch head SHA — simulates a
 	// push landing between evaluation and merge.
 	headSHAOverride string
+	// recheckMergeableState, when set, is the mergeable_state the SECOND
+	// and later PR fetches return (the merge-time re-check): GitHub found
+	// a conflict after the first read.
+	recheckMergeableState string
+	// reviews, when set, are returned by GET /pulls/{n}/reviews.
+	reviews []map[string]any
+	// updatedAt, when set, is the PR's updated_at (the sweep's head-age clock).
+	updatedAt string
+	// workflowRuns are returned by GET /actions/runs?head_sha=<head>.
+	workflowRuns []map[string]any
+	// headCommitAuthor is the login GET /commits/{head} reports as author;
+	// commentBodies collects POST /issues/{n}/comments bodies.
+	headCommitAuthor string
+	commentBodies    *[]string
+	// existingComments, when set, are returned by GET /issues/{n}/comments
+	// (a pointer so a test can grow the thread between ticks).
+	existingComments *[]map[string]any
+	// okToTestWorkflowStatus is the status GET /contents/.github/workflows/hive-ok-to-test.yml
+	// answers with (0 = 404).
+	okToTestWorkflowStatus int
 }
 
 func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int, getCounts ...*map[int]int) *httptest.Server {
@@ -1806,10 +1885,24 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 					"draft":  pr.draft,
 					"user":   map[string]string{"login": pr.author},
 					"head":   map[string]string{"sha": "sha" + strconv.Itoa(pr.number)},
+					"base":   map[string]string{"ref": "main"},
 					"labels": issueLabels("", pr.extraLabels),
 				})
 			}
 			json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
+			// The self lane reads reviews on every pass for a trusted
+			// human's changes_requested (hivecommons/hive#13041).
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/reviews")
+			reviews := []map[string]any{}
+			if pr := byNumber[number]; pr != nil && pr.reviews != nil {
+				reviews = pr.reviews
+			}
+			json.NewEncoder(w).Encode(reviews)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/files"):
+			// The merge train lists changed files to group overlapping PRs
+			// (hivecommons/hive#15117); disjoint here, so no train forms.
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
 			pr := byNumber[number]
@@ -1818,17 +1911,33 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			if fetchCount[number] > 1 && pr.headSHAOverride != "" {
 				headSHA = pr.headSHAOverride
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			state := pr.mergeableState
+			if fetchCount[number] > 1 && pr.recheckMergeableState != "" {
+				state = pr.recheckMergeableState
+			}
+			body := map[string]any{
 				"number":          pr.number,
 				"state":           "open",
 				"draft":           pr.draft,
-				"mergeable_state": pr.mergeableState,
-				"mergeable":       pr.mergeableState == "clean",
+				"mergeable_state": state,
+				"mergeable":       state == "clean",
 				"user":            map[string]string{"login": pr.author},
 				"head":            map[string]string{"sha": headSHA},
 				"base":            map[string]string{"ref": "main"},
 				"labels":          issueLabels("", pr.extraLabels),
-			})
+			}
+			if pr.updatedAt != "" {
+				body["updated_at"] = pr.updatedAt
+			}
+			json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/actions/runs":
+			number := shaNumber(t, "/repos/acme/widget/commits/"+r.URL.Query().Get("head_sha")+"/status")
+			pr := byNumber[number]
+			runs := pr.workflowRuns
+			if runs == nil {
+				runs = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
 			json.NewEncoder(w).Encode(map[string]any{"commit": map[string]string{"sha": "basesha"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
@@ -1837,7 +1946,25 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				"contexts": []string{"ci/build"},
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
-			json.NewEncoder(w).Encode([]map[string]any{})
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/issues/", "/comments")
+			out := []map[string]any{}
+			if pr := byNumber[number]; pr != nil && pr.existingComments != nil {
+				out = *pr.existingComments
+			}
+			json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/contents/.github/workflows/hive-ok-to-test.yml":
+			status := http.StatusNotFound
+			for _, pr := range prs {
+				if pr.okToTestWorkflowStatus != 0 {
+					status = pr.okToTestWorkflowStatus
+				}
+			}
+			w.WriteHeader(status)
+			if status == http.StatusOK {
+				json.NewEncoder(w).Encode(map[string]any{"type": "file", "path": ".github/workflows/hive-ok-to-test.yml", "content": "", "encoding": "base64"})
+			} else {
+				json.NewEncoder(w).Encode(map[string]string{"message": "Not Found"})
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/basesha/status":
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []map[string]string{}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
@@ -1867,6 +1994,9 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/merge"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/merge")
+			if pr := byNumber[number]; pr != nil && pr.mergeAttempts != nil {
+				(*pr.mergeAttempts)++
+			}
 			if pr := byNumber[number]; pr != nil && pr.mergeStatus != 0 {
 				w.WriteHeader(pr.mergeStatus)
 				msg := pr.mergeMessage
@@ -1878,6 +2008,28 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			}
 			*merged = append(*merged, number)
 			json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merge" + strconv.Itoa(number)})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/sha") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/commits/"), "/"):
+			pr := byNumber[shaNumber(t, r.URL.Path)]
+			json.NewEncoder(w).Encode(map[string]any{
+				"sha":    "sha" + strconv.Itoa(pr.number),
+				"author": map[string]string{"login": pr.headCommitAuthor},
+				"commit": map[string]any{"author": map[string]string{"name": pr.headCommitAuthor}},
+			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/issues/", "/comments")
+			var in struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if pr := byNumber[number]; pr != nil && pr.commentBodies != nil {
+				*pr.commentBodies = append(*pr.commentBodies, in.Body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1, "body": in.Body})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/timeline"):
+			// The superseded rule looks for a merged PR declaring
+			// `Supersedes #N`; none of these fixtures has one.
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/update-branch"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/update-branch")
 			if pr := byNumber[number]; pr != nil && pr.updateCount != nil {
@@ -2800,7 +2952,7 @@ func newAutoMergeSweepClient(apiURL string) *Engine {
 	// Audit F3: the sweep fails CLOSED without an authorizer, so every test
 	// exercising the merge path must install one. Tests that assert the
 	// fail-closed behaviour itself build their client without this helper.
-	return New(client, Options{MergerAuthorizer: func(login string) bool {
+	return New(client, Options{HeadFirstSeen: NewHeadFirstSeenTracker(), MergerAuthorizer: func(login string) bool {
 		return testTrustedMergers[strings.ToLower(strings.TrimSpace(login))]
 	}})
 }
@@ -2808,6 +2960,7 @@ func newAutoMergeSweepClient(apiURL string) *Engine {
 func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, merged *[]int, extras ...func(http.ResponseWriter, *http.Request)) *httptest.Server {
 	t.Helper()
 	byNumber := make(map[int]sweepPR, len(prs))
+	comments := make(map[int][]map[string]any)
 	for _, pr := range prs {
 		byNumber[pr.number] = pr
 	}
@@ -2841,10 +2994,11 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 					headRepo = "acme/widget"
 				}
 				pulls = append(pulls, map[string]any{
-					"number": pr.number,
-					"state":  "open",
-					"draft":  pr.draft,
-					"user":   map[string]string{"login": pr.author},
+					"node_id": pr.nodeID,
+					"number":  pr.number,
+					"state":   "open",
+					"draft":   pr.draft,
+					"user":    map[string]string{"login": pr.author},
 					"head": map[string]any{
 						"sha":  headSHA,
 						"repo": map[string]string{"full_name": headRepo},
@@ -2897,7 +3051,15 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			if headRepo == "" {
 				headRepo = "acme/widget"
 			}
+			// The base ref is omitted unless a test opts in, so existing
+			// callers keep the empty-base-branch path and need no
+			// protection or base-status stubs.
+			base := map[string]any{"repo": map[string]string{"full_name": "acme/widget"}}
+			if pr.baseRef != "" {
+				base["ref"] = pr.baseRef
+			}
 			json.NewEncoder(w).Encode(map[string]any{
+				"node_id":         pr.nodeID,
 				"number":          pr.number,
 				"state":           "open",
 				"draft":           pr.draft,
@@ -2905,7 +3067,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"mergeable":       pr.mergeableState == "clean",
 				"user":            map[string]string{"login": pr.author},
 				"head":            map[string]any{"sha": headSHA, "repo": map[string]string{"full_name": headRepo}},
-				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
+				"base":            base,
 				"labels":          prLabels,
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status") && hasShaNumber(r.URL.Path):
@@ -2935,6 +3097,24 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			for _, extra := range extras {
 				extra(w, r)
 				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments") {
+				number := pathNumber(t, r.URL.Path, "/repos/acme/widget/issues/", "/comments")
+				switch r.Method {
+				case http.MethodGet:
+					json.NewEncoder(w).Encode(comments[number])
+					return
+				case http.MethodPost:
+					var payload map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+						t.Errorf("decode comment: %v", err)
+					}
+					payload["user"] = map[string]string{"login": testHiveAppBotLogin}
+					comments[number] = append(comments[number], payload)
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(payload)
+					return
+				}
 			}
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -3089,6 +3269,8 @@ func TestCommitGreenKnownEmptyRequiredChecksRequiresEvidence(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
 			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]any{}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+			json.NewEncoder(w).Encode([]any{}) // no rulesets
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -3150,5 +3332,134 @@ func TestWarnRequiredChecksMismatchOnce(t *testing.T) {
 	}
 	if !strings.Contains(out, "using=actual") || !strings.Contains(out, "build-gate") {
 		t.Fatalf("warn log missing fields: %s", out)
+	}
+}
+
+// supersededCloserSpy wraps the sweep's transport with the optional
+// CloseSupersededHivePRIfEligible hook (hivecommons/hive#14965): the
+// self-authored lane asks it on a conflicting PR before any verdict or
+// gate is read.
+type supersededCloserSpy struct {
+	Transport
+	calls  []int
+	result hgithub.HiveSupersededClose
+}
+
+func (s *supersededCloserSpy) CloseSupersededHivePRIfEligible(_ context.Context, _ string, pr *gh.PullRequest) (hgithub.HiveSupersededClose, error) {
+	s.calls = append(s.calls, pr.GetNumber())
+	return s.result, nil
+}
+
+func TestSweepSelfAuthoredConflictingPRClosedAsSuperseded(t *testing.T) {
+	var merged []int
+	var updates int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:         14965,
+		author:         testHiveAppBotLogin,
+		mergeableState: "dirty",
+		updateCount:    &updates,
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	spy := &supersededCloserSpy{Transport: c.transport, result: hgithub.HiveSupersededClose{Closed: true, Superseded: true, CloserPR: 14957, Issue: 14952}}
+	c.transport = spy
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 14965, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR: %v", err)
+	}
+	if reason != autoMergeReasonClosedSuperseded || event.BranchUpdated {
+		t.Fatalf("reason=%q event=%+v, want %q", reason, event, autoMergeReasonClosedSuperseded)
+	}
+	if len(spy.calls) != 1 || spy.calls[0] != 14965 {
+		t.Fatalf("closer calls = %v, want [14965]", spy.calls)
+	}
+	if updates != 0 || len(merged) != 0 {
+		t.Fatalf("closed PR must not be updated or merged: updates=%d merged=%v", updates, merged)
+	}
+}
+
+func TestSweepSelfAuthoredConflictingPRKeptWhenNotSuperseded(t *testing.T) {
+	var merged []int
+	var updates int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:         15,
+		author:         testHiveAppBotLogin,
+		mergeableState: "dirty",
+		updateCount:    &updates,
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	spy := &supersededCloserSpy{Transport: c.transport, result: hgithub.HiveSupersededClose{Verdict: "keep", Reason: "not-superseded"}}
+	c.transport = spy
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 15, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR: %v", err)
+	}
+	if reason == autoMergeReasonClosedSuperseded {
+		t.Fatalf("a conflicting PR the rule keeps must fall through to the lane's own reason, got %q", reason)
+	}
+	if len(spy.calls) != 1 {
+		t.Fatalf("closer calls = %v, want one", spy.calls)
+	}
+}
+
+func TestSweepSelfAuthoredCleanPRDoesNotAskSupersededCloser(t *testing.T) {
+	var merged []int
+	var updates int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:         16,
+		author:         testHiveAppBotLogin,
+		mergeableState: "behind",
+		updateCount:    &updates,
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	spy := &supersededCloserSpy{Transport: c.transport, result: hgithub.HiveSupersededClose{Closed: true}}
+	c.transport = spy
+	if _, _, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 16, true); err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR: %v", err)
+	}
+	if len(spy.calls) != 0 {
+		t.Fatalf("closer must only be asked on a conflicting head, calls=%v", spy.calls)
+	}
+}
+
+// TestSweepSelfAuthoredNeedsRebaseLabelAsksSupersededCloser: a lane
+// already put needs-rebase on the hive's PR, so later sweeps returned
+// `label:needs-rebase` before the superseded question was asked and
+// #15208 kept wearing it after #15206 merged (hivecommons/hive#15208).
+func TestSweepSelfAuthoredNeedsRebaseLabelAsksSupersededCloser(t *testing.T) {
+	var merged []int
+	var updates int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:      15208,
+		author:      testHiveAppBotLogin,
+		extraLabels: []string{"needs-rebase"},
+		// dirty, not behind: a needs-rebase label on a merely-behind head is
+		// stale and the lane updates the branch instead (hivecommons/hive#15103).
+		mergeableState: "dirty",
+		updateCount:    &updates,
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	spy := &supersededCloserSpy{Transport: c.transport, result: hgithub.HiveSupersededClose{Closed: true, Superseded: true, CloserPR: 15206, Issue: 15188}}
+	c.transport = spy
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 15208, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR: %v", err)
+	}
+	if reason != autoMergeReasonClosedSuperseded || len(spy.calls) != 1 || updates != 0 || len(merged) != 0 {
+		t.Fatalf("reason=%q calls=%v updates=%d merged=%v, want closed-superseded", reason, spy.calls, updates, merged)
+	}
+
+	// Kept: the label block still answers.
+	spy.result = hgithub.HiveSupersededClose{Verdict: "keep", Reason: "not-superseded"}
+	_, reason, err = c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 15208, true)
+	if err != nil || reason != autoMergeReasonLabelNeedsRebase {
+		t.Fatalf("reason=%q err=%v, want %s", reason, err, autoMergeReasonLabelNeedsRebase)
 	}
 }

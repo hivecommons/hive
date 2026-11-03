@@ -97,6 +97,30 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := ValidateRepoMergeStrategy(rp.Repo, rp.MergeStrategy); err != nil {
 			return err
 		}
+		if err := ValidateMergeFrontTimeout(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.MergeFrontTimeout); err != nil {
+			return err
+		}
+		if err := ValidateRedMainThreshold(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.RedMainThreshold); err != nil {
+			return err
+		}
+		if err := ValidateMaxOpenHeldPRs(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.MaxOpenHeldPRs); err != nil {
+			return err
+		}
+	}
+	if err := ValidateMergeFrontTimeout("project", c.Project.MergeFrontTimeout); err != nil {
+		return err
+	}
+	if err := ValidateRedMainThreshold("project", c.Project.RedMainThreshold); err != nil {
+		return err
+	}
+	if _, err := c.Ioscan.Policy(); err != nil {
+		return err
+	}
+	if m := strings.ToLower(strings.TrimSpace(c.Ioscan.Classifier.FailMode)); m != "" && m != ioscanFailModeOpen && m != ioscanFailModeClosed {
+		return fmt.Errorf("ioscan.classifier.fail_mode: %q is not \"open\" or \"closed\"", c.Ioscan.Classifier.FailMode)
+	}
+	if err := c.Ioscan.Classifier.ValidateCLI(); err != nil {
+		return err
 	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
@@ -140,7 +164,19 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Classifier.Validate(); err != nil {
 		return err
 	}
+	if err := c.Writeback.Validate(); err != nil {
+		return err
+	}
+	if err := c.Governor.Labels.Author.Validate(); err != nil {
+		return err
+	}
+	if err := c.Governor.Labels.Stage.Engine.Validate(); err != nil {
+		return err
+	}
 	if err := c.Publication.Validate(); err != nil {
+		return err
+	}
+	if err := c.Nous.Validate(); err != nil {
 		return err
 	}
 	if err := c.Runs.ValidateEngine(); err != nil {
@@ -161,6 +197,27 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.ValidateReviewEventDispatch(); err != nil {
 		return err
 	}
+	if err := c.Review.ValidatePendingReviewTTL(); err != nil {
+		return err
+	}
+	if err := c.Review.Reviewers.Autoscale.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.ValidateDeltaMaxAge(); err != nil {
+		return err
+	}
+	if err := c.Review.ValidatePendingFixTTL(); err != nil {
+		return err
+	}
+	if err := c.validateReviewPerspectiveModels(); err != nil {
+		return err
+	}
+	if err := c.Review.VerdictLabels.Validate(); err != nil {
+		return err
+	}
+	if err := c.validateReviewHeads(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
@@ -171,6 +228,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.ValidateRecheckDiscovery(); err != nil {
+		return err
+	}
+	if err := c.validateRepoForges(); err != nil {
 		return err
 	}
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
@@ -185,10 +245,25 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
 		return err
 	}
+	if err := c.AutoMerge.ContributorLane.Validate(); err != nil {
+		return err
+	}
+	if err := c.AutoMerge.ContributorTier.Validate(); err != nil {
+		return err
+	}
 	if err := c.Compliance.Validate(); err != nil {
 		return err
 	}
+	if err := c.Search.Validate(); err != nil {
+		return err
+	}
 	if err := c.Review.Severity.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateGoodFirstIssue(c.GoodFirstIssue); err != nil {
+		return err
+	}
+	if err := ValidateFirstTimerWelcome(c.Governor.FirstTimerWelcome); err != nil {
 		return err
 	}
 	if err := c.Review.Backlog.Validate(); err != nil {
@@ -205,6 +280,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	} else {
 		c.Dashboard.PublicURL = normalized
 	}
+	if normalized, err := validateSnapshotURL(c.Hub.SnapshotURL, true); err != nil {
+		return err
+	} else {
+		c.Hub.SnapshotURL = normalized
+	}
 	if err := dashboardtheme.ValidateSelection(c.Dashboard.Theme, c.Dashboard.ThemeOverrides); err != nil {
 		return err
 	}
@@ -218,6 +298,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
+	}
+	if !ValidReviewGateModes[c.Governor.ReviewGate.Mode] {
+		return fmt.Errorf("governor: invalid review_gate.mode %q (must be off, shadow or enforce)", c.Governor.ReviewGate.Mode)
 	}
 	if err := ValidateBobSessionLabel("governor.bob.session_prefix", strings.TrimSpace(c.Governor.Bob.SessionPrefix)); err != nil {
 		return err
@@ -241,6 +324,18 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if c.Governor.EvalIntervalWebhookS < 0 {
 		return fmt.Errorf("governor.eval_interval_webhook_s must be at least 0")
+	}
+	if c.Governor.WebhookWakeDebounceS < 0 {
+		return fmt.Errorf("governor.webhook_wake_debounce_s must be at least 0")
+	}
+	if c.Governor.WebhookWakeMinGapS < 0 {
+		return fmt.Errorf("governor.webhook_wake_min_gap_s must be at least 0")
+	}
+	if c.Governor.CIFailureKickCooldownS < 0 {
+		return fmt.Errorf("governor.ci_failure_kick_cooldown_s must be at least 0")
+	}
+	if c.Governor.MergeTrainStallWarnS < 0 {
+		return fmt.Errorf("governor.merge_train_stall_warn_s must be at least 0")
 	}
 	if c.Governor.ConserveIntervalMultiplier < 0 {
 		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
@@ -348,13 +443,14 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 			return fmt.Errorf("notifications.msteams.webhook_url is required when msteams.enabled is true")
 		}
 	}
+	c.Governor.ClearInvalidInferenceLaunchCmds(c.Agents)
 	for name, agent := range c.Agents {
 		// One gate, shared with the config write path (dashboard agent-config
 		// save) and agreeing with what the launcher can actually dispatch. A
 		// configured gateway name is valid too: naming a gateway as the backend
 		// routes that agent through it, matched case-insensitively to mirror
 		// ResolveGateway.
-		label := agentSourceLabel(name, agent.sourceFile)
+		label := agentSourceLabel(name, agent.SourceFile())
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
 			return fmt.Errorf("agent %s: %w", label, err)
 		}
@@ -389,6 +485,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if !ValidateCadenceScope(agent.CadenceScope) {
 			return fmt.Errorf("agent %s: invalid cadence_scope %q (must be aggregate or per_repo)", name, agent.CadenceScope)
 		}
+		if err := ValidateExperimentEngine(effectiveRole(name, agent), agent.Engine); err != nil {
+			return fmt.Errorf("agent %s: %w", label, err)
+		}
 		if agent.ContinuousCooldown < 0 {
 			return fmt.Errorf("agent %s: continuous_cooldown must be positive", name)
 		}
@@ -396,13 +495,13 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 			return fmt.Errorf("agent %s: continuous_budget_pct must be 0 (default) or between 1 and 100", name)
 		}
 		if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
 		}
 		if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
 		}
 		if err := ValidateBobSessionLabel("bob.session_label", strings.TrimSpace(agent.Bob.SessionLabel)); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
 		}
 		bobSessionLabel := strings.TrimSpace(agent.Bob.SessionLabel)
 		if bobSessionLabel == "" {
@@ -412,7 +511,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 			bobSessionLabel = strings.TrimSpace(c.Governor.Bob.SessionPrefix) + name
 		}
 		if len(bobSessionLabel) > MaxBobSessionLabelLen {
-			return fmt.Errorf("agent %s: bob session label %q is longer than %d characters", agentSourceLabel(name, agent.sourceFile), bobSessionLabel, MaxBobSessionLabelLen)
+			return fmt.Errorf("agent %s: bob session label %q is longer than %d characters", agentSourceLabel(name, agent.SourceFile()), bobSessionLabel, MaxBobSessionLabelLen)
 		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err
@@ -678,6 +777,33 @@ func validateConnections(agentName string, conns []ConnectionConfig) error {
 			if conn.Auth.Type == "file" && conn.Auth.File == "" {
 				return fmt.Errorf("agent %s: connections[%d]: auth.file is required when auth.type is file", agentName, i)
 			}
+		}
+	}
+	return nil
+}
+
+// validateReviewPerspectiveModels checks review.perspective_models the way
+// agents.<name>.review_models.pool entries are checked: both halves present,
+// and the backend one the governor can launch.
+func (c *Config) validateReviewPerspectiveModels() error {
+	names := make([]string, 0, len(c.Review.PerspectiveModels))
+	for name := range c.Review.PerspectiveModels {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		entry := c.Review.PerspectiveModels[name]
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("review.perspective_models: perspective name is required")
+		}
+		if strings.TrimSpace(entry.Backend) == "" {
+			return fmt.Errorf("review.perspective_models[%s]: backend is required", name)
+		}
+		if err := c.Governor.ValidateBackend(strings.TrimSpace(entry.Backend)); err != nil {
+			return fmt.Errorf("review.perspective_models[%s]: %w", name, err)
+		}
+		if strings.TrimSpace(entry.Model) == "" {
+			return fmt.Errorf("review.perspective_models[%s]: model is required", name)
 		}
 	}
 	return nil

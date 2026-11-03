@@ -89,12 +89,77 @@ One `system` writer worth knowing by name: CLI model discovery (#7384). When a
 backend's live model probe fails — or degrades to a catalog that is not the
 one the CLI uses — the dashboard writes `model_discovery_failed` with
 `backend=…, platform=<os/arch>, fallback=…, degraded=…, served=…, error=<the
-probe's own message>`, and `model_discovery_recovered` (with `previous=` the
-failure it recovered from) once a clean probe answers again. Entries are
-written on transitions only, never per 30 s probe, and the ordinary
-not-configured fallbacks (no credential, no helper installed) are not
-failures and write nothing. Before this existed, a spoke served a wrong
-catalog for two days and the only record was a server log line.
+probe's own message>` — plus `state=credential_missing, recovery=<operator
+action>` when the failure is copilot's runtime `Not authenticated` refusal
+(#12947), naming the dashboard Copilot Login that clears it — and
+`model_discovery_recovered` (with `previous=` the failure it recovered from)
+once a clean probe answers again. Entries are written on transitions only,
+never per 30 s probe, and the ordinary not-configured fallbacks (no credential
+found, no helper installed) are not failures and write nothing. The `Not
+authenticated` case is different: the helper ran and refused, so it does write
+a `model_discovery_failed` entry (with `state=`/`recovery=`) even though no
+fleet self-report is filed for it (see `fleet-report.md`). Before this
+existed, a spoke served a wrong catalog for two days and the only record was a
+server log line.
+
+## Contributor relay rows
+
+The hub records the [contributor relay](contributor-relay.md)'s lifecycle in
+this same file (hivecommons/hive#13441); there is no separate file, store or
+endpoint. The rows are written from frames the hub already receives, so an
+unmodified relay needs no change. Unlike the rows above, the principal is the
+**contributor**, not a dashboard user: `user` is the contributor's GitHub login
+(within the pseudo-user contract above — a consumer that expects an OIDC actor
+key must accept a login here), `agent` is the contributor session identity
+(`<contributor id>` or `<contributor id>#<session>`), and task rows carry the
+task's `repo` and issue/PR `target`.
+
+| Action | Written when | `detail` keys |
+| --- | --- | --- |
+| `relay_connected` | The socket authenticated (`auth_ok` sent) | `backend`, `model`, `tier`, `relay_version` |
+| `relay_rejected` | A recognised contributor was refused at auth | `reason` (`revoked`, `model_not_accepted`, `effort_below_floor`, `role_claim_rejected`) |
+| `relay_disconnected` | The socket closed | `reason` (`client`, `heartbeat_timeout`, `server_shutdown`, `revoked`), `uptime_s`, `tasks` |
+| `relay_task_assigned` | A `task_assign` frame was sent | `task`, `generation`, `kind`, `mcp` |
+| `relay_task_accepted` | The relay's first `task_accepted` for the task it holds | `task` |
+| `relay_task_declined` | The relay declined an offered task in its preflight | `task`, `reason` |
+| `relay_token_minted` | An installation token was issued **or re-minted** for a task and sent to the relay (assignment, mid-task refresh, resume) | `task`, `expires_at`, `installation`, `scopes` |
+| `relay_mcp_lease_issued` / `relay_mcp_lease_revoked` | Reserved for the task-MCP lease lifecycle; the hub does not issue a task-MCP lease yet, so nothing writes these today | `task`, `expires_at` |
+| `relay_task_completed` | `task_complete` was accepted for the held task | `task`, `pr_url` (only a PR the hub verified), `verdict`, `duration_s`, `model` as the relay reported it |
+| `relay_task_failed` | `task_failed` was accepted for the held task | `task`, `class` (the normalised failure kind: `environment`, `task` or `unspecified`), `duration_s` |
+| `relay_task_revoked` | The hub took a task back: operator requeue or yank, or a resume refused by the admission gate | `task`, `reason` |
+| `relay_task_abandoned` | The task ended with no terminal frame: lease expired, or the socket dropped and the task was not re-adopted within the disconnect grace | `task`, `last_progress_at` (lease expiry only) |
+| `relay_task_attested` | The terminal frame carried the contributor's **opt-in** audit attestation (`hivectl hives set <name> --share-audit`; the relay-side flag lands with the v6 follow-up to [#13458](https://github.com/hivecommons/hive/issues/13458) — until then no relay sends `audit_share` and the hub is simply ready for it); never written without that consent | `task`, `level` (shared level, after clamping), `capture_level`, `local_ref` (the contributor's local record key), `rows` (rows accepted), `commands` (command rows stored), `stored` (`<login>/<task>.jsonl` under `/data/contrib-audit/`, only at `commands`+), `dropped` (rows above the shared level or malformed), `clamped` (share exceeded capture) |
+
+Things to know when you query them:
+
+- **Never a token.** `relay_token_minted` records when the credential was sent,
+  how long it lives and the installation it came from — `installation` is the
+  join key to GitHub's installation-token audit — but never the token itself.
+  Together with the task's terminal row it bounds the window in which a given
+  contributor could have written to GitHub.
+- **Sensitive.** `relay_token_minted` and `relay_task_revoked` are in the
+  sensitive-action vocabulary, so they count toward `sensitive_24h` and carry
+  `sensitive: true`. `relay_connected` is not: it fires on every reconnect.
+- **Not audited.** `task_progress`, heartbeat and `ping`/`pong` frames are
+  telemetry, not actions; they would evict operator actions from the 500-entry
+  ring. A connection that never identifies a contributor (missing or invalid
+  registration token) writes no row either.
+- **No remote address.** `relay_connected` omits the peer address; the reverse
+  proxy's access log has it.
+- **Volume.** Expect roughly 6–10 rows per contributor task, plus one
+  `relay_token_minted` per mid-task refresh on tasks that run past the token
+  refresh period.
+- **Shared command rows live outside this file.** When a contributor shares
+  at `commands` or `reasoning`, the hub writes one `relay_task_attested` row
+  here. The command rows themselves go to
+  `/data/contrib-audit/<login>/<task>.jsonl` (file 0600, directory 0700; login
+  and task id lowercased, with anything outside `[a-z0-9._-]` replaced), so a
+  chatty task cannot evict operator actions from the 500-entry ring.
+  `reason`/`reason_source` are kept only at `reasoning`. Each file is bounded by
+  the relay's 64 KiB frame limit, and a repeated attestation for the same task
+  replaces it. Retention uses this log's max-age knob (90 days, see below):
+  older per-task files are pruned when the next attestation is stored, at most
+  once an hour.
 
 ## Rotation and retention
 
@@ -117,6 +182,32 @@ Reads that need history beyond the current file must walk the rotated and `.gz`
 backups. `OutputActionsSince` does this, with a decompression cap that bounds a
 malicious or corrupt `.gz` — see [security](security.md).
 
+### Spill files during a rolling update
+
+A hosted spoke rolls with `maxSurge: 1`, so two pods briefly share the
+ReadWriteMany `/data`. NFSv3 cannot make two writers' appends to one file safe,
+so only the pod holding `/data/audit-writer.lease` (renewed every 10s, stale
+after 90s, released on shutdown) appends to `audit.jsonl`. The other pod writes
+to `/data/audit-spill-<pod>-<start>.jsonl` and touches it on every 10s renewal
+tick while it is alive; a pod that cannot write the lease file spills too
+rather than appending to `audit.jsonl` unleased. The lease holder appends spill
+entries to `audit.jsonl` and deletes the spill once it takes over (its own
+spill) or once another pod's spill has not been touched for 90s (that pod has
+released the lease or died). A spill file that lingers is therefore unmerged
+audit data, not garbage — `grep /data/audit*.jsonl` covers both, and the
+readers that walk rotated backups already include it (#13046). Merged entries
+keep their original `ts`, so `audit.jsonl` is not strictly time-ordered across
+a rollout. Merged entries are written to the file only, not to the new pod's
+in-memory list, so verify a rollout's entries in `/data/audit*.jsonl` rather
+than in `GET /api/audit` (they appear there after the next restart).
+
+The 90s TTL assumes the NFS client caches file attributes and directory
+entries for at most 60s — the Linux default `acregmax`/`acdirmax` — so a pod
+never sees a lease or spill timestamp older than the TTL while its owner is
+still renewing it (#13072). Mounting `/data` with `noac`, or with `actimeo` at
+or below 60, keeps that assumption; raising the attribute cache above 60s can
+let two pods append to `audit.jsonl` for up to one renewal interval.
+
 ## `GET /api/audit`
 
 The dashboard serves recent entries at `GET /api/audit`
@@ -135,6 +226,15 @@ The dashboard serves recent entries at `GET /api/audit`
 - **Sensitive filter**: `?sensitive=1` returns sensitive entries from the same
   24-hour window as `sensitive_24h`, scanning the in-memory ring so an entry
   older than the default 200-row page can still be found.
+- **Contributor filter**: `?contributor=<login>` returns only entries whose
+  `user` is that GitHub login (case-insensitive) — the principal of the
+  [contributor relay rows](#contributor-relay-rows) above. It scans the
+  in-memory ring like `?sensitive=1`, keeps the same 200-entry cap and the same
+  role gate, and combines with `?sensitive=1` (both filters apply). The
+  summary fields (`histogram`, `sensitive_24h`, `today`, `last`) still cover
+  the whole ring. The contribute page's Operations **Your assignments** card
+  reads the caller's own `relay_*` rows through it, and the Audit Log's
+  `relay_` chip narrows the loaded page to `relay_*` actions.
 - **Enrichment**: `user_name` is stamped here, on served copies only (see
   above).
 

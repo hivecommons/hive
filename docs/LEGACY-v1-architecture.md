@@ -2,7 +2,7 @@
 
 > **Legacy v1/systemd documentation.** This root `docs/` page describes the
 > original supervisor, systemd/launchd timers, tmux, and `agent.env` workflow.
-> It is kept for historical context. For the current containerized Go architecture (branch `v4`; code under `src/`),
+> It is kept for historical context. For the current containerized Go architecture (branch `v5`; code under `src/`),
 > start with [`src/docs/architecture.md`](../src/docs/architecture.md) and the
 > [`src/docs/documentation-map.md`](../src/docs/documentation-map.md).
 

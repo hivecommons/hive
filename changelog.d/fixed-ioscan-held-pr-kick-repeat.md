@@ -1,0 +1,1 @@
+- An agent whose held-PR coordination kick is blocked by ioscan fail-closed now logs the WARN once per agent and demotes repeats to Debug, matching the main fail-closed kick path, instead of warning on every tick and tripping an `unclassified_error_repeated` runtime self-report ([#14442](https://github.com/hivecommons/hive/issues/14442)).

@@ -392,6 +392,9 @@ func (s *HubServer) bulkSetAutoUpgrade(h *SaaSHive, id, username string, enabled
 	// Mode changes clear the day's fire record for the same reason the
 	// single-hive handler does — see handleToggleAutoUpgrade.
 	h.AutoUpgradeLastFired = ""
+	// A hold recorded under the old setting no longer explains anything.
+	h.AutoUpgradeHoldReason = ""
+	h.AutoUpgradeHoldAt = time.Time{}
 	if err := saveSaaSHive(h); err != nil {
 		return BulkHiveResult{HiveID: id, Ok: false, Error: "failed to save"}
 	}

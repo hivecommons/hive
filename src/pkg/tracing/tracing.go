@@ -158,7 +158,15 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
-	return tp.Shutdown, nil
+	// Metrics ride the same switch and endpoint (hivecommons/hive#13380): the
+	// GitHub-spend and cache-freshness instruments in pkg/github and
+	// pkg/forgestate record through the global MeterProvider, which stays the
+	// no-op delegate unless this installs the OTLP pipeline.
+	metricShutdown, merr := initMetrics(ctx, cfg, res)
+	if merr != nil {
+		return tp.Shutdown, merr
+	}
+	return joinShutdown(tp.Shutdown, metricShutdown), nil
 }
 
 // newResource builds the OTLP resource identifying this hive process. Factored

@@ -144,6 +144,23 @@ func (c *prDetailCache) invalidate(repo string, number int) bool {
 	return ok
 }
 
+// peek returns the cached PR for (repo, number) regardless of TTL or
+// mergeable state, for readers that only need the PR's identity (author,
+// title, head) at the moment of a webhook delivery.
+func (c *prDetailCache) peek(repo string, number int) (*gh.PullRequest, string, bool) {
+	if c == nil || number <= 0 {
+		return nil, "", false
+	}
+	key := prDetailCacheKey{repo: canonicalPRDetailRepo(repo), number: number}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok || e.pr == nil {
+		return nil, "", false
+	}
+	return e.pr, e.headSHA, true
+}
+
 // numbersMatching returns the PR numbers cached for any of repos whose head
 // SHA, head ref or base ref satisfy match.
 func (c *prDetailCache) numbersMatching(repos []string, match func(headSHA, headRef, baseRef string) bool) []int {

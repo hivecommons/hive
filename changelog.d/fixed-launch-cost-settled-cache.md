@@ -1,0 +1,1 @@
+- The launch-cost collector now caches each settled day's sorted per-ref list for its persisted store, rebuilding only days that changed instead of re-listing the whole retained rollup every tick (#14834).

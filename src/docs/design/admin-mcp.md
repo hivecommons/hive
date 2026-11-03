@@ -91,7 +91,7 @@ Phase 3 adds the reusable contract that phases 4–6 extend. The MCP exposes two
 
 Writes are disabled by default on both transports. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` to enable them. Pending confirmations are durable: the dashboard endpoint stores them in `/data/admin-mcp-pending-confirmations.json` by default, and the stdio binary stores them under the user's config directory; both support `HIVE_ADMIN_MCP_PENDING_FILE` as an explicit path. The confirmation is not a capability for any other action: it is action-bound, hive-bound, one-use, and time-limited.
 
-The write contract deliberately goes through existing dashboard REST endpoints and sends only the dashboard token. It never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision. Audit attribution therefore remains `local`, as recorded below.
+The write contract deliberately goes through existing dashboard REST endpoints and sends only the dashboard token. It never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision. Audit attribution therefore falls back to the token-authenticated owner identity (the configured owner's login, or `owner`), as recorded below.
 
 Because a confirmed write re-authenticates with the dashboard token alone, the endpoint checks up front whether that can succeed for the current caller. When the dashboard enforces authentication and the caller was admitted some other way (a per-user session, hub proxy proof, or the internal header) rather than with `Authorization: Bearer <dashboard token>`, or when the spoke enforces direct-route authorization (which refuses the shared token), writes are reported as unavailable for that caller: `tools/list` and `exclusion_catalogue` show `writes_enabled: false` with the reason (`writes_unavailable_reason` in the catalogue), and `write_preview` refuses without minting a confirmation that could never execute.
 
@@ -118,6 +118,8 @@ type WriteOp interface {
     Preview(ctx context.Context, args map[string]any) (WritePreview, error)
 }
 ```
+
+A write op may also implement `PreviewWithProvider(ctx, args, provider)` to read live hive state for its preview; `PreviewWrite` prefers it over `Preview`, which remains the provider-less fallback.
 
 The preview returns a `WritePreview` containing the operator-facing summary, widening disclosure, and the REST `WriteRequest` to execute on confirmation. Keep new operations in their own files (for example `tools_agent_ops.go`, `tools_fleet_ops.go`, `tools_repo_ops.go`) so later phases can add operations without editing unrelated operation groups. Phase 3 registered `agent.pause` and `agent.resume`. Phase 4 extends the same `tools_agent_ops.go` group with `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, and `agent.interaction_tier`; it also adds the read-only `agent_nudge_status` lookup for `GET /api/kick/{agent}/status`. Nudge previews include the prompt verbatim in the confirmation message, because that text is typed into an agent CLI session. Interaction-tier previews carry explicit widening disclosure because `ISSUES_ONLY`, `ISSUES_AND_PRS`, and `ISSUES_PRS_MERGE` grant progressively broader GitHub authority.
 
@@ -241,9 +243,16 @@ one, which is why the advisor is in scope.
 Redaction on the dashboard is **per-handler**, not response middleware:
 `redactTokensInLine`, `redactTokens` (applied to run titles), `redactPromptSecrets`,
 `redactLiteLLMKeyMaterial`, `redactSecret`. `pkg/logscrub` holds the canonical closed
-category set — `hive-canary`, `github-token`, `jwt`, `aws-access-key`, `bearer-token`,
+category set — `hive-canary`, `github-token`, `jwt`, `api-key`, `slack-webhook-url`,
+`discord-webhook-url`, `slack-token`, `slack-app-token`, `aws-access-key`, `bearer-token`,
 `private-key`, `encrypted-private-key`, `pgp-private-key` — with `TokenPattern` exported as
-the single source of truth and reused by `pkg/ioscan`.
+the single source of truth and reused by `pkg/ioscan`. The canonical list is defined in
+`src/pkg/logscrub/handler.go`'s `secretPatterns` variable.
+
+hivecommons/hive#11942 adds a `basic-auth` category (an `Authorization: Basic <base64>`
+header, header or key/value form), mirrored in `bin/contributor-relay.js` so the relay
+category-parity test still holds. The log read tools below apply the whole set, and more, at
+read time.
 
 Two consequences for a client whose output is read by a language model:
 
@@ -292,6 +301,7 @@ one.
 | agent detail | `GET /api/agents`, `GET /api/config/agent/{name}`, `GET /api/agents/{name}/kicks` | `GET /api/config/agent/{name}` reports the last kick as `prompt`. |
 | leases and claims | `GET /api/runs`, `GET /api/runs/{key}`, `GET /api/claims` | Two distinct notions of "who holds this work", and both are wanted — see below. |
 | plans | `GET /api/plans`, `GET /api/plan/{epicID}` | `ListPlans` returns drafts first; the detail view is the epic plus children with execution tags and dependency edges. |
+| logs | `GET /api/logs/sources`, `GET /api/logs/read` | Added by #11942 for `log_sources` / `log_read`; see [Log read](#log-read). |
 | audit | `GET /api/audit`, `GET /api/runs/audit` | `handleAuditLog` requires `RoleAtLeast(role, RoleReadWrite)`, not owner. Both read-only by construction. |
 | settings | `GET /api/config`, `GET /api/config/governor`, `GET /api/packs` | Every setting a write tool can change is readable, so a preview can state a before as well as an after. |
 | autonomy readiness | `GET /api/acmm/evaluation`, `GET /api/acmm-recommendation` | The hive's own assessment, rather than a client-side judgment about level fitness. |
@@ -345,19 +355,30 @@ Overview rows carry the band's display label ("Confirm & close"), not its key; t
 each row back to the key through `bands[]` inside `pkg/adminmcp`, so `band=<key>` matches on
 both the dashboard endpoint and stdio (hive#10018).
 
-**`review_queue`** (hive#10019) answers "give me things to review": one list merged across
-issues and pull requests of what needs a human now, each row carrying `reason_code` and a
-one-line `reason`. It reads both Overview exports unfiltered (only `repo` is forwarded) and
-selects rows in priority order: `hold` (held, waiting on a maintainer to release it),
-`needs_human` (the `waiting` band — labelled for a human decision), `sweep_outstanding` (a PR
-in review whose merge-sweep verdict is outstanding), `confirm_close` (the issue `done` band)
-and `agent_filed` (the issue `agent-filed` band). Within a reason, the oldest `updated_at`
-comes first, then pull requests before issues, then repo and number, so the order is
-deterministic; the answer repeats it in `ordering`. Everything else — unclaimed, claimed,
-merge-eligible, blocked, draft, ordinary open — needs no human yet and is left out. Pages are
-`limit` rows (cap 50) from `offset`; a capped page sets `rows_truncated`,
-`_admin_mcp.total` and `next_offset`, and `counts` gives the per-reason totals for the
-whole queue. It is read-only: `queue-automerge` stays excluded.
+**`review_queue`** (hive#10019, hive#11569) answers "give me things to review": exactly the
+your-turn items of the hive (the dashboard inbox's N plus M, hive#11507), including parked
+issues, merged across issues and pull requests. It reads both Overview exports unfiltered
+(only `repo` is forwarded) and keeps the rows whose stored ownership decision says
+`your_turn`; the queue never recomputes the decision from labels or bands. Each row carries
+the server's `verb`, `reason_code`, `reason` and `inbox_rank`, and rows come back in
+`inbox_rank` order (`INSPECT`, `DECIDE`, `STEER`, `SPEC`, `REVIEW`, `TRIAGE`, `ADMIT`, then
+`CLOSE`; within a verb, least recently active first, then repository name, then item
+number); the answer repeats this in `ordering`. `counts.your_turn` is the inbox header's N
+(every verb except `CLOSE`), `counts.to_close` its M, and `verbs` counts each verb. With
+`repo` set only that repository's items are listed, each keeping its position across the
+whole hive. Pages are `limit` rows (cap 50) from `offset`; a capped page sets
+`rows_truncated`, `_admin_mcp.total` and `next_offset`. It is read-only: `queue-automerge`
+stays excluded.
+
+The two exports are separate GETs and each reads the hive's status snapshot on its own, so a
+status refresh between them could pair `inbox_rank`s and decisions from different snapshots.
+Both JSON exports therefore carry the snapshot they read (`snapshot_instance`,
+`snapshot_seq`, `snapshot_at`: the status payload's `statusInstance`, `statusSeq` and
+`timestamp`). `review_queue` compares them; on a mismatch it reads both exports again once, and
+if they still differ the call fails with an error saying the status snapshot changed during the
+read and to retry, rather than answer from mixed snapshots. A hive that predates these fields
+reports none on either export, which never counts as a mismatch. The same
+`adminmcp.ReadReviewQueue` serves the dashboard endpoint and the stdio server.
 
 **`governor_setup_proposal`** (hive#10034) answers "set up these governors for me" for a new
 hive. It reads `GET /api/config/governor`, which already carries the repo count, cadence
@@ -373,6 +394,100 @@ whole set operator-owned absolutes that repo-count scaling no longer adjusts (#4
 entry's `disclosure` says so. A hive with no token budget gets a `budget.update` entry whose
 `owner_input` names `totalTokens`, since only the owner can pick that number. Autonomy level,
 queue depth and feature toggles are out of scope and named in `not_considered`.
+
+### Log read
+
+hivecommons/hive#11942 (first child of #11941) adds the one surface the list above lacks for
+an operator with no shell on the host: the hive's own log. Two read tools wrap two dashboard
+routes added for them, in both read dispatchers (the in-hive provider and the stdio binary):
+
+| Tool | Endpoint | Gate |
+|---|---|---|
+| `log_sources` | `GET /api/logs/sources` | Dashboard auth. Names only: every source this hive knows, each `available` or not with a `reason`, and `default_source`. |
+| `log_read` | `GET /api/logs/read` | `handleLogRead` itself requires `RoleAtLeast(role, RoleReadWrite)`, so a read-only viewer is refused whichever path admitted the request. |
+
+Both are read-only: nothing here rotates, truncates, deletes or edits a log, or changes a log
+setting.
+
+- **Sources.** A fixed list; `hive` (`governor.logging.dir/hive.log` and its rotated
+  `hive-<time>.log[.gz]` history within the configured retention) is the first entry and the
+  default. A name the hive does not offer, or a source that is not available, returns
+  `status: not_available` with a reason, not an error.
+- **Line shape.** Every source returns `{time, source, level, stream, text}` oldest first;
+  `time` (UTC) and `level` come from the slog JSON record when present, `stream` only when the
+  source knows it.
+- **Bounds.** `lines` (not the shared `limit`) defaults to 100 and is clamped to 1000, with
+  `lines_requested`, `lines_applied` and `lines_clamped` reported. The result stays under
+  128 KiB (`result_byte_cap`); when bytes run out before the line count the answer has fewer
+  lines, `byte_capped`, `has_more` and a `next_cursor`. A line over 8 KiB is cut and flagged
+  `cut` with `full_bytes`. The list is `lines[]`, which the generic list capper never touches,
+  and no field name contains a word the outbound key mask hides. Each call scans at most
+  64 MiB of log (decompressed bytes count); `governor.logging.read_scan_max_mb` can lower
+  that. A call that stops early says so in `coverage` (`complete: false`, `stopped_reason`,
+  `covered_from`/`covered_until`). When it stopped on the scan bound it also answers
+  `status: incomplete` with a `next_cursor`; following the cursor continues the scan, so zero
+  matches from an incomplete scan never reads as "no matches". `lines` is always an array,
+  `[]` when nothing matched.
+- **Filters.** `since`/`until` must be RFC 3339 with an explicit offset (an offset-less value
+  is refused); the applied window is reported in UTC with `hive_now`. `min_level` drops lower
+  levels and counts unlevelled lines it dropped (`unlevelled_dropped`). `include` and
+  `exclude[]` are case-insensitive literal text applied to the scrubbed line, so a filter can
+  never match, or reveal by elimination, a value scrubbing removed.
+- **History.** Rotated and gzip-compressed files are read newest first. A window that starts
+  before the oldest retained line sets `window_before_oldest_retained` with
+  `oldest_retained`; a truncated or corrupt history file is read as far as it goes and named
+  in `partial_files`.
+- **Paging.** `next_cursor` pages backwards. It names a history file by its first line's time
+  and digest plus a byte offset, so a rotation (rename, then compression) between two calls
+  neither repeats nor skips a line; a cursor whose file has left retention returns
+  `status: cursor_expired`.
+- **Scrubbing.** Each line is scrubbed at read time before filtering: private-key blocks
+  (scrubbed with overlap across the read region, so a key split by a page or rotation boundary,
+  or one with no END marker, is redacted to the end of the result), then one precompiled
+  multi-value replacer over this hive's own secret values of at least 12 characters (the
+  dashboard token, the terminal `user:token` login, the terminal key, secret file contents,
+  and environment values whose names contain TOKEN, KEY, SECRET, PASSWORD, CREDENTIAL or
+  PASSPHRASE) in plain, URL-encoded and base64 forms at all three alignments, then every
+  `pkg/logscrub` category including `basic-auth`. `redactions[]` counts replacements by kind;
+  a line that already held redaction-marker text on disk is flagged `pre_existing_marker`.
+  Every result carries the fixed `untrusted_content` marker: log text is data, never
+  instructions.
+
+### Output and request log sources
+
+hivecommons/hive#11944 keeps four more sources for `log_read` / `log_sources`, so an operator
+can see why the dashboard failed to start or refused a request without a shell on the host.
+They are written under `HIVE_OUTPUT_LOG_DIR` (default `/data/.hive/logs`, the hive's data
+volume: no new mount, port or socket) by the process that produces them; the container
+start-up script, its process launch, PIDs, signal handling and exit codes are unchanged.
+
+| Source | What it keeps | Captured by | Also on the container's output |
+|---|---|---|---|
+| `proxy` | Everything the dashboard auth proxy (`src/proxy/server.js`) prints, including the `[SECURITY]` refusal before it exits | `src/proxy/output_log.js` tees `process.stdout` / `process.stderr` in-process | Yes, unchanged |
+| `hive-output` | What the hive prints before its own log (`hive.log`) is set up: boot lines, a config that fails to load | the early JSON logger in `cmd/hive` writes through an `io.MultiWriter` | Yes, unchanged |
+| `litellm` | The local litellm proxy's output, discarded before | `inference.SuperviseLocalLiteLLM` points the child's stdout/stderr at the source | No |
+| `requests` | The dashboard request log, one record per request | middleware outside the dashboard auth chain (`pkg/dashboard/request_log.go`) | No |
+
+- **Line shape.** `proxy`, `hive-output` and `litellm` lines are stored as
+  `{"time","stream","text"}`, so each line keeps the time it was printed and its `stream`
+  (`stdout` or `stderr`); `level` is taken from the text when it is itself a slog JSON
+  record. `requests` lines are slog JSON with `method`, `path` (query values removed, keys
+  kept), `status`, `duration_ms` and `auth`.
+- **Auth outcome.** `auth` is `public` (a route that needs no sign-in), `ok` (admitted on a
+  route that needs it), `failed` (credentials presented and refused) or `none` (no
+  credentials on a route that needs them). Terminal traffic handled by the auth proxy itself, and requests the
+  gateway refuses before they reach the dashboard, are not in the request log. Recording keeps
+  websocket upgrades and streamed responses working (the wrapped writer still flushes and
+  hijacks).
+- **Bounds.** Each source keeps at most 5 files of 10 MiB (`<source>.log` plus rotated
+  `<source>-<UTC time>.log`) and nothing older than 7 days; the oldest file is removed when a
+  bound is hit, checked on every rotation, on open and hourly. Files are `0600` and the
+  directory `0700`, owned by the hive runtime user, so agent users cannot read them.
+- **Availability.** `proxy` is not available on an image without the auth proxy (the hub
+  image), and `litellm` is not available unless `governor.litellm.local_proxy` is on; both
+  say why. A source that is available but has printed nothing yet reads as empty.
+- **Failure.** If the directory cannot be used the output still goes where it went before and
+  is simply not kept; nothing about start-up changes.
 
 ### Write
 
@@ -469,6 +584,114 @@ Phase 5 registers the fleet-level write operations under that contract:
   shallower queue, which raises agent cadence and spend — because the number alone does not tell
   an owner what it buys.
 
+### Diagnostic reads
+
+hivecommons/hive#11943 (child of #11941) adds read tools for the per-agent, per-run, health,
+prompt and configuration evidence an operator otherwise collects with a shell. Each tool
+(`pkg/adminmcp/tools_diag.go`) maps to one `GET /api/diag/...` route
+(`pkg/dashboard/api_diag.go`, `api_diag_config.go`). The route calls the existing dashboard
+endpoint through the mux as the caller, carrying only the user, role and verified-owner marker
+that this hive's authentication set. So the wrapped endpoint's own role rule decides access,
+and its response is left unchanged. Both read dispatchers (the in-hive provider in
+`admin_mcp_diag.go` and the stdio binary in `cmd/hive-admin-mcp/diag.go`) call these routes
+and nothing else. Neither applies `CapResult`. A refusal becomes the typed `ErrForbidden`
+(JSON-RPC `-32003`) without the hive's response body.
+
+| Tool | Route | Wraps | Gate |
+|---|---|---|---|
+| `agent_log_read` | `/api/diag/agents/{name}/log` | `/api/agents/{name}/log` | any authenticated role |
+| `agent_kicks_list` | `/api/diag/agents/{name}/kicks` | `/api/agents/{name}/kicks` | any authenticated role |
+| `agent_kick_read` | `/api/diag/agents/{name}/kicks/{id}` | `/api/agents/{name}/kicks/{id}` | any authenticated role |
+| `run_log_read` | `/api/diag/runs/{key}/log` | `/api/runs/{key}/log` | `RoleRead`, in `handleRunLog` |
+| `run_detail_read` | `/api/diag/runs/{key}/detail` | `/api/runs/{key}/detail` | any authenticated role; pane tails only for `paneTailViewer` |
+| `health_deep_read` | `/api/diag/health` | `/api/health/deep` | public |
+| `prompt_history_read` | `/api/diag/prompt-history` | `/api/prompt-history` | `RoleReadWrite`, in `handlePromptHistory` |
+| `config_effective_read` | `/api/diag/config` | the merge `/api/config/provenance` computes | `requireOwnerRole` (owner plus the hive-set verified marker) |
+
+- **Text shape.** Plain-text sources come back as `diag_text`: `text`, `content_type`,
+  `truncated`, `bytes_total` (the full size), `bytes_returned`, `max_bytes` (default 64 KiB,
+  clamped to 128 KiB with `max_bytes_clamped`), `redactions`. Only the newest `max_bytes`
+  plus a 16 KiB overlap is scrubbed. The overlap lets a private key cut by the window still be
+  recognised. The text keeps its newest part and starts on a line boundary where one is near.
+- **JSON shape.** JSON sources are scrubbed string by string. They come back under one key
+  (`kicks`, `detail`, `health`) with `truncated` and `trimmed[]` (`field`, `unit`, `total`,
+  `kept`). When the result would pass the cap, the oldest list entries and the oldest raw log
+  bytes are dropped first. If that is still not enough, the value is replaced by the newest
+  part of its JSON text (`<key>_json_tail`).
+- **Prompt history.** Each entry's agent, trigger and prompt are scrubbed. A prompt over 8 KiB
+  keeps its first 8 KiB and is flagged `cut` with `full_bytes`. Entries are kept newest first
+  while the result fits, with `entries_total` and `cut_entries` reported.
+- **Configuration.** The effective configuration is the seed merged with the dashboard overlay
+  by `config.MergeLayersYAML`, as provenance computes it. Every key of the effective
+  configuration and of each raw layer is listed with `layer`: the tracked provenance layer,
+  else the accepted overlay, else the seed (when no overlay was accepted, or for `github.*`
+  when the GitHub ratchet fired), else `default`, else `unset`. `also_set_by` lists the lower
+  layers it overrode. `provenance` adds the layer descriptions, overlay presence, rejection
+  and reason (quoted YAML removed), the last-good fallback and identity issues.
+- **Values.** A value is shown only for a key or environment name on the documented value
+  list. That list is returned in the result as `value_list`. Every other key or name is
+  `set` with `value_hidden: not_on_value_list`. An environment name the log-read secret rule
+  claims is never shown, even if listed. A listed value is scrubbed and cut at 1 KiB. A URL
+  with a login is withheld (`url_with_embedded_login`). Keys travel as values (`"key": ...`),
+  never as map keys, so the outbound key mask never hides them. No hash or fingerprint of any
+  value is returned. Keys are paged by size with `offset`/`next_offset`.
+- **Verified owner, both transports.** Through the in-hive endpoint, `config_effective_read`
+  is refused with `ErrOwnerUnverified` before any request unless `handleAdminMCP` saw the
+  owner role with the verified marker that `authenticate` sets only for the dashboard token,
+  the internal token or a verified owner session. `authenticate` deletes any inbound copy of
+  the marker. Over stdio, the hive's own authentication of the configured token decides, and
+  a 401/403 maps to the same typed error.
+
+These tools add no scrubber category, so `bin/contributor-relay.js` is unchanged.
+
+### Start records, crash traces and out-of-memory evidence
+
+hivecommons/hive#11945 (child of #11941) records whether the hive crashed, was killed or ran
+out of memory. An operator can then tell this without host access, through `log_read` and
+`fleet_status`. Everything lives in `HIVE_OUTPUT_LOG_DIR` beside the #11944 sources. Files are
+`0600` in a `0700` directory. There is no new mount, port, socket, host component or gateway
+change. The start-up script's process launch, PIDs, signals and exit codes are unchanged.
+
+- **Start records (`pkg/startrec`).** `cmd/hive` calls `startrec.Begin` right after it takes
+  the singleton lock (`boot.beginStartRecord`). A duplicate process refused by the lock has
+  therefore written nothing. `Begin` reads the previous run's `start-current.json`. That run
+  is `clean` or `self-upgrade-failed` if it closed its record, `not-closed` if it did not, and
+  `unknown` if there is no record. `Begin` then appends one slog-shaped line to `starts.log`
+  (kept to the newest 200) and writes the new run's `start-current.json`. A heartbeat refreshes
+  `last_seen_alive` and the memory reading every 30 seconds. The record is closed `clean` from
+  the cleanup stack, pushed just after the lock. Because the stack runs last in, first out, the
+  close runs after `runLoop` has persisted state and the later cleanups have run. The
+  self-upgrade failure path closes it `self-upgrade-failed` before its `os.Exit`. Other
+  `os.Exit` paths leave it open and read as `not-closed`. Writes are atomic (temporary file
+  and rename). The clock, directory and memory reader are injected, so tests use a fake clock.
+  A helper process killed with SIGKILL proves `not-closed`.
+- **Start identifier.** `startrec.NewID` makes 8 hex characters. The single helper
+  `withStartID` adds it as `start` to both hive logger constructors, the early JSON logger
+  and the file logger. Every `hive` line of one run can therefore be selected with `include`.
+- **Crash traces.** `Begin` creates `crash-<UTC start time>.log`, writes a JSON header line
+  that names the start, and passes it to `debug.SetCrashOutput`. The Go runtime then also
+  writes an unrecovered panic or fatal error there, one file per start. When the next start
+  begins, files that hold only their header are removed. The last 10 traces are kept, and
+  each is cut to 1 MiB. The previous start's line reports `crash_trace`. A SIGKILL or
+  out-of-memory kill runs no code, so it leaves no trace. The tests crash a re-executed test
+  helper; production has no crash-on-demand path.
+- **Out-of-memory evidence.** `dashboard.readMemoryEvidence` reads the container's own memory
+  controller under a test seam root (`/sys/fs/cgroup`). On cgroup v2 it reads `memory.max`,
+  `memory.current` and the `oom_kill` count in `memory.events`. On cgroup v1 it reads
+  `memory/memory.limit_in_bytes`, `usage_in_bytes` and the `oom_kill` line of `oom_control`.
+  `collectSystemResources` adds `memLimit` (`N MiB`, `unlimited` or `unknown`),
+  `memLimitBytes` and `oomKillCount` to `systemResources`. The existing fields, which the web
+  UI reads, are unchanged. The heartbeat stores the same reading in the start record. The
+  count is lost when the container restarts with a new cgroup, so the next start reports the
+  last reading as `previous.memory`.
+- **Reads.** `starts` and `crash` are `logread` output-dir sources. They are read, bounded
+  (128 KiB per call, below the 256 KiB `CapResult` cap) and scrubbed like the other sources.
+  Their text is untrusted result data. They and the new status fields carry no credential
+  material, and their field names avoid credential words.
+
+These sources add no scrubber category, so `bin/contributor-relay.js` is unchanged. No
+dashboard route is added.
+
 ## Deliberately absent, and why
 
 Recording the reason matters as much as recording the exclusion. A bare "out of scope" reads,
@@ -553,14 +776,18 @@ explicitly not to.
 
 ## Known gap: attribution
 
-`requestUser` resolves the acting user from `X-Hive-User`, falling back to `"local"`. Because
-this client is forbidden from asserting an identity, every write it makes is audited as
-`local` — the same as any other token-authenticated caller, including `hivectl` and the SPA on
+`requestUser` resolves the acting user from `X-Hive-User`, falling back to `"local"` only when
+that header is empty. The bearer-token middleware fills the header with the owner identity
+(`verifiedOwnerUser`), so a token-authenticated write never reaches that fallback. Because this
+client is forbidden from asserting an identity, every write it makes is audited as the
+configured owner's login when `dashboard.authorized_users` names an owner, and as `owner`
+otherwise — the same as any other token-authenticated caller, including `hivectl` and the SPA on
 a self-hosted spoke.
 
 So `GET /api/audit` will show *that* an agent was paused and *when*, but not that an assistant
 mediated it. An operator reconstructing a timeline cannot separate conversational actions from
-dashboard ones.
+dashboard ones. Under a configured owner, an assistant-mediated write is recorded under a real
+person's login.
 
 **This was decided, not overlooked.** #8697 settled it: accepted as a recorded limitation, and
 the write contract will not carry a client-identity record. Three reasons, in the order they
@@ -573,7 +800,7 @@ matter:
   person?". That does not need to be unforgeable, and conflating the two is how a trivially
   spoofable field ends up being treated as proof.
 - It is not specific to this surface. `hivectl`, `curl` and the SPA on a self-hosted hive all
-  audit as `local` too. If recording the calling client is worth doing, it is worth doing for
+  audit as the same owner identity too. If recording the calling client is worth doing, it is worth doing for
   all of them — which makes it its own change, recording the caller as a *claim* rather than an
   identity, not a rider on this one.
 

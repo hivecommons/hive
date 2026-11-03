@@ -167,13 +167,16 @@ func TestDashboardAdminMCPBandFilterMatchesRowKeyNotLabel(t *testing.T) {
 }
 
 // TestDashboardAdminMCPReviewQueueUsesRealOverviewRows runs review_queue over
-// the real Overview row builders, so the queue sees display-label bands
-// exactly as production serves them (#10018) and still classifies them.
+// the real Overview row builders, so the queue sees the rows exactly as
+// production serves them (display-label bands, #10018) and lists the your-turn
+// items the server decided, nothing it derives from labels or bands.
 func TestDashboardAdminMCPReviewQueueUsesRealOverviewRows(t *testing.T) {
 	s := NewServerWithAuth(0, "secret", nil)
 	s.deps = &Dependencies{Config: &config.Config{HiveID: "h1", Dashboard: config.DashboardConfig{AuthToken: "secret"}}}
+	status := parityStatus9102(t)
+	decideRepoOwnership(status.Repos, config.DashboardIssueBandsConfig{}, ownershipEnv11565(5))
 	s.statusMu.Lock()
-	s.status = parityStatus9102(t)
+	s.status = status
 	s.statusMu.Unlock()
 
 	result, err := dashboardAdminMCPProvider{server: s}.Read(context.Background(), adminmcp.ToolReviewQueue, map[string]any{})
@@ -185,33 +188,55 @@ func TestDashboardAdminMCPReviewQueueUsesRealOverviewRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	var body struct {
-		Total int `json:"total"`
-		Rows  []struct {
+		Total  int `json:"total"`
+		Counts struct {
+			YourTurn int `json:"your_turn"`
+			ToClose  int `json:"to_close"`
+		} `json:"counts"`
+		Rows []struct {
 			Kind       string  `json:"kind"`
 			Number     float64 `json:"number"`
+			Verb       string  `json:"verb"`
 			ReasonCode string  `json:"reason_code"`
 			Reason     string  `json:"reason"`
+			InboxRank  int     `json:"inbox_rank"`
 		} `json:"rows"`
 	}
 	if err := json.Unmarshal(encoded, &body); err != nil {
 		t.Fatalf("decode %s: %v", encoded, err)
 	}
-	found := map[string]string{}
-	for _, row := range body.Rows {
-		if row.Reason == "" {
-			t.Fatalf("row without reason: %+v", row)
+
+	// The expected rows are the stored decisions, in inbox_rank order.
+	type want struct{ verb, code string }
+	wantRows := map[string]want{}
+	ranks := map[int]string{}
+	var n, m int
+	for _, repo := range status.Repos {
+		for key, o := range repo.Ownership {
+			if !o.YourTurn {
+				continue
+			}
+			kind, num, _ := strings.Cut(key, "#")
+			id := fmt.Sprintf("%s#%s", kind, num)
+			wantRows[id] = want{o.Verb, o.ReasonCode}
+			ranks[o.InboxRank] = id
+			if o.Verb == OwnershipVerbClose {
+				m++
+			} else {
+				n++
+			}
 		}
-		found[fmt.Sprintf("%s#%d", row.Kind, int(row.Number))] = row.ReasonCode
 	}
-	if found["issue#6"] != adminmcp.ReviewReasonConfirmClose {
-		t.Fatalf("rows = %s, want hive/likely-done issue #6 as confirm_close", encoded)
+	if len(wantRows) == 0 {
+		t.Fatal("fixture has no your-turn items")
 	}
-	if _, ok := found["pr#10"]; !ok {
-		t.Fatalf("rows = %s, want needs-human PR #10 queued", encoded)
+	if body.Total != len(wantRows) || len(body.Rows) != len(wantRows) || body.Counts.YourTurn != n || body.Counts.ToClose != m {
+		t.Fatalf("queue = %s, want %d rows, N=%d M=%d", encoded, len(wantRows), n, m)
 	}
-	for _, absent := range []string{"pr#12", "pr#14", "issue#1"} {
-		if _, ok := found[absent]; ok {
-			t.Fatalf("rows = %s, %s needs no human and must not be queued", encoded, absent)
+	for i, row := range body.Rows {
+		id := fmt.Sprintf("%s#%d", row.Kind, int(row.Number))
+		if row.Reason == "" || row.InboxRank != i+1 || ranks[row.InboxRank] != id || wantRows[id] != (want{row.Verb, row.ReasonCode}) {
+			t.Fatalf("row %d = %+v, want %s %+v in inbox order", i, row, id, wantRows[id])
 		}
 	}
 }

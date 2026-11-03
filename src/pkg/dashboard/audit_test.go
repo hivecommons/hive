@@ -308,6 +308,108 @@ func TestHandleAuditLogSensitiveFilterUsesSummaryWindow(t *testing.T) {
 	}
 }
 
+func TestHandleAuditLogContributorFilter(t *testing.T) {
+	now := time.Now().UTC()
+	server := &Server{audit: &AuditLog{}}
+	server.audit.ring = append(server.audit.ring, AuditEntry{
+		Timestamp: now.Add(-3 * time.Hour).Format(time.RFC3339),
+		User:      "Octocat",
+		Action:    "relay_token_minted",
+		Detail:    "older than the default page",
+	})
+	for i := 0; i <= auditMaxEntries; i++ {
+		server.audit.ring = append(server.audit.ring, AuditEntry{
+			Timestamp: now.Add(-time.Duration(auditMaxEntries-i) * time.Second).Format(time.RFC3339),
+			User:      "system",
+			Action:    "repos_rescan",
+		})
+	}
+	server.audit.ring = append(server.audit.ring, AuditEntry{
+		Timestamp: now.Format(time.RFC3339),
+		User:      "octocat",
+		Action:    "relay_task_assigned",
+		Repo:      "hivecommons/hive",
+		Target:    42,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit?contributor=octocat", nil)
+	req.Header.Set("X-Hive-Role", config.RoleReadWrite)
+	rec := httptest.NewRecorder()
+
+	server.handleAuditLog(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Entries []AuditEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v; body=%q", err, rec.Body.String())
+	}
+	if len(body.Entries) != 2 {
+		t.Fatalf("filtered entries = %#v, want both octocat rows", body.Entries)
+	}
+	if body.Entries[0].Action != "relay_task_assigned" || body.Entries[0].Sensitive {
+		t.Fatalf("newest entry = %#v, want non-sensitive relay_task_assigned first", body.Entries[0])
+	}
+	if body.Entries[1].Action != "relay_token_minted" || !body.Entries[1].Sensitive {
+		t.Fatalf("older entry = %#v, want sensitive relay_token_minted outside default page", body.Entries[1])
+	}
+}
+
+func TestHandleAuditLogContributorFilterCombinesWithSensitive(t *testing.T) {
+	server := &Server{audit: &AuditLog{}}
+	server.audit.Log("octocat", "relay_task_assigned", "task=t1", "c1")
+	server.audit.Log("octocat", "relay_token_minted", "task=t1", "c1")
+	server.audit.Log("alice", "relay_token_minted", "task=t2", "c2")
+	req := httptest.NewRequest(http.MethodGet, "/api/audit?contributor=octocat&sensitive=1", nil)
+	req.Header.Set("X-Hive-Role", config.RoleReadWrite)
+	rec := httptest.NewRecorder()
+
+	server.handleAuditLog(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Entries []AuditEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v; body=%q", err, rec.Body.String())
+	}
+	if len(body.Entries) != 1 || body.Entries[0].User != "octocat" || body.Entries[0].Action != "relay_token_minted" {
+		t.Fatalf("filtered entries = %#v, want octocat's single sensitive row", body.Entries)
+	}
+}
+
+func TestHandleAuditLogContributorFilterKeepsRoleGate(t *testing.T) {
+	server := &Server{audit: &AuditLog{}}
+	server.audit.Log("octocat", "relay_task_assigned", "task=t1", "c1")
+	req := httptest.NewRequest(http.MethodGet, "/api/audit?contributor=octocat", nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
+	rec := httptest.NewRecorder()
+
+	server.handleAuditLog(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestAuditContributorEntriesCapsAtLimit(t *testing.T) {
+	entries := make([]AuditEntry, 0, auditMaxEntries+10)
+	for i := 0; i < auditMaxEntries+10; i++ {
+		entries = append(entries, AuditEntry{User: "octocat", Action: "relay_connected"})
+	}
+	entries = append(entries, AuditEntry{User: "alice", Action: "relay_connected"})
+	if got := auditContributorEntries(entries, "octocat", auditMaxEntries); len(got) != auditMaxEntries {
+		t.Fatalf("len = %d, want cap %d", len(got), auditMaxEntries)
+	}
+	if got := auditContributorEntries(entries, "nobody", auditMaxEntries); len(got) != 0 {
+		t.Fatalf("unknown contributor returned %d entries, want 0", len(got))
+	}
+}
+
 func TestAuditLogSummaryHistogramSensitiveTodayAndLast(t *testing.T) {
 	now := time.Date(2026, 10, 5, 15, 31, 0, 0, time.UTC)
 	entries := []AuditEntry{

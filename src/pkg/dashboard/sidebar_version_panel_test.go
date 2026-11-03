@@ -110,6 +110,7 @@ func TestSidebarVersionDetailsFitAndFallbackRows(t *testing.T) {
 	script := `
 function escapeHtml(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function relativeAge(){ return '2h ago'; }
+function formatDashboardDateTime(d){ return String(d); }
 const window = {};
 ` + jsFunc(t, html, "versionDeliveryLabel") + "\n" +
 		jsFunc(t, html, "versionTrackingLabel") + "\n" +
@@ -117,6 +118,13 @@ const window = {};
 		jsFunc(t, html, "versionCompareURL") + "\n" +
 		jsFunc(t, html, "versionStatusText") + "\n" +
 		jsFunc(t, html, "versionLastUpgradeText") + "\n" +
+		jsFunc(t, html, "versionStateLabels") + "\n" +
+		jsFunc(t, html, "versionStateLabel") + "\n" +
+		jsFunc(t, html, "versionFormatDuration") + "\n" +
+		jsFunc(t, html, "versionAgentsInTurnText") + "\n" +
+		jsFunc(t, html, "versionUpgradeStateText") + "\n" +
+		jsFunc(t, html, "versionUpgradeStatePillHTML") + "\n" +
+		jsFunc(t, html, "versionUpgradeHistoryHTML") + "\n" +
 		jsFunc(t, html, "versionShortSHA") + "\n" +
 		jsFunc(t, html, "versionSameCommit") + "\n" +
 		jsFunc(t, html, "versionDashHTML") + "\n" +
@@ -127,6 +135,7 @@ const window = {};
 		jsFunc(t, html, "versionStatusSummary") + "\n" +
 		jsFunc(t, html, "versionButtonHTML") + "\n" +
 		jsFunc(t, html, "renderVersionUpgradeAction") + "\n" +
+		jsFunc(t, html, "versionBuildSkew") + "\n" +
 		jsFunc(t, html, "renderVersionDetails") + `
 const out = renderVersionDetails({hash:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', branch:'v5', channel:'candidate', tracking:'floating', latestHash:'07d99d8426ec7b5ae364e25abcdef0123456789', target:{sha:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', managedBy:'hub'}, autoUpdate:{state:'up_to_date', managedBy:'hub', enabled:true, detail:'ok'}, releaseStatus:{attempt:{state:'succeeded', completedAt:'2026-10-02T10:00:00Z'}}}, {deliveryLabel:'candidate (v5)', offeredUpgradeHash:'07d99d8426ec7b5ae364e25abcdef0123456789', offeredUpgradeShort:'07d99d8'});
 if (!out.includes('>07d99d8<')) throw new Error('short sha missing: '+out);
@@ -145,6 +154,30 @@ const building = {hash:'aaa1111', short:'aaa1111', stableV4ImageReady:false, tar
 if (versionStatusSummary(building, 'bbb2222') !== 'queued (v6 building)') throw new Error('building status changed: '+versionStatusSummary(building, 'bbb2222'));
 const stuck = versionStatusSummary(Object.assign({}, building, {deployment:{runtime:'unknown', upgradeSupported:false}}), 'bbb2222');
 if (stuck !== 'manual update required (unknown); v6 building') throw new Error('unsupported deployment must not report only the build: '+stuck);
+
+// #12318: last-seen stdio client build and skew warning
+const stdioMatching = renderVersionDetails({hash:'abc1234567890', short:'abc1234', last_seen_stdio_build:'0.1.0+abc1234', last_seen_stdio_at:'2026-10-16T10:00:00Z'});
+if (!stdioMatching.includes('>Stdio client</span>')) throw new Error('missing Stdio client row on match: '+stdioMatching);
+if (!stdioMatching.includes('>0.1.0+abc1234</strong>')) throw new Error('missing stdio build on match: '+stdioMatching);
+if (stdioMatching.includes('build skew')) throw new Error('unexpected skew warning on match: '+stdioMatching);
+
+const stdioSkewed = renderVersionDetails({hash:'abc1234567890', short:'abc1234', last_seen_stdio_build:'0.1.0+def5678', last_seen_stdio_at:'2026-10-16T10:00:00Z'});
+if (!stdioSkewed.includes('>Stdio client</span>')) throw new Error('missing Stdio client row on skew: '+stdioSkewed);
+if (!stdioSkewed.includes('>0.1.0+def5678</strong>')) throw new Error('missing stdio build on skew: '+stdioSkewed);
+if (!stdioSkewed.includes('⚠ build skew')) throw new Error('missing skew warning on skew: '+stdioSkewed);
+
+const stdioUnident = renderVersionDetails({hash:'abc1234567890', short:'abc1234', last_seen_stdio_build:'unidentified stdio client', last_seen_stdio_at:'2026-10-16T10:00:00Z'});
+if (!stdioUnident.includes('>Stdio client</span>')) throw new Error('missing Stdio client row on unidentified: '+stdioUnident);
+if (!stdioUnident.includes('>unidentified stdio client</strong>')) throw new Error('missing unidentified client build: '+stdioUnident);
+if (stdioUnident.includes('build skew')) throw new Error('unexpected skew warning on unidentified: '+stdioUnident);
+
+const stdioNone = renderVersionDetails({hash:'abc1234567890', short:'abc1234'});
+if (stdioNone.includes('>Stdio client</span>')) throw new Error('unexpected Stdio client row when none seen: '+stdioNone);
+// a superseded success must not read as a plain "succeeded · 2h ago".
+const sup = versionLastUpgradeText({releaseStatus:{attempt:{state:'succeeded', superseded:true, rolledExternally:true, runningCommit:'2a9e3f5', target:'54e5c90', completedAt:'2026-10-20T15:00:00Z'}}});
+if (sup.text !== 'Last upgrade: superseded (rolled externally, now 2a9e3f5) · 2h ago') throw new Error('superseded last-upgrade text: '+sup.text);
+const ok = versionLastUpgradeText({releaseStatus:{attempt:{state:'succeeded', completedAt:'2026-10-20T15:00:00Z'}}});
+if (ok.text !== 'Last upgrade: succeeded · 2h ago') throw new Error('plain last-upgrade text changed: '+ok.text);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -359,5 +392,92 @@ if (st !== null || localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY) !== null) t
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node sidebar progress persistence failed: %v\n%s", err, out)
+	}
+}
+
+// #12055: an upgrade launched from the hub reaches the dashboard only as
+// v.upgradeMarker. The bee/navbar progress surfaces must be driven from that
+// polled state too, not just from the local Upgrade button click.
+func TestSidebarVersionAdoptsHubInitiatedUpgradeProgress(t *testing.T) {
+	html := indexHTML(t)
+	fetch := jsFunc(t, html, "fetchGitVersion")
+	if !strings.Contains(fetch, "if (!upgradeProgress) upgradeProgress = versionAdoptHubUpgradeProgress(v);") {
+		t.Fatal("fetchGitVersion does not adopt a hub-initiated upgrade marker into the upgrade progress record")
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — hub-initiated upgrade progress JS was NOT executed by this run")
+	}
+	script := `
+const VERSION_UPGRADE_STORAGE_KEY = 'hive.version.upgradeProgress';
+const VERSION_UPGRADE_HUB_SEEN_KEY = 'hive.version.upgradeHubAttempt';
+const VERSION_UPGRADE_DONE_MS = 30000;
+const VERSION_UPGRADE_LONG_MS = 15 * 60 * 1000;
+var _upgradeInProgress = false;
+var _upgradeTargetHash = null;
+const localStorage = {data:{}, getItem(k){return this.data[k] || null}, setItem(k,v){this.data[k]=String(v)}, removeItem(k){delete this.data[k]}};
+` + jsFunc(t, html, "versionShortSHA") + "\n" +
+		jsFunc(t, html, "versionSameCommit") + "\n" +
+		jsFunc(t, html, "versionPolicy") + "\n" +
+		jsFunc(t, html, "versionNowMs") + "\n" +
+		jsFunc(t, html, "versionReadUpgradeProgress") + "\n" +
+		jsFunc(t, html, "versionWriteUpgradeProgress") + "\n" +
+		jsFunc(t, html, "versionClearUpgradeProgress") + "\n" +
+		jsFunc(t, html, "versionMarkUpgradeComplete") + "\n" +
+		jsFunc(t, html, "versionReconcileUpgradeProgress") + "\n" +
+		jsFunc(t, html, "versionHubUpgradeAttemptKey") + "\n" +
+		jsFunc(t, html, "versionAdoptHubUpgradeProgress") + `
+const requestedAt = new Date(1000000).toISOString();
+const marker = {target:'1898332abcdef', current:'aaa1111', attempts:1, maxAttempts:5, failed:false, requestedAt};
+const hubV = {hash:'aaa1111abcdef', short:'aaa1111', upgradeMarker:marker, target:{source:'hub', resolved:true, sha:'1898332abcdef', short:'1898332'}, upgradePolicy:{target_sha:'1898332abcdef'}, autoUpdate:{state:'retrying'}};
+const now = 1000000 + 53000;
+
+// No local click: reconcile finds nothing, adoption creates the record.
+let st = versionReconcileUpgradeProgress(hubV, now);
+if (st !== null) throw new Error('reconcile should find no local record: '+JSON.stringify(st));
+st = versionAdoptHubUpgradeProgress(hubV, now);
+if (!st || st.target !== '1898332abcdef' || st.targetShort !== '1898332' || st.source !== 'hub' || st.startedAt !== 1000000 || st.startedFrom !== 'aaa1111' || st.completedAt) throw new Error('hub marker not adopted: '+JSON.stringify(st));
+if (!_upgradeInProgress || _upgradeTargetHash !== '1898332abcdef') throw new Error('globals not marked in progress after adoption');
+const stored = JSON.parse(localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY) || '{}');
+if (stored.source !== 'hub') throw new Error('adopted record did not persist its source: '+JSON.stringify(stored));
+
+// Subsequent polls keep the record while the marker is alive.
+st = versionReconcileUpgradeProgress(hubV, now + 5000);
+if (!st || st.completedAt || st.source !== 'hub') throw new Error('hub record dropped while marker still live: '+JSON.stringify(st));
+
+// Landed: the running commit is the marker target -> complete, then cleared after grace.
+st = versionReconcileUpgradeProgress({hash:'1898332abcdef', short:'1898332', target:{source:'hub', resolved:true, sha:'1898332abcdef'}}, now + 60000);
+if (!st || !st.completedAt || st.source !== 'hub') throw new Error('landed hub upgrade not marked complete: '+JSON.stringify(st));
+if (_upgradeInProgress) throw new Error('in-progress flag still set after landing');
+st = versionReadUpgradeProgress(st.completedAt + VERSION_UPGRADE_DONE_MS + 1);
+if (st !== null) throw new Error('completed hub record not cleared after grace');
+
+// Same attempt is not re-adopted once dismissed.
+st = versionAdoptHubUpgradeProgress(hubV, now + 120000);
+if (st !== null || localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY) !== null) throw new Error('same hub attempt was re-shown after dismissal: '+JSON.stringify(st));
+
+// A new attempt (retry) is adopted again.
+const retryV = Object.assign({}, hubV, {upgradeMarker: Object.assign({}, marker, {attempts:2, requestedAt:new Date(2000000).toISOString()})});
+st = versionAdoptHubUpgradeProgress(retryV, 2000000 + 1000);
+if (!st || st.startedAt !== 2000000) throw new Error('new hub attempt not adopted: '+JSON.stringify(st));
+
+// Marker vanished without landing -> abandoned, record cleared.
+st = versionReconcileUpgradeProgress({hash:'aaa1111abcdef', short:'aaa1111', target:{source:'hub', resolved:true, sha:'1898332abcdef'}}, 2000000 + 6000);
+if (st !== null || localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY) !== null || _upgradeInProgress) throw new Error('hub record survived marker removal: '+JSON.stringify(st));
+
+// Failed marker and already-landed marker are never adopted.
+if (versionAdoptHubUpgradeProgress(Object.assign({}, hubV, {upgradeMarker: Object.assign({}, marker, {failed:true, attempts:5, requestedAt:new Date(3000000).toISOString()})}), 3000000) !== null) throw new Error('failed marker was adopted');
+if (versionAdoptHubUpgradeProgress({hash:'1898332abcdef', upgradeMarker: Object.assign({}, marker, {requestedAt:new Date(4000000).toISOString()})}, 4000000) !== null) throw new Error('landed marker was adopted');
+
+// A local click record is left alone (adoption only fills a gap).
+localStorage.data = {};
+versionWriteUpgradeProgress({target:'1898332abcdef', targetShort:'1898332', startedFrom:'aaa1111abcdef', startedAt:5000000});
+st = versionReconcileUpgradeProgress(hubV, 5000000 + 1000);
+if (!st || st.source) throw new Error('local click record was replaced: '+JSON.stringify(st));
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node hub-initiated upgrade progress failed: %v\n%s", err, out)
 	}
 }

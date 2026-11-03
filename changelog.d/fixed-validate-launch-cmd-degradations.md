@@ -1,0 +1,1 @@
+- `hive validate` now lists base-config `launch_cmd` entries dropped for contradicting their backend and exits non-zero instead of printing "config OK" (#15769)

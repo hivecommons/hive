@@ -83,12 +83,19 @@ func TestApplyPackPreservesOperatorBackend(t *testing.T) {
 func TestApplyPackStillReconcilesPackOwnedModel(t *testing.T) {
 	srv := newFullServer(t)
 	enableScanner(t, srv)
+	// The fixture's hand-set backend differs from the pack's; ApplyPack
+	// stamps it operator-owned (#13221) and such a backend then keeps its
+	// own model (#13288). Pack-owned model reconciliation is what this test
+	// is about, so let the pack fill the backend as pack-owned.
+	sc := srv.deps.Config.Agents["scanner"]
+	sc.Backend = ""
+	srv.deps.Config.Agents["scanner"] = sc
 	if _, err := srv.ApplyPack(3); err != nil {
 		t.Fatalf("ApplyPack(3): %v", err)
 	}
 
 	// Force a stale pack-owned value, as a previous level's pack would leave.
-	sc := srv.deps.Config.Agents["scanner"]
+	sc = srv.deps.Config.Agents["scanner"]
 	sc.Model = "stale-previous-level-model"
 	sc.ModelOwner = config.FieldOwnerPack
 	srv.deps.Config.Agents["scanner"] = sc

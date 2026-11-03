@@ -1,0 +1,1 @@
+- Agent-runtime configuration (`agents`, `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` and the governor-nested watchdog / engine / gateway / trajectory / rotation blocks) is now grouped in Go under `config.AgentRuntimeConfig` and `config.AgentRuntimeGovernorConfig` (inlined, so `hive.yaml` is unchanged) as the first Crux boundary (#13536).

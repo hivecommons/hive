@@ -126,7 +126,7 @@ func TestReaderPrunesClonedCIStrip(t *testing.T) {
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Errorf("cloned wrapper stats.json for reviewer still on disk (err=%v)", err)
 	}
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"reviewer": {}}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"reviewer": {}}}}
 	writeStats(t, "reviewer", clone)
 	if got := LoadStatsConfigWithCfg("reviewer", cfg); len(got) != 0 {
 		t.Errorf("LoadStatsConfigWithCfg(reviewer) = %d stats, want none", len(got))

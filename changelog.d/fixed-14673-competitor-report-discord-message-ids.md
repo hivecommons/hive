@@ -1,0 +1,1 @@
+- **Weekly competitor report records its Discord message ids.** The `post_to_discord` step posts each chunk with `?wait=true`, logs `Posted chunk N/M id=<id>`, writes the ids to the step summary and a `message_ids` step output, and appends them to the tracking-issue comment so a report can be deleted or replaced later (#14673).

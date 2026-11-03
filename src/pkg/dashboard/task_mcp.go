@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/taskmcp"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 type dashboardTaskMCPProvider struct{ server *Server }
@@ -85,8 +85,8 @@ func (p dashboardTaskMCPProvider) Scope(r *http.Request, args map[string]any) (t
 				p.server.logger.Warn("[task-mcp] lease stage mismatch", "lease_id", lease.Claims.ID, "tool", tool, "repo", repo, "claim_stage", lease.Claims.Stage, "current_stage", lease.CurrentStage)
 			}
 			if p.server != nil {
-				p.server.AgentAuditSink().Record("system", agent.AuditTaskMCPStageMismatch, lease.Claims.TaskID,
-					agent.Fields("lease_id", lease.Claims.ID, "tool", tool, "repo", repo, "reason", "stage_mismatch", "stage_claimed", lease.Claims.Stage, "stage_current", lease.CurrentStage))
+				p.server.AgentAuditSink().Record("system", agentaudit.AuditTaskMCPStageMismatch, lease.Claims.TaskID,
+					agentaudit.Fields("lease_id", lease.Claims.ID, "tool", tool, "repo", repo, "reason", "stage_mismatch", "stage_claimed", lease.Claims.Stage, "stage_current", lease.CurrentStage))
 			}
 			return taskmcp.Scope{}, taskmcp.RefusalError{Err: fmt.Errorf("%w: task MCP lease stage mismatch", taskmcp.ErrForbidden), Data: taskmcp.RefusalData{
 				Type: "refusal", Code: "stage_mismatch", LeaseID: lease.Claims.ID, Tool: tool, Repo: repo,
@@ -268,7 +268,10 @@ func (p dashboardTaskMCPProvider) activeLaunchLookup() activeLaunchLookup {
 		}
 		return nil
 	}
-	return p.server.deps.AgentMgr
+	if lookup, ok := p.server.deps.AgentMgr.(activeLaunchLookup); ok {
+		return lookup
+	}
+	return nil
 }
 
 type activeLaunchFunc func() []taskmcp.LaunchScope

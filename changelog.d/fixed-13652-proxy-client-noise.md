@@ -1,0 +1,1 @@
+- Proxy client read timeouts and pre-handshake disconnects (including the transparent-proxy handshake and copilot-sniff client reads) no longer surface as repeated-error self-reports (#13652, #13657, #13661, #13665).

@@ -1,0 +1,1 @@
+- The dashboard's BLOCKED issue pill now shows the issue's open GitHub "blocked by" links on hover, or says the label records no reason when it is only labelled `blocked`; the legend entry now explains the pill ([#11716](https://github.com/hivecommons/hive/issues/11716)).

@@ -2,9 +2,12 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
@@ -27,6 +30,9 @@ const (
 	// suppresses a whole kick after a Critical injection finding.
 	auditActionIoscanFailClosed = "ioscan_fail_closed"
 	auditActionIoscanClassifier = "ioscan_classifier"
+	// auditActionIoscanClassifierDailyQuota is recorded once per UTC day when
+	// daily-quota exhaustion first lets untrusted text pass on unclassified.
+	auditActionIoscanClassifierDailyQuota = "ioscan_classifier_daily_quota_exhausted"
 	// ioscanAuditUser is the audit-log user/agent attribution for kick-path
 	// enforcement events. Untrusted issue text has no single owning agent at
 	// list-assembly time, so events are attributed to the scheduler itself.
@@ -38,7 +44,21 @@ func (s *Scheduler) SetClassifier(c ioscan.Classifier, thresholds ioscan.Thresho
 	defer s.mu.Unlock()
 	s.classifier = c
 	s.classifierThresholds = thresholds.Normalize()
-	s.classifierBudget = ioscan.DefaultClassifierBudgetPerEval
+	s.classifierBudgetPerEval = ioscan.DefaultClassifierBudgetPerEval
+	s.classifierBudget = s.classifierBudgetPerEval
+}
+
+// SetClassifierBudgetPerEval replaces the per-pass classifier budget set by
+// SetClassifier. Boot lowers it for a CLI classifier backend, where each call
+// starts a process. Zero or less keeps DefaultClassifierBudgetPerEval.
+func (s *Scheduler) SetClassifierBudgetPerEval(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n <= 0 {
+		n = ioscan.DefaultClassifierBudgetPerEval
+	}
+	s.classifierBudgetPerEval = n
+	s.classifierBudget = n
 }
 
 func (s *Scheduler) SetAdvisoryFunc(f AdvisoryFunc) {
@@ -57,8 +77,20 @@ func (s *Scheduler) resetClassifierBudget() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.classifier != nil {
-		s.classifierBudget = ioscan.DefaultClassifierBudgetPerEval
+		s.classifierBudget = s.classifierBudgetPerEval
 	}
+}
+
+// markClassifierQuotaWarned reports whether day's daily-quota WARN has not
+// been logged yet, and records it as logged.
+func (s *Scheduler) markClassifierQuotaWarned(day string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.classifierQuotaWarnedDay == day {
+		return false
+	}
+	s.classifierQuotaWarnedDay = day
+	return true
 }
 
 func (s *Scheduler) consumeClassifierBudget() bool {
@@ -111,11 +143,98 @@ func (s *Scheduler) ioscanFailClosed() bool {
 	return s.cfg != nil && s.cfg.Ioscan.FailClosedAtLevel(s.cfg.ACMMLevelOrZero())
 }
 
+// classifierFailClosed reports whether a classifier that cannot answer
+// withholds the text (ioscan.classifier.fail_mode, defaulting to the ioscan
+// fail mode and so to closed at ACMM L5-L6).
+func (s *Scheduler) classifierFailClosed() bool {
+	return s.cfg != nil && s.cfg.Ioscan.ClassifierFailClosedAtLevel(s.cfg.ACMMLevelOrZero())
+}
+
+// classifierSwitchedOff reports an explicit ioscan.classifier.enabled: false.
+// The classifier is built once at boot, so without this live check an owner
+// who switches it off in Settings would keep it running (and, with no model
+// endpoint at L5-L6, keep withholding untrusted text) until a restart. Only
+// the explicit off is honoured here; the level default was already applied
+// when boot decided whether to install a classifier.
+func (s *Scheduler) classifierSwitchedOff() bool {
+	return s.cfg != nil && s.cfg.Ioscan.Classifier.Enabled != nil && !*s.cfg.Ioscan.Classifier.Enabled
+}
+
+// ioscanPolicy returns the configured severity matrix (ioscan.block_at), or
+// the shipped default when the config is absent or did not validate; config
+// load already rejects a bad map, so the fallback is for tests and nil cfg.
+func (s *Scheduler) ioscanPolicy() ioscan.Policy {
+	if s.cfg == nil {
+		return ioscan.DefaultPolicy()
+	}
+	p, err := s.cfg.Ioscan.Policy()
+	if err != nil {
+		return ioscan.DefaultPolicy()
+	}
+	return p
+}
+
+// issueSource tags an issue's title/labels for the policy. Only positive
+// evidence of a non-human author (the hive's own identities, GitHub Apps and
+// bot accounts, whose issue text is templated) earns the trusted line; a
+// human or unknown author is untrusted.
+func issueSource(issue github.Issue) ioscan.Source {
+	return ioscan.Source{
+		Surface:       ioscan.SurfaceIssueBody,
+		TrustedAuthor: issue.Author != "" && !issue.AuthorIsHuman,
+	}
+}
+
+// prSource tags a PR's title/author/annotation for the policy. Trusted means
+// the hive opened it, a non-human account did, or the author is a repo owner
+// or member; everyone else, including collaborators and contributors, is
+// untrusted.
+func prSource(pr github.PullRequest) ioscan.Source {
+	return ioscan.Source{Surface: ioscan.SurfacePRBody, TrustedAuthor: trustedPRAuthor(pr)}
+}
+
+func trustedPRAuthor(pr github.PullRequest) bool {
+	if pr.AppAuthored || pr.AuthorNonHuman {
+		return true
+	}
+	switch pr.AuthorAssociation {
+	case config.AuthorAssociationOwner, config.AuthorAssociationMember:
+		return true
+	}
+	return false
+}
+
+// reviewSource tags review-bot thread bodies. The bots are external and quote
+// PR text written by anyone, so they are never trusted.
+var reviewSource = ioscan.Source{Surface: ioscan.SurfaceReview}
+
+// warnOnce logs the first occurrence of key at Warn and every repeat at Debug,
+// so a persistent condition does not flood the log on every call.
+func (s *Scheduler) warnOnce(key, msg string, args ...any) {
+	if s.logger == nil {
+		return
+	}
+	if _, seen := s.ioscanWarned.LoadOrStore(key, struct{}{}); seen {
+		s.logger.Debug(msg, args...)
+		return
+	}
+	s.logger.Warn(msg, args...)
+}
+
+// enforceIssueTextVerdict scans one untrusted string from an issue surface
+// under the policy's untrusted line. Callers that know the author use
+// enforceTextFrom with issueSource/prSource instead.
 func (s *Scheduler) enforceIssueTextVerdict(text string) (string, ioscan.Verdict) {
+	return s.enforceTextFrom(text, ioscan.Source{Surface: ioscan.SurfaceIssueBody})
+}
+
+// enforceTextFrom scans one untrusted string under the severity matrix for
+// its source, redacts it when the policy trips, and records the block.
+func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ioscan.Verdict) {
 	if !s.ioscanEnabled() {
 		return text, ioscan.Verdict{}
 	}
-	sanitized, v := ioscan.EnforceInput(text)
+	sanitized, v := ioscan.EnforceInputFrom(text, src, s.ioscanPolicy())
 	if v.Blocked {
 		s.recordIoscanBlock(v)
 	}
@@ -123,22 +242,42 @@ func (s *Scheduler) enforceIssueTextVerdict(text string) (string, ioscan.Verdict
 		s.recordIoscanFailClosed(v)
 	}
 	classifier, thresholds, ok := s.classifierSettings()
-	if !ok || v.Blocked {
+	if !ok || v.Blocked || s.classifierSwitchedOff() {
 		return sanitized, v
+	}
+	// A classifier that could not be constructed never makes a model call, so
+	// it must not consume the per-eval budget: otherwise the first N strings
+	// are withheld and every later one passes on as "budget_exhausted",
+	// turning fail-closed into a render-order lottery.
+	if u, isUnavailable := classifier.(ioscan.UnavailableClassifier); isUnavailable {
+		return s.classifierErrored(sanitized, v, u.Err)
 	}
 	if !s.consumeClassifierBudget() {
 		s.recordClassifierSkip("budget_exhausted")
 		return sanitized, v
 	}
 	score, err := classifier.Score(context.Background(), sanitized)
-	if err != nil {
-		s.recordClassifierSkip("error")
-		if s.logger != nil {
-			s.logger.Warn("ioscan classifier failed open", "error", err)
+	var quotaErr *ioscan.DailyQuotaExhaustedError
+	if errors.As(err, &quotaErr) {
+		// Same path as an exhausted per-pass budget: the text passes on in
+		// either fail mode.
+		s.recordClassifierSkip("daily_quota_exhausted")
+		if s.markClassifierQuotaWarned(quotaErr.Day) {
+			s.recordClassifierDailyQuota(quotaErr)
+			if s.logger != nil {
+				s.logger.Warn("ioscan classifier daily quota reached; untrusted text passes on unclassified until the next UTC day",
+					"quota", quotaErr.Quota, "day", quotaErr.Day,
+					"fix", "raise ioscan.classifier.cli_daily_quota (Settings → Security → Input Defense)")
+			}
 		}
 		return sanitized, v
 	}
-	action := ioscan.ActionForScore(score, thresholds, s.ioscanFailClosed())
+	if err != nil {
+		return s.classifierErrored(sanitized, v, err)
+	}
+	s.classifierUnavailable(nil)
+	s.lastClassifierErr.Store("")
+	action := ioscan.ActionForScore(score, thresholds, s.classifierFailClosed())
 	s.recordClassifierResult(score, action)
 	switch action {
 	case ioscan.ClassifierActionBlock:
@@ -157,7 +296,89 @@ func (s *Scheduler) enforceIssueTextVerdict(text string) (string, ioscan.Verdict
 	return sanitized, v
 }
 
-func (s *Scheduler) enforceLabelsWithPolicy(labels []string) ([]string, bool) {
+const classifierFixHint = "check the ioscan classifier model/endpoint is served by the inference gateway (governor.trajectory/litellm, ioscan.classifier.model), or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open"
+
+// warnBlockedKick logs that fail-closed withheld a kick, naming the latest
+// classifier error and the config knobs so operators can act on it.
+func (s *Scheduler) warnBlockedKick(agentName string) {
+	args := []any{"agent", agentName}
+	if e, _ := s.lastClassifierErr.Load().(string); e != "" {
+		args = append(args, "classifier_error", e, "fix", classifierFixHint)
+	}
+	s.warnOnce("blocked-kick:"+agentName, "ioscan fail-closed blocked kick", args...)
+}
+
+// classifierErrored applies the fail mode when the classifier could not score
+// sanitized: fail-closed withholds the text, fail-open passes it on. Both
+// branches log at most once per distinct error so a dead backend does not
+// emit one WARN per string per eval.
+func (s *Scheduler) classifierErrored(sanitized string, v ioscan.Verdict, err error) (string, ioscan.Verdict) {
+	if s.classifierFailClosed() {
+		s.recordClassifierSkip("error_fail_closed")
+		s.classifierUnavailable(err)
+		s.lastClassifierErr.Store(err.Error())
+		if s.logger != nil {
+			if strings.Contains(err.Error(), "no model endpoint resolved") {
+				s.warnOnce("classifier-no-endpoint", "ioscan classifier failed closed; text withheld",
+					"error", err,
+					"fix", classifierFixHint)
+			} else {
+				s.warnOnce("classifier-error:"+err.Error(), "ioscan classifier failed closed; text withheld",
+					"error", err,
+					"fix", classifierFixHint)
+			}
+		}
+		cv := ioscan.UnavailableVerdict(err.Error())
+		s.recordIoscanFailClosed(cv)
+		return ioscan.UnavailableRedactionMarker("error"), cv
+	}
+	s.recordClassifierSkip("error")
+	if s.logger != nil {
+		s.warnOnce("classifier-open-error:"+err.Error(), "ioscan classifier failed open; text passes on unclassified",
+			"error", err,
+			"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false")
+	}
+	return sanitized, v
+}
+
+// threadEnforcer scans one issue/PR conversation (title first, then each
+// comment or review body in order) as a unit and returns the segments with
+// withheld ones redacted, plus whether the fail-closed policy tripped. A nil
+// enforcer is a passthrough, used by formatting tests.
+type threadEnforcer func(segments []string) ([]string, bool)
+
+// enforceThread is the kick-path counterpart of enforceIssueTextVerdict for
+// text that arrives as an ordered conversation (hivecommons/hive#6685,
+// split-payload family). Each segment still gets its own scan, and the
+// conversation is scanned once more as a whole so a payload split across two
+// comments is withheld from both halves rather than reaching the agent in
+// pieces. Disabled → strict passthrough.
+func (s *Scheduler) enforceThread(segments []string, src ioscan.Source) ([]string, bool) {
+	if !s.ioscanEnabled() || len(segments) == 0 {
+		return segments, false
+	}
+	out, tv := ioscan.EnforceThreadFrom(segments, src, s.ioscanPolicy())
+	failClosed := false
+	for _, v := range tv.Segments {
+		if v.Blocked {
+			s.recordIoscanBlock(v)
+		}
+		if s.ioscanFailClosed() && v.HasCriticalInjection() {
+			s.recordIoscanFailClosed(v)
+			failClosed = true
+		}
+	}
+	if tv.Thread.Blocked {
+		s.recordIoscanBlock(tv.Thread)
+	}
+	if s.ioscanFailClosed() && tv.Thread.HasCriticalInjection() {
+		s.recordIoscanFailClosed(tv.Thread)
+		failClosed = true
+	}
+	return out, failClosed
+}
+
+func (s *Scheduler) enforceLabelsWithPolicy(labels []string, src ioscan.Source) ([]string, bool) {
 	if !s.ioscanEnabled() || len(labels) == 0 {
 		return labels, false
 	}
@@ -165,7 +386,7 @@ func (s *Scheduler) enforceLabelsWithPolicy(labels []string) ([]string, bool) {
 	failClosed := false
 	for i, l := range labels {
 		var v ioscan.Verdict
-		out[i], v = s.enforceIssueTextVerdict(l)
+		out[i], v = s.enforceTextFrom(l, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && v.HasCriticalInjection())
 	}
 	return out, failClosed
@@ -221,6 +442,23 @@ func (s *Scheduler) recordClassifierSkip(reason string) {
 	log(auditActionIoscanClassifier, detail, ioscanAuditUser)
 }
 
+// recordClassifierDailyQuota audits the first unclassified pass-through caused
+// by daily-quota exhaustion for a UTC day, so an operator can see that semantic
+// classification was off even though the text passed in either fail mode.
+func (s *Scheduler) recordClassifierDailyQuota(e *ioscan.DailyQuotaExhaustedError) {
+	log := s.auditLogger()
+	if log == nil {
+		return
+	}
+	failMode := "open"
+	if s.classifierFailClosed() {
+		failMode = "closed"
+	}
+	detail := fmt.Sprintf("rule=%s, fail_mode=%s, quota=%d, day=%s",
+		ioscan.SemanticClassifierRule, failMode, e.Quota, e.Day)
+	log(auditActionIoscanClassifierDailyQuota, detail, ioscanAuditUser)
+}
+
 func (s *Scheduler) recordClassifierAdvisory(score ioscan.InjectionScore, action ioscan.ClassifierAction) {
 	adv := s.advisoryLogger()
 	if adv == nil {
@@ -241,4 +479,21 @@ func (s *Scheduler) IoscanHooksForTest() (audit AuditFunc, advisory AdvisoryFunc
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.auditFunc, s.advisoryFunc, s.classifier != nil
+}
+
+// SetClassifierUnavailableFunc attaches an alert callback for runtime fail-closed errors.
+// A nil error signals a successful score and clears a prior runtime alert.
+func (s *Scheduler) SetClassifierUnavailableFunc(f func(error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.classifierUnavailableFunc = f
+}
+
+func (s *Scheduler) classifierUnavailable(err error) {
+	s.mu.RLock()
+	f := s.classifierUnavailableFunc
+	s.mu.RUnlock()
+	if f != nil {
+		f(err)
+	}
 }

@@ -1,0 +1,1 @@
+- Serialized merge lanes promptly release a blocked front whose head is up to date and whose required checks pass, confirming the block with a fresh PR read before recording it and promoting the next pull request instead of waiting for the front timeout ([#12955](https://github.com/hivecommons/hive/issues/12955)).

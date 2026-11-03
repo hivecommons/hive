@@ -1,17 +1,22 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -23,7 +28,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 		s.logger = slog.Default()
 	}
 	s.deps = deps
+	s.surfaceLaunchCmdDegradations()
 	s.loadSidebarFromDisk()
+	s.mergedLedger()
 	s.registerContributeRoutes()
 	// Issue claims (hivecommons/hive#8380). Routes register unconditionally;
 	// handlers answer "not enabled" when deps.IssueClaims is nil.
@@ -33,6 +40,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// an honest 200 the panel can render rather than a 404 that looks broken.
 	s.registerApprovalRoutes()
 	s.registerSwarmRoutes()
+	s.registerLogReadRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/version/release-notes", s.handleVersionReleaseNotes)
@@ -102,6 +110,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/campaigns/{id}/resume", s.handleCampaignResume)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/release", s.handleCampaignRelease)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/revise", s.handleCampaignRevise)
+	s.mux.HandleFunc("DELETE /api/campaigns/{id}", s.handleCampaignDelete)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/recheck", s.handleCampaignRecheck)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam", s.handleCampaignJamGet)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam", s.handleCampaignJamPost)
@@ -116,6 +125,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/ws", s.handleCampaignJamWebSocket)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
+	s.mux.HandleFunc("GET /api/widget/summary", s.handleWidgetSummary)
+	s.mux.HandleFunc("GET /api/widget/token", s.handleWidgetTokenStatus)
+	s.mux.HandleFunc("POST /api/widget/token", s.handleWidgetTokenMint)
+	s.mux.HandleFunc("DELETE /api/widget/token", s.handleWidgetTokenRevoke)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
 	// Backs the Terminal's "view / download full log" controls.
@@ -159,6 +172,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/repo-activity", s.handleRepoActivity)
 	s.mux.HandleFunc("GET /api/repo-cost", s.handleRepoCost)
+	// #12128: per-issue/PR/head-SHA launch attribution over the same collector.
+	s.mux.HandleFunc("GET /api/launch-cost", s.handleLaunchCost)
+	s.mux.HandleFunc("GET /api/launch-cost/history", s.handleLaunchCostHistory)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
 	// #4298: "for every recent reset, how much of the budget had been used".
 	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)
@@ -181,6 +197,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()
 	s.mux.HandleFunc("GET /api/summaries", s.handleSummaries)
+	s.mux.HandleFunc("GET /api/stage-tracker", s.handleStageTracker)
 	s.mux.HandleFunc("POST /api/prs/{owner}/{repo}/{number}/queue-automerge", s.handleQueuePRAutoMerge)
 
 	s.mux.HandleFunc("GET /api/config/agent/{name}", s.handleAgentConfigGet)
@@ -200,10 +217,13 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/stat-sources", s.handleStatSources)
 
 	s.mux.HandleFunc("GET /api/config/governor", s.handleGovernorConfigGet)
+	s.mux.HandleFunc("GET /api/config/dashboard", s.handleDashboardSettingsGet)
+	s.mux.HandleFunc("PUT /api/config/dashboard", s.handleDashboardSettingsPut)
 	s.mux.HandleFunc("PUT /api/config/governor/sensing", s.handleGovernorSensing)
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
 	s.mux.HandleFunc("GET /api/config/governor/cadence-scope", s.handleGovernorCadenceScopeGet)
 	s.mux.HandleFunc("PUT /api/config/governor/cadence-scope", s.handleGovernorCadenceScope)
+	s.mux.HandleFunc("POST /api/config/governor/cadence-templates", s.handleGovernorCadenceTemplates)
 	s.mux.HandleFunc("GET /api/config/governor/threshold-scaling", s.handleGovernorThresholdScalingGet)
 	s.mux.HandleFunc("PUT /api/config/governor/threshold-scaling", s.handleGovernorThresholdScaling)
 	s.mux.HandleFunc("PUT /api/config/governor/coverage-target", s.handleGovernorCoverageTarget)
@@ -219,6 +239,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// its UI lives on the governor Health tab — see api_escalation.go.
 	s.mux.HandleFunc("GET /api/config/escalation", s.handleEscalationGet)
 	s.mux.HandleFunc("PUT /api/config/escalation", s.handleEscalationPut)
+	// Inbound trigger surfaces (GitHub mentions/Actions, chat bots, escalation
+	// sinks) edited on the Settings → Channels tab — see channels_settings.go.
+	s.mux.HandleFunc("GET /api/config/channels", s.handleChannelsSettingsGet)
+	s.mux.HandleFunc("PUT /api/config/channels", s.handleChannelsSettingsPut)
 	// Review-swarm merge gate is a top-level Config field (not GovernorConfig),
 	// but its UI lives on the governor Features tab — see api_config_review.go.
 	s.mux.HandleFunc("GET /api/config/review", s.handleReviewConfigGet)
@@ -244,6 +268,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// fixed-commit telemetry read path (convergence_soak.go).
 	s.mux.HandleFunc("GET /api/config/convergence", s.handleConvergenceConfigGet)
 	s.mux.HandleFunc("PUT /api/config/convergence", s.handleConvergenceConfigPut)
+	s.mux.HandleFunc("GET /api/config/sla", s.handleSLAConfigGet)
+	s.mux.HandleFunc("PUT /api/config/sla", s.handleSLAConfigPut)
 	s.mux.HandleFunc("GET /api/convergence/soak", s.handleConvergenceSoak)
 	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
 	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
@@ -255,6 +281,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor/question-autoclose", s.handleGovernorQuestionAutocloseGet)
 	s.mux.HandleFunc("PUT /api/config/governor/question-autoclose", s.handleGovernorQuestionAutocloseSet)
 	s.mux.HandleFunc("GET /api/config/governor/question-autoclose/schedule", s.handleGovernorQuestionAutocloseSchedule)
+	s.mux.HandleFunc("GET /api/config/governor/fleet-report", s.handleGovernorFleetReportGet)
+	s.mux.HandleFunc("PUT /api/config/governor/fleet-report", s.handleGovernorFleetReportSet)
+	s.mux.HandleFunc("PUT /api/config/governor/release-sentinel", s.handleGovernorReleaseSentinelPut)
 	s.mux.HandleFunc("GET /api/config/governor/work-source", s.handleGovernorWorkSourceGet)
 	s.mux.HandleFunc("PUT /api/config/governor/work-source", s.handleGovernorWorkSourcePut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
@@ -324,7 +353,17 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/repos/merge-strategy", s.handleRepoMergeStrategySet)
 	s.mux.HandleFunc("GET /api/repos/merge-lane", s.handleRepoMergeLaneGet)
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/hold-permission", s.handleRepoHoldPermission)
-	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/hold", s.handleRepoItemHold)
+	// Owner row actions are wrapped so the ledger behind the activity
+	// monitor's ✓ badge remembers them (operator_actions.go).
+	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/items/{number}", s.handleRepoItemDetail)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/hold", s.recordOperatorAction(s.handleRepoItemHold))
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decision", s.recordOperatorAction(s.handleRepoItemDecision))
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.recordOperatorAction(s.handleRepoItemDecideDelegated))
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/issues/{number}/release", s.recordOperatorAction(s.handleRepoIssueRelease))
+	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.handleRepoItemDecideDelegatedStatus)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated/plan", s.handleRepoItemDecideDelegatedPlan)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/blocker/recheck", s.handleRepoItemBlockerRecheck)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/blocker/close-partial", s.handleRepoItemBlockerClosePartial)
 
 	s.mux.HandleFunc("GET /api/acmm/evaluation", s.handleACMMEvaluation)
 	s.mux.HandleFunc("POST /api/acmm/issue", s.handleACMMCreateIssue)
@@ -342,6 +381,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/sidebar", s.handleSidebarGet)
 	s.mux.HandleFunc("PUT /api/config/sidebar", s.handleSidebarSet)
 	s.mux.HandleFunc("GET /api/config/backends", s.handleBackends)
+	s.mux.HandleFunc("PUT /api/config/backends", s.handleBackendsPolicyPut)
+	s.mux.HandleFunc("PUT /api/config/classifier", s.handleClassifierSettingsPut)
 	s.mux.HandleFunc("GET /api/inference/models/{backend}", s.handleInferenceModels)
 
 	s.mux.HandleFunc("GET /api/knowledge", s.handleKnowledgeList)
@@ -390,6 +431,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/config/knowledge/connectors/{name}/sync", s.handleKnowledgeConnectorsSync)
 	s.mux.HandleFunc("GET /api/config/knowledge/agent-scopes", s.handleKnowledgeAgentScopesGet)
 	s.mux.HandleFunc("PUT /api/config/knowledge/agent-scopes", s.handleKnowledgeAgentScopesPut)
+	s.mux.HandleFunc("GET /api/config/knowledge/pipeline", s.handleKnowledgePipelineGet)
+	s.mux.HandleFunc("PUT /api/config/knowledge/pipeline", s.handleKnowledgePipelinePut)
 	s.mux.HandleFunc("GET /api/knowledge/git-sources", s.handleGitSourcesList)
 	s.mux.HandleFunc("POST /api/knowledge/git-sources", s.handleGitSourcesConnect)
 	s.mux.HandleFunc("DELETE /api/knowledge/git-sources", s.handleGitSourcesDisconnect)
@@ -440,6 +483,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/nous/principles", s.handleNousPrinciples)
 	s.mux.HandleFunc("POST /api/nous/approve", s.handleNousApprove)
 	s.mux.HandleFunc("POST /api/nous/abort", s.handleNousAbort)
+	s.mux.HandleFunc("POST /api/nous/promote", s.handleNousPromote)
 	s.mux.HandleFunc("PUT /api/nous/mode", s.handleNousMode)
 	s.mux.HandleFunc("PUT /api/nous/scope", s.handleNousScope)
 	s.mux.HandleFunc("GET /api/nous/phase", s.handleNousPhase)
@@ -456,6 +500,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/nous/config/controllables", s.handleNousConfigControllables)
 	s.mux.HandleFunc("PUT /api/nous/config/principles", s.handleNousConfigPrinciples)
 	s.mux.HandleFunc("DELETE /api/nous/principles/{id}", s.handleNousDeletePrinciple)
+	s.mux.HandleFunc("POST /api/nous/artifacts/sync", s.handleNousArtifactSync)
+	s.mux.HandleFunc("POST /api/nous/reset", s.handleNousReset)
+	s.mux.HandleFunc("POST /api/nous/campaign/start", s.handleNousCampaignStart)
+	s.mux.HandleFunc("GET /api/nous/campaigns", s.handleNousCampaignsList)
+	s.mux.HandleFunc("POST /api/nous/campaigns", s.handleNousCampaignsCreate)
+	s.mux.HandleFunc("PATCH /api/nous/campaigns/{id}", s.handleNousCampaignPatch)
 
 	s.mux.HandleFunc("GET /api/beads", s.handleBeadsList)
 	s.mux.HandleFunc("GET /api/beads/{agent}", s.handleBeadsList)
@@ -482,11 +532,20 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// review stage (unreviewed … approved) with reviewers, severity counts,
 	// loop counter and next action. Read-only; paged like /api/review/queue.
 	s.mux.HandleFunc("GET /api/review/pipeline", s.handleReviewPipeline)
-	s.mux.HandleFunc("POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human", s.handleReviewPipelineSendToHuman)
+	s.mux.HandleFunc("POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human", s.recordOperatorAction(s.handleReviewPipelineSendToHuman))
 	// Review evidence (#11061): the per-PR evidence bundle as sealed on disk,
 	// or zipped with the artifacts it references; owner/merger only.
 	s.mux.HandleFunc("GET /api/review/evidence", s.handleReviewEvidence)
 	s.mux.HandleFunc("GET /api/review/evidence/list", s.handleReviewEvidenceList)
+	// Portfolio search (#14637): the spoke-local search index; owner or
+	// maintainer only, 404 while the search index is disabled.
+	s.mux.HandleFunc("GET /api/search", s.handleSearch)
+	// Durable attempted-vs-blocked agent write counters (#12069); owner/merger only.
+	s.mux.HandleFunc("GET /api/evidence/write-counters", s.handleWriteCounters)
+	// Evidence summary (#12063): read-only aggregate over the bundles; never
+	// consulted by any merge decision.
+	s.mux.HandleFunc("GET /api/evidence/summary", s.handleEvidenceSummary)
+	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/health", s.handleRepoHealth)
 	// write_surface is a top-level Config field; the lane write allowlist
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
@@ -494,11 +553,22 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/runs/{key}/abandon", s.handleRunAbandon)
 	// Settings → Compliance framework picker (#11080, api_compliance_settings.go).
 	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
+	// Write-back containment (api_writeback.go): suppressed-write drill-down
+	// and the sentinel findings held internally, written or not.
+	s.mux.HandleFunc("GET /api/writeback/suppressed", s.handleWritebackSuppressed)
+	s.mux.HandleFunc("GET /api/sentinel", s.handleSentinel)
+	// Merge-hotspot advisor (api_hotspots.go): files repeatedly touched by
+	// concurrent PRs and the modularize issues filed for them.
+	s.mux.HandleFunc("GET /api/hotspots", s.handleHotspots)
 	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
 	s.registerKnowledgeConnectorRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 	// Per-agent Variables tab (#11458, api_variables.go).
 	s.registerAgentVariableRoutes()
+	// Admin MCP diagnostic reads (#11943, api_diag.go).
+	s.registerDiagRoutes()
+	// Activity monitor row menu: Accept triage (api_repo_item_accept_triage.go).
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/accept-triage", s.recordOperatorAction(s.handleRepoItemAcceptTriage))
 }
 
 var (
@@ -548,6 +618,13 @@ func SetGitVersion(hash, short string) {
 	versionShort = short
 }
 
+// BuildInfo returns the hive version and full commit the dashboard version
+// endpoint reports, for other packages that need to stamp them (kick logs).
+func BuildInfo() (version, commit string) {
+	version, _ = fleetReportBuildInfo()
+	return version, versionHash
+}
+
 // SetGitBranch records the branch the running binary was built from so the
 // version check and Upgrade affordance compare against the right upstream.
 func SetGitBranch(branch string) {
@@ -590,15 +667,34 @@ func upstreamBranch() string {
 func jsonResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Warn("jsonResponse encode failed", "error", err)
+		logEncodeFailure("jsonResponse encode failed", err)
 	}
+}
+
+// isClientDisconnect reports a write error caused by the client going away
+// (broken pipe, reset, cancelled request, handler timeout): an expected
+// condition on a dashboard behind probes and restarts, not a hive defect.
+func isClientDisconnect(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, http.ErrHandlerTimeout) || errors.Is(err, io.ErrClosedPipe)
+}
+
+// logEncodeFailure logs client disconnects at DEBUG and genuine encode
+// failures at WARN.
+func logEncodeFailure(msg string, err error) {
+	if isClientDisconnect(err) {
+		slog.Debug(msg+" (client disconnected)", "error", err)
+		return
+	}
+	slog.Warn(msg, "error", err)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": msg}); err != nil {
-		slog.Warn("jsonError encode failed", "error", err)
+		logEncodeFailure("jsonError encode failed", err)
 	}
 }
 
@@ -614,7 +710,7 @@ func jsonStatusResponse(w http.ResponseWriter, code int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Warn("jsonStatusResponse encode failed", "error", err)
+		logEncodeFailure("jsonStatusResponse encode failed", err)
 	}
 }
 
@@ -821,6 +917,13 @@ func (s *Server) sentinelLabel() string {
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	evalHistoryResponse(w, r, s.historyPayload())
+}
+
+// historyPayload is the /api/history body: the live eval history, prefixed by
+// the seeded sparkline history when one exists. Shared with the read-only
+// widget summary so both report the same series.
+func (s *Server) historyPayload() any {
 	history := s.deps.Governor.EvalHistory()
 
 	seedData, err := os.ReadFile("/data/sparkline-history.json")
@@ -829,21 +932,17 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(seedData, &seed) == nil && len(seed) > 0 {
 			liveData, err := json.Marshal(history)
 			if err != nil {
-				jsonResponse(w, history)
-				return
+				return history
 			}
 			var liveEntries []json.RawMessage
 			if json.Unmarshal(liveData, &liveEntries) != nil {
-				jsonResponse(w, history)
-				return
+				return history
 			}
-			combined := append(seed, liveEntries...)
-			jsonResponse(w, combined)
-			return
+			return append(seed, liveEntries...)
 		}
 	}
 
-	jsonResponse(w, history)
+	return history
 }
 
 func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
@@ -1039,7 +1138,7 @@ func (s *Server) lifecycleACMMLevel() int {
 func filterJourneysByACMMLevel(journeys []timeline.Journey, level int) []timeline.Journey {
 	filtered := make([]timeline.Journey, 0, len(journeys))
 	for _, j := range journeys {
-		if agent.AgentAvailableAtACMMLevel(j.Agent, level) {
+		if crux.AgentAvailableAtACMMLevel(j.Agent, level) {
 			filtered = append(filtered, j)
 		}
 	}
@@ -1108,7 +1207,7 @@ func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
 
 	throughput := PRThroughput{Hours: 168, Source: "audit"}
 	if s.audit != nil {
-		throughput = buildPRThroughputWindow(prThroughputEntries(s.audit), time.Now().UTC(), 168, "", prThroughputRoleMerged)
+		throughput = buildPRThroughputWindow(qualifyPRThroughputEntries(prThroughputEntries(s.audit), s.mergedRepoQualifier()), time.Now().UTC(), 168, "", prThroughputRoleMerged)
 	}
 
 	breakerEngaged := false
@@ -1299,6 +1398,18 @@ func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
 		return
 	}
+	// Match the merge sweep's trustedMergerFunc against the identity that
+	// QueuePRAutoMerge will record, rather than trusting the request role.
+	if s.deps.Config == nil || len(s.deps.Config.Dashboard.AuthorizedUsers) == 0 {
+		jsonError(w, "dashboard.authorized_users is empty: no queued PR can merge until an owner or merger is listed", http.StatusForbidden)
+		return
+	}
+	role, authorized := s.deps.Config.Dashboard.AuthorizedRole(user)
+	if !authorized || !config.RoleAtLeast(role, config.RoleMerger) {
+		jsonError(w, "@"+user+" cannot merge: queue from a signed-in owner/merger account listed in dashboard.authorized_users", http.StatusForbidden)
+		return
+	}
+
 	number, err := strconv.Atoi(r.PathValue("number"))
 	if err != nil || number <= 0 {
 		jsonError(w, "invalid pull request number", http.StatusBadRequest)
@@ -1355,11 +1466,11 @@ func (s *Server) prQueueRepoAllowed(repo string) bool {
 }
 
 func (s *Server) handleFactHistory(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, s.FactHistory())
+	historyResponse(w, r, s.FactHistory(), func(e FactHistoryEntry) int64 { return e.Timestamp })
 }
 
 func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, s.CostHistory())
+	historyResponse(w, r, s.CostHistory(), func(e CostHistoryEntry) int64 { return e.Timestamp })
 }
 
 func (s *Server) handleTrendHistory(w http.ResponseWriter, r *http.Request) {
@@ -1384,9 +1495,9 @@ func (s *Server) handleTimeSeries(w http.ResponseWriter, r *http.Request) {
 	case "token", "tokens":
 		jsonResponse(w, s.TokenSparklineHistory())
 	case "fact", "facts":
-		jsonResponse(w, s.FactHistory())
+		historyResponse(w, r, s.FactHistory(), func(e FactHistoryEntry) int64 { return e.Timestamp })
 	case "cost":
-		jsonResponse(w, s.CostHistory())
+		historyResponse(w, r, s.CostHistory(), func(e CostHistoryEntry) int64 { return e.Timestamp })
 	default:
 		http.Error(w, `{"error":"unknown series; valid: token, fact, cost"}`, http.StatusBadRequest)
 	}

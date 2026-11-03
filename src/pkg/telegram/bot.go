@@ -17,9 +17,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -44,6 +44,7 @@ type Config struct {
 	BotToken       string
 	ChatID         string
 	DashboardURL   string
+	PublicURL      string // user-facing dashboard origin; empty omits notification links
 	DashboardToken string
 	AllowedUsers   []string
 	// PersonaStore persists each author's persona; nil keeps personas in
@@ -115,6 +116,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 	}
 	service := chat.NewService(backend, chat.Config{
 		DashboardURL:      cfg.DashboardURL,
+		PublicURL:         cfg.PublicURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
 		PersonaStore:      cfg.PersonaStore,

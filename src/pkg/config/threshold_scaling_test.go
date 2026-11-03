@@ -275,9 +275,11 @@ func TestValidateThresholdScaling(t *testing.T) {
 
 func TestValidate_RejectsBadThresholdScaling(t *testing.T) {
 	c := &Config{
-		Project:  ProjectConfig{Org: "my-org"},
-		GitHub:   GitHubConfig{Token: "t"},
-		Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		Project: ProjectConfig{Org: "my-org"},
+		GitHub:  GitHubConfig{Token: "t"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		},
 		Governor: GovernorConfig{ThresholdScaling: "logarithmic"},
 	}
 	err := c.validate()
@@ -294,9 +296,11 @@ func TestValidate_RejectsBadThresholdScaling(t *testing.T) {
 func TestValidate_AcceptsEveryThresholdScaling(t *testing.T) {
 	for _, v := range []string{"", "linear", "sqrt", "none"} {
 		c := &Config{
-			Project:  ProjectConfig{Org: "my-org"},
-			GitHub:   GitHubConfig{Token: "t"},
-			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			Project: ProjectConfig{Org: "my-org"},
+			GitHub:  GitHubConfig{Token: "t"},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			},
 			Governor: GovernorConfig{ThresholdScaling: v},
 		}
 		if err := c.validate(); err != nil {
@@ -320,9 +324,11 @@ func TestValidateCadenceScope(t *testing.T) {
 
 func TestValidate_RejectsBadCadenceScope(t *testing.T) {
 	c := &Config{
-		Project:  ProjectConfig{Org: "my-org"},
-		GitHub:   GitHubConfig{Token: "t"},
-		Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		Project: ProjectConfig{Org: "my-org"},
+		GitHub:  GitHubConfig{Token: "t"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		},
 		Governor: GovernorConfig{CadenceScope: "repo"},
 	}
 	err := c.validate()
@@ -339,9 +345,11 @@ func TestValidate_RejectsBadCadenceScope(t *testing.T) {
 func TestValidate_AcceptsEveryCadenceScope(t *testing.T) {
 	for _, v := range []string{"", "aggregate", "per_repo"} {
 		c := &Config{
-			Project:  ProjectConfig{Org: "my-org"},
-			GitHub:   GitHubConfig{Token: "t"},
-			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			Project: ProjectConfig{Org: "my-org"},
+			GitHub:  GitHubConfig{Token: "t"},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			},
 			Governor: GovernorConfig{CadenceScope: v},
 		}
 		if err := c.validate(); err != nil {
@@ -378,9 +386,11 @@ func TestValidateCoverageTarget(t *testing.T) {
 func TestValidate_CoverageTarget(t *testing.T) {
 	for _, v := range []int{101, -1} {
 		c := &Config{
-			Project:  ProjectConfig{Org: "my-org"},
-			GitHub:   GitHubConfig{Token: "t"},
-			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			Project: ProjectConfig{Org: "my-org"},
+			GitHub:  GitHubConfig{Token: "t"},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			},
 			Governor: GovernorConfig{CoverageTarget: v},
 		}
 		err := c.validate()
@@ -390,9 +400,11 @@ func TestValidate_CoverageTarget(t *testing.T) {
 	}
 	for _, v := range []int{0, 1, 80, 100} {
 		c := &Config{
-			Project:  ProjectConfig{Org: "my-org"},
-			GitHub:   GitHubConfig{Token: "t"},
-			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			Project: ProjectConfig{Org: "my-org"},
+			GitHub:  GitHubConfig{Token: "t"},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			},
 			Governor: GovernorConfig{CoverageTarget: v},
 		}
 		if err := c.validate(); err != nil {

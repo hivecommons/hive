@@ -126,9 +126,12 @@ var (
 	secretSinkRE           = regexp.MustCompile(`(?i)\b(echo|printf|cat|curl|wget|nc|ncat|base64|printenv|env|set\s*\+?x|tee|xxd|od|hexdump|python[23]?\s+-c|node\s+-e)\b|>\s*\$GITHUB_(OUTPUT|STEP_SUMMARY)|::set-output|::add-mask`)
 	envDumpRE              = regexp.MustCompile(`(?i)toJSON\s*\(\s*(secrets|env|github)\s*\)|\bprintenv\b|\benv\s*\|\s*(curl|base64|nc)\b`)
 	ciWeakenAddRE          = regexp.MustCompile(`(?i)(continue-on-error:\s*true|\|\|\s*true\b|\|\|\s*exit\s+0\b|^\s*if:\s*(false|\$\{\{\s*false\s*\}\})\s*$|--no-verify\b|allow_failure:\s*true|SKIP[_A-Z]*=1|\bset\s+\+e\b|^\s*exit\s+0\s*$|\btrue\s*#\s*(skip|disable|bypass)|--exit-zero\b|\|\|\s*:\s*$)`)
-	ciWeakenRemoveRE       = regexp.MustCompile(`(?i)(required|coverage|ratchet|--strict|lint|vet|gosec|codeql|trivy|gitleaks|semgrep|verify|gate|protect|signoff|dco|needs:)`)
-	remoteExecRE           = regexp.MustCompile(`(?i)((curl|wget)[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b|eval\s*\(?\s*(base64|atob|Buffer\.from|\$\(\s*(echo|printf)[^)]*base64)|base64\s+(-d|--decode)[^|\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|\bnc\b[^\n]*\s-e\s|/dev/tcp/|\bmkfifo\b[^\n]*\bnc\b|-----BEGIN (RSA |OPENSSH |EC |DSA |PGP )?PRIVATE KEY|\bAKIA[0-9A-Z]{16}\b|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|socket\.socket\([^)]*\)[^\n]*connect|subprocess\.(Popen|call|run)\([^)]*(sh|bash)[^)]*-c|chmod\s+[0-7]*[4-7][0-7]{2,3}\s+/|LD_PRELOAD=)`)
-	fenceRE                = regexp.MustCompile("^\\s*(```|~~~)")
+	// ciWeakenRemoveRE matches its keywords as whole words with "-", "_" and
+	// other punctuation as separators, so "hardcoded" is not "dco" and "gateway"
+	// is not "gate" while "golangci-lint" and "required_status_checks" still count.
+	ciWeakenRemoveRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])(required|coverage|ratchet(s|ing)?|lint(s|er|ers|ing)?|vet|gosec|codeql|trivy|gitleaks|semgrep|verify|gate[sd]?|protect(s|ed|ion|ions)?|signoff|dco|needs:)([^a-z0-9]|$)|--strict`)
+	remoteExecRE     = regexp.MustCompile(`(?i)((curl|wget)[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b|eval\s*\(?\s*(base64|atob|Buffer\.from|\$\(\s*(echo|printf)[^)]*base64)|base64\s+(-d|--decode)[^|\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|\bnc\b[^\n]*\s-e\s|/dev/tcp/|\bmkfifo\b[^\n]*\bnc\b|-----BEGIN (RSA |OPENSSH |EC |DSA |PGP )?PRIVATE KEY|\bAKIA[0-9A-Z]{16}\b|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|socket\.socket\([^)]*\)[^\n]*connect|subprocess\.(Popen|call|run)\([^)]*(sh|bash)[^)]*-c|chmod\s+[0-7]*[4-7][0-7]{2,3}\s+/|LD_PRELOAD=)`)
+	fenceRE          = regexp.MustCompile("^\\s*(```|~~~)")
 )
 
 // ciRemovedLineThreshold is how many gate-looking lines must be removed
@@ -351,7 +354,12 @@ func checkCIGateWeakening(pr PR, _ Config) *Finding {
 			}
 		}
 		removedGates := 0
+		hashComments := hashCommentCIPath(f.Path)
 		for _, line := range removedLines(f.Patch) {
+			// Deleting a comment removes no gate.
+			if hashComments && strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
 			if ciWeakenRemoveRE.MatchString(line) {
 				removedGates++
 			}
@@ -441,6 +449,21 @@ func filesWithAddedLineMatching(pr PR, patterns []string, match func(string) boo
 		return nil
 	}
 	return uniq(hit)
+}
+
+// hashCommentCIPath reports whether p is a CI file where a line starting
+// with "#" is a comment: YAML, Makefiles and Justfiles. Jenkinsfiles and
+// gate scripts keep counting every removed line.
+func hashCommentCIPath(p string) bool {
+	switch strings.ToLower(path.Ext(p)) {
+	case ".yml", ".yaml", ".mk":
+		return true
+	}
+	switch strings.ToLower(path.Base(p)) {
+	case "makefile", "gnumakefile", "justfile", ".justfile":
+		return true
+	}
+	return false
 }
 
 // isDocPath excludes prose from the shell-pattern rule: docs legitimately

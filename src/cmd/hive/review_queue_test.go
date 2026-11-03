@@ -18,16 +18,39 @@ type fakePriorityLabeler struct {
 	applied  []string
 	removed  []string
 	applyErr error
+	// ops is every write in order ("+key label" / "-key label"); asOf the
+	// observed state each RemoveLabelAsOf was journaled against.
+	ops  []string
+	asOf []time.Time
+	// closed answers ClosedPRsWithLabel by label; searches counts calls.
+	closed   map[string][]github.LabelledPR
+	searches int
 }
 
 func (f *fakePriorityLabeler) ApplyHumanDecisionLabel(_ context.Context, repo string, number int, label string) error {
 	f.applied = append(f.applied, github.ReviewQueueKey(repo, number)+" "+label)
+	f.ops = append(f.ops, "+"+github.ReviewQueueKey(repo, number)+" "+label)
 	return f.applyErr
 }
 
 func (f *fakePriorityLabeler) RemoveLabel(_ context.Context, repo string, number int, label string) error {
 	f.removed = append(f.removed, github.ReviewQueueKey(repo, number)+" "+label)
+	f.ops = append(f.ops, "-"+github.ReviewQueueKey(repo, number)+" "+label)
 	return nil
+}
+
+func (f *fakePriorityLabeler) RemoveLabelAsOf(ctx context.Context, repo string, number int, label string, updatedAt time.Time) error {
+	f.asOf = append(f.asOf, updatedAt)
+	return f.RemoveLabel(ctx, repo, number, label)
+}
+
+func (f *fakePriorityLabeler) ClosedPRsWithLabel(_ context.Context, _ string, label string, limit int) ([]github.LabelledPR, error) {
+	f.searches++
+	out := f.closed[label]
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func priorityQueue() []github.ReviewQueueEntry {

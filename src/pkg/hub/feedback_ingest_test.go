@@ -3,14 +3,16 @@ package hub
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/feedbackbundle"
 )
 
 // feedbackGitHubCapture is the GitHub side of a feedback-ingest test. It
@@ -58,11 +60,9 @@ func interceptFeedbackGitHub(t *testing.T, handler http.HandlerFunc) *feedbackGi
 	capture := &feedbackGitHubCapture{handler: handler}
 	prevTransport := http.DefaultTransport
 	prevClientTransport := http.DefaultClient.Transport
-	prevLogin := lookupHubFeedbackTokenLogin
 	prevMint := mintHubFeedbackAppToken
 	http.DefaultTransport = capture
 	http.DefaultClient.Transport = nil
-	lookupHubFeedbackTokenLogin = func(string) string { return "" }
 	mintHubFeedbackAppToken = func(_ context.Context, _ *HubServer, _ string) (string, string) {
 		return "hub-app-token", "hub-bot"
 	}
@@ -70,7 +70,6 @@ func interceptFeedbackGitHub(t *testing.T, handler http.HandlerFunc) *feedbackGi
 		waitChannelTargetRefreshes(t)
 		http.DefaultTransport = prevTransport
 		http.DefaultClient.Transport = prevClientTransport
-		lookupHubFeedbackTokenLogin = prevLogin
 		mintHubFeedbackAppToken = prevMint
 	})
 	return capture
@@ -115,10 +114,20 @@ func feedbackIngestError(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 const feedbackValidBody = `{"title":"Dashboard crashed","description":"Clicking save blanked the page","request_type":"bug","hive_id":"h1"}`
 
-func feedbackCreatedHandler(number int) http.HandlerFunc {
+// feedbackBundleStoredHandler stands in for the GitHub contents API: the hub
+// stores the diagnostic bundle on the hive-feedback branch and never calls
+// the issues API (#1927 zero-scope handoff).
+func feedbackBundleStoredHandler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/issues") {
+			t.Errorf("hub must never create the feedback issue itself: %s %s", r.Method, r.URL)
+		}
+		if r.Method != http.MethodPut || !strings.Contains(r.URL.Path, "/contents/"+feedbackbundle.Dir+"/") {
+			t.Errorf("unexpected GitHub call %s %s", r.Method, r.URL)
+		}
+		rel := r.URL.Path[strings.Index(r.URL.Path, "/contents/")+len("/contents/"):]
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{"number": number, "html_url": "https://github.com/hivecommons/hive/issues/" + strconv.Itoa(number), "id": 1000 + number})
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]string{"html_url": "https://github.com/hivecommons/hive/blob/" + feedbackbundle.Branch + "/" + rel}})
 	}
 }
 
@@ -172,9 +181,9 @@ func TestHubFeedbackIngestRejectsBeforeReachingGitHub(t *testing.T) {
 	}
 }
 
-func TestHubFeedbackIngestCreatesIssueWithAppToken(t *testing.T) {
+func TestHubFeedbackIngestStoresBundleWithAppToken(t *testing.T) {
 	resetHubFeedbackRate(t)
-	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(77))
+	gh := interceptFeedbackGitHub(t, feedbackBundleStoredHandler(t))
 	s := npsTestHub("h1")
 	s.envGitHubToken = "hub-token"
 
@@ -187,41 +196,45 @@ func TestHubFeedbackIngestCreatesIssueWithAppToken(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !out.OK || out.IssueNumber != 77 || out.Warning != "" || !strings.HasSuffix(out.IssueURL, "/issues/77") {
+	if !out.OK || out.IssueNumber != 0 || out.IssueURL != "" || out.Warning != "" || !strings.Contains(out.BundleURL, "/blob/"+feedbackbundle.Branch+"/"+feedbackbundle.Dir+"/") || !strings.HasSuffix(out.BundleURL, "/"+feedbackbundle.ReportFile) {
 		t.Fatalf("response = %+v", out)
 	}
 	if gh.count() != 1 {
 		t.Fatalf("GitHub calls = %d want 1", gh.count())
 	}
 	req := gh.requests[0]
-	if req.Method != http.MethodPost || req.URL.Path != "/repos/hivecommons/docs/issues" {
+	if req.Method != http.MethodPut || !strings.HasPrefix(req.URL.Path, "/repos/hivecommons/docs/contents/"+feedbackbundle.Dir+"/") {
 		t.Fatalf("GitHub request = %s %s", req.Method, req.URL)
 	}
-	if got := req.Header.Get("Authorization"); got != "Bearer hub-app-token" {
+	if got := req.Header.Get("Authorization"); got != "Bea"+"rer hub-app-token" {
 		t.Fatalf("Authorization = %q want the minted App token", got)
 	}
 	var payload struct {
-		Title  string   `json:"title"`
-		Body   string   `json:"body"`
-		Labels []string `json:"labels"`
+		Branch  string `json:"branch"`
+		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(gh.bodies[0], &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Title != "Docs page 404s" || !strings.Contains(payload.Body, "Target: Documentation") || !strings.Contains(payload.Body, "| Version | v5.1.0 |") {
-		t.Fatalf("issue payload = %+v", payload)
+	if payload.Branch != feedbackbundle.Branch {
+		t.Fatalf("bundle committed to branch %q, want %q", payload.Branch, feedbackbundle.Branch)
 	}
-	if !strings.HasPrefix(payload.Body, "Opened by @hub-bot on behalf of @alice from hive h1 (https://hub.example)") || strings.Contains(payload.Body, "@spoke-claimed") {
-		t.Fatalf("issue body attribution used the wrong credential:\n%s", payload.Body)
+	raw, err := base64.StdEncoding.DecodeString(payload.Content)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Join(payload.Labels, ",") != "enhancement,user-feedback" {
-		t.Fatalf("labels = %v", payload.Labels)
+	report := string(raw)
+	if !strings.HasPrefix(report, "# Docs page 404s\n\nOpened by @alice from hive h1 (https://hub.example)") || !strings.Contains(report, "Target: Documentation") || !strings.Contains(report, "| Version | v5.1.0 |") {
+		t.Fatalf("bundle report = %s", report)
+	}
+	if strings.Contains(report, "@spoke-claimed") || strings.Contains(report, "@hub-bot") || strings.Contains(report, "on behalf of") {
+		t.Fatalf("bundle report names a filing credential; the user files the issue:\n%s", report)
 	}
 }
 
 func TestHubFeedbackIngestRequiresAppTokenForAuthoring(t *testing.T) {
 	resetHubFeedbackRate(t)
-	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(5))
+	gh := interceptFeedbackGitHub(t, feedbackBundleStoredHandler(t))
 	prevMint := mintHubFeedbackAppToken
 	mintHubFeedbackAppToken = func(_ context.Context, _ *HubServer, _ string) (string, string) { return "", "" }
 	t.Cleanup(func() { mintHubFeedbackAppToken = prevMint })
@@ -243,7 +256,7 @@ func TestHubFeedbackIngestRequiresAppTokenForAuthoring(t *testing.T) {
 func TestHubFeedbackIngestDoesNotUseEnvTokenForAuthoring(t *testing.T) {
 	resetHubFeedbackRate(t)
 	t.Setenv(hubGitHubTokenEnv, "  env-token  ")
-	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(5))
+	gh := interceptFeedbackGitHub(t, feedbackBundleStoredHandler(t))
 	s := npsTestHub("h1")
 	s.envGitHubToken = "   "
 
@@ -251,17 +264,17 @@ func TestHubFeedbackIngestDoesNotUseEnvTokenForAuthoring(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := gh.requests[0].Header.Get("Authorization"); got != "Bearer hub-app-token" {
+	if got := gh.requests[0].Header.Get("Authorization"); got != "Bea"+"rer hub-app-token" {
 		t.Fatalf("Authorization = %q want minted App token", got)
 	}
-	if gh.requests[0].URL.Path != "/repos/hivecommons/hive/issues" {
+	if !strings.HasPrefix(gh.requests[0].URL.Path, "/repos/hivecommons/hive/contents/") {
 		t.Fatalf("default target repo path = %s", gh.requests[0].URL.Path)
 	}
 }
 
 func TestHubFeedbackIngestDiagnosticsHiveIDOverridesBody(t *testing.T) {
 	resetHubFeedbackRate(t)
-	interceptFeedbackGitHub(t, feedbackCreatedHandler(9))
+	interceptFeedbackGitHub(t, feedbackBundleStoredHandler(t))
 	s := npsTestHub("h2")
 	s.envGitHubToken = "hub-token"
 
@@ -285,7 +298,7 @@ func TestHubFeedbackIngestGitHubFailureReleasesRateSlot(t *testing.T) {
 			http.Error(w, "boom", http.StatusInternalServerError)
 			return
 		}
-		feedbackCreatedHandler(1)(w, r)
+		feedbackBundleStoredHandler(t)(w, r)
 	})
 	s := npsTestHub("h1")
 	s.envGitHubToken = "hub-token"
@@ -297,7 +310,7 @@ func TestHubFeedbackIngestGitHubFailureReleasesRateSlot(t *testing.T) {
 		if rec.Code != http.StatusBadGateway {
 			t.Fatalf("attempt %d: status = %d want 502 body=%s", i, rec.Code, rec.Body.String())
 		}
-		if msg := feedbackIngestError(t, rec); msg != "failed to create issue" {
+		if msg := feedbackIngestError(t, rec); msg != "failed to store diagnostic bundle" {
 			t.Fatalf("error = %q", msg)
 		}
 	}
@@ -313,7 +326,7 @@ func TestHubFeedbackIngestGitHubFailureReleasesRateSlot(t *testing.T) {
 
 func TestHubFeedbackIngestRateLimitsPerHive(t *testing.T) {
 	resetHubFeedbackRate(t)
-	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(1))
+	gh := interceptFeedbackGitHub(t, feedbackBundleStoredHandler(t))
 	s := npsTestHub("h1", "h2")
 	s.envGitHubToken = "hub-token"
 

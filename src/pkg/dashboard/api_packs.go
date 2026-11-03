@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -49,10 +49,14 @@ func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
 
 // ApplyPackResult holds the outcome of applying an ACMM pack.
 type ApplyPackResult struct {
-	Name            string           `json:"name"`
-	Created         []string         `json:"created"`
-	Updated         []string         `json:"updated"`
-	Skipped         []string         `json:"skipped"`
+	Name    string   `json:"name"`
+	Created []string `json:"created"`
+	Updated []string `json:"updated"`
+	Skipped []string `json:"skipped"`
+	// Preserved lists agents whose hand-set backend (no owner stamp, differing
+	// from the pack default) was kept and stamped operator-owned (#13221).
+	// Preserved agents are also counted in Skipped.
+	Preserved       []string         `json:"preserved,omitempty"`
 	Paused          []string         `json:"paused"`
 	Resumed         []string         `json:"resumed"`
 	GovernorChanges *GovernorChanges `json:"governor_changes,omitempty"`
@@ -132,6 +136,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	var skipped []string
 
 	var updated []string
+	var preserved []string
 	// Collect per-agent create failures instead of aborting the whole apply on
 	// the first one. Aborting mid-loop leaves a partially reconciled roster
 	// (some of the level's agents added, the rest missing) that no longer
@@ -147,6 +152,14 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// the manager's process table and were re-registered. A repair, not a
 	// creation — it never feeds `created` or isFirstApplyOrExpansion (#5632).
 	var readded []string
+	// Read once, before this apply creates or moves anything, so every pack
+	// agent judges the hive's gateway on the same pre-apply roster rather
+	// than on agents this apply already moved.
+	hiveBackends := s.hiveAgentBackends()
+	roster := make(map[string]bool, len(pack.Agents))
+	for _, pa := range pack.Agents {
+		roster[strings.ToLower(pa.Name)] = true
+	}
 	for _, pa := range pack.Agents {
 		// A deliberately deleted agent is NOT re-created, at any level. The
 		// pack listing it is exactly why deletion did not stick: ApplyPack
@@ -156,8 +169,12 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			tombstoned = append(tombstoned, pa.Name)
 			continue
 		}
+		hiveGateway := s.hiveGatewayBackend(hiveBackends, pa.Name, roster)
 		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
 			changed := false
+			// stamped records an ownership-only change that must be persisted
+			// but is not a value update (so it never feeds `updated`).
+			stamped := false
 
 			// Pack-behavior fields define what an agent DOES at a given ACMM
 			// level (which kick template it runs, its issue/PR mode, which model,
@@ -183,8 +200,16 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				existing.KickTemplate = pa.KickTemplate
 				changed = true
 			}
-			if pa.Mode != "" && existing.Mode != pa.Mode {
+			// An explicit level change (forceGovernor) hands mode back to the
+			// pack, since mode is most of what a level means; a same-level
+			// restart leaves an operator-owned mode alone.
+			if forceGovernor && existing.ModeIsOperatorOwned() {
+				existing.ModeOwner = config.FieldOwnerPack
+				changed = true
+			}
+			if pa.Mode != "" && existing.Mode != pa.Mode && !existing.ModeIsOperatorOwned() {
 				existing.Mode = pa.Mode
+				existing.ModeOwner = config.FieldOwnerPack
 				changed = true
 			}
 			// Model is reconciled to the pack ONLY while the pack still owns
@@ -197,13 +222,50 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// A pack model names a model of the pack's backend; when the
 			// spoke's backends list replaced that backend (#11310) the model is
 			// not seeded, so the replacement backend launches its own default.
+			// The same holds when the agent itself was moved onto a model
+			// gateway (#9945): the pack's copilot id `claude-sonnet-4-6` was
+			// re-seeded on every restart onto a `litellm` agent, outranked the
+			// gateway's default_model, and 403'd as a model the team is not
+			// entitled to — and deleting the `model:` line by hand did not
+			// stick. A pack-owned model is cleared there instead, so the
+			// gateway default applies.
 			packBackend, backendReplaced := s.packAgentBackend(pa)
+			// A pack agent whose backend the pack still owns follows the
+			// hive's gateway (#14678): from the CLI the pack gave it, and
+			// again from a gateway an earlier apply moved it onto when the
+			// operator later moves the hive to another. Only a backend the
+			// pack itself wrote moves — never an operator's pick, nor a
+			// legacy unowned one.
+			gw := gatewayPlacement(packBackend, backendReplaced, hiveGateway)
+			if gw != "" && existing.BackendIsPackOwned() && !strings.EqualFold(existing.Backend, gw) {
+				s.logger.Info("moving pack-owned agent onto the hive's inference gateway",
+					"agent", pa.Name, "backend", existing.Backend, "gateway", gw)
+				existing.Backend = gw
+				if !existing.ModelIsOperatorOwned() {
+					existing.Model = ""
+				}
+				changed = true
+			}
+			onForeignGateway := s.agentOnForeignGatewayBackend(existing.Backend, packBackend)
 			packModel := pa.Model
-			if backendReplaced {
+			// A hand-set backend other than the pack's (an operator-owned
+			// CLI such as codex, #13288) does not understand the pack's model
+			// id either. Only operator-owned backends qualify: a pack-owned
+			// backend that merely differs still takes the pack model.
+			onOtherBackend := existing.Backend != "" && existing.BackendIsOperatorOwned() &&
+				!strings.EqualFold(existing.Backend, packBackend)
+			if backendReplaced || onForeignGateway || onOtherBackend {
 				packModel = ""
 			}
 			if packModel != "" && existing.Model != packModel && !existing.ModelIsOperatorOwned() {
 				existing.Model = packModel
+				existing.ModelOwner = config.FieldOwnerPack
+				changed = true
+			}
+			if onForeignGateway && existing.Model != "" && !existing.ModelIsOperatorOwned() {
+				s.logger.Info("clearing pack model on gateway-routed agent so the gateway default_model applies",
+					"agent", pa.Name, "backend", existing.Backend, "model", existing.Model, "pack_backend", packBackend)
+				existing.Model = ""
 				existing.ModelOwner = config.FieldOwnerPack
 				changed = true
 			}
@@ -255,27 +317,59 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// Backend is fill-if-empty: it never varies by level (always the same
 			// per agent across all packs), and users legitimately pin it, so the
 			// pack must not stomp a user's choice. The spoke's backends
-			// allow/deny list (#11310) replaces a denied pack backend, and moves
-			// a still pack-owned agent off a backend that has since been denied.
-			if existing.Backend == "" && packBackend != "" && !existing.BackendIsOperatorOwned() {
+			// allow/deny list (#11310) replaces a denied pack backend and moves
+			// any agent — stamped pack-owned or unstamped (hand-set) — off a
+			// backend that has since been denied; an unstamped allowed backend
+			// that differs from the pack is kept and stamped operator (#13221).
+			//
+			// moveToPackBackend is the shared fill/deny path: put the agent on
+			// the pack backend as pack-owned and drop a non-operator model so
+			// the new backend uses its own default (unless the caller says the
+			// pack model still applies, i.e. the pack backend itself was kept).
+			moveToPackBackend := func(clearModel bool) {
 				existing.Backend = packBackend
 				existing.BackendOwner = config.FieldOwnerPack
-				if backendReplaced && !existing.ModelIsOperatorOwned() {
-					existing.Model = ""
-				}
-				changed = true
-			} else if existing.Backend != "" && !existing.BackendIsOperatorOwned() && !s.deps.Config.BackendAllowed(existing.Backend) {
-				s.logger.Info("moving pack-owned agent off backend denied by spoke backends config", "agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
-				existing.Backend = packBackend
-				existing.BackendOwner = config.FieldOwnerPack
-				if !existing.ModelIsOperatorOwned() {
+				if clearModel && !existing.ModelIsOperatorOwned() {
 					existing.Model = ""
 				}
 				changed = true
 			}
+			if existing.Backend == "" && packBackend != "" && !existing.BackendIsOperatorOwned() {
+				moveToPackBackend(backendReplaced)
+			} else if existing.Backend != "" && existing.BackendOwner != "" && !existing.BackendIsOperatorOwned() && !s.deps.Config.BackendAllowed(existing.Backend) {
+				s.logger.Info("moving pack-owned agent off backend denied by spoke backends config", "agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
+				moveToPackBackend(true)
+			} else if existing.Backend != "" && existing.BackendOwner == "" {
+				// A backend with no owner stamp predates ownership tracking or
+				// was written by hand in hive.yaml. A denied one is moved to the
+				// pack backend like a pack-owned one, so the spoke-wide deny
+				// (#11310) holds. An allowed one matching the pack default (or
+				// the pack's own raw value) is adopted as pack-owned; an allowed
+				// differing one is an operator choice and is stamped so it stays
+				// put (#13221).
+				switch {
+				case !s.deps.Config.BackendAllowed(existing.Backend):
+					s.logger.Warn("moving hand-set agent backend off backend denied by spoke backends config",
+						"agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
+					moveToPackBackend(true)
+				case strings.EqualFold(existing.Backend, packBackend) || strings.EqualFold(existing.Backend, pa.Backend):
+					existing.BackendOwner = config.FieldOwnerPack
+				default:
+					existing.BackendOwner = config.FieldOwnerOperator
+					preserved = append(preserved, pa.Name)
+					s.logger.Info("keeping hand-set agent backend that differs from the ACMM pack default",
+						"agent", pa.Name, "backend", existing.Backend, "pack_backend", packBackend)
+				}
+				stamped = true
+			}
 
 			// Respect user's enabled: false — don't override it.
-			if changed {
+			if changed || stamped {
+				// Any backend move above must not leave a launch_cmd that
+				// launches the previous CLI behind.
+				if changed {
+					s.reconcileLaunchCmdForBackend(pa.Name, &existing)
+				}
 				s.deps.Config.Agents[pa.Name] = existing
 				_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
 				if agentsDir != "" {
@@ -289,7 +383,9 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 						s.ClearSystemAlert(alertID)
 					}
 				}
-				updated = append(updated, pa.Name)
+				if changed {
+					updated = append(updated, pa.Name)
+				}
 				// A flag flip is a statement about whether a process should
 				// EXIST (#7446): leaving on-demand starts the agent — nothing
 				// else will, it was skipped at launch for being on-demand —
@@ -307,7 +403,8 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 						s.logger.Warn("could not stop agent after pack made it on-demand", "agent", pa.Name, "error", err)
 					}
 				}
-			} else {
+			}
+			if !changed {
 				skipped = append(skipped, pa.Name)
 			}
 			// The manager's process table tracks ENABLED agents only — it is
@@ -349,6 +446,12 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		if backendReplaced {
 			packModel = ""
 		}
+		// The pack model is an id from the pack CLI's catalogue; on the
+		// gateway it is cleared so the gateway's default_model applies (#9945).
+		if gw := gatewayPlacement(packBackend, backendReplaced, hiveGateway); gw != "" {
+			packBackend = gw
+			packModel = ""
+		}
 		agentCfg := config.AgentConfig{
 			Backend: packBackend,
 			Model:   packModel,
@@ -356,6 +459,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// the pack owns them until an operator overrides in the grid.
 			ModelOwner:   config.FieldOwnerPack,
 			BackendOwner: config.FieldOwnerPack,
+			ModeOwner:    config.FieldOwnerPack,
 			Enabled:      true,
 			DisplayName:  pa.DisplayName,
 			Description:  pa.Description,
@@ -504,7 +608,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// restart — clearing it here silently promoted `mode: ADVISORY` to the L5
 	// default ISSUES_AND_PRS on the projectbluefin spoke (#7503).
 	s.deps.AgentMgr.ClearModeOverrides(config.ACMMPackManagedAgentNames())
-	paused, resumed := s.syncAgentVisibility(level)
+	paused, resumed := s.syncAgentVisibilityWith(level, forceGovernor)
 	s.deps.AgentMgr.SyncModeFiles(level)
 
 	s.persistOnly()
@@ -537,7 +641,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// grep by agent name against this one line answers it. Since #5632 the
 	// list holds genuinely NEW roster members only — manager-table repairs are
 	// logged separately as readded_agents below.
-	s.logger.Info("ACMM pack applied", "hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned), "gate_removed", len(removedByGate), "created_agents", created, "tombstoned_agents", tombstoned, "skipped_agents", skipped)
+	s.logger.Info("ACMM pack applied", "hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "preserved", len(preserved), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned), "gate_removed", len(removedByGate), "created_agents", created, "tombstoned_agents", tombstoned, "skipped_agents", skipped, "preserved_agents", preserved)
 	if len(readded) > 0 {
 		// A repair worth naming, at INFO not buried in `created`: an ENABLED
 		// agent missing from the manager's process table is unusual (the table
@@ -558,6 +662,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		Created:    created,
 		Updated:    updated,
 		Skipped:    skipped,
+		Preserved:  preserved,
 		Paused:     paused,
 		Resumed:    resumed,
 		Tombstoned: tombstoned,
@@ -577,7 +682,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 func (s *Server) removeAgentsUnavailableAtLevel(level int, agentsDir string) []string {
 	var removed []string
 	for name := range s.deps.Config.Agents {
-		if agent.AgentAvailableAtACMMLevel(name, level) {
+		if crux.AgentAvailableAtACMMLevel(name, level) {
 			continue
 		}
 		delete(s.deps.Config.Agents, name)
@@ -944,7 +1049,29 @@ func crossesSelfMergeLevel(cfg *config.Config, prev, next int) bool {
 	return !cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&prev) && cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&next)
 }
 
+// packVisibilityPauseReason is the PausedReason syncAgentVisibility stamps on
+// an agent it pauses for not being in the level's pack. It records the level
+// the pause was made AT, which is what lets a later non-explicit sweep tell
+// "the level changed" apart from "the shipped pack definition changed".
+func packVisibilityPauseReason(level int) string {
+	return fmt.Sprintf("agent not in pack level %d", level)
+}
+
+// syncAgentVisibility is the explicit-operator sweep (level change / pack
+// apply): pack-paused agents now in the level's roster are resumed.
 func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
+	return s.syncAgentVisibilityWith(level, true)
+}
+
+// syncAgentVisibilityWith runs the sweep. explicit=false is the startup
+// ApplyPack that runs on every pod roll: it does NOT resume an agent the pack
+// paused at this SAME level. At an unchanged level the only way such an agent
+// joins the roster is a pack definition shipped in a new image (e.g. reviewer
+// joining the L2-L4 packs), and resuming it then silently undid a pause the
+// operator had been living with — the agent came back running and was kicked
+// after an unattended upgrade (#14368). The operator's explicit apply, or a
+// resume from the dashboard, still brings it back.
+func (s *Server) syncAgentVisibilityWith(level int, explicit bool) (paused, resumed []string) {
 	pack, err := config.ACMMPackByLevel(level)
 	if err != nil {
 		return nil, nil
@@ -964,6 +1091,7 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 	// Collect agents to resume and agents to pause.
 	var toResume []string
 	var leftRunning []string
+	var leftPaused []string
 	for name, ac := range s.deps.Config.Agents {
 		if packAgents[name] {
 			// On-demand agents (e.g. brainstorm) should never auto-resume;
@@ -974,6 +1102,10 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 			if s.deps.AgentMgr.IsPaused(name) {
 				proc, err := s.deps.AgentMgr.GetStatus(name)
 				if err == nil && proc.PausedTrigger == "acmm-pack" {
+					if !explicit && proc.PausedReason == packVisibilityPauseReason(level) {
+						leftPaused = append(leftPaused, name)
+						continue
+					}
 					toResume = append(toResume, name)
 				}
 			}
@@ -994,7 +1126,7 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 				leftRunning = append(leftRunning, name)
 				continue
 			}
-			if err := s.deps.AgentMgr.Pause(name, "acmm-pack", fmt.Sprintf("agent not in pack level %d", level)); err == nil {
+			if err := s.deps.AgentMgr.Pause(name, "acmm-pack", packVisibilityPauseReason(level)); err == nil {
 				paused = append(paused, name)
 			}
 		}
@@ -1005,6 +1137,11 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 		// is indistinguishable from a sweep that never considered them.
 		s.logger.Info("ACMM pack: non-pack agents left running (operator owns their pause state)",
 			"level", level, "agents", strings.Join(leftRunning, ", "))
+	}
+	if len(leftPaused) > 0 {
+		sort.Strings(leftPaused)
+		s.logger.Info("ACMM pack: agents now in the pack left paused (paused by the pack at this same level; resume from the dashboard or re-apply the pack)",
+			"level", level, "agents", strings.Join(leftPaused, ", "))
 	}
 
 	// Resume agents in parallel — each Resume() call takes ~2s,
@@ -1054,6 +1191,17 @@ func (s *Server) ensureCPUTier(level int) {
 	}
 }
 
+// agentOnForeignGatewayBackend reports whether an agent runs on an
+// inference-routed backend (litellm/vllm/llm-d or a configured gateway name)
+// other than the pack's backend, so a pack model — an id from the pack
+// backend's catalogue — does not apply to it.
+func (s *Server) agentOnForeignGatewayBackend(agentBackend, packBackend string) bool {
+	if agentBackend == "" || strings.EqualFold(agentBackend, packBackend) {
+		return false
+	}
+	return config.IsInferenceBackend(agentBackend) || s.deps.Config.Governor.ResolveGateway(agentBackend) != nil
+}
+
 // packAgentBackend is the backend a pack agent is placed on: the pack's own
 // choice, unless the spoke's backends allow/deny list (#11310) disallows it,
 // in which case the list's fallback ("" = hive default) is used instead and
@@ -1063,4 +1211,141 @@ func (s *Server) packAgentBackend(pa config.PackAgent) (backend string, replaced
 		return pa.Backend, false
 	}
 	return s.deps.Config.Backends.Fallback(), true
+}
+
+// agentBackendVote is one enabled agent's backend as seen by
+// hiveGatewayBackend: the backend and whether an operator picked it.
+type agentBackendVote struct {
+	backend       string
+	operatorOwned bool
+	packCLI       bool
+}
+
+// hiveAgentBackends snapshots the backend of every enabled agent, keyed by
+// name, for hiveGatewayBackend.
+func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
+	backends := map[string]agentBackendVote{}
+	for name, agent := range s.deps.Config.Agents {
+		if !agent.Enabled || s.deps.Config.IsAgentRemoved(name) {
+			continue
+		}
+		backend := strings.TrimSpace(agent.Backend)
+		backends[name] = agentBackendVote{
+			backend:       backend,
+			operatorOwned: agent.BackendIsOperatorOwned() || s.unownedGatewayBackend(agent),
+			packCLI:       agent.BackendIsPackOwned() && config.IsCLIBackend(backend),
+		}
+	}
+	return backends
+}
+
+// unownedGatewayBackend reports whether agent sits on an inference backend or
+// configured gateway with no backend_owner stamp. A pack only ever writes a
+// subscription CLI, and stamps a gateway it moved an agent onto as pack-owned,
+// so an unowned gateway backend is the operator's own choice — set in hive.yaml,
+// through an endpoint that does not stamp ownership, or before ownership
+// stamping existed. It counts as an operator pick for hiveGatewayBackend
+// (#14678): a hive whose operator moved every agent onto LiteLLM that way had
+// no operator-owned picks, so no gateway was found and the reviewer stayed on
+// copilot. An unowned CLI is not counted either way: it may be a legacy pack
+// placement, which must not veto the move it is the subject of.
+func (s *Server) unownedGatewayBackend(agent config.AgentConfig) bool {
+	backend := strings.TrimSpace(agent.Backend)
+	if agent.BackendOwner != "" || backend == "" {
+		return false
+	}
+	return s.agentOnForeignGatewayBackend(backend, "")
+}
+
+// hiveGatewayBackend is the inference gateway the operator moved the hive
+// onto, or "" when there is no such gateway. The agents considered are the
+// enabled ones in backends other than except, the pack agent being placed, so
+// its own placement is not counted against the move.
+//
+// The rule, in order:
+//  1. Unanimity: the operator-owned backends among those agents (including an
+//     unowned gateway backend, see unownedGatewayBackend) must all name
+//     the same inference backend or configured gateway. Any operator pick of
+//     a subscription CLI, of the hive default or of a different gateway, or no
+//     operator pick at all, yields "".
+//  2. At least two operator picks: one agent moved onto a gateway is not the
+//     hive moving, so the pack's CLI agents are not migrated with it.
+//  3. Majority: more than half of the agents NOT waiting on this apply run on
+//     the chosen gateway, whoever placed them there. Roster peers still on
+//     their pack CLI are excluded from that denominator (and from the
+//     numerator): they are the agents this apply is about to move, and
+//     counting them would make two late-added agents veto each other (#14721).
+//
+// Because roster peers on their pack CLI drop out, in a hive whose roster is
+// all on the pack CLI except the operator's picks, rule 3 reduces to rules 1
+// and 2: unanimous operator picks, at least two of them, move the pack agents.
+// The bar only bites against agents outside the level's roster, such as an
+// operator-owned subscription agent or a pack agent of another level.
+//
+// The answer therefore depends on the level being applied: ci-maintainer is in
+// the L3 roster but not the L2 one, so under ApplyPack(2) a ci-maintainer on
+// its pack CLI counts as a non-waiting agent and can hold the bar down, while
+// under ApplyPack(3) it is waiting, is excluded, and cannot.
+//
+// A pack agent a level adds later is placed on this backend instead of its
+// pack CLI (#14678): an operator who moved scanner/quality/guide onto a LiteLLM
+// gateway found the L2 `reviewer`, added afterwards, on copilot. Only
+// operator-owned backends choose the gateway, so the pack's own CLI
+// placements (the L2 `supervisor`/`brainstorm`, or a reviewer the pack
+// created before this fix) cannot veto the move they are the subject of.
+// Every agent already on the chosen gateway counts toward the majority,
+// whoever placed it there, so the pack agents an earlier level moved onto it
+// do not dilute the bar for the agent the next level adds.
+func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except string, roster map[string]bool) string {
+	shared := ""
+	for name, vote := range backends {
+		if strings.EqualFold(name, except) || !vote.operatorOwned {
+			continue
+		}
+		if !s.agentOnForeignGatewayBackend(vote.backend, "") {
+			return ""
+		}
+		if shared != "" && !strings.EqualFold(shared, vote.backend) {
+			return ""
+		}
+		shared = vote.backend
+	}
+	if shared == "" || !s.deps.Config.BackendAllowed(shared) {
+		return ""
+	}
+	onGateway, others, operatorPicks := 0, 0, 0
+	for name, vote := range backends {
+		if strings.EqualFold(name, except) {
+			continue
+		}
+		if vote.operatorOwned {
+			operatorPicks++
+		}
+		// A roster peer still on its pack CLI is itself waiting to be placed,
+		// as `except` is; counting it would let two late-added agents each
+		// veto the other's move (#14721).
+		if vote.packCLI && roster[strings.ToLower(name)] {
+			continue
+		}
+		others++
+		if strings.EqualFold(vote.backend, shared) {
+			onGateway++
+		}
+	}
+	if onGateway*2 <= others || operatorPicks < 2 {
+		return ""
+	}
+	return shared
+}
+
+// gatewayPlacement is the backend a pack-owned agent is moved to so it follows
+// the hive's gateway (hiveGatewayBackend), or "" to keep packBackend. Only a
+// pack whose own placement is a CLI is redirected: a pack that itself names a
+// gateway, or a placement the spoke's backends list already replaced, is left
+// alone.
+func gatewayPlacement(packBackend string, backendReplaced bool, hiveGateway string) string {
+	if hiveGateway == "" || backendReplaced || !config.IsCLIBackend(packBackend) {
+		return ""
+	}
+	return hiveGateway
 }

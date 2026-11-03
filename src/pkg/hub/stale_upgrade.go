@@ -1,7 +1,10 @@
 package hub
 
 import (
+	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // orphanedUpgradeGrace is the EXTRA time, beyond staleUpgradeTimeout, that a
@@ -144,6 +147,12 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 	// checked in since — and is not already on the target — so a genuinely
 	// fresh upgrade whose stamp merely lags a beat is never dropped.
 	zeroStart := entry.UpgradeStartedAt.IsZero()
+	// A spoke that is deliberately deferring the upgrade to drain in-flight
+	// agent kicks heartbeats normally and is not on the target, which would
+	// look exactly like an orphan. Leave it alone until its drain deadline.
+	if upgradeDrainActive(entry.UpgradeDrainUntil, now) {
+		return ev
+	}
 	if !zeroStart {
 		ev.elapsed = now.Sub(entry.UpgradeStartedAt)
 		if ev.elapsed < orphanedUpgradeClearAfter {
@@ -210,6 +219,44 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 		return ev
 	}
 
+	// The spoke is alive and still on its old build — but if its latest beat
+	// says it is DRAINING, the attempt is not gone, it is being held on purpose
+	// until in-flight agent kicks finish (#11876). Judged by liveness alone a
+	// draining spoke is indistinguishable from an orphan, and the arithmetic
+	// made the two collide on every daily-mode hive with a long turn in
+	// flight: orphanedUpgradeClearAfter is 2x staleUpgradeTimeout, the spoke's
+	// default drain is more than twice that, so the sweep abandoned the attempt
+	// — three days running, then declared a permanent UpgradeFailed blaming a
+	// floating tag — while the spoke was still politely waiting and would have
+	// rolled on its own. Hold the latch while the spoke says it is draining;
+	// the spoke's own deadline (plus the sweep's usual grace) bounds the hold,
+	// so a report that never counts down cannot wedge the latch forever.
+	if hold, reason := drainingUpgradeHold(entry.UpgradeDrain, ev.elapsed); hold {
+		ev.reason = reason
+		return ev
+	}
+	// No drain report at all. That is also what an OLDER spoke build looks
+	// like: drain reporting only shipped with #14322, and a spoke on a build
+	// before it drains silently for the full default window. Judged by
+	// liveness alone it was orphaned at orphanedUpgradeClearAfter — the three
+	// vllm-d :stable hives in #14856 (two daily windows running): the sweep
+	// cleared the latch at ~20-28m, the only remaining copy of the instruction
+	// was the in-memory heartbeatUpgrade map, the next merge-driven hub
+	// restart wiped it, the spoke's drain went stale a few beats later, and
+	// the daily fire date was already spent. Hold the latch for the default
+	// drain window plus the usual grace instead: the latch is what keeps the
+	// stale-recovery path re-arming delivery across hub restarts, so a spoke
+	// that is quietly draining keeps receiving UpgradeTo until its own
+	// deadline and rolls. A genuine orphan is re-armed by that same recovery
+	// path at staleUpgradeTimeout regardless of this sweep, so the hold costs
+	// only a longer "Upgrading" spinner before the retry budget is spent.
+	if entry.UpgradeDrainUntil.IsZero() {
+		if hold, reason := silentDrainUpgradeHold(entry.UpgradeDrain, zeroStart, ev.elapsed); hold {
+			ev.reason = reason
+			return ev
+		}
+	}
+
 	ev.orphaned = true
 	if zeroStart {
 		// No trustworthy start time to report an elapsed from — the flag itself is
@@ -223,6 +270,68 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 			", no upgrade attempt in flight"
 	}
 	return ev
+}
+
+// upgradeDrainOverrun is how far past the drain window the spoke itself
+// reported (waited + remaining, measured from the instruction) the sweep keeps
+// believing a drain report. The spoke proceeds — and so stops reporting, then
+// restarts — the moment its remaining time hits zero, so a report still
+// arriving this long after that is not a drain any more; it is a spoke that
+// cannot act on its own verdict, and the orphan path must get it.
+const upgradeDrainOverrun = orphanedUpgradeClearAfter
+
+// drainingUpgradeHold reports whether a latched upgrade should be left alone
+// because the spoke's latest heartbeat says it is draining in-flight agent
+// kicks before restarting, with the reason the sweep logs. elapsed is the time
+// since the hub instructed the upgrade (0 when the start clock is lost).
+func drainingUpgradeHold(d *UpgradeDrainReport, elapsed time.Duration) (bool, string) {
+	if d == nil || d.RemainingS <= 0 {
+		return false, ""
+	}
+	window := time.Duration(d.WaitedS+d.RemainingS) * time.Second
+	if elapsed > window+upgradeDrainOverrun {
+		return false, ""
+	}
+	reason := "spoke is draining in-flight agent kicks before restarting"
+	if len(d.InFlight) > 0 {
+		reason += " (" + joinNames(d.InFlight) + ")"
+	}
+	reason += " — waited " + roundedDuration(time.Duration(d.WaitedS)*time.Second) +
+		", at most " + roundedDuration(time.Duration(d.RemainingS)*time.Second) + " more"
+	return true, reason
+}
+
+// silentDrainClearAfter is how long an alive spoke that is still on its old
+// build and reports NO drain block is left latched before the sweep treats
+// the attempt as orphaned: the spoke's default drain window plus the same
+// grace the sweep already allows every attempt. Derived from the spoke-side
+// default so the two sides cannot drift apart again (#14856).
+const silentDrainClearAfter = time.Duration(config.DefaultUpgradeDrainTimeoutS)*time.Second + orphanedUpgradeClearAfter
+
+// silentDrainUpgradeHold reports whether a latched upgrade on an alive,
+// still-old spoke should be left alone because the spoke reports no drain at
+// all — the signature of a build that predates drain reporting (#14322) and
+// may be draining in-flight agent kicks silently for the default window.
+// A zero start clock is never held: with no elapsed to measure the hold would
+// be unbounded, and that entry belongs to the lost-clock path instead.
+func silentDrainUpgradeHold(d *UpgradeDrainReport, zeroStart bool, elapsed time.Duration) (bool, string) {
+	if d != nil || zeroStart || elapsed >= silentDrainClearAfter {
+		return false, ""
+	}
+	return true, "spoke is alive on its old build and reports no drain — holding " +
+		roundedDuration(silentDrainClearAfter-elapsed) + " more in case it is an older build draining in-flight agent kicks before restarting"
+}
+
+// joinNames renders a short agent list for log and timeline text.
+func joinNames(names []string) string {
+	out := ""
+	for i, n := range names {
+		if i > 0 {
+			out += ", "
+		}
+		out += n
+	}
+	return out
 }
 
 // evaluateSilentUpgrade decides the fate of a latched upgrade whose spoke has
@@ -384,9 +493,22 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 			h.UpgradeFailed = true
 			h.UpgradeError = "upgrade to " + orDash(h.UpgradeTarget) +
 				" never landed after " + itoa(h.OrphanedUpgradeSweeps) +
-				" attempts — hive is still on " + orDash(h.GitHash) +
-				". If its Deployment tracks a floating tag, the pod may be " +
-				"re-pulling that tag and landing on a build other than the target."
+				" attempts — hive is still on " + orDash(h.GitHash) + "."
+			if d := h.UpgradeDrain; d != nil {
+				// The spoke told us why: it has been draining past its own
+				// deadline and never restarted. Point the operator at the
+				// kicks, not at the image tag.
+				h.UpgradeError += " The spoke kept reporting an upgrade drain on in-flight agent kicks (" +
+					orDash(joinNames(d.InFlight)) + ") that never finished — check for a kick that never settles."
+			} else if fb := strings.TrimSpace(h.UpgradeRestartFallback); fb != "" {
+				// The spoke told us why: its Deployment patch was refused and
+				// it fell back to a process restart. Name that cause rather
+				// than guessing at the image tag (vllm-d Kyverno incident).
+				h.UpgradeError += " The spoke could not patch its own Deployment: " + fb + "."
+			} else {
+				h.UpgradeError += " If its Deployment tracks a floating tag, the pod may be " +
+					"re-pulling that tag and landing on a build other than the target."
+			}
 			h.UpgradeFailedAt = now
 			// Drop any armed instruction so no path keeps re-delivering it.
 			delete(s.heartbeatUpgrade, h.ID)
@@ -432,6 +554,7 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 				"upgrade to "+orDash(c.to)+" had already completed (hive is on "+
 					orDash(c.from)+") — cleared a stale in-flight latch",
 				"stale-upgrade-sweep")
+			s.noteUpgradeDone(c.id, "completed; stale latch cleared by the sweep", "", c.from)
 			continue
 		}
 		if c.exhausted {
@@ -448,6 +571,8 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 				"upgrade to "+orDash(c.to)+" abandoned after "+itoa(c.sweeps)+
 					" attempts — hive is still on "+orDash(c.from)+
 					" and is no longer being retried", "stale-upgrade-sweep")
+			s.noteUpgradeMissed(c.id,
+				"abandoned after "+itoa(c.sweeps)+" attempts: "+c.reason, c.from, c.to)
 			continue
 		}
 		s.logger.Warn("cleared orphaned upgrade flag — no attempt in flight",
@@ -462,6 +587,8 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 			"upgrade never completed after "+roundedDuration(c.elapsed)+
 				" — cleared stale in-flight state (still on "+orDash(c.from)+
 				", target was "+orDash(c.to)+")", "stale-upgrade-sweep")
+		s.noteUpgradeMissed(c.id,
+			"never completed after "+roundedDuration(c.elapsed)+": "+c.reason, c.from, c.to)
 	}
 	if len(swept) > 0 {
 		s.requestSave()

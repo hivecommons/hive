@@ -143,7 +143,7 @@ HARDEN="$(sed -n '/^hive_harden_runtime_config() {/,/^}/p' "$ENTRYPOINT")"
 if [ -z "$HARDEN" ]; then
   echo "  FAIL: could not extract hive_harden_runtime_config from $ENTRYPOINT"
   FAIL=$((FAIL + 1))
-elif ! printf '%s' "$HARDEN" | grep -q 'chown'; then
+elif ! grep -q 'chown' <<<"$HARDEN"; then
   echo "  FAIL: hive_harden_runtime_config does not chown — 0600 on a root-owned"
   echo "        file is unreadable to the dev uid that reads it (#5360)"
   FAIL=$((FAIL + 1))

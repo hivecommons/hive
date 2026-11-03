@@ -599,3 +599,99 @@ func fakeUpgradeHelperRecording(t *testing.T, argsPath string) string {
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
+
+// A hub answer of 200 {"status":"current"} means the spoke is already at its
+// reachable target and nothing was armed. The relay must neither record a
+// "started" upgrade (nothing will roll) nor a "failed" one (nothing went
+// wrong) — the pre-existing 409 for this case was persisted as a failed
+// self-upgrade and rendered "Upgrade failed" (#12494).
+func TestHandleSelfUpgradeAlreadyCurrentIsNotRecordedAsStartedOrFailed(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "dashboard-upgrade-state.json")
+	oldStatePath := dashboardUpgradeStatePath
+	dashboardUpgradeStatePath = statePath
+	t.Cleanup(func() { dashboardUpgradeStatePath = oldStatePath })
+
+	const hubBody = `{"status":"current","current":"e0e0417","target":"e0e0417","channel":"edge","message":"already up to date — nothing to upgrade"}`
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(hubBody))
+	}))
+	defer hub.Close()
+
+	srv := NewServer(0, slog.Default())
+	srv.deps = &Dependencies{Config: &config.Config{
+		Hub:        config.HubConfig{URL: hub.URL},
+		HiveID:     "hosted-test-hive",
+		Dashboard:  config.DashboardConfig{AuthToken: "spoke-token"},
+		Deployment: config.DeploymentConfig{Runtime: "kubernetes"},
+	}, Logger: slog.Default()}
+	req := httptest.NewRequest(http.MethodPost, "/api/self-upgrade", nil)
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	srv.handleSelfUpgrade(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	var body struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode relayed body %s: %v", w.Body.String(), err)
+	}
+	if body.Status != hubUpgradeStatusCurrent || body.Error != "" || !strings.Contains(body.Message, "already up to date") {
+		t.Errorf("relayed body = %+v, want the hub's status=current no-op passed through verbatim", body)
+	}
+	if st := readDashboardUpgradeState(); st != nil {
+		t.Errorf("dashboard upgrade state = %+v, want none recorded for an already-current no-op", st)
+	}
+}
+
+func TestHubUpgradeBodyIsCurrent(t *testing.T) {
+	cases := map[string]bool{
+		`{"status":"current","current":"abc1234"}`:  true,
+		`{"status":"upgrading","mode":"heartbeat"}`: false,
+		`{"error":"only the owner can upgrade"}`:    false,
+		`not json`:                                  false,
+		``:                                          false,
+	}
+	for body, want := range cases {
+		if got := hubUpgradeBodyIsCurrent([]byte(body)); got != want {
+			t.Errorf("hubUpgradeBodyIsCurrent(%q) = %v, want %v", body, got, want)
+		}
+	}
+}
+
+// The spoke's Upgrade button must branch on status=current before declaring
+// success: a 2xx that armed nothing must not say "Upgrade started".
+func TestSelfUpgradeUIHandlesAlreadyCurrent(t *testing.T) {
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	start := strings.Index(html, "async function selfUpgrade(")
+	if start < 0 {
+		t.Fatal("selfUpgrade not found")
+	}
+	fn := html[start:]
+	if end := strings.Index(fn, "var _initialVersionHash"); end > 0 {
+		fn = fn[:end]
+	}
+	current := strings.Index(fn, "okBody.status === 'current'")
+	started := strings.Index(fn, "'Upgrade started")
+	if current < 0 {
+		t.Fatal("selfUpgrade must branch on status === 'current'")
+	}
+	if started < 0 || current > started {
+		t.Errorf("the status=current branch must precede the 'Upgrade started' toast (current=%d started=%d)", current, started)
+	}
+	if !strings.Contains(fn[current:started], "versionClearUpgradeProgress()") {
+		t.Error("the already-current branch must clear the upgrade progress it optimistically recorded")
+	}
+	if strings.Contains(fn[current:started], "'error')") {
+		t.Error("the already-current branch must not toast as an error")
+	}
+}

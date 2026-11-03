@@ -85,6 +85,9 @@ type HivesOverlay struct {
 	// escQuits is set by the hives-only entry, where the overlay is the whole
 	// program rather than a modal above the operator grid.
 	escQuits bool
+
+	// tree is the contribution tree's state; see hives_tree.go.
+	tree hivesTreeState
 }
 
 // HiveRow is one hive as the overlay draws it.
@@ -94,6 +97,7 @@ type HivesOverlay struct {
 // one refactor away from printing it. The app projects the fields this frame
 // shows and leaves the secret in the store.
 type HiveRow struct {
+	Scope         string
 	Disabled      bool
 	Name          string
 	Hub           string
@@ -120,6 +124,10 @@ const (
 	hivesModeRemove
 	// hivesModeRename is the single-field rename form.
 	hivesModeRename
+	hivesModeRepo
+	// hivesModeTree is the staged contribution tree (#13291). Its keys are
+	// bindings, not text, except while its search field is open.
+	hivesModeTree
 )
 
 // HivesActionKind names the mutation the app should perform.
@@ -140,6 +148,7 @@ const (
 	HivesActionStrategy
 	HivesActionEnable
 	HivesActionDisable
+	HivesActionToggleRepo
 )
 
 // HivesAction is the mutation Submit accepted, addressed by NAME rather than by
@@ -147,11 +156,12 @@ const (
 // shared with the CLI and may have moved under us), and an index into a stale
 // snapshot would then name a different hive.
 type HivesAction struct {
-	Kind     HivesActionKind
-	Name     string
-	Hub      string
-	NewName  string
-	Strategy string
+	Kind       HivesActionKind
+	Name       string
+	Hub        string
+	NewName    string
+	Strategy   string
+	Repository string
 }
 
 // NewHivesOverlay returns the overlay in its loading state.
@@ -182,7 +192,8 @@ func (o HivesOverlay) Pending() bool { return o.pending }
 //
 // The app routes rune presses to Type only while this is true, which is what
 // makes `a`, `d` and `r` bindings on the list and literal characters inside a
-// hive name.
+// hive name. The contribution tree also reports true: its letters are its own
+// bindings, so none of them may fall through to the program's quit keys.
 func (o HivesOverlay) Typing() bool { return o.mode != hivesModeList }
 
 // Rows returns the hives currently on screen, in the order they are drawn.
@@ -401,6 +412,21 @@ func (o HivesOverlay) BeginRename() (HivesOverlay, bool) {
 	return o, true
 }
 
+// BeginRepo opens a personal exclusion toggle; the application resolves the
+// current saved override after reloading, rather than trusting this row snapshot.
+func (o HivesOverlay) BeginRepo() (HivesOverlay, bool) {
+	if o.pending || o.mode != hivesModeList {
+		return o, false
+	}
+	row, ok := o.Selected()
+	if !ok {
+		return o, false
+	}
+	o.mode, o.target, o.typed = hivesModeRepo, row, ""
+	o.actionErr, o.note = "", ""
+	return o, true
+}
+
 // Cancel closes an open form and returns to the list, discarding what was
 // typed. It refuses while a mutation is pending: the write is already with the
 // filesystem and hiding its result would not undo it.
@@ -508,6 +534,12 @@ func (o HivesOverlay) Submit() (HivesOverlay, HivesAction, bool) {
 			return o, HivesAction{}, false
 		}
 		return o.start("Removing " + o.target.Name), HivesAction{Kind: HivesActionRemove, Name: o.target.Name}, true
+	case hivesModeRepo:
+		repository := strings.TrimSpace(o.typed)
+		if repository == "" {
+			return o, HivesAction{}, false
+		}
+		return o.start("Updating repository exclusion"), HivesAction{Kind: HivesActionToggleRepo, Name: o.target.Name, Repository: repository}, true
 	case hivesModeRename:
 		newName := strings.TrimSpace(o.typed)
 		if newName == "" || newName == o.target.Name {
@@ -600,9 +632,17 @@ const hivesActiveLegend = "* = active: the hub the relay solicits from first."
 // profile set is committed and the relay signal has been attempted.
 const hivesSwitchNote = "the running relay is signaled when present"
 
-// View renders the overlay's box, sized to its own content. Placing it over the
-// frame is the app's job, matching every other overlay.
-func (o HivesOverlay) View(width int) string {
+// View renders the overlay. The optional terminal height bounds the staged
+// review (24 rows by default); other modes size their box to its content.
+// Placing it over the frame is the app's job.
+func (o HivesOverlay) View(width int, height ...int) string {
+	if o.TreeReviewing() && !o.pending {
+		h := 24
+		if len(height) > 0 {
+			h = height[0]
+		}
+		return o.treeReviewView(width, h)
+	}
 	boxWidth := max(1, width-4)
 	contentWidth := max(1, boxWidth-2)
 
@@ -643,10 +683,18 @@ func (o HivesOverlay) bodyText(contentWidth int) string {
 	switch {
 	case o.pending:
 		return o.pendingWhat + "…"
+	case o.mode == hivesModeTree:
+		return o.treeBody(contentWidth)
 	case o.mode == hivesModeAdd:
 		return o.addBody()
 	case o.mode == hivesModeRemove:
 		return o.removeBody()
+	case o.mode == hivesModeRepo:
+		body := "Toggle personal repository exclusion for " + o.target.Name + "\n" + o.inputLine("Repository (owner/name or forge/host/owner/name)", o.typed, true) + "\nRequires a saved selection; initialize it with hives repos <hive> --select all-current."
+		if o.actionErr != "" {
+			body += "\n\n" + hivesErrorStyle.Render(o.actionErr)
+		}
+		return body
 	case o.mode == hivesModeRename:
 		return o.renameBody()
 	default:
@@ -681,12 +729,15 @@ func (o HivesOverlay) listBody(contentWidth int) string {
 		out.WriteString(o.hiveRow(i, cols, contentWidth))
 		out.WriteString("\n")
 	}
-	allDisabled := true
+	allDisabled, allIdle := true, true
 	for _, row := range o.rows {
 		allDisabled = allDisabled && row.Disabled
+		allIdle = allIdle && (row.Disabled || row.Scope == "none")
 	}
 	if allDisabled {
 		out.WriteString("\nAll hives disabled: relay idle after in-flight work; e to enable.")
+	} else if allIdle {
+		out.WriteString("\nAll hives empty or disabled: scoped relay idle after in-flight work; edit repository selections to resume.")
 	}
 	if o.actionErr != "" {
 		out.WriteString("\n" + hivesErrorStyle.Render(o.actionErr))
@@ -769,10 +820,14 @@ func (o HivesOverlay) hiveRow(i int, cols hiveColumns, contentWidth int) string 
 }
 
 func hiveDisplayName(row HiveRow) string {
-	if row.Disabled {
-		return "[disabled] " + row.Name
+	name := row.Name
+	if row.Scope != "" {
+		name += " (" + row.Scope + ")"
 	}
-	return row.Name
+	if row.Disabled {
+		return "[disabled] " + name
+	}
+	return name
 }
 
 func padCells(s string, width int, selected bool) string {
@@ -958,6 +1013,8 @@ func (o HivesOverlay) footer() string {
 	}
 	keys := ""
 	switch {
+	case o.mode == hivesModeTree:
+		keys = o.treeFooter()
 	case o.pending:
 		// No cancel offered while pending: the write is already under way and
 		// closing the overlay would neither undo it nor show its result.
@@ -966,12 +1023,14 @@ func (o HivesOverlay) footer() string {
 		keys = "type to edit  tab next field  enter add  esc cancel"
 	case o.mode == hivesModeRemove:
 		keys = "type the name  backspace edit  enter remove  esc cancel"
+	case o.mode == hivesModeRepo:
+		keys = "type repository  enter toggle exclusion  esc cancel"
 	case o.mode == hivesModeRename:
 		keys = "type to edit  backspace edit  enter rename  esc cancel"
 	case o.loading:
 		keys = closeHint
 	case o.loaded && len(o.rows) > 0:
-		keys = "j/k move  [/] rank  s strategy  e toggle  enter use  a add  d remove  r rename  " + closeHint
+		keys = "j/k move  [/] rank  s strategy  e toggle  x repo  enter use  a/d/r edit  t tree  " + closeHint
 	default:
 		keys = "a add  " + closeHint
 	}

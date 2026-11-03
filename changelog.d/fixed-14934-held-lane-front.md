@@ -1,0 +1,1 @@
+- Serialized merge lanes now release a held front PR on the next queued or self-authored sweep and promote the next waiting PR, instead of waiting for the front timeout ([#14934](https://github.com/hivecommons/hive/issues/14934)).

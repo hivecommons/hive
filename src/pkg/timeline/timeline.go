@@ -58,6 +58,11 @@ const (
 	KindClassified Kind = "classified"
 	// KindKicked: an agent was kicked to work the issue.
 	KindKicked Kind = "kicked"
+	// KindStarted: an agent signalled it began a PR for the issue (its
+	// `hive-open-issue claim` or first relay write on it — the instant the
+	// hive/in-progress label states). Sits between kicked and pr_opened so
+	// kick→start and start→PR are both measurable.
+	KindStarted Kind = "started"
 	// KindPROpened: a pull request was opened for the issue.
 	KindPROpened Kind = "pr_opened"
 	// KindMerged: the pull request merged (terminal, success).
@@ -80,7 +85,7 @@ const (
 
 // progressKinds are the non-terminal stages in furthest-first order, used to
 // derive a Journey's current stage.
-var progressKinds = []Kind{KindPROpened, KindStageCompleted, KindProgress, KindKicked, KindClassified, KindEnumerated}
+var progressKinds = []Kind{KindPROpened, KindStageCompleted, KindProgress, KindStarted, KindKicked, KindClassified, KindEnumerated}
 
 // Event is a single lifecycle datapoint. It is a plain value type with JSON
 // tags so producers and the FromSpan shim can stay decoupled from the Store's
@@ -481,6 +486,29 @@ func (s *Store) Journey(ref string) (Journey, bool) {
 	return j.clone(), true
 }
 
+// LinkedIssueRefs returns the refs of the ISSUE journeys whose pr_opened
+// stage names prRef (the "repo#N" of a pull request), so a merge observed
+// for that PR can be folded onto the issues it fixes. The PR's own journey
+// (ref == prRef) is excluded. Sorted for determinism.
+func (s *Store) LinkedIssueRefs(prRef string) []string {
+	if s == nil || prRef == "" {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for ref, j := range s.journeys {
+		if ref == prRef {
+			continue
+		}
+		if st := j.Stages[KindPROpened]; st != nil && st.Attrs[AttrPRRef] == prRef {
+			out = append(out, ref)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // synthesizeEvents renders a journey's stages back into per-stage Events
 // (newest first is the caller's job). Count is carried in attrs so consumers
 // of the event view can see collapse cardinality.
@@ -857,6 +885,8 @@ func stageLabel(kind Kind) string {
 		return "Classified"
 	case KindKicked:
 		return "Kicked"
+	case KindStarted:
+		return "Started"
 	case KindPROpened:
 		return "PR opened"
 	case KindMerged:
@@ -939,10 +969,16 @@ func (s *Store) persistLocked() error {
 	if err != nil {
 		return fmt.Errorf("marshaling lifecycle timeline: %w", err)
 	}
-	dir := filepath.Dir(s.path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(s.path)+".*.tmp")
+	return writeFileAtomic(s.path, data, "lifecycle timeline")
+}
+
+// writeFileAtomic commits data to path with the repo's atomic-persist idiom
+// (unique temp file + fsync + rename). label names the file in errors.
+func writeFileAtomic(path string, data []byte, label string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("creating tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("creating tmp %s: %w", label, err)
 	}
 	tmpPath := tmp.Name()
 	keep := false
@@ -953,19 +989,19 @@ func (s *Store) persistLocked() error {
 		}
 	}()
 	if err := tmp.Chmod(timelineFileMode); err != nil {
-		return fmt.Errorf("protecting tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("protecting tmp %s: %w", label, err)
 	}
 	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("writing tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("writing tmp %s: %w", label, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("syncing tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("syncing tmp %s: %w", label, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("closing tmp %s: %w", label, err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
-		return fmt.Errorf("committing lifecycle timeline: %w", err)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("committing %s: %w", label, err)
 	}
 	keep = true
 	return nil
@@ -980,6 +1016,8 @@ var spanKindMap = map[string]Kind{
 	"governor.kick":       KindKicked,
 	"agent.kick":          KindKicked,
 	"agent.kicked":        KindKicked,
+	"agent.started":       KindStarted,
+	"issue.started":       KindStarted,
 	"pr.opened":           KindPROpened,
 	"pr.open":             KindPROpened,
 	"pr.merged":           KindMerged,
@@ -989,6 +1027,7 @@ var spanKindMap = map[string]Kind{
 	"lifecycle.enumerate": KindEnumerated,
 	"lifecycle.classify":  KindClassified,
 	"lifecycle.kick":      KindKicked,
+	"lifecycle.started":   KindStarted,
 	"lifecycle.pr_opened": KindPROpened,
 	"lifecycle.merged":    KindMerged,
 	"lifecycle.blocked":   KindBlocked,
@@ -1036,6 +1075,7 @@ func KnownKinds() []Kind {
 		KindEnumerated,
 		KindClassified,
 		KindKicked,
+		KindStarted,
 		KindPROpened,
 		KindMerged,
 		KindBlocked,

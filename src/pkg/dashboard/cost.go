@@ -90,12 +90,33 @@ type costResponse struct {
 	CountUpdatedAt   string `json:"count_updated_at,omitempty"`
 	CountStatus      string `json:"count_status,omitempty"`
 	CountStale       bool   `json:"count_stale,omitempty"`
-	CountAvailable   bool   `json:"count_available"`
+	// CountStaleSince is when the counts stopped being confirmed by GitHub
+	// (RFC 3339), set with CountStale (hivecommons/hive#13376).
+	CountStaleSince string `json:"count_stale_since,omitempty"`
+	// CountSource is "search" or "forgestate" (webhook-maintained counters
+	// reconciled against search hourly).
+	CountSource    string `json:"count_source,omitempty"`
+	CountAvailable bool   `json:"count_available"`
 	// AdvisorByAgent is each agent's advisor-lane spend over the retained
 	// advisor records (#9725), reported beside Estimated.ByAgent rather than
 	// folded into it: the advisor's cost is the lane's, not the agent's
 	// model's. Windowed figures come from GET /api/advisor/spend.
 	AdvisorByAgent []advisor.AgentSpend `json:"advisor_by_agent"`
+	// CountPartial is set when the attributed count covers only some of the
+	// configured repos (the rest are still waiting on GitHub); CountError is
+	// why the latest attributed refresh failed or was partial, surfaced so
+	// the tile tooltip can say why instead of a bare "—" or a silent
+	// fallback to the merged-by-hive counter.
+	CountPartial bool   `json:"count_partial,omitempty"`
+	CountError   string `json:"count_error,omitempty"`
+	// DailyRollup is the per-UTC-day spend kept for ~2 years, ascending by
+	// day; the Cost section's chart uses it for buckets older than the
+	// 30-day snapshot ring (/api/cost/history). Empty until the first UTC
+	// day of snapshots has completed.
+	DailyRollup []CostDailyRollup `json:"daily_rollup"`
+	// Recording reports whether the running agents' configured models are
+	// actually being recorded (hivecommons/hive#13485); see cost_recording.go.
+	Recording costRecording `json:"recording"`
 }
 
 // costModelEntry is one row of the estimated per-model / per-agent breakdown.
@@ -206,6 +227,10 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 		resp.CountStatus = counts.Status
 		resp.CountStale = counts.Stale
 		resp.CountAvailable = true
+		resp.CountStaleSince = counts.StaleSince
+		resp.CountSource = counts.Source
+		resp.CountPartial = counts.Partial
+		resp.CountError = counts.Error
 		if counts.WindowStart != "" {
 			if t, err := time.Parse(time.RFC3339, counts.WindowStart); err == nil {
 				resp.CountWindowStart = t.UnixMilli()
@@ -214,10 +239,20 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp.CountStatus = "counts unavailable (GitHub rate-limited)"
 	}
+	if resp.CountError == "" && resp.CountBasis != "hive-attributed" {
+		// No attributed count is being served (fallback or nothing): say why
+		// the attributed refresh is failing.
+		resp.CountError = s.costCountError()
+		if resp.CountError != "" && !resp.CountAvailable {
+			resp.CountStatus = "counts unavailable (" + resp.CountError + ")"
+		}
+	}
 	if !resp.CountAvailable && resp.CountWindowStart == 0 {
 		resp.CountWindowStart = s.costCountWindowStart()
 	}
 	resp.CountWindowEnd = time.Now().UnixMilli()
+	resp.DailyRollup = s.CostDailyRollups()
+	resp.Recording = s.costRecording(resp.Estimated)
 
 	// --- Native cost per metered gateway ---
 	if s.deps != nil && s.deps.Config != nil {
@@ -236,9 +271,8 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) costCountWindowStart() int64 {
-	history := s.CostHistory()
-	if len(history) > 0 {
-		return history[0].Timestamp
+	if start := s.CostWindowStart(); !start.IsZero() {
+		return start.UnixMilli()
 	}
 	if est := s.estimatedCost(); est.WindowStart > 0 {
 		return est.WindowStart
@@ -246,21 +280,28 @@ func (s *Server) costCountWindowStart() int64 {
 	return 0
 }
 
+// costOutcomeCounts picks the divisor for the per-unit tiles: the collector's
+// hive-attributed count whenever one exists — fresh, stale or partial — and
+// the persisted merged-by-hive counter only when no attributed count has
+// ever been produced (at ACMM L5 humans merge every PR, so that fallback is
+// legitimately 0 and must not displace a stale attributed number).
 func (s *Server) costOutcomeCounts() *ghpkg.PRIssueCounts {
 	if s != nil && s.deps != nil && s.deps.MetricsCollector != nil {
-		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); prIssueCountsTotal(counts) > 0 && !counts.Stale {
+		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); prIssueCountsTotal(counts) > 0 {
 			return counts
 		}
 	}
 	if counts := s.persistedCostOutcomeCounts(); prIssueCountsTotal(counts) > 0 {
 		return counts
 	}
-	if s != nil && s.deps != nil && s.deps.MetricsCollector != nil {
-		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); prIssueCountsTotal(counts) > 0 {
-			return counts
-		}
-	}
 	return nil
+}
+
+func (s *Server) costCountError() string {
+	if s == nil || s.deps == nil || s.deps.MetricsCollector == nil {
+		return ""
+	}
+	return s.deps.MetricsCollector.GetPRIssueCountError()
 }
 
 func (s *Server) persistedCostOutcomeCounts() *ghpkg.PRIssueCounts {

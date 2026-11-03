@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"log/slog"
 	"os/exec"
 	"regexp"
@@ -37,6 +38,17 @@ const (
 	// not-planned/duplicate (#6463). Audited so the suppression is visible to
 	// operators — a silent gate would be indistinguishable from a lost finding.
 	AuditActionAgentIssueRejectedDuplicate = "agent_issue_rejected_duplicate"
+	// AuditActionAgentIssuePriorArtRefused is the audit action recorded when
+	// the issue-request watcher REFUSES a create under the prior-art filing
+	// verdict (hivecommons/hive#13879): either the request matches existing
+	// work at or above the gate threshold, or a medium match lacks the
+	// required "Gap vs existing" section. The detail names the match so the
+	// refusal is visible to operators, not just in the agent's bead store.
+	AuditActionAgentIssuePriorArtRefused = "agent_issue_prior_art_refused"
+	// AuditActionAgentIssueEmptyAdvisoryRefused: the relay refused an
+	// issue-create whose body is a dedupe checklist with nothing actionable
+	// in it (hivecommons/hive#15381).
+	AuditActionAgentIssueEmptyAdvisoryRefused = "agent_issue_empty_advisory_refused"
 	// AuditActionHiveIssueCreated is the audit action recorded when the hive
 	// itself creates an issue (advisory issue, ACMM-gap issue).
 	AuditActionHiveIssueCreated = "hive_issue_created"
@@ -45,6 +57,9 @@ const (
 	// the dashboard audit log: issue created → PR created → PR merged. Detail
 	// carries path= naming which hive path merged it (see PRAuditPath*).
 	AuditActionPRMerged = "pr_merged"
+	// AuditActionReleaseCreated is the audit action recorded when an eligible
+	// owner approval makes the hub create a GitHub release.
+	AuditActionReleaseCreated = "release_created"
 	// AuditActionPRClosed is the audit action recorded when the hive closes a
 	// PR WITHOUT merging it: the issue-request watcher's close relay targeting
 	// a pull request number. It is the "closed without merging" half of the
@@ -76,6 +91,10 @@ const (
 	// refused by the relay and never reach this entry. It is distinct from
 	// hive_label_applied, which is the hive labeling on its own initiative.
 	AuditActionAgentLabelApplied = "agent_label_applied"
+	// AuditActionAgentIssueDecisionResolved is recorded when the issue relay
+	// downgrades a Hive-authored non-risk engineering decision request from
+	// stage/085 parking to the ordinary actionable path.
+	AuditActionAgentIssueDecisionResolved = "agent_issue_decision_resolved"
 	// AuditActionAgentReviewRequested is recorded when the issue-request
 	// watcher asks users and/or teams to review a PR on an agent's behalf
 	// (kind "request_review", #9587). The detail carries who was asked.
@@ -99,9 +118,16 @@ const (
 	// AuditActionSentinelBlockedApproval records an approval/LGTM path refused
 	// because the configured sentinel alert label is present.
 	AuditActionSentinelBlockedApproval = "sentinel-blocked-approval"
+	// AuditActionReviewLabelGateRefused records a hive-review relay request
+	// refused because the PR carries none of review.require_labels.
+	AuditActionReviewLabelGateRefused = "review_label_gate_refused"
 	// AuditActionReviewModelFallback is recorded when an adversarial reviewer
 	// pool has no independent candidate and the configured fallback is used.
 	AuditActionReviewModelFallback = "review_model_fallback"
+	// AuditActionMergeRequestRefused records a merge-request relay request
+	// the lane policy refused (MergeRequestPolicyGate): the agent that
+	// asked, the PR and the gate it failed.
+	AuditActionMergeRequestRefused = "merge_request_refused"
 )
 
 // PR audit path values: the "path=" detail field on pr_merged and pr_closed
@@ -120,6 +146,15 @@ const (
 	// MergePR from the hive-merge relay, or a PR close from the issue-request
 	// watcher.
 	PRAuditPathRelay = "relay"
+	// PRAuditPathForge marks a merge the forge adapter (pkg/forge's GitHub
+	// Merge) carried out through MergePRVia, so forge-driven merges are not
+	// counted as relay merges.
+	PRAuditPathForge = "forge"
+	// PRAuditPathDashboard marks a merge an operator asked for from the
+	// dashboard's activity monitor ("Merge now as maintainer" on a
+	// Ready-for-human-merge row, hivecommons/hive#15078): the hive's App
+	// performs it, the audit line names the person.
+	PRAuditPathDashboard = "dashboard"
 )
 
 // System "agent" names recorded for creations no single coding agent
@@ -343,8 +378,9 @@ func HasAttributionTrailer(body string) bool {
 }
 
 // attributionIdentityFooter matches only the terminal block emitted by
-// bin/gh-wrapper.sh's _identity_footer, not arbitrary trailing Markdown.
-var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`[ \\t\\n]*$")
+// bin/gh-wrapper.sh's _identity_footer, not arbitrary trailing Markdown. The
+// footer may end with the origin marker (`<!-- hive:origin … -->`, #12539).
+var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`[ \\t]*(?:\\n[ \\t]*<!-- " + OriginMarkerName + "[^>]*-->)?[ \\t\\n]*$")
 
 // ParseAttributionTrailer extracts the launch metadata from the final visible
 // `— hive:` line in a PR body, optionally followed by Hive's identity footer.
@@ -401,32 +437,16 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 // cache fields: lowercase, strip quotes/backticks, and drop bracketed suffixes
 // such as "model[preview]".
 func NormalizeAttributionValue(value string) string {
-	v := strings.TrimSpace(strings.ToLower(value))
-	v = strings.Trim(v, "`'\"“”‘’")
-	if i := strings.Index(v, "["); i >= 0 {
-		v = strings.TrimSpace(v[:i])
-	}
-	v = strings.Trim(v, "`'\"“”‘’")
-	switch v {
-	case "", "auto", "<agent>", "<backend>", "<model>", "...", "…", "placeholder":
-		return "unknown"
-	}
-	return v
+	return modelfamily.Normalize(value)
 }
 
 func NormalizeAttributionModel(model string) string {
-	return NormalizeAttributionValue(model)
+	return modelfamily.Normalize(model)
 }
 
+// ModelFamily is modelfamily.Family: the normalized vendor prefix.
 func ModelFamily(model string) string {
-	m := NormalizeAttributionModel(model)
-	if m == "unknown" {
-		return "unknown"
-	}
-	if i := strings.Index(m, "-"); i >= 0 {
-		return m[:i]
-	}
-	return m
+	return modelfamily.Family(model)
 }
 
 // RequestedModel normalizes the model recorded in the trail: bob has no model

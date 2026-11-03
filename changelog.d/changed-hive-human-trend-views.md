@@ -1,0 +1,1 @@
+- Changed the dashboard's Hive vs human trend to show counts per bucket by default, with axes and a hover title per bucket. A View dropdown also offers the hive share over a trailing window and the original 100% share area.

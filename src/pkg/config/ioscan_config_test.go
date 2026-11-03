@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hivecommons/hive/pkg/ioscan"
+)
 
 // TestIoscanConfig_IsEnabled covers the F11 tri-state default-on contract:
 // a nil Enabled pointer (an omitted `enabled:` key, or a zero-valued
@@ -112,9 +116,96 @@ func TestIoscanConfig_FailClosedAtLevel(t *testing.T) {
 	}
 }
 
-func TestIoscanClassifierConfig_DefaultOff(t *testing.T) {
+func TestIoscanClassifierConfig_DefaultFollowsLevel(t *testing.T) {
 	var c IoscanConfig
-	if c.Classifier.Enabled {
-		t.Fatal("ioscan classifier must default off")
+	for level, want := range map[int]bool{0: false, 1: false, 3: false, 4: true, 5: true, 6: true, 7: false} {
+		if got := c.ClassifierEnabledAtLevel(level); got != want {
+			t.Errorf("ClassifierEnabledAtLevel(%d) = %v, want %v", level, got, want)
+		}
+	}
+	off := false
+	c.Classifier.Enabled = &off
+	if c.ClassifierEnabledAtLevel(5) {
+		t.Fatal("explicit enabled: false must win at L5")
+	}
+	on := true
+	c.Classifier.Enabled = &on
+	if !c.ClassifierEnabledAtLevel(1) {
+		t.Fatal("explicit enabled: true must win at L1")
+	}
+	disabled := false
+	c.Enabled = &disabled
+	if c.ClassifierEnabledAtLevel(5) {
+		t.Fatal("ioscan.enabled: false must switch the classifier off too")
+	}
+}
+
+func TestIoscanClassifierConfig_FailClosedAtLevel(t *testing.T) {
+	cases := []struct {
+		name, ioscanMode, classifierMode string
+		level                            int
+		want                             bool
+	}{
+		{"pack default L4 open", "", "", 4, false},
+		{"pack default L5 closed", "", "", 5, true},
+		{"pack default L6 closed", "", "", 6, true},
+		{"ioscan open inherited", "open", "", 5, false},
+		{"ioscan closed inherited", "closed", "", 1, true},
+		{"classifier open wins", "closed", "open", 6, false},
+		{"classifier closed wins", "open", "closed", 1, true},
+		{"case-insensitive", "", "CLOSED", 2, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := IoscanConfig{FailMode: tc.ioscanMode, Classifier: IoscanClassifierConfig{FailMode: tc.classifierMode}}
+			if got := c.ClassifierFailClosedAtLevel(tc.level); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIoscanClassifierConfig_CLIDefaults(t *testing.T) {
+	var c IoscanClassifierConfig
+	if c.CLIBackend() != "" {
+		t.Fatalf("CLIBackend() = %q, want empty (HTTP path)", c.CLIBackend())
+	}
+	if got := c.CLIBudgetPerEvalOrDefault(); got != ioscan.DefaultCLIClassifierBudgetPerEval || ioscan.DefaultCLIClassifierBudgetPerEval != 8 {
+		t.Fatalf("CLIBudgetPerEvalOrDefault() = %d, want 8", got)
+	}
+	if got := c.CLIDailyQuotaOrDefault(); got != ioscan.DefaultCLIClassifierDailyQuota || ioscan.DefaultCLIClassifierDailyQuota != 500 {
+		t.Fatalf("CLIDailyQuotaOrDefault() = %d, want 500", got)
+	}
+	if ioscan.DefaultCLIClassifierBudgetPerEval >= ioscan.DefaultClassifierBudgetPerEval {
+		t.Fatalf("CLI budget %d must be below the HTTP budget %d", ioscan.DefaultCLIClassifierBudgetPerEval, ioscan.DefaultClassifierBudgetPerEval)
+	}
+
+	c = IoscanClassifierConfig{Backend: "  claude ", CLIBudgetPerEval: 4, CLIDailyQuota: 50}
+	if c.CLIBackend() != "claude" || c.CLIBudgetPerEvalOrDefault() != 4 || c.CLIDailyQuotaOrDefault() != 50 {
+		t.Fatalf("explicit CLI values not honoured: %q %d %d", c.CLIBackend(), c.CLIBudgetPerEvalOrDefault(), c.CLIDailyQuotaOrDefault())
+	}
+}
+
+func TestIoscanClassifierConfig_ValidateCLI(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      IoscanClassifierConfig
+		wantErr bool
+	}{
+		{"zero values use defaults", IoscanClassifierConfig{}, false},
+		{"explicit values", IoscanClassifierConfig{Backend: "claude", CLIBudgetPerEval: 8, CLIDailyQuota: 500}, false},
+		{"budget at HTTP ceiling", IoscanClassifierConfig{CLIBudgetPerEval: ioscan.DefaultClassifierBudgetPerEval}, false},
+		{"negative budget", IoscanClassifierConfig{CLIBudgetPerEval: -1}, true},
+		{"budget above HTTP ceiling", IoscanClassifierConfig{CLIBudgetPerEval: ioscan.DefaultClassifierBudgetPerEval + 1}, true},
+		{"negative quota", IoscanClassifierConfig{CLIDailyQuota: -1}, true},
+		// Backend names are refused at boot with a log line, not at load.
+		{"refused backend still loads", IoscanClassifierConfig{Backend: "copilot"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.in.ValidateCLI(); (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateCLI() err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }

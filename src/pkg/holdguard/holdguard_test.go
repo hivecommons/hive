@@ -120,13 +120,13 @@ func TestTouchClearMarkCommented(t *testing.T) {
 
 	before, _ := s.Recorded("r", 1)
 	*clock = clock.Add(time.Hour)
-	s.Touch("r", 1)
+	s.Touch("r", 1, "")
 	after, _ := s.Recorded("r", 1)
 	if !after.UpdatedAt.After(before.UpdatedAt) {
 		t.Fatal("Touch must refresh UpdatedAt")
 	}
 	// Touch/MarkCommented/Clear on unknown PRs are safe no-ops.
-	s.Touch("r", 99)
+	s.Touch("r", 99, "head")
 	s.MarkCommented("r", 99)
 	s.Clear("r", 99)
 
@@ -215,8 +215,8 @@ func TestPruneAgesOutStaleEntriesOnly(t *testing.T) {
 	s.Snapshot("r", 2, "h2", nil)
 
 	*clock = clock.Add(Retention + time.Hour)
-	s.Touch("r", 2) // still observed held — must survive
-	s.Prune(0)      // 0 falls back to Retention
+	s.Touch("r", 2, "h2") // still observed held — must survive
+	s.Prune(0)            // 0 falls back to Retention
 
 	if _, ok := s.Recorded("r", 1); ok {
 		t.Fatal("stale entry must be pruned")
@@ -350,5 +350,81 @@ func TestEmptyPathStoreDoesNotWrite(t *testing.T) {
 	s.Snapshot("r", 1, "h", nil) // must not panic on save with no path
 	if _, ok := s.Recorded("r", 1); !ok {
 		t.Fatal("path-less store must still track entries in memory")
+	}
+}
+
+func TestLiftCoversCurrentHead(t *testing.T) {
+	push := time.Date(2026, 10, 22, 6, 25, 0, 0, time.UTC)
+	after := push.Add(12 * time.Hour)
+	before := push.Add(-time.Hour)
+	cases := []struct {
+		name string
+		lift GateLift
+		want bool
+	}{
+		{"human lift after the rebase covers the head", GateLift{LiftedAt: after, LatestPushAt: push}, true},
+		{"human lift before a later push is drift", GateLift{LiftedAt: before, LatestPushAt: push}, false},
+		{"push at the exact lift instant is drift", GateLift{LiftedAt: push, LatestPushAt: push}, false},
+		{"hive account lift never covers", GateLift{LiftedAt: after, LatestPushAt: push, ActorIsHive: true}, false},
+		{"bot lift never covers", GateLift{LiftedAt: after, LatestPushAt: push, ActorIsBot: true}, false},
+		{"unknown lift time fails closed", GateLift{LatestPushAt: push}, false},
+		{"unknown push time fails closed", GateLift{LiftedAt: after}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := LiftCoversCurrentHead(tc.lift); got != tc.want {
+				t.Fatalf("LiftCoversCurrentHead(%+v) = %v, want %v", tc.lift, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestObservedHeldHeadTracksLatestHeldHead(t *testing.T) {
+	s, _ := newTestStore(t)
+	s.Snapshot("r", 1, "c1", nil)
+	if rec, _ := s.Recorded("r", 1); rec.ObservedHeldHeadSHA != "c1" {
+		t.Fatalf("ObservedHeldHeadSHA after Snapshot = %q, want c1", rec.ObservedHeldHeadSHA)
+	}
+	s.Touch("r", 1, "p1")
+	s.Touch("r", 1, "") // a headless observation keeps the last one
+	rec, _ := s.Recorded("r", 1)
+	if rec.HeadSHA != "c1" || rec.ObservedHeldHeadSHA != "p1" {
+		t.Fatalf("after Touch: %+v, want baseline c1 and observed held head p1", rec)
+	}
+	s.ReArm("r", 1, "f1", nil)
+	if rec, _ := s.Recorded("r", 1); rec.ObservedHeldHeadSHA != "f1" {
+		t.Fatalf("ObservedHeldHeadSHA after ReArm = %q, want f1 (an earlier episode's head must not carry over)", rec.ObservedHeldHeadSHA)
+	}
+	s.AdvanceHygiene("r", 1, "m1", nil)
+	if rec, _ := s.Recorded("r", 1); rec.ObservedHeldHeadSHA != "m1" {
+		t.Fatalf("ObservedHeldHeadSHA after AdvanceHygiene = %q, want m1", rec.ObservedHeldHeadSHA)
+	}
+}
+
+func TestLiftCoversObservedHead(t *testing.T) {
+	lifted := time.Date(2026, 10, 22, 18, 19, 0, 0, time.UTC)
+	human := GateLift{LiftedAt: lifted}
+	rec := Entry{HeadSHA: "c1", ObservedHeldHeadSHA: "p1"}
+	cases := []struct {
+		name    string
+		lift    GateLift
+		rec     Entry
+		current string
+		want    bool
+	}{
+		{"human lift on the head observed while held covers it", human, rec, "p1", true},
+		{"head never observed while held is drift", human, rec, "f1", false},
+		{"record without an observed head fails closed", human, Entry{HeadSHA: "c1"}, "p1", false},
+		{"unknown current head fails closed", human, rec, "", false},
+		{"unknown lift time fails closed", GateLift{}, rec, "p1", false},
+		{"hive account lift never covers", GateLift{LiftedAt: lifted, ActorIsHive: true}, rec, "p1", false},
+		{"bot lift never covers", GateLift{LiftedAt: lifted, ActorIsBot: true}, rec, "p1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := LiftCoversObservedHead(tc.lift, tc.rec, tc.current); got != tc.want {
+				t.Fatalf("LiftCoversObservedHead(%+v, %+v, %q) = %v, want %v", tc.lift, tc.rec, tc.current, got, tc.want)
+			}
+		})
 	}
 }

@@ -3,7 +3,7 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -50,11 +50,13 @@ func TestBuildAgentsWithHidden_ConfigOnlyPassReportsEveryOmission(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{
 				ACMMLevel: &level,
-				Agents:    map[string]config.AgentConfig{tc.agentName: tc.agentCfg},
+				AgentRuntimeConfig: config.AgentRuntimeConfig{
+					Agents: map[string]config.AgentConfig{tc.agentName: tc.agentCfg},
+				},
 			}
 			// Deliberately empty: this is the config-only pass, i.e. an agent
 			// the runtime never registered.
-			statuses := map[string]*agent.AgentProcess{}
+			statuses := map[string]*crux.Process{}
 
 			agents, hidden := buildAgentsWithHidden(statuses, cfg, governor.State{Mode: governor.ModeIdle})
 
@@ -73,12 +75,14 @@ func TestBuildAgentsWithHidden_ConfigOnlyPassReportsEveryOmission(t *testing.T) 
 
 func TestBuildAgentsWithHidden_ConfigOnlyDisabledAgentGetsCard(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"guide": {Backend: "claude", Enabled: false, DisplayName: "Guide"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"guide": {Backend: "claude", Enabled: false, DisplayName: "Guide"},
+			},
 		},
 	}
 
-	agents, hidden := buildAgentsWithHidden(map[string]*agent.AgentProcess{}, cfg, governor.State{Mode: governor.ModeIdle})
+	agents, hidden := buildAgentsWithHidden(map[string]*crux.Process{}, cfg, governor.State{Mode: governor.ModeIdle})
 
 	if len(hidden) != 0 {
 		t.Fatalf("hidden = %+v, want disabled config-only agent surfaced as a card", hidden)
@@ -101,12 +105,14 @@ func TestBuildAgentsWithHidden_ConfigOnlyPassKeepsAllowedAgentVisible(t *testing
 	level := 1
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"guide": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"guide": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
 
-	agents, hidden := buildAgentsWithHidden(map[string]*agent.AgentProcess{}, cfg, governor.State{Mode: governor.ModeIdle})
+	agents, hidden := buildAgentsWithHidden(map[string]*crux.Process{}, cfg, governor.State{Mode: governor.ModeIdle})
 
 	names := agentNamesFromFrontend(agents)
 	if len(names) != 1 || names[0] != "guide" {

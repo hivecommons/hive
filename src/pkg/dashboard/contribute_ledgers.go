@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -58,15 +59,30 @@ const (
 	completionVerdictNoWorkNeeded  = "no_work_needed"
 	completionVerdictBlocked       = "blocked"
 	completionVerdictNeedsDecision = "needs_decision"
+	completionVerdictWrongBase     = "wrong_base"
 )
 
 // noWorkReasonMaxLen caps the client-supplied VerdictReason before it is stored
 // in the PVC-backed verdict ledger and echoed into logs: the field is scraped
 // from arbitrary agent output, so an unbounded value would let a confused (or
-// hostile) relay bloat the ledger file. 200 runes comfortably fits the
+// hostile) relay bloat the ledger file. 200 bytes comfortably fits the
 // machine-readable reasons ("maintainer_gated", "already_covered") plus a short
 // free-text explanation.
 const noWorkReasonMaxLen = 200
+
+// truncateReasonBytes caps a reason at noWorkReasonMaxLen bytes without splitting
+// a UTF-8 rune. It preserves the retained text verbatim for ledger auditing;
+// GitHub comments apply their additional sanitization in sanitizeReportedReason.
+func truncateReasonBytes(reason string) string {
+	if len(reason) <= noWorkReasonMaxLen {
+		return reason
+	}
+	cut := noWorkReasonMaxLen
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
+}
 
 var completedTasksFile = "/data/contributors/completed-tasks.json"
 
@@ -237,6 +253,8 @@ type noWorkVerdictRecord struct {
 	EvidenceCommit        string    `json:"evidence_commit,omitempty"`
 	AlreadyDoneUnverified bool      `json:"already_done_unverified,omitempty"`
 	Blocked               bool      `json:"blocked,omitempty"`
+	WrongBase             bool      `json:"wrong_base,omitempty"`
+	TargetBranch          string    `json:"target_branch,omitempty"`
 }
 
 // suppressWindow is how long, from RecordedAt, this verdict withholds the
@@ -323,15 +341,8 @@ func (h *ContributeWSHub) saveNoWorkVerdicts() {
 // SERVER-side PR verification outcome to the verdict the hub acts on (#3987).
 // A VERIFIED PR always wins ("shipped") regardless of what the client claimed —
 // the self-reported field can neither hide nor fabricate shipped work. With no
-// verified PR, only an exact (case-insensitive) no_work_needed or blocked is
-// honoured; anything else — absent, unknown, or a claimed "shipped" whose PR
-// failed verification — normalizes to idle, which is byte-for-byte today's
-// behavior, so relays that never learn the field keep working unchanged.
-//
-// blocked (#7924) is accepted in two spellings: the verdict itself, or
-// no_work_needed with the WSMessage.VerdictBlocked marker set. The relay sends
-// the second — a hub older than this one then still sees the no_work_needed it
-// already books, rather than an unknown token it would normalize to idle.
+// verified PR, only a recognized completion verdict is honoured; anything else
+// normalizes to idle so older relays retain their existing behaviour.
 func normalizeCompletionVerdict(reported string, blocked bool, needsDecision bool, verifiedPR string) string {
 	if verifiedPR != "" {
 		return completionVerdictShipped
@@ -339,6 +350,9 @@ func normalizeCompletionVerdict(reported string, blocked bool, needsDecision boo
 	reported = strings.TrimSpace(reported)
 	if strings.EqualFold(reported, completionVerdictBlocked) {
 		return completionVerdictBlocked
+	}
+	if strings.EqualFold(reported, completionVerdictWrongBase) {
+		return completionVerdictWrongBase
 	}
 	if strings.EqualFold(reported, completionVerdictNoWorkNeeded) {
 		if blocked {
@@ -353,10 +367,11 @@ func normalizeCompletionVerdict(reported string, blocked bool, needsDecision boo
 }
 
 // isNoWorkFamilyVerdict reports whether a normalized verdict is an affirmative
-// "nothing to ship" conclusion — no_work_needed or its blocked sibling — as
-// opposed to shipped work or a bare return to idle.
+// conclusion that the dispatched task cannot ship on this attempt, as opposed
+// to shipped work or a bare return to idle.
 func isNoWorkFamilyVerdict(verdict string) bool {
-	return verdict == completionVerdictNoWorkNeeded || verdict == completionVerdictBlocked || verdict == completionVerdictNeedsDecision
+	return verdict == completionVerdictNoWorkNeeded || verdict == completionVerdictBlocked ||
+		verdict == completionVerdictNeedsDecision || verdict == completionVerdictWrongBase
 }
 
 // Completion-signal vocabulary (kubestellar/hive#5376). Originally diagnostic
@@ -486,6 +501,12 @@ func (h *ContributeWSHub) isSuppressedByNoWorkVerdictKey(key string, issueUpdate
 			"key", key, "expired", expired, "voided_by_activity", voided)
 		return false
 	}
+	if rec.WrongBase {
+		// A wrong-base record is routing memory, not a "nothing to do" hold.
+		// Keep the issue offerable after its ordinary short completion cooldown.
+		h.completedMu.Unlock()
+		return false
+	}
 	h.completedMu.Unlock()
 	if issueUpdatedAt.IsZero() {
 		// Activity unknown → fail open. See doc comment.
@@ -502,6 +523,26 @@ func (h *ContributeWSHub) noWorkVerdictRecordKey(key string) (noWorkVerdictRecor
 	defer h.completedMu.Unlock()
 	rec, ok := h.noWorkVerdicts[key]
 	return rec, ok
+}
+
+// wrongBaseTargetBranchKey returns the validated branch correction retained
+// from the latest wrong_base completion. Staleness is swept by the immediately
+// preceding isSuppressedByNoWorkVerdictKey call in both offer paths.
+func (h *ContributeWSHub) wrongBaseTargetBranchKey(key string, issueUpdatedAt time.Time) string {
+	if h == nil || key == "" {
+		return ""
+	}
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	rec, ok := h.noWorkVerdicts[key]
+	if !ok || !rec.WrongBase || rec.TargetBranch == "" {
+		return ""
+	}
+	if time.Since(rec.RecordedAt) >= rec.suppressWindow() ||
+		(!issueUpdatedAt.IsZero() && issueUpdatedAt.After(rec.RecordedAt)) {
+		return ""
+	}
+	return rec.TargetBranch
 }
 
 // issueUpdatedAtFromMap extracts the issue's GitHub updated_at from the
@@ -733,25 +774,25 @@ func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prUR
 	h.markTaskCompletedVerdictKey(worksource.Ref{Repo: repo, Number: number}.Key(), prURL, verdict, reporter, reason)
 }
 
+// markAlreadyDoneUnverified handles an "already done" verdict whose cited PR
+// or commit is missing or did not verify. The contributor's word is a claim,
+// not a fact: the issue gets a claim-worded comment and the longer offer hold,
+// but never the already-done label. That label is reserved for verified
+// evidence; it is a contributor skip label, so on an unverified claim it kept
+// unfinished work out of the queue until a maintainer noticed
+// (projectbluefin/chairlift#591, fixed later by chairlift#626).
 func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, reporter, reason string, evidence *VerdictEvidence) {
 	if h == nil || repo == "" || number <= 0 {
 		return
 	}
-	if len(reason) > noWorkReasonMaxLen {
-		reason = reason[:noWorkReasonMaxLen]
-	}
-	claim := ghpkg.IssueClaim{Repo: repo, Issue: number, Source: ghpkg.ClaimSourceVerdict, SourceReporter: reporter}
-	if evidence != nil {
-		claim.PRNumber = evidence.PR
-		if evidence.PR > 0 {
-			claim.PRRepo = repo
-		}
-	}
-	if err := h.markAlreadyDoneIssue(context.Background(), repo, number, claim, reporter, false); err != nil && h.logger != nil && err != ghpkg.ErrNoGitHubClient {
-		h.logger.Warn("[contribute-ws] already-done verdict label failed",
+	reason = truncateReasonBytes(reason)
+	hold := h.configuredAlreadyDoneUnverifiedHold()
+	// The comment goes out before the hold is booked so the hive's own
+	// comment does not count as newer issue activity that lifts the hold.
+	if err := h.noteAlreadyDoneUnverified(context.Background(), repo, number, reporter, hold); err != nil && h.logger != nil && err != ghpkg.ErrNoGitHubClient {
+		h.logger.Warn("[contribute-ws] unverified already-done verdict comment failed",
 			"repo", repo, "number", number, "error", err.Error())
 	}
-	hold := h.configuredAlreadyDoneUnverifiedHold()
 	rec := noWorkVerdictRecord{
 		RecordedAt:            time.Now(),
 		SuppressHours:         hold.Hours(),
@@ -845,6 +886,23 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 		// A flat base cooldown keeps the issue out of a tight re-offer loop
 		// (#2492/#2557) while leaving it offerable.
 		cooldown = completedNoPRCooldownHours * time.Hour
+	} else if verdict == completionVerdictWrongBase {
+		// #13146: the issue is still actionable, just not on the dispatched
+		// branch. Keep the ordinary short completion cooldown to prevent an
+		// immediate loop, and persist the server-validated branch as routing
+		// memory for the next offer. Unlike no_work_needed, this record never
+		// suppresses the issue.
+		cooldown = completedNoPRCooldownHours * time.Hour
+		targetBranch := strings.TrimSpace(reason)
+		h.noWorkVerdicts[key] = noWorkVerdictRecord{
+			RecordedAt:    time.Now(),
+			SuppressHours: withPRCooldown.Hours(),
+			Reporter:      reporter,
+			Reason:        targetBranch,
+			WrongBase:     true,
+			TargetBranch:  targetBranch,
+		}
+		verdictLedgerDirty = true
 	} else if verdict == completionVerdictBlocked || verdict == completionVerdictNeedsDecision {
 		// #7924: blocked on something outside the repo. Nothing a retry can
 		// do until that lands, so the no-PR ladder's first rungs (4h, 8h, …)
@@ -857,9 +915,7 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 		// past this cooldown until a human clears it. The no-PR streak is
 		// left alone: it exists to escalate, and this is already the ceiling.
 		cooldown = withPRCooldown
-		if len(reason) > noWorkReasonMaxLen {
-			reason = reason[:noWorkReasonMaxLen]
-		}
+		reason = truncateReasonBytes(reason)
 		h.noWorkVerdicts[key] = noWorkVerdictRecord{
 			RecordedAt:    time.Now(),
 			SuppressHours: withPRCooldown.Hours(),
@@ -881,9 +937,7 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 		// issue activity. Only the OFFER surfaces read this ledger; the
 		// escalating cooldown above still stands as the backstop.
 		if verdict == completionVerdictNoWorkNeeded {
-			if len(reason) > noWorkReasonMaxLen {
-				reason = reason[:noWorkReasonMaxLen]
-			}
+			reason = truncateReasonBytes(reason)
 			h.noWorkVerdicts[key] = noWorkVerdictRecord{
 				RecordedAt:    time.Now(),
 				SuppressHours: withPRCooldown.Hours(),

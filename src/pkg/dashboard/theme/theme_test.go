@@ -206,12 +206,33 @@ func TestThemeCSSAppendsStructuralLayoutGuardAfterCustomCSS(t *testing.T) {
 		`body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;`,
 		`body #repos.repo-grid .repo-card .repo-name{display:flex!important;`,
 		`justify-content:flex-start!important;`,
-		`body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 auto!important;`,
-		`body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin-left:auto!important;`,
+		`body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 12rem!important;min-width:0!important;max-width:100%!important;text-align:left!important;justify-self:start!important;white-space:normal!important;overflow-wrap:anywhere!important;`,
+		`body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin:0 0 0 auto!important;`,
 	} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("layout guard missing %q:\n%s", want, css)
 		}
+	}
+}
+
+// The sidebar becomes an off-canvas drawer below 1025px (index.html), so the
+// guard must release the topbar from the --sidebar-w offset across the whole
+// drawer range, not only at phone-portrait widths; otherwise landscape phones
+// and portrait tablets (769-1024px) get a topbar that starts 302px in.
+func TestThemeCSSLayoutGuardReleasesTopbarAcrossDrawerRange(t *testing.T) {
+	css, err := CSS(Theme{ID: "guard-drawer", Dark: true, Tokens: map[string]string{"--accent": "#58a6ff"}})
+	if err != nil {
+		t.Fatalf("CSS: %v", err)
+	}
+	fullWidth := `@media (max-width:1024px){body #oc-topbar.oc-topbar{left:var(--sp-0)!important;right:auto!important;width:100%!important;max-width:100%!important;}}`
+	if !strings.Contains(css, fullWidth) {
+		t.Fatalf("layout guard must release the topbar at max-width:1024px:\n%s", css)
+	}
+	if strings.Contains(css, `@media (max-width:768px){body #oc-topbar.oc-topbar{left:`) {
+		t.Fatalf("layout guard still releases the topbar only at 768px:\n%s", css)
+	}
+	if !strings.Contains(css, `@media (max-width:768px){body #oc-topbar.oc-topbar>.oc-topbar-center{display:none!important;}}`) {
+		t.Fatalf("layout guard must keep hiding the topbar center at phone-portrait widths:\n%s", css)
 	}
 }
 

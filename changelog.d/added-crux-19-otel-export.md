@@ -1,0 +1,1 @@
+- The `crux` binary now exports its OpenTelemetry spans and new kick duration/outcome metrics (`crux.agent.kick.duration`, `crux.agent.kick.outcomes`, labelled only by agent role and outcome) over OTLP/HTTP when the standard `OTEL_EXPORTER_OTLP_*` environment names an endpoint; with none set nothing changes ([hivecommons/crux#19](https://github.com/hivecommons/crux/issues/19)).

@@ -1,0 +1,1 @@
+- The CI-poll guard no longer interrupts CI-maintainer lanes or reports their routine cross-repository workflow inspection as polling an owned PR ([#13898](https://github.com/hivecommons/hive/issues/13898)).

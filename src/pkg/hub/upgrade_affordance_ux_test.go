@@ -25,7 +25,7 @@ import (
 func TestQueuedStateSplitsBadgeFromUpgradeNowAction(t *testing.T) {
 	body := funcBody(t, "var buildRow = function(")
 	for _, want := range []string{
-		"var queuedLabel = behindLabel + ' · ' + nextCheck + ' · why not now: ' + whyNotNow;",
+		"var queuedLabel = behindLabel + ' · ' + nextCheck;",
 		"var whyNotNow = h.upgradeWhyNotNow || (queuedDaily ? 'daily schedule' : 'waiting for idle/health gates');",
 		// The badge is affordance-free: styled by the shared state-badge
 		// constant, with no role/onclick of its own.
@@ -91,7 +91,7 @@ func TestNonOwnersGetPassiveUpdateAvailableBadge(t *testing.T) {
 func TestChannelCurrentButBranchImagePendingIsExplicit(t *testing.T) {
 	body := funcBody(t, "var buildRow = function(")
 	for _, want := range []string{
-		"var channelImagePending = !!(isCurrent && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':'",
+		"var channelImagePending = !!(isCurrent && !promotionGated && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':'",
 		"' image is published at ' + behindSHA",
 		"'. Upgrade will appear after a newer immutable image is published.'",
 		`channelImagePending ? '<span style="color:var(--yellow);margin-left:3px"`,

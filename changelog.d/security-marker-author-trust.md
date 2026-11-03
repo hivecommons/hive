@@ -1,0 +1,1 @@
+- A hive authenticated with a personal access token and no configured identity now learns its own login from `GET /user`, so a once-only marker (unpark reply, label-approval, sentinel) pasted by another commenter is no longer trusted; hives that cannot reach `/user` keep the previous behavior ([#13520](https://github.com/hivecommons/hive/issues/13520)).

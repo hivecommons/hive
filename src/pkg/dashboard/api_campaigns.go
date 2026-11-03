@@ -42,6 +42,9 @@ type Campaign struct {
 	History        []CampaignGenEntry `json:"history,omitempty"`
 	Recheck        *CampaignRecheck   `json:"recheck,omitempty"`
 	Drift          *CampaignDrift     `json:"drift,omitempty"`
+	// SupersededBy is the id of the newer revision that branched from this
+	// campaign, so the dashboard can fold Revise chains into one row.
+	SupersededBy string `json:"superseded_by,omitempty"`
 
 	reviseLeaseHeld bool
 	closedGen       uint64
@@ -129,6 +132,12 @@ type campaignReviseResponse struct {
 	OK       bool     `json:"ok"`
 	Campaign Campaign `json:"campaign"`
 	Message  string   `json:"message,omitempty"`
+}
+
+type campaignDeleteResponse struct {
+	OK      bool   `json:"ok"`
+	ID      string `json:"id"`
+	Message string `json:"message,omitempty"`
 }
 
 func (s *Server) handleCampaignsList(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +313,49 @@ func (s *Server) handleCampaignRevise(w http.ResponseWriter, r *http.Request) {
 	jsonError(w, "campaign not found", http.StatusNotFound)
 }
 
+// handleCampaignDelete removes a campaign's archive record. Durable artefacts
+// (KB facts, Jam threads, scaffolded repo files) stay; only the saved
+// inception state and its wiki snapshot are deleted (hivecommons/hive#12698).
+func (s *Server) handleCampaignDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	id := campaignIDFromRequest(r)
+	if id == "" {
+		jsonError(w, "campaign id required", http.StatusBadRequest)
+		return
+	}
+	if s.deps == nil || s.deps.Inception == nil {
+		jsonError(w, "campaign store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	campaigns, err := s.allCampaigns(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	for _, campaign := range campaigns {
+		if campaign.ID != id && campaign.RunKey != id {
+			continue
+		}
+		if _, loadErr := s.deps.Inception.LoadCampaignArchive(campaign.ID); loadErr != nil && campaign.Type == "spektacular" {
+			// Run-backed rows are projections of the contributor run, not an
+			// archive we own; deleting them here would silently drop a live run.
+			jsonError(w, "run-backed campaigns are managed by the run lifecycle and cannot be deleted here", http.StatusConflict)
+			return
+		}
+		deleted, err := s.deps.Inception.DeleteCampaignArchive(campaign.ID)
+		if err != nil {
+			jsonError(w, err.Error(), campaignArchiveErrorStatus(err))
+			return
+		}
+		s.auditFromRequest(r, "campaign_delete", auditDetail("campaign", deleted.ID, "type", campaign.Type, "revision_of", campaign.RevisionOf), "")
+		jsonResponse(w, campaignDeleteResponse{OK: true, ID: deleted.ID, Message: "Campaign record deleted; knowledge-base facts and Jam threads were kept"})
+		return
+	}
+	jsonError(w, "campaign not found", http.StatusNotFound)
+}
+
 func campaignIDFromRequest(r *http.Request) string {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if unescaped, err := url.PathUnescape(id); err == nil {
@@ -395,6 +447,7 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 		}
 	}
 	s.decorateCampaignRechecks(byID)
+	markSupersededCampaigns(byID)
 	out := make([]Campaign, 0, len(byID))
 	for _, campaign := range byID {
 		out = append(out, campaign)
@@ -434,6 +487,35 @@ func campaignGenerationLogFromArchive(history []knowledge.CampaignRevisionHistor
 		})
 	}
 	return out
+}
+
+// markSupersededCampaigns links each campaign to the newest revision that
+// branched from it so the dashboard can show one row per Revise chain
+// (hivecommons/hive#12698). When several revisions share a parent the highest
+// revision number wins; ties fall back to the most recent activity.
+func markSupersededCampaigns(byID map[string]Campaign) {
+	for id, campaign := range byID {
+		parent := strings.TrimSpace(campaign.RevisionOf)
+		if parent == "" || parent == id {
+			continue
+		}
+		base, ok := byID[parent]
+		if !ok {
+			continue
+		}
+		if current, ok := byID[base.SupersededBy]; ok && !campaignNewerRevision(campaign, current) {
+			continue
+		}
+		base.SupersededBy = id
+		byID[parent] = base
+	}
+}
+
+func campaignNewerRevision(a, b Campaign) bool {
+	if a.Revision != b.Revision {
+		return a.Revision > b.Revision
+	}
+	return a.LastActivity > b.LastActivity
 }
 
 func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Campaign {

@@ -22,7 +22,7 @@ var acmmLevelNames = map[int]string{
 	3: "Quality-Gated",
 	4: "Security-Aware",
 	5: "Semi-Autonomous",
-	6: "Fully Autonomous",
+	6: "Autonomous",
 }
 
 // universalCriteria contains the 43 repo-universal ACMM criteria ported
@@ -123,7 +123,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:reflection-log", Source: "acmm", Level: 5, Category: "feedback-loop", Name: "Reflection log",
 		Patterns: []string{".claude/reflections/", "memory/", ".memory/", "docs/reflections/", "REFLECTIONS.md"}},
 
-	// ── L6 Fully Autonomous (6 acmm) ──
+	// ── L6 Autonomous (6 acmm) ──
 	{ID: "acmm:auto-issue-gen", Source: "acmm", Level: 6, Category: "autonomy", Name: "Auto issue generation",
 		Patterns: []string{".github/workflows/auto-issues.yml", ".github/workflows/auto-issue.yml", ".github/workflows/issue-gen.yml", ".github/workflows/auto-generate-issues.yml", "scripts/generate-issues.mjs"}},
 	{ID: "acmm:multi-agent-orchestration", Source: "acmm", Level: 6, Category: "autonomy", Name: "Multi-agent orchestration",

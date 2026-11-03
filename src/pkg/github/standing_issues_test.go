@@ -88,6 +88,8 @@ func TestStandingMetaIssueReasonSkipMatrix(t *testing.T) {
 	}{
 		{"advisory by exact title", "🐝 Hive Advisory Report", "anyone", nil, true},
 		{"advisory by label, retitled", "weekly digest", "anyone", []string{"HIVE/Advisory"}, true},
+		{"dedupe advisory-only checklist", "triage: duplicate and overlapping open issues/PRs to consolidate", "hive-app[bot]", []string{"triage/advisory"}, true},
+		{"dedupe action-required checklist", "triage: duplicate and overlapping open issues/PRs to consolidate", "hive-app[bot]", []string{"needs-decision"}, false},
 		{"renovate dashboard", "Dependency Dashboard", "renovate[bot]", nil, true},
 		{"renovate dashboard, case-insensitive author", "Renovate Dashboard", "Renovate[bot]", nil, true},
 		{"dependabot dashboard", "Dependency Dashboard", "dependabot[bot]", nil, true},

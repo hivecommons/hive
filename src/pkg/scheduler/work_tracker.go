@@ -107,8 +107,8 @@ func (s *Scheduler) workTrackerSection() string {
 	return b.String()
 }
 
-// addWorkTrackerSection appends the tracker guidance to a fully resolved kick
-// message when the work source is Linear and the template did not already
+// addWorkTrackerSection adds the tracker guidance to the static prefix of a
+// fully resolved kick message when the work source is Linear and the template did not already
 // place it via ${WORK_TRACKER}. Empty messages (fail-closed kicks) stay empty.
 func (s *Scheduler) addWorkTrackerSection(message string) string {
 	if message == "" {
@@ -118,5 +118,5 @@ func (s *Scheduler) addWorkTrackerSection(message string) string {
 	if section == "" || strings.Contains(message, workTrackerHeader) {
 		return message
 	}
-	return strings.TrimRight(message, "\n") + "\n\n" + section
+	return insertAfterKickHeader(message, section)
 }

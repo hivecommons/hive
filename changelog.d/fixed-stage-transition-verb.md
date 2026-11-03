@@ -1,0 +1,1 @@
+- Activity Monitor: the row event line no longer says "fell back to" for forward moves whose stage number happens to decrease — triage accepted (015 → 010), a decision made (085 → 080), the author resuming (072 → 070). The stage table now carries `falls_to` from the stage engine's regression rule, and only those hops read as a fall.

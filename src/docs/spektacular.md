@@ -298,7 +298,7 @@ On hosted hives the same no-file path is used to start work. Operators can:
   `run/spec` label path;
 - use chat (`!runs spec owner/repo#123`, `!runs status`, `!runs approve`,
   `!runs reject`, `!runs list`) for the same run lane; or
-- set the Strategy Lab campaign output mode to **Spektacular Run**. When a
+- set the Experiment Lab campaign output mode to **Spektacular Run**. When a
   pending repo campaign is approved, Hive reads its `owner/repo#number` target,
   calls the same `AdmitRun` lease path, and records the resulting run key back
   onto the campaign/pending proposal so the dashboard detail links to the run.
@@ -395,6 +395,133 @@ runs:
     fix_labels: [kind/bug, good first issue]
     min_body_chars: 80
     clarify_comment: true
+```
+
+### Clarity gate
+
+`runs.triage.clarity_gate` ([#13577](https://github.com/hivecommons/hive/issues/13577))
+pushes back on vague issues before an agent claims them. It is OFF by default
+and independent of `runs.triage.enabled`. When on, the scheduler scores every
+human-filed, unclaimed GitHub issue in the kick list, without a model call:
+
+| Signal | Points | Found when the body has |
+|---|---|---|
+| Goal | 25 | a goal/problem/summary heading, or a goal sentence (`should`, `expected`, `so that`, `fails`, …) |
+| Acceptance criteria | 35 | an `Acceptance criteria` / `Definition of done` / `Expected behavior` heading or line, or a `- [ ]` checklist |
+| Scope | 20 | a code span, a path or file name, or a scope word (`component`, `command`, `page`, `out of scope`, …) |
+| Detail | 20 | 300+ characters (10 at `min_body_chars` or more) |
+| Open choice | −30 | an unchosen `high/medium/low` list, an unfilled `<placeholder>`, `TBD`, `???`, `not sure if`, `or maybe` |
+
+An issue scoring under `threshold` (default 60, Settings → Features →
+Incoming issue triage → **Clarity threshold**) is withheld from the kick. Hive
+posts one comment carrying `<!-- hive:clarity-gate -->` with one short question
+per missing signal and adds the `needs-spec` hard-suppress label (the first
+label of `project.issue_filter.hard_suppress_labels.needs_spec`). The issue then
+derives `stage/045-needs-decision` ("parked on a person: needs-spec"), leaves
+enumeration and is refused by the claim gate. The marker is never posted twice.
+If the comment posts but the label write fails, the issue stays withheld and the
+label is retried on the next kick; a restart in between does not lose the
+retry, because the gate reads the issue's label history and tells a park that
+never landed from one a person removed.
+
+The issue resumes on its own once somebody answers
+([#13588](https://github.com/hivecommons/hive/issues/13588)). While the gate is
+on, a resume sweep (every 5 minutes, at most 10 issues per pass) looks at open
+issues carrying `needs-spec` and lifts it when all of these hold:
+
+- the issue has a `<!-- hive:clarity-gate -->` comment written by one of the
+  hive's own accounts (a pasted marker does not count);
+- the newest `needs-spec` label event is by the hive, so a `needs-spec` a
+  person added, with or without an older gate comment, is never lifted;
+- after both, the issue author, or a person other than the hive with write,
+  maintain or admin permission on the repo (checked live), commented.
+
+The sweep removes `needs-spec` and records the un-park on the stage engine, so
+the issue re-derives `stage/010-actionable` and re-enters the queue. Removing
+`needs-spec` by hand resumes it too. Either way the gate sees the marker and
+does not ask again, however the issue scores. Issues filed by Hive or an agent,
+issues already claimed and issues carrying `approved-direction` are not scored.
+
+```yaml
+runs:
+  triage:
+    clarity_gate:
+      enabled: false           # default
+      threshold: 60            # 0-100; 0 uses the default
+```
+
+### Prior-art gate
+
+`runs.triage.prior_art` ([#13575](https://github.com/hivecommons/hive/issues/13575))
+answers "does this already exist?" before any agent claims a feature request.
+It is ON by default and independent of `runs.triage.enabled`. For every
+unclaimed GitHub issue of a gated kind (`kinds`, default `feature`, `rfc`,
+`epic`, `enhancement` — matched as a bare or `kind/`-prefixed label, or as a
+leading `[RFC]` / `RFC:` / `Epic:` title tag; anything labelled `bug` is never
+gated) the scheduler derives the issue's key terms (backticked identifiers,
+config keys and `--flags` weigh 4, title words 3, the most frequent body
+words 1) and asks, without a model call:
+
+| Source | What it searches | Hit kind |
+|---|---|---|
+| knowledge | the hive's knowledge layers (`SearchAll`, deprecated/superseded facts dropped) | `knowledge` |
+| settings | the dashboard Settings search index, as the `rfc_existing_check` does | `setting` |
+| merged_prs | merged PRs in the repo from the last 12 months | `merged PR` |
+| closed_issues | closed issues in the repo (declined `not_planned` ones skipped unless `duplicate`) | `closed issue` |
+| docs | `README*`, `CHANGELOG*`, `docs/` in every `project.repos` checkout under `checkouts_dir`, by identifier and top terms (local `pkg/codeindex` snapshot) | `doc` |
+| code | source files in every registered checkout, by identifier only (local `pkg/codeindex` snapshot) | `code` / `setting` |
+| search | past review verdicts, reviewer findings, sentinel hits and beads in the portfolio search index (`pkg/search`, [#14639](https://github.com/hivecommons/hive/issues/14639)), by identifier and top terms; only when `search.enabled` is set | `review` |
+
+Each candidate's confidence is the share of the issue's weighted terms it
+contains; a candidate needs two shared terms including a title term or an
+identifier to count at all. Every source is optional and soft (a failed
+search drops its candidates only), a missing, dirty or partly indexed
+checkout is called out as "checkout missing/partial for <repo>" instead of
+being read as no prior art — in the gate comment when one is posted, and as a
+`prior-art-gate-coverage-gap` audit entry otherwise; reports with a
+still-building index are not cached, the whole search is bounded (20s, one
+query per source) and the report is cached per issue content hash, so an
+unchanged issue costs nothing on later cycles.
+
+When the best finding reaches `threshold` (default **70**: deliberately
+high because a park costs a person a round trip — 70 means the finding
+covers about three quarters of the issue's weighted vocabulary including a
+title term) what happens depends on who filed the issue:
+
+| Author | Detected by | What the gate does |
+|---|---|---|
+| a person | `author/human`, or the enumerator's human verdict | one `<!-- hive:prior-art-gate -->` comment quoting up to `max_findings` (default 5) findings with links and a one-line quote, the `stage/017-possible-existing` park label, and a `discoverability: <feature> was asked for though it exists` advisory bead so the docs can be improved. Never auto-closed. |
+| the hive's own agent | `author/hive`, the App login, or an `agent/*` / `origin/*` label | **never parked** — a `<!-- hive:prior-art-findings -->` note is attached once and the issue carries on; the claiming agent must open its claim comment with a *Gap vs existing* paragraph. At filing time the `hive-open-issue` relay enforces it for feature kinds: a high-confidence match is refused naming the existing item and recorded as a knowledge bead; a medium one is refused unless the body has a *Gap vs existing* section, and is then filed with the findings note attached. |
+| a clanker (another hive, a contributor CLI, an external bot) | `author/clanker`, or a `[bot]` / non-human, non-hive login | parked like a person, with notice that silence closes it: after `bot_close_ttl` (default 72h) with no reply the resume sweep closes it `not_planned` with the `already-exists` label. Reopenable. |
+
+While an issue carries `stage/017-possible-existing` no agent claims it
+(it is a hard suppress, like 045). The resume sweep (every un-park cadence)
+answers the author's or a maintainer's reply:
+
+- `/hive decision proceed — <what is missing>` lifts the label, appends a
+  **Scope vs existing** section with the delta to the issue body as
+  acceptance criteria, and records the un-park so the issue re-derives
+  `stage/010-actionable`;
+- `/hive decision exists` adds `already-exists`, closes the issue
+  `not_planned` and replies with a pointer at the findings;
+- a plain reply lifts the label too (the claiming agent is told to state the
+  gap first).
+
+The gate's marker keeps it from asking twice; a `stage/017` a person added by
+hand is never lifted by the sweep. At most `max_parks_per_cycle` (default 5)
+issues are parked per enumeration cycle, so turning the gate on against a
+backlog never floods a repo.
+
+```yaml
+runs:
+  triage:
+    prior_art:
+      enabled: true            # default
+      threshold: 70            # 0-100; 0 uses the default
+      max_findings: 5
+      kinds: [feature, rfc, epic, enhancement]
+      max_parks_per_cycle: 5
+      bot_close_ttl: 72h       # clanker parks only; negative disables auto-close
 ```
 
 ## What the runner does
@@ -729,7 +856,7 @@ are capped by `runs.spektacular.recheck.max_delta_tasks` (default `50`).
 
 When a completed `implement` campaign is due, or an owner posts
 `POST /api/campaigns/{id}/recheck`, Hive rewinds the campaign's existing run
-to a new generation in place (ADR 0020, v6 addendum): the same campaign ID and
+to a new generation in place (ADR 0100, v6 addendum): the same campaign ID and
 run key get `revision` N+1, `current_stage` resets to `spec`, and the spec
 stage is admitted on the run's own lease key (`<repo>!<run key>:spec`) with a
 higher `gen` than any earlier generation, so prior receipts stay intact. No

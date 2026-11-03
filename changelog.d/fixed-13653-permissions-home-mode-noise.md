@@ -1,0 +1,1 @@
+- Permissions watcher fixes now log at Info, and the interactive-home mode restore no longer warns on EPERM for homes the process does not own, avoiding repeated self-report issues Per-agent XDG dir creation and per-agent dir-mode restore likewise log at Debug on permission errors for unowned homes (#13653, #13654, #13655, #13662, #13663).

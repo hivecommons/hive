@@ -1,0 +1,1 @@
+- Evidence: the "Issue reopen rate · rolling 30 days" card now uses the shared panel chrome (collapse toggle, ⓘ explainer, n= chip of distinct issues closed, grade pill) and a compact, overflow-contained table instead of unstyled browser defaults that bled into the next card.

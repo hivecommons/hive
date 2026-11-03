@@ -335,6 +335,201 @@ else
   echo "$output" | sed 's/^/      | /'
 fi
 
+# --- same-person noreply author (hivecommons/hive#15401) ---------------------
+#
+# GitHub's squash writes the PR author's GitHub identity on the landing commit.
+# For a private-email account that is `<id>+<login>@users.noreply.github.com`,
+# while the Signed-off-by carried over from the branch is the contributor's real
+# address (v5 687c3cb0: author 91499691+odttlnt@…, sign-off
+# sachin.naik@ibm.com). Same person; the checker must accept it only when the
+# branch's own history shows the link, and must say which commit showed it.
+sp_repo="$TMP/same-person"
+mkdir -p "$sp_repo"
+cd "$sp_repo" || exit 1
+git init -q
+
+# Evidence commit A: the contributor authored under the real address before,
+# under the same name (case differs, as it does on v5 97a705ca vs 687c3cb0).
+git config user.name 'SACHIN NAIK'
+git config user.email 'sachin.naik@example.com'
+echo one > f.txt
+git add f.txt
+git commit -q -m $'earlier commit under work address\n\nSigned-off-by: SACHIN NAIK <sachin.naik@example.com>'
+sp_evidence_a_sha=$(git rev-parse HEAD)
+
+# The squash shape under test: noreply author, work-address sign-off.
+git config user.name 'Sachin Naik'
+git config user.email '91499691+odttlnt@users.noreply.github.com'
+echo two >> f.txt
+git add f.txt
+git commit -q -m $'squash of a private-email PR\n\nSigned-off-by: SACHIN NAIK <sachin.naik@example.com>'
+sp_squash_sha=$(git rev-parse HEAD)
+
+# Negative: a noreply author whose foreign sign-off has NO history anywhere.
+git config user.name 'Nobody Known'
+git config user.email '555+nobody-known@users.noreply.github.com'
+echo three >> f.txt
+git add f.txt
+git commit -q -m $'noreply author, unknown sign-off\n\nSigned-off-by: Nobody Known <nobody@example.com>'
+sp_unknown_sha=$(git rev-parse HEAD)
+
+# Negative: the sign-off address HAS history, but under a different name. A
+# shared address alone is not a same-person link.
+git config user.name 'Imposter Noreply'
+git config user.email '777+imposter@users.noreply.github.com'
+echo four >> f.txt
+git add f.txt
+git commit -q -m $'noreply author, someone else\'s address\n\nSigned-off-by: SACHIN NAIK <sachin.naik@example.com>'
+sp_imposter_sha=$(git rev-parse HEAD)
+
+# Negative: the only "evidence" is another commit of the SAME ambiguous shape
+# (noreply author + the same foreign sign-off). Repetition is not resolution.
+git config user.name 'Repeat Offender'
+git config user.email '888+repeat-offender@users.noreply.github.com'
+echo five >> f.txt
+git add f.txt
+git commit -q -m $'first of two identical mismatches\n\nSigned-off-by: Repeat Offender <repeat@example.com>'
+sp_repeat_a_sha=$(git rev-parse HEAD)
+echo six >> f.txt
+git add f.txt
+git commit -q -m $'second of two identical mismatches\n\nSigned-off-by: Repeat Offender <repeat@example.com>'
+sp_repeat_b_sha=$(git rev-parse HEAD)
+
+# Evidence commit B (co-occurrence): authored under the real address and
+# signed off as the login's own noreply — the two identities tied together in
+# the orientation the login-lookup path already accepts. The author NAME
+# differs from the squash's, so the name-based rule cannot be what accepts it.
+git config user.name 'P. Cooccur (work)'
+git config user.email 'pat@example.com'
+echo seven >> f.txt
+git add f.txt
+git commit -q -m $'authored as work address, signed as own noreply\n\nSigned-off-by: Pat Cooccur <424242+patco@users.noreply.github.com>'
+sp_evidence_b_sha=$(git rev-parse HEAD)
+git config user.name 'Pat Cooccur'
+git config user.email '424242+patco@users.noreply.github.com'
+echo eight >> f.txt
+git add f.txt
+git commit -q -m $'squash for patco\n\nSigned-off-by: Pat Cooccur <pat@example.com>'
+sp_cooccur_sha=$(git rev-parse HEAD)
+
+run_sp() { # run_sp <env-assignments...>
+  set +e
+  output=$(env "DCO_AUTHOR_LOGIN_MAP=${sp_evidence_b_sha}=patco" "$@" bash "$CHECKER" 20 HEAD 2>&1)
+  rc=$?
+  set -e
+}
+
+run_sp "DCO_WAIVED_COMMITS="
+if out_grep -q "^same-person-noreply ${sp_squash_sha} .*evidence=authored-under-signoff-email:$(git rev-parse --short "$sp_evidence_a_sha")"; then
+  pass "a noreply author is accepted when the same name authored under the sign-off address before, citing that commit"
+else
+  bad "same-person noreply squash ${sp_squash_sha} was not accepted with authored-under-signoff-email evidence"
+  echo "$output" | sed 's/^/      | /'
+fi
+if out_grep -q "^FAIL ${sp_squash_sha}"; then
+  bad "same-person noreply squash ${sp_squash_sha} still reported as FAIL"
+fi
+if out_grep -q "^same-person-noreply ${sp_cooccur_sha} .*evidence=login-and-email-cooccur:$(git rev-parse --short "$sp_evidence_b_sha")"; then
+  pass "a noreply author is accepted when the sign-off address and the login's noreply co-occur on another commit"
+else
+  bad "co-occurrence squash ${sp_cooccur_sha} was not accepted with login-and-email-cooccur evidence"
+  echo "$output" | sed 's/^/      | /'
+fi
+if out_grep -q "^FAIL ${sp_unknown_sha} mismatched-signoff"; then
+  pass "a noreply author with an unknown sign-off address still fails"
+else
+  bad "unknown-address noreply commit ${sp_unknown_sha} was not reported"
+  echo "$output" | sed 's/^/      | /'
+fi
+if out_grep -q "^FAIL ${sp_imposter_sha} mismatched-signoff"; then
+  pass "a noreply author signing off as a different-named known address still fails"
+else
+  bad "imposter noreply commit ${sp_imposter_sha} was not reported"
+  echo "$output" | sed 's/^/      | /'
+fi
+if out_grep -q "^FAIL ${sp_repeat_a_sha} mismatched-signoff" && out_grep -q "^FAIL ${sp_repeat_b_sha} mismatched-signoff"; then
+  pass "two commits of the same ambiguous shape are not evidence for each other"
+else
+  bad "repeated noreply/foreign-signoff pair was accepted without evidence"
+  echo "$output" | sed 's/^/      | /'
+fi
+if out_grep -q '2 same-person-noreply)'; then
+  pass "the summary line counts same-person acceptances"
+else
+  bad "summary did not report 2 same-person-noreply"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# The heuristic is a strict addition: with the window disabled the squash is
+# an ordinary mismatched-signoff again, and a waiver covers it exactly as before.
+run_sp "DCO_WAIVED_COMMITS=" "DCO_SAME_PERSON_WINDOW=0"
+if out_grep -q "^FAIL ${sp_squash_sha} mismatched-signoff" && ! out_grep -q '^same-person-noreply '; then
+  pass "DCO_SAME_PERSON_WINDOW=0 disables the heuristic"
+else
+  bad "window=0 did not disable the same-person heuristic (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+run_sp "DCO_WAIVED_COMMITS=${sp_squash_sha}" "DCO_SAME_PERSON_WINDOW=0"
+if out_grep -q "^WAIVED ${sp_squash_sha} mismatched-signoff"; then
+  pass "a waiver still covers the squash when no evidence is available"
+else
+  bad "waiver on ${sp_squash_sha} was not honoured with the heuristic disabled"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# A waiver on a commit the heuristic now accepts is dead weight, and is
+# reported as such so it gets removed — the same convergence rule as #6770.
+run_sp "DCO_WAIVED_COMMITS=${sp_squash_sha}"
+if out_grep -q "^STALE-WAIVER ${sp_squash_sha}"; then
+  pass "a waiver on a same-person-accepted commit is reported as stale"
+else
+  bad "stale waiver on ${sp_squash_sha} was not reported"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# Evidence may come from an extra ref the operator fetched on purpose (e.g. the
+# PR's own branch), and only from refs that resolve.
+git checkout -q -b evidence-only "$sp_evidence_a_sha"
+git checkout -q -b scan-tip "$sp_squash_sha"
+git branch -q -D master 2>/dev/null || git branch -q -D main 2>/dev/null || true
+set +e
+output=$(DCO_SAME_PERSON_WINDOW=0 bash "$CHECKER" 1 scan-tip 2>&1); rc=$?
+set -e
+if out_grep -q "^FAIL ${sp_squash_sha} mismatched-signoff"; then
+  pass "with no evidence ref the squash alone is a mismatch"
+else
+  bad "squash-only scan did not fail as expected (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+set +e
+output=$(DCO_SAME_PERSON_EVIDENCE_REFS=evidence-only bash "$CHECKER" 1 "${sp_evidence_a_sha}..${sp_squash_sha}" 2>&1); rc=$?
+set -e
+if [ "$rc" -eq 0 ] && out_grep -q "^same-person-noreply ${sp_squash_sha} .*evidence=authored-under-signoff-email:"; then
+  pass "DCO_SAME_PERSON_EVIDENCE_REFS supplies evidence from outside the scanned range"
+else
+  bad "evidence ref was not consulted (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+set +e
+output=$(DCO_SAME_PERSON_EVIDENCE_REFS=no-such-ref bash "$CHECKER" 1 scan-tip 2>&1); rc=$?
+set -e
+if [ "$rc" -eq 2 ]; then
+  pass "an unresolvable evidence ref is a config error"
+else
+  bad "bad evidence ref should exit 2, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+set +e
+output=$(DCO_SAME_PERSON_WINDOW=lots bash "$CHECKER" 1 scan-tip 2>&1); rc=$?
+set -e
+if [ "$rc" -eq 2 ]; then
+  pass "a non-numeric DCO_SAME_PERSON_WINDOW is a config error"
+else
+  bad "non-numeric window should exit 2, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+cd "$repo" || exit 1
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-dco-trailers FAILED"
   exit 1

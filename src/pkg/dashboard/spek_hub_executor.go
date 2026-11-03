@@ -21,9 +21,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -1441,7 +1442,7 @@ func (e *SpekHubExecutor) recordNonFinal(st spekHubStage, taskID string, status 
 		stageAttrCurrentStep:    status.CurrentStep,
 		"waiting_on":            worksource.RunWaitingOnHuman,
 	}
-	e.Server.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, taskID, agent.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubNonFinalReason, "artifact", status.JoinKey(), "document_status", status.DocumentStatus))
+	e.Server.AgentAuditSink().Record("system", agentaudit.AuditLeaseStageRefused, taskID, agentaudit.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubNonFinalReason, "artifact", status.JoinKey(), "document_status", status.DocumentStatus))
 	e.Server.LifecycleTimeline().Record(timeline.Event{IssueRef: st.runKey, Kind: timeline.KindBlocked, At: time.Now().UnixMilli(), Attrs: attrs})
 }
 
@@ -1882,7 +1883,7 @@ func (e *SpekHubExecutor) recordFailure(st spekHubStage, key string, err error) 
 		stageAttrReason: spekHubFailureReason,
 		"waiting_on":    worksource.RunWaitingOnHuman,
 	}
-	e.Server.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, st.taskID, agent.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubFailureReason, "error", msg))
+	e.Server.AgentAuditSink().Record("system", agentaudit.AuditLeaseStageRefused, st.taskID, agentaudit.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubFailureReason, "error", msg))
 	e.Server.LifecycleTimeline().Record(timeline.Event{IssueRef: st.runKey, Kind: timeline.KindBlocked, At: time.Now().UnixMilli(), Attrs: attrs})
 	e.log().Warn("[spektacular] hub executor failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", msg)
 }

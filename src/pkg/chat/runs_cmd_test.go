@@ -590,3 +590,33 @@ func TestCmdRunsListStatusAndSpecAliases(t *testing.T) {
 		t.Fatal("design endpoint was not called")
 	}
 }
+
+func TestCmdRunsSpecDesignBadTargetRepliesUsage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"target must be owner/repo#number","ok":false}`))
+	}))
+	defer ts.Close()
+
+	tests := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"spec", "spec owner/repo#N", "Usage: `!runs spec <owner/repo#n>`"},
+		{"design", "design owner/repo#N", "Usage: `!runs design <owner/repo#n>`"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
+			s.client = ts.Client()
+			got, err := s.cmdRuns(ownerCtx("alice"), tc.args)
+			if err != nil {
+				t.Fatalf("cmdRuns: %v", err)
+			}
+			if !strings.Contains(got, tc.want) || strings.Contains(got, "HTTP 400") {
+				t.Fatalf("reply %q, want usage line %q without raw HTTP body", got, tc.want)
+			}
+		})
+	}
+}

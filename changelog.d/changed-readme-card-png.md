@@ -1,0 +1,2 @@
+- `hivectl evidence benchmark` now also draws the README outcome cards as 2× PNGs with an embedded font (flat colours, no glow), gains `--from-json` to re-render committed assets without the evidence tree, and the README embeds the PNGs so the cards look the same in every browser.
+- The README and its outcome cards are written as short full sentences in plain speech, with the numbers inside the sentences. A test now rejects semicolons and label lines in the README prose and card text.

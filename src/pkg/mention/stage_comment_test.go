@@ -2,15 +2,60 @@ package mention
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 type stageCommentGH struct {
 	comments []IssueComment
 	creates  []string
 	edits    []string
+}
+
+type gatedStageCommentGH struct {
+	stageCommentGH
+	gate *writeback.Gate
+}
+
+func (g *gatedStageCommentGH) WritebackItemForNumber(_ context.Context, _ string, number int) (writeback.Item, error) {
+	return writeback.Item{Number: number, Author: "visitor"}, nil
+}
+
+func (g *gatedStageCommentGH) WritebackAllowed(repo string, item writeback.Item, kind writeback.Kind, body string) writeback.Decision {
+	return g.gate.AllowedPreview(repo, item, kind, body)
+}
+
+func TestStageCommenterGateRefusalLeavesTransitionRetryable(t *testing.T) {
+	for _, editing := range []bool{false, true} {
+		t.Run(fmt.Sprint(editing), func(t *testing.T) {
+			store, _ := NewStore("")
+			g := &gatedStageCommentGH{gate: writeback.New(writeback.Config{}, writeback.Deps{LevelFor: func(string) int { return 1 }}, "")}
+			if editing {
+				g.comments = []IssueComment{{ID: 1, Body: stageCommentMarker("run-gated")}}
+			}
+			c := &StageCommenter{
+				Store: store, GitHub: func() GitHub { return g },
+				Agents: func() []AgentInfo { return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true}} },
+			}
+			tr := StageTransition{Run: "run-gated", Repo: "org/repo", Number: 42, Agent: "scanner", To: "review", Gen: 1}
+			if err := c.Post(context.Background(), tr); !errors.Is(err, writeback.ErrSuppressed) || len(g.creates)+len(g.edits) != 0 {
+				t.Fatalf("refusal err=%v creates=%q edits=%q", err, g.creates, g.edits)
+			}
+			yes := true
+			g.gate.SetConfig(writeback.Config{
+				Unsolicited: writeback.UnsolicitedConfig{Backfill: &yes},
+				PerRepo:     map[string]writeback.RepoOverride{"org/repo": {Mode: writeback.RepoModeFull}},
+			})
+			if err := c.Post(context.Background(), tr); err != nil || len(g.creates)+len(g.edits) != 1 {
+				t.Fatalf("retry err=%v creates=%q edits=%q", err, g.creates, g.edits)
+			}
+		})
+	}
 }
 
 func (g *stageCommentGH) AppBotLogin() string { return "hive[bot]" }

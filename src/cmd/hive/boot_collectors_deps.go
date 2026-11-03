@@ -15,6 +15,7 @@ const (
 	fleetStatsPersistPath = "/data/fleet-stats.json"
 	activityPersistPath   = "/data/activity.json"
 	repoCostPersistPath   = "/data/repo-cost.json"
+	launchCostPersistPath = "/data/launch-cost.json"
 )
 
 // ctxCollector is the shape shared by every ctx-bound dashboard collector

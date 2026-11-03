@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -36,15 +37,17 @@ func newFullServerWithUIDMapPath(t *testing.T, uidMapPath string) *Server {
 			Repos: []string{"testrepo"},
 		},
 		Data: config.DataConfig{AgentsDir: t.TempDir()},
-		Agents: map[string]config.AgentConfig{
-			// Enabled must be set explicitly. This literal skips
-			// ApplyAgentDefaults, which is what gives a real config
-			// `enabled: true` unless the operator wrote `enabled: false`
-			// (config/agent_overlay.go). Leaving it at the zero value
-			// described a state production cannot produce — an agent in the
-			// runtime roster that is switched OFF — and the health checks now
-			// read that as a deliberate off-state rather than a down agent.
-			"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				// Enabled must be set explicitly. This literal skips
+				// ApplyAgentDefaults, which is what gives a real config
+				// `enabled: true` unless the operator wrote `enabled: false`
+				// (config/agent_overlay.go). Leaving it at the zero value
+				// described a state production cannot produce — an agent in the
+				// runtime roster that is switched OFF — and the health checks now
+				// read that as a deliberate off-state rather than a down agent.
+				"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+			},
 		},
 		GitHub:     config.GitHubConfig{Token: "ghp_test123456789"},
 		SourcePath: t.TempDir() + "/hive.yaml",
@@ -54,9 +57,9 @@ func newFullServerWithUIDMapPath(t *testing.T, uidMapPath string) *Server {
 	scannerStore, _ := beads.NewStore(dir + "/scanner")
 	logger := slog.Default()
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManagerWithOptions(cfg.Agents, logger, agent.ProjectContext{
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{
 		Org: "testorg", Repos: []string{"testrepo"}, ACMMLevel: *cfg.ACMMLevel, PRsAllowed: true,
-	}, agent.WithUIDMapPath(uidMapPath))
+	}, cruxtest.WithUIDMapPath(uidMapPath))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 

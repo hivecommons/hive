@@ -108,3 +108,26 @@ func TestAgentPayload_ProvenanceClearedOnResume(t *testing.T) {
 	}
 	_ = s
 }
+
+// An operator-stopped agent is distinguishable from a crash-stopped one in the
+// status payload.
+func TestAgentPayload_CarriesOperatorStopped(t *testing.T) {
+	_, deps := apiServer(t)
+	if err := deps.AgentMgr.Stop("scanner"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	proc, _ := deps.AgentMgr.GetStatus("scanner")
+	if !proc.OperatorStopped {
+		t.Skip("agent not stoppable in this environment")
+	}
+	payload := BuildAgentOnlyStatus(deps.Governor.GetState(), deps.AgentMgr.AllStatuses(), deps.Config)
+	for _, a := range payload.Agents {
+		if a.Name == "scanner" {
+			if !a.OperatorStopped {
+				t.Error("payload OperatorStopped = false, want true")
+			}
+			return
+		}
+	}
+	t.Fatal("scanner missing from payload")
+}

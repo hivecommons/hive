@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive
+  namespace: hive
+spec:
+  template:
+    spec:
+      containers:
+        - name: hive
+          env:
+            - name: HIVE_METRICS_ENABLED
+              value: "true"
+            - name: HIVE_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hive-metrics-token
+                  key: HIVE_METRICS_TOKEN
+                  optional: true

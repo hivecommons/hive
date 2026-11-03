@@ -13,10 +13,12 @@ func TestAdvisorEffectiveForSources(t *testing.T) {
 			Model:             "@advisor",
 			DailyBudgetTokens: 5000,
 		},
-		Agents: map[string]AgentConfig{
-			"plain":    {Backend: "claude"},
-			"override": {Backend: "claude", Advisor: &AdvisorOverride{Model: advStrPtr("model-b"), TimeoutS: intPtr(9)}},
-			"optout":   {Backend: "claude", Advisor: &AdvisorOverride{Enabled: boolPtr(false)}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"plain":    {Backend: "claude"},
+				"override": {Backend: "claude", Advisor: &AdvisorOverride{Model: advStrPtr("model-b"), TimeoutS: intPtr(9)}},
+				"optout":   {Backend: "claude", Advisor: &AdvisorOverride{Enabled: boolPtr(false)}},
+			},
 		},
 	}
 
@@ -80,7 +82,7 @@ func TestValidateAdvisorLaneExported(t *testing.T) {
 }
 
 func TestAdvisorAgentNamesSorted(t *testing.T) {
-	c := &Config{Agents: map[string]AgentConfig{"zeta": {}, "alpha": {}, "mid": {}}}
+	c := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"zeta": {}, "alpha": {}, "mid": {}}}}
 	got := strings.Join(c.AdvisorAgentNames(), ",")
 	if got != "alpha,mid,zeta" {
 		t.Errorf("names = %s", got)

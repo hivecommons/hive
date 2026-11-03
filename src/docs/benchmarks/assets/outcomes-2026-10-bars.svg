@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="300" viewBox="0 0 760 300" role="img" aria-label="Mediated vs unmediated — 2026-10 (95% Wilson intervals)" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">
+<title>Mediated vs unmediated — 2026-10 (95% Wilson intervals)</title>
+<text x="56" y="20" fill="#8a97a8" font-size="14" font-weight="600">Mediated vs unmediated — 2026-10 (95% Wilson intervals)</text>
+<rect x="536" y="8" width="12" height="12" fill="#f4c75f"/><text x="552" y="18" fill="#8a97a8">mediated</text>
+<rect x="626" y="8" width="12" height="12" fill="#8a97a8"/><text x="642" y="18" fill="#8a97a8">unmediated</text>
+<line x1="56" y1="244.0" x2="736" y2="244.0" stroke="#7d8a9b" stroke-opacity="0.3"/><text x="50" y="248.0" fill="#8a97a8" text-anchor="end">0%</text>
+<line x1="56" y1="192.0" x2="736" y2="192.0" stroke="#7d8a9b" stroke-opacity="0.3"/><text x="50" y="196.0" fill="#8a97a8" text-anchor="end">10%</text>
+<line x1="56" y1="140.0" x2="736" y2="140.0" stroke="#7d8a9b" stroke-opacity="0.3"/><text x="50" y="144.0" fill="#8a97a8" text-anchor="end">20%</text>
+<line x1="56" y1="88.0" x2="736" y2="88.0" stroke="#7d8a9b" stroke-opacity="0.3"/><text x="50" y="92.0" fill="#8a97a8" text-anchor="end">30%</text>
+<line x1="56" y1="36.0" x2="736" y2="36.0" stroke="#7d8a9b" stroke-opacity="0.3"/><text x="50" y="40.0" fill="#8a97a8" text-anchor="end">40%</text>
+<rect x="56" y="244.0" width="66" height="0.0" fill="#f4c75f" rx="2"/>
+<line x1="89" y1="244.0" x2="89" y2="201.4" stroke="#7d8a9b" stroke-width="1.5"/><line x1="84" y1="244.0" x2="94" y2="244.0" stroke="#7d8a9b" stroke-width="1.5"/><line x1="84" y1="201.4" x2="94" y2="201.4" stroke="#7d8a9b" stroke-width="1.5"/>
+<text x="89" y="197.4" fill="#8a97a8" text-anchor="middle" font-size="10">0.0% (n=43)</text>
+<rect x="132" y="243.7" width="66" height="0.3" fill="#8a97a8" rx="2"/>
+<line x1="165" y1="243.9" x2="165" y2="242.1" stroke="#7d8a9b" stroke-width="1.5"/><line x1="160" y1="243.9" x2="170" y2="243.9" stroke="#7d8a9b" stroke-width="1.5"/><line x1="160" y1="242.1" x2="170" y2="242.1" stroke="#7d8a9b" stroke-width="1.5"/>
+<text x="165" y="238.1" fill="#8a97a8" text-anchor="middle" font-size="10">0.1% (n=1513)</text>
+<text x="127" y="262" fill="#8a97a8" text-anchor="middle">Revert rate</text>
+<rect x="235" y="231.9" width="66" height="12.1" fill="#f4c75f" rx="2"/>
+<line x1="268" y1="241.9" x2="268" y2="181.3" stroke="#7d8a9b" stroke-width="1.5"/><line x1="263" y1="241.9" x2="273" y2="241.9" stroke="#7d8a9b" stroke-width="1.5"/><line x1="263" y1="181.3" x2="273" y2="181.3" stroke="#7d8a9b" stroke-width="1.5"/>
+<text x="268" y="177.3" fill="#8a97a8" text-anchor="middle" font-size="10">2.3% (n=43)</text>
+<rect x="311" y="238.5" width="66" height="5.5" fill="#8a97a8" rx="2"/>
+<line x1="344" y1="240.6" x2="344" y2="235.1" stroke="#7d8a9b" stroke-width="1.5"/><line x1="339" y1="240.6" x2="349" y2="240.6" stroke="#7d8a9b" stroke-width="1.5"/><line x1="339" y1="235.1" x2="349" y2="235.1" stroke="#7d8a9b" stroke-width="1.5"/>
+<text x="344" y="231.1" fill="#8a97a8" text-anchor="middle" font-size="10">1.1% (n=1513)</text>
+<text x="306" y="262" fill="#8a97a8" text-anchor="middle">Change-failure rate</text>
+<rect x="414" y="208.2" width="66" height="35.8" fill="#f4c75f" rx="2"/>
+<line x1="447" y1="216.3" x2="447" y2="197.9" stroke="#7d8a9b" stroke-width="1.5"/><line x1="442" y1="216.3" x2="452" y2="216.3" stroke="#7d8a9b" stroke-width="1.5"/><line x1="442" y1="197.9" x2="452" y2="197.9" stroke="#7d8a9b" stroke-width="1.5"/>
+<text x="447" y="193.9" fill="#8a97a8" text-anchor="middle" font-size="10">6.9% (n=798)</text>
+<rect x="490" y="226.0" width="66" height="18" fill="none" stroke="#8a97a8" stroke-dasharray="3 3"/><text x="523" y="238.0" fill="#8a97a8" text-anchor="middle" font-size="10">n=62</text>
+<text x="485" y="262" fill="#8a97a8" text-anchor="middle">CI failure at head</text>
+<rect x="593" y="68.9" width="66" height="175.1" fill="#f4c75f" rx="2"/>
+<line x1="626" y1="81.3" x2="626" y2="56.0" stroke="#7d8a9b" stroke-width="1.5"/><line x1="621" y1="81.3" x2="631" y2="81.3" stroke="#7d8a9b" stroke-width="1.5"/><line x1="621" y1="56.0" x2="631" y2="56.0" stroke="#7d8a9b" stroke-width="1.5"/>
+<text x="626" y="52.0" fill="#8a97a8" text-anchor="middle" font-size="10">33.7% (n=1455)</text>
+<text x="664" y="262" fill="#8a97a8" text-anchor="middle">Changes requested pre-merge</text>
+<line x1="56" y1="244.0" x2="736" y2="244.0" stroke="#7d8a9b"/>
+<text x="56" y="290" fill="#8a97a8" font-size="10">Hatched = n &lt; 10 or CI not captured for most of the cohort: not reported. Change-failure = revert or follow-up fix within 14 days.</text>
+</svg>

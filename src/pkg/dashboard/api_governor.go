@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -68,6 +70,10 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	repos := make([]string, 0, len(cfg.Project.Repos))
 	repoSelfAuthorizationHold := make(map[string]map[string]any, len(cfg.Project.Repos))
 	repoReporterTrustHold := make(map[string]map[string]any, len(cfg.Project.Repos))
+	repoLabelDriven := make(map[string]map[string]any, len(cfg.Project.Repos))
+	// #15335 current-base gate: same three-way shape as #5117/#9665
+	// (hive-wide default on the Features tab, per-repo override here).
+	repoCurrentBase := make(map[string]map[string]any, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
 		full := repo
 		if strings.Contains(repo, "/") {
@@ -76,7 +82,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			full = org + "/" + repo
 			repos = append(repos, full)
 		}
-		entry := map[string]any{"effective": cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, cfg.EffectiveACMMLevelForRepo(repo))}
+		entry := map[string]any{"effective": cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, cfg.ACMMLevelOrZero())}
 		if rp, ok := cfg.RepoPolicyFor(repo); ok && rp.SelfAuthorizationHold != nil {
 			entry["value"] = *rp.SelfAuthorizationHold
 		}
@@ -86,6 +92,24 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			rtEntry["value"] = *rp.ReporterTrustHold
 		}
 		repoReporterTrustHold[full] = rtEntry
+		repoLabelDriven[full] = labelDrivenRepoPayload(cfg, repo)
+		cbEntry := map[string]any{"effective": cfg.AutoMerge.RequireCurrentBaseFor(full)}
+		if v := cfg.AutoMerge.CurrentBaseOverrideFor(full); v != nil {
+			cbEntry["value"] = *v
+		}
+		repoCurrentBase[full] = cbEntry
+	}
+	// hivecommons/hive#11313 label-driven approval, rendered on the Repos tab
+	// next to the per-repo opt-in. EFFECTIVE values are sent for the defaulted
+	// lists; the *Set flags say whether the operator overrode a default.
+	labelDrivenApproval := map[string]any{
+		"approvalLabels":     cfg.LabelDrivenApprovalLabelsDefault(),
+		"approvalLabelsSet":  cfg.Project.LabelDrivenApprovalLabels != nil,
+		"trustOrgMembers":    cfg.LabelDrivenTrustOrgMembers(),
+		"trustOrgMembersSet": cfg.Project.LabelDrivenTrustOrgMembers != nil,
+		"trustedBots":        cfg.LabelDrivenTrustedBots(),
+		"trustedBotsSet":     cfg.Project.LabelDrivenTrustedBots != nil,
+		"docsAnchor":         "label-driven-repositories",
 	}
 	// #9665 reporter trust, rendered on the Labels tab (who is trusted, what
 	// label everyone else needs) and the Repos tab (the merge hold). EFFECTIVE
@@ -131,6 +155,31 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"repoCount":           repoCount,
 		"labels":              cfg.Governor.Labels.Exempt,
 		"holdLabels":          github.HoldLabels,
+		// automergeLabel is the configured governor.labels.automerge ("" =
+		// default); automergeLabelDefault is the label used when it is empty.
+		"automergeLabel":        cfg.Governor.Labels.AutoMerge,
+		"automergeLabelDefault": config.DefaultAutoMergeLabel,
+		// stageLabelsEnabled/Dwell are governor.labels.stage (#12429).
+		"stageLabelsEnabled": cfg.Governor.Labels.Stage.IsEnabled(),
+		"stageLabelsDwell":   formatStageDwell(cfg.Governor.Labels.Stage.Dwell),
+		// governor.labels.stage.contributor_nudge.* and presence_window
+		// (hivecommons/hive#12436): the stage-072 contributor nudge.
+		"stageNudgeEnabled":   cfg.Governor.Labels.Stage.ContributorNudge.IsEnabled(),
+		"stageNudgeRenudge":   cfg.Governor.Labels.Stage.ContributorNudge.RenudgeInterval,
+		"stagePresenceWindow": cfg.Governor.Labels.Stage.PresenceWindow,
+		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
+		// stage-074 adoption of red contributor PRs.
+		"stageAdoptionEnabled": cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
+		// governor.labels.stage.adoption.maintainer_policy: adopt | ask |
+		// never, what adoption does when the author maintains the
+		// repository (hivecommons/hive#14524).
+		"stageAdoptionMaintainerPolicy": cfg.Governor.Labels.Stage.Adoption.EffectiveMaintainerPolicy(),
+		"stageStalledRequireQuiet":      cfg.Governor.Labels.Stage.Stalled.IsRequireQuiet(),
+		// governor.labels.stage.engine.mode: the ADR-0025 central stage
+		// engine's rollout switch (off | shadow | enforce).
+		"stageEngineMode":   cfg.Governor.Labels.Stage.Engine.EffectiveMode().String(),
+		"stageGraceOnline":  cfg.Governor.Labels.Stage.ContributorGraceOnline,
+		"stageGraceOffline": cfg.Governor.Labels.Stage.ContributorGraceOffline,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -148,6 +197,10 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"reporterTrustHoldSet":           cfg.GitHub.ReporterTrustHold != nil,
 		"repoReporterTrustHold":          repoReporterTrustHold,
 		"reporterTrustHoldEnvLocked":     cfg.GitHub.ReporterTrustHoldEnvOverrideSet(),
+		"repoLabelDriven":                repoLabelDriven,
+		"labelDrivenApproval":            labelDrivenApproval,
+		"currentBaseDefault":             cfg.AutoMerge.CurrentBaseDefaultEnabled(),
+		"repoCurrentBase":                repoCurrentBase,
 		// Kick-list caps, rendered on the Repos tab. The EFFECTIVE values are
 		// sent (defaults and ceiling already resolved) so the fields always
 		// show the number actually in force rather than an empty box when the
@@ -173,14 +226,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"ttlSeconds":         cfg.Governor.Sensing.TTLSeconds,
 			"pullbackSeconds":    cfg.Governor.Sensing.PullbackSeconds,
 		},
-		"logging": map[string]interface{}{
-			"dir":        cfg.Governor.Logging.Dir,
-			"maxSizeMB":  cfg.Governor.Logging.MaxSizeMB,
-			"maxAgeDays": cfg.Governor.Logging.MaxAgeDays,
-			"maxBackups": cfg.Governor.Logging.MaxBackups,
-			"compress":   cfg.Governor.Logging.Compress,
-			"level":      cfg.Governor.Logging.Level,
-		},
+		"logging":               loggingSectionResponse(cfg),
+		"dashboard":             dashboardSettingsResponse(cfg),
+		"backends":              backendsPolicyResponse(cfg),
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
 		"classifier":            classifierSectionResponse(cfg),
@@ -189,10 +237,13 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"review_bots":           reviewBotsSectionResponse(cfg),
 		"auto_merge":            s.autoMergeSectionResponseWithBots(cfg),
 		"convergence":           s.convergenceSectionResponse(cfg),
+		"sla":                   slaSectionResponse(cfg),
 		"advisory":              advisorySectionResponse(cfg),
 		"project_observability": s.projectObservabilityResponse(cfg),
 		"replan":                replanSectionResponse(cfg),
 		"question_autoclose":    questionAutocloseSectionResponse(cfg),
+		"fleet_report":          s.fleetReportSectionResponse(cfg),
+		"release_sentinel":      releaseSentinelSectionResponse(cfg),
 		"work_source":           s.workSourceSectionResponse(cfg),
 		"security":              securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{
@@ -262,20 +313,28 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// switch state; contribute_cooldown_hours is the EFFECTIVE period (the
 			// 168h default surfaces when unset) so the number input shows the value
 			// actually in force.
-			"contribute_cooldown_enabled":  cfg.Hub.IsContributeCooldownEnabled(),
-			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
-			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
-			"contribute_announcement":      s.activeContributeAnnouncement(),
-			"contribute_help_links":        s.contributeHelpLinks(),
-			"disabled_repos":               s.normalizedHubDisabledRepos(),
-			"disabled_repos_raw":           cfg.Hub.DisabledRepos,
-			"disabled_tiers":               cfg.Hub.DisabledTiers,
-			"tier_limits":                  cfg.Hub.TierLimits,
+			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
+			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
+			// contribute.max_parallel_fixes / contribute.min_focus_window
+			// (hivecommons/hive#12436): the per-contributor red-PR fix budget.
+			"contribute_max_parallel_fixes": cfg.Contribute.EffectiveMaxParallelFixes(),
+			"contribute_min_focus_window":   cfg.Contribute.MinFocusWindow,
+			"contribute_delegatable_roles":  normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
+			"contribute_announcement":       s.activeContributeAnnouncement(),
+			"contribute_help_links":         s.contributeHelpLinks(),
+			"disabled_repos":                s.normalizedHubDisabledRepos(),
+			"disabled_repos_raw":            cfg.Hub.DisabledRepos,
+			"disabled_tiers":                cfg.Hub.DisabledTiers,
+			"tier_limits":                   cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
 			// about (from the live status snapshot), so the Management tab can render
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
 			// list. A repo is ENABLED unless it appears in disabled_repos.
 			"available_repos": s.contributeAvailableRepos(),
+			// settings backs the scalar hub keys (identity, already-done
+			// handling, NPS, task-status push, upgrade drain, hub-only
+			// secrets as set/not set). See hubSettingsResponse.
+			"settings": s.hubSettingsResponse(cfg),
 		},
 	})
 }
@@ -512,6 +571,99 @@ func (s *Server) handleGovernorCadenceScope(w http.ResponseWriter, r *http.Reque
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// handleGovernorCadenceTemplates applies a preset global cadence template to
+// all configured and active agents across governor modes (#12300).
+func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	var body struct {
+		Template string `json:"template"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	var cadences map[string]config.Cadence
+	switch body.Template {
+	case "testing", "new-level-testing":
+		cadences = map[string]config.Cadence{
+			"surge": "pause",
+			"busy":  "2h",
+			"quiet": "4h",
+			"idle":  "8h",
+		}
+	case "weekly", "weekly-sprint":
+		cadences = map[string]config.Cadence{
+			"surge": "1h",
+			"busy":  "2h",
+			"quiet": "4h",
+			"idle":  "8h",
+		}
+	case "biweekly", "biweekly-sprint":
+		cadences = map[string]config.Cadence{
+			"surge": "2h",
+			"busy":  "4h",
+			"quiet": "8h",
+			"idle":  "16h",
+		}
+	case "daily", "daily-cadence":
+		cadences = map[string]config.Cadence{
+			"surge": "30m",
+			"busy":  "1h",
+			"quiet": "2h",
+			"idle":  "4h",
+		}
+	default:
+		jsonError(w, "invalid template: must be one of testing (new-level-testing), weekly (weekly-sprint), biweekly (biweekly-sprint), daily (daily-cadence)", http.StatusBadRequest)
+		return
+	}
+
+	agentSet := make(map[string]bool)
+	updatedAgents := make(map[string]bool)
+	if s.deps != nil && s.deps.Config != nil {
+		for agentName := range s.deps.Config.Agents {
+			agentSet[agentName] = true
+		}
+	}
+
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Governor.Modes != nil {
+		for modeName, cadVal := range cadences {
+			mode, ok := s.deps.Config.Governor.Modes[modeName]
+			if !ok {
+				continue
+			}
+			if mode.Cadences == nil {
+				mode.Cadences = make(map[string]config.Cadence)
+			}
+			for agentName := range agentSet {
+				// Keep explicit per-mode continuous opt-ins.
+				if mode.Cadences[agentName].IsContinuous() {
+					continue
+				}
+				mode.Cadences[agentName] = cadVal
+				updatedAgents[agentName] = true
+				s.deps.Config.Governor.ClaimCadenceOwnership(modeName, agentName)
+			}
+			s.deps.Config.Governor.Modes[modeName] = mode
+		}
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after cadence template update", "template", body.Template, "error", err)
+	}
+
+	if s.deps != nil && s.deps.EnumerateFunc != nil {
+		go s.deps.EnumerateFunc()
+	}
+
+	s.auditFromRequest(r, "config_governor_cadence_template", auditDetail("template", body.Template), "")
+	floor := s.refreshAndPersistSeq()
+	jsonResponse(w, map[string]any{"ok": true, "status": "updated", "template": body.Template, "agentsUpdated": len(updatedAgents), "minStatusSeq": floor})
+}
+
 // handleGovernorThresholdScalingGet returns the configured threshold-scaling
 // curve (with its default applied) so the Thresholds tab can prefill its
 // select without loading the whole governor config payload. OWNER-ONLY,
@@ -639,6 +791,33 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			NeedsSpec      *[]string `json:"needs_spec"`
 		} `json:"hard_suppress_labels"`
 		WritingGuide *string `json:"writing_guide"`
+		// Automerge is governor.labels.automerge, the label the merger queue
+		// action applies. Empty restores the default. The GitHub client reads it
+		// at boot, so a change applies after a restart.
+		Automerge *string `json:"automerge"`
+		// StageEnabled/StageDwell are governor.labels.stage.enabled and
+		// governor.labels.stage.dwell ("slug=duration, ..."), read live by the
+		// automerge sweep so no restart is needed.
+		StageEnabled *bool   `json:"stage_enabled"`
+		StageDwell   *string `json:"stage_dwell"`
+		// Stage-072 contributor nudge (hivecommons/hive#12436):
+		// governor.labels.stage.contributor_nudge.enabled / .renudge_interval
+		// and governor.labels.stage.presence_window (Go durations; empty
+		// restores the default).
+		StageNudgeEnabled   *bool   `json:"stage_nudge_enabled"`
+		StageNudgeRenudge   *string `json:"stage_nudge_renudge_interval"`
+		StagePresenceWindow *string `json:"stage_presence_window"`
+		// Stage-074 adoption: governor.labels.stage.adoption.enabled and
+		// governor.labels.stage.contributor_grace_online / _offline.
+		StageAdoptionEnabled *bool `json:"stage_adoption_enabled"`
+		// governor.labels.stage.adoption.maintainer_policy (adopt | ask | never).
+		StageAdoptionMaintainerPolicy *string `json:"stage_adoption_maintainer_policy"`
+		StageGraceOnline              *string `json:"stage_grace_online"`
+		StageGraceOffline             *string `json:"stage_grace_offline"`
+		// governor.labels.stage.stalled.require_quiet (hivecommons/hive#12534).
+		StageStalledRequireQuiet *bool `json:"stage_stalled_require_quiet"`
+		// governor.labels.stage.engine.mode (ADR-0025): off | shadow | enforce.
+		StageEngineMode *string `json:"stage_engine_mode"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -714,9 +893,56 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var automerge string
+	if body.Automerge != nil {
+		automerge = strings.TrimSpace(*body.Automerge)
+		if err := validateGovernorLabels([]string{automerge}); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if strings.ContainsAny(automerge, ",\n") {
+			jsonError(w, "automerge must be a single label", http.StatusBadRequest)
+			return
+		}
+	}
+	var stageDwell map[string]string
+	if body.StageDwell != nil {
+		var err error
+		if stageDwell, err = parseStageDwell(*body.StageDwell); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	for name, v := range map[string]*string{
+		"stage_nudge_renudge_interval": body.StageNudgeRenudge,
+		"stage_presence_window":        body.StagePresenceWindow,
+		"stage_grace_online":           body.StageGraceOnline,
+		"stage_grace_offline":          body.StageGraceOffline,
+	} {
+		if v == nil || strings.TrimSpace(*v) == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(strings.TrimSpace(*v)); err != nil || d <= 0 {
+			jsonError(w, name+" must be a positive Go duration such as 15m or 24h", http.StatusBadRequest)
+			return
+		}
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.StageEngineMode != nil {
+		probe := config.StageEngineConfig{Mode: strings.TrimSpace(*body.StageEngineMode)}
+		if err := probe.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.StageAdoptionMaintainerPolicy != nil {
+		if v := strings.ToLower(strings.TrimSpace(*body.StageAdoptionMaintainerPolicy)); v != "" && !slices.Contains(config.AdoptionMaintainerPolicies, v) {
+			jsonError(w, "stage_adoption_maintainer_policy must be one of "+strings.Join(config.AdoptionMaintainerPolicies, ", "), http.StatusBadRequest)
 			return
 		}
 	}
@@ -781,6 +1007,48 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.WritingGuide != nil {
 		s.deps.Config.Project.WritingGuide = *body.WritingGuide
+	}
+	if body.Automerge != nil {
+		s.deps.Config.Governor.Labels.AutoMerge = automerge
+	}
+	if body.StageEnabled != nil {
+		v := *body.StageEnabled
+		s.deps.Config.Governor.Labels.Stage.Enabled = &v
+	}
+	if body.StageDwell != nil {
+		s.deps.Config.Governor.Labels.Stage.Dwell = stageDwell
+	}
+	if body.StageNudgeEnabled != nil {
+		v := *body.StageNudgeEnabled
+		s.deps.Config.Governor.Labels.Stage.ContributorNudge.Enabled = &v
+	}
+	if body.StageNudgeRenudge != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorNudge.RenudgeInterval = strings.TrimSpace(*body.StageNudgeRenudge)
+	}
+	if body.StagePresenceWindow != nil {
+		s.deps.Config.Governor.Labels.Stage.PresenceWindow = strings.TrimSpace(*body.StagePresenceWindow)
+	}
+	if body.StageAdoptionEnabled != nil {
+		v := *body.StageAdoptionEnabled
+		s.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &v
+	}
+	if body.StageAdoptionMaintainerPolicy != nil {
+		s.deps.Config.Governor.Labels.Stage.Adoption.MaintainerPolicy = strings.ToLower(strings.TrimSpace(*body.StageAdoptionMaintainerPolicy))
+	}
+	if body.StageGraceOnline != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorGraceOnline = strings.TrimSpace(*body.StageGraceOnline)
+	}
+	if body.StageGraceOffline != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorGraceOffline = strings.TrimSpace(*body.StageGraceOffline)
+	}
+	if body.StageStalledRequireQuiet != nil {
+		v := *body.StageStalledRequireQuiet
+		s.deps.Config.Governor.Labels.Stage.Stalled.RequireQuiet = &v
+	}
+	if body.StageEngineMode != nil {
+		// The sweeps re-read this before every pass (cmd/hive
+		// syncStageEngineMode), so the flip takes effect without a restart.
+		s.deps.Config.Governor.Labels.Stage.Engine.Mode = strings.TrimSpace(*body.StageEngineMode)
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
@@ -944,6 +1212,7 @@ func (s *Server) governorNotificationsPayload() map[string]any {
 		out["slackWebhook"] = maskSecret(cfg.Notifications.Slack.Webhook)
 		out["hasSlack"] = cfg.Notifications.Slack.Webhook != ""
 	}
+	notificationsExtraPayload(cfg, out)
 	return out
 }
 
@@ -958,6 +1227,7 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		DiscordWebhook string   `json:"discordWebhook"`
 		SlackWebhook   string   `json:"slackWebhook"`
 		Events         []string `json:"events"`
+		notificationsExtraBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -972,6 +1242,10 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := validateNotificationURL(body.SlackWebhook, "slackWebhook"); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := applyNotificationsExtra(s.deps.Config, body.notificationsExtraBody); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1095,6 +1369,32 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// loggingSectionResponse builds the Logging tab payload. kickLogSource is the
+// saved governor.logging.kick_log_source ("" when unset); kickLogSourceEffective
+// is what the next kick log will actually use, with HIVE_KICK_LOG_SOURCE
+// applied, and kickLogSourceEnvLocked says when that env var is the reason the
+// two differ so the dialog can lock the select and say why (#11762, #9579).
+// readScanMaxMB is the saved governor.logging.read_scan_max_mb (0 when unset,
+// meaning the built-in bound) and readScanMaxMBDefault that bound in MiB, so
+// the dialog can show the ceiling the setting can only lower (#11942).
+func loggingSectionResponse(cfg *config.Config) map[string]interface{} {
+	l := cfg.Governor.Logging
+	return map[string]interface{}{
+		"dir":                    l.Dir,
+		"maxSizeMB":              l.MaxSizeMB,
+		"maxAgeDays":             l.MaxAgeDays,
+		"maxBackups":             l.MaxBackups,
+		"compress":               l.Compress,
+		"level":                  l.Level,
+		"kickLogSource":          l.KickLogSource,
+		"kickLogSourceEffective": l.ResolveKickLogSource(),
+		"kickLogSourceEnvLocked": l.KickLogSourceOrigin() == config.KickLogSourceOriginEnv,
+		"kickLogSources":         config.KickLogSources(),
+		"readScanMaxMB":          l.ReadScanMaxMB,
+		"readScanMaxMBDefault":   int(logread.DefaultWorkBoundBytes >> 20),
+	}
+}
+
 func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -1106,6 +1406,12 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 		MaxBackups int    `json:"maxBackups"`
 		Compress   *bool  `json:"compress"`
 		Level      string `json:"level"`
+		// KickLogSource is a pointer so an absent key leaves the setting
+		// untouched; "" resets it to the default (scrollback).
+		KickLogSource *string `json:"kickLogSource"`
+		// ReadScanMaxMB is a pointer so an absent key leaves the setting
+		// untouched; 0 resets it to the built-in bound.
+		ReadScanMaxMB *int `json:"readScanMaxMB"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -1113,6 +1419,14 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateGovernorLogging(s.deps.Config.Governor.Logging.Dir, body.MaxSizeMB, body.MaxAgeDays); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.KickLogSource != nil && strings.TrimSpace(*body.KickLogSource) != "" && !config.ValidKickLogSource(*body.KickLogSource) {
+		jsonError(w, fmt.Sprintf("kickLogSource must be one of %s", strings.Join(config.KickLogSources(), ", ")), http.StatusBadRequest)
+		return
+	}
+	if body.ReadScanMaxMB != nil && *body.ReadScanMaxMB < 0 {
+		jsonError(w, "readScanMaxMB must be 0 (built-in bound) or a positive number of MiB", http.StatusBadRequest)
 		return
 	}
 
@@ -1136,6 +1450,20 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "level must be one of: debug, info, warn, error", http.StatusBadRequest)
 			return
 		}
+	}
+	if body.KickLogSource != nil {
+		// Applied to the next kick by the resolver main.go injects into the
+		// agent manager; nothing to push here.
+		v := strings.TrimSpace(*body.KickLogSource)
+		if v != "" {
+			v = config.NormalizeKickLogSource(v)
+		}
+		s.deps.Config.Governor.Logging.KickLogSource = v
+	}
+	if body.ReadScanMaxMB != nil {
+		// Read by logReadOptions on every /api/logs/read and admin MCP
+		// log_read call; nothing to push here.
+		s.deps.Config.Governor.Logging.ReadScanMaxMB = *body.ReadScanMaxMB
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after logging update", "error", err)
@@ -1217,14 +1545,13 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		Enabled                        *bool                                  `json:"enabled"`
 		URL                            string                                 `json:"url"`
 		DashboardURL                   string                                 `json:"dashboard_url"`
-		SnapshotURL                    string                                 `json:"snapshot_url"`
+		SnapshotURL                    *string                                `json:"snapshot_url"`
 		IsPublic                       *bool                                  `json:"is_public"`
 		AutoSnapshot                   *bool                                  `json:"auto_snapshot"`
 		SnapshotFrameAncestors         []string                               `json:"snapshot_frame_ancestors"`
 		AutoUpgrade                    *bool                                  `json:"auto_upgrade"`
 		ContributeSuspended            *bool                                  `json:"contribute_suspended"`
 		ContributeWallEnabled          *bool                                  `json:"contribute_wall_enabled"`
-		ContributeWallRetentionDays    *int                                   `json:"contribute_wall_retention_days"`
 		ContributeTitlesMode           *string                                `json:"contribute_titles_mode"`
 		ContributeAuthorsMode          *string                                `json:"contribute_authors_mode"`
 		ContributeLabelsMode           *string                                `json:"contribute_labels_mode"`
@@ -1242,18 +1569,45 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeSkipAssignedToOthers *bool                                  `json:"contribute_skip_assigned_to_others"`
 		ContributeCooldownEnabled      *bool                                  `json:"contribute_cooldown_enabled"`
 		ContributeCooldownHours        *int                                   `json:"contribute_cooldown_hours"`
+		ContributeMaxParallelFixes     *int                                   `json:"contribute_max_parallel_fixes"`
+		ContributeMinFocusWindow       *string                                `json:"contribute_min_focus_window"`
 		ContributeDelegatableRoles     []string                               `json:"contribute_delegatable_roles"`
 		ContributeAnnouncement         *config.ContributeAnnouncement         `json:"contribute_announcement"`
 		ContributeHelpLinks            []config.ContributeHelpLink            `json:"contribute_help_links"`
 		DisabledRepos                  []string                               `json:"disabled_repos"`
 		DisabledTiers                  []string                               `json:"disabled_tiers"`
 		TierLimits                     map[string]config.TierRate             `json:"tier_limits"`
+		hubSettingsBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 	cfg := s.deps.Config
+	// The scalar hub keys are validated before any field is applied.
+	applyHubSettings, err := body.hubSettingsBody.prepare(body.ContributeAnnouncement)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var snapshotURL string
+	if body.SnapshotURL != nil {
+		normalized, err := config.ValidateSnapshotURL(*body.SnapshotURL)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		snapshotURL = normalized
+	}
+	var snapshotFrameAncestors []string
+	if body.SnapshotFrameAncestors != nil {
+		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		snapshotFrameAncestors = normalized
+	}
 	// #7451: on a hub-managed spoke the hub owns dashboard_url — the next
 	// heartbeat would revert an edit, and until it did the new value would
 	// be the OAuth callback origin (oauth_origin.go), so a typo locks the
@@ -1265,6 +1619,21 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "hub.dashboard_url is owned by the hub on this spoke and is set from its heartbeat; to serve the dashboard from a different host set dashboard.public_url instead", http.StatusConflict)
 		return
 	}
+	// hivecommons/hive#12436: validate the fix-budget leaves before any field
+	// is applied (same refuse-whole-save rule as dashboard_url above).
+	if body.ContributeMaxParallelFixes != nil &&
+		(*body.ContributeMaxParallelFixes < 1 || *body.ContributeMaxParallelFixes > maxParallelFixesCeiling) {
+		jsonError(w, fmt.Sprintf("contribute_max_parallel_fixes must be between 1 and %d", maxParallelFixesCeiling), http.StatusBadRequest)
+		return
+	}
+	if body.ContributeMinFocusWindow != nil {
+		if v := strings.TrimSpace(*body.ContributeMinFocusWindow); v != "" {
+			if d, err := time.ParseDuration(v); err != nil || d <= 0 {
+				jsonError(w, "contribute_min_focus_window must be a positive Go duration such as 30m", http.StatusBadRequest)
+				return
+			}
+		}
+	}
 	if body.Enabled != nil {
 		cfg.Hub.Enabled = *body.Enabled
 	}
@@ -1274,7 +1643,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.DashboardURL != "" {
 		cfg.Hub.DashboardURL = body.DashboardURL
 	}
-	cfg.Hub.SnapshotURL = body.SnapshotURL
+	if body.SnapshotURL != nil {
+		cfg.Hub.SnapshotURL = snapshotURL
+	}
 	if body.IsPublic != nil {
 		cfg.Hub.IsPublic = *body.IsPublic
 	}
@@ -1282,12 +1653,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		cfg.Hub.AutoSnapshot = *body.AutoSnapshot
 	}
 	if body.SnapshotFrameAncestors != nil {
-		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
-		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		cfg.Dashboard.SnapshotFrameAncestors = normalized
+		cfg.Dashboard.SnapshotFrameAncestors = snapshotFrameAncestors
 	}
 	if body.AutoUpgrade != nil {
 		cfg.Hub.AutoUpgrade = *body.AutoUpgrade
@@ -1297,9 +1663,6 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeWallEnabled != nil {
 		cfg.Hub.ContributeWallEnabled = *body.ContributeWallEnabled
-	}
-	if body.ContributeWallRetentionDays != nil {
-		cfg.Hub.ContributeWallRetentionDays = *body.ContributeWallRetentionDays
 	}
 	if body.ContributeTitlesMode != nil {
 		cfg.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
@@ -1324,6 +1687,13 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		v := strings.TrimSpace(*body.ContributeNeedsDecisionLabel)
 		if previous != v {
 			cfg.Hub.ContributeSkipLabels = withoutExactLabel(cfg.Hub.ContributeSkipLabels, previous)
+			if previous == config.DefaultNeedsDecisionLabel {
+				// The retired spellings ride along with the default
+				// (hivecommons/hive#12683); a custom label replaces them too.
+				for _, legacy := range config.LegacyNeedsDecisionLabels {
+					cfg.Hub.ContributeSkipLabels = withoutExactLabel(cfg.Hub.ContributeSkipLabels, legacy)
+				}
+			}
 			if len(cfg.Hub.ContributeSkipLabels) == 0 {
 				cfg.Hub.ContributeSkipLabels = []string{"blocked"}
 			}
@@ -1375,6 +1745,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.ContributeCooldownHours != nil {
 		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
 	}
+	if body.ContributeMaxParallelFixes != nil {
+		cfg.Contribute.MaxParallelFixes = *body.ContributeMaxParallelFixes
+	}
+	if body.ContributeMinFocusWindow != nil {
+		cfg.Contribute.MinFocusWindow = strings.TrimSpace(*body.ContributeMinFocusWindow)
+	}
 	if body.ContributeDelegatableRoles != nil {
 		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
 	}
@@ -1414,6 +1790,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	cfg.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(cfg.Hub.ContributeAuthorsMode)
 	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
 	cfg.Hub.NormalizeContributeRepoFilters()
+	applyHubSettings(&cfg.Hub)
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	if announcementTouched {
@@ -1588,6 +1965,29 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 	return len(models), nil
 }
 
+// describeEdgeServer names the kind of intermediary a Server header identifies,
+// so an operator told "a proxy refused the request" learns which one it was
+// (hivecommons/hive#9945: "awselb/2.0" alone does not say it is an AWS load
+// balancer). Unknown values yield "" and the raw header is still reported.
+func describeEdgeServer(server string) string {
+	s := strings.ToLower(strings.TrimSpace(server))
+	switch {
+	case strings.HasPrefix(s, "awselb"):
+		return "an AWS Elastic Load Balancer"
+	case strings.HasPrefix(s, "cloudflare"):
+		return "Cloudflare"
+	case strings.HasPrefix(s, "nginx"):
+		return "an nginx ingress/reverse proxy"
+	case strings.HasPrefix(s, "envoy"):
+		return "an Envoy proxy"
+	case strings.HasPrefix(s, "akamaighost"):
+		return "an Akamai edge"
+	case strings.HasPrefix(s, "squid"):
+		return "a Squid proxy"
+	}
+	return ""
+}
+
 func litellmModelsHTTPError(req *http.Request, resp *http.Response, apiKey string) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
 	gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
@@ -1608,21 +2008,73 @@ func litellmModelsHTTPError(req *http.Request, resp *http.Response, apiKey strin
 		// WWW-Authenticate header), not an edge refusal: keep the more
 		// accurate missing-key message below.
 		if looksLikeIntermediaryRejection(contentType, gatewayMsg) && !(apiKey == "" && gatewayMsg == "") {
+			edgeKind := ""
+			if k := describeEdgeServer(resp.Header.Get("Server")); k != "" {
+				edgeKind = ", identified from the Server header as " + k
+			}
 			return &probeEdgeRejectedError{fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
-				" (content-type %q, server %q, final URL %s, non-JSON body) — the configured key was probably never evaluated;"+
+				" (content-type %q, server %q%s, final URL %s, non-JSON body) — the configured key was probably never evaluated;"+
 				" check that ingress/WAF/VPN rules allow GET /v1/models from the hive%s: %s",
-				req.URL.String(), resp.StatusCode, contentType, resp.Header.Get("Server"), finalURL, describeEgressProxy(req), gatewayMsg)}
+				req.URL.String(), resp.StatusCode, contentType, resp.Header.Get("Server"), edgeKind, finalURL, describeEgressProxy(req), gatewayMsg)}
 		}
 		// The two auth failures lead users to different fixes.
 		if apiKey == "" {
 			return fmt.Errorf("gateway requires an API key and none is configured (HTTP %d for GET %s; final URL %s): %s",
 				resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
 		}
-		return fmt.Errorf("gateway rejected the configured key (HTTP %d for GET %s; final URL %s): %s",
-			resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
+		// A JSON body means the gateway API ITSELF evaluated the key and said
+		// no — the opposite classification from the proxy/WAF branch above.
+		// Spell out exactly what was sent (method, path, which header carried
+		// the key, its fingerprint, the User-Agent) and what answered (Server,
+		// content-type) so the operator can line it up against a curl that
+		// works from their laptop without guessing which part differs.
+		return fmt.Errorf("gateway rejected the configured key (HTTP %d for GET %s; final URL %s) — this is the gateway API's own JSON auth error (server %q, content-type %q), not a proxy/WAF refusal, so the key below is what it evaluated; request sent: %s: %s",
+			resp.StatusCode, req.URL.String(), finalURL, resp.Header.Get("Server"), contentType, probeRequestShape(req, apiKey), gatewayMsg)
 	default:
-		return fmt.Errorf("gateway returned HTTP %d for GET %s (final URL %s): %s", resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
+		return fmt.Errorf("gateway returned HTTP %d for GET %s (final URL %s; server %q, content-type %q; request sent: %s): %s",
+			resp.StatusCode, req.URL.String(), finalURL, resp.Header.Get("Server"), contentType, probeRequestShape(req, apiKey), gatewayMsg)
 	}
+}
+
+// probeUserAgent is what the probe (and the inference translator, which also
+// uses Go's default client) presents as User-Agent. Go only stamps the header
+// at transport time, so req.UserAgent() is empty while the diagnostic is being
+// built; naming the default here keeps the report truthful.
+const probeUserAgent = "Go-http-client/1.1 (Go default; identical to the hive's inference translator)"
+
+// probeRequestShape describes the outbound probe request in the terms an
+// operator compares against their own curl: method and path, which header
+// carried the key (always Authorization: Bearer — never x-api-key), the key's
+// SHA-256 prefix (a fingerprint, never the value), the User-Agent, and the
+// egress proxy that applied. One sentence fragment, safe to log.
+func probeRequestShape(req *http.Request, apiKey string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s", req.Method, req.URL.String())
+	if apiKey == "" {
+		b.WriteString(" with no Authorization header")
+	} else {
+		b.WriteString(" with Authorization: Bearer <key>")
+		if hash := config.APIKeySHA256(apiKey); hash != "" {
+			fmt.Fprintf(&b, " (SHA256 %s)", shortKeyHash(hash))
+		}
+	}
+	if req.Header.Get("Content-Type") != "" {
+		fmt.Fprintf(&b, ", Content-Type %s", req.Header.Get("Content-Type"))
+	}
+	fmt.Fprintf(&b, ", User-Agent %s%s", probeUserAgent, describeEgressProxy(req))
+	return b.String()
+}
+
+// shortKeyHashLen is how many leading hex characters of a key's SHA-256 the
+// dashboard shows: enough to match against `shasum -a 256` output by eye,
+// far too few to be a usable fingerprint of the secret.
+const shortKeyHashLen = 12
+
+func shortKeyHash(hash string) string {
+	if len(hash) > shortKeyHashLen {
+		return hash[:shortKeyHashLen]
+	}
+	return hash
 }
 
 // probeEdgeRejectedError marks a /v1/models probe failure that an ingress,
@@ -1676,7 +2128,12 @@ func probeLiteLLMInference(endpoint, apiKey, model string) error {
 			" (server %q), so inference from the hive is blocked too, not just model listing%s: %s",
 			chatURL, model, resp.StatusCode, resp.Header.Get("Server"), describeEgressProxy(req), gatewayMsg)
 	}
-	return fmt.Errorf("POST %s (model %q) returned HTTP %d: %s", chatURL, model, resp.StatusCode, gatewayMsg)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("POST %s (model %q) was rejected by the gateway API itself with HTTP %d (JSON auth error; server %q, content-type %q) — request sent: %s: %s",
+			chatURL, model, resp.StatusCode, resp.Header.Get("Server"), contentType, probeRequestShape(req, apiKey), gatewayMsg)
+	}
+	return fmt.Errorf("POST %s (model %q) returned HTTP %d (server %q, content-type %q): %s",
+		chatURL, model, resp.StatusCode, resp.Header.Get("Server"), contentType, gatewayMsg)
 }
 
 // redactSecret removes any occurrence of a secret value from a message so
@@ -1778,20 +2235,20 @@ func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string
 			} else {
 				infErr := probeLiteLLMInference(ep, probeKey, lc.DefaultModel)
 				if infErr == nil {
-					return map[string]interface{}{
+					return s.withLiteLLMRouteDiagnostic(map[string]interface{}{
 						"ok":                true,
 						"models":            0,
 						"modelsListBlocked": true,
 						"inferenceModel":    lc.DefaultModel,
 						"warning":           redactSecret(err.Error(), probeKey),
-					}
+					}, ep, probeKey)
 				}
 				err = fmt.Errorf("%w; fallback inference check with default model also failed: %v", err, infErr)
 			}
 		}
-		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
+		return s.withLiteLLMRouteDiagnostic(map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}, ep, probeKey)
 	}
-	result := map[string]interface{}{"ok": true, "models": n}
+	result := s.withLiteLLMRouteDiagnostic(map[string]interface{}{"ok": true, "models": n}, ep, probeKey)
 	// If the proxy has learned this key's entitled subset (some gateways
 	// advertise the full catalog on /v1/models but scope the key to fewer),
 	// surface how many of the ADVERTISED models are actually usable so Test
@@ -1808,6 +2265,23 @@ func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string
 		}
 	}
 	return result
+}
+
+// withLiteLLMRouteDiagnostic attaches the "route" line (where agents on the
+// litellm backend will really POST, with which key) to a LiteLLM tab probe
+// result. The tab probes the LEGACY block's endpoint; when an explicit gateway
+// named "litellm" exists the route resolver prefers that gateway instead, and
+// the line says so, so the operator is never told "OK" about an endpoint no
+// agent will use (hivecommons/hive#9945). Nil-safe for the test seams that
+// build a Server without deps.
+func (s *Server) withLiteLLMRouteDiagnostic(probe map[string]interface{}, testedEndpoint, testedKey string) map[string]interface{} {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return probe
+	}
+	if line := inferenceRouteDiagnostic(s.deps.Config, config.GatewayKindLiteLLM, testedEndpoint, testedKey); line != "" {
+		probe["route"] = line
+	}
+	return probe
 }
 
 // handleGovernorLiteLLMTest is the Test Connection endpoint: a live
@@ -2245,7 +2719,8 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if body.Backend == "" {
+	backendPicked := body.Backend != ""
+	if !backendPicked {
 		body.Backend = "claude"
 	}
 	// Reject an unsupported backend before the agent is created, rather than
@@ -2259,6 +2734,15 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		Backend: body.Backend,
 		Model:   body.Model,
 		Enabled: true,
+	}
+	// A backend the operator named is their pick, like every other dashboard
+	// backend write: the pack apply on each restart must not move it, and it
+	// counts when the pack decides which gateway the hive is on (#14678).
+	if backendPicked {
+		agentCfg.BackendOwner = config.FieldOwnerOperator
+	}
+	if body.Model != "" {
+		agentCfg.ModelOwner = config.FieldOwnerOperator
 	}
 	// An explicit re-add is the operator changing their mind, and it is the
 	// only signal that lifts a deletion tombstone. Without this the agent
@@ -2431,6 +2915,15 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 		// #9665 reporter-trust merge hold, same shape as the #5117 pair.
 		ReporterTrustHold     *bool            `json:"reporterTrustHold,omitempty"`
 		RepoReporterTrustHold map[string]*bool `json:"repoReporterTrustHold,omitempty"`
+		// hivecommons/hive#11313 label-driven approval: the per-repo opt-in
+		// (with optional approval-label override) and the project-wide trust
+		// knobs. Pointer-typed so absent keys mean "unchanged".
+		RepoLabelDriven     map[string]*labelDrivenRepoBody `json:"repoLabelDriven,omitempty"`
+		LabelDrivenApproval *labelDrivenApprovalBody        `json:"labelDrivenApproval,omitempty"`
+		// hivecommons/hive#15335 current-base gate per-repo override:
+		// true → auto_merge.require_current_base, false →
+		// auto_merge.skip_current_base, null → inherit (removed from both).
+		RepoCurrentBase map[string]*bool `json:"repoCurrentBase,omitempty"`
 		// Kick-list caps. POINTER-typed so an absent key means "unchanged":
 		// the Repos tab sends only the fields the operator actually touched,
 		// and editing a repo must not reset the caps (or vice versa).
@@ -2446,7 +2939,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	// the "nothing supplied" guard must only fire when the request would change
 	// nothing at all.
 	capsOnly := body.MaxIssuesPerKick != nil || body.MaxPRsPerKick != nil
-	holdOnly := body.ReporterTrustHold != nil || body.RepoReporterTrustHold != nil
+	holdOnly := body.ReporterTrustHold != nil || body.RepoReporterTrustHold != nil || body.RepoLabelDriven != nil || body.LabelDrivenApproval != nil || body.RepoCurrentBase != nil
 	if len(body.Repos) == 0 && body.PrimaryRepo == nil && body.SelfAuthorizationHold == nil && body.RepoSelfAuthorizationHold == nil && !capsOnly && !holdOnly {
 		jsonError(w, "at least one repo is required", http.StatusBadRequest)
 		return
@@ -2602,7 +3095,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			s.deps.Config.Project.PrimaryRepo = prevPrimary
 			s.deps.Config.GitHub.BaseURL = prevBaseURL
 			s.deps.Config.GitHub.APIURL = prevAPIURL
-			s.deps.Config.GitHub.SelfAuthorizationHold = prevSelfAuthHold
+			s.deps.Config.UpdateGitHubLive(func(g *config.GitHubConfig) { g.SelfAuthorizationHold = prevSelfAuthHold })
 			s.deps.Config.GitHub.ReporterTrustHold = prevReporterTrustHold
 			s.deps.Config.Project.RepoPolicies = prevRepoPolicies
 			if s.deps.GHClient != nil {
@@ -2624,7 +3117,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.SelfAuthorizationHold != nil {
 		v := *body.SelfAuthorizationHold
-		s.deps.Config.GitHub.SelfAuthorizationHold = &v
+		s.deps.Config.UpdateGitHubLive(func(g *config.GitHubConfig) { g.SelfAuthorizationHold = &v })
 	}
 	if body.RepoSelfAuthorizationHold != nil {
 		s.deps.Config.SetSelfAuthorizationHoldForRepos(body.RepoSelfAuthorizationHold)
@@ -2635,6 +3128,21 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RepoReporterTrustHold != nil {
 		s.deps.Config.SetReporterTrustHoldForRepos(body.RepoReporterTrustHold)
+	}
+	if body.RepoLabelDriven != nil {
+		s.deps.Config.SetLabelDrivenForRepos(labelDrivenRepoSettings(body.RepoLabelDriven))
+	}
+	if body.LabelDrivenApproval != nil {
+		body.LabelDrivenApproval.applyTo(s.deps.Config)
+	}
+	for repo, value := range body.RepoCurrentBase {
+		// The auto_merge lists hold owner/repo; the Repos tab may send a bare
+		// name for a repo of this hive's org.
+		full := strings.TrimSpace(repo)
+		if full != "" && !strings.Contains(full, "/") && strings.TrimSpace(s.deps.Config.Project.Org) != "" {
+			full = strings.TrimSpace(s.deps.Config.Project.Org) + "/" + full
+		}
+		s.deps.Config.AutoMerge.SetCurrentBaseOverride(full, value)
 	}
 	s.deps.Config.PruneRepoPoliciesToWatched()
 
@@ -2959,4 +3467,52 @@ func trimNonEmpty(in []string) []string {
 		}
 	}
 	return out
+}
+
+// formatStageDwell renders governor.labels.stage.dwell as "slug=dur, ..." in
+// stable order for the Settings field.
+func formatStageDwell(dwell map[string]string) string {
+	if len(dwell) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(dwell))
+	for k := range dwell {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+dwell[k])
+	}
+	return strings.Join(parts, ", ")
+}
+
+// parseStageDwell parses the Settings field back into the config map,
+// validating slugs against the stage table and durations with
+// time.ParseDuration. Empty input clears every override.
+func parseStageDwell(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		slug, dur, ok := strings.Cut(part, "=")
+		slug, dur = strings.ToLower(strings.TrimSpace(slug)), strings.TrimSpace(dur)
+		if !ok || slug == "" || dur == "" {
+			return nil, fmt.Errorf("stage dwell %q must be slug=duration", part)
+		}
+		if !config.KnownStageSlug(slug) {
+			return nil, fmt.Errorf("stage dwell: unknown stage %q (known: %s)", slug, strings.Join(config.KnownStageSlugs(), ", "))
+		}
+		if d, err := time.ParseDuration(dur); err != nil || d < 0 {
+			return nil, fmt.Errorf("stage dwell %q: invalid duration", part)
+		}
+		out[slug] = dur
+	}
+	return out, nil
 }

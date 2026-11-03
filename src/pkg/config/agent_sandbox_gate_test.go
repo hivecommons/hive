@@ -22,8 +22,10 @@ import (
 func gateCfg(t *testing.T, globalEnabled bool, globalImage string, agents map[string]AgentConfig) *Config {
 	t.Helper()
 	return &Config{
-		AgentSandbox: AgentSandboxConfig{Enabled: globalEnabled, Image: globalImage},
-		Agents:       agents,
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			AgentSandbox: AgentSandboxConfig{Enabled: globalEnabled, Image: globalImage},
+			Agents:       agents,
+		},
 	}
 }
 

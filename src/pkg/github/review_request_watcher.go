@@ -13,6 +13,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -35,9 +36,15 @@ func reviewRequestDir() string {
 	return ReviewRequestDir
 }
 
-// reviewRequestPollInterval mirrors prRequestPollInterval — reviews are not
-// latency-critical. A var so tests can drive the ticker quickly.
+// reviewRequestPollInterval mirrors prRequestPollInterval. Since #13378 it
+// is the cadence only while webhooks are degraded or the request dir cannot
+// be watched; see ReviewRequestWebhookFallbackInterval for the healthy
+// cadence. A var so tests can drive the ticker quickly.
 var reviewRequestPollInterval = 10 * time.Second
+
+// reviewRequestTickBudget is how long one watcher tick may wait for its
+// first pacing slot before the tick is shed to the next one.
+const reviewRequestTickBudget = 5 * time.Second
 
 // ReviewRequest is the JSON an agent writes to ReviewRequestDir. Event selects
 // the review type: "approve" | "request_changes" | "comment" |
@@ -153,46 +160,87 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 		close(done)
 		return done
 	}
-	// Capture the poll interval BEFORE spawning: the goroutine's first read of
-	// the package-level interval races with a test's fastTick cleanup restoring
-	// it (the race detector flagged exactly that on v4 CI). Reading it here is
-	// sequenced with the caller, and the loop only ever needed it once anyway.
-	interval := reviewRequestPollInterval
+	// Capture the intervals BEFORE spawning: the goroutine's first read of
+	// the package-level vars races with a test's fastTick cleanup restoring
+	// them (the race detector flagged exactly that on v4 CI). Reading them
+	// here is sequenced with the caller.
+	poll, fallback := reviewRequestPollInterval, reviewRequestFallbackInterval
+	dir, spools := reviewRequestDir(), sandboxReviewSpoolsDir()
+	// Event-driven since #13378: a request-file drop (fsnotify) or a
+	// review-shaped webhook delivery (reviewRequestWakeEvent) wakes the
+	// loop; the timer is a reconcile that runs every fallback while webhooks
+	// are healthy and every poll while they are degraded or the dir cannot be
+	// watched. The wake channel is per client, so a delivery handled by
+	// HandleWebhookEvent reaches this loop without a package-level seam.
+	wake := c.reviewWake.c()
+	dirNotify, stopNotify := watchReviewRequestDir(dir, c.logger)
 	go func() {
 		defer close(done)
-		t := time.NewTicker(interval)
+		defer stopNotify()
+		t := time.NewTimer(reviewRequestScanInterval(dirNotify != nil && !hasSandboxReviewSpools(spools), poll, fallback))
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				// A cancelled ctx can lose the select to an already-ready tick
-				// (select picks randomly among ready cases), letting the loop
-				// process one more scan after cancellation. Fail the tick
-				// closed so cancel means no further processing.
-				if ctx.Err() != nil {
-					return
-				}
-				c.processReviewRequests(ctx, nowFn)
+			case <-wake:
+			case <-dirNotify:
 			}
+			// A cancelled ctx can lose the select to an already-ready tick
+			// (select picks randomly among ready cases), letting the loop
+			// process one more scan after cancellation. Fail the tick
+			// closed so cancel means no further processing.
+			if ctx.Err() != nil {
+				return
+			}
+			c.reviewRequestTick(ctx, nowFn)
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
+			// A registered sandbox spool keeps the poll cadence: its writes
+			// land on a shared volume, often from another node, where no
+			// change notification reaches this pod.
+			t.Reset(reviewRequestScanInterval(dirNotify != nil && !hasSandboxReviewSpools(spools), poll, fallback))
 		}
 	}()
-	c.logger.Info("review-request watcher started", slog.String("dir", reviewRequestDir()))
+	c.logger.Info("review-request watcher started", slog.String("dir", dir),
+		slog.Bool("dir_notify", dirNotify != nil),
+		slog.Duration("webhook_fallback", fallback), slog.Duration("degraded_poll", poll))
 	return done
 }
 
+// reviewRequestTick is one scheduled or woken pass of the watcher.
+// Housekeeping cadence against the pacer (#13382): a pass whose requests
+// would queue behind the governor's enumeration during a caution window is
+// shed; the next wake or timer retries it.
+func (c *Client) reviewRequestTick(ctx context.Context, nowFn func() time.Time) {
+	if ShedLowPriorityTick("review-request-watcher", reviewRequestTickBudget) {
+		return
+	}
+	c.processReviewRequests(WithPacingClass(ctx, PacingLow), nowFn)
+}
+
+// processReviewRequests drains the pod-local drop box, then every sandbox
+// review spool (review_request_sandbox_spool.go).
 func (c *Client) processReviewRequests(ctx context.Context, nowFn func() time.Time) {
-	entries, err := os.ReadDir(reviewRequestDir())
+	c.processReviewRequestDir(ctx, reviewRequestDir(), reviewRequestSource{}, nowFn)
+	c.processSandboxReviewSpools(ctx, nowFn)
+}
+
+func (c *Client) processReviewRequestDir(ctx context.Context, dir string, src reviewRequestSource, nowFn func() time.Time) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".result.json") {
+		if !isReviewRequestFile(e) {
 			continue
 		}
-		c.handleOneReviewRequest(ctx, filepath.Join(reviewRequestDir(), name), nowFn)
+		c.handleOneReviewRequest(ctx, filepath.Join(dir, e.Name()), src, nowFn)
 	}
 }
 
@@ -204,7 +252,7 @@ func (c *Client) ProcessReviewRequestsOnce(ctx context.Context) {
 	c.processReviewRequests(ctx, time.Now)
 }
 
-func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn func() time.Time) {
+func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src reviewRequestSource, nowFn func() time.Time) {
 	if !c.reviewRetries.allows(path, nowFn()) {
 		return
 	}
@@ -232,6 +280,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		c.logger.Warn("review-request watcher: bad request file quarantined",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
+	}
+	// A sandbox spool's requests belong to the agent its manifest names,
+	// whatever the file says (hivecommons/hive#14986).
+	if src.agent != "" {
+		req.Agent = src.agent
 	}
 
 	apiEvent, state, okEvent := reviewEventToAPI(req.Event)
@@ -294,6 +347,14 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// Authorize: forge-resistance (file UID must be the claimed agent) + the same
 	// push-capability gate as opening a PR. A nil authorizer fails closed.
 	fileUID := statUID(data, path)
+	if src.agent != "" {
+		// A staged spool file is owned by hive, not the agent: its owning
+		// UID proves nothing. The proving was done at ingest instead: the
+		// manifest names the agent, and the request's MAC under the run's
+		// spool key shows that agent's sandbox wrote it
+		// (ingestSandboxSpool). 0 is the authorizer's "no owning UID" value.
+		fileUID = 0
+	}
 	if c.reviewAuthz == nil {
 		c.denyReviewRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return
@@ -316,6 +377,22 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// the other write relays. Pause applies to every review event.
 	if c.RepoIsPaused(req.Repo) {
 		c.denyReviewRequest(path, req, RepoPausedReason(req.Repo), nowFn)
+		return
+	}
+	// review.require_labels (PR approval allow-list): the server-side half of
+	// the gate. The kick lists never offer an unlabelled PR, but a reviewer
+	// that found one anyway — or was told to by a prompt — is refused here,
+	// whatever the event: a review, a thread reply, a resolution or a bare
+	// record_verdict are all "the hive reviewed this PR". Labels are read
+	// fresh with the App token; a fetch failure is retried, not waved through.
+	if admitted, err := c.reviewLabelGateAdmits(ctx, req.Repo, req.Number); err != nil {
+		c.retryOrQuarantineReview(path, req, fmt.Errorf("review.require_labels: could not read PR labels: %w", err), nowFn)
+		return
+	} else if !admitted {
+		c.recordWriteAudit(AuditActionReviewLabelGateRefused, c.attributionMeta(req.Agent),
+			WriteTarget{Repo: req.Repo, Number: req.Number},
+			"event", strings.TrimSpace(req.Event), "require_labels", strings.Join(c.reviewRequireLabels(), ","))
+		c.denyReviewRequest(path, req, config.ReviewRequireLabelsSkipReason+" ("+strings.Join(c.reviewRequireLabels(), ", ")+")", nowFn)
 		return
 	}
 	if resolveThread || threadReply {
@@ -385,7 +462,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// state record_verdict and a note, so the agent's own loop is done.
 	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
-			c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), nil, nowFn())
+			c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), nil, nowFn())
 			if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 				c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 					slog.String("repo", req.Repo), slog.Int("number", req.Number),
@@ -404,7 +481,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// Authorized and well-formed, but nothing to post: record and finish
 	// without touching the GitHub API.
 	if recordOnly {
-		c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), nil, nowFn())
+		c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), nil, nowFn())
 		if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 			c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number),
@@ -420,7 +497,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	}
 
 	meta := c.attributionMeta(req.Agent)
-	body := c.relayBody(req.Agent, req.Body)
+	body := leadWithDecisionQuestion(c.relayBody(req.Agent, req.Body))
 	if c.confidenceScoreOn() {
 		body = appendConfidenceLine(body, req.Report, c.perspectives)
 	}
@@ -440,6 +517,8 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// so it must honor the same fail-closed contract and flow through the same
 	// error/retry handling as a real CreateReview failure below.
 	var created *gh.PullRequestReview
+	decisionDeduped := false
+	ownPRNote := ""
 	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 	} else if req.Revise {
@@ -451,8 +530,18 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		if err == nil && created == nil && !revised {
 			created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 		}
+	} else if existing := c.findOwnOpenDecisionReview(ctx, owner, repoName, req.Number, req.Body); existing != nil && apiEvent == "COMMENT" {
+		// The same decision question is already standing on this PR from
+		// an earlier head (hivecommons/hive#15499): refresh that review in
+		// place rather than asking the person again. The verdict for the
+		// new head is still recorded below.
+		created, err = c.refreshDecisionReview(ctx, owner, repoName, req.Number, existing, body)
+		if err == nil {
+			decisionDeduped = true
+		}
 	} else {
-		_, err = effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		provenance := owner + "/" + repoName + "#" + strconv.Itoa(req.Number)
+		_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 			Repo:   owner + "/" + repoName,
 			Kind:   effects.KindReviewSubmit,
 			Target: strconv.Itoa(req.Number),
@@ -463,11 +552,40 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 			// replay. Without this the journal refused the second one as
 			// already applied and the request retried until quarantine.
 			Inputs: map[string]string{"event": apiEvent, "body": effects.StableDigest(body), "request": filepath.Base(path)},
-		}, func(ctx context.Context) (effects.Result, error) {
+		}, func(ctx context.Context) (effects.ExternalState, error) {
+			return c.observeReviewSubmit(ctx, owner, repoName, req.Number, body, "", provenance)
+		}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 			var apiErr error
-			created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
-			return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(req.Number)}, apiErr
+			for {
+				created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+				if !IsOwnPullRequestReviewRefusal(apiErr) || ownPRNote != "" {
+					return effects.Result{Provenance: provenance}, apiErr
+				}
+				// GitHub never lets the App approve or request changes on
+				// its own pull request (422), and no retry changes that:
+				// post the same text once more as a COMMENT review so the
+				// verdict still lands on the PR (hivecommons/hive#15666).
+				// The verdict itself is recorded below as asked.
+				ownPRNote = fmt.Sprintf("%s downgraded to COMMENT: GitHub refuses a review on the App's own pull request", apiEvent)
+				commentEvent, _, _ := reviewEventToAPI("comment")
+				reviewReq.Event = gh.Ptr(commentEvent)
+				if reviewReq.Body == nil {
+					reviewReq.Body = gh.Ptr(contributorCommentBody(""))
+				}
+			}
 		})
+	}
+	if errors.Is(err, errReviseNotAllowlisted) {
+		// Policy, not a transient fault (#13252): the repo is not in
+		// review.revise_repos, and no retry changes that. Deny once and move
+		// the file aside so it is not re-attempted on every tick.
+		c.denyReviewRequest(path, req, err.Error(), nowFn)
+		return
+	}
+	if err == nil && ownPRNote != "" {
+		_, state, _ = reviewEventToAPI("comment")
+		c.logger.Warn("review-request watcher: own-PR review refused by GitHub, posted as COMMENT",
+			slog.String("agent", req.Agent), slog.String("repo", req.Repo), slog.Int("number", req.Number))
 	}
 	if err != nil {
 		// Retry with exponential backoff and quarantine at the give-up horizon
@@ -494,8 +612,14 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	if commentOnlyNote != "" {
 		resp.Note = commentOnlyNote
 	}
+	if ownPRNote != "" {
+		resp.Note = ownPRNote
+	}
 	if sentinelBlockNote != "" {
 		resp.Note = sentinelBlockNote
+	}
+	if decisionDeduped {
+		resp.Note = decisionDedupedNote
 	}
 
 	// Record where the review landed so the queue views can link to it. A
@@ -523,8 +647,8 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// artifacts are recorded together so a verdict can never be attributed to a
 	// review that never actually landed. The evidence bundle for the head
 	// records the same two things (review_evidence.go).
-	c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), created, nowFn())
-	if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
+	c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), created, nowFn())
+	if err := c.fileReviewBacklog(ctx, req, nowFn().UTC(), created); err != nil {
 		c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
 			slog.String("error", err.Error()))
@@ -716,12 +840,35 @@ func appendConfidenceLine(body, rawReport string, set review.PerspectiveSet) str
 	if err != nil || len(reports) == 0 {
 		return body
 	}
-	line := review.ScoreConfidence(review.ScopeEffectiveReports(reports), set.Len()).Render()
+	conf := review.ScoreConfidence(review.ScopeEffectiveReports(reports), set.Len())
+	line := conf.Render()
+	// A redundant PR is not bad code: name the reason instead of a 0/5.
+	if of := redundantOfFromBody(body); of != "" && conf.Score < review.ConfidenceSafeFloor {
+		line = "**no-op merge: duplicate of " + of + "**"
+	}
 	body = strings.TrimRight(body, "\n")
 	if body == "" {
 		return line
 	}
 	return body + "\n\n" + line
+}
+
+// redundantOfFromBody reads the PR a review marked as already containing this
+// change (`<!-- hive-redundant-of: #334 -->`), or "" when it did not.
+func redundantOfFromBody(body string) string {
+	return hiddenMarkerValue(body, reviewRedundantOfMarker)
+}
+
+// leadWithDecisionQuestion renders the question carried by the
+// `<!-- hive-decision-question: ... -->` marker as visible text at the top of
+// the comment (hivecommons/hive#13116). GitHub hides the marker, which stays
+// untouched for machine parsing.
+func leadWithDecisionQuestion(body string) string {
+	question := decisionQuestionFromBody(body)
+	if question == "" || strings.Contains(body, "**Decision needed:** "+question) {
+		return body
+	}
+	return "**Decision needed:** " + question + "\n\n" + body
 }
 
 // malformedVerdictRefusal is the result an agent reads when its --verdict-file

@@ -1,1 +1,0 @@
-Overview KPI cards: the "open Settings → …" control inside the held/blocked/outside term tooltip is no longer a nested `<button>`, which the HTML parser used to force-close the KPI card around, spilling the tooltip text inline and pushing the remaining equation terms below the card grid.

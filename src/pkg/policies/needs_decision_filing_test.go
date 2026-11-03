@@ -44,3 +44,97 @@ func TestIssueFilingPoliciesParkDecisionIssues(t *testing.T) {
 		t.Fatal("no issue-filing policies found; the guard would pass vacuously")
 	}
 }
+
+// Every lane policy that can comment through the relay must tell the agent
+// to park an existing issue whose remaining step is owner-only, with the
+// command that actually works: the label relay refuses needs-human and
+// needs-decision from agents (hivecommons/hive#12329).
+func TestLanePoliciesParkOwnerOnlyHandOffs(t *testing.T) {
+	t.Parallel()
+
+	rule := []byte("**Park an existing issue when only the owner can finish it.**")
+	command := []byte("`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`")
+	releaseCommand := []byte("`--step-kind release --release-tag <tag> --release-target <full-commit-sha>`")
+
+	entries, err := fs.ReadDir(DefaultPolicies, "defaults")
+	if err != nil {
+		t.Fatalf("read embedded defaults: %v", err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, err := DefaultPolicies.ReadFile(path.Join("defaults", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		escalates := bytes.Contains(data, []byte("needs-direction"))
+		if !bytes.Contains(data, []byte("hive-open-issue")) {
+			if !escalates && !strings.HasPrefix(e.Name(), "scanner") {
+				continue
+			}
+			checked++
+			// Lanes that cannot comment record the step in the bead instead.
+			if !bytes.Contains(data, []byte("**Owner-only steps.**")) {
+				t.Errorf("%s has no owner-only rule", e.Name())
+			}
+			continue
+		}
+		if strings.HasPrefix(e.Name(), "dedupe") {
+			continue
+		}
+		checked++
+		if bytes.Contains(data, []byte("label the item and post one maintainer question")) {
+			t.Errorf("%s tells the agent to label the item for needs-direction without the relay flag", e.Name())
+		}
+		if !bytes.Contains(data, rule) || !bytes.Contains(data, command) || !bytes.Contains(data, releaseCommand) {
+			t.Errorf("%s lacks the owner-only park rule naming %s and the typed release flags %s", e.Name(), command, releaseCommand)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no lane policies found; the guard would pass vacuously")
+	}
+}
+
+// Every lane rule that parks work at stage/045-needs-decision must ask for the
+// options in the shape the "What to reply" notice reads and for one named
+// recommendation, so the owner can accept it with `/hive approve`. A 045 ask
+// with options but no recommendation left Danathar/goodreads-mcp#432 with a
+// governance A/B/C and nothing to accept.
+func TestNeedsDecisionAsksNameARecommendation(t *testing.T) {
+	t.Parallel()
+
+	options := []byte("post one maintainer question with options A/B/C, one per line as `Option A: …`")
+	recommend := []byte("`Recommended: <letter>, because <reason>`")
+	ownerConfirms := []byte("`Recommended (owner confirms): <letter>, because <reason>`")
+
+	entries, err := fs.ReadDir(DefaultPolicies, "defaults")
+	if err != nil {
+		t.Fatalf("read embedded defaults: %v", err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, err := DefaultPolicies.ReadFile(path.Join("defaults", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		for _, line := range bytes.Split(data, []byte("\n")) {
+			if !bytes.HasPrefix(line, []byte("- `stage/045-needs-decision`:")) {
+				continue
+			}
+			checked++
+			for _, want := range [][]byte{options, recommend, ownerConfirms} {
+				if !bytes.Contains(line, want) {
+					t.Errorf("%s: the 045 rule lacks %s", e.Name(), want)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no 045 rules found; the guard would pass vacuously")
+	}
+}

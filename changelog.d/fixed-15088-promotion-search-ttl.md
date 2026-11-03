@@ -1,0 +1,1 @@
+- Contributor auto-promotion now remembers each author's merged-repository search for an hour (a failed search for 15 minutes) instead of searching again on every sweep ([#15088](https://github.com/hivecommons/hive/issues/15088)).

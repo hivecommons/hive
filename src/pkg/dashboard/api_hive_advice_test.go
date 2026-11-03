@@ -83,7 +83,7 @@ func TestBuildHiveAdvisorSignals(t *testing.T) {
 
 func TestStatusPayloadCarriesHiveAdvice(t *testing.T) {
 	s := newTestServer()
-	s.deps = &Dependencies{Config: &config.Config{Agents: map[string]config.AgentConfig{}}}
+	s.deps = &Dependencies{Config: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}}}
 	payload := minimalPayload()
 	payload.Governor.Mode = "idle"
 	payload.Governor.Issues = 0
@@ -128,5 +128,16 @@ func TestHandleHiveAdviceDoesNotMutatePublishedStatus(t *testing.T) {
 	}
 	if got.Epoch.Mode != computed.Epoch.Mode {
 		t.Fatalf("handler did not serve persisted advice: %#v", got)
+	}
+}
+
+func TestCountNoCadenceAgentsMirrorsNoCadenceFlag(t *testing.T) {
+	agents := []FrontendAgent{
+		{Name: "on-demand", Enabled: true, Cadence: "", NoCadence: false},
+		{Name: "idle", Enabled: true, NoCadence: true},
+		{Name: "disabled", Enabled: false, NoCadence: true},
+	}
+	if got := countNoCadenceAgents(agents); got != 1 {
+		t.Fatalf("countNoCadenceAgents = %d, want 1", got)
 	}
 }

@@ -20,6 +20,10 @@ remote layer clients behind one `KnowledgeAPI`, and prime agents by formatting a
 bounded set of selected facts into the kick prompt rather than letting agents
 query the store directly ([knowledge API](../../pkg/knowledge/api.go)).
 
+**Retrieval implementation.** Similar wording and explicit fact relationships
+help select a small relevant set; no external embedding service is required.
+The details below are for maintainers of that selection path.
+
 Use a deterministic term-frequency embedder as the default semantic signal: text
 is tokenized, feature-hashed into a 256-dimensional vector, and L2-normalized,
 with embeddings cached only for the search/reindex pass
@@ -31,8 +35,6 @@ deduplication gates, then stores them as ordinary project facts derived from the
 source bead or PR ([retro lessons](../../pkg/knowledge/retro_lesson.go)).
 
 ## Consequences
-
-Rationale not recorded beyond the implementation, linked code, and cited design notes.
 
 Agents can receive durable, source-backed context without depending on an LLM's
 conversation memory or a hosted embedding API. Layer precedence and explicit

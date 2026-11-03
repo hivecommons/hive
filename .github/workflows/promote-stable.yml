@@ -138,7 +138,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to native GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -192,7 +192,7 @@ jobs:
 
       - name: Log in to GHCR as the cross-org publisher
         if: steps.crosspat.outputs.available == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -218,6 +218,17 @@ jobs:
           REASON: ${{ env.EMERGENCY_EXCEPTION_REASON }}
           DIGEST: ${{ steps.native.outputs.candidate_digest }}
           SHA: ${{ steps.native.outputs.candidate_sha }}
+          SOAK_HOURS: ${{ env.SOAK_HOURS }}
         run: |
           set -euo pipefail
-          unset GITHUB_TOKEN && gh issue comment "$FOLLOWUP" --body "Emergency stable promotion exception used for ${SHA} (${DIGEST}): ${REASON}"
+          unset GITHUB_TOKEN
+          gh issue comment "$FOLLOWUP" --body "Emergency stable promotion exception used for ${SHA} (${DIGEST}): ${REASON}"
+          # Stamp the follow-up as an ops-tracking issue with the soak
+          # deadline so the hive's good-first-issue picker and contributor
+          # lane leave it to the maintainer and the hive knows when the
+          # checklist becomes checkable (hivecommons/hive#13267).
+          recheck_at=$(date -u -d "+${SOAK_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)
+          body=$(gh issue view "$FOLLOWUP" --json body --jq .body)
+          if ! grep -q 'hive:ops-tracking' <<<"$body"; then
+            printf '%s\n\n<!-- hive:ops-tracking -->\n<!-- hive:recheck-after %s -->\n' "$body" "$recheck_at" | gh issue edit "$FOLLOWUP" --body-file -
+          fi

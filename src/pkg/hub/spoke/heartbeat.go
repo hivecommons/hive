@@ -22,8 +22,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/nous"
 	spokesig "github.com/hivecommons/hive/pkg/spoke"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -353,6 +357,9 @@ type AgentSummary struct {
 	// is correctly idle between kicks (flashsystems/ess: 2h/4h cadences looked
 	// idle after the generic 45-minute pane-activity threshold).
 	KickIntervalSec int64 `json:"kickIntervalSec,omitempty"`
+	// LaneQueuedWork is the actionable backlog in this agent's own lane, when
+	// the spoke reports it. nil (older spokes) falls back to the hive-wide count.
+	LaneQueuedWork *int `json:"laneQueuedWork,omitempty"`
 
 	// --- Fleet-divergence signals (the EXPECTED and ABLE legs) ---
 	// These let the hub show the gap between what the GOVERNOR expects running,
@@ -408,6 +415,16 @@ type AgentSummary struct {
 	// last fields explain the newest restart. The hub may add ResetAt/ResetBy
 	// when rendering fleet rows after an operator reset.
 	Restarts AgentRestartTelemetry `json:"restarts,omitempty"`
+	// BackendAuth* is the agent's backend-auth canary (#6558), the same fields
+	// /api/status shows per agent; empty status means ok. The hub's
+	// auth_health roll-up reads them. BackendAuthRefreshable is
+	// claude.HasUsableToken over the agent's own credential (ADR-0024): nil
+	// for backends with no verified refresh semantics, so absent never reads
+	// as "needs login".
+	BackendAuthStatus      string `json:"backendAuthStatus,omitempty"`
+	BackendAuthSince       string `json:"backendAuthSince,omitempty"`
+	BackendAuthLastError   string `json:"backendAuthLastError,omitempty"`
+	BackendAuthRefreshable *bool  `json:"backendAuthRefreshable,omitempty"`
 }
 
 type AgentRestartTelemetry struct {
@@ -437,6 +454,7 @@ type AgentActivity struct {
 	StartedAt      time.Time
 	LastActivityAt time.Time
 	KickInterval   time.Duration
+	LaneQueuedWork *int
 	// Fleet-divergence signals — see the matching AgentSummary fields.
 	ExpectedActive bool
 	CanOpenIssue   bool
@@ -453,6 +471,11 @@ type AgentActivity struct {
 	StartFailureExitCode *int
 	StartFailureSignal   string
 	Restarts             AgentRestartTelemetry
+	// BackendAuth* — see the matching AgentSummary fields.
+	BackendAuthStatus      string
+	BackendAuthSince       time.Time
+	BackendAuthLastError   string
+	BackendAuthRefreshable *bool
 }
 
 // NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
@@ -484,6 +507,13 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		StartBlocked:         act.StartBlocked,
 		StartFailureExitCode: act.StartFailureExitCode,
 		StartFailureSignal:   act.StartFailureSignal,
+
+		BackendAuthStatus:      act.BackendAuthStatus,
+		BackendAuthLastError:   act.BackendAuthLastError,
+		BackendAuthRefreshable: act.BackendAuthRefreshable,
+	}
+	if !act.BackendAuthSince.IsZero() {
+		as.BackendAuthSince = act.BackendAuthSince.UTC().Format(time.RFC3339)
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -500,6 +530,7 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 	if act.KickInterval > 0 {
 		as.KickIntervalSec = int64(act.KickInterval / time.Second)
 	}
+	as.LaneQueuedWork = act.LaneQueuedWork
 	return as
 }
 
@@ -511,6 +542,11 @@ type GovernorSummary struct {
 	// "linear", "jira"). Empty for the default GitHub Issues source; the hub
 	// dashboard only badges non-default sources.
 	WorkSource string `json:"work_source,omitempty"`
+	// OpenIssues and OpenPRs are all open issues and PRs across the hive's
+	// repos (Issues/PRs above are only the actionable ones). The hub's fleet
+	// widget shows them.
+	OpenIssues int `json:"open_issues,omitempty"`
+	OpenPRs    int `json:"open_prs,omitempty"`
 }
 
 type ContributorSummary struct {
@@ -540,6 +576,22 @@ type LeaderboardEntry struct {
 	StagesCompleted *int `json:"stages_completed,omitempty"`
 }
 
+// UpgradeDrainReport is the spoke's account of a self-upgrade it is
+// deliberately holding while kicked agent turns finish (#11876). Target is the
+// SHA being drained toward, InFlight names the agents whose turns are still
+// running, and WaitedS / RemainingS bound the hold: the spoke proceeds — cutting
+// whatever is still in flight — once RemainingS reaches zero.
+type UpgradeDrainReport struct {
+	Target     string   `json:"target"`
+	InFlight   []string `json:"in_flight,omitempty"`
+	WaitedS    int      `json:"waited_s"`
+	RemainingS int      `json:"remaining_s"`
+	// Turns carries, for each InFlight agent, how long its current turn has
+	// been running, so the hub can say "reviewer 38m" rather than just
+	// "reviewer". Spokes that predate the field send only InFlight.
+	Turns []UpgradeTurn `json:"turns,omitempty"`
+}
+
 // HeartbeatClusterHealthReport contains cluster node and GPU metrics
 // collected by the spoke in-cluster and sent to the hub via heartbeat.
 // This allows the hub to display health data for firewalled clusters
@@ -552,6 +604,10 @@ type HeartbeatClusterHealthReport struct {
 	// NodeHealthError carries the spoke-side reason health is partial or
 	// absent, for example a missing metrics API or forbidden node list.
 	NodeHealthError string `json:"node_health_error,omitempty"`
+	// NodeRBAC is this spoke's verdict on its cluster-scoped Node read access:
+	// "ok" when listing /api/v1/nodes succeeded, "forbidden" on HTTP 403, and
+	// empty when the list failed for any other reason.
+	NodeRBAC string `json:"node_rbac,omitempty"`
 }
 
 // HeartbeatNodeMetric holds per-node resource usage collected on the spoke.
@@ -757,6 +813,11 @@ type HeartbeatPayload struct {
 	ProviderLimitAgents   []string       `json:"provider_limit_agents,omitempty"`
 	Health                map[string]any `json:"health"`
 	DashboardURL          string         `json:"dashboard_url"`
+	// Providers is the per-provider auth/availability roll-up of Agents
+	// (ADR-0024, #12611): redacted, no credential material. Omitted when the
+	// spoke disables provider status or has no enabled agent naming a
+	// backend; an old hub ignores it.
+	Providers []crux.ProviderStatus `json:"providers,omitempty"`
 	// Output-freshness telemetry is optional and backward compatible: older
 	// spokes omit it, and the hub keeps the pre-existing no-write verdict.
 	LastWriteCapableKickAt string `json:"last_write_capable_kick_at,omitempty"`
@@ -825,12 +886,30 @@ type HeartbeatPayload struct {
 	AutoUpgrade      bool   `json:"auto_upgrade,omitempty"`
 	Upgrading        bool   `json:"upgrading,omitempty"`
 	UpgradeTargetSHA string `json:"upgrade_target_sha,omitempty"`
+	// UpgradeDrainUntil (RFC3339) is set while a hub-instructed self-upgrade is
+	// deferred to let in-flight agent kicks finish; it is the latest moment the
+	// spoke will wait. The hub does not call the upgrade stuck before it.
+	// Empty from a spoke that is not draining or is too old to report it.
+	UpgradeDrainUntil string `json:"upgrade_drain_until,omitempty"`
 	// UpgradeFailed / UpgradeError let a spoke tell the hub that an instructed
 	// upgrade did NOT land. Without them a failed upgrade is indistinguishable
 	// from a slow one: the hub keeps re-instructing and the UI shows a permanent
 	// "Upgrading" spinner that is simply a lie.
-	UpgradeFailed           bool                          `json:"upgrade_failed,omitempty"`
-	UpgradeError            string                        `json:"upgrade_error,omitempty"`
+	UpgradeFailed bool   `json:"upgrade_failed,omitempty"`
+	UpgradeError  string `json:"upgrade_error,omitempty"`
+	// UpgradePendingRestart tells the hub that the spoke could NOT patch its
+	// own Deployment (UpgradeError carries why — typically an admission
+	// webhook rejecting or timing out the patch) but is exiting so the kubelet
+	// re-pulls its floating tag. The upgrade is still in flight, not failed:
+	// the hub must keep the latch and the hint, and not spend a failed attempt.
+	UpgradePendingRestart bool `json:"upgrade_pending_restart,omitempty"`
+	// UpgradeDrain tells the hub that an instructed upgrade is being HELD by
+	// the spoke on purpose: it is waiting for in-flight agent kicks to finish
+	// (hub.upgrade_drain_timeout_s). Without it a draining spoke looks exactly
+	// like one whose attempt vanished — alive, heartbeating, still on the old
+	// SHA — and the hub's orphan sweep abandons the attempt before the drain
+	// can ever end. Nil when no drain is open.
+	UpgradeDrain            *UpgradeDrainReport           `json:"upgrade_drain,omitempty"`
 	PendingGitHubAppInstall bool                          `json:"pending_github_app_install,omitempty"`
 	ClusterHealth           *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
 	// Fleet contribution counts — the spoke's AI-author PR activity across its
@@ -1072,6 +1151,13 @@ type HeartbeatPayload struct {
 	// configured and clears what the hub stored; nil (old spoke, minimal
 	// beat) leaves the hub's stored profile untouched.
 	Compliance *HeartbeatCompliance `json:"compliance,omitempty"`
+	// Evidence is the spoke's evidence-pipeline summary over the last 90
+	// days (#12114, part of #12080), built from the same review-evidence
+	// bundles as GET /api/evidence/summary. The hub sanitizes and bounds it
+	// (sanitizeEvidence) and stores it with the other per-hive quadrant
+	// inputs. nil (old spoke, minimal beat, or bundles unreadable this cycle)
+	// leaves the hub's stored summary untouched.
+	Evidence *HeartbeatEvidence `json:"evidence,omitempty"`
 	// StatsStale is true when this beat carries CACHED collected stats rather
 	// than fresh ones, because collect() timed out this cycle (see
 	// sendHeartbeat / collectWithTimeout). The beat is still a genuine liveness
@@ -1089,6 +1175,8 @@ type HeartbeatPayload struct {
 	// That lets the hub keep liveness/staleness visible without overwriting
 	// agents and health with an old cached copy.
 	FreshAgentStats bool `json:"fresh_agent_stats,omitempty"`
+	// SelfExperimentsOptIn is local consent; absent or false means opted out.
+	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
 }
 
 const (
@@ -1139,6 +1227,109 @@ type HeartbeatCompliancePosture struct {
 	LastRun string `json:"lastRun,omitempty"`
 }
 
+// HeartbeatEvidenceCalibrationBuckets is the number of confidence buckets in
+// HeartbeatEvidence.Calibration; bucket i covers confidence [i/6, (i+1)/6),
+// the last bucket also including 1.0.
+const HeartbeatEvidenceCalibrationBuckets = 6
+
+// HeartbeatEvidence is the evidence block of a heartbeat: 90-day counts over
+// the newest review-evidence bundle per PR. FalseApprove90d counts approve
+// verdicts on PRs later reverted or followed up within 14 days of merge;
+// FalseBlock90d counts blocking verdicts on PRs that were merged anyway;
+// Reverted14d90d counts merged PRs reverted or followed up within 14 days.
+// AutomergeSelfAuthored is AutoMerge.SelfAuthoredAutoMergeAllowed(ACMMLevel),
+// nil when the spoke has no config. HiveState is the 24 h / 7 d summary of the
+// spoke's hive state time series (#12339), nil when it has no recent sample.
+// The JSON shape matches hub.HeartbeatEvidence.
+type HeartbeatEvidence struct {
+	// Nil means an older spoke did not report author-kind counts.
+	ByAuthorKind          map[string]HeartbeatEvidenceBucket                           `json:"by_author_kind,omitempty"`
+	Verdicts90d           int                                                          `json:"verdicts_90d"`
+	FalseApprove90d       int                                                          `json:"false_approve_90d"`
+	FalseBlock90d         int                                                          `json:"false_block_90d"`
+	Merged90d             int                                                          `json:"merged_90d"`
+	Reverted14d90d        int                                                          `json:"reverted_14d_90d"`
+	AutomergeSelfAuthored *bool                                                        `json:"automerge_self_authored,omitempty"`
+	ReviewerFamilies      []string                                                     `json:"reviewer_families,omitempty"`
+	AuthorFamilies        []string                                                     `json:"author_families,omitempty"`
+	Calibration           [HeartbeatEvidenceCalibrationBuckets]HeartbeatEvidenceBucket `json:"calibration"`
+
+	// Fleet-panel aggregates (#12370), all additive: an old spoke omits them
+	// and the hub treats the absence as "not reported", never as zero.
+	// OutcomesByAuthorKind is keyed by human/agent/bot. WriteCounters is the
+	// proxy's attempted-vs-blocked agent write totals per intent tier since the
+	// proxy started (not a 90-day window). ShadowGate compares what the shadow
+	// review gate / intent verification would have done with the outcome.
+	OutcomesByAuthorKind map[string]HeartbeatEvidenceOutcome    `json:"outcomes_by_author_kind,omitempty"`
+	WriteCounters        map[string]HeartbeatEvidenceWriteCount `json:"write_counters,omitempty"`
+	ShadowGate           *HeartbeatEvidenceShadow               `json:"shadow_gate,omitempty"`
+
+	// TimeToMerge is the median time-to-merge (merge.at minus
+	// merge.opened_at) of the merged PRs in the window that recorded an open
+	// time, with that sample size. nil when none did, including every bundle
+	// written before opened_at was captured: the hub shows "not reported",
+	// never a zero median.
+	TimeToMerge *HeartbeatEvidenceTimeToMerge `json:"time_to_merge,omitempty"`
+
+	// Windows carries the same counts over shorter trailing windows, keyed by
+	// HeartbeatEvidenceWindowKeys ("24h", "7d", "30d"), so the hub can offer
+	// a window selector without a per-PR feed (RFC #12062). Field names keep
+	// their *90d suffix inside a window for wire compatibility; the key is
+	// the real look-back. Lifetime values (AutomergeSelfAuthored,
+	// WriteCounters) and Windows itself are left empty inside a window. An
+	// old spoke omits it and the hub shows "not reported for this window".
+	Windows   map[string]*HeartbeatEvidence `json:"windows,omitempty"`
+	HiveState *hivestate.Trends             `json:"hive_state,omitempty"`
+}
+
+// HeartbeatEvidenceWindowKeys are the trailing windows a spoke reports in
+// HeartbeatEvidence.Windows, in hours.
+var HeartbeatEvidenceWindowKeys = map[string]int{"24h": 24, "7d": 7 * 24, "30d": 30 * 24}
+
+// HeartbeatEvidenceBucket is one calibration bucket: N verdicts, Bad of
+// which disagreed with the outcome (a false approve or a false block).
+type HeartbeatEvidenceBucket struct {
+	N   int `json:"n"`
+	Bad int `json:"bad"`
+}
+
+// HeartbeatEvidenceOutcome counts the PRs of one author kind: N PRs, Merged
+// of them merged, Reverted (a subset of Merged) reverted or followed up
+// within 14 days. N-Merged is still open.
+type HeartbeatEvidenceOutcome struct {
+	N        int `json:"n"`
+	Merged   int `json:"merged"`
+	Reverted int `json:"reverted"`
+}
+
+// HeartbeatEvidenceTimeToMerge is one window's median time-to-merge in
+// whole seconds over N merged PRs with a recorded open time.
+type HeartbeatEvidenceTimeToMerge struct {
+	MedianSeconds int64 `json:"median_s"`
+	N             int   `json:"n"`
+}
+
+// HeartbeatEvidenceWriteCount is one tier's attempted and proxy-blocked
+// agent write counts.
+type HeartbeatEvidenceWriteCount struct {
+	Attempted int `json:"attempted"`
+	Blocked   int `json:"blocked"`
+}
+
+// HeartbeatEvidenceShadow is the shadow-gate block: ReviewGate is the
+// shadow review gate, Intent the shadow intent verification.
+type HeartbeatEvidenceShadow struct {
+	ReviewGate HeartbeatEvidenceShadowGate `json:"review_gate"`
+	Intent     HeartbeatEvidenceShadowGate `json:"intent"`
+}
+
+// HeartbeatEvidenceShadowGate splits the PRs one shadow gate evaluated into
+// the ones it would have stopped (Held) and let through (Passed).
+type HeartbeatEvidenceShadowGate struct {
+	Held   HeartbeatEvidenceOutcome `json:"held"`
+	Passed HeartbeatEvidenceOutcome `json:"passed"`
+}
+
 type StatusCollector func() *HeartbeatPayload
 
 // FreshStatusCollector returns only cheap, in-memory state that is safe to
@@ -1152,6 +1343,17 @@ type FreshStatusCollector func() *HeartbeatPayload
 // (HeartbeatResponse.RestartSpoke). The callback owns the uptime guard.
 type RestartSpokeCallback func()
 type AgentRestartResetCallback func(agent string)
+
+// Values of HeartbeatResponse.Breaker (#15092).
+const (
+	BreakerEngage  = "engage"
+	BreakerRelease = "release"
+)
+
+// BreakerCallback applies a hub-requested whole-hive pause (BreakerEngage) or
+// resume (BreakerRelease) through the fleet breaker — the same mechanism as
+// the dashboard's top-bar ⏸ button.
+type BreakerCallback func(action string)
 
 type UpgradeCallback func(targetSHA string)
 
@@ -1187,8 +1389,10 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onAuthorizedUsers AuthorizedUsersCallback
 	var onProjectConfig ProjectConfigCallback
 	var onGatewayConfig GatewayConfigCallback
+	var onClusterID ClusterIDCallback
 	var onRestartSpoke RestartSpokeCallback
 	var onAgentRestartReset AgentRestartResetCallback
+	var onBreaker BreakerCallback
 	var freshCollect FreshStatusCollector
 	var onUpgradePolicy UpgradePolicyCallback
 	for _, cb := range callbacks {
@@ -1209,10 +1413,14 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onProjectConfig = fn
 		case GatewayConfigCallback:
 			onGatewayConfig = fn
+		case ClusterIDCallback:
+			onClusterID = fn
 		case RestartSpokeCallback:
 			onRestartSpoke = fn
 		case AgentRestartResetCallback:
 			onAgentRestartReset = fn
+		case BreakerCallback:
+			onBreaker = fn
 		case FreshStatusCollector:
 			freshCollect = fn
 		case UpgradePolicyCallback:
@@ -1228,11 +1436,15 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp == nil {
 			return
 		}
+		// Missing assignments are authoritative withdrawal, including old hubs.
+		// Only verified, decoded heartbeat responses reach this dispatch.
+		nous.SelfExperiments.Apply(selfExperimentsOptedIn(), resp.SelfExperimentFlag)
 		if resp.SwitchToTag != "" && onSwitchBranch != nil {
 			// Branch switch takes precedence over a plain SHA upgrade — it
 			// changes the image tag, which a same-tag re-pull can't do.
 			onSwitchBranch(resp.SwitchToTag)
 		} else if resp.UpgradeTo != "" && onUpgrade != nil {
+			setUpgradeInterrupt(resp.UpgradeInterrupt)
 			onUpgrade(resp.UpgradeTo)
 		}
 		if resp.GitHubAppConfig != nil && onGitHubAppConfig != nil {
@@ -1260,6 +1472,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp.PendingGateway != nil && onGatewayConfig != nil {
 			onGatewayConfig(resp.PendingGateway)
 		}
+		if resp.ClusterID != "" && onClusterID != nil {
+			onClusterID(resp.ClusterID)
+		}
 		if resp.RestartSpoke && onRestartSpoke != nil {
 			onRestartSpoke()
 		}
@@ -1272,6 +1487,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			for _, name := range resp.ResetAgentRestarts {
 				onAgentRestartReset(name)
 			}
+		}
+		if resp.Breaker != "" && onBreaker != nil {
+			onBreaker(resp.Breaker)
 		}
 	}
 
@@ -1497,6 +1715,7 @@ func overlayFreshStatsAfterCollectTimeout(ctx context.Context, payload *Heartbea
 	payload.ProviderLimitRebuffs = fresh.ProviderLimitRebuffs
 	payload.ProviderLimitHiveWide = fresh.ProviderLimitHiveWide
 	payload.ProviderLimitAgents = fresh.ProviderLimitAgents
+	payload.Providers = fresh.Providers
 	payload.LastWriteCapableKickAt = fresh.LastWriteCapableKickAt
 	payload.LastKickDisposition = fresh.LastKickDisposition
 	payload.LastKickSkipReason = fresh.LastKickSkipReason
@@ -1542,7 +1761,9 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 }
 
 // postHeartbeat marshals and POSTs a beat to the hub, records success on
-// acceptance, and decodes the hub's response.
+// acceptance, and decodes the hub's response. It also overlays current local
+// experiment consent and revokes assignments on opt-out before any network I/O;
+// verified response assignments are applied separately by processHeartbeatResponse.
 //
 // Named ...ToHub to avoid colliding with the pkg-local test helper postHeartbeat.
 // Extracted from sendHeartbeat so the MINIMAL liveness beat (no cached payload,
@@ -1551,7 +1772,16 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 // handling — including hub-instructed upgrades. A separate ad-hoc POST would
 // drift from this one over time and silently lose those behaviours.
 func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPayload, logger *slog.Logger) *HeartbeatResponse {
-	payload = redactHeartbeat(payload)
+	// Collector/cache ownership stays with the caller. Overlay consent on a
+	// private copy, including when no redaction classes are configured.
+	owned := *payload
+	payload = redactHeartbeat(&owned)
+	// Read local consent even for cached/minimal/upgrading heartbeats; never
+	// trust an old collector's value. This does not modify governor config.
+	payload.SelfExperimentsOptIn = selfExperimentsOptedIn()
+	if !payload.SelfExperimentsOptIn {
+		nous.SelfExperiments.Apply(false, nil)
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
@@ -1581,8 +1811,12 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
+		if hubHeartbeatStatusIsDefect(resp.StatusCode) {
+			fleetreport.Observe(fleetreport.ClassUnexpectedHub5xx, "heartbeat", fmt.Sprintf("hub heartbeat returned HTTP %d", resp.StatusCode), string(respBody))
+		}
 		return nil
 	}
+	fleetreport.Clear(fleetreport.ClassUnexpectedHub5xx, "heartbeat")
 
 	// The hub accepted the beat (status < 300) — this is what /api/livez
 	// treats as "the heartbeat goroutine is alive and doing its job", so
@@ -1642,6 +1876,17 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 // is recovered and reported as a nil (skipped) payload rather than crashing
 // the heartbeat goroutine.
 func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout time.Duration, logger *slog.Logger) *HeartbeatPayload {
+	// Per-section recorder for this collect, found by TimedSection through
+	// currentCollectTimings. Cleared on return only if still ours (CAS), so a
+	// straggling collect never clears a successor's recorder.
+	timings := newCollectTimings()
+	currentCollectTimings.Store(timings)
+	defer currentCollectTimings.CompareAndSwap(timings, nil)
+	gen := heartbeatStateGeneration.Load()
+
+	// timedOut is set by the waiter before it gives up; the collect goroutine
+	// reads it after collect() returns to decide whether its payload is late.
+	var timedOut atomic.Bool
 	// Buffered so the collect goroutine can always complete its send and exit
 	// even after we have stopped waiting — prevents a permanent goroutine leak
 	// once the blocker (NFS) finally releases.
@@ -1655,7 +1900,21 @@ func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout ti
 				done <- nil
 			}
 		}()
-		done <- collect()
+		payload := collect()
+		if timedOut.Load() && payload != nil && storeLateGoodPayload(payload, gen) {
+			// Late but complete. A spoke whose collect takes 10–30 s EVERY
+			// beat never finishes inside the budget, so without this it never
+			// populates the last-good cache and sends the identity-only MINIMAL
+			// beat forever — the hub shows it with no stats at all. Caching the
+			// late result lets the NEXT beat send full (merely stale) stats.
+			publishHeartbeatIdentity(payload)
+			if logger != nil {
+				logger.Info("hub heartbeat collect finished after its budget; cached as last-good for the next beat",
+					"took", time.Since(timings.started).Round(time.Millisecond).String(),
+					"timeout", timeout.String())
+			}
+		}
+		done <- payload
 	}()
 
 	timer := time.NewTimer(timeout)
@@ -1664,17 +1923,45 @@ func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout ti
 	case payload := <-done:
 		return payload
 	case <-timer.C:
+		timedOut.Store(true)
 		if logger != nil {
 			// The CALLER decides what to do with a timed-out collect (send
 			// cached last-good stats, or skip on the first beats) — it logs the
-			// outcome. Here we only note the timeout itself.
+			// outcome. Here we only note the timeout itself, then name the
+			// sections that consumed the budget.
 			logger.Warn("hub heartbeat collect timed out; loop keeps ticking so liveness stays green",
 				"timeout", timeout.String())
+			logCollectTimeoutBreakdown(logger, timings, timeout)
 		}
 		return nil
 	case <-ctx.Done():
+		timedOut.Store(true)
 		return nil
 	}
+}
+
+// heartbeatStateGeneration is bumped by ResetHeartbeatStateForTest (under
+// lastGoodPayload's lock) so a collect goroutine that straggles past a reset
+// (tests release their wedged collectors in Cleanup) does not cache its late
+// payload into the next test's pristine state. Never changes in production.
+var heartbeatStateGeneration atomic.Uint64
+
+// storeLateGoodPayload is storeLastGoodPayload for a collect that finished
+// after its budget: it stores only if the heartbeat state has not been reset
+// since the collect began, checking and storing under one lock so a reset
+// cannot slip between the two. Reports whether it stored.
+func storeLateGoodPayload(p *HeartbeatPayload, gen uint64) bool {
+	c := clonePayload(p)
+	if c == nil {
+		return false
+	}
+	lastGoodPayload.Lock()
+	defer lastGoodPayload.Unlock()
+	if heartbeatStateGeneration.Load() != gen {
+		return false
+	}
+	lastGoodPayload.payload = c
+	return true
 }
 
 // storeLastGoodPayload caches a deep clone of a payload that collect() produced
@@ -2251,16 +2538,32 @@ func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA st
 // Best-effort and non-fatal: the caller is usually seconds from exiting, and a
 // failure to report must never mask the upgrade failure itself.
 func ReportUpgradeFailure(hubURL, hiveID, targetSHA, currentSHA, cause string, logger *slog.Logger) {
+	reportUpgradeOutcome(hubURL, hiveID, targetSHA, currentSHA, cause, false, logger)
+}
+
+// ReportUpgradePendingRestart tells the hub that the Deployment patch failed
+// (hint says why) but the spoke is restarting its process so the kubelet
+// re-pulls the floating tag and the upgrade lands anyway. Unlike
+// ReportUpgradeFailure this keeps the hub's "Upgrading" latch and does not
+// count as a failed attempt — the admission-webhook incident on vllm-d showed
+// "failed 3 attempts" for an upgrade that landed on every restart.
+func ReportUpgradePendingRestart(hubURL, hiveID, targetSHA, currentSHA, hint string, logger *slog.Logger) {
+	reportUpgradeOutcome(hubURL, hiveID, targetSHA, currentSHA, hint, true, logger)
+}
+
+func reportUpgradeOutcome(hubURL, hiveID, targetSHA, currentSHA, cause string, pendingRestart bool, logger *slog.Logger) {
 	if hubURL == "" || hiveID == "" {
 		return
 	}
 	payload := HeartbeatPayload{
-		HiveID:           hiveID,
-		GitHash:          currentSHA,
-		UpgradeTargetSHA: targetSHA,
-		UpgradeFailed:    true,
-		UpgradeError:     cause,
-		Timestamp:        time.Now().UTC().Format(time.RFC3339),
+		HiveID:                hiveID,
+		GitHash:               currentSHA,
+		UpgradeTargetSHA:      targetSHA,
+		UpgradeFailed:         !pendingRestart,
+		Upgrading:             pendingRestart,
+		UpgradePendingRestart: pendingRestart,
+		UpgradeError:          cause,
+		Timestamp:             time.Now().UTC().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -2281,10 +2584,14 @@ func ReportUpgradeFailure(hubURL, hiveID, targetSHA, currentSHA, cause string, l
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		logger.Warn("could not report upgrade failure to hub", "error", err)
+		logger.Warn("could not report upgrade outcome to hub", "pending_restart", pendingRestart, "error", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if pendingRestart {
+		logger.Info("reported upgrade pending-restart to hub", "target", targetSHA, "hint", cause)
+		return
+	}
 	logger.Info("reported upgrade failure to hub", "target", targetSHA, "cause", cause)
 }
 
@@ -2467,11 +2774,14 @@ type GatewayConfigCallback func(cfg *HeartbeatGatewayConfig)
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
 type HeartbeatResponse struct {
-	OK         bool   `json:"ok"`
-	UpgradeTo  string `json:"upgrade_to,omitempty"`
-	HubGitHash string `json:"hub_git_hash,omitempty"`
-	LatestSHA  string `json:"latest_sha,omitempty"`
-	LatestTag  string `json:"latest_tag,omitempty"`
+	OK        bool   `json:"ok"`
+	UpgradeTo string `json:"upgrade_to,omitempty"`
+	// UpgradeInterrupt rides with UpgradeTo when the owner asked the upgrade
+	// to proceed without draining in-flight agent turns (#14950).
+	UpgradeInterrupt bool   `json:"upgrade_interrupt,omitempty"`
+	HubGitHash       string `json:"hub_git_hash,omitempty"`
+	LatestSHA        string `json:"latest_sha,omitempty"`
+	LatestTag        string `json:"latest_tag,omitempty"`
 	// SwitchToTag instructs the spoke to change its own deployment image to
 	// ghcr.io/hivecommons/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
@@ -2485,11 +2795,15 @@ type HeartbeatResponse struct {
 	// so ALL instances reporting as this hive receive it; the spoke's own
 	// uptime guard keeps a freshly restarted process from acting on the same
 	// window twice.
-	RestartSpoke       bool                      `json:"restart_spoke,omitempty"`
-	ResetAgentRestarts []string                  `json:"reset_agent_restarts,omitempty"`
-	GitHubAppConfig    *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
-	HubBanner          *HubBanner                `json:"hub_banner,omitempty"`
-	IsPublic           *bool                     `json:"is_public,omitempty"`
+	RestartSpoke       bool     `json:"restart_spoke,omitempty"`
+	ResetAgentRestarts []string `json:"reset_agent_restarts,omitempty"`
+	// Breaker is a one-shot whole-hive pause/resume (BreakerEngage /
+	// BreakerRelease) an owner requested from the hub's per-hive menu
+	// (#15092); empty means none.
+	Breaker         string                    `json:"breaker,omitempty"`
+	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
+	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
+	IsPublic        *bool                     `json:"is_public,omitempty"`
 	// AuthorizedUsers is the hub's authoritative per-hive access list, as
 	// "username:role" entries. The hub can't reach heartbeat-only spokes (e.g.
 	// the heartbeat-only cluster) over kubectl, and those spokes authorize their own device-flow
@@ -2525,6 +2839,12 @@ type HeartbeatResponse struct {
 	// nil means "nothing to deliver". The hub sends it once (drained on delivery)
 	// rather than every beat, since it carries a secret key value.
 	PendingGateway *HeartbeatGatewayConfig `json:"pending_gateway,omitempty"`
+	// ClusterID is the cluster the hub's record places this hive on. The hub
+	// sends it only while the spoke reports no cluster_id of its own, so a
+	// spoke provisioned before the template rendered hub.cluster_id (#11432)
+	// learns it — the only channel on pull_only clusters the hub cannot
+	// re-render. Empty means "nothing to deliver".
+	ClusterID string `json:"cluster_id,omitempty"`
 	// UpgradePolicy is the hub's upgrade posture for THIS spoke (#7262): who
 	// owns upgrades, on what schedule, toward which branch/channel head. Sent
 	// on every beat for any hive the hub has an upgrade opinion about; nil
@@ -2538,6 +2858,8 @@ type HeartbeatResponse struct {
 	SigSeq      int64  `json:"sig_seq,omitempty"`
 	SigSignedAt int64  `json:"sig_ts,omitempty"`
 	SigVersion  int    `json:"sig_v,omitempty"`
+	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
+	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
@@ -2574,6 +2896,11 @@ type GitHubAppConfigCallback func(cfg *HeartbeatGitHubAppConfig)
 // its running project config. Used for heartbeat-only clusters where the hub
 // cannot push config over kubectl (mirrors AuthorizedUsersCallback).
 type ProjectConfigCallback func(cfg *HeartbeatProjectConfig)
+
+// ClusterIDCallback is called with the hub-known cluster id when the hub
+// delivers one via the heartbeat response. The spoke adopts it only when its
+// own hub.cluster_id is empty, which enables cluster_health on later beats.
+type ClusterIDCallback func(clusterID string)
 
 // HeartbeatUpgradePolicy is the hub's authoritative upgrade posture for one
 // spoke (#7262). Every field is descriptive: nothing here instructs the spoke
@@ -2615,6 +2942,19 @@ type HeartbeatUpgradePolicy struct {
 	// send it — and must not be rendered as "no update coming".
 	NextUpdateAt     string `json:"next_update_at,omitempty"`
 	NextUpdateStatus string `json:"next_update_status,omitempty"`
+	// ScheduledHoldReason is why the hub did not apply this hive's daily/weekly
+	// upgrade while its window was open; ScheduledHoldAt (RFC3339 UTC) is when
+	// it was recorded. Empty when nothing is held or the hub is too old to say.
+	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
+	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
+	// NextWindowAt is this hive's OWN next daily/weekly window (RFC3339
+	// UTC), independent of the channel promotion estimate in NextUpdateAt.
+	// Empty for instant/manual policies and for hubs too old to send it.
+	NextWindowAt string `json:"next_window_at,omitempty"`
+	// UpgradeHistory is the hub's record of this hive's recent upgrade
+	// attempts and missed windows, newest last, so the spoke dashboard can
+	// show why a window did not land without asking the hub.
+	UpgradeHistory []UpgradeAttempt `json:"upgrade_history,omitempty"`
 }
 
 // Schedule values carried by HeartbeatUpgradePolicy.Schedule. These mirror
@@ -2682,3 +3022,28 @@ func StartTaskStatusPush(ctx context.Context, hubURL string, collect TaskStatusC
 		}
 	}
 }
+
+// hubHeartbeatStatusIsDefect reports whether a heartbeat status points at a
+// hub defect worth self-reporting. 502/503/504 are the front proxy saying the
+// hub is restarting or has no backend ("no available server"); the next beat
+// retries on its own interval, so they are logged but never escalated.
+func hubHeartbeatStatusIsDefect(status int) bool {
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return false
+	}
+	return status >= http.StatusInternalServerError
+}
+
+// upgradeInterrupt is the latest heartbeat's UpgradeInterrupt flag, read by
+// the UpgradeCallback in cmd/hive to skip its drain (#14950). A package
+// atomic rather than a callback parameter so the long-standing
+// UpgradeCallback signature stays put.
+var upgradeInterrupt atomic.Bool
+
+func setUpgradeInterrupt(v bool) { upgradeInterrupt.Store(v) }
+
+// UpgradeInterruptRequested reports whether the hub's latest upgrade
+// instruction asked the spoke to interrupt in-flight agent turns rather
+// than drain them.
+func UpgradeInterruptRequested() bool { return upgradeInterrupt.Load() }

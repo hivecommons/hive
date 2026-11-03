@@ -17,11 +17,15 @@ func TestOverviewBandChartsStaticWiring9003(t *testing.T) {
 		"function overviewIssueBandSlices(repos)",
 		"function overviewPRBandSlices(repos)",
 		"function renderOverviewDonut(title, subtitle, slices, history, state)",
+		"function overviewSliceSpecs(kind)",
+		"const list = items.get(issue && issue.chart_slice);",
+		"const list = items.get(pr && pr.chart_slice);",
+		"(r.actionableIssues || []).forEach(issue => place(issue, false));",
+		"(r.nonActionableIssues || []).forEach(issue => place(issue, false));",
 		"groupedRepoIssues(issues)",
 		"groupedRepoPRs(r.openPrs || [], r.heldPrs || [])",
-		"(r.actionableIssues || []).concat(r.heldIssues || [])",
+		"repoCardTrackedIssues(repo)",
 		"OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done']",
-		"PR_BAND_ORDER.map(band => ({",
 		"Issues by band",
 		"PRs by band",
 	} {
@@ -53,8 +57,11 @@ func TestOverviewBandChartClassMappings9003(t *testing.T) {
 		"overview-pr-in-review { --slice-c: var(--band-in-review); }",
 		"overview-pr-open { --slice-c: var(--band-open); }",
 		"overview-pr-draft { --slice-c: var(--band-draft); }",
-		"className: 'overview-issue-' + band",
-		"className: 'overview-pr-' + band",
+		"overview-issue-your-turn, .overview-pr-your-turn { --slice-c: var(--band-needs-human); }",
+		"overview-issue-to-close, .overview-pr-to-close { --slice-c: var(--band-confirm-close); }",
+		"overview-issue-waiting-elsewhere, .overview-pr-waiting-elsewhere { --slice-c: var(--muted); }",
+		"className: 'overview-issue-' + spec.key",
+		"className: 'overview-pr-' + spec.key",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("overview band chart mapping missing %q", want)

@@ -123,7 +123,7 @@ func npsGA4CSPSources() (script, connect string) {
 // the App's existing issue-creation path (dedupe, label and canary guards,
 // log scrubbing included). A seam so tests need no forge.
 type npsIssueFiler interface {
-	CreateIssue(ctx context.Context, repo, title, body string, labels []string) (ghpkg.CreateIssueResult, error)
+	CreateIssue(ctx context.Context, req ghpkg.CreateIssueRequest) (ghpkg.CreateIssueResult, error)
 }
 
 // npsIssueFilerFor returns the filer to use, or nil when this hive has no
@@ -244,7 +244,7 @@ func (s *Server) handleNPSIssue(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), npsIssueTimeout)
 	defer cancel()
-	res, err := s.npsIssueFilerFor().CreateIssue(ctx, repo, npsIssueTitle(feedback), npsIssueBody(feedback, versionShort), nil)
+	res, err := s.npsIssueFilerFor().CreateIssue(ctx, ghpkg.CreateIssueRequest{Repo: repo, Title: npsIssueTitle(feedback), Body: npsIssueBody(feedback, versionShort), Origin: config.OriginSourceDashboard}) // writeback:solicited signed-in feedback author explicitly consented to opening this public issue.
 	if err != nil {
 		release()
 		if s.logger != nil {

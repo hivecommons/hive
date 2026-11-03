@@ -1,0 +1,1 @@
+- The hard-suppress reconcile no longer lifts a hive-applied `hold` or `blocked` because any merged PR mentioned the issue: only a PR in one of the hive's repos authored by the App bot or `project.ai_author` counts (a person's intake PR listing ~65 issues had lifted `blocked` from issues waiting on outside dependencies).

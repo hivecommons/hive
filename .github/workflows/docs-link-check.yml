@@ -49,6 +49,9 @@ on:
       - 'src/scripts/test-check-docs-links.sh'
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
+      - 'src/scripts/check-security-docs-readability.sh'
+      - 'src/scripts/test-check-security-docs-readability.sh'
+      - 'src/scripts/check-security-docs-rot.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
@@ -71,6 +74,9 @@ on:
       - 'src/scripts/test-check-docs-links.sh'
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
+      - 'src/scripts/check-security-docs-readability.sh'
+      - 'src/scripts/test-check-security-docs-readability.sh'
+      - 'src/scripts/check-security-docs-rot.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
@@ -90,7 +96,8 @@ permissions:
 jobs:
   link-check:
     name: relative links and anchors resolve
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -100,12 +107,13 @@ jobs:
       - name: Check src/docs/ relative links and anchors
         run: python3 src/scripts/check-docs-links.py src/docs
 
-      # Verifies every `pkg/<file>:<line>` citation in api-reference.md still
+      # Verifies every `pkg/<file>:<line>` citation in api-reference.md and
+      # api-reference/*.md still
       # points at the route registration it names (hivecommons/hive#6628).
       - name: Self-test the api-reference citation checker
         run: bash src/scripts/test-check-api-reference-citations.sh
 
-      - name: Check api-reference.md source citations
+      - name: Check api-reference source citations
         run: bash src/scripts/check-api-reference-citations.sh
 
       # Verifies repo-local file:line citations across every src/docs/*.md file
@@ -115,6 +123,22 @@ jobs:
 
       - name: Check src/docs file:line citations
         run: python3 src/scripts/check-docs-citations.py src/docs
+
+      # Security docs must stay readable by a non-expert: Flesch-Kincaid grade
+      # 11 or lower for SECURITY.md and the src/docs/security*/ioscan* set.
+      - name: Self-test the security docs readability checker
+        run: bash src/scripts/test-check-security-docs-readability.sh
+
+      - name: Check security docs readability
+        run: bash src/scripts/check-security-docs-readability.sh --verbose
+
+      # Security docs must also stay current: a `Last reviewed:` date no
+      # older than 120 days, and no "tracked in #N" sentence whose issue has
+      # since closed. GITHUB_TOKEN lets the script ask GitHub for issue state.
+      - name: Check security docs rot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash src/scripts/check-security-docs-rot.sh
 
       # Repo-root docs/ was covered by nothing until #5491: it was absent from
       # both paths: filters and had no step, so a PR breaking a relative link

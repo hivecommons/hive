@@ -1,1 +1,0 @@
-- Portal the dashboard version popover out of the sidebar so upgrade details and progress controls cannot be clipped by the sidebar edge.

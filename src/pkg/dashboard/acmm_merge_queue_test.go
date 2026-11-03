@@ -314,7 +314,7 @@ func TestACMMMergeQueueCredit_NilGuards(t *testing.T) {
 // acmmOrgMergeQueueGolden is the merge-queue gap ticket body as filed before
 // #10891. Organization repositories must keep it byte for byte (AC32).
 const acmmOrgMergeQueueGolden = "## ACMM Gap: Merge queue\n\n" +
-	"**Level:** L6 Fully Autonomous\n" +
+	"**Level:** L6 Autonomous\n" +
 	"**Category:** autonomy\n" +
 	"**Criterion ID:** `acmm:merge-queue`\n\n" +
 	"### What's needed\n\n" +
@@ -323,7 +323,7 @@ const acmmOrgMergeQueueGolden = "## ACMM Gap: Merge queue\n\n" +
 	"- `.github/merge-queue.yml`\n" +
 	"- `.prow.yaml`\n" +
 	"- `tide.yaml`\n\n" +
-	"Adding any one of these will satisfy this criterion and help the repository advance to ACMM Level 6 (Fully Autonomous).\n\n" +
+	"Adding any one of these will satisfy this criterion and help the repository advance to ACMM Level 6 (Autonomous).\n\n" +
 	"### Why it matters\n\n" +
 	"Autonomy criteria enable agents to operate independently — generating issues, orchestrating multi-agent workflows, and managing merge queues.\n\n" +
 	"### How to fix\n\n" +
@@ -339,13 +339,18 @@ func mqIssueLabels(t *testing.T, captured map[string]interface{}) []string {
 	}
 	out := make([]string, 0, len(raw))
 	for _, l := range raw {
-		out = append(out, l.(string))
+		// CreateIssue stamps the origin/<source> provenance label on every
+		// issue it files (hivecommons/hive#12688); these tests pin the ACMM
+		// labels only.
+		if name := l.(string); !strings.HasPrefix(name, "origin/") {
+			out = append(out, name)
+		}
 	}
 	return out
 }
 
 // AC32: organization-owned repos (and repos whose owner type cannot be read)
-// keep today's ticket: same title, body and labels.
+// keep the gap content and labels, with v6's dashboard title provenance.
 func TestACMMIssue_MergeQueueOrgTicketUnchanged(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -361,7 +366,7 @@ func TestACMMIssue_MergeQueueOrgTicketUnchanged(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 			}
-			if got := captured["title"]; got != "[ACMM L6] Add Merge queue" {
+			if got := captured["title"]; got != "[dashboard] [ACMM L6] Add Merge queue" {
 				t.Fatalf("title = %q", got)
 			}
 			if got := captured["body"]; got != acmmOrgMergeQueueGolden {

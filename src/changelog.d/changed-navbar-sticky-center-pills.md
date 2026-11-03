@@ -1,1 +1,0 @@
-- Made the dashboard top navbar sticky, centered the run-state agent cards, moved feedback into the right controls, and added compact UP NEXT motion.

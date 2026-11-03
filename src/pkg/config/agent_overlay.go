@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -42,7 +43,7 @@ func LoadAgentOverrides(dir string) (map[string]AgentConfig, error) {
 			return nil, fmt.Errorf("parsing agent file %s: %w", path, err)
 		}
 		agent.Managed = true
-		agent.sourceFile = path
+		agent.SetLoadState(agent.Name(), path)
 		agents[name] = agent
 	}
 	return agents, nil
@@ -67,6 +68,12 @@ func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map
 	if len(overlays) == 0 {
 		return overlays
 	}
+	for _, name := range c.Governor.ClearInvalidInferenceLaunchCmds(overlays) {
+		slog.Default().Warn("config: cleared invalid inference launch_cmd from per-agent overlay; inference and gateway backends launch through claude",
+			"hive_id", c.HiveID,
+			"agent", name,
+			"file", func() string { o := overlays[name]; return o.SourceFile() }())
+	}
 	kept := make(map[string]AgentConfig, len(overlays))
 	for name, agent := range overlays {
 		if err := c.validateAgentOverlay(name, agent); err != nil {
@@ -74,7 +81,7 @@ func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map
 			slog.Default().Error("config: rejected invalid per-agent overlay file - the hive is booting WITHOUT it so its dashboard stays reachable; fix the file or the agent via the dashboard API (#6024)",
 				"hive_id", c.HiveID,
 				"agent", name,
-				"file", agent.sourceFile,
+				"file", agent.SourceFile(),
 				"error", err.Error(),
 				"fell_back_to_base_config", hasBase,
 			)
@@ -83,6 +90,61 @@ func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map
 		kept[name] = agent
 	}
 	return kept
+}
+
+// LaunchCmdDegradation records one agent whose base-config launch_cmd the
+// loader dropped because it contradicted the agent's backend.
+type LaunchCmdDegradation struct {
+	Agent     string
+	Backend   string
+	LaunchCmd string
+	Error     string
+}
+
+// DegradeContradictingLaunchCmds drops, from every agent in the merged map,
+// a launch_cmd that contradicts the agent's backend, and records each drop in
+// c.LaunchCmdDegradations. It is the base-config counterpart of
+// RejectInvalidAgentOverlays: that gate skips a contradictory per-agent FILE
+// and "falls back to base config", which is useless when the base entry has
+// the same defect — and the base config has no further layer to fall back
+// to, so validation used to exit the process and the hive crash-looped until
+// someone hand-edited the PVC.
+//
+// backend is the operator-owned field; launch_cmd is the stale derived one
+// (the dashboard fills it from the backend when it is empty), so dropping
+// launch_cmd is always the safe direction: the agent launches on its declared
+// backend's default command. Should clearing not satisfy the gate, the entry
+// is left alone and validation fails as before.
+//
+// Every drop is logged at ERROR in the same shape as the overlay rejection,
+// because the config the hive is running is now knowingly not the config on
+// disk; the dashboard raises a banner from the recorded list.
+func (c *Config) DegradeContradictingLaunchCmds() []LaunchCmdDegradation {
+	var degraded []LaunchCmdDegradation
+	for name, agent := range c.Agents {
+		err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd)
+		if err == nil {
+			continue
+		}
+		if c.Governor.ValidateLaunchCmdBackend(agent.Backend, "") != nil {
+			continue
+		}
+		d := LaunchCmdDegradation{Agent: name, Backend: agent.Backend, LaunchCmd: agent.LaunchCmd, Error: err.Error()}
+		slog.Default().Error("config: dropped launch_cmd that contradicts the agent's backend - the hive is booting WITHOUT it so its dashboard stays reachable; the agent launches on its backend's default command until launch_cmd is fixed via the dashboard API",
+			"hive_id", c.HiveID,
+			"agent", name,
+			"file", agent.SourceFile(),
+			"backend", agent.Backend,
+			"launch_cmd", agent.LaunchCmd,
+			"error", err.Error(),
+		)
+		agent.LaunchCmd = ""
+		c.Agents[name] = agent
+		degraded = append(degraded, d)
+	}
+	sort.Slice(degraded, func(i, j int) bool { return degraded[i].Agent < degraded[j].Agent })
+	c.LaunchCmdDegradations = append(c.LaunchCmdDegradations, degraded...)
+	return degraded
 }
 
 // validateAgentOverlay runs the per-agent gates that an overlay file can
@@ -107,6 +169,9 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
 		return err
 	}
+	if err := ValidateExperimentEngine(effectiveRole(name, agent), agent.Engine); err != nil {
+		return err
+	}
 	if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
 		return err
 	}
@@ -126,7 +191,9 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 }
 
 // MergeAgentOverrides merges overlay agents into the config's agent map.
-// Overlay agents override base config agents with the same name.
+// Overlay agents override base config agents with the same name, except that
+// a hand-set base backend outranks a pack-owned overlay backend (see
+// keepHandSetBackend, #13221).
 //
 // Tombstoned agents (Config.RemovedAgents) are skipped AND evicted from the
 // base map. Both halves matter: skipping stops a stale
@@ -151,10 +218,52 @@ func (c *Config) MergeAgentOverrides(overlays map[string]AgentConfig) {
 			)
 			continue
 		}
+		if base, ok := c.Agents[name]; ok {
+			agent = c.keepHandSetBackend(name, base, agent)
+		}
 		agent.Managed = true
 		c.Agents[name] = agent
 	}
 	c.PruneRemovedAgents()
+}
+
+// keepHandSetBackend stops a pack-written overlay from shadowing a backend an
+// operator wrote by hand into the base config (#13221). ApplyPack persists
+// every agent it reconciles to the overlay layers with backend_owner: pack;
+// because an overlay replaces the whole base entry, a later hand edit of
+// `backend:` in hive.yaml lost to that stale pack value on the next load, and
+// ApplyPack then saw nothing to change. A base backend with no owner stamp
+// that differs from a pack-owned overlay backend is an operator edit, so it
+// wins; its owner stays empty so ApplyPack treats it as hand-set (and stamps
+// it operator) instead of reconciling it. Operator-owned or unowned overlay
+// backends, and an empty base backend, keep the overlay value as before.
+//
+// Only an UNSTAMPED base backend counts as a hand edit. A base entry whose
+// backend: line alone was edited while it still carries a backend_owner: line
+// — pack from a runtime file saved before the first apply, or operator after
+// Save() wrote the stamp back — loses to the overlay: a pack-owned base/overlay
+// pair that disagree can also be a runtime file saved before a pack upgrade,
+// and keeping the stale base there would pin an old pack backend for good. The
+// changelog fragment and docs/agent-configuration.md name the workaround
+// (delete the backend_owner: line too, whatever its value).
+func (c *Config) keepHandSetBackend(name string, base, overlay AgentConfig) AgentConfig {
+	if base.Backend == "" || base.BackendOwner != "" || overlay.BackendOwner != FieldOwnerPack ||
+		strings.EqualFold(base.Backend, overlay.Backend) {
+		return overlay
+	}
+	if c.Governor.ValidateBackend(base.Backend) != nil || c.Governor.ValidateLaunchCmdBackend(base.Backend, overlay.LaunchCmd) != nil {
+		return overlay
+	}
+	slog.Default().Info("config: keeping hand-set agent backend over pack-owned overlay value",
+		"hive_id", c.HiveID,
+		"agent", name,
+		"backend", base.Backend,
+		"overlay_backend", overlay.Backend,
+		"file", overlay.SourceFile(),
+	)
+	overlay.Backend = base.Backend
+	overlay.BackendOwner = ""
+	return overlay
 }
 
 // PruneRemovedAgents drops every tombstoned agent from the in-memory agent
@@ -205,9 +314,18 @@ func (c *Config) ClearAgentRemoved(name string) bool {
 }
 
 // SaveAgentFile writes a single agent config to dir/<name>.yaml.
+//
+// It refuses a backend/launch_cmd contradiction: the loader rejects such a
+// file on the next boot (RejectInvalidAgentOverlays), so writing it would
+// only defer the failure to a restart. The gateway-aware half of the gate
+// needs the governor config; callers that have it should also run
+// Config.ValidateAgentLaunchCmds before calling this.
 func SaveAgentFile(dir, name string, agent AgentConfig) error {
 	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return fmt.Errorf("invalid agent name %q", name)
+	}
+	if err := (GovernorConfig{}).ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
+		return fmt.Errorf("refusing to save agent overlay %s: %w", name, err)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating agent overlay dir: %w", err)
@@ -215,9 +333,7 @@ func SaveAgentFile(dir, name string, agent AgentConfig) error {
 
 	// Don't persist internal-only fields
 	agent.Managed = false
-	agent.name = ""
-	agent.sourceFile = ""
-	agent.clearOnKickSet = false
+	agent.ClearLoadState()
 
 	data, err := yaml.Marshal(&agent)
 	if err != nil {
@@ -254,7 +370,7 @@ func (c *Config) ApplyAgentDefaults(name string) {
 	if !ok {
 		return
 	}
-	agent.name = name
+	agent.SetLoadState(name, agent.SourceFile())
 	if agent.ID == "" {
 		agent.ID = name
 	}
@@ -265,14 +381,17 @@ func (c *Config) ApplyAgentDefaults(name string) {
 		agent.BeadsDir = fmt.Sprintf("/data/beads/%s", name)
 	}
 	// Default to enabled unless the user explicitly set enabled: false.
-	if !agent.Enabled && !agent.enabledSet {
+	if !agent.Enabled && !agent.EnabledExplicitlySet() {
 		agent.Enabled = true
 	}
-	if !agent.clearOnKickSet {
+	if !agent.ClearOnKickExplicitlySet() {
 		agent.ClearOnKick = true
 	}
 	if agent.Role == "" {
 		agent.Role = name
+	}
+	if agent.IsExperimenter() && agent.Engine == "" {
+		agent.Engine = DefaultExperimentEngine
 	}
 	applyKnownAgentDefaults(name, &agent)
 	c.Agents[name] = agent

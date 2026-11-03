@@ -695,6 +695,101 @@ func TestMergeCIGate_QueuedZeroJobRunWaits(t *testing.T) {
 	mustExist(t, reqPath, "request parked on queued run")
 }
 
+// #13818: a GITHUB_TOKEN-opened PR gets its pull_request runs held for
+// approval while the opener dispatches the same workflows by
+// workflow_dispatch on the branch. The dispatch twin succeeded and its check
+// runs are on the head, so the held copy is not evidence of anything and must
+// not turn a green head red.
+func TestMergeCIGate_HeldRunIgnoredWhenWorkflowSucceededUnderAnotherEvent(t *testing.T) {
+	f := &ciFixture{
+		defaultHead:    "abc",
+		checks:         []ciCheck{{name: "build", status: "completed", conclusion: "success"}},
+		requiredChecks: []string{"build"},
+		runs: []ciRun{
+			{id: 41, workflowID: 4, name: "Build", event: "pull_request", status: "completed", conc: "action_required", jobs: 0},
+			{id: 42, workflowID: 4, name: "Build", event: "workflow_dispatch", status: "completed", conc: "success", jobs: 1},
+		},
+	}
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if got := merges.Load(); got != 1 {
+		t.Fatalf("held run with a successful dispatch twin must not block, got %d merges (%+v)", got, readMergeResult(t, reqPath))
+	}
+	if len(sink.adds) != 0 {
+		t.Fatalf("no approval alert may be raised when the workflow already succeeded, got %+v", sink.adds)
+	}
+}
+
+// A held run whose workflow has NOT succeeded under any other event still
+// blocks: a different workflow's success is not this workflow's verdict.
+func TestMergeCIGate_HeldRunStillBlocksWhenOnlyOtherWorkflowSucceeded(t *testing.T) {
+	f := &ciFixture{
+		defaultHead: "abc",
+		checks:      []ciCheck{{name: "build", status: "completed", conclusion: "success"}},
+		runs: []ciRun{
+			{id: 41, workflowID: 4, name: "Vitest", event: "pull_request", status: "completed", conc: "action_required", jobs: 0},
+			{id: 42, workflowID: 5, name: "Build", event: "workflow_dispatch", status: "completed", conc: "success", jobs: 1},
+		},
+	}
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("held run without a same-workflow success must still block")
+	}
+	if resp := readMergeResult(t, reqPath); !strings.Contains(resp.Error, "awaiting maintainer approval") || !strings.Contains(resp.Error, `"Vitest"(41)`) {
+		t.Fatalf("expected approval refusal naming the held run, got %+v", resp)
+	}
+}
+
+// A same-repo PR (head and base in the same repository) whose runs are held
+// is not a fork PR; the operator message must say so rather than send them
+// looking for a fork that does not exist (#13818).
+func TestMergeCIGate_ActionRequiredSameRepoRunNamesBotTokenCause(t *testing.T) {
+	var merges atomic.Int32
+	f := &ciFixture{
+		defaultHead: "abc",
+		author:      "github-actions[bot]",
+		authorType:  "Bot",
+		runs:        []ciRun{{id: 41, workflowID: 4, name: "CI", status: "completed", conc: "action_required", jobs: 0}},
+	}
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("action_required workflow runs must not merge, got %d merges", merges.Load())
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.Attempts != 1 || !strings.Contains(resp.Error, "same-repo PR workflow runs are awaiting maintainer approval") || strings.Contains(resp.Error, "fork PR workflow runs") {
+		t.Fatalf("expected a same-repo refusal, not a fork one, got %+v", resp)
+	}
+	if len(sink.adds) != 1 || !strings.Contains(sink.adds[0].message, "same-repo PR opened by a bot token") || !strings.Contains(sink.adds[0].message, "https://github.com/o/r/settings/actions") {
+		t.Fatalf("expected same-repo approval alert, got %+v", sink.adds)
+	}
+	if sink.adds[0].id == "" {
+		t.Fatalf("alert must carry an id, got %+v", sink.adds[0])
+	}
+}
+
 func TestMergeCIGate_ActionRequiredForkRunAlerts(t *testing.T) {
 	var merges, approvals atomic.Int32
 	f := &ciFixture{
@@ -861,7 +956,7 @@ func TestMergeCIGate_NoCIOKDoesNotOverrideFailingCheck(t *testing.T) {
 }
 
 func TestMergeCIVerdictString(t *testing.T) {
-	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
+	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCINeverCreated: "never-created", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
 		if got := v.String(); got != want {
 			t.Errorf("%d.String() = %q, want %q", int(v), got, want)
 		}
@@ -970,5 +1065,103 @@ func TestMergeCIGate_PolicyFailsClosed(t *testing.T) {
 	nilClient.SetMergeRequestPolicy(map[string]bool{"o/r": true}, nil) // must not panic
 	if nilClient.repoAllowsUnprotectedBase("o", "r") || nilClient.repoNoCIOK("o", "r") {
 		t.Fatalf("nil client must deny everything")
+	}
+}
+
+// A required check that was never created on a head where nothing else is
+// running is terminal once the head is older than the grace period (#11891):
+// the request is quarantined on the first verdict, never merged, and never
+// routed to the fix loop. Anything still in flight, or a head too young (or
+// of unknown age), keeps the ordinary pending wait.
+func TestMergeCIGate_RequiredCheckNeverCreated(t *testing.T) {
+	ts := func(d time.Duration) string { return fixedNow().Add(-d).UTC().Format(time.RFC3339) }
+	old, young := ts(2*time.Hour), ts(5*time.Minute)
+	cases := []struct {
+		name     string
+		checks   []ciCheck
+		runs     []ciRun
+		statuses []ciStatus
+		terminal bool
+	}{
+		{
+			name:     "all other checks complete on an old head",
+			checks:   []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: old}, {name: "check-hold-issues", status: "completed", conclusion: "success", startedAt: old}},
+			runs:     []ciRun{{id: 1, name: "CodeQL", status: "completed", conc: "success", jobs: 1, startedAt: old}},
+			terminal: true,
+		},
+		{
+			name:   "non-required check still in progress",
+			checks: []ciCheck{{name: "CodeQL", status: "in_progress", startedAt: old}},
+		},
+		{
+			name:     "non-required status still pending",
+			checks:   []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: old}},
+			statuses: []ciStatus{{context: "external", state: "pending"}},
+		},
+		{
+			name:   "workflow run with jobs still in flight",
+			checks: []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: old}},
+			runs:   []ciRun{{id: 2, name: "build", status: "in_progress", jobs: 1, startedAt: old}},
+		},
+		{
+			name:   "head younger than the grace period",
+			checks: []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: young}},
+		},
+		{
+			name:   "head age unknown",
+			checks: []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &ciFixture{defaultHead: "abc", checks: tc.checks, runs: tc.runs, statuses: tc.statuses}
+			var merges atomic.Int32
+			srv := ciGateServer(t, f, &merges)
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+			c.SetRequiredChecks(map[string]bool{"build-gate": true})
+			var hook atomic.Int32
+			c.SetMergeReEngageHook(func(string, int) bool { hook.Add(1); return true })
+
+			reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+			if merges.Load() != 0 {
+				t.Fatalf("INVARIANT VIOLATED: merged with the required check never reported")
+			}
+			if hook.Load() != 0 {
+				t.Fatalf("a missing required check must never re-engage the fix loop, got %d calls", hook.Load())
+			}
+			resp := readMergeResult(t, reqPath)
+			if !tc.terminal {
+				if resp.Attempts != 0 || resp.CIWaits != 1 || strings.Contains(resp.Error, "never created") {
+					t.Fatalf("expected an ordinary pending wait, got %+v", resp)
+				}
+				mustExist(t, reqPath, "request parked on pending CI")
+				return
+			}
+			if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, `required check "build-gate" was never created`) {
+				t.Fatalf("expected a terminal never-created refusal, got %+v", resp)
+			}
+			for _, banned := range []string{"expected", "required status check", "has not succeeded"} {
+				if strings.Contains(resp.Error, banned) {
+					t.Fatalf("terminal reason must not contain %q (fix-loop vocabulary): %q", banned, resp.Error)
+				}
+			}
+			if isRequiredCheckMergeBlocker(resp.Error) || isConflictMergeBlocker(resp.Error) {
+				t.Fatalf("terminal reason must not classify as re-engageable: %q", resp.Error)
+			}
+			mustExist(t, reqPath+".exhausted", "never-created request quarantined on the first verdict")
+			mustNotExist(t, reqPath, "live request after quarantine")
+
+			// A re-request for the same head is refused with the recorded
+			// reason instead of being evaluated again.
+			again, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), again, fixedNow)
+			if resp := readMergeResult(t, again); !strings.Contains(resp.Error, "exhausted on the same head") || !strings.Contains(resp.Error, "was never created") {
+				t.Fatalf("re-request on the same head must be refused with the recorded reason, got %+v", resp)
+			}
+			mustExist(t, again+".exhausted", "refused re-request")
+		})
 	}
 }

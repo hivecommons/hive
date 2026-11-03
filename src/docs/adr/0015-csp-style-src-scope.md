@@ -2,7 +2,17 @@
 
 Status: Accepted
 
+**Current scope:** Content Security Policy (CSP) treats style elements and style
+attributes separately. This ADR accepts inline style attributes and records the
+original sequencing rationale for hardening style elements. The inline-script
+condition described in the original context **no longer holds**: [ADR-0016](0016-csp-script-src-scope.md)
+records the completed inline-handler refactor and closed script policy on its
+covered documents, with explicit emitter/document exclusions.
+
 ## Context
+
+**Historical context at adoption.** The measurements and sequencing argument
+below explain the original choice, not today's script allowances.
 
 The dashboard's Content-Security-Policy carried one blanket `style-src 'self'
 'unsafe-inline'` ([securityHeaders](../../pkg/dashboard/server.go)). That single
@@ -30,7 +40,7 @@ maintainable. So for the attributes there is no policy that both permits them
 and constrains them: the realistic choice is `'unsafe-inline'` or deleting every
 inline style in the UI.
 
-A second constraint shapes the timing. `script-src` still carries
+A second constraint shaped the original timing. At adoption, `script-src` carried
 `'unsafe-inline'` — that is the other half of #3848 and is staged behind an
 event-delegation refactor (437 inline `on*=` attributes in `static/index.html`,
 plus ~145 more built as strings inside the page's own JavaScript and injected
@@ -89,12 +99,11 @@ some engines, CSS-based inference of page content. It does **not** enable script
 execution. This risk is accepted for as long as the UI uses inline style
 attributes.
 
-It is worth being clear that this residual is currently dominated by a larger
-one: while `script-src 'unsafe-inline'` remains, HTML injection already yields
-script execution, which subsumes everything the style allowance permits. The
-style residual only becomes the *governing* risk once #3848's `script-src` half
-lands — which is precisely why the element half is sequenced behind it rather
-than in front of it.
+**Historical sequencing rationale.** At adoption, the larger inline-script
+allowance dominated this residual: HTML injection could yield script execution.
+That justified sequencing the style-element work behind the script refactor.
+The refactor has since landed as recorded in ADR-0016; do not use that historical
+argument to dismiss the remaining style risk today.
 
 **Harder.** Nothing meaningfully. The extra directives lengthen the header by
 about 70 bytes on every response.

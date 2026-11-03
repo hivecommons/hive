@@ -256,6 +256,11 @@ func TestEnsureFleetReport_AuditedOnCommentWithRedactedFingerprint(t *testing.T)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues/7/reactions":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 2})
+		// Every join now enriches the issue (#13470): label + Affected block.
+		case strings.Contains(r.URL.Path, "/labels"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": fleetreport.LabelSelfReport})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -493,7 +498,7 @@ func TestReviewBacklog_FiledIssuesAndSummaryAudited(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"message":"not found"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/labels":
-			_, _ = io.WriteString(w, `{"name":"from-review"}`)
+			_, _ = io.WriteString(w, `{"name":"agent/reviewer"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues":
 			created++
 			fmt.Fprintf(w, `{"number":%d,"html_url":"https://github.test/o/r/issues/%d"}`, 100+created, 100+created)

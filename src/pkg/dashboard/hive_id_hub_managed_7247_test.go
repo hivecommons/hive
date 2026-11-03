@@ -269,8 +269,10 @@ func TestStatusPayloadCarriesHiveIDEditability(t *testing.T) {
 func TestBuildFrontendStatusWiresHiveIDLock(t *testing.T) {
 	newCfg := func(hubEnabled bool, hubURL string) *config.Config {
 		cfg := &config.Config{
-			Project:  config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
-			Agents:   map[string]config.AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+			Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+			},
 			Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}}}},
 			HiveID:   "hive-bold-hawk",
 		}

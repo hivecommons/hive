@@ -100,6 +100,20 @@ type Claim struct {
 	Session string `json:"session,omitempty"`
 	// Hive names the hive that recorded the claim, for the marker comment.
 	Hive string `json:"hive,omitempty"`
+	// Tier is a relay contributor's trust tier when the claim was taken; it
+	// is stamped as tier= in a contributor marker. Empty for other kinds.
+	Tier string `json:"tier,omitempty"`
+	// Verified records that the contributor had proven ownership of the
+	// GitHub login (reissue-token flow) when the claim was taken; stamped as
+	// verified= in a contributor marker.
+	Verified bool `json:"verified,omitempty"`
+	// PRStarted records PR evidence behind an agent claim: the agent's
+	// `hive-open-pr --issues` request named the issue, or its start marker
+	// named a branch / pull request. It is what derives
+	// stage/030-pr-in-progress; a claim without it derives
+	// stage/020-claimed whatever its Kind (hivecommons/hive#13069). Once set
+	// it stays for the claim's life — a renewal never clears it.
+	PRStarted bool `json:"pr_started,omitempty"`
 	// ClaimedAt is when the current holder took the claim.
 	ClaimedAt time.Time `json:"claimed_at"`
 	// ExpiresAt is when the claim lapses unless renewed.
@@ -200,6 +214,12 @@ type Request struct {
 	HolderID string
 	Kind     Kind
 	Session  string
+	// Tier and Verified describe a relay contributor holder; see Claim.
+	Tier     string
+	Verified bool
+	// PRStarted is the PR evidence behind an agent start signal; see
+	// Claim.PRStarted.
+	PRStarted bool
 	// TTL overrides the ledger's default for the Kind. Zero means default;
 	// values above MaxTTL are clamped.
 	TTL time.Duration
@@ -332,6 +352,14 @@ func (p Policy) ttlFor(k Kind, requested time.Duration) time.Duration {
 }
 
 // Ledger holds live claims, persists them, and applies precedence.
+// It maintains at most one live claim per (repo, issue) pair: a Claim either
+// renews an existing holder's TTL, displaces (takes over) a lower-ranked holder,
+// is held by same-rank contention, or is refused by higher rank. Two live
+// ledger claims never coexist on one issue. The hive/claimed-by-<who> label
+// mirrors the single live claim but reconciles stale remnants and hand-applied
+// labels: co-party claimed-by-* labels on the same issue therefore only arise
+// from manual label application or persistent debris from a previous holder,
+// not because the ledger models concurrent co-parties.
 type Ledger struct {
 	mu     sync.Mutex
 	claims map[string]Claim
@@ -451,6 +479,7 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		Repo: req.Repo, Issue: req.Issue,
 		Holder: req.Holder, HolderID: req.HolderID, Kind: req.Kind,
 		Session: req.Session, Hive: l.hive,
+		Tier: req.Tier, Verified: req.Verified, PRStarted: req.PRStarted,
 		ClaimedAt: now, ExpiresAt: now.Add(ttl),
 	}
 	prev, held := l.claims[key]
@@ -462,6 +491,7 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		l.recordAttemptLocked(next)
 	case sameHolder(prev, req):
 		prev.ExpiresAt = now.Add(ttl)
+		prev.PRStarted = prev.PRStarted || req.PRStarted
 		l.claims[key] = prev
 		res = Result{Outcome: OutcomeRenewed, Claim: prev}
 	case req.Kind.Outranks(prev.Kind), req.Kind.rank() == prev.Kind.rank() && req.Force:
@@ -665,6 +695,55 @@ func (l *Ledger) ReleaseByHolderID(holderID, reason string, onlyKey ...string) [
 	return out
 }
 
+// ReasonHolderRelaunched is the release reason recorded when a hive agent's
+// CLI was relaunched (hive boot, operator or self-heal restart): the context
+// that held the claim is gone, so the issue goes back to the pool at once
+// instead of sitting at stage/020-claimed until the agent TTL lapses.
+const ReasonHolderRelaunched = "holding agent relaunched"
+
+// ReasonExpired is the release reason the ledger records when a claim's TTL
+// lapses without a renew. Hooks treat it as the one release that needs no
+// forge release marker: the marker's until= already says the claim is over.
+const ReasonExpired = "expired"
+
+// ReasonLeaseExpired is the release reason a contributor lease's claim is
+// dropped with when the lease itself aged out of its re-adoption window
+// unresumed (hivecommons/hive#13579). Unlike ReasonExpired the claim's own
+// until= may still be in the future, so the hooks post a release marker.
+const ReasonLeaseExpired = "lease expired"
+
+// ReleaseAgentClaims drops every live KindAgent claim held by agent and fires
+// OnReleased for each. Unlike ReleaseByHolderID it never touches a human or
+// contributor claim whose login happens to spell the agent's name.
+func (l *Ledger) ReleaseAgentClaims(agent, reason string) []Claim {
+	agent = strings.TrimSpace(agent)
+	if l == nil || agent == "" {
+		return nil
+	}
+	l.mu.Lock()
+	now := l.now()
+	var out []Claim
+	for k, c := range l.claims {
+		if c.Kind != KindAgent || c.Holder != agent {
+			continue
+		}
+		out = append(out, c)
+		delete(l.claims, k)
+		l.endAttemptLocked(c, reason, now)
+	}
+	if len(out) > 0 {
+		_ = l.saveLocked()
+	}
+	hooks := l.hooks
+	l.mu.Unlock()
+	for _, c := range out {
+		if hooks.OnReleased != nil {
+			hooks.OnReleased(c, reason)
+		}
+	}
+	return out
+}
+
 // Lookup returns the live claim on an issue, if any.
 func (l *Ledger) Lookup(repo string, issue int) (Claim, bool) {
 	if l == nil {
@@ -749,7 +828,7 @@ func (l *Ledger) Expire() int {
 	l.mu.Unlock()
 	for _, c := range dropped {
 		if hooks.OnReleased != nil {
-			hooks.OnReleased(c, "expired")
+			hooks.OnReleased(c, ReasonExpired)
 		}
 	}
 	return len(dropped)
@@ -762,7 +841,7 @@ func fireExpired(hooks Hooks, expired []Claim) {
 		return
 	}
 	for _, c := range expired {
-		hooks.OnReleased(c, "expired")
+		hooks.OnReleased(c, ReasonExpired)
 	}
 }
 
@@ -772,7 +851,7 @@ func (l *Ledger) expireLocked(now time.Time) []Claim {
 		if c.Expired(now) {
 			dropped = append(dropped, c)
 			delete(l.claims, k)
-			l.endAttemptLocked(c, "expired", c.ExpiresAt)
+			l.endAttemptLocked(c, ReasonExpired, c.ExpiresAt)
 		}
 	}
 	l.pruneLocked(now)
@@ -895,7 +974,12 @@ func (l *Ledger) Listed(repo string, issue int) (Listing, bool) {
 // live claim. Any other start signal (a comment on an issue nobody kicked the
 // agent with, a request about its own pull request) reports false and
 // changes nothing.
-func (l *Ledger) ClaimOnStart(repo string, issue int, agent string) (Result, bool, error) {
+//
+// prStarted says the signal is PR evidence (a pull-request request naming
+// the issue, or a start marker naming a branch / PR): the claim records it
+// (Claim.PRStarted) so the stage engine derives stage/030-pr-in-progress;
+// without it the claim derives stage/020-claimed (hivecommons/hive#13069).
+func (l *Ledger) ClaimOnStart(repo string, issue int, agent string, prStarted bool) (Result, bool, error) {
 	repo, agent = strings.TrimSpace(repo), strings.TrimSpace(agent)
 	if l == nil || repo == "" || issue <= 0 || agent == "" {
 		return Result{}, false, nil
@@ -911,7 +995,7 @@ func (l *Ledger) ClaimOnStart(repo string, issue int, agent string) (Result, boo
 	if !ok {
 		return Result{}, false, nil
 	}
-	res, err := l.Claim(Request{Repo: repo, Issue: issue, Holder: agent, HolderID: agent, Kind: KindAgent})
+	res, err := l.Claim(Request{Repo: repo, Issue: issue, Holder: agent, HolderID: agent, Kind: KindAgent, PRStarted: prStarted})
 	return res, true, err
 }
 

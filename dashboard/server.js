@@ -802,6 +802,7 @@ app.get('/api/events', (req, res) => {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
   });
 
   const send = () => {
@@ -2274,7 +2275,7 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// ── Nous (Strategy Lab) API endpoints ──────────────────────────────────────
+// ── Nous (Experiment Lab) API endpoints ──────────────────────────────────────
 const NOUS_CAMPAIGN_PATH = process.env.NOUS_CAMPAIGN_PATH || '/etc/hive/nous-campaign.yaml';
 const NOUS_OVERLAY_PATH = '/etc/hive/governor-experiment.env';
 const NOUS_STATE_DIR = '/var/run/nous';
@@ -2908,10 +2909,10 @@ app.get('/contribute/register', (_req, res) => {
       <h2>Hive Contributor Registration</h2>
       <p>GitHub OAuth is not configured on this hub.</p>
       <p>Use the API endpoint instead:</p>
-      <pre style="background:#161b22;padding:16px;border-radius:8px">curl -X POST ${_req.protocol}://${_req.get('host')}/api/contribute/register \\
+      <pre style="background:#161b22;padding:16px;border-radius:8px">curl -X POST ${esc(`${_req.protocol}://${_req.get('host')}`)}/api/contribute/register \\
   -H "Content-Type: application/json" \\
   -d '{"github_username": "your-github-username"}'</pre>
-      <p>Or run: <code>just contribute-register</code></p>
+      <p>Or run: <code>just contribute-setup</code></p>
     </body></html>`);
   }
   const state = crypto.randomBytes(16).toString('hex');

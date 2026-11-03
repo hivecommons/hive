@@ -57,7 +57,7 @@ func (c *Composite) RemoveLabel(ctx context.Context, ref Ref, label string) erro
 	if !ok {
 		return fmt.Errorf("worksource/%s: labels unsupported", c.SourceType())
 	}
-	return m.RemoveLabel(ctx, ref, label)
+	return m.RemoveLabel(ctx, ref, label) // writeback:gated: GitHub primary enforces policy in githubIssuesSource.
 }
 
 func (c *Composite) AddComment(ctx context.Context, ref Ref, body string) error {

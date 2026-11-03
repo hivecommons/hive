@@ -407,16 +407,16 @@ func TestMetricsCollector_CollectPRIssueCounts_WithMock(t *testing.T) {
 		if !strings.Contains(q, "author:app/hive-bot") && !strings.Contains(q, "author:hive-bot[bot]") {
 			t.Fatalf("query missing hive author qualifier: %q", q)
 		}
+		// Both configured repos travel in one batched query per kind.
+		if !strings.Contains(q, "repo:myorg/repo1 repo:myorg/repo2") {
+			t.Fatalf("query must batch both repos: %q", q)
+		}
 		total := 0
 		switch {
-		case strings.Contains(q, "repo:myorg/repo1") && strings.Contains(q, "type:pr"):
-			total = 8
-		case strings.Contains(q, "repo:myorg/repo1") && strings.Contains(q, "type:issue"):
-			total = 5
-		case strings.Contains(q, "repo:myorg/repo2") && strings.Contains(q, "type:pr"):
-			total = 13
-		case strings.Contains(q, "repo:myorg/repo2") && strings.Contains(q, "type:issue"):
+		case strings.Contains(q, "type:pr"):
 			total = 21
+		case strings.Contains(q, "type:issue"):
+			total = 26
 		}
 		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
 	})

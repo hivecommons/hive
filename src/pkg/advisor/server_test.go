@@ -8,9 +8,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // testUsage records what landed in the budget sink.
@@ -31,20 +35,22 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 // newTestServer builds a Server whose Resolve points every agent named
 // "scout" at the given chat endpoint.
 func newTestServer(store *Store, usage UsageRecorder, endpoint string, rt Runtime) *Server {
+	// Fill defaults once; Resolve is called from concurrent handlers and
+	// must not mutate shared state.
+	if rt.Endpoint == "" {
+		rt.Endpoint = endpoint
+	}
+	if rt.Model == "" {
+		rt.Model = "test-model"
+	}
+	if rt.TimeoutS == 0 {
+		rt.TimeoutS = 5
+	}
 	return &Server{
 		Identify: func(r *http.Request) string { return r.Header.Get("X-Test-Agent") },
 		Resolve: func(agent string) (Runtime, bool) {
 			if agent != "scout" {
 				return Runtime{}, false
-			}
-			if rt.Endpoint == "" {
-				rt.Endpoint = endpoint
-			}
-			if rt.Model == "" {
-				rt.Model = "test-model"
-			}
-			if rt.TimeoutS == 0 {
-				rt.TimeoutS = 5
 			}
 			return rt, true
 		},
@@ -307,5 +313,128 @@ func TestListenAndServeFailsWhenPortBusy(t *testing.T) {
 	srv := &Server{Logger: testLogger()}
 	if err := srv.ListenAndServe(); err == nil {
 		t.Error("ListenAndServe must fail while the advise port is taken")
+	}
+}
+
+func TestServerReviewRecordsCost(t *testing.T) {
+	chat := fakeChatServer(t, http.StatusOK, `{"severity":"aside","text":""}`, nil)
+	defer chat.Close()
+	store := NewStore("")
+	h := newTestServer(store, nil, chat.URL, Runtime{Model: "claude-sonnet-4-5"}).Handler()
+	postAdvise(t, h, "scout", `{"transcript":"x"}`)
+	recs := store.List("scout", time.Time{}, 0)
+	if len(recs) != 1 {
+		t.Fatalf("records = %d", len(recs))
+	}
+	want, _ := tokens.EstimateCostUSD("claude-sonnet-4-5", 42, 7, 0, 0)
+	if want <= 0 || recs[0].CostUSD != want {
+		t.Errorf("CostUSD = %v, want %v (>0)", recs[0].CostUSD, want)
+	}
+}
+
+func TestServerBudgetSurvivesRestart(t *testing.T) {
+	chat := fakeChatServer(t, http.StatusOK, `{"severity":"aside","text":""}`, nil)
+	defer chat.Close()
+	path := filepath.Join(t.TempDir(), "advisor-records.jsonl")
+	rt := Runtime{DailyBudgetTokens: 100}
+	h1 := newTestServer(NewStore(path), nil, chat.URL, rt).Handler()
+	for range 3 {
+		if _, resp := postAdvise(t, h1, "scout", `{"transcript":"x"}`); resp.Skipped != "" {
+			t.Fatalf("unexpected skip %q", resp.Skipped)
+		}
+	}
+	h2 := newTestServer(NewStore(path), nil, chat.URL, rt).Handler()
+	if _, resp := postAdvise(t, h2, "scout", `{"transcript":"x"}`); resp.Skipped != SkipBudgetExhausted {
+		t.Errorf("skipped = %q, want %q", resp.Skipped, SkipBudgetExhausted)
+	}
+}
+
+func TestServerBudgetCountsMissingUsage(t *testing.T) {
+	chat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": `{"severity":"aside","text":""}`}}},
+		})
+	}))
+	defer chat.Close()
+	store := NewStore("")
+	h := newTestServer(store, nil, chat.URL, Runtime{DailyBudgetTokens: 10}).Handler()
+	for range 5 {
+		postAdvise(t, h, "scout", `{"transcript":"x"}`)
+	}
+	recs := store.List("scout", time.Time{}, 0)
+	ran := 0
+	for _, r := range recs {
+		if r.Skipped == "" {
+			ran++
+			if !r.UsageEstimated || r.InputTokens+r.OutputTokens == 0 {
+				t.Errorf("record not estimated: %+v", r)
+			}
+		}
+	}
+	if ran == 0 || ran >= 5 {
+		t.Errorf("ran = %d of 5, want the budget to stop reviews", ran)
+	}
+	if recs[0].Skipped != SkipBudgetExhausted {
+		t.Errorf("newest skipped = %q, want %q", recs[0].Skipped, SkipBudgetExhausted)
+	}
+}
+
+func TestServerBudgetSerializesPerAgent(t *testing.T) {
+	// release opens once every request is in flight, so the first model
+	// call cannot finish before the other nine have reached the budget check.
+	release := make(chan struct{})
+	chat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": `{"severity":"aside","text":""}`}}},
+			"usage":   map[string]any{"prompt_tokens": 42, "completion_tokens": 7},
+		})
+	}))
+	defer chat.Close()
+	store := NewStore("")
+	h := newTestServer(store, nil, chat.URL, Runtime{DailyBudgetTokens: 100}).Handler()
+	var started, wg sync.WaitGroup
+	for range 10 {
+		started.Add(1)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, AdvisePath, strings.NewReader(`{"transcript":"x"}`))
+			req.Header.Set("X-Test-Agent", "scout")
+			started.Done()
+			h.ServeHTTP(httptest.NewRecorder(), req)
+		}()
+	}
+	started.Wait()
+	close(release)
+	wg.Wait()
+	ran := 0
+	for _, r := range store.List("scout", time.Time{}, 0) {
+		if r.Skipped == "" {
+			ran++
+		}
+	}
+	if ran > 3 {
+		t.Errorf("ran = %d, want at most 3", ran)
+	}
+}
+
+func TestServerDowngradesConcernWhenStopHookActive(t *testing.T) {
+	chat := fakeChatServer(t, http.StatusOK, `{"severity":"concern","text":"mind the tests"}`, nil)
+	defer chat.Close()
+	store := NewStore("")
+	h := newTestServer(store, nil, chat.URL, Runtime{}).Handler()
+
+	_, resp := postAdvise(t, h, "scout", `{"transcript":"x"}`)
+	if !resp.Interjected || resp.Severity != SeverityConcern {
+		t.Errorf("inactive: %+v", resp)
+	}
+	_, resp = postAdvise(t, h, "scout", `{"transcript":"x","stop_hook_active":true}`)
+	if resp.Interjected || resp.Severity != SeverityAside {
+		t.Errorf("active: %+v", resp)
+	}
+	recs := store.List("scout", time.Time{}, 0)
+	if len(recs) != 2 || !recs[0].Downgraded || recs[1].Downgraded {
+		t.Errorf("records = %+v", recs)
 	}
 }

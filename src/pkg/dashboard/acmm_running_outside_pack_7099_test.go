@@ -3,7 +3,8 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -24,30 +25,34 @@ func TestBuildAgentsWithHidden_RunningCustomAgentOutsideAnyPackVisible7099(t *te
 	reviewCfg := config.AgentConfig{Backend: "unsloth-local", Enabled: true, DisplayName: "Review"}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"supervisor": supervisorCfg,
-			"review":     reviewCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": supervisorCfg,
+				"review":     reviewCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"review": {
 			Name:         "review",
 			Config:       reviewCfg,
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 

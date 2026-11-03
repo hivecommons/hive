@@ -19,12 +19,19 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
 )
 
 // DefaultFrontTimeout is the hive-wide front timeout (the relay's existing
 // wait for CI); it restarts on every branch update.
 const DefaultFrontTimeout = 60 * time.Minute
+
+// MaxFrontTimeoutExtensions bounds how often a front whose required checks
+// are all queued or in progress gets one more timeout instead of leaving
+// (hivecommons/hive#12952): it holds the front for at most 4x the timeout
+// after its last branch update.
+const MaxFrontTimeoutExtensions = 3
 
 // DefaultStaleAfter drops a waiter whose merge path stopped asking for it.
 const DefaultStaleAfter = 15 * time.Minute
@@ -36,6 +43,7 @@ const ReasonNotAtFront = "deferred: not at the front of the lane"
 const (
 	ActionFrontEnter = "front-enter"
 	ActionFrontExit  = "front-exit"
+	ActionExtend     = "front-extend"
 	ActionDeferred   = "deferred"
 	ActionUpdate     = "branch-update"
 	ActionMerge      = "merge"
@@ -91,7 +99,11 @@ type GitHub interface {
 	IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 	// Merge is the REST merge with head pinned, no admin bypass; it returns
-	// the merge commit SHA.
+	// the merge commit SHA. On a 409 head mismatch it returns ErrHeadMoved.
+	// When GitHub definitively refuses the merge (403/405/422) it returns an
+	// error wrapping effects.ErrNotApplied so the lane can let the front
+	// leave at once; any other error (5xx, transport) is reported as-is and
+	// the front keeps waiting.
 	Merge(ctx context.Context, repo string, number int, head string) (string, error)
 	CommitParents(ctx context.Context, repo, sha string) ([]string, error)
 	PullRequestsForCommit(ctx context.Context, repo, sha string) ([]int, error)
@@ -168,6 +180,9 @@ type Decision struct {
 	Reason   string
 	Position int
 	MergeSHA string
+	// MergeError is the underlying failure when a merge call holds the front
+	// or GitHub definitively refuses it.
+	MergeError error
 }
 
 // Lane is the gate. One Lane per process; it resets every in-progress front on
@@ -207,6 +222,7 @@ func New(opts Options) (*Lane, error) {
 			rec.Front.Stage = StageValidating
 			rec.Front.EvaluatedHead = ""
 			rec.Front.LastReason = ""
+			rec.Front.ChecksPending = false
 			ev = append(ev, l.event(rec, rec.Front.PR, "", "", ActionRestart,
 				"restart: the in-progress validation is repeated in full before any merge"))
 		}
@@ -287,6 +303,51 @@ func (l *Lane) Release(repo, branch string, pr int, reason string) error {
 	return nil
 }
 
+// releaseGoneFront reads the front PR pr of repo/branch and, when it can no
+// longer merge into branch (prShape: closed, merged outside the lane, a draft
+// or retargeted), ends the front with that reason and promotes the oldest
+// waiter. Only the front's own merge path runs a round, and the sweeps list
+// open PRs only, so without this such a front held the lane until its
+// timeout, and up to MaxFrontTimeoutExtensions more when its checks were last
+// seen pending. An open front, or one that cannot be read, is left alone. It
+// returns the exit reason, empty when the front stayed.
+func (l *Lane) releaseGoneFront(ctx context.Context, repo, branch string, pr int) (string, error) {
+	unlock := l.lockLane(repo, branch)
+	defer unlock()
+	rec, _, err := l.Snapshot(repo, branch)
+	if err != nil || rec.Front == nil || rec.Front.PR != pr {
+		return "", err
+	}
+	epoch := rec.Front.Epoch
+	p, err := l.opts.GitHub.PullRequest(ctx, repo, pr)
+	if err != nil {
+		return "", fmt.Errorf("mergelane: reading front PR #%d of %s: %w", pr, laneKey(repo, branch), err)
+	}
+	reason := prShape(p, branch)
+	if reason == "" {
+		return "", nil
+	}
+	reason = "front check: " + reason
+	now := l.opts.Now()
+	var ev []Event
+	left := false
+	err = l.opts.Store.update(func(lanes map[string]*Record) error {
+		rec := lane(lanes, repo, branch)
+		if rec.Front == nil || rec.Front.PR != pr || rec.Front.Epoch != epoch {
+			return nil
+		}
+		l.exitLocked(rec, now, p.Head, "", reason, &ev)
+		l.promoteLocked(rec, now, &ev)
+		left = true
+		return nil
+	})
+	l.emit(ev)
+	if err != nil || !left {
+		return "", err
+	}
+	return reason, nil
+}
+
 // Advance runs one round of the front PR's validation: validate → update →
 // wait → final live re-check → pinned merge → post-merge verify. A caller
 // that is not at the front gets ReasonNotAtFront and nothing is read or
@@ -360,10 +421,30 @@ func (l *Lane) timeoutFor(repo string) time.Duration {
 	return l.opts.DefaultTimeout
 }
 
+// expireLocked ends a front whose deadline passed. A front whose required
+// checks were last seen all queued or in progress is waiting on CI capacity,
+// not on the pull request: rotating it would only start another CI run, so
+// its deadline is extended by one timeout at a time, at most
+// MaxFrontTimeoutExtensions times (hivecommons/hive#12952).
 func (l *Lane) expireLocked(rec *Record, now time.Time, ev *[]Event) {
-	if rec.Front != nil && now.After(rec.Front.DeadlineAt) {
-		l.exitLocked(rec, now, rec.Front.EvaluatedHead, "", timeoutReason(rec.Front, l.timeoutFor(rec.Repo)), ev)
+	f := rec.Front
+	if f == nil || !now.After(f.DeadlineAt) {
+		return
 	}
+	timeout := l.timeoutFor(rec.Repo)
+	if f.ChecksPending && f.PinnedHead == "" {
+		for f.Extensions < MaxFrontTimeoutExtensions && now.After(f.DeadlineAt) {
+			f.Extensions++
+			f.DeadlineAt = f.DeadlineAt.Add(timeout)
+			*ev = append(*ev, l.event(rec, f.PR, f.EvaluatedHead, "", ActionExtend,
+				fmt.Sprintf("front timeout extended by %s (%d of %d): required checks still queued or in progress; last known state: %s",
+					timeout, f.Extensions, MaxFrontTimeoutExtensions, f.LastReason)))
+		}
+		if !now.After(f.DeadlineAt) {
+			return
+		}
+	}
+	l.exitLocked(rec, now, f.EvaluatedHead, "", timeoutReason(f, timeout*time.Duration(1+f.Extensions)), ev)
 }
 
 // timeoutReason says what the lane last knew about a front that timed out; it
@@ -488,8 +569,10 @@ func prShape(p PullRequest, branch string) string {
 	return ""
 }
 
-// mergeability maps GitHub's answer: conflicts leave the front, unknown and
-// any other no wait for the next round.
+// mergeability is called after confirming the head contains the current tip
+// and its required checks pass. Conflicts and a remaining block leave the
+// front: the lane has no further action that can satisfy that block. Unknown
+// mergeability and other negative states wait for the next round.
 func mergeability(p PullRequest) (string, bool) {
 	switch ghub.MergeableFromState(p.MergeableState, p.Mergeable) {
 	case ghub.MergeableYes:
@@ -500,12 +583,18 @@ func mergeability(p PullRequest) (string, bool) {
 	if p.MergeableState == "dirty" {
 		return "pull request has merge conflicts", true
 	}
+	if p.MergeableState == "blocked" {
+		return "pull request is blocked despite passing required checks on an up-to-date head; no remaining lane action can satisfy the block", true
+	}
 	return fmt.Sprintf("pull request is not mergeable (state %q)", p.MergeableState), false
 }
 
 type checkVerdict struct {
 	outcome ghub.CheckOutcome
 	reason  string
+	// pending is set when every required check not yet passed has a run that
+	// is queued or in progress: the head waits on CI, nothing is missing.
+	pending bool
 }
 
 // checks re-reads the required set and its results on head. An unknown or
@@ -517,28 +606,39 @@ func (l *Lane) checks(ctx context.Context, repo, branch, head string) checkVerdi
 		if reason == "" {
 			reason = "required check set is empty"
 		}
-		return checkVerdict{ghub.CheckWait, "required checks unknown, no merge: " + reason}
+		return checkVerdict{outcome: ghub.CheckWait, reason: "required checks unknown, no merge: " + reason}
 	}
 	runs, err := l.opts.GitHub.CheckRuns(ctx, repo, head)
 	if err != nil {
-		return checkVerdict{ghub.CheckWait, "reading check results failed: " + err.Error()}
+		return checkVerdict{outcome: ghub.CheckWait, reason: "reading check results failed: " + err.Error()}
 	}
 	var waiting []string
+	// missing: some required check has no run, or finished without a
+	// verdict, so the head is not simply waiting on CI.
+	missing := false
 	for _, name := range rules.SortedRequired() {
 		run, ok := runs[name]
 		if !ok {
+			missing = true
 			waiting = append(waiting, name+" (missing)")
 			continue
 		}
 		switch ghub.ClassifyRequiredCheck(run.Status, run.Conclusion) {
 		case ghub.CheckFailed:
-			return checkVerdict{ghub.CheckFailed, fmt.Sprintf("required check %q finished as %s on head %s", name, run.Conclusion, short(head))}
+			return checkVerdict{outcome: ghub.CheckFailed, reason: fmt.Sprintf("required check %q finished as %s on head %s", name, run.Conclusion, short(head))}
 		case ghub.CheckWait:
+			if strings.EqualFold(run.Status, "completed") {
+				missing = true
+			}
 			waiting = append(waiting, fmt.Sprintf("%s (%s)", name, run.Status))
 		}
 	}
 	if len(waiting) > 0 {
-		return checkVerdict{ghub.CheckWait, fmt.Sprintf("waiting for required checks on head %s: %s", short(head), strings.Join(waiting, ", "))}
+		return checkVerdict{
+			outcome: ghub.CheckWait,
+			reason:  fmt.Sprintf("waiting for required checks on head %s: %s", short(head), strings.Join(waiting, ", ")),
+			pending: !missing,
+		}
 	}
 	return checkVerdict{outcome: ghub.CheckPassed}
 }
@@ -559,6 +659,10 @@ type round struct {
 	branch    string
 	front     *Front
 	authorize Authorizer
+	// restarted is set when this round restarted the front timeout (a branch
+	// update); otherwise save keeps the durable deadline, which a concurrent
+	// expiry may have extended.
+	restarted bool
 }
 
 func (r *round) run() (Decision, error) {
@@ -587,6 +691,9 @@ func (r *round) run() (Decision, error) {
 		r.l.emit([]Event{r.event(p.Head, "", ActionRefusal,
 			fmt.Sprintf("head changed during validation from %s: the new head is evaluated from the start", short(r.front.EvaluatedHead)))})
 	}
+	if r.front.EvaluatedHead != p.Head {
+		r.front.ChecksPending = false
+	}
 	r.front.EvaluatedHead = p.Head
 	r.front.Stage = StageValidating
 
@@ -609,9 +716,14 @@ func (r *round) run() (Decision, error) {
 			return r.leave(p.Head, tip, v.reason)
 		}
 		r.front.Stage = StageWaitingChecks
+		r.front.ChecksPending = v.pending
 		return r.hold(p.Head, tip, v.reason)
 	}
-	if reason, leave := mergeability(p); reason != "" {
+	r.front.ChecksPending = false
+	// The PR snapshot predates the check results. A check may have just
+	// passed, so let finalCheck re-read a blocked PR before deciding to
+	// release it; the earlier block may already have cleared.
+	if reason, leave := mergeability(p); reason != "" && p.MergeableState != "blocked" {
 		if leave {
 			return r.leave(p.Head, tip, reason)
 		}
@@ -642,9 +754,6 @@ func (r *round) finalCheck(head, tip string) (string, bool) {
 	if reason := prShape(q, r.branch); reason != "" {
 		return reason, true
 	}
-	if reason, leave := mergeability(q); reason != "" {
-		return reason, leave
-	}
 	if reason := r.l.policyProblem(r.repo, q.Labels); reason != "" {
 		return reason, true
 	}
@@ -657,6 +766,9 @@ func (r *round) finalCheck(head, tip string) (string, bool) {
 	}
 	if v := r.l.checks(r.ctx, r.repo, r.branch, head); v.outcome != ghub.CheckPassed {
 		return v.reason, v.outcome == ghub.CheckFailed
+	}
+	if reason, leave := mergeability(q); reason != "" {
+		return reason, leave
 	}
 	if r.authorize == nil {
 		return "no merge-path authorization was supplied", false
@@ -703,7 +815,7 @@ func (r *round) ensureForkWaitComment(tip string) error {
 Hi! This pull request is from a fork and needs to be updated with the latest %s before Hive can merge it.
 
 Hive cannot update this fork branch unless GitHub says this token can update it and the repository owner has enabled `+"`review.contributor_prs.base_sync`"+`. Please merge the latest target branch tip (%s) into your branch, then let the required checks pass; the pull request will stay eligible for the lane.`, forkWaitCommentMarker, r.branch, short(tip))
-	return r.l.opts.GitHub.CreateIssueComment(r.ctx, r.repo, r.front.PR, body)
+	return r.l.opts.GitHub.CreateIssueComment(r.ctx, r.repo, r.front.PR, body) // writeback:gated: RESTGitHub checks the item's policy before posting.
 }
 
 func (r *round) update(head, tip string) (Decision, error) {
@@ -718,7 +830,10 @@ func (r *round) update(head, tip string) (Decision, error) {
 	r.front.PinnedHead = head
 	r.front.Stage = StageUpdating
 	r.front.LastReason = ""
+	r.front.ChecksPending = false
 	r.front.DeadlineAt = r.l.opts.Now().Add(r.l.timeoutFor(r.repo))
+	r.front.Extensions = 0
+	r.restarted = true
 	reason := fmt.Sprintf("head does not contain the target branch tip %s: merged the tip in, pinned to head %s", short(tip), short(head))
 	if err := r.save(); err != nil {
 		return Decision{Outcome: OutcomeWaiting, Reason: err.Error()}, err
@@ -738,9 +853,19 @@ func (r *round) merge(head, tip string) (Decision, error) {
 		r.front.Stage = StageValidating
 		return r.hold(head, tip, "merge refused: head moved past the pinned SHA; validation restarts")
 	}
+	if errors.Is(err, effects.ErrNotApplied) {
+		// GitHub definitively refused the merge, so nothing happened and
+		// the front need not wait out its timeout. The typed refusal still
+		// travels with the decision so callers can explain it.
+		dec, leaveErr := r.leave(head, tip, "merge refused by GitHub: "+err.Error())
+		dec.MergeError = err
+		return dec, leaveErr
+	}
 	if err != nil {
 		r.front.Stage = StageValidating
-		return r.hold(head, tip, "merge call failed; no merge assumed this round: "+err.Error())
+		dec, holdErr := r.hold(head, tip, "merge call failed; no merge assumed this round: "+err.Error())
+		dec.MergeError = err
+		return dec, holdErr
 	}
 	reason := fmt.Sprintf("merged as %s after the final re-check", short(sha))
 	r.l.emit([]Event{r.event(head, tip, ActionMerge, reason)})
@@ -820,7 +945,11 @@ func (r *round) save() error {
 		if !r.fenceOK(rec) {
 			return ErrFenced
 		}
+		deadline, extensions := rec.Front.DeadlineAt, rec.Front.Extensions
 		*rec.Front = *r.front
+		if !r.restarted {
+			rec.Front.DeadlineAt, rec.Front.Extensions = deadline, extensions
+		}
 		return nil
 	})
 }

@@ -106,8 +106,17 @@ const (
 	// capExtExecOMP (declared beside it as "ext-exec/omp") is the same opt-in
 	// for the OMP workbench host (#8361 step 9, #6899), gated by
 	// runs.external.omp. capExtExecVibeKanban is the local board/workspace host
-	// opt-in, gated by runs.external.vibe_kanban. The tokens are independent:
+	// opt-in, gated by runs.external.vibe_kanban. The Claude Managed Agents
+	// token is the private-spoke hosted prototype, gated by
+	// runs.external.claude_managed_agents. The tokens are independent:
 	// declaring one grants nothing for another engine.
+	//
+	// capRepoScope: the hub accepts a versioned contributor repository scope
+	// (repo_scope → repo_scope_ack) and filters candidates by the acknowledged
+	// scope BEFORE it leases or mints for them (hivecommons/hive#12805, RFC
+	// #12570 §4). Negotiated on this token rather than a protocol-version bump:
+	// a relay that never sends repo_scope is served exactly as before.
+	capRepoScope = "repo_scope_v1"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -132,6 +141,9 @@ func serverCapabilities() []string {
 		capExtExecFlue,
 		capExtExecOMP,
 		capExtExecVibeKanban,
+		capExtExecClaudeManagedAgents,
+		capFixPRInterrupt,
+		capRepoScope,
 	}
 }
 
@@ -140,6 +152,138 @@ func relaySupportsRunStage(c *ContributorConnection) bool {
 		return false
 	}
 	return c.capabilities.DeclaresCapability(capRunStage)
+}
+
+// Contributor repository scope (hivecommons/hive#12805). A relay may narrow the
+// work this hub offers it to a set of repositories it has selected. The scope
+// can only NARROW: every operator admission gate still runs unchanged.
+const (
+	// repoScopeModeAll keeps today's unrestricted behaviour.
+	repoScopeModeAll = "all"
+	// repoScopeModeSelected restricts selection to the listed repository ids.
+	repoScopeModeSelected = "selected"
+	// repoScopeMaxRepositories bounds one repo_scope message.
+	repoScopeMaxRepositories = 1000
+	// repoScopeMaxIDLen bounds one repository id.
+	repoScopeMaxIDLen = 512
+	// repoScopeDefaultForge is the forge segment of every id this hub
+	// advertises: contributor work is minted through the GitHub App.
+	repoScopeDefaultForge = "github"
+	// repoScopeDefaultHost is the host segment when no forge host is configured.
+	repoScopeDefaultHost = "github.com"
+	// taskDeclinedOutOfScope is the task_declined reason a scope-capable relay
+	// sends for an offer outside its selected scope (the reload race). It is
+	// "not this contributor's work", never a failure.
+	taskDeclinedOutOfScope = "out_of_contributor_scope"
+)
+
+// Reasons carried on a repo_scope_ack with accepted:false.
+const (
+	repoScopeReasonInvalidVersion = "invalid_scope_version"
+	repoScopeReasonInvalidMode    = "invalid_mode"
+	repoScopeReasonTooMany        = "too_many_repositories"
+	repoScopeReasonInvalidID      = "invalid_repository_id"
+)
+
+// contributorRepoScope is a connection's ACKNOWLEDGED repository scope. Nil on
+// a connection that never sent repo_scope, which is served exactly as before.
+type contributorRepoScope struct {
+	version int
+	mode    string
+	repos   map[string]struct{}
+}
+
+// restricts reports whether the scope narrows selection at all.
+func (s *contributorRepoScope) restricts() bool {
+	return s != nil && s.mode == repoScopeModeSelected
+}
+
+// allows reports whether the canonical repository id is inside the scope.
+func (s *contributorRepoScope) allows(id string) bool {
+	if !s.restricts() {
+		return true
+	}
+	_, ok := s.repos[id]
+	return ok
+}
+
+// repoScopeID builds the canonical, lower-cased repository id
+// "{forge}/{host}/{owner}/{name}" for a repository the hub monitors. Empty
+// forge/host default to github / github.com.
+func repoScopeID(forge, host, fullName string) string {
+	forge = strings.ToLower(strings.TrimSpace(forge))
+	if forge == "" {
+		forge = repoScopeDefaultForge
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		host = repoScopeDefaultHost
+	}
+	return forge + "/" + host + "/" + strings.ToLower(strings.Trim(strings.TrimSpace(fullName), "/"))
+}
+
+// normalizeRepoScopeID validates a client-supplied repository id and returns
+// its canonical lower-cased form. An id is exactly four non-empty segments
+// forge/host/owner/name with no whitespace, control characters or dot segments.
+func normalizeRepoScopeID(raw string) (string, bool) {
+	id := strings.ToLower(strings.TrimSpace(raw))
+	if id == "" || len(id) > repoScopeMaxIDLen || !utf8.ValidString(id) {
+		return "", false
+	}
+	parts := strings.Split(id, "/")
+	if len(parts) != 4 {
+		return "", false
+	}
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return "", false
+		}
+		for _, r := range p {
+			if unicode.IsSpace(r) || unicode.IsControl(r) {
+				return "", false
+			}
+		}
+	}
+	return id, true
+}
+
+// parseRepoScope validates a repo_scope message. It returns the scope and the
+// canonical ids in message order, or a non-empty reason when the scope is
+// malformed — in which case the connection must be served nothing until a
+// valid scope arrives (fail closed).
+func parseRepoScope(msg WSMessage) (*contributorRepoScope, []string, string) {
+	if msg.ScopeVersion <= 0 {
+		return nil, nil, repoScopeReasonInvalidVersion
+	}
+	mode := strings.ToLower(strings.TrimSpace(msg.Mode))
+	switch mode {
+	case repoScopeModeAll:
+		return &contributorRepoScope{version: msg.ScopeVersion, mode: mode}, nil, ""
+	case repoScopeModeSelected:
+	default:
+		return nil, nil, repoScopeReasonInvalidMode
+	}
+	if len(msg.Repositories) > repoScopeMaxRepositories {
+		return nil, nil, repoScopeReasonTooMany
+	}
+	scope := &contributorRepoScope{
+		version: msg.ScopeVersion,
+		mode:    mode,
+		repos:   make(map[string]struct{}, len(msg.Repositories)),
+	}
+	ids := make([]string, 0, len(msg.Repositories))
+	for _, raw := range msg.Repositories {
+		id, ok := normalizeRepoScopeID(raw)
+		if !ok {
+			return nil, nil, repoScopeReasonInvalidID
+		}
+		if _, dup := scope.repos[id]; dup {
+			continue
+		}
+		scope.repos[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return scope, ids, ""
 }
 
 // Surface identifiers for the /api/contribute/status response (#2567). Two
@@ -165,6 +309,10 @@ const (
 // trusted for a security decision (server-side policy still governs what a
 // contributor may do — see the Restrictions reservation in contribute_ws.go).
 type ContributorCapabilities struct {
+	// ParallelSessions is the total session capacity INCLUDING the primary.
+	// Zero/omitted means no parallel capability. This declaration is groundwork
+	// for fix-pr scheduling (#12436), not permission to launch extra sessions.
+	ParallelSessions int `json:"parallel_sessions,omitempty"`
 	// ContainerRuntime is the container runtime the relay found available:
 	// "docker", "podman", or "none". Advisory only.
 	ContainerRuntime string `json:"container_runtime,omitempty"`
@@ -201,6 +349,12 @@ type ContributorCapabilities struct {
 	// CredentialType names the kind of credential the relay authenticates GitHub
 	// with (e.g. "app", "pat", "oauth"), NOT the credential itself. Advisory.
 	CredentialType string `json:"credential_type,omitempty"`
+	// IsolationClass names the isolation the contributor's LAUNCHER chose, e.g.
+	// "microvm-krun" for a krun microVM launch (#12200). The relay passes on what
+	// the launcher set and never detects it. Unlike the runtime, OS, arch,
+	// credential and backend fields it is DISPLAY-ONLY: task selection and
+	// admission never read it (ContributorCanRunTask ignores it).
+	IsolationClass string `json:"isolation_class,omitempty"`
 	// Pi readiness is a four-stage, machine-readable declaration (#5039). Auth
 	// deliberately distinguishes configured_unverified from verified: a key or
 	// auth-file entry is configuration, not proof that a provider accepted it.
@@ -209,6 +363,12 @@ type ContributorCapabilities struct {
 	PiConfiguration  string `json:"pi_configuration,omitempty"`
 	PiAuthentication string `json:"pi_authentication,omitempty"`
 	PiInvocation     string `json:"pi_invocation,omitempty"`
+	// MaxParallelFixes is how many stage-072 `fix-pr` sub-sessions the relay
+	// can run beside its primary session (hivecommons/hive#12436). Only
+	// meaningful with the "parallel_sessions" relay capability token; the hub
+	// clamps it to contribute.max_parallel_fixes. 0/unset reads as capacity 1
+	// (preempt mode).
+	MaxParallelFixes int `json:"max_parallel_fixes,omitempty"`
 }
 
 // IsZero reports whether the client declared no capabilities at all, so the hub
@@ -217,7 +377,7 @@ type ContributorCapabilities struct {
 func (c ContributorCapabilities) IsZero() bool {
 	return c.ContainerRuntime == "" && c.OS == "" && c.Arch == "" &&
 		c.AgentCLIVersion == "" && c.RelayProtocolVersion == "" && c.CredentialType == "" &&
-		len(c.RelayCapabilities) == 0 &&
+		c.IsolationClass == "" && len(c.RelayCapabilities) == 0 && c.MaxParallelFixes == 0 &&
 		c.PiBinary == "" && c.PiConfiguration == "" && c.PiAuthentication == "" && c.PiInvocation == ""
 }
 
@@ -245,7 +405,15 @@ const capabilityFieldMaxLen = 64
 // still accepted and still authenticates. Declaring badly must never cost a
 // client its connection or its work.
 func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
+	parallel := c.ParallelSessions
+	if parallel < 0 {
+		parallel = 0
+	}
+	if parallel > 64 {
+		parallel = 64
+	}
 	return ContributorCapabilities{
+		ParallelSessions:     parallel,
 		ContainerRuntime:     sanitizeCapabilityField(c.ContainerRuntime),
 		OS:                   sanitizeCapabilityField(c.OS),
 		Arch:                 sanitizeCapabilityField(c.Arch),
@@ -253,11 +421,27 @@ func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
 		RelayProtocolVersion: sanitizeCapabilityField(c.RelayProtocolVersion),
 		RelayCapabilities:    sanitizeCapabilityTokens(c.RelayCapabilities),
 		CredentialType:       sanitizeCapabilityField(c.CredentialType),
+		IsolationClass:       sanitizeCapabilityField(c.IsolationClass),
 		PiBinary:             sanitizeCapabilityField(c.PiBinary),
 		PiConfiguration:      sanitizeCapabilityField(c.PiConfiguration),
 		PiAuthentication:     sanitizeCapabilityField(c.PiAuthentication),
 		PiInvocation:         sanitizeCapabilityField(c.PiInvocation),
+		MaxParallelFixes:     clampMaxParallelFixes(c.MaxParallelFixes),
 	}
+}
+
+// maxParallelFixesCeiling bounds the relay-declared fix-session count before
+// config clamps it further; a self-report above this is not an honest value.
+const maxParallelFixesCeiling = 16
+
+func clampMaxParallelFixes(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxParallelFixesCeiling {
+		return maxParallelFixesCeiling
+	}
+	return n
 }
 
 // sanitizeCapabilityField makes one declared value printable and bounded.
@@ -451,9 +635,17 @@ func TaskRequirementsFromLabels(labels []string) ContributorTaskRequirements {
 // requirements. Unknown always fits for backward compatibility; only an explicit
 // contradictory declaration excludes the client.
 func ContributorCanRunTask(caps *ContributorCapabilities, cliBackend string, req ContributorTaskRequirements) bool {
-	if req.IsZero() || caps == nil || caps.IsZero() {
+	if req.IsZero() || caps == nil {
 		return true
 	}
+	// The isolation class is display-only (#12200): a declaration that carries
+	// only it is still "declared nothing" for the fit decision.
+	fit := *caps
+	fit.IsolationClass = ""
+	if fit.IsZero() {
+		return true
+	}
+	caps = &fit
 	if req.ContainerRuntime != "" {
 		have := strings.ToLower(strings.TrimSpace(caps.ContainerRuntime))
 		want := strings.ToLower(req.ContainerRuntime)

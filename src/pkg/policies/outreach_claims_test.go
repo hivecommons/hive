@@ -20,7 +20,9 @@ func TestOutreachPolicyRequiresGroundedHumanReviewedClaims(t *testing.T) {
 	}
 
 	required := []string{
-		"Every outreach PR requires the `hold` label, including at ACMM L6",
+		"Every cross-repo outreach PR — one that targets a repository the hive does not manage",
+		"requires the `hold` label, including at ACMM L6",
+		"A PR into the repo the finding is about (`$HIVE_REPO` or another hive-managed repo) is an ordinary hive PR",
 		"Ground every product capability claim before writing it",
 		"cite the exact implementing file, test, release, or human-authored official documentation for each claim",
 		"If a claim cannot be verified, omit it and flag the question for a human",
@@ -28,7 +30,7 @@ func TestOutreachPolicyRequiresGroundedHumanReviewedClaims(t *testing.T) {
 		"Software features are not proof of an organization's compliance posture",
 		"NEVER invent roadmap commitments",
 		"## Claim evidence",
-		"--label \"community,outreach,hold\"",
+		"--label \"community,outreach\"",
 	}
 	for _, policy := range []struct {
 		name string
@@ -45,6 +47,9 @@ func TestOutreachPolicyRequiresGroundedHumanReviewedClaims(t *testing.T) {
 			}
 			if strings.Contains(policy.body, "No hold label required") {
 				t.Error("outreach policy still exempts public content from human review")
+			}
+			if strings.Contains(policy.body, "Every outreach PR requires the `hold` label") {
+				t.Error("outreach policy still holds same-repo PRs; only cross-repo PRs are held (operator decision 2026-10-16)")
 			}
 		})
 	}

@@ -77,6 +77,38 @@ func (c *Client) enrichAttributedPRRework(ctx context.Context, prs []PullRequest
 	}
 }
 
+// MergedPRReworkCommits returns the number of commits pushed after the first
+// review of a merged PR, from the same measurement (and cache) the dashboard
+// uses. ok is false when the measurement could not be taken.
+func (c *Client) MergedPRReworkCommits(ctx context.Context, repo string, number int, mergedAt time.Time) (int, bool) {
+	if c == nil || repo == "" || number <= 0 {
+		return 0, false
+	}
+	rework, err := c.cachedPRRework(ctx, repo, number, mergedAt)
+	if err != nil {
+		return 0, false
+	}
+	return rework.FollowUpCommits, true
+}
+
+// cachedPRRework returns the rework measurement for repo#number from the
+// rework cache, computing it once with the existing rework fetch (and caching
+// it) on a miss.
+func (c *Client) cachedPRRework(ctx context.Context, repo string, number int, mergedAt time.Time) (PRReworkStats, error) {
+	key := ReviewLinkKey(repo, number)
+	cache := loadPRReworkCache()
+	if cached, ok := cache[key]; ok {
+		return cached, nil
+	}
+	rework, err := c.fetchPRRework(ctx, PullRequest{Repo: repo, Number: number, MergedAt: mergedAt})
+	if err != nil {
+		return PRReworkStats{}, err
+	}
+	cache[key] = rework
+	storePRReworkCache(cache)
+	return rework, nil
+}
+
 func (c *Client) fetchPRRework(ctx context.Context, pr PullRequest) (PRReworkStats, error) {
 	reviews, err := c.listPRReviewEvents(ctx, pr.Repo, pr.Number)
 	if err != nil {

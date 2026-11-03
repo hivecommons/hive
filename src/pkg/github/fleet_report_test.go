@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
@@ -44,6 +46,9 @@ func TestEnsureFleetReportCreatesWhenNoFingerprintMatch(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	// The create runs with open-twin consolidation on; a report body cites
+	// no files, so there is nothing to fold into and it stays a plain create.
+	c.appBotLogin = "hive-app[bot]"
 	res, err := c.EnsureFleetReport(context.Background(), fleetreport.Report{Fingerprint: "fp", Title: "Fleet report", Body: "<!-- hive-fleet-fingerprint:fp -->\nbody", Labels: []string{"fleet-report"}})
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +72,11 @@ func TestEnsureFleetReportCommentsAndReactsOnFingerprintMatch(t *testing.T) {
 			reactions.Add(1)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 2})
+		// Every join now enriches the issue (#13470): label + Affected block.
+		case strings.Contains(r.URL.Path, "/labels"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": fleetreport.LabelSelfReport})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -115,5 +125,429 @@ func TestEnsureFleetReportRejectsMissingFingerprint(t *testing.T) {
 	defer cancel()
 	if _, err := c.EnsureFleetReport(ctx, fleetreport.Report{}); err == nil {
 		t.Fatal("expected missing fingerprint error")
+	}
+}
+
+// selfReportFakeGitHub is a scripted GitHub for the join-first self-report
+// path (#11868). Search queries are answered in order of what they ask for:
+// the fingerprint marker, the hive/selfreport+class label query, then the
+// class-keyword query; each can be told to hit or miss.
+type selfReportFakeGitHub struct {
+	t                *testing.T
+	fingerprintHit   *map[string]any
+	labelHit         *map[string]any
+	keywordHit       *map[string]any
+	searches         []string
+	comments         []string
+	labelsAdded      []string
+	labelsCreated    []string
+	bodyPatches      []string
+	creates          atomic.Int64
+	reactions        atomic.Int64
+	existingLabels   []string
+	refuseWithStatus int
+}
+
+func (f *selfReportFakeGitHub) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.refuseWithStatus != 0 && strings.HasPrefix(r.URL.Path, "/repos/") {
+			w.WriteHeader(f.refuseWithStatus)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"})
+			return
+		}
+		switch {
+		case r.URL.Path == "/search/issues":
+			q := r.URL.Query().Get("q")
+			f.searches = append(f.searches, q)
+			var hit *map[string]any
+			switch {
+			case strings.Contains(q, "hive-fleet-fingerprint:"):
+				hit = f.fingerprintHit
+			case strings.Contains(q, "label:hive/selfreport"):
+				hit = f.labelHit
+			case strings.Contains(q, "in:title,body"):
+				hit = f.keywordHit
+			}
+			items := []map[string]any{}
+			if hit != nil {
+				items = append(items, *hit)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/hive/labels/"):
+			name := strings.TrimPrefix(r.URL.Path, "/repos/hivecommons/hive/labels/")
+			for _, l := range f.existingLabels {
+				if l == name {
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": name})
+					return
+				}
+			}
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/labels":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.labelsCreated = append(f.labelsCreated, body["name"].(string))
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			var names []string
+			_ = json.NewDecoder(r.Body).Decode(&names)
+			f.labelsAdded = append(f.labelsAdded, names...)
+			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			raw, _ := io.ReadAll(r.Body)
+			f.comments = append(f.comments, string(raw))
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reactions"):
+			f.reactions.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 2})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/hive/issues/"):
+			raw, _ := io.ReadAll(r.Body)
+			f.bodyPatches = append(f.bodyPatches, string(raw))
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/hive/issues":
+			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/hive/issues/comments":
+			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
+			f.creates.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 99, "html_url": "https://github.com/hivecommons/hive/issues/99", "user": map[string]any{"login": "bot"}})
+		default:
+			f.t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	})
+}
+
+func selfReportTestReport(fp string) fleetreport.Report {
+	return fleetreport.Report{
+		Fingerprint: fp, Class: fleetreport.ClassRestartStorm, Trigger: fleetreport.TriggerRuntimeError,
+		Title: "[selfreport] restart_storm: agent restarted N times", Body: "<!-- hive-fleet-fingerprint:" + fp + " -->\nbody",
+		Labels:     []string{"fleet-report", fleetreport.LabelSelfReport},
+		Evidence:   []fleetreport.Evidence{{Class: fleetreport.ClassRestartStorm, Count: 4, Message: "restart storm"}},
+		InstanceID: "inst-aslom", Owners: []string{"bob", "alice"},
+	}
+}
+
+func selfReportTestOptions() FleetReportOptions {
+	return FleetReportOptions{
+		Repo: "hivecommons/hive", HiveSlug: "hosted-aslom", Version: "v5.1.0", Cluster: "oke-11",
+		Now: func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) }, JoinExisting: true, SeenCommentAllowed: true,
+	}
+}
+
+func TestEnsureFleetReportWithOptionsJoinsViaLabelAndClass(t *testing.T) {
+	human := map[string]any{"number": 7, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "Restart storm on hosted hives after upgrade", "user": map[string]any{"login": "maintainer"}}
+	f := &selfReportFakeGitHub{t: t, labelHit: &human}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-join"), selfReportTestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Created || !res.Joined || !res.Commented || res.Number != 7 || f.creates.Load() != 0 {
+		t.Fatalf("result = %#v creates=%d", res, f.creates.Load())
+	}
+	if len(f.comments) != 1 || !strings.Contains(f.comments[0], "hive:selfreport-seen hive=hosted-aslom fp=fp-join") || !strings.Contains(f.comments[0], "Also seen on **hosted-aslom** (v5.1.0, oke-11)") {
+		t.Fatalf("comments = %q", f.comments)
+	}
+	if f.reactions.Load() != 1 {
+		t.Fatalf("reactions = %d", f.reactions.Load())
+	}
+	// The hive/<slug> label is retired (#12539): joining adds hive/selfreport
+	// only; the seen marker above names the hive.
+	joinedLabels := strings.Join(f.labelsAdded, ",")
+	if strings.Contains(joinedLabels, "hive/hosted-aslom") || !strings.Contains(joinedLabels, fleetreport.LabelSelfReport) {
+		t.Fatalf("labels added = %v (res=%#v)", f.labelsAdded, res)
+	}
+	if strings.Contains(strings.Join(f.labelsCreated, ","), "hive/hosted-aslom") {
+		t.Fatalf("retired hive/<slug> label was created: %v", f.labelsCreated)
+	}
+	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], `Affected hives (1):**\n- hosted-aslom (instance inst-aslom) — owner(s): @alice, @bob — seen 1, last `) || !strings.Contains(f.bodyPatches[0], "Restart storm on hosted hives after upgrade") || !res.BodyUpdated {
+		t.Fatalf("body patches = %q", f.bodyPatches)
+	}
+	if len(f.searches) != 2 {
+		t.Fatalf("expected fingerprint + label searches, got %q", f.searches)
+	}
+}
+
+func TestEnsureFleetReportWithOptionsJoinsHumanIssueViaKeywords(t *testing.T) {
+	human := map[string]any{"number": 8, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/8", "body": "Seeing a restart storm on my hive", "user": map[string]any{"login": "maintainer"}}
+	f := &selfReportFakeGitHub{t: t, keywordHit: &human}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-kw"), selfReportTestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Joined || res.Number != 8 || f.creates.Load() != 0 {
+		t.Fatalf("result = %#v creates=%d", res, f.creates.Load())
+	}
+	if len(f.searches) != 3 || !strings.Contains(f.searches[2], `"restart storm"`) {
+		t.Fatalf("searches = %q", f.searches)
+	}
+}
+
+func TestEnsureFleetReportWithOptionsSkipsSeenCommentInsideGapButStillLabels(t *testing.T) {
+	mine := map[string]any{"number": 7, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:fp-x -->\nbody\n" + fleetreport.RenderAffectedBlock([]string{"other-hive"}, 1), "user": map[string]any{"login": "bot"}}
+	f := &selfReportFakeGitHub{t: t, fingerprintHit: &mine, existingLabels: []string{"hive/hosted-aslom", fleetreport.LabelSelfReport}}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	opts := selfReportTestOptions()
+	opts.SeenCommentAllowed = false
+	report := selfReportTestReport("fp-x")
+	// #13211: the hive's display name and dashboard URL ride along onto its line.
+	report.HiveName, report.SpokeURL = "kellya", "https://kellya.hive.example.dev"
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), report, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Commented || len(f.comments) != 0 {
+		t.Fatalf("comment posted inside the seen gap: %#v %q", res, f.comments)
+	}
+	if len(f.labelsCreated) != 0 {
+		t.Fatalf("existing labels re-created: %v", f.labelsCreated)
+	}
+	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], `Affected hives (2):**\n- kellya (hosted-aslom) (instance inst-aslom) — [open](https://kellya.hive.example.dev) — owner(s): @alice, @bob — seen 1, last `) || !strings.Contains(f.bodyPatches[0], `\n- other-hive — owner(s): unknown — seen 1\n`) {
+		t.Fatalf("body patches = %q", f.bodyPatches)
+	}
+}
+
+func TestEnsureFleetReportWithOptionsClosedFingerprintWritesNothing(t *testing.T) {
+	closed := map[string]any{"number": 5, "state": "closed", "closed_at": "2026-09-23T10:00:00Z", "html_url": "https://github.com/hivecommons/hive/issues/5", "body": "<!-- hive-fleet-fingerprint:fp-closed -->", "user": map[string]any{"login": "bot"}}
+	f := &selfReportFakeGitHub{t: t, fingerprintHit: &closed}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-closed"), selfReportTestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ClosedAt.IsZero() || res.Number != 5 || res.Created || res.Joined || res.Commented || f.creates.Load() != 0 || len(f.comments) != 0 || len(f.bodyPatches) != 0 {
+		t.Fatalf("closed fingerprint wrote upstream: res=%#v comments=%q patches=%q", res, f.comments, f.bodyPatches)
+	}
+}
+
+func TestEnsureFleetReportWithOptionsCreateGateBlocksOnlyCreates(t *testing.T) {
+	f := &selfReportFakeGitHub{t: t}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	c.appBotLogin = "hive-app[bot]"
+	gateErr := errors.New("deferred")
+	opts := selfReportTestOptions()
+	opts.CreateGate = func() error { return gateErr }
+	_, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-new"), opts)
+	if !errors.Is(err, gateErr) || f.creates.Load() != 0 {
+		t.Fatalf("gate not honoured: err=%v creates=%d", err, f.creates.Load())
+	}
+	opts.CreateGate = nil
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-new"), opts)
+	if err != nil || !res.Created || res.Number != 99 || f.creates.Load() != 1 {
+		t.Fatalf("create without gate: res=%#v err=%v", res, err)
+	}
+}
+
+func TestEnsureFleetReportWithOptionsSurfacesForbiddenForRelay(t *testing.T) {
+	f := &selfReportFakeGitHub{t: t, refuseWithStatus: http.StatusForbidden}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	_, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-403"), selfReportTestOptions())
+	var ghErr *gh.ErrorResponse
+	if err == nil || !errors.As(err, &ghErr) || ghErr.Response.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected a 403 ErrorResponse for the hub-relay fallback, got %v", err)
+	}
+}
+
+func TestPostFleetReportClearedCommentsOnConfiguredRepo(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// The state read that precedes the comment (#14256).
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 12, "state": "open"})
+			return
+		}
+		path = r.Method + " " + r.URL.Path
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	if err := c.PostFleetReportCleared(context.Background(), "acme/fork", 12, "Cleared on **h**"); err != nil || path != "POST /repos/acme/fork/issues/12/comments" {
+		t.Fatalf("err=%v path=%q", err, path)
+	}
+	if err := c.PostFleetReportCleared(context.Background(), "", 13, "Cleared"); err != nil || path != "POST /repos/hivecommons/hive/issues/13/comments" {
+		t.Fatalf("default repo: err=%v path=%q", err, path)
+	}
+	var nilClient *Client
+	if err := nilClient.PostFleetReportCleared(context.Background(), "", 1, "x"); !errors.Is(err, ErrNoGitHubClient) {
+		t.Fatalf("nil client err=%v", err)
+	}
+}
+
+// An ACMM-shortfall report that matches an existing issue by fingerprint
+// gets the same treatment as a self-report (#13470): the short "also seen"
+// comment rather than a re-post of the whole body, the hive/selfreport
+// label, and an Affected-hives entry naming the hive and its owners.
+func TestEnsureFleetReportWithOptionsEnrichesACMMJoin(t *testing.T) {
+	existing := map[string]any{"number": 9, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/9", "body": "Fleet report: merge blocks Merge success rate\n\nfull body", "user": map[string]any{"login": "hive-bot"}}
+	f := &selfReportFakeGitHub{t: t, fingerprintHit: &existing}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	report := fleetreport.Report{
+		Fingerprint: "fp-acmm", Trigger: fleetreport.TriggerACMMShortfall, Criterion: "merge-success-rate",
+		Title: "Fleet report: merge blocks Merge success rate [hosted-aslom]", Body: "## Fleet report\n\nlong evidence body that must not be re-posted",
+		Labels:     fleetreport.SelfReportLabels(fleetreport.TriggerACMMShortfall, "high", ""),
+		Evidence:   []fleetreport.Evidence{{Component: "merge", ErrorClass: "structurally unmergeable hive PR", Count: 3, Window: time.Hour}},
+		InstanceID: "inst-aslom", Owners: []string{"alice"}, Repos: []string{"acme/widgets"}, HiveName: "Aslom", SpokeURL: "https://aslom.hive.example",
+	}
+	opts := selfReportTestOptions()
+	opts.JoinExisting = false
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), report, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Created || !res.Joined || !res.Commented || res.Number != 9 || f.creates.Load() != 0 {
+		t.Fatalf("result = %#v creates=%d", res, f.creates.Load())
+	}
+	if len(f.comments) != 1 || strings.Contains(f.comments[0], "long evidence body") || !strings.Contains(f.comments[0], "hive:selfreport-seen hive=hosted-aslom fp=fp-acmm") || !strings.Contains(f.comments[0], "Also seen on **hosted-aslom**") {
+		t.Fatalf("comments = %q", f.comments)
+	}
+	if !strings.Contains(strings.Join(f.labelsAdded, ","), fleetreport.LabelSelfReport) {
+		t.Fatalf("hive/selfreport not added on ACMM join: %v", f.labelsAdded)
+	}
+	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], "Affected hives (1):") || !strings.Contains(f.bodyPatches[0], "@alice") || !strings.Contains(f.bodyPatches[0], "acme/widgets") || !res.BodyUpdated {
+		t.Fatalf("body patches = %q", f.bodyPatches)
+	}
+}
+
+func TestPostFleetReportRollupCommentsOnTargetIssue(t *testing.T) {
+	var path, body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.Method + " " + r.URL.Path
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		body, _ = req["body"].(string)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	report := fleetreport.Report{Fingerprint: "fp-acmm", RollupOf: "fp-self", Trigger: fleetreport.TriggerACMMShortfall, Body: "ACMM shortfall rolled up"}
+	if err := c.PostFleetReportRollup(context.Background(), "acme/fork", 21, report); err != nil || path != "POST /repos/acme/fork/issues/21/comments" || body != "ACMM shortfall rolled up" {
+		t.Fatalf("err=%v path=%q body=%q", err, path, body)
+	}
+	if err := c.PostFleetReportRollup(context.Background(), "", 22, report); err != nil || path != "POST /repos/hivecommons/hive/issues/22/comments" {
+		t.Fatalf("default repo: err=%v path=%q", err, path)
+	}
+	if err := c.PostFleetReportRollup(context.Background(), "", 0, report); err == nil {
+		t.Fatal("roll-up without a target issue number must fail")
+	}
+	var nilClient *Client
+	if err := nilClient.PostFleetReportRollup(context.Background(), "", 1, report); !errors.Is(err, ErrNoGitHubClient) {
+		t.Fatalf("nil client err=%v", err)
+	}
+}
+
+// A "cleared" comment is never written under a closed issue: the state is
+// read first and a *FleetReportClosedError carries the close time back so
+// the publisher records it (#14256 — #14255 collected four "Cleared on …"
+// after a maintainer closed it).
+func TestPostFleetReportClearedWithholdsOnClosedIssue(t *testing.T) {
+	var comments int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 14, "state": "closed", "closed_at": "2026-10-25T18:50:25Z"})
+			return
+		}
+		comments++
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	err := c.PostFleetReportCleared(context.Background(), "", 14, "Cleared on **h**")
+	var closed *FleetReportClosedError
+	if !errors.As(err, &closed) || closed.Number != 14 || !closed.ClosedAt.Equal(time.Date(2026, 10, 25, 18, 50, 25, 0, time.UTC)) {
+		t.Fatalf("err = %v", err)
+	}
+	if comments != 0 {
+		t.Fatalf("comment written under a closed issue: %d", comments)
+	}
+}
+
+// The catch-all class says nothing about the defect, so its join-first
+// search is scoped to the message's title phrase; without one it does not
+// join at all. Before #14256 the class-only match joined unrelated messages
+// onto whichever unclassified_error_repeated issue was oldest.
+func TestEnsureFleetReportWithOptionsCatchAllJoinIsScopedToMessage(t *testing.T) {
+	other := map[string]any{"number": 7, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:fp-other -->\nbody", "user": map[string]any{"login": "bot"}}
+	f := &selfReportFakeGitHub{t: t, labelHit: &other}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	report := selfReportTestReport("fp-catchall")
+	report.Class = fleetreport.ClassUnclassifiedRepeated
+	report.Title = "[selfreport] unclassified_error_repeated: policies: seeded policy differs from the embedded default with no seed record; leaving it"
+	report.Evidence = []fleetreport.Evidence{{Class: fleetreport.ClassUnclassifiedRepeated, Count: 29, Message: "policies: seeded policy differs from the embedded default with no seed record; leaving it in place"}}
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), report, selfReportTestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Joined || res.Number != 7 || len(f.searches) != 2 {
+		t.Fatalf("res=%#v searches=%q", res, f.searches)
+	}
+	if !strings.Contains(f.searches[1], `label:hive/selfreport "unclassified_error_repeated" in:title "policies seeded policy differs from the embedded default"`) {
+		t.Fatalf("catch-all search is not scoped to the message: %q", f.searches[1])
+	}
+
+	// No usable message phrase: no class-only join, a new issue instead.
+	f2 := &selfReportFakeGitHub{t: t, labelHit: &other}
+	srv2 := httptest.NewServer(f2.handler())
+	defer srv2.Close()
+	c2 := NewClientForTest(srv2.URL, "hivecommons", nil, slog.Default())
+	c2.appBotLogin = "hive-app[bot]"
+	report.Evidence = []fleetreport.Evidence{{Class: fleetreport.ClassUnclassifiedRepeated, Count: 29}}
+	res, err = c2.EnsureFleetReportWithOptions(context.Background(), report, selfReportTestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Joined || !res.Created || f2.creates.Load() != 1 || len(f2.searches) != 1 {
+		t.Fatalf("class-only join still happens: res=%#v searches=%q", res, f2.searches)
+	}
+}
+
+// A closed fingerprint match older than ClosedCooldown is no match: the
+// condition came back after a quiet period and gets a fresh issue. Inside
+// the cooldown (or with no cooldown configured) it still blocks.
+func TestEnsureFleetReportWithOptionsClosedCooldownBoundsTheBlock(t *testing.T) {
+	closed := map[string]any{"number": 5, "state": "closed", "closed_at": "2026-09-01T10:00:00Z", "html_url": "https://github.com/hivecommons/hive/issues/5", "body": "<!-- hive-fleet-fingerprint:fp-closed -->", "user": map[string]any{"login": "bot"}}
+	f := &selfReportFakeGitHub{t: t, fingerprintHit: &closed}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	c.appBotLogin = "hive-app[bot]"
+	opts := selfReportTestOptions()
+	opts.ClosedCooldown = 7 * 24 * time.Hour
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-closed"), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.ClosedAt.IsZero() || !res.Created || f.creates.Load() != 1 {
+		t.Fatalf("stale closed match still blocked: %#v", res)
+	}
+	opts.ClosedCooldown = 60 * 24 * time.Hour
+	res, err = c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-closed"), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ClosedAt.IsZero() || res.Created || f.creates.Load() != 1 {
+		t.Fatalf("recent closed match did not block: %#v", res)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 )
 
 // DefaultTaskListSweepMaxCloses caps the closures a single
@@ -78,6 +79,11 @@ type TaskListSweepResult struct {
 var taskListCheckboxRE = regexp.MustCompile(`^[ \t]*[-*+] \[( |[xX])\](?:\s|$)`)
 
 const issueNeedsHumanLabel = "needs-human"
+
+// issueHandoffLabel is the soft label for remainders that prose hands to
+// another lane or a human. Unlike needs-human it is not hard-suppress, so the
+// next lane can still claim the issue.
+const issueHandoffLabel = "hive/handoff"
 
 // fenceOpenRE recognises fenced code blocks. A run of THREE OR MORE backticks
 // (or tildes) at the start of a line opens a fence; the same character with
@@ -310,6 +316,7 @@ type mergedPRRef struct {
 	Reference  bool
 	Remainder  string
 	NeedsHuman bool
+	Handoff    bool
 }
 
 // collectMergedReferencingPRs walks the repo's closed-PR list once per tick
@@ -370,6 +377,7 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 					Reference:  meta.Reference,
 					Remainder:  meta.Remainder,
 					NeedsHuman: meta.NeedsHuman,
+					Handoff:    meta.Handoff,
 				})
 			}
 		}
@@ -385,6 +393,7 @@ type refsRemainderMeta struct {
 	Reference          bool
 	Remainder          string
 	NeedsHuman         bool
+	Handoff            bool
 	ExplicitNeedsHuman bool
 }
 
@@ -392,7 +401,7 @@ var explicitNeedsHumanRefRE = regexp.MustCompile(`(?i)\b(?:refs|ref|references|r
 
 // refsRemainderMetadata extracts the auditable remainder text for non-closing
 // Refs lines. The explicit needs-human marker is authoritative; prose only
-// counts when it appears in a deliberately named remainder section.
+// only yields the soft hand-off signal, never the hard needs-human label.
 func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMeta {
 	out := map[string]refsRemainderMeta{}
 	refsByKey := map[string]ClaimedRef{}
@@ -444,7 +453,7 @@ func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMet
 			}
 			if sectionForRef != "" {
 				meta.Remainder = sectionForRef
-				meta.NeedsHuman = meta.NeedsHuman || remainderSectionNeedsHuman(sectionForRef)
+				meta.Handoff = meta.Handoff || remainderSectionHandoff(sectionForRef)
 			}
 			out[key] = meta
 		}
@@ -565,7 +574,7 @@ func extractRemainderSection(body string) string {
 	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
 }
 
-func remainderSectionNeedsHuman(section string) bool {
+func remainderSectionHandoff(section string) bool {
 	lower := strings.ToLower(section)
 	for _, phrase := range []string{
 		"needs a human",
@@ -576,6 +585,9 @@ func remainderSectionNeedsHuman(section string) bool {
 		"must be applied by hand",
 		"must be done by a human",
 		"must be made by a human",
+		"fix lane",
+		"quality lane",
+		"production change",
 	} {
 		if containsAffirmativeHumanOnlyPhrase(lower, phrase) {
 			return true
@@ -608,45 +620,84 @@ func directlyNegatesHumanPhrase(prefix string) bool {
 	return false
 }
 
-func hasIssueNeedsHumanLabel(labels []string) bool {
-	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), issueNeedsHumanLabel) {
-			return true
-		}
-	}
-	return false
+func hasIssueHandoffLabel(labels []string) bool {
+	return labelPresent(labels, issueHandoffLabel)
 }
 
-func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo string, number int, labels []string, mergedRefs []mergedPRRef) error {
+func hasIssueNeedsHumanLabel(labels []string) bool {
+	return labelPresent(labels, issueNeedsHumanLabel)
+}
+
+func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo string, number int, labels []string, mergedRefs []mergedPRRef, untouched []string) error {
+	partial := labelPresent(labels, PartiallyAddressedLabel)
 	refs := make([]mergedPRRef, 0, len(mergedRefs))
-	needsHuman := false
+	needsHuman, handoff := false, false
 	for _, ref := range mergedRefs {
-		if !ref.Reference {
+		if !ref.Reference && !partial {
 			continue
 		}
 		refs = append(refs, ref)
 		needsHuman = needsHuman || ref.NeedsHuman
+		handoff = handoff || ref.Handoff
 	}
 	if len(refs) == 0 {
 		return nil
 	}
-	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, renderRefsRemainderComment(refs)); err != nil {
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
 		return err
 	}
-	if needsHuman && !hasIssueNeedsHumanLabel(labels) {
+	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, comments, renderRefsRemainderComment(refs, partial, untouched)); err != nil {
+		return err
+	}
+	// #13516: a maintainer answer recorded after a PR merged settles that
+	// PR's needs-human marker; only a PR merged after the answer re-parks.
+	answeredAt := c.lastMaintainerAcceptanceAt(comments)
+	unansweredNeedsHuman := false
+	for _, ref := range refs {
+		if ref.NeedsHuman && ref.MergedAt.After(answeredAt) {
+			unansweredNeedsHuman = true
+			// The remainder is the agent's needs-human report; record it
+			// so a capability gap parks the issue on a blocker rather than
+			// a bare label (hivecommons/hive#15099).
+			itemblocker.Shared().Observe(owner+"/"+repo, number, "needs-human: "+strings.TrimSpace(ref.Remainder), ref.MergedAt)
+		}
+	}
+	if unansweredNeedsHuman && !c.hasNeedsHumanLabel(labels) {
 		_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{issueNeedsHumanLabel})
 		if err != nil {
 			return fmt.Errorf("adding %s label to %s/%s#%d: %w", issueNeedsHumanLabel, owner, repo, number, err)
 		}
 	}
+	if handoff && !needsHuman && !hasIssueHandoffLabel(labels) {
+		_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{issueHandoffLabel})
+		if err != nil {
+			return fmt.Errorf("adding %s label to %s/%s#%d: %w", issueHandoffLabel, owner, repo, number, err)
+		}
+	}
 	return nil
 }
 
-func (c *Client) ensureRefsRemainderComment(ctx context.Context, owner, repo string, number int, desiredBody string) error {
-	comments, err := c.listIssueComments(ctx, owner, repo, number)
-	if err != nil {
-		return err
+// lastMaintainerAcceptanceAt returns when the hive last recorded a maintainer
+// answer on the issue: an accepted `/hive approve` / `/hive decision` reply or
+// a label-approval reply. It is zero when there is none.
+func (c *Client) lastMaintainerAcceptanceAt(comments []*gh.IssueComment) time.Time {
+	var latest time.Time
+	for _, cm := range comments {
+		if cm == nil || !c.markerAuthorTrusted(cm.GetUser()) {
+			continue
+		}
+		body := cm.GetBody()
+		accepted := strings.Contains(body, labelApprovalMarkerPrefix) ||
+			(strings.Contains(body, unparkReplyMarkerPrefix) && strings.Contains(body, unparkDecisionLinePrefix))
+		if accepted && cm.GetCreatedAt().Time.After(latest) {
+			latest = cm.GetCreatedAt().Time
+		}
 	}
+	return latest
+}
+
+func (c *Client) ensureRefsRemainderComment(ctx context.Context, owner, repo string, number int, comments []*gh.IssueComment, desiredBody string) error {
 	desiredPRs := sweepCommentPRNumbers(desiredBody)
 	for _, cm := range comments {
 		if cm == nil || !strings.Contains(cm.GetBody(), taskListSweepMarker) {
@@ -668,7 +719,7 @@ func (c *Client) ensureRefsRemainderComment(ctx context.Context, owner, repo str
 		}
 		return nil
 	}
-	_, _, err = c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desiredBody)})
+	_, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desiredBody)})
 	if err != nil {
 		return fmt.Errorf("creating Refs remainder comment on %s/%s#%d: %w", owner, repo, number, err)
 	}
@@ -755,11 +806,16 @@ func sweepCommentPRBlocks(body string) map[int]string {
 	return blocks
 }
 
-func renderRefsRemainderComment(merged []mergedPRRef) string {
+func renderRefsRemainderComment(merged []mergedPRRef, partial bool, untouched []string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, taskListSweepMarker)
-	fmt.Fprintln(&b, "A merged PR referenced this issue without closing it. Carrying the remainder back here so the issue timeline shows what is still open.")
+	if partial {
+		fmt.Fprintf(&b, "A merged PR addressed only part of this issue (`%s`); it stays open and actionable. Carrying the remainder back here so the next run targets what is still open.\n", PartiallyAddressedLabel)
+	} else {
+		fmt.Fprintln(&b, "A merged PR referenced this issue without closing it. Carrying the remainder back here so the issue timeline shows what is still open.")
+	}
 	fmt.Fprintln(&b)
+	writeUntouchedPaths(&b, untouched)
 	for _, ref := range sortedMergedRefs(merged) {
 		title := strings.TrimSpace(ref.Title)
 		fmt.Fprintf(&b, "- #%d", ref.Number)
@@ -771,6 +827,8 @@ func renderRefsRemainderComment(merged []mergedPRRef) string {
 		}
 		if ref.NeedsHuman {
 			fmt.Fprint(&b, " — needs human")
+		} else if ref.Handoff {
+			fmt.Fprint(&b, " — handed off to the next lane")
 		}
 		fmt.Fprintln(&b)
 		if strings.TrimSpace(ref.Remainder) != "" {
@@ -780,9 +838,50 @@ func renderRefsRemainderComment(merged []mergedPRRef) string {
 			fmt.Fprintln(&b, strings.TrimSpace(ref.Remainder))
 			fmt.Fprintln(&b)
 		}
+		// A remainder that names a capability the App lacks is a structured
+		// blocker, not a question: the marker lets the tracker and "Let hive
+		// decide" read it as one (hivecommons/hive#15099).
+		if kind, ok := itemblocker.Infer(ref.Remainder); ok && ref.NeedsHuman {
+			fmt.Fprintln(&b, itemblocker.Marker(kind))
+		}
 	}
 	fmt.Fprintln(&b, "_This comment is edited in place by the task-list sweep on every cycle; it is not duplicated._")
 	return b.String()
+}
+
+// writeUntouchedPaths lists the issue's cited paths no merged PR changed
+// (#11931). It is written before the per-PR blocks so the aged-out block
+// merge in mergeRefsRemainderCommentBodies never absorbs it.
+func writeUntouchedPaths(b *strings.Builder, untouched []string) {
+	if len(untouched) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "Not yet touched: %s\n\n", quotedPaths(untouched))
+}
+
+// partiallyAddressedUntouchedPaths returns the paths cited in a
+// hive/partially-addressed issue's body that none of its merged referencing
+// PRs changed. It returns nil for any other issue, or when a PR's file list
+// cannot be read, so the sweep never prints a wrong list.
+func (c *Client) partiallyAddressedUntouchedPaths(ctx context.Context, owner, repo string, issue *gh.Issue, merged []mergedPRRef) []string {
+	if len(merged) == 0 || !labelPresent(issueLabelNames(issue.Labels), PartiallyAddressedLabel) {
+		return nil
+	}
+	cited := issueCitedPaths(issue.GetBody())
+	if len(cited) == 0 {
+		return nil
+	}
+	var changed []string
+	for _, ref := range merged {
+		files, err := ListPRChangedFiles(ctx, c.client, owner, repo, &gh.PullRequest{Number: gh.Ptr(ref.Number)})
+		if err != nil {
+			return nil
+		}
+		for _, f := range files {
+			changed = append(changed, f.Filename)
+		}
+	}
+	return untouchedCitedPaths(cited, changed)
 }
 
 func sortedMergedRefs(merged []mergedPRRef) []mergedPRRef {
@@ -810,7 +909,7 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 	if c.isHeld(labels) {
 		return TaskListSweepEvent{}, taskListReasonHeld, nil
 	}
-	if c.isExempt(labels) || hasIssueNeedsHumanLabel(labels) {
+	if c.isExempt(labels) || c.hasNeedsHumanLabel(labels) {
 		return TaskListSweepEvent{}, taskListReasonExempt, nil
 	}
 	body := issue.GetBody()
@@ -818,8 +917,9 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 	number := issue.GetNumber()
 
 	mergedRefs := mergedByIssue[number]
+	untouched := c.partiallyAddressedUntouchedPaths(ctx, owner, repo, issue, mergedRefs)
 	if checked+unchecked == 0 {
-		if err := c.tryAnnotateNonTaskListRefs(ctx, owner, repo, number, issueLabelNames(issue.Labels), mergedRefs); err != nil {
+		if err := c.tryAnnotateNonTaskListRefs(ctx, owner, repo, number, issueLabelNames(issue.Labels), mergedRefs, untouched); err != nil {
 			return TaskListSweepEvent{}, taskListReasonCommentFailed, fmt.Errorf("Refs remainder comment on %s#%d: %w", displayRepo, number, err)
 		}
 		return TaskListSweepEvent{}, taskListReasonNoBoxes, nil
@@ -836,7 +936,7 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 		// then leave the issue open. This path exists so a maintainer looking
 		// at the timeline sees a live "N of M done, PRs so far" without a
 		// duplicate comment on every 15-minute cycle.
-		progress := renderProgressComment(listTaskListItems(body), mergedRefs)
+		progress := renderProgressComment(listTaskListItems(body), mergedRefs, untouched)
 		if err := c.ensureSweepComment(ctx, owner, repo, number, progress); err != nil {
 			return TaskListSweepEvent{}, taskListReasonCommentFailed, fmt.Errorf("progress comment on %s#%d: %w", displayRepo, number, err)
 		}
@@ -879,7 +979,7 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 // task, ✅ / 🔲 to make the outstanding items scannable at a glance, then a
 // PRs-so-far list — so the equality check inside ensureSweepComment can short
 // out and skip the API edit call on ticks where nothing has changed.
-func renderProgressComment(items []taskListItem, merged []mergedPRRef) string {
+func renderProgressComment(items []taskListItem, merged []mergedPRRef, untouched []string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, taskListSweepMarker)
 	checked := 0
@@ -901,6 +1001,7 @@ func renderProgressComment(items []taskListItem, merged []mergedPRRef) string {
 		fmt.Fprintf(&b, "- 🔲 %s\n", text)
 	}
 	fmt.Fprintln(&b)
+	writeUntouchedPaths(&b, untouched)
 	fmt.Fprintln(&b, "Merged PRs referencing this issue so far:")
 	writeMergedList(&b, merged)
 	fmt.Fprintln(&b)

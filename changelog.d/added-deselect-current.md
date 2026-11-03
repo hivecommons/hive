@@ -1,0 +1,1 @@
+- Add `hivectl hives repos <hive> --deselect-current` to clear current repository consent while retaining exclusions, provenance, and future-follow policy, and `--follow-new-repos=false` to stop following without removing accepted repositories.

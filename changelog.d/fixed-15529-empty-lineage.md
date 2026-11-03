@@ -1,0 +1,1 @@
+- Fix an extra separator before the base branch in dashboard issue rows when PR lineage is empty.

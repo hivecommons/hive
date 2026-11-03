@@ -1,0 +1,1 @@
+- Adopted contributor PRs now supersede automatically when confirmed push-access loss or squash sign-off attribution prevents in-place repair (not on API errors or unrelated base workflow drift), and idle rebase work falls through to a hive-owned branch instead of parking for a human; fixer instructions preserve contributor authorship and sign-offs (#13975).

@@ -1,1 +1,0 @@
-- Tint contributor cards from avatar-derived accent colours with deterministic fallbacks.

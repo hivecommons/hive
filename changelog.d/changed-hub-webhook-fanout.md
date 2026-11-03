@@ -1,0 +1,1 @@
+- The hub's GitHub webhook relay now fans out to every enrolled hive that tracks the delivery's repository (and has a dashboard URL) instead of only the first match, so additional hives on the same repo no longer fall back to polling. One log line is emitted per relay target; hives without a dashboard URL are skipped and counted. (#13202)

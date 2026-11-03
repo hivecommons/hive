@@ -3,12 +3,17 @@ package dashboard
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
 
 func TestFleetReportEvidenceIncludesRuntimeGatewayFaults(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
 	SetGatewayHealthProvider(func() []inferencehealth.GatewayStatus {
-		return []inferencehealth.GatewayStatus{{Name: "litellm", ErrorClass: inferencehealth.ClassAuth, HTTPStatus: 403}}
+		return []inferencehealth.GatewayStatus{
+			{Name: "litellm", ErrorClass: inferencehealth.ClassAuth, HTTPStatus: 403},
+			{Name: "copilot", ErrorClass: inferencehealth.ClassOther, HTTPStatus: 502},
+		}
 	})
 	t.Cleanup(func() { SetGatewayHealthProvider(nil) })
 	s := &Server{}
@@ -16,82 +21,60 @@ func TestFleetReportEvidenceIncludesRuntimeGatewayFaults(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("evidence len=%d, want 1: %#v", len(got), got)
 	}
-	if got[0].Component != "backend-auth" || got[0].ErrorClass != "auth http 403" || !got[0].Attributable {
+	// Auth faults are no longer a hive-code-defect symptom here: the
+	// inferencehealth store does not self-report them either (#12284),
+	// so only the upstream fault remains.
+	if got[0].Component != "inference-gateway" || got[0].ErrorClass != "other http 502" || !got[0].Attributable {
 		t.Fatalf("unexpected evidence: %#v", got[0])
 	}
 }
 
-// Restarts is a cumulative counter that every cadence kick increments, so a
-// healthy hive accrues large values. Observed on a live spoke: all six agents
-// idle between scheduled kicks, yet each was reported as a high-severity crash
-// loop purely because restarts exceeded a fixed threshold.
-func TestFleetReportEvidenceIgnoresCadenceDrivenRestarts(t *testing.T) {
+func TestFleetReportEvidenceIncludesRuntimeErrorClasses(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
+	fleetreport.Observe(fleetreport.ClassRestartStorm, "quality", "restart storm: quality restarted 5 times in 10m", "")
 	s := &Server{}
-	status := &StatusPayload{Agents: []FrontendAgent{
-		{Name: "scanner", Role: "scanner", State: "stopped", Restarts: 43},
-		{Name: "quality", Role: "quality", State: "stopped", Restarts: 39},
-		{Name: "review", Role: "review", State: "stopped", Restarts: 8},
-	}}
-	for _, ev := range s.buildFleetReportEvidence(status) {
-		if ev.ErrorClass == "agent crash loop" {
-			t.Fatalf("healthy cadence cycling reported as a crash loop: %#v", ev)
-		}
+	got := s.buildFleetReportEvidence(&StatusPayload{})
+	if len(got) != 1 || got[0].Class != fleetreport.ClassRestartStorm || !got[0].Attributable {
+		t.Fatalf("evidence = %#v", got)
 	}
 }
 
-func TestFleetReportEvidenceStillReportsRealCrashState(t *testing.T) {
+// Agent counters (restarts, stall nudges, CI-poll nudges, crash state) are
+// no longer synthesised into bare "hive-code defect" evidence here (#13470):
+// the agent manager and watchdog feed the runtime tracker at the moment they
+// observe the condition, with kick/pane context, so the self-report carries
+// something an owner can act on.
+func TestFleetReportEvidenceNoLongerSynthesisesAgentCounters(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
 	s := &Server{}
 	status := &StatusPayload{Agents: []FrontendAgent{
-		{Name: "scanner", Role: "scanner", State: "crashed", Restarts: 5},
+		{Name: "scanner", Role: "scanner", State: "stopped", Restarts: 43, StallNudges: 5, StallRecoveries: 0, CIPollNudges: 2},
+		{Name: "quality", Role: "quality", State: "failed", Restarts: 39, StructuredStatus: "Stalled: waiting"},
 	}}
-	var found bool
-	for _, ev := range s.buildFleetReportEvidence(status) {
-		if ev.ErrorClass == "agent crash loop" {
-			found = true
-			if ev.Window != 0 {
-				t.Fatalf("cumulative restart count must not claim a window: %v", ev.Window)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("explicit crash state should still produce crash-loop evidence")
+	if got := s.buildFleetReportEvidence(status); len(got) != 0 {
+		t.Fatalf("dashboard synthesised bare-counter evidence: %#v", got)
 	}
 }
 
-// #9673: nudgeIfPollingCI's stop-polling nudge count is worth fleet-level
-// visibility (an operator can spot an agent that keeps burning turns on CI
-// despite the harness telling it to stop), even though the per-kick cap
-// keeps a single incident from generating more than one nudge.
-func TestFleetReportEvidenceIncludesCIPollNudges(t *testing.T) {
-	s := &Server{}
-	status := &StatusPayload{Agents: []FrontendAgent{
-		{Name: "scanner", Role: "scanner", State: "running", CIPollNudges: 2},
-	}}
-	var found bool
-	for _, ev := range s.buildFleetReportEvidence(status) {
-		if ev.ErrorClass == "CI-poll nudge" {
-			found = true
-			if ev.Count != 2 {
-				t.Fatalf("Count = %d, want 2", ev.Count)
-			}
-			if ev.Severity != "low" {
-				t.Fatalf("Severity = %q, want %q", ev.Severity, "low")
-			}
-		}
+func TestFleetReportEvidenceCarriesTrackerStallWithContext(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
+	for i := 0; i < fleetreport.AgentStallNudgeStreak; i++ {
+		fleetreport.Observe(fleetreport.ClassAgentStall, "scanner", "agent stalled after kick: 3 continue nudge(s) sent without the pane moving", "agent=scanner lane=scanner")
 	}
-	if !found {
-		t.Fatal("nonzero CIPollNudges should produce CI-poll nudge evidence")
+	s := &Server{}
+	got := s.buildFleetReportEvidence(&StatusPayload{Agents: []FrontendAgent{{Name: "scanner", Role: "scanner", State: "running", StallNudges: 3}}})
+	if len(got) != 1 || got[0].Class != fleetreport.ClassAgentStall || got[0].Agent != "scanner" || got[0].Diagnostics == "" {
+		t.Fatalf("evidence = %#v", got)
 	}
 }
 
-func TestFleetReportEvidenceOmitsCIPollNudgesWhenZero(t *testing.T) {
+func TestFleetReportEvidenceIgnoresInferenceBlockedAgents(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
 	s := &Server{}
-	status := &StatusPayload{Agents: []FrontendAgent{
-		{Name: "scanner", Role: "scanner", State: "running", CIPollNudges: 0},
-	}}
-	for _, ev := range s.buildFleetReportEvidence(status) {
-		if ev.ErrorClass == "CI-poll nudge" {
-			t.Fatalf("zero CIPollNudges should not produce evidence: %#v", ev)
-		}
+	got := s.buildFleetReportEvidence(&StatusPayload{Agents: []FrontendAgent{
+		{Name: "supervisor", Role: "supervisor", StructuredStatus: "blocked", StatusEvidence: "blocked: inference (auth)"},
+	}})
+	if len(got) != 0 {
+		t.Fatalf("inference-blocked agent must not be hive-code evidence: %#v", got)
 	}
 }

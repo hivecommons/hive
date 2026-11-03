@@ -157,6 +157,36 @@ func TestFormatPRList_FairSharesAcrossRepos(t *testing.T) {
 	}
 }
 
+func TestFormatPRList_ReviewerIncludesHeldPRsInReviewRankOrder(t *testing.T) {
+	s := newScheduler()
+	actionable := &github.ActionableResult{PRs: github.PRResult{
+		Items: []github.PullRequest{
+			{Repo: "hive", Number: 101, Title: "fix: active", Author: "bot", ReviewRank: 3},
+			{Repo: "hive", Number: 102, Title: "docs: active", Author: "bot", ReviewRank: 4},
+		},
+		Held: []github.PullRequest{
+			{Repo: "pluk", Number: 257, Title: "refactor: held satellite", Author: "bot", ReviewRank: 1},
+			{Repo: "rationguard", Number: 249, Title: "refactor: held satellite", Author: "bot", ReviewRank: 2},
+		},
+	}}
+
+	reviewer, _ := s.formatPRListWithPolicyForAgent(actionable, "reviewer")
+	for _, want := range []string{"pluk#257", "rationguard#249", "hive#101", "hive#102"} {
+		if !strings.Contains(reviewer, want) {
+			t.Fatalf("reviewer PR_LIST missing %s:\n%s", want, reviewer)
+		}
+	}
+	if !(strings.Index(reviewer, "pluk#257") < strings.Index(reviewer, "rationguard#249") &&
+		strings.Index(reviewer, "rationguard#249") < strings.Index(reviewer, "hive#101")) {
+		t.Fatalf("reviewer PR_LIST is not in review-rank order:\n%s", reviewer)
+	}
+
+	scanner, _ := s.formatPRListWithPolicyForAgent(actionable, "scanner")
+	if strings.Contains(scanner, "pluk#257") || strings.Contains(scanner, "rationguard#249") {
+		t.Fatalf("non-reviewer PR_LIST must not gain held PRs:\n%s", scanner)
+	}
+}
+
 // An explicit max_prs: 0 lists every PR instead of emptying the list — the
 // failure mode of treating the unlimited sentinel as a literal cap.
 func TestFormatPRList_UnlimitedListsEverything(t *testing.T) {

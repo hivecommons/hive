@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
@@ -184,8 +184,8 @@ func standbyModeCeilingReason(cfg *config.Config, lane string) string {
 	}
 	acmm := cfg.ACMMLevelOrZero()
 	agentCfg := cfg.Agents[lane]
-	mode := agent.DefaultAgentMode(lane, acmm)
-	if parsed, ok := agent.ParseAgentMode(strings.TrimSpace(agentCfg.Mode)); ok && strings.TrimSpace(agentCfg.Mode) != "" {
+	mode := crux.DefaultAgentMode(lane, acmm)
+	if parsed, ok := crux.ParseAgentMode(strings.TrimSpace(agentCfg.Mode)); ok && strings.TrimSpace(agentCfg.Mode) != "" {
 		mode = parsed
 	}
 	if !mode.CanCreatePRs() {
@@ -400,5 +400,11 @@ func (h *ContributeWSHub) applyDonatedHold(prURL string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return h.server.deps.GHClient.AddLabels(ctx, ref.FullName(), ref.Number, []string{"hold"})
+	if err := h.server.deps.GHClient.AddLabels(ctx, ref.FullName(), ref.Number, []string{"hold"}); err != nil { // writeback:solicited donor submitted this PR through the standby donation workflow.
+		return err
+	}
+	// Hive's local record of hold sources (#11564): this hold leaves no
+	// marker on GitHub. A local write only; its failure never fails the hold.
+	_ = ghpkg.RecordHoldSource(ghpkg.HoldKindPR, ref.FullName(), ref.Number, ghpkg.HoldSourceStandbyDonation)
+	return nil
 }

@@ -1,0 +1,1 @@
+- Hive activity monitor: hover text in a tracker row now appears only on the `#N` link (which carries the row tooltip), the covering-PR link, the title and the lit chevron (stage plus whose move it is); passed and upcoming chevrons, the kind, author and mover icons, chips and the `since` column no longer show tooltips.

@@ -44,8 +44,8 @@ rather than fragile line numbers.
   [subscription headroom](../../src/pkg/rotation/rotation.go) and
   [model discovery](../../src/pkg/dashboard/cli_models_codex.go); those are not
   a per-issue coding runner.
-- **E4 — Isolated execution:** [`SandboxExecutor.Run` / `prepareWorkspace`](../../src/pkg/agent/sandbox_executor.go),
-  [path/cwd tests](../../src/pkg/agent/sandbox_executor_paths_test.go).
+- **E4 — Isolated execution:** [`SandboxExecutor.Run` / `prepareWorkspace`](../../src/crux/agent/sandbox_executor.go),
+  [path/cwd tests](../../src/crux/agent/sandbox_executor_paths_test.go).
   This is an execution path, not a guarantee for all tmux agents.
 - **E5 — Safety:** [security self-assessment](../../src/docs/security-self-assessment.md),
   [ACMM matrix](../../src/docs/acmm-policy-matrix.md),

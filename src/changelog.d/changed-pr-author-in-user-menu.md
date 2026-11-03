@@ -1,1 +1,0 @@
-- Move the dashboard PR author identity from the governor strip into the avatar user menu.

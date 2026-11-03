@@ -8,8 +8,8 @@ import (
 
 const formalQualityPolicyPath = "defaults/formal-quality-capability.md"
 
-// addFormalQualityCapability prepends the formal-model authoring contract to
-// every quality-role kick when the operator opt-in and ACMM floor both allow
+// addFormalQualityCapability adds the formal-model authoring contract to the
+// static prefix of every quality-role kick when the operator opt-in and ACMM floor both allow
 // it. This is deliberately outside template resolution: an operator-authored
 // or remotely sourced quality prompt may customize the lane, but cannot make
 // quality.formal silently mean something weaker than the artifact/reporting
@@ -37,9 +37,5 @@ func (s *Scheduler) addFormalQualityCapability(agentName, message string) string
 		return ""
 	}
 
-	section := strings.TrimSpace(string(data)) + "\n\n"
-	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
-		return message[:newline+1] + "\n" + section + message[newline+1:]
-	}
-	return section + message
+	return insertAfterKickHeader(message, strings.TrimSpace(string(data)))
 }

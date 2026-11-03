@@ -1,0 +1,1 @@
+- Added an operator page, `src/docs/monitoring.md`, covering Prometheus and Grafana monitoring of a hive: enabling the fail-closed `/metrics` endpoint with `HIVE_METRICS_ENABLED` and `HIVE_METRICS_TOKEN`, the metric families, alert runbook anchors, and a plain `scrape_config` without Prometheus Operator ([#15440](https://github.com/hivecommons/hive/issues/15440)).

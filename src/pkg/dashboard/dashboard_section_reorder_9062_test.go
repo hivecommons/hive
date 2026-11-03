@@ -14,7 +14,9 @@ var dashboardLayoutIDs9062 = []string{
 	"runs-section",
 	"pr-throughput-section",
 	"repos-section",
+	"activity-monitor-section",
 	"knowledge-section",
+	"search-section",
 	"review-queue-section",
 	"contributors-section",
 	"advisory-section",
@@ -38,7 +40,9 @@ var dashboardDefaultNavOrder9062 = []string{
 	"runs-section",
 	"pr-throughput-section",
 	"repos-section",
+	"activity-monitor-section",
 	"knowledge-section",
+	"search-section",
 	"review-queue-section",
 	"contributors-section",
 	"advisory-section",
@@ -53,7 +57,7 @@ var dashboardDefaultNavOrder9062 = []string{
 
 var dashboardDefaultLayoutOrder9062 = append([]string{}, dashboardLayoutIDs9062...)
 
-const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
+const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
 
 func jsArray9062(ids []string) string {
 	var b strings.Builder
@@ -90,11 +94,11 @@ const AGENT_COMPACT_LS_PREFIX='hive-agent-compact-';
 const ALL_AGENTS_COMPACT_KEY='hive-all-agents-compact';
 var dashboardDragState=null;
 var dashboardKeyboardSnapshot=null;
-var window={_lastStatus:{features:{strategy_lab:true}}};
+var window={_lastStatus:{features:{experiment_lab:true}}};
 function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
-function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
+function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
 function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
-function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!strategyLabEnabled();}
+function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!experimentLabEnabled();}
 `
 }
 
@@ -204,15 +208,15 @@ if (JSON.stringify(got.main) !== JSON.stringify(want)) throw new Error('normaliz
 	}
 }
 
-func TestDashboardLayoutNormalizeDropsStrategyLabWhenFeatureHidden(t *testing.T) {
+func TestDashboardLayoutNormalizeDropsExperimentLabWhenFeatureHidden(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not on PATH — dashboard layout normalization was NOT executed by this run")
 	}
 	html := indexHTML(t)
-	script := strings.Replace(dashboardLayoutPreamble9062(), "strategy_lab:true", "strategy_lab:false", 1) + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
+	script := strings.Replace(dashboardLayoutPreamble9062(), "experiment_lab:true", "experiment_lab:false", 1) + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:1, main:['nous-section','overview-section','unknown']}).main;
-if (got.includes('nous-section')) throw new Error('hidden Strategy Lab survived normalization: '+JSON.stringify(got));
+if (got.includes('nous-section')) throw new Error('hidden Experiment Lab survived normalization: '+JSON.stringify(got));
 if (got[0] !== 'overview-section') throw new Error('unexpected first section: '+JSON.stringify(got));
 `
 	cmd := exec.Command(node, "-e", script)
@@ -244,6 +248,8 @@ class El {
 }
 const localStorage = {data:{}, setItem(k,v){this.data[k]=String(v)}, getItem(k){return this.data[k] ?? null}, removeItem(k){delete this.data[k]}, key(i){return Object.keys(this.data)[i] || null}, get length(){return Object.keys(this.data).length}};
 function isSectionCollapsed(sectionId){ return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1'; }
+function dashboardLayoutDefaultCollapsed(){ return {}; }
+function writeSectionCollapsedKey(id, collapsed){ if (collapsed) localStorage.setItem(SECTION_LS_PREFIX + id, '1'); else localStorage.removeItem(SECTION_LS_PREFIX + id); }
 function applySectionCollapse(){}
 function hiveConfirm(){ return Promise.resolve(true); }
 function dashboardEnsureSidebarHandles(){}
@@ -313,7 +319,7 @@ if (middle !== 'nous-section,logs-section,agents-section,agent-activity-section,
 if (new Set(got).size !== got.length) throw new Error('duplicate ids: '+JSON.stringify(got));
 const moved = dashboardLayoutNormalize({v:1, main:['faq-section','cost-panel','overview-section']}).main;
 if (moved[0] !== 'faq-section') throw new Error('operator-moved FAQ not respected: '+JSON.stringify(moved));
-if (moved.length !== 21) throw new Error('missing sections not restored: '+moved.length);
+if (moved.length !== 23) throw new Error('missing sections not restored: '+moved.length);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

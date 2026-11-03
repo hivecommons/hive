@@ -68,7 +68,9 @@ func TestApplyPackDoesNotResurrectDeletedAgent(t *testing.T) {
 // config reload, because MergeAgentOverrides only ever adds.
 func TestMergeAgentOverridesSkipsTombstoned(t *testing.T) {
 	cfg := &config.Config{
-		Agents:        map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		RemovedAgents: []string{"guide"},
 	}
 	cfg.MergeAgentOverrides(map[string]config.AgentConfig{
@@ -89,8 +91,10 @@ func TestMergeAgentOverridesSkipsTombstoned(t *testing.T) {
 // must be evicted too.
 func TestMergeAgentOverridesPrunesSeedAgent(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"guide": {Model: "from-seed"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"guide": {Model: "from-seed"},
+			},
 		},
 		RemovedAgents: []string{"guide"},
 	}
@@ -212,7 +216,7 @@ func TestDeleteResponseNamesThePack(t *testing.T) {
 // TestRepeatDeleteIsIdempotent: a second delete of the same name must not
 // append a duplicate tombstone.
 func TestRepeatDeleteIsIdempotent(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}}
 	if !cfg.MarkAgentRemoved("guide") {
 		t.Fatal("first mark should report a new tombstone")
 	}

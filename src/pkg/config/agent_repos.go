@@ -39,34 +39,6 @@ func agentRepoKey(org, repo string) string {
 	return strings.ToLower(qualifyAgentRepo(org, repo))
 }
 
-// IsRepoScoped reports whether this agent declares a repository scope. False —
-// the zero value, and every agent in every config written before #6204 — means
-// the agent serves the whole hive.
-func (a AgentConfig) IsRepoScoped() bool {
-	for _, r := range a.Repos {
-		if strings.TrimSpace(r) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// ReposIsOperatorOwned reports whether an operator explicitly set this agent's
-// repo scope, which makes it immune to pack reconciliation — the same contract
-// ModelIsOperatorOwned provides for models and PauseIsOperatorOwned for run
-// state.
-//
-// This marker is the specific failure mode #6204 asks to design against. ACMM
-// packs reconcile agents on EVERY restart, and the ownership family
-// (#5632/#5706) exists because a pack that does not know a field was chosen by
-// a human silently reverts it on the next pod roll. No pack ships a repo scope
-// today, so nothing reverts it today — the marker is here so that a pack which
-// one day does cannot widen a specialist back to the whole hive without anyone
-// noticing.
-func (a AgentConfig) ReposIsOperatorOwned() bool {
-	return a.ReposOwner == FieldOwnerOperator
-}
-
 // AgentServesRepo reports whether the named agent is in scope for repo. It is
 // the single predicate every enforcement point asks — the MITM proxy, the
 // hive-open-pr/hive-merge relays, kick assembly and the dashboard — so there is
@@ -336,4 +308,33 @@ func AgentRepoScopeWarnings(cfg *Config) []string {
 		}
 	}
 	return warnings
+}
+
+// AgentOwnsRepo reports whether repo is one of the repositories this agent is
+// handed work on (ReposForAgent, plus the hive's primary repo), so a PR the
+// agent opens there changes the agent's "own" repo rather than someone else's.
+// It is the same-repo / cross-repo distinction the outreach hold policy keys
+// on: an outreach PR into a hive-managed repo flows through ordinary review
+// and auto-merge, while a PR into any other repository is held for a human
+// (hivecommons/hive, operator decision 2026-10-16). repo may be bare or
+// org-qualified; comparison is org-qualified and case-folded like every other
+// repo predicate in this package.
+func (c *Config) AgentOwnsRepo(agent, repo string) bool {
+	if c == nil {
+		return false
+	}
+	key := repoPauseKey(c.Project.Org, repo)
+	if key == "" {
+		return false
+	}
+	candidates := c.ReposForAgent(agent)
+	if primary := strings.TrimSpace(c.Project.PrimaryRepo); primary != "" && c.AgentServesRepo(agent, primary) {
+		candidates = append(append([]string{}, candidates...), primary)
+	}
+	for _, r := range candidates {
+		if repoPauseKey(c.Project.Org, r) == key {
+			return true
+		}
+	}
+	return false
 }

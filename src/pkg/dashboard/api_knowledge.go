@@ -47,6 +47,7 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 			Primer: knowledge.PrimerConfig{
 				MaxFacts:      s.deps.Config.Knowledge.Primer.MaxFacts,
 				MergeStrategy: s.deps.Config.Knowledge.Primer.MergeStrategy,
+				MaxBytes:      s.deps.Config.Knowledge.Primer.MaxBytes,
 			},
 		}
 		api := knowledge.NewKnowledgeAPI(layers, kcfg, s.deps.Logger)
@@ -159,18 +160,136 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
+	states, ok := knowledgeListStates(w, r)
+	if !ok {
+		return
+	}
 	if !s.ensureKnowledge() {
 		jsonResponse(w, map[string]interface{}{"enabled": false, "facts": []interface{}{}})
 		return
 	}
 
+	includeStates, err := knowledgeIncludeStates(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	limit, offset := knowledgeListPagination(r)
 	typeFilter := r.URL.Query().Get("type")
-	facts := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0)
-	jsonResponse(w, map[string]interface{}{
-		"enabled": true,
-		"count":   len(facts),
-		"facts":   facts,
+	all := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0)
+	var facts []knowledge.Fact
+	if len(states) > 0 {
+		facts = filterFactsByExactState(all, states)
+	} else {
+		facts = knowledge.FilterByLifecycle(all, includeStates)
+	}
+	facts = filterFactsByAllTags(facts, splitCSV(r.URL.Query().Get("tag")))
+	// Search merges multiple stores; impose a stable order before slicing pages.
+	sort.SliceStable(facts, func(i, j int) bool {
+		if facts[i].Layer != facts[j].Layer {
+			return facts[i].Layer < facts[j].Layer
+		}
+		return facts[i].Slug < facts[j].Slug
 	})
+	total := len(facts)
+	if offset > total {
+		offset = total
+	}
+	end := offset + min(limit, total-offset)
+	page := append([]knowledge.Fact{}, facts[offset:end]...)
+	jsonResponse(w, map[string]interface{}{
+		"enabled":  true,
+		"count":    len(page),
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": end < total,
+		"facts":    page,
+	})
+}
+
+// knowledgeListStates parses the list's ?state= filter, a comma-separated
+// list of lifecycle states (or "all") that the listed facts must be in.
+// Listing any state other than approved exposes unapproved knowledge, so it
+// requires a verified owner and is refused, not silently clamped, otherwise.
+func knowledgeListStates(w http.ResponseWriter, r *http.Request) ([]knowledge.LifecycleState, bool) {
+	states, err := knowledge.ParseLifecycleStates(r.URL.Query().Get("state"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	for _, st := range states {
+		if st != knowledge.StateApproved {
+			if !requireOwnerRole(w, r) {
+				return nil, false
+			}
+			break
+		}
+	}
+	return states, true
+}
+
+// filterFactsByExactState keeps only facts whose effective lifecycle state is
+// listed in states, with State populated.
+func filterFactsByExactState(facts []knowledge.Fact, states []knowledge.LifecycleState) []knowledge.Fact {
+	out := make([]knowledge.Fact, 0, len(facts))
+	for _, f := range facts {
+		st := f.EffectiveState()
+		for _, want := range states {
+			if st == want {
+				f.State = st
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// filterFactsByAllTags keeps facts carrying every tag (case-insensitive).
+func filterFactsByAllTags(facts []knowledge.Fact, tags []string) []knowledge.Fact {
+	if len(tags) == 0 {
+		return facts
+	}
+	out := make([]knowledge.Fact, 0, len(facts))
+	for _, f := range facts {
+		if factHasAllTags(f, tags) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func factHasAllTags(f knowledge.Fact, tags []string) bool {
+	for _, want := range tags {
+		found := false
+		for _, t := range f.Tags {
+			if strings.EqualFold(strings.TrimSpace(t), want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// knowledgeListPagination bounds list responses, including omitted or invalid limits.
+func knowledgeListPagination(r *http.Request) (limit, offset int) {
+	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 // titleCaseWords capitalizes the first letter following each run of
@@ -203,7 +322,9 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	facts := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", "", 0)
+	// The export seeds contributor agents' startup context, so it carries
+	// approved knowledge only, whoever asks (#14546).
+	facts := knowledge.FilterByLifecycle(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", "", 0), nil)
 
 	grouped := make(map[string][]knowledge.Fact)
 	for _, f := range facts {
@@ -370,9 +491,10 @@ func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Search defaults to approved (current) knowledge; include_states opts
-	// into draft/deprecated/superseded facts, e.g. "deprecated,superseded" or "all".
-	includeStates, err := knowledge.ParseLifecycleStates(r.URL.Query().Get("include_states"))
+	// Search defaults to approved (current) knowledge; owners may opt into
+	// draft/deprecated/superseded facts with include_states, e.g.
+	// "deprecated,superseded" or "all".
+	includeStates, err := knowledgeIncludeStates(r)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -452,26 +574,10 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 		s.AppendFactHistory(total)
 	}
 
-	// Sample the estimated cost on the same cadence as the fact history so the
-	// cost sparkline shares the fact sparkline's timer (both throttled to
-	// ~5-min intervals). The figure is the same all-time cumulative estimated
-	// total that GET /api/cost returns; the per-agent map feeds the agent
-	// cards' spend-over-window display and the per-model map feeds the cost
-	// table's mini sparklines (unpriced models included — tokens still trend).
-	est := s.estimatedCost()
-	perAgent := make(map[string]float64, len(est.ByAgent))
-	for _, row := range est.ByAgent {
-		if row.USD > 0 {
-			perAgent[row.Name] = row.USD
-		}
-	}
-	perModel := make(map[string]CostModelSnap, len(est.ByModel))
-	for _, row := range est.ByModel {
-		if row.Input > 0 || row.Output > 0 || row.USD > 0 {
-			perModel[row.Name] = CostModelSnap{Input: row.Input, Output: row.Output, USD: row.USD}
-		}
-	}
-	s.AppendCostHistoryFull(est.TotalUSD, perAgent, perModel)
+	// A viewer's poll also takes a cost sample (throttled to the same 5-min
+	// cadence); the server-side ticker (runCostSampler) is what guarantees one
+	// regardless of viewers (#13483).
+	s.sampleCostHistory()
 
 	jsonResponse(w, stats)
 }
@@ -505,6 +611,11 @@ func (s *Server) handleKnowledgeLayer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeStates, err := knowledgeIncludeStates(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	layer := r.PathValue("layer")
 	typeFilter := r.URL.Query().Get("type")
 
@@ -516,7 +627,7 @@ func (s *Server) handleKnowledgeLayer(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, map[string]interface{}{"layer": layer, "count": 0, "facts": []interface{}{}})
 			return
 		}
-		facts := store.ListPages(typeFilter)
+		facts := knowledge.FilterByLifecycle(store.ListPages(typeFilter), includeStates)
 		for i := range facts {
 			facts[i].Layer = knowledge.LayerType(layer)
 		}
@@ -529,10 +640,7 @@ func (s *Server) handleKnowledgeLayer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	knowledgeLayer := knowledge.LayerType(layer)
-	facts := s.deps.Knowledge.LayerFacts(s.deps.Ctx, knowledgeLayer, typeFilter)
-	if facts == nil {
-		facts = []knowledge.Fact{}
-	}
+	facts := knowledge.FilterByLifecycle(s.deps.Knowledge.LayerFacts(s.deps.Ctx, knowledgeLayer, typeFilter), includeStates)
 	jsonResponse(w, map[string]interface{}{
 		"layer": layer,
 		"count": len(facts),
@@ -546,13 +654,24 @@ func (s *Server) handleKnowledgeFact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeStates, err := knowledgeIncludeStates(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	slug := r.PathValue("slug")
 	fact, err := s.deps.Knowledge.ReadFact(s.deps.Ctx, slug)
 	if err != nil || fact == nil {
 		jsonError(w, "fact not found", http.StatusNotFound)
 		return
 	}
-	jsonResponse(w, fact)
+	// A fact hidden from lists must not be readable by guessing its slug.
+	visible := knowledge.FilterByLifecycle([]knowledge.Fact{*fact}, includeStates)
+	if len(visible) == 0 {
+		jsonError(w, "fact not found", http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, visible[0])
 }
 
 func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
@@ -977,12 +1096,13 @@ func (s *Server) handleVaultFacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := r.PathValue("name")
-	facts := s.deps.Knowledge.VaultFacts(name)
-	if facts == nil {
-		facts = []knowledge.Fact{}
+	includeStates, err := knowledgeIncludeStates(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	jsonResponse(w, facts)
+	name := r.PathValue("name")
+	jsonResponse(w, knowledge.FilterByLifecycle(s.deps.Knowledge.VaultFacts(name), includeStates))
 }
 
 func (s *Server) handleGitSourcesList(w http.ResponseWriter, r *http.Request) {

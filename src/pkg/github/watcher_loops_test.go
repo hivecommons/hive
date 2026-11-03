@@ -251,7 +251,12 @@ func TestStartPRRequestWatcher_DispatchesQueuedRequest(t *testing.T) {
 	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "f", Base: "main", Title: "t", Body: "a change", Agent: "a"}); err != nil {
 		t.Fatal(err)
 	}
-	if !waitFor(t, 5*time.Second, func() bool { return created.Load() > 0 }) {
+	// One PR-open attempt runs the whole gate chain (claims, content scan,
+	// dedupe lookups) as sequential HTTP round trips before the POST this
+	// counts, so under -race on a loaded runner the first attempt can outlast
+	// the 5s the lighter merge/review loops get. Poll to a generous deadline;
+	// a passing run still returns on the first observation.
+	if !waitFor(t, 30*time.Second, func() bool { return created.Load() > 0 }) {
 		t.Fatal("the ticker loop never picked up a queued PR request")
 	}
 }

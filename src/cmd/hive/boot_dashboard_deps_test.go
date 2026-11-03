@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -24,6 +26,8 @@ type bootDashboardFake struct {
 	lifecyclePath string
 	sessionsSrv   *dashboard.Server
 	lifecycleSrv  *dashboard.Server
+	slaPath       string
+	slaSrv        *dashboard.Server
 }
 
 func newBootDashboardFake() *bootDashboardFake {
@@ -34,8 +38,9 @@ func newBootDashboardFake() *bootDashboardFake {
 			f.srv = dashboard.NewServer(0, logger)
 			return f.srv
 		},
-		enableSessionPersistence:   func(s *dashboard.Server, p string) { f.sessionsSrv, f.sessionsPath = s, p },
-		enableLifecyclePersistence: func(s *dashboard.Server, p string) { f.lifecycleSrv, f.lifecyclePath = s, p },
+		enableSessionPersistence:    func(s *dashboard.Server, p string) { f.sessionsSrv, f.sessionsPath = s, p },
+		enableLifecyclePersistence:  func(s *dashboard.Server, p string) { f.lifecycleSrv, f.lifecyclePath = s, p },
+		enableSLAHistoryPersistence: func(s *dashboard.Server, p string) { f.slaSrv, f.slaPath = s, p },
 	}
 	return f
 }
@@ -57,7 +62,7 @@ func newBootDashboardBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.sched = scheduler.New(cfg, b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.ghClient = fakeGitHubClient(t)
 	b.beadStores = map[string]*beads.Store{}
 	return b
@@ -101,6 +106,9 @@ func TestBootDashboardWithConstructsAndPersistsOnPVC(t *testing.T) {
 	}
 	if f.lifecycleSrv != f.srv || f.lifecyclePath != lifecycleTimelinePath || !strings.HasPrefix(f.lifecyclePath, "/data/") {
 		t.Fatalf("lifecycle persistence = %q on %p", f.lifecyclePath, f.lifecycleSrv)
+	}
+	if f.slaSrv != f.srv || f.slaPath != slaHistoryPath || !strings.HasPrefix(f.slaPath, "/data/") {
+		t.Fatalf("sla history persistence = %q on %p", f.slaPath, f.slaSrv)
 	}
 	if got := f.srv.TokenSparklineHistory(); len(got) != 1 || got[0].Input != 10 {
 		t.Fatalf("token seed not applied: %+v", got)
@@ -197,13 +205,26 @@ func TestBootDashboardWithAdvisoryHookNoStoresIsNoop(t *testing.T) {
 }
 
 func TestBootDashboardWithClassifier(t *testing.T) {
+	// The fixture's agent runs on copilot, which boot would use as the
+	// classifier CLI when no endpoint is configured (#14499); these cases
+	// are about a hive with no usable backend at all, so they run on codex.
+	noToollessAgents := func(cfg *config.Config) {
+		t.Setenv(config.LiteLLMEndpointEnv, "")
+		for name, a := range cfg.Agents {
+			a.Backend = "codex"
+			cfg.Agents[name] = a
+		}
+	}
 	t.Run("no endpoint logs and skips", func(t *testing.T) {
 		cfg := bootDashboardConfig()
 		on := true
 		cfg.Ioscan.Enabled = &on
-		cfg.Ioscan.Classifier.Enabled = true
+		cfg.Ioscan.Classifier.Enabled = &on
+		noToollessAgents(cfg)
 		b := newBootDashboardBoot(t, cfg)
-		var log strings.Builder
+		// bootDashboardWith starts backfillRecentMergedPRs in a goroutine that
+		// logs through b.logger, so the sink must be goroutine-safe (#13168).
+		var log syncLogBuffer
 		b.logger = slog.New(slog.NewTextHandler(&log, nil))
 		b.sched = scheduler.New(cfg, b.logger)
 
@@ -216,15 +237,77 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 			t.Fatalf("log:\n%s", log.String())
 		}
 	})
+	t.Run("L5 default on, no endpoint installs fail-closed classifier", func(t *testing.T) {
+		cfg := bootDashboardConfig()
+		on := true
+		cfg.Ioscan.Enabled = &on
+		level := 5
+		cfg.ACMMLevel = &level
+		noToollessAgents(cfg)
+		b := newBootDashboardBoot(t, cfg)
+		var log syncLogBuffer
+		b.logger = slog.New(slog.NewTextHandler(&log, nil))
+		b.sched = scheduler.New(cfg, b.logger)
+
+		b.bootDashboardWith(newBootDashboardFake().deps)
+
+		if _, _, installed := b.sched.IoscanHooksForTest(); !installed {
+			t.Fatal("L5 requires the classifier; an unavailable classifier must be installed so scans fail closed")
+		}
+		if !strings.Contains(log.String(), "required at this ACMM level but not running") {
+			t.Fatalf("log:\n%s", log.String())
+		}
+	})
+	t.Run("L5, no endpoint, copilot agents installs the copilot CLI classifier", func(t *testing.T) {
+		cfg := bootDashboardConfig()
+		on := true
+		cfg.Ioscan.Enabled = &on
+		level := 5
+		cfg.ACMMLevel = &level
+		t.Setenv(config.LiteLLMEndpointEnv, "")
+		b := newBootDashboardBoot(t, cfg)
+		var log syncLogBuffer
+		b.logger = slog.New(slog.NewTextHandler(&log, nil))
+		b.sched = scheduler.New(cfg, b.logger)
+
+		b.bootDashboardWith(newBootDashboardFake().deps)
+
+		if _, _, installed := b.sched.IoscanHooksForTest(); !installed {
+			t.Fatal("copilot agents with no endpoint must install the copilot CLI classifier")
+		}
+		if !strings.Contains(log.String(), "backend=copilot") || !strings.Contains(log.String(), "backend_from_agents=true") || strings.Contains(log.String(), "not running") {
+			t.Fatalf("log:\n%s", log.String())
+		}
+	})
+	t.Run("L5 with classifier disabled explicitly skips", func(t *testing.T) {
+		cfg := bootDashboardConfig()
+		on, off := true, false
+		cfg.Ioscan.Enabled = &on
+		cfg.Ioscan.Classifier.Enabled = &off
+		level := 5
+		cfg.ACMMLevel = &level
+		b := newBootDashboardBoot(t, cfg)
+		var log syncLogBuffer
+		b.logger = slog.New(slog.NewTextHandler(&log, nil))
+		b.sched = scheduler.New(cfg, b.logger)
+
+		b.bootDashboardWith(newBootDashboardFake().deps)
+
+		if _, _, installed := b.sched.IoscanHooksForTest(); installed {
+			t.Fatal("explicit classifier.enabled: false must win at L5")
+		}
+	})
 	t.Run("endpoint installs cached classifier", func(t *testing.T) {
 		cfg := bootDashboardConfig()
 		on := true
 		cfg.Ioscan.Enabled = &on
-		cfg.Ioscan.Classifier.Enabled = true
+		cfg.Ioscan.Classifier.Enabled = &on
 		cfg.Ioscan.Classifier.Model = "judge-small"
 		cfg.Governor.Trajectory.Endpoint = "http://127.0.0.1:1/v1"
 		b := newBootDashboardBoot(t, cfg)
-		var log strings.Builder
+		// bootDashboardWith starts backfillRecentMergedPRs in a goroutine that
+		// logs through b.logger, so the sink must be goroutine-safe (#13168).
+		var log syncLogBuffer
 		b.logger = slog.New(slog.NewTextHandler(&log, nil))
 		b.sched = scheduler.New(cfg, b.logger)
 
@@ -246,8 +329,8 @@ func TestBootDashboardWithSandboxAuditCreatesRejectionBead(t *testing.T) {
 
 	b.bootDashboardWith(f.deps)
 
-	b.agentMgr.SandboxAuditForTest("scanner", "sandbox_broker_rejected", "push to main refused")
-	b.agentMgr.SandboxAuditForTest("scanner", "sandbox_failed", "oom")
+	b.agentMgr.(cruxtest.Runtime).SandboxAuditForTest("scanner", "sandbox_broker_rejected", "push to main refused")
+	b.agentMgr.(cruxtest.Runtime).SandboxAuditForTest("scanner", "sandbox_failed", "oom")
 
 	if recent := f.srv.GetAudit().Recent(2); len(recent) != 2 {
 		t.Fatalf("audit ring = %+v", recent)

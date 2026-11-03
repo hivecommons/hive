@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -104,6 +106,166 @@ func TestCollectAndMergeFreshVerdictWinsForSameKey(t *testing.T) {
 	}
 }
 
+func TestCollectAndMergeKeepsHumanDecisionDuringIncompleteReview(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "reports")
+	artifactPath := filepath.Join(root, ReviewVerdictsFile)
+	now := time.Now().UTC().Truncate(time.Second)
+	prior := Aggregate{
+		Repo: "acme/hive", Number: 7, HeadSHA: "sha1",
+		Verdict: VerdictRequiresHuman, RequiresHuman: true,
+		DecisionRequested: true, DecisionQuestion: "Is this public API change acceptable?",
+		HumanSummaries: []string{"security requires a human decision"},
+		Reasons:        []string{"public API decision"},
+		Perspectives:   map[Perspective]Verdict{PerspectiveSecurity: VerdictRequiresHuman},
+		RecordedAt:     now.Add(-time.Hour),
+	}
+	if err := WriteArtifact(artifactPath, Artifact{Items: []Aggregate{prior}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The first replacement report approves, but the other perspectives
+	// have not arrived yet. It must not withdraw the settled decision.
+	report := baseReport(PerspectiveCorrectness, VerdictApprove)
+	report.Repo, report.Number, report.HeadSHA = prior.Repo, prior.Number, prior.HeadSHA
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reportDir, ReviewReportFilePrefix+"correctness"+ReviewReportFileSuffix), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		at := now.Add(time.Duration(i) * time.Minute)
+		if _, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, at); err != nil {
+			t.Fatal(err)
+		}
+		persisted, err := LoadArtifact(artifactPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(persisted.Items) != 1 || !reflect.DeepEqual(persisted.Items[0], prior) {
+			t.Fatalf("refresh %d lost or refreshed the settled decision: %+v", i, persisted.Items)
+		}
+		if persisted.HasAggregateApproval(prior.Repo, prior.Number, prior.HeadSHA) {
+			t.Fatal("retaining a human decision must never authorize a merge")
+		}
+		plan := PlanDispatch([]PullRequest{dispatchPR(prior.HeadSHA)}, persisted, DispatchState{}, DispatchOptions{
+			RequireApproval: true, FanOut: true, ProjectOrg: "acme", Now: at,
+			Agents: []AgentCapability{reviewer("r1")},
+		})
+		if len(plan.ReviewKicks) != 0 || len(plan.State.Human) != 1 {
+			t.Fatalf("refresh %d reopened a settled decision: %+v", i, plan)
+		}
+	}
+	// Once every replacement perspective approves, the new settled result
+	// must replace the decision rather than pinning the PR on a human forever.
+	seedReports(t, reportDir, prior.Repo, prior.Number, prior.HeadSHA)
+	settled, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, now.Add(4*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settled.HasAggregateApproval(prior.Repo, prior.Number, prior.HeadSHA) {
+		t.Fatalf("completed replacement review did not supersede the decision: %+v", settled.Items)
+	}
+}
+
+func TestCollectAndMergeKeepsSettledVerdictsDuringIncompleteReview(t *testing.T) {
+	for _, verdict := range []Verdict{VerdictChangesRequested, VerdictReject} {
+		t.Run(string(verdict), func(t *testing.T) {
+			root := t.TempDir()
+			reportDir := filepath.Join(root, "reports")
+			artifactPath := filepath.Join(root, ReviewVerdictsFile)
+			now := time.Now().UTC().Truncate(time.Second)
+			prior := Aggregate{
+				Repo: "acme/hive", Number: 7, HeadSHA: "sha1",
+				Verdict:      verdict,
+				Perspectives: map[Perspective]Verdict{PerspectiveCorrectness: verdict},
+				RecordedAt:   now.Add(-time.Hour),
+			}
+			if err := WriteArtifact(artifactPath, Artifact{Items: []Aggregate{prior}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(reportDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			report := baseReport(PerspectiveCorrectness, VerdictApprove)
+			report.Repo, report.Number, report.HeadSHA = prior.Repo, prior.Number, prior.HeadSHA
+			raw, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(reportDir, ReviewReportFilePrefix+"correctness"+ReviewReportFileSuffix), raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, now); err != nil {
+				t.Fatal(err)
+			}
+			persisted, err := LoadArtifact(artifactPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(persisted.Items) != 1 || !reflect.DeepEqual(persisted.Items[0], prior) {
+				t.Fatalf("incomplete review displaced %s: %+v", verdict, persisted.Items)
+			}
+		})
+	}
+}
+
+func TestCollectAndMergeIncompleteReviewIsolation(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		priorVerdict Verdict
+		priorHead    string
+		priorBody    string
+		age          time.Duration
+	}{
+		{name: "approval must not survive incomplete coverage", priorVerdict: VerdictApprove, priorHead: "sha1"},
+		{name: "new head needs its own review", priorVerdict: VerdictRequiresHuman, priorHead: "old-head"},
+		{name: "edited body needs its own review", priorVerdict: VerdictRequiresHuman, priorHead: "sha1", priorBody: "old-body"},
+		{name: "expired decision is not revived", priorVerdict: VerdictRequiresHuman, priorHead: "sha1", age: VerdictRetention + time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			artifactPath := filepath.Join(root, ReviewVerdictsFile)
+			now := time.Now().UTC()
+			prior := Aggregate{
+				Repo: "acme/hive", Number: 7, HeadSHA: tc.priorHead, BodyDigest: tc.priorBody,
+				Verdict: tc.priorVerdict, MergeEligible: tc.priorVerdict == VerdictApprove,
+				RecordedAt: now.Add(-tc.age),
+			}
+			if err := WriteArtifact(artifactPath, Artifact{Items: []Aggregate{prior}}); err != nil {
+				t.Fatal(err)
+			}
+			report := baseReport(PerspectiveCorrectness, VerdictApprove)
+			report.Repo, report.Number, report.HeadSHA = prior.Repo, prior.Number, "sha1"
+			raw, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, ReviewReportFilePrefix+"correctness"+ReviewReportFileSuffix), raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			merged, err := CollectAndMerge(root, artifactPath, AggregateOptions{}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var current *Aggregate
+			for i := range merged.Items {
+				item := &merged.Items[i]
+				if item.HeadSHA == report.HeadSHA && item.BodyDigest == report.BodyDigest {
+					current = item
+				}
+			}
+			if current == nil || current.Verdict != VerdictIncomplete || current.MergeEligible {
+				t.Fatalf("incomplete review inherited another verdict: %+v", current)
+			}
+		})
+	}
+}
+
 func TestCollectAndMergeKeepsDistinctHeadSHAs(t *testing.T) {
 	// A force-push creates a new head SHA and a genuinely new review subject.
 	// The old verdict is still useful history and must not evict the new one.
@@ -191,5 +353,168 @@ func TestCollectAndMergeSurvivesMissingPriorArtifact(t *testing.T) {
 	}
 	if len(merged.Items) != 1 {
 		t.Fatalf("unexpected items: %+v", merged.Items)
+	}
+}
+
+// seedVerdictReports writes one report per default perspective for
+// repo#number@headSHA, all approving except the perspectives in override.
+func seedVerdictReports(t *testing.T, dir string, repo string, number int, headSHA string, override map[Perspective]Verdict) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range DefaultPerspectives {
+		v := VerdictApprove
+		if o, ok := override[p]; ok {
+			v = o
+		}
+		rep := baseReport(p, v)
+		rep.Repo = repo
+		rep.Number = number
+		rep.HeadSHA = headSHA
+		raw, err := json.Marshal(rep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := ReviewReportFilePrefix + string(p) + ReviewReportFileSuffix
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+var securityRequiresHuman = map[Perspective]Verdict{PerspectiveSecurity: VerdictRequiresHuman}
+
+// hivecommons/hive#12957: every artifact refresh re-collects the same
+// reports. RecordedAt moves (it is the retention clock); the first-recorded
+// time must not, or a person's release of the verdict hold, judged against
+// it, stops counting a few minutes after it was given.
+func TestCollectAndMergeKeepsFirstRecordedAtAcrossRefreshes(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "reports")
+	artifactPath := filepath.Join(root, "data", ReviewVerdictsFile)
+	t1 := time.Now().UTC().Truncate(time.Second)
+	t2 := t1.Add(5 * time.Minute)
+
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "cacbd42", securityRequiresHuman)
+	if _, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t1); err != nil {
+		t.Fatalf("first collect: %v", err)
+	}
+	merged, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t2)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(merged.Items) != 1 {
+		t.Fatalf("same key must not duplicate: %+v", merged.Items)
+	}
+	item := merged.Items[0]
+	if !item.RecordedAt.Equal(t2) {
+		t.Fatalf("RecordedAt = %v, want the refresh time %v (retention clock)", item.RecordedAt, t2)
+	}
+	if !item.FirstRecordedAt.Equal(t1) {
+		t.Fatalf("FirstRecordedAt = %v, want the first collect %v", item.FirstRecordedAt, t1)
+	}
+	hold, ok := merged.VerdictHoldFor("acme/widget", 192)
+	if !ok {
+		t.Fatal("requires_human verdict must hold the PR")
+	}
+	if !hold.RecordedAt.Equal(t1) {
+		t.Fatalf("hold.RecordedAt = %v, want the first-recorded time %v", hold.RecordedAt, t1)
+	}
+
+	// Retention follows the last time the verdict was seen, not the first:
+	// with the reports gone, a collect just past t1+VerdictRetention (but
+	// within t2+VerdictRetention) still keeps the entry.
+	if err := os.RemoveAll(reportDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	later, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t1.Add(VerdictRetention+time.Minute))
+	if err != nil {
+		t.Fatalf("collect after wipe: %v", err)
+	}
+	if len(later.Items) != 1 || !later.Items[0].FirstRecordedAt.Equal(t1) || !later.Items[0].RecordedAt.Equal(t2) {
+		t.Fatalf("entry re-confirmed at %v must survive with its timestamps unchanged: %+v", t2, later.Items)
+	}
+}
+
+// An artifact written before first_recorded_at existed falls back to the
+// entry's RecordedAt on the first refresh after the upgrade.
+func TestCollectAndMergeFirstRecordedAtFallsBackToLegacyRecordedAt(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "reports")
+	artifactPath := filepath.Join(root, "data", ReviewVerdictsFile)
+	t0 := time.Now().UTC().Truncate(time.Second)
+
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "cacbd42", securityRequiresHuman)
+	first, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := first
+	legacy.Items = append([]Aggregate(nil), first.Items...)
+	legacy.Items[0].FirstRecordedAt = time.Time{}
+	if err := WriteArtifact(artifactPath, legacy); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "first_recorded_at") {
+		t.Fatalf("a zero FirstRecordedAt must be omitted from the JSON: %s", raw)
+	}
+
+	merged, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t0.Add(5*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := merged.Items[0].FirstRecordedAt; !got.Equal(t0) {
+		t.Fatalf("FirstRecordedAt = %v, want the legacy RecordedAt %v", got, t0)
+	}
+}
+
+// A genuinely new verdict starts a new first-recorded time: a new head, or a
+// different outcome for the same head. That keeps #12374's rule that a
+// release given before the verdict does not count.
+func TestCollectAndMergeNewVerdictResetsFirstRecordedAt(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "reports")
+	artifactPath := filepath.Join(root, "data", ReviewVerdictsFile)
+	t1 := time.Now().UTC().Truncate(time.Second)
+
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "cacbd42", securityRequiresHuman)
+	if _, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fix push: the per-perspective files are rewritten for the new head.
+	t3 := t1.Add(10 * time.Minute)
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "d00dfee", securityRequiresHuman)
+	merged, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold, ok := merged.VerdictHoldFor("acme/widget", 192)
+	if !ok || hold.HeadSHA != "d00dfee" || !hold.RecordedAt.Equal(t3) {
+		t.Fatalf("hold = %+v (held %v), want the new head's verdict first recorded at %v", hold, ok, t3)
+	}
+
+	// Same head, different outcome: the approve is a new verdict.
+	t4 := t3.Add(10 * time.Minute)
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "d00dfee", nil)
+	merged, err = CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range merged.Items {
+		if item.HeadSHA == "d00dfee" && !item.FirstRecordedAt.Equal(t4) {
+			t.Fatalf("changed verdict on the same head kept FirstRecordedAt %v, want %v", item.FirstRecordedAt, t4)
+		}
+	}
+	if hold, ok := merged.VerdictHoldFor("acme/widget", 192); ok {
+		t.Fatalf("a merge-eligible approve recorded after the hold must release it, got %+v", hold)
 	}
 }

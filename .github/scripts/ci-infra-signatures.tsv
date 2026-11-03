@@ -27,6 +27,10 @@
 
 gocache-permission	step	open /mnt/gocache/\S+: permission denied
 build-cache-corrupt	step	can't find export data \(bufio: buffer full\)
+# Run 39036933822 (#12746): the runner's extracted module tree lost a file
+# before test discovery. Restrict this to the observed runner cache root and
+# versioned module trees; missing repository source files remain code failures.
+module-cache-incomplete	step	\bopen /mnt/gomod-local/[^\s@]+@v[^/\s]+/\S+: no such file or directory$
 disk-full	step	No space left on device
 lint-no-go-files	step	context loading failed: no go files to analyze
 lint-timeout	step	level=error msg="Timeout exceeded

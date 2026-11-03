@@ -136,8 +136,10 @@ func TestLoadAgentOverridesNonExistent(t *testing.T) {
 
 func TestApplyAgentDefaultsExtended(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude"},
+			},
 		},
 	}
 	cfg.ApplyAgentDefaults("scanner")
@@ -155,7 +157,9 @@ func TestApplyAgentDefaultsExtended(t *testing.T) {
 
 func TestApplyAgentDefaultsMissing(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		},
 	}
 	cfg.ApplyAgentDefaults("nonexistent")
 }
@@ -175,7 +179,7 @@ func TestMergeAgentOverridesExtended(t *testing.T) {
 }
 
 func TestMergeAgentOverridesNilMap(t *testing.T) {
-	cfg := &Config{Agents: nil}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: nil}}
 	cfg.MergeAgentOverrides(map[string]AgentConfig{
 		"test": {Backend: "claude"},
 	})
@@ -254,8 +258,10 @@ func TestSave_SuccessRoundTrip(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude"},
+			},
 		},
 	}
 
@@ -276,7 +282,9 @@ func TestSave_NoSourcePath(t *testing.T) {
 	cfg := &Config{
 		SourcePath: "",
 		Project:    ProjectConfig{Org: "org"},
-		Agents:     map[string]AgentConfig{"x": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"x": {}},
+		},
 	}
 	if err := cfg.Save(); err == nil {
 		t.Error("expected error with no source path")
@@ -287,7 +295,9 @@ func TestSave_EmptyOrg(t *testing.T) {
 	cfg := &Config{
 		SourcePath: "/tmp/test.yaml",
 		Project:    ProjectConfig{Org: ""},
-		Agents:     map[string]AgentConfig{"x": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"x": {}},
+		},
 	}
 	if err := cfg.Save(); err == nil {
 		t.Error("expected error with empty org (save guard)")
@@ -298,7 +308,9 @@ func TestSave_NoAgents(t *testing.T) {
 	cfg := &Config{
 		SourcePath: "/tmp/test.yaml",
 		Project:    ProjectConfig{Org: "org"},
-		Agents:     map[string]AgentConfig{},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		},
 	}
 	if err := cfg.Save(); err == nil {
 		t.Error("expected error with no agents (save guard)")
@@ -410,7 +422,7 @@ DASHBOARD_PORT=9999
 DASHBOARD_AUTH_TOKEN=secret123
 `), 0o644)
 
-	cfg := &Config{Agents: map[string]AgentConfig{}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{}}}
 	if err := cfg.applyConfigEnv(envFile); err != nil {
 		t.Fatal(err)
 	}
@@ -448,9 +460,11 @@ func TestApplyConfigEnvAgentsEnabled(t *testing.T) {
 	os.WriteFile(envFile, []byte("AGENTS_ENABLED=scanner quality\n"), 0o644)
 
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Enabled: false},
-			"quality": {Enabled: false},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Enabled: false},
+				"quality": {Enabled: false},
+			},
 		},
 	}
 	if err := cfg.applyConfigEnv(envFile); err != nil {
@@ -532,9 +546,11 @@ func TestSaveAgentFileRoundTrip(t *testing.T) {
 
 func TestResolveAgent_ByName(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", ID: "scan-001"},
-			"fixer":   {Backend: "copilot", ID: "fix-001"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", ID: "scan-001"},
+				"fixer":   {Backend: "copilot", ID: "fix-001"},
+			},
 		},
 	}
 
@@ -546,8 +562,10 @@ func TestResolveAgent_ByName(t *testing.T) {
 
 func TestResolveAgent_ByID(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", ID: "scan-001"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", ID: "scan-001"},
+			},
 		},
 	}
 
@@ -559,8 +577,10 @@ func TestResolveAgent_ByID(t *testing.T) {
 
 func TestResolveAgent_NotFound(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", ID: "scan-001"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", ID: "scan-001"},
+			},
 		},
 	}
 
@@ -572,8 +592,10 @@ func TestResolveAgent_NotFound(t *testing.T) {
 
 func TestAgentByID_Found(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", ID: "scan-001", Model: "sonnet"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", ID: "scan-001", Model: "sonnet"},
+			},
 		},
 	}
 
@@ -588,8 +610,10 @@ func TestAgentByID_Found(t *testing.T) {
 
 func TestAgentByID_NotFound(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", ID: "scan-001"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", ID: "scan-001"},
+			},
 		},
 	}
 

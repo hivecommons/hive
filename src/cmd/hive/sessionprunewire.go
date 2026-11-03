@@ -17,6 +17,11 @@ const sessionPruneInterval = 6 * time.Hour
 // is the fixed workspace root every spoke uses; nothing in config points at it.
 const agentHomesRoot = "/data/agents"
 
+// agentSessionTreesRoot is the parent of the per-agent interactive homes
+// (/data/home/agents/<agent>), each holding its own .copilot/session-state
+// (hivecommons/hive#13488).
+const agentSessionTreesRoot = "/data/home/agents"
+
 func runSessionPrune(logger *slog.Logger, dir string, maxAge time.Duration) {
 	res, err := sessionprune.Prune(dir, maxAge, time.Now(), logger)
 	if err != nil {
@@ -49,6 +54,24 @@ func runAgentHomePrune(logger *slog.Logger, root string, maxAge time.Duration) {
 	}
 	if res.Removed > 0 || res.Failed > 0 {
 		logger.Info("agent home prune complete",
+			"root", root,
+			"scanned", res.Scanned,
+			"removed", res.Removed,
+			"failed", res.Failed,
+			"retention_days", int(maxAge.Hours()/24))
+	}
+}
+
+// runAgentSessionTreePrune prunes the per-agent Copilot session-state trees
+// with the same retention as the shared tree.
+func runAgentSessionTreePrune(logger *slog.Logger, root string, maxAge time.Duration) {
+	res, err := sessionprune.PruneAgentSessionTrees(root, maxAge, time.Now(), logger)
+	if err != nil {
+		logger.Warn("agent session tree prune failed", "root", root, "error", err)
+		return
+	}
+	if res.Removed > 0 || res.Failed > 0 {
+		logger.Info("agent session tree prune complete",
 			"root", root,
 			"scanned", res.Scanned,
 			"removed", res.Removed,

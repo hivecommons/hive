@@ -101,7 +101,7 @@ func TestClassifierConfig_AbsentIsZero(t *testing.T) {
 }
 
 func TestClassifierConfigValidation(t *testing.T) {
-	valid := Config{Project: ProjectConfig{Org: "o"}, Agents: map[string]AgentConfig{"scanner": {}}, GitHub: GitHubConfig{Token: "x"}}
+	valid := Config{Project: ProjectConfig{Org: "o"}, AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {}}}, GitHub: GitHubConfig{Token: "x"}}
 	valid.Classifier = ClassifierConfig{Backend: "jev", Mode: "shadow", Jev: JevClassifierConfig{Provider: "typesafe", MinConfidence: 0.8, Timeout: 2}}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid classifier config rejected: %v", err)

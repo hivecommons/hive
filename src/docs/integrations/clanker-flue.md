@@ -4,13 +4,30 @@
 
 This page is for authors of external workflow engines that want Hive to hand them bounded work the way the Flue pilot does. It is also for operators deciding whether ClankeR is the right integration point.
 
+For example, Hive can send an allowed task to an external runtime, poll until it reports completion, then verify the returned report. Reporting completion does not give that runtime permission to publish code or bypass Hive's checks.
+
+| What you have | Route | Prerequisites |
+| --- | --- | --- |
+| A local coding CLI/subscription to lend | Use the [contributor relay setup](../contributor-relay.md#basic-setup), not the HTTP calls below | A hive registration, supported backend, credentials, and the selected launch boundary |
+| A service that accepts and runs workflow requests | Implement an HTTP-runtime adapter such as Flue | A reachable runtime endpoint, pinned workflow version, a Hive build linking the adapter, and trusted network access |
+| No runtime yet; you want to understand the contract | Use the deterministic [fixture walkthrough](../../../examples/flue/README.md) | A Hive checkout, Go and curl; no model or GitHub token |
+
 ## Concepts
+
+**Keyed admission** means “start this request only once”: retrying the same key and payload must not start a duplicate. An **incarnation** identifies one lifetime of a runtime so Hive cannot mistake a recreated server for the old one. A **receipt** is the runtime's structured evidence about its output; Hive binds that evidence to the exact execution before accepting artifacts. A **sentinel error** is a named error value the caller can classify.
+
+**Shadow** checks the integration without dispatching work. **Report-only** dispatches work but does not grant publication credentials. A **seam** is simply a code boundary; operators do not need to implement one to run a contributor relay.
 
 In this codebase, **ClankeR** is the contributor relay: a contributor-owned process connects to a hive over `/api/contribute/ws`, advertises backend/model/capabilities, receives one task at a time, heartbeats, and reports completion metadata. The user-facing setup is documented in [ClankeR contributor relay](../contributor-relay.md).
 
-Flue is not a separate Hive Commons repository in the org listing; the v5 integration lives in this repo under `pkg/extwork/flue`. The adapter comment names the probed upstream Flue runtime commit `c5a2a725fe1d93209ed294cca90af97060f6f2e2` and maps Hive's external-work contract to Flue's keyed admission, runtime UID, status, abort, and artifacts (`src/pkg/extwork/flue/flue.go:1`).
+Flue's v5 adapter lives in this repository under `pkg/extwork/flue`. The contract and pinned upstream version are implementation reference below, not an instruction to install an arbitrary latest Flue release.
 
 ## Interface
+
+<details>
+<summary>Adapter-author contract and source references</summary>
+
+The adapter comment names the probed upstream Flue runtime commit `c5a2a725fe1d93209ed294cca90af97060f6f2e2` and maps Hive's external-work contract to Flue's keyed admission, runtime UID, status, abort, and artifacts (`src/pkg/extwork/flue/flue.go:1`).
 
 The engine-neutral contract is `pkg/extwork.Adapter`:
 
@@ -21,6 +38,8 @@ The engine-neutral contract is `pkg/extwork.Adapter`:
 - `OpenArtifact(ctx, key, incarnation, path)` streams an artifact by execution key and relative path; the binding verifies size, path, and digest before parsing (`src/pkg/extwork/adapter.go:121`).
 
 Adapters are constructed through `extwork.Factory` and registered in an `extwork.Registry` (`src/pkg/extwork/registry.go:16`, `src/pkg/extwork/registry.go:36`). The Flue build tag links the Flue adapter into the default registry (`src/cmd/hive/extwork_flue.go:17`). Dashboard code sees only the `ExternalExecution` seam, not the adapter package (`src/pkg/dashboard/extwork_binding.go:51`).
+
+</details>
 
 ## How Flue maps the contract
 
@@ -49,6 +68,10 @@ The adapter never receives a GitHub token, dashboard token, or publication crede
 
 ## Example: minimal Flue-style calls
 
+**Illustrative only — not a runnable smoke test.** `flue-runtime.example` is a placeholder, and `"base64-or-json-bundle"` is not a valid demonstrated payload. For a known-good request, use the bundle construction and request sequence in [`examples/flue/run.sh`](../../../examples/flue/run.sh) and the [fixture README](../../../examples/flue/README.md).
+
+The fixture runs as a separate process alongside the caller, not inside a contributor's coding session. From the Hive checkout, its example script starts `cmd/flue-fixture` with the workflow in `src/pkg/extwork/flue/testdata/flue-fixture/`. A real runtime must be started by its own operator and reachable from the Hive process; this guide does not install one.
+
 ```sh
 curl -s http://flue-runtime.example/ | jq .
 
@@ -61,6 +84,8 @@ curl -s 'http://flue-runtime.example/submissions?key=hive-example-key' | jq .
 
 Hive makes those calls through the adapter, not shell commands; the snippet is for implementers validating their runtime surface.
 
+**Expected fixture results:** runtime info names `engine`, `version`, and `incarnation`; first dispatch returns a submission ID and UID, replay with the same key/payload reports `deduplicated`, and a changed payload yields HTTP `409 submission_conflict`. Three explicit fixture ticks advance the deterministic workflow and expose `receipt.json`. Without an egress route its attempted effects are recorded as `no_route`, not silently published. The example then invokes conformance tests; repository agents should leave execution to CI as required by `AGENTS.md`.
+
 ## Testing
 
 Use the engine-neutral tests in `pkg/extwork` for admission and receipt behavior, plus adapter-specific conformance. Flue's test suite verifies factory validation, duplicate/different payload behavior, status mapping, cancellation facts, artifact fetch, and fixture smoke paths (`src/pkg/extwork/flue/flue_test.go:58`, `src/pkg/extwork/flue/conformance_test.go:1`).
@@ -70,6 +95,7 @@ Use the engine-neutral tests in `pkg/extwork` for admission and receipt behavior
 - Auth: v5 Flue carries no auth header in the adapter. Put the runtime behind network controls or add a reviewed adapter auth field before using it outside a trusted environment.
 - Rate limits and backpressure: use `waiting` for human, budget, or capacity waits instead of returning terminal failure.
 - Failure modes: transport failure is `unknown`; incarnation mismatch is a refusal to adopt a possibly unrelated recreated runtime; artifact digest mismatch rejects the candidate while preserving evidence.
+- To end a trial, restore the previous `runs.external.flue` settings (normally disabled) through the deployment's configuration path. Stopping future dispatch is not proof that an existing external worker stopped: cancellation reports requested, acknowledged, and stopped as separate facts.
 - Terminology: describe this as an external workflow engine or contributor relay capability, not a GitHub-only integration.
 
 ## Gaps

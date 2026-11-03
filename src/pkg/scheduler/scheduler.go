@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -16,29 +17,42 @@ import (
 )
 
 type Scheduler struct {
-	surgeDuration        func() (time.Duration, bool)
-	cfg                  *config.Config
-	primer               *knowledge.Primer
-	inception            *knowledge.InceptionEngine
-	lastActionable       *github.ActionableResult
-	logger               *slog.Logger
-	promptResolver       *promptsrc.Resolver
-	auditFunc            AuditFunc
-	advisoryFunc         AdvisoryFunc
-	classifier           ioscan.Classifier
-	classifierThresholds ioscan.Thresholds
-	classifierBudget     int
-	inflight             InflightLookup
-	runAdmitter          RunAdmitter
-	triageCommenter      TriageCommenter
-	questionAutocloser   QuestionAutocloser
-	lifecycle            timeline.Recorder
-	taskMCPURL           string
-	laneDepths           map[string]int
-	scanned              bool
-	deferredKicks        map[string]func(string)
-	firstScanDeferred    map[string]bool
-	mu                   sync.RWMutex
+	surgeDuration             func() (time.Duration, bool)
+	cfg                       *config.Config
+	primer                    *knowledge.Primer
+	inception                 *knowledge.InceptionEngine
+	lastActionable            *github.ActionableResult
+	logger                    *slog.Logger
+	primerCapLogged           sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
+	promptResolver            *promptsrc.Resolver
+	auditFunc                 AuditFunc
+	advisoryFunc              AdvisoryFunc
+	classifierUnavailableFunc func(error)
+	classifier                ioscan.Classifier
+	classifierThresholds      ioscan.Thresholds
+	classifierBudget          int
+	// classifierBudgetPerEval is what resetClassifierBudget refills to each
+	// pass: DefaultClassifierBudgetPerEval, or the lower CLI budget.
+	classifierBudgetPerEval int
+	// classifierQuotaWarnedDay is the UTC day the daily-quota WARN was last
+	// logged, so it is logged once per day.
+	classifierQuotaWarnedDay string
+	inflight                 InflightLookup
+	runAdmitter              RunAdmitter
+	triageCommenter          TriageCommenter
+	clarity                  clarityGateState
+	priorArt                 priorArtGateState
+	priorArtSearcher         PriorArtSearcher
+	questionAutocloser       QuestionAutocloser
+	lifecycle                timeline.Recorder
+	taskMCPURL               string
+	laneDepths               map[string]int
+	scanned                  bool
+	deferredKicks            map[string]func(string)
+	firstScanDeferred        map[string]bool
+	ioscanWarned             sync.Map
+	lastClassifierErr        atomic.Value // string: latest fail-closed classifier error
+	mu                       sync.RWMutex
 }
 
 // SetRunTriageDeps attaches the narrow surfaces the scheduler needs for the

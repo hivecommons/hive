@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -185,8 +185,10 @@ func TestSetProxyViolationsProvider(t *testing.T) {
 
 func TestBuildAgentOnlyStatus(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -196,8 +198,8 @@ func TestBuildAgentOnlyStatus(t *testing.T) {
 	}
 
 	state := governor.State{Mode: "IDLE"}
-	statuses := map[string]*agent.AgentProcess{
-		"scanner": {State: agent.StateRunning},
+	statuses := map[string]*crux.Process{
+		"scanner": {State: crux.StateRunning},
 	}
 
 	payload := BuildAgentOnlyStatus(state, statuses, cfg)
@@ -926,9 +928,11 @@ func TestBuildBeadsFromConfig(t *testing.T) {
 		"supervisor": supStore,
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {BeadRole: "worker"},
-			"supervisor": {BeadRole: "supervisor"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {BeadRole: "worker"},
+				"supervisor": {BeadRole: "supervisor"},
+			},
 		},
 	}
 

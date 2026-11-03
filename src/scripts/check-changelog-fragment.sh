@@ -40,6 +40,24 @@ sed 's/^/  /' "$work_dir"/changed-files.txt
 
 grep -E '^changelog\.d/[^/]+\.md$' "$work_dir"/present-files.txt | grep -v '^changelog\.d/README\.md$' > "$work_dir"/fragments.txt || true
 bad=0
+
+# compile-changelog.sh only reads the repo-root changelog.d/, so a fragment
+# under src/changelog.d/ never reaches CHANGELOG.md, and the code-change check
+# below would count it as "src/ code" and let the autofix add a title-only
+# twin (#11919). Deletions are fine: moving fragments out must pass.
+grep -E '^src/changelog\.d/[^/]+\.md$' "$work_dir"/present-files.txt | grep -v '^src/changelog\.d/README\.md$' > "$work_dir"/misplaced.txt || true
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  echo "::error file=$f::fragment is under src/changelog.d/; fragments live in changelog.d/ at the repo root — run: git mv $f changelog.d/$(basename "$f")"
+  bad=1
+done < "$work_dir"/misplaced.txt
+if [ "$bad" -ne 0 ]; then
+  if [ -n "${MISPLACED_OUT:-}" ]; then
+    cp "$work_dir"/misplaced.txt "$MISPLACED_OUT"
+  fi
+  exit 1
+fi
+
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   base="$(basename "$f")"
@@ -63,6 +81,7 @@ fi
 
 grep -E '^src/' "$work_dir"/changed-files.txt \
   | grep -vE '^src/docs/' \
+  | grep -vE '^src/changelog\.d/' \
   | grep -vE '_test\.go$' \
   | grep -vE '^src/(deploy|scripts)/test[-_][^/]+\.sh$' \
   > "$work_dir"/code-files.txt || true
@@ -99,6 +118,9 @@ the `no-changelog` label.
 If the change is user-visible, add ONE file:
 
   changelog.d/<category>-<pr-or-slug>.md
+
+changelog.d/ is at the repository root, NOT under src/ (src/changelog.d/ is
+never compiled and fails this guard).
 
 category: added | changed | deprecated | fixed | security
 content:  exactly your entry, as a single '- ' bullet.

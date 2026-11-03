@@ -1,7 +1,9 @@
-# Bounds the node-local caches used by hive-runners-lke. Runs on every runner
-# node; once a day deletes module-cache download artefacts and tool-cache
-# entries untouched for MAX_AGE_DAYS. Module zips are content-addressed, so a
-# prune only costs a re-download on next use.
+# Bounds the node-local module download cache used by hive-runners-lke.
+# Runs on every runner node; once a day deletes module-cache download artefacts
+# older than MAX_AGE_DAYS. Module zips are content-addressed, so a prune only
+# costs a re-download on next use. Never age-prune the live tool cache: archive
+# mtimes are release dates, not last use, and deleting binaries leaves newer
+# .complete markers behind (#13425). Reclaim tool-cache space on drained nodes.
 #
 #   kubectl --context hive-ci -n arc-hive apply -f src/deploy/ci-runners/lke/cache-prune-daemonset.yaml
 apiVersion: apps/v1
@@ -27,7 +29,7 @@ spec:
             - |
               MAX_AGE_DAYS="${MAX_AGE_DAYS:-14}"
               while true; do
-                for d in /mnt/gomod/cache/download /mnt/toolcache; do
+                for d in /mnt/gomod/cache/download; do
                   [ -d "$d" ] || continue
                   echo "prune: $d before: $(du -sh "$d" 2>/dev/null | cut -f1)"
                   find "$d" -type f -mtime "+$MAX_AGE_DAYS" -delete 2>/dev/null
@@ -43,9 +45,6 @@ spec:
             runAsUser: 0
           volumeMounts:
             - { mountPath: /mnt/gomod, name: gomod }
-            - { mountPath: /mnt/toolcache, name: toolcache }
       volumes:
         - name: gomod
           hostPath: { path: /var/lib/hive-ci/gomod, type: DirectoryOrCreate }
-        - name: toolcache
-          hostPath: { path: /var/lib/hive-ci/toolcache, type: DirectoryOrCreate }

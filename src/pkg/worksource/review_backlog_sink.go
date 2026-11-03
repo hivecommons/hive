@@ -127,6 +127,16 @@ func (s *linearBacklogSink) AppendToItem(ctx context.Context, _ string, ref gith
 	return s.src.CommentOnIssue(ctx, ref.ID, comment)
 }
 
+// LiftBlock removes the `blocked` label (when the issue carries it) and
+// posts note: the reviewed PR merged, or closed unmerged and the item goes
+// back to triage (hivecommons/hive#13833).
+func (s *linearBacklogSink) LiftBlock(ctx context.Context, _ string, ref github.ReviewBacklogRef, note string) error {
+	if err := s.src.RemoveIssueLabel(ctx, ref.ID, github.BlockedLabel); err != nil {
+		return err
+	}
+	return s.src.CommentOnIssue(ctx, ref.ID, note)
+}
+
 // jiraBacklogSink files Jira Tasks in the first configured project.
 type jiraBacklogSink struct {
 	src    *jiraSource

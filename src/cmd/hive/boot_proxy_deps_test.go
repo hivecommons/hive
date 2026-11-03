@@ -8,10 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
-	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -43,7 +45,7 @@ func newBootProxyFake() *bootProxyFake {
 			f.proxy = p
 			return p, err
 		},
-		installInferenceCallbacks: func(_ *agent.Manager, set func(string, string, string), clear func(string)) {
+		installInferenceCallbacks: func(_ crux.Host, set func(string, string, string), clear func(string)) {
 			f.setRoute, f.clearRoute = set, clear
 		},
 		setInferenceRoute: func(_ *proxy.GitHubProxy, agentName string, r *proxy.InferenceRoute) {
@@ -77,10 +79,10 @@ func newBootProxyBoot(t *testing.T, f *bootProxyFake, cfg *config.Config) *boot 
 		ctx:                      ctx,
 		cfg:                      cfg,
 		logger:                   logger,
-		agentMgr:                 agent.NewManager(cfg.Agents, logger, agent.ProjectContext{}),
+		agentMgr:                 cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{}),
 		dashSrv:                  dashboard.NewServer(0, logger),
 		tokenCollector:           tokens.NewCollector(t.TempDir(), logger),
-		linearCredentialResolver: func() agent.LinearCredential { return agent.LinearCredential{} },
+		linearCredentialResolver: func() crux.LinearCredential { return crux.LinearCredential{} },
 	}
 	b.wireBootClosures()
 	return b
@@ -243,5 +245,56 @@ func TestBootProxyWith_VLLMWithoutEndpointsClearsTheRoute(t *testing.T) {
 	}
 	if !strings.Contains(f.log.String(), "inference backend selected but no endpoint configured") {
 		t.Fatal("missing vllm endpoint not reported")
+	}
+}
+
+// hivecommons/hive#9945 (FMA hive after #11794): gateway "litellm" carries
+// default_model X; one agent names no model, another still carries the
+// `model:` written for its earlier copilot backend. Both routes must carry X
+// as DefaultModel so the proxy can fall back to it once the gateway says the
+// stale model is not entitled — and the agent without a model must be routed
+// for X outright, never for a Claude CLI built-in default.
+func TestBootProxyWith_LiteLLMGatewayDefaultModelRidesAlong(t *testing.T) {
+	const gatewayDefault = "rits/zai-org/glm-5-3"
+	cfg := bootProxyConfig()
+	cfg.Governor.LiteLLM.Endpoint = "https://old-litellm.example.test"
+	cfg.Governor.LiteLLM.DefaultModel = "legacy/stale-default"
+	cfg.Governor.Gateways = []config.GatewayConfig{
+		{Name: "litellm", Kind: "litellm", Endpoint: "https://litellm.cb.example.test", DefaultModel: gatewayDefault},
+	}
+	f := newBootProxyFake()
+	b := newBootProxyBoot(t, f, cfg)
+	b.bootProxyWith(f.deps)
+
+	f.setRoute("scanner", "litellm", "")
+	r := f.routes["scanner"]
+	if r == nil || r.Endpoint != "https://litellm.cb.example.test" {
+		t.Fatalf("route = %+v, want the explicit litellm gateway", r)
+	}
+	if r.Model != gatewayDefault || r.DefaultModel != gatewayDefault {
+		t.Fatalf("no per-agent model: Model=%q DefaultModel=%q, want both %q (never the legacy block's %q)",
+			r.Model, r.DefaultModel, gatewayDefault, cfg.Governor.LiteLLM.DefaultModel)
+	}
+
+	f.setRoute("quality", "litellm", "claude-sonnet-4-6")
+	r = f.routes["quality"]
+	if r == nil || r.Model != "claude-sonnet-4-6" {
+		t.Fatalf("explicit per-agent model must be honoured by the resolver: %+v", r)
+	}
+	if r.DefaultModel != gatewayDefault {
+		t.Fatalf("DefaultModel = %q, want the gateway default %q beside the stale per-agent model", r.DefaultModel, gatewayDefault)
+	}
+
+	// Named (non-built-in) gateway and legacy-only litellm carry theirs too.
+	cfg.Governor.Gateways = append(cfg.Governor.Gateways,
+		config.GatewayConfig{Name: "openrouter", Kind: "openrouter", Endpoint: "https://openrouter.ai/api/v1", DefaultModel: "or/default"})
+	f.setRoute("reviewer", "openrouter", "or/explicit")
+	if r = f.routes["reviewer"]; r == nil || r.Model != "or/explicit" || r.DefaultModel != "or/default" {
+		t.Fatalf("named gateway route = %+v, want Model or/explicit with DefaultModel or/default", r)
+	}
+	cfg.Governor.Gateways = nil
+	f.setRoute("triage", "litellm", "")
+	if r = f.routes["triage"]; r == nil || r.Model != "legacy/stale-default" || r.DefaultModel != "legacy/stale-default" {
+		t.Fatalf("legacy-only route = %+v, want the legacy block's default model", r)
 	}
 }

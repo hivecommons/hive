@@ -14,9 +14,15 @@ import (
 // restores it (mirrors swapSDKHelper for the copilot SDK probe).
 func swapGooseProbe(t *testing.T, fn func(ctx context.Context) (*gooseACPModels, error)) {
 	t.Helper()
+	runGooseACPProbeMu.Lock()
 	prev := runGooseACPProbe
 	runGooseACPProbe = fn
-	t.Cleanup(func() { runGooseACPProbe = prev })
+	runGooseACPProbeMu.Unlock()
+	t.Cleanup(func() {
+		runGooseACPProbeMu.Lock()
+		runGooseACPProbe = prev
+		runGooseACPProbeMu.Unlock()
+	})
 }
 
 // gooseProbeMissing is the seam stand-in for "goose not on PATH" — today's

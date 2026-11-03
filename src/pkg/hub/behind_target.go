@@ -30,6 +30,11 @@ type behindTarget struct {
 	// VerificationUnavailable means the hub could not verify per-SHA image
 	// existence and fell back to the channel's floating tag.
 	VerificationUnavailable bool
+	// PromotionGated is true for a channel that moves only by promotion
+	// (:stable), never by following its branch tip. The dashboard must not
+	// read "branch tip has moved past SHA" as an image pending for such a
+	// channel — the newer build is the upstream channel's, not this one's.
+	PromotionGated bool
 }
 
 // behindTargetSuffixBranch is appended to a branch name in a display ref.

@@ -210,8 +210,7 @@ func TestValidatePRRequestContentAllowsOrdinaryStaleness(t *testing.T) {
 }
 
 // TestValidatePRRequestContentDriftBeatsFileLimit pins the check order: a
-// wrongly-cut branch usually also exceeds the 300-file compare scan cap, and
-// the file-cap error is retried as transient forever. The drift rejection —
+// wrongly-cut branch usually also has a huge diff. The drift rejection —
 // permanent, with the actual cause — must win.
 func TestValidatePRRequestContentDriftBeatsFileLimit(t *testing.T) {
 	files := make([]map[string]string, githubCompareFileLimit)
@@ -245,5 +244,64 @@ func TestValidatePRRequestContentUsesExplicitBase(t *testing.T) {
 	}
 	if comparePath != "/repos/o/r/compare/release...fix" {
 		t.Fatalf("compare path = %q", comparePath)
+	}
+}
+
+func TestValidatePRRequestContentPagesCompareFiles(t *testing.T) {
+	leak := "@@ -0,0 +1,1 @@\n+" + "Filed" + " by x agent (acmm 1)\n"
+	var pages []string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		if r.URL.Query().Get("per_page") != "300" {
+			t.Errorf("per_page = %q", r.URL.Query().Get("per_page"))
+		}
+		n, patchAt := 300, -1
+		if page == "2" {
+			n, patchAt = 5, 4
+		} else {
+			w.Header().Set("Link", "<"+srv.URL+"/repos/o/r/compare/testing...fix?per_page=300&page=2>; rel=\"next\"")
+		}
+		files := make([]map[string]string, n)
+		for i := range files {
+			files[i] = map[string]string{"filename": "f", "patch": ""}
+			if i == patchAt {
+				files[i]["filename"] = "late.md"
+				files[i]["patch"] = leak
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.Default())
+
+	err := c.validatePRRequestContent(context.Background(), PRRequest{Repo: "o/r", Base: "testing", Head: "fix"})
+	if _, ok := prContentMetadataReason(err); !ok {
+		t.Fatalf("want metadata rejection from page 2 file, got: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("pages requested = %v, want exactly 2", pages)
+	}
+}
+
+func TestValidatePRRequestContentExactlyFullPageWithoutNextPasses(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		files := make([]map[string]string, githubCompareFileLimit)
+		for i := range files {
+			files[i] = map[string]string{"filename": "f", "patch": ""}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.Default())
+
+	if err := c.validatePRRequestContent(context.Background(), PRRequest{Repo: "o/r", Base: "testing", Head: "fix"}); err != nil {
+		t.Fatalf("300 files must not be an error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
 	}
 }

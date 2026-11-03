@@ -25,3 +25,18 @@ func TestEvidenceConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestComplexityConfig(t *testing.T) {
+	if !(ComplexityConfig{}).IsEnabled() || (ComplexityConfig{}).StaticAnalysis {
+		t.Fatal("unset must be enabled without static analysis")
+	}
+	if (ComplexityConfig{Enabled: boolPtr(false)}).IsEnabled() {
+		t.Fatal("explicit off")
+	}
+	if !(ComplexityConfig{Enabled: boolPtr(true), StaticAnalysis: true}).IsEnabled() {
+		t.Fatal("explicit on")
+	}
+	if !(EvidenceConfig{}).Complexity.IsEnabled() {
+		t.Fatal("nested default must be on")
+	}
+}

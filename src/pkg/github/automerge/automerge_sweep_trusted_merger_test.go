@@ -76,6 +76,32 @@ func TestF3_UntrustedMergerDoesNotMerge(t *testing.T) {
 	if result.Skipped != 1 {
 		t.Fatalf("skipped = %d, want 1", result.Skipped)
 	}
+	// Restart the engine: dedupe must survive process-local state being lost.
+	c = newAutoMergeSweepClient(api.URL)
+	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
+	if err != nil || reason != autoMergeReasonUntrustedMerger {
+		t.Fatalf("repeat sweep reason=%q err=%v", reason, err)
+	}
+	comments, _, err := c.gh.Issues.ListComments(context.Background(), "acme", "widget", 7, nil)
+	if err != nil || len(comments) != 1 {
+		t.Fatalf("comments=%v err=%v, want one notice across sweeps", comments, err)
+	}
+	for _, text := range []string{"untrusted-merger", "@mallory", "sha7", "dashboard.authorized_users"} {
+		if !strings.Contains(comments[0].GetBody(), text) {
+			t.Errorf("notice %q missing %q", comments[0].GetBody(), text)
+		}
+	}
+	// A new head gets its own notice, while repeated lane re-checks do not.
+	if err := c.commentUntrustedMerger(context.Background(), "acme", "widget", 7, "newsha", "mallory"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.commentUntrustedMerger(context.Background(), "acme", "widget", 7, "newsha", "mallory"); err != nil {
+		t.Fatal(err)
+	}
+	comments, _, err = c.gh.Issues.ListComments(context.Background(), "acme", "widget", 7, nil)
+	if err != nil || len(comments) != 2 {
+		t.Fatalf("comments=%v err=%v, want one notice for each head", comments, err)
+	}
 }
 
 // TestF3_SockpuppetPairDoesNotMerge covers the case the self-merge ban cannot
@@ -181,5 +207,26 @@ func TestF3_IsTrustedMergerFailsClosedOnEdgeCases(t *testing.T) {
 	}
 	if allowed, _ := c.isTrustedMerger("mallory"); allowed {
 		t.Fatal("mallory must not be trusted")
+	}
+}
+
+func TestQueueApprovalRevokedBeforeLaneExecutionPostsNotice(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "bob")}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	ctx := context.Background()
+	if err := c.queueApprovalStillHolds(ctx, "acme", "widget", 7, "sha7"); err != nil {
+		t.Fatalf("trusted approval rejected: %v", err)
+	}
+	c.SetMergerAuthorizer(func(string) bool { return false })
+	for range 2 {
+		if err := c.queueApprovalStillHolds(ctx, "acme", "widget", 7, "sha7"); err == nil {
+			t.Fatal("revoked merger must fail the lane's final authorization")
+		}
+	}
+	comments, _, err := c.gh.Issues.ListComments(ctx, "acme", "widget", 7, nil)
+	if err != nil || len(comments) != 1 || !strings.Contains(comments[0].GetBody(), "@bob") {
+		t.Fatalf("comments=%v err=%v, want one notice for revoked merger bob", comments, err)
 	}
 }

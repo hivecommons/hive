@@ -1,7 +1,12 @@
-# Base images are pulled from the ECR Public mirror of Docker Official Images
-# (public.ecr.aws/docker/library/*) instead of Docker Hub: GitHub-hosted runners
-# share egress IPs and exhaust Docker Hub's anonymous pull quota (429s, #11327).
+# Base images are pulled from mirror.gcr.io (Google's quota-free Docker Hub
+# pull-through cache of Docker Official Images) instead of Docker Hub or ECR
+# Public: GitHub-hosted runners share egress IPs and exhaust Docker Hub's
+# anonymous pull quota (429s, #11327), and ECR Public likewise meters anonymous
+# pulls per shared-runner IP (429 "Data limit exceeded", #11757).
 # The manifest-list digest is identical on the mirror, so the pins are unchanged.
+# If the mirror itself throttles (429), CI probes it and rebuilds with
+# `--build-arg BASE_REGISTRY=docker.io/library` (.github/actions/docker-base-registry);
+# the digests are identical on both registries, so the pins are unchanged.
 #
 # Pinned to the golang:1.27-alpine multi-arch index digest to prevent
 # floating-tag supply-chain risk. Refresh deliberately:
@@ -10,7 +15,15 @@
 #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
 #     https://registry-1.docker.io/v2/library/golang/manifests/1.27-alpine | grep -i docker-content-digest
 # and update both the tag and the @sha256 digest together.
-FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+# No --platform: resolves to the target platform so the agent Go toolchain
+# copied into the runtime image matches its arch (#11726). This stage must be
+# declared BEFORE builder: every instruction after a FROM belongs to that
+# stage, so placing it after builder's FROM hijacked the builder steps and
+# left /hive, /bd, /hivectl unbuilt (v5 docker build broke on 470c2002).
+ARG BASE_REGISTRY=mirror.gcr.io/library
+FROM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS agent-go
+
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -20,9 +33,13 @@ WORKDIR /src
 # populated. Mount contents never become image layers, so nothing here can
 # ship a stale artifact — the mount is an input cache for `go`, which
 # verifies modules against go.sum regardless of where they come from.
-COPY src/go.mod src/go.sum ./
+# src/go.work makes this a two-module workspace (root + the nested Crux
+# module at src/crux, #13536): the root go.mod replaces the Crux module with
+# ./crux, so its go.mod/go.sum must be present before `go mod download`.
+COPY src/go.mod src/go.sum src/go.work src/go.work.sum ./
+COPY src/crux/go.mod src/crux/go.sum ./crux/
 RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
-    go mod download
+    for i in 1 2 3; do go mod download && break; [ "$i" = 3 ] && exit 1; sleep $((i * 2)); done
 
 # Layer 2: copy source and build (re-runs on any source change)
 COPY .git /repo/.git
@@ -56,7 +73,7 @@ ARG TARGETARCH
 RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
     GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
-    GIT_SHORT=$(git -C /repo rev-parse --short=7 HEAD 2>/dev/null || echo "unknown") && \
+    GIT_SHORT=$(if [ "$GIT_HASH" = "unknown" ]; then echo unknown; else printf '%s' "$GIT_HASH" | cut -c1-7; fi) && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     VERSION_LDFLAG="" && \
     RESOLVED_VERSION="$VERSION" && \
@@ -66,7 +83,8 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
-    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive-admin-mcp ./cmd/hive-admin-mcp
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive-admin-mcp ./cmd/hive-admin-mcp && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
@@ -74,7 +92,7 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
 # supply-chain risk. Refresh deliberately (same technique as golang above,
 # repo library/node, tag 26-slim) and update both the tag and the @sha256
 # digest together in BOTH FROM node:26-slim lines in this file.
-FROM public.ecr.aws/docker/library/node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS tmux-builder
+FROM ${BASE_REGISTRY}/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS tmux-builder
 ARG TARGETARCH
 ARG TMUX_VERSION=3.5a
 ARG TMUX_SHA256_AMD64=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
@@ -102,7 +120,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (and the rewrite RUN below) from the branch-scoped GHA cache — so a fresh
 # binary was rebuilt and then discarded, and the OLD binary shipped. See the
 # stale-binary note in .github/workflows/docker.yml.
-FROM public.ecr.aws/docker/library/node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS runtime
+FROM ${BASE_REGISTRY}/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS runtime
 
 # --- Layer 1: system packages (rarely changes) ---
 # util-linux provides `setpriv`, used by the entrypoint to drop to `dev` with an
@@ -114,11 +132,42 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
+# --- Layer 1b: CA trust bundle refresh ---
+# Distrust two Mozilla roots that the browser/OS root programs withdrew trust
+# from on 2026-10-17..20. Debian's ca-certificates 20250419+deb13u1 already
+# drops the entries while older package builds still ship them; each entry is
+# rewritten only when present so a package refresh cannot break the build
+# either way. Static-bundle clients — curl, git, Python
+# (Debian's certifi points at the system bundle), Go via the system store and
+# the entrypoint's SSL_CERT_FILE combined bundle (built FROM this file), and
+# codex (OpenSSL system store) — all read /etc/ssl/certs/ca-certificates.crt,
+# so one regeneration here covers them. The `!` prefix is Debian's documented
+# way to keep a cert out of the bundle; the final tests prove the roots are
+# absent from the regenerated bundle whichever package build is installed.
+# Drop the block once every base image in use ships a package without them.
+RUN for cert in mozilla/emSign_ECC_Root_CA_-_G3.crt mozilla/Comodo_AAA_Services_root.crt; do \
+      if grep -q "^${cert}" /etc/ca-certificates.conf; then \
+        sed -i -e "s|^${cert}|!&|" /etc/ca-certificates.conf \
+        && grep -q "^!${cert}" /etc/ca-certificates.conf || exit 1; \
+      fi; \
+    done \
+ && update-ca-certificates --fresh \
+ && ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem \
+ && ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
+# Node ships its own copy of the Mozilla store and ignores the system bundle
+# (NODE_EXTRA_CA_CERTS can only ADD roots). --use-openssl-ca makes Node — and
+# the Copilot CLI, a Node SEA that honours NODE_OPTIONS — verify against the
+# OpenSSL store regenerated above instead; NODE_EXTRA_CA_CERTS (the proxy CA
+# set by the entrypoint / agent manager) still layers on top of it. Agents
+# inherit this through os.Environ(). Claude Code is a Bun binary and does not
+# read NODE_OPTIONS, but it already rejects these chains with its own store.
+ENV NODE_OPTIONS=--use-openssl-ca
+
 COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 
 # su-exec: lightweight setuid exec for UID switching from non-root.
 # gosu rejects SUID mode, so we use su-exec (which is designed for it)
-# for the manager's dev→agent UID switches (pkg/agent/manager.go,
+# for the manager's dev→agent UID switches (crux/agent/manager.go,
 # pkg/dashboard/workspace_cleanup.go, deploy/ttyd-tmux.sh — all invoked by the
 # non-root `dev` process AFTER the entrypoint's `exec gosu dev`, so a SUID
 # helper or CAP_SETUID is genuinely required to switch to agent UIDs at runtime).
@@ -197,9 +246,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     chmod +x /usr/local/bin/ttyd
 
 # --- Layer 2b: GitHub CLI (off-PATH — only snapshot publisher uses it) ---
-ARG GH_VERSION=2.102.0
-ARG GH_SHA256_AMD64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
-ARG GH_SHA256_ARM64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
+ARG GH_VERSION=2.103.3
+ARG GH_SHA256_AMD64=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
+ARG GH_SHA256_ARM64=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GH_ARCH=amd64; GH_SHA256="$GH_SHA256_AMD64" ;; \
@@ -252,8 +301,10 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # SDK nests as its own dependency is never executed (its native binary would
 # reject the proxy CA). Tolerant of failure like the copilot layer: discovery
 # falls back to the raw HTTP probe when the SDK is absent.
+# Bound this optional install so a stalled registry download cannot consume
+# the overlayfs exec guard's entire job timeout before it runs its assertion.
 ARG COPILOT_SDK_VERSION=1.0.8
-RUN npm install -g --ignore-scripts --no-fund --no-audit \
+RUN timeout 120s npm install -g --ignore-scripts --no-fund --no-audit \
     "@github/copilot-sdk@${COPILOT_SDK_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot SDK install failed — skipping"
 
@@ -266,12 +317,12 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.162.1
+ARG CODEX_VERSION=0.166.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.296
+ARG CLAUDE_CODE_VERSION=2.1.314
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -292,9 +343,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.54.0
-ARG GOOSE_SHA256_AMD64=ab396c95aebbd28b4d38c175234be8d4a3ea0c96e7ccb24c307e4618c9be57e1
-ARG GOOSE_SHA256_ARM64=0f174b5118a53888cd4e65b7ca9a4b72dd0b887e89142c8ce41e2409205e40d5
+ARG GOOSE_VERSION=1.57.0
+ARG GOOSE_SHA256_AMD64=10eb96cb6a159b6e1d38eeedbef6ab64cd28168aad91948f1fa5c34eefdf98e3
+ARG GOOSE_SHA256_ARM64=c32605acfd560aeb2adbf17ec359cc0217e28022a7e647b35a6af5dcfca91749
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -319,10 +370,10 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # complete the interactive OAuth flow itself). This enables a self-hosted Hive
 # controller to use its configured agy fallback rung without pretending that
 # generic contributor containers can bootstrap Google login.
-ARG AGY_VERSION=1.3.0
-ARG AGY_BUILD=6233328509124608
-ARG AGY_SHA512_AMD64=f6f5e16f356ae8a345fd6ab265ad2a4e4dc8d0b7f4ac345249d0e250a06edd496677b8ac0193b258971feb7ccfbba2fccc2f482db1d62cc650498e352ef85280
-ARG AGY_SHA512_ARM64=8a880575accf28b03de00e748209dc735c11e59847de8b137cba07aaaab166c892836574cacd9a0d6fa1e24d6e19197d25f36b7e0a49fd84d64ea84ee26ab21d
+ARG AGY_VERSION=1.4.0
+ARG AGY_BUILD=5281842794987520
+ARG AGY_SHA512_AMD64=6c4b298c2a69b6bd0f58567031cc56d8097a32be54c4b633aa80ad395871b389618ab3860d4ba0a12599831b8226b51b03e258ee2ec7fae105a45b8e0fce2188
+ARG AGY_SHA512_ARM64=64dfb2a9665ebd19b6e9d687c094673b61ca9f5ffdebc81391cea8e3858773e1c88154f088e8a8691208561d946a7aea9acbec7a3bdca9e5d8a48fa197b0a308
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) AGY_URL_ARCH=x64; AGY_FILE_ARCH=x64; AGY_SHA512="$AGY_SHA512_AMD64" ;; \
@@ -340,9 +391,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.9.1
-ARG OMP_SHA256_AMD64=0ac24a7c146dbfb4005ef00e21aa60bf9b1ddf15dae5f92938542c1475824417
-ARG OMP_SHA256_ARM64=8d67b1d1c8e698a8fa568685cab72b05a13263b45192e334fb5e1d04bb7dde83
+ARG OMP_VERSION=18.14.0
+ARG OMP_SHA256_AMD64=e7dd2b606c4ebe9d1a7bcfad1b8820db968cd6b05409fed1c6bc8db0b6a95a8f
+ARG OMP_SHA256_ARM64=dba8d170499709bc87359e02e677821aa76a6ef998ca0254578fe4ea07aff5bc
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -400,7 +451,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
-ARG PI_VERSION=1.1.0
+ARG PI_VERSION=1.4.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"
@@ -440,7 +491,7 @@ ARG BOBSHELL_SHA256_ARM64=eff232eb1b69f34f984ddd295e6960470058ca922b1c751879c5a8
 # backend "bob" passed config validation (validBackends in pkg/config) and
 # then failed at launch with no honest signal — a silent trap that cost real
 # debugging time. That trap is now closed at the launch site instead of at
-# image-build time: pkg/agent/manager.go's launchInTmux resolves the backend
+# image-build time: crux/agent/manager.go's launchInTmux resolves the backend
 # binary via exec.LookPath BEFORE any bob-specific logic runs, and on a miss
 # marks the agent StateFailed, records LastError, logs a warning, writes a
 # banner into the agent's own tmux pane, and emits an AuditAgentStartFailed
@@ -487,13 +538,18 @@ ARG GIT_HASH=unknown
 
 # Go toolchain for agents. The wrapper below blocks in-pod test/vet
 # execution by agents while preserving build/fmt/mod/etc.
-COPY --from=builder /usr/local/go /usr/local/go
+COPY --from=agent-go /usr/local/go /usr/local/go
 RUN mv /usr/local/go/bin/go /usr/local/go/bin/go-real
+RUN /usr/local/go/bin/go-real version
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 COPY --from=builder /hive /usr/local/bin/hive
 COPY --from=builder /bd /usr/local/bin/bd
 COPY --from=builder /hive-backup /usr/local/bin/hive-backup
+# crux (#13536, src/docs/crux-cli.md): the agent runtime's own CLI. Ships in
+# the image so an operator can `crux ps` / `crux logs` against a definition
+# set inside the container without the dashboard.
+COPY --from=builder /crux /usr/local/bin/crux
 
 # #5646 — hivectl travels in the image as CARGO, not as part of the runtime.
 # It is the host-side client of the dashboard API, and the whole premise of
@@ -530,7 +586,7 @@ COPY --from=builder /hive-admin-mcp /usr/local/share/hive/hive-admin-mcp
 # change (which stops the OCI-index form that enables the metacopy layout in the
 # first place) and this rewrite are independent, belt-and-suspenders defenses.
 RUN for b in /usr/local/bin/hive /usr/local/bin/bd /usr/local/bin/hive-backup \
-             /usr/local/share/hive/hivectl \
+             /usr/local/bin/crux /usr/local/share/hive/hivectl \
              /usr/local/share/hive/hive-admin-mcp; do \
       cp --remove-destination "$b" "$b.fresh" && \
       mv -f "$b.fresh" "$b" && \
@@ -565,6 +621,9 @@ COPY bin/hive-review.sh /usr/local/bin/hive-review
 COPY bin/hive-push-branch.sh /usr/local/bin/hive-push-branch
 COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
+# Compact `gh --json` projections for the common read verbs (#12127); runs the
+# wrapper above, so every gate still applies — it is a projection, not a bypass.
+COPY bin/hive-gh.sh /usr/local/bin/hive-gh
 COPY bin/go-wrapper.sh /usr/local/go/bin/go
 # SDK-based copilot model discovery helper (see Layer 3b). Invoked as
 # `node /usr/local/bin/copilot-models.mjs` by the dashboard, so no exec bit.
@@ -573,7 +632,7 @@ COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh /usr/local/go/bin/go \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-open-issue /usr/local/bin/hive-merge /usr/local/bin/hive-review \
-    /usr/local/bin/hive-push-branch \
+    /usr/local/bin/hive-push-branch /usr/local/bin/hive-gh \
     /usr/local/bin/hive-baseline-check.sh
 
 # SECURITY (#4045): interactive-shell arm of the agent credential scrub.
@@ -616,7 +675,7 @@ RUN printf '\n# hive #4045: scrub backend-exported GitHub credentials from agent
 # while silently leaving CapAmb=0x0. When the bounding set LACKS it (self-hosted/rootless), the entrypoint
 # does NOT attempt the raise (setpriv would error) and falls back to plain
 # `gosu dev`: the binary execs fine (no file cap to block it) and the proxy's
-# SO_MARK path degrades gracefully (src/pkg/proxy/github_proxy.go logs once and
+# SO_MARK path degrades gracefully (src/crux/proxy/github_proxy.go logs once and
 # dials unmarked). setpriv comes from util-linux, installed in Layer 1.
 
 # --- Nous framework (strategist experiment engine) ---
@@ -626,7 +685,7 @@ RUN (apt-get update && apt-get install -y --no-install-recommends \
 COPY bin/nous-runner.sh bin/nous-sync.py bin/nous-hive-gate.py bin/nous-install.sh /tmp/hive/bin/
 RUN chmod +x /tmp/hive/bin/*.sh
 COPY examples/kubestellar/nous-campaign.yaml examples/kubestellar/nous-governor-campaign.yaml examples/kubestellar/nous-repo-campaign.yaml /etc/hive/
-RUN mkdir -p /var/run/nous/governor /var/run/nous/repo /data/nous/snapshots /opt/nous
+RUN mkdir -p /var/run/nous/governor /var/run/nous/repo /data/nous/governor /data/nous/snapshots /opt/nous
 # Pinned (issue #6479 — the #3340 pins were lost in the v2→src migration):
 # unpinned pip installs pull whatever PyPI serves at build time, breaking
 # reproducibility and exposing every image build to a malicious release.

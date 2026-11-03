@@ -36,6 +36,13 @@ func (c *Config) validateSaveGuard() error {
 		log.Printf("WARNING: config.Save() blocked — no agents configured and no tombstones, would corrupt hive.yaml")
 		return fmt.Errorf("no agents configured")
 	}
+	// A backend/launch_cmd contradiction written here is a config the loader
+	// will reject on the next boot. Refuse it now, while the caller can still
+	// report the error, instead of persisting a crash-loop.
+	if err := c.ValidateAgentLaunchCmds(); err != nil {
+		log.Printf("WARNING: config.Save() blocked — %v", err)
+		return err
+	}
 	return nil
 }
 
@@ -477,4 +484,23 @@ func redactEnvExpandedValue(value string) string {
 		redacted = strings.ReplaceAll(redacted, item.value, "${"+item.name+"}")
 	}
 	return redacted
+}
+
+// ValidateAgentLaunchCmds runs the backend/launch_cmd gate over every agent.
+// It is the write-side twin of the loader's check: the dashboard's
+// persistence paths (Save, SaveAgentFile) call it so a contradiction is
+// refused at save time rather than discovered as a fatal error at boot.
+func (c *Config) ValidateAgentLaunchCmds() error {
+	names := make([]string, 0, len(c.Agents))
+	for name := range c.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		agent := c.Agents[name]
+		if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
+		}
+	}
+	return nil
 }

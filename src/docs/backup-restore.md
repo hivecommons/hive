@@ -2,6 +2,30 @@
 
 Hive has two backup paths with different scopes: nightly encrypted hub disaster-recovery archives, and on-demand per-spoke backups an owner can download from the dashboard.
 
+## Choose your recovery task
+
+| What you need | Access required | Route |
+|---|---|---|
+| Download a backup of one hive | Dashboard owner | [Owner-triggered spoke backup](#owner-triggered-spoke-backup) |
+| Restore that spoke archive | Administrator with shell access to the target data volume | [Spoke restore](#restoring-a-spoke-backup-archive) |
+| Restore as a hosted owner with no shell | Hub/deployment administrator must perform it | [No-shell limitation](#still-manual-the-fully-hosted-no-shell-case); **there is no upload/restore endpoint** |
+| Back up or rebuild the hub/fleet | Hub/cluster administrator, object-storage access and escrowed key | [Hub backup](#hub-disaster-recovery-hive-backup), [hub restore](#restore), [CronJob](#kubernetes-cronjob) |
+| Back up/restore a standalone host volume | Host runtime administrator | [Docker Compose](#docker-compose) or [Podman Quadlet](#podman-quadlet); commands are not interchangeable |
+| Move hosts or change runtime | Source and destination deployment administrators | Migration guides below; [same-host Docker → Podman](#docker--podman-migration) is a specific reference case |
+| Inspect configuration only | Dashboard owner | [Config export](#config-export-is-not-a-backup), not data recovery |
+
+**Before any restore:** have the **source archive's escrowed key**, stop writes
+to the target, and identify the correct target volume. Keep the source and a
+backup of any destination data until identity, keys, ledger and config are
+verified. `restore` prepares files; restarting and validating the deployment
+remain separate actions. Do not paste private keys or their contents into logs.
+
+**Terms:** DR = disaster recovery; **escrow** means keeping the decryption key
+somewhere safe outside the cluster being backed up; **PVC** = Kubernetes
+persistent volume claim. **UID mapping** translates container user IDs to host
+IDs. **SELinux** is a host access-control system whose file labels affect
+container access; a correct Unix owner alone may not be enough.
+
 > **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Moving a Hive between hosts, same runtime](move-host.md), [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md); [Cross-runtime moves](move-cross-runtime.md) covers Podman ↔ Docker cross-host and Compose/Quadlet ↔ Kubernetes, using the same-host Docker → Podman migration below as its reference case.
 
 ## Config export is not a backup
@@ -63,6 +87,9 @@ Environment:
 
 ## Restore
 
+**Hub archives only — access: hub/cluster administrator.** For a downloaded
+single-spoke archive, use [spoke restore](#restoring-a-spoke-backup-archive).
+
 `hive-backup verify -file <archive>` checks integrity: the GCM auth tag rejects a wrong key or any bit-flip. `hive-backup extract -file <archive> -dest ./restore` decrypts into a directory and verifies hashes. Neither mutates a live cluster.
 
 A restore operator should inspect the extracted `MANIFEST.json`, re-apply the captured Secret JSON to the new hub namespace, copy `hub/` files back to the hub PVC, and recreate or patch spokes from `spokes/<hive-id>/`. Any `spoke_errors` in the manifest are honest gaps: those spokes were not captured and need separate recovery.
@@ -80,7 +107,7 @@ Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, e
 
 ## Owner-triggered spoke backup
 
-`pkg/spokebackup` is complementary: it backs up one spoke on demand for its owner and includes the spoke's bead ledger. It uses the same AES-256-GCM sealing as the hub path and is sized for browser download, not nightly fleet DR. It includes `hive.yaml.dashboard`, runtime config files, `hive-id`, `hive-state.json`, GitHub App keys, and `/data/beads/*`; it skips bulk/derived data and live dashboard sessions.
+`pkg/spokebackup` is complementary: it backs up one spoke on demand for its owner and includes the spoke's bead ledger. It uses the same AES-256-GCM sealing as the hub path and is sized for browser download, not nightly fleet DR. It includes `hive.yaml.dashboard`, runtime config files, `hive-id`, `hive-state.json`, GitHub App keys, and `/data/beads/*`, plus the reserved `/data/vaults/bead-synth-wiki/*.md` facts even when repository publishing is disabled. Other vaults, nested files, attachments, and symlinks remain excluded, as do bulk/derived data and live dashboard sessions. This captures the default vault location only; a custom `knowledge.bead_synthesizer.vault_path` is not backed up (see `vault_path` in [knowledge-curator.md](knowledge-curator.md)).
 
 ### Setting the backup encryption key (hosted flow)
 
@@ -110,22 +137,45 @@ Resolution order at backup time is governor config first, then the environment:
 
 ## Restoring a spoke backup archive
 
+**Access: shell on the target deployment/data volume.** Hosted dashboard owners
+can download archives but cannot upload/restore them. Ask the hub administrator
+to carry out this procedure; see the [no-shell limitation](#still-manual-the-fully-hosted-no-shell-case).
+
 > **Status: the decrypt/extract step and the `hive-backup restore` command below are OBSERVED — executed while writing this section, command output included. Loading the restored `/data` into a real container and rebooting it is DOCUMENTED, NOT EXECUTED — no container runtime was available to prove that half.**
 
-This answers epic [#6521](https://github.com/hivecommons/hive/issues/6521) item #16, [#6527](https://github.com/hivecommons/hive/issues/6527) and [#6529](https://github.com/hivecommons/hive/issues/6529): **restoring a `pkg/spokebackup` archive into a fresh deployment is a single command.** `pkg/spokebackup` deliberately reuses `pkg/hubbackup`'s builder (`src/pkg/hubbackup/builder_export.go:1-22`, "so `Verify` and `Extract` accept both archive kinds unchanged") — it produces the same AES-256-GCM-sealed, SHA-256-manifested tar.gz that `hive-backup` already knows how to decrypt.
+`hive-backup restore` decrypts a spoke archive and places its files in the
+target data directory. That **file-placement step** is one command, not a
+one-command live-service recovery.
+
+**Safe sequence:** stop the target Hive process, mount the intended data
+volume, supply the source archive's `HIVE_BACKUP_KEY`, run `-dry-run`, inspect
+the identity result, then restore. Restart and verify before retiring source
+data. If a target has another hive's ID, stop and resolve the mismatch:
+`-force` bypasses the guard and can splice one hive's keys/config onto another.
+The [placement limits](#placing-the-files-hive-backup-restore--executed)
+below also explain bead merging, file modes and boot-time ownership.
 
 There are two verbs, and the difference matters:
 
 | | `hive-backup extract` | `hive-backup restore` |
 | --- | --- | --- |
-| Output | a plain directory still carrying the archive's `spoke/` and `beads/` prefixes | a populated spoke data directory |
-| Path mapping | none — prefixes preserved | `spoke/` → data-dir root, `beads/<agent>/` → `<data-dir>/beads/<agent>/` |
+| Output | a plain directory still carrying the archive's `spoke/`, `beads/`, `nous/` and `bead-synth-wiki/` prefixes | a populated spoke data directory |
+| Path mapping | none — prefixes preserved | `spoke/` → data-dir root, `beads/<agent>/` → `<data-dir>/beads/<agent>/`, `nous/` → `<data-dir>/nous/`, `bead-synth-wiki/<slug>.md` → `<data-dir>/vaults/bead-synth-wiki/<slug>.md` |
 | Identity guard | none | refuses a destination that belongs to a different hive |
 | Use it for | inspecting an archive; a **hub** disaster-recovery archive, whose Secret/PVC reassembly is manual | putting a **spoke** archive back on a deployment |
 
+<details>
+<summary>Archive layout, implementation evidence and recorded extraction trial</summary>
+
+The spoke builder reuses the hub archive format: AES-256-GCM encryption and
+a SHA-256 manifest (`src/pkg/hubbackup/builder_export.go:1-22`).
+History: [#6521](https://github.com/hivecommons/hive/issues/6521) item #16,
+[#6527](https://github.com/hivecommons/hive/issues/6527) and
+[#6529](https://github.com/hivecommons/hive/issues/6529).
+
 ### What the archive contains, and where each path goes on restore
 
-The archive has two top-level directories (`src/pkg/spokebackup/backup.go:111-116`):
+The archive has three top-level directories (`spoke/`, `beads/`, `nous/`; see `src/pkg/spokebackup/backup.go`), plus `bead-synth-wiki/` when synthesized facts exist:
 
 | Archive path | Container path (relative to `HIVE_SPOKE_BACKUP_DATA_DIR`, default `/data`) | Source |
 | --- | --- | --- |
@@ -134,11 +184,13 @@ The archive has two top-level directories (`src/pkg/spokebackup/backup.go:111-11
 | `spoke/hive.yaml.bak` | `/data/hive.yaml.bak` | `configRuntimeFileLegacy`, `backup.go:94` (present only on hives that have not saved config since the rename) |
 | `spoke/hive-id` | `/data/hive-id` | `hiveIDFile`, `backup.go:97` |
 | `spoke/hive-state.json` | `/data/hive-state.json` | `stateFile`, `backup.go:100` |
-| `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:105`, matched with `filepath.Glob` (`backup.go:255`) |
+| `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:105`, matched with `filepath.Glob` (`backup.go:256`) |
 | `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:58,114` — one subtree per agent, discovered from the archive rather than a fixed list |
+| `nous/governor/ledger.json`, `nous/governor/principles.json`, `nous/panel-config.json` | `/data/nous/**` | `nousSubdir`/`nousPrefix` — the durable Nous (Experiment Lab) state from #11694. `nous/snapshots/` and `*.tmp` are skipped (`nousSkip`): snapshots are regenerable bulk data. A missing `nous/` dir is recorded in `Skipped`, not fatal. |
+| `bead-synth-wiki/<slug>.md` | `/data/vaults/bead-synth-wiki/<slug>.md` | `beadSynthPrefix`, `backup.go`; `addBeadSynthVault` in `pkg/spokebackup/bead_synth.go`; flat markdown facts only, restored at the synthesizer's own `0644` (not hardened to `0600`, since nothing re-applies ownership under `vaults/` at boot) |
 | `MANIFEST.json` | (not restored — it is metadata, verified by `Extract`, not spoke state) | `hubbackup` manifest format |
 
-The mapping is a flat rename of the two archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,586,879`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:1239-1248,1847-1853`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api_config.go:186`, `src/pkg/hub/cluster_app_key.go:393`).
+The mapping is a flat rename of the archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`, `nous/` → data-dir `nous/`, `bead-synth-wiki/` → data-dir `vaults/bead-synth-wiki/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,586,879`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:1239-1248,1847-1853`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api_config.go:186`, `src/pkg/hub/cluster_app_key.go:393`).
 
 ### Decrypting the archive — executed
 
@@ -163,7 +215,9 @@ $ cat restored/beads/agentA/bead-0001.json
 {"agent":"agentA","bead":1}
 ```
 
-`hive-id`, the GitHub App key (byte-for-byte, confirmed by SHA-256), and the bead ledger all round-tripped unchanged. `hive-state.json` also round-tripped here only because nothing was running to rewrite it — on a live restore expect it to be overwritten at the next boot, the same caveat the Podman restore section above notes for the same file.
+`hive-id`, the GitHub App key (byte-for-byte, confirmed by SHA-256), and the bead ledger all round-tripped unchanged. `hive-state.json` also round-tripped here only because nothing was running to rewrite it — on a live restore expect it to be overwritten at the next boot, as described in [Podman volume restore](#podman-volume-restore).
+
+</details>
 
 ### Placing the files: `hive-backup restore` — executed
 
@@ -177,6 +231,9 @@ hive-backup restore -file hive-spoke-backup-<id>-<ts>.tar.gz.enc -dest /data -dr
 
 hive-backup restore -file hive-spoke-backup-<id>-<ts>.tar.gz.enc -dest /data
 ```
+
+<details>
+<summary>Recorded synthetic restore trial (file placement, not a live-service boot)</summary>
 
 Executed here against a real archive built by `spokebackup.Build` from a synthetic `/data`-shaped directory (`hive-id`, a `gh-app-key.pem`, both config files, `hive-state.json`, and two agents' bead ledgers):
 
@@ -209,6 +266,8 @@ $ sha256sum src-data/gh-app-key.pem target-fresh/gh-app-key.pem
 997d7dab9ff6688a2f76e08fb77996becd53621bdfa1d21d0a453ee1d87bc779  target-fresh/gh-app-key.pem
 ```
 
+</details>
+
 Points worth knowing before you run it:
 
 1. **Supplying the encryption key.** The key is never in the archive by design (`src/pkg/spokebackup/backup.go`, "Encryption" doc comment: "the archive must be encrypted... The key is deliberately NOT embedded in, or derivable from, the archive"). `restore` resolves it exactly as `extract` does — `hubbackup.LoadKey`, i.e. `HIVE_BACKUP_KEY` in the environment the `hive-backup` binary runs in. **The escrowed key from the source hive is required — the target's own key setting, if any, is irrelevant to decrypting a foreign archive.** If the key was rotated after the archive was taken, the *old* key is what decrypts it (see "Escrow the key" above).
@@ -231,12 +290,13 @@ Points worth knowing before you run it:
    $ echo $?
    1
    ```
-3. **Where "the target `/data`" is.** On Kubernetes it is the spoke's PVC — run `restore` from an init container or a temporary debug pod mounting the same PVC before the hive Deployment's pod starts (or into a scaled-down Deployment's pod). On Compose/Quadlet it is the `hive-data` volume — use the same container-mediated pattern as the [host-level backup pattern](#host-level-backup-pattern) / [Podman restore](#restore) sections above. The `hive-backup` binary ships inside the hive image (`src/Dockerfile`), so a debug pod or `podman exec` on the hive image already has it.
+3. **Where "the target `/data`" is.** On Kubernetes it is the spoke's PVC — run `restore` from an init container or a debug pod mounting the same PVC while the Hive Deployment is scaled down, before restarting it. On Compose/Quadlet it is the data volume — use the container-mediated pattern in [host-level backup](#host-level-backup-pattern) or [Podman volume restore](#podman-volume-restore) below. The `hive-backup` binary ships inside the Hive image (`src/Dockerfile`).
 4. **A restore merges into the bead ledger rather than replacing it.** An agent present at the destination but absent from the archive keeps its beads; an agent in both gets the archive's copy. If you want a clean slate, empty `<dest>/beads` first.
 5. **Modes, and what `restore` does not do.** Every restored root file — the config pair, `hive-id`, `hive-state.json` and the GitHub App keys — is written `0600`, so a hand-built archive cannot widen a credential to world-readable. Ownership is *not* set: the entrypoint re-applies `0600` to the config files (`entrypoint.sh:437-450`, `hive_harden_runtime_config`) and re-chowns `beads/<agent>` to each agent's runtime UID (`entrypoint.sh:1847-1853`) on every boot, so a restore run from a host shell does not need to reproduce container-internal UIDs.
-6. **(Re)start the container**, then **verify** the same way the Podman section above does: `hive-id` and the GitHub App key SHA-256 must match the source hive; the bead ledger and dashboard config overlay must be present.
+6. **(Re)start the container**, then **verify** as in [Podman volume restore](#podman-volume-restore): `hive-id` and the GitHub App key SHA-256 must match the source hive; the bead ledger and dashboard config overlay must be present.
 
-`hive-state.json` round-trips, but on a live restore expect it to be overwritten at the next boot — the same caveat the Podman restore section above notes for the same file.
+`hive-state.json` round-trips, but on a live restore expect it to be overwritten
+at the next boot — also noted in [Podman volume restore](#podman-volume-restore).
 
 ### Still manual: the fully hosted, no-shell case
 
@@ -272,11 +332,12 @@ On Docker and LXC the entrypoint treats `/data` as the boot-time source of truth
 - `hive-id`;
 - `hive-state.json`;
 - `gh-app-key*.pem`, the GitHub App private keys;
-- `beads/`, the agent work ledger.
+- `beads/`, the agent work ledger;
+- `nous/`, durable Nous (Experiment Lab) state — governor ledger, principles and panel config (snapshots excluded from the spoke backup).
 
 Hub deployments also keep `hub-registry.json` and `clusters.json` in `/data`. A standalone Compose spoke has neither.
 
-Regenerable bulk state such as `nous/`, `home/`, and `logs/` can be excluded from a backup. `docker compose down -v` deletes the named volume.
+Regenerable bulk state such as `nous/snapshots/`, `home/`, and `logs/` can be excluded from a backup. `docker compose down -v` deletes the named volume.
 
 ### `hive-backup run` does not apply
 
@@ -297,7 +358,7 @@ Managing the key from the dashboard is also owner-only:
 - `PUT /api/config/governor/backup` — `{"encryptionKey":"<64 hex>","keyName":"escrowed in 1Password"}`.
 - `DELETE /api/config/governor/backup` — removes the stored key; backups are refused again.
 
-The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, and `beads/`. It is encrypted and sized for browser download, not nightly fleet DR.
+The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, `beads/`, `nous/` (minus snapshots), and the synthesized facts in `vaults/bead-synth-wiki/*.md`. It is encrypted and sized for browser download, not nightly fleet DR.
 
 ### Host-level backup pattern
 
@@ -432,6 +493,8 @@ systemctl --user stop hive-data-volume.service  # not destructive
 podman volume rm hive-data                      # DESTRUCTIVE -- this is the down -v step
 ```
 
+<a id="podman-volume-restore"></a>
+
 ### Restore
 
 **Recreate the volume through its unit, not with `podman volume create`.** Both give you an empty `hive-data`; only one of them is Hive's. Observed:
@@ -551,6 +614,9 @@ Doing it the other way round — `docker run --user "$(id -u):$(id -g)"` in step
 Also copy the Docker deployment's `src/hive.yaml` to `%E/hive/hive.yaml` and `src/secrets/` to `%E/hive/secrets/`, then re-apply the secrets ownership as described above. Two settings do **not** carry over and have to be moved by hand: the Compose `environment:` block becomes `%E/hive/hive.env`, and `dashboard.port` must be `3002` to match the unit's `HealthCmd` ([#4367](podman-standalone-quadlet.md)).
 
 ## Podman: what was observed
+
+This is supporting evidence, not another restore procedure. Follow
+[Podman volume restore](#podman-volume-restore) for the action sequence.
 
 Fedora 44, Podman 5.8.4, systemd 259, cgroup v2, SELinux **enforcing**, Docker 29.7.2, against the real `ghcr.io/hivecommons/hive:stable` image (`sha256:ec8e69bc…`). Three separate deployments, each with its own identity, so a restore returning the wrong data would be visible rather than plausible.
 

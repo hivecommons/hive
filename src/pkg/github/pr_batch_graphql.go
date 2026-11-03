@@ -17,6 +17,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
       nodes {
         number
         headRefOid
+        baseRefOid
         updatedAt
         isDraft
         mergeable
@@ -35,7 +36,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
                 contexts(first: 50) {
                   nodes {
                     __typename
-                    ... on CheckRun { name conclusion status detailsUrl }
+                    ... on CheckRun { databaseId name conclusion status detailsUrl }
                     ... on StatusContext { context state targetUrl }
                   }
                 }
@@ -43,7 +44,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
             }
           }
         }
-        closingIssuesReferences(first: 10) { nodes { number } }
+        closingIssuesReferences(first: 10) { nodes { number title state stateReason url repository { nameWithOwner } } }
       }
     }
   }
@@ -76,6 +77,7 @@ type graphQLPRBatchResponse struct {
 type graphQLPRBatchNode struct {
 	Number           int       `json:"number"`
 	HeadRefOID       string    `json:"headRefOid"`
+	BaseRefOID       string    `json:"baseRefOid"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 	IsDraft          bool      `json:"isDraft"`
 	Mergeable        string    `json:"mergeable"`
@@ -106,13 +108,24 @@ type graphQLPRBatchNode struct {
 	} `json:"commits"`
 	ClosingIssuesReferences struct {
 		Nodes []struct {
-			Number int `json:"number"`
+			Number      int    `json:"number"`
+			Title       string `json:"title"`
+			State       string `json:"state"`
+			StateReason string `json:"stateReason"`
+			URL         string `json:"url"`
+			Repository  struct {
+				NameWithOwner string `json:"nameWithOwner"`
+			} `json:"repository"`
 		} `json:"nodes"`
 	} `json:"closingIssuesReferences"`
 }
 
 type graphQLPRBatchContext struct {
-	TypeName   string `json:"__typename"`
+	TypeName string `json:"__typename"`
+	// DatabaseID is the check run's REST id (CheckRun only). The external-CI
+	// marker pins a triage to it (hivecommons/hive#11609), and annotation
+	// lookups need the real id rather than a positional stand-in.
+	DatabaseID int64  `json:"databaseId"`
 	Name       string `json:"name"`
 	Conclusion string `json:"conclusion"`
 	Status     string `json:"status"`
@@ -240,7 +253,7 @@ func (c *Client) storeGraphQLPRBatchNode(repo string, n graphQLPRBatchNode) {
 		Mergeable:      mergeable,
 		MergeableState: gh.Ptr(state),
 		Head:           &gh.PullRequestBranch{SHA: gh.Ptr(n.HeadRefOID), Ref: gh.Ptr(n.HeadRefName)},
-		Base:           &gh.PullRequestBranch{Ref: gh.Ptr(n.BaseRefName)},
+		Base:           &gh.PullRequestBranch{SHA: gh.Ptr(n.BaseRefOID), Ref: gh.Ptr(n.BaseRefName)},
 	}
 	for _, l := range n.Labels.Nodes {
 		if strings.TrimSpace(l.Name) != "" {
@@ -290,6 +303,9 @@ func graphQLCheckRuns(n graphQLPRBatchNode) ([]*gh.CheckRun, bool) {
 			continue
 		}
 		id := int64(i + 1)
+		if ctx.TypeName == "CheckRun" && ctx.DatabaseID > 0 {
+			id = ctx.DatabaseID
+		}
 		out = append(out, &gh.CheckRun{
 			ID:         gh.Ptr(id),
 			Name:       gh.Ptr(name),
@@ -350,7 +366,14 @@ func (c *Client) storeGraphQLPRBatchReview(repo string, n graphQLPRBatchNode) {
 	st := prReviewState{decision: ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision)))}
 	for _, li := range n.ClosingIssuesReferences.Nodes {
 		if li.Number > 0 {
-			st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{Number: li.Number})
+			st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
+				Number:      li.Number,
+				Title:       li.Title,
+				Repo:        li.Repository.NameWithOwner,
+				State:       strings.ToLower(strings.TrimSpace(li.State)),
+				StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
+				URL:         li.URL,
+			})
 		}
 	}
 	byNumber[n.Number] = st

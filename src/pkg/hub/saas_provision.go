@@ -793,6 +793,14 @@ type SaaSHive struct {
 	// cannot touch any other way.
 	RequestedRestartAt string `json:"requested_restart_at,omitempty"`
 
+	// PendingBreaker queues a whole-hive pause ("engage") or resume
+	// ("release") requested from the hub's per-hive menu (#15092), with the
+	// requesting user in PendingBreakerBy. Delivered once on the next
+	// heartbeat (pendingBreakerForHeartbeat) and then cleared; durable here so
+	// a hub restart between click and beat does not drop it.
+	PendingBreaker   string `json:"pending_breaker,omitempty"`
+	PendingBreakerBy string `json:"pending_breaker_by,omitempty"`
+
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`
@@ -819,6 +827,21 @@ type SaaSHive struct {
 	// an upgrade that already went out at 17:01. Empty for instant-mode hives,
 	// which are never gated and never record a date.
 	AutoUpgradeLastFired string `json:"auto_upgrade_last_fired,omitempty"`
+	// AutoUpgradeLastAt is when an automatic upgrade last went out for this
+	// hive (any mode). Instant-mode hives are held until it is older than
+	// autoUpgradeCooldown() (#11825); persisted so a hub restart cannot reset
+	// the cooldown.
+	AutoUpgradeLastAt time.Time `json:"auto_upgrade_last_at,omitempty"`
+	// AutoUpgradeHoldReason / AutoUpgradeHoldAt record why the hub did NOT
+	// apply a daily/weekly hive's upgrade while its window was open (#11196):
+	// a target that would not resolve, a claim in flight, an undeliverable
+	// hive, a full wave, a debounce. Every one of those gates used to be a
+	// Debug log only, so a hive that skipped its 13:00 window looked the same
+	// as one with nothing to do. Persisted so the reason survives a hub
+	// restart and outlives the window itself; cleared when the hive is armed,
+	// reaches its target, or has its auto-upgrade setting changed.
+	AutoUpgradeHoldReason string    `json:"auto_upgrade_hold_reason,omitempty"`
+	AutoUpgradeHoldAt     time.Time `json:"auto_upgrade_hold_at,omitempty"`
 
 	// AutoUpgradePendingTarget / AutoUpgradePendingSince / AutoUpgradeCollapsed
 	// are the merge-driven upgrade DEBOUNCE state (#5391): the newest SHA seen
@@ -2268,16 +2291,16 @@ func provisionAdditionalAppKeys(fleetKeys map[int64]fleetAppKey, primaryAppID st
 const (
 	// hostedStartupBudget is the total time a new container gets to answer
 	// /api/health before kubelet restarts it.
-	hostedStartupBudget = 10 * time.Minute
+	hostedStartupBudget = spoke.HostedStartupBudget
 
 	// hostedStartupProbeInitialDelaySeconds and hostedStartupProbePeriodSeconds
 	// keep their pre-#9692 values; only the failure threshold grows.
-	hostedStartupProbeInitialDelaySeconds = 10
-	hostedStartupProbePeriodSeconds       = 5
+	hostedStartupProbeInitialDelaySeconds = spoke.HostedStartupProbeInitialDelaySeconds
+	hostedStartupProbePeriodSeconds       = spoke.HostedStartupProbePeriodSeconds
 
 	// hostedStartupProbeFailureThreshold is derived from the budget so the two
 	// can never disagree: (600s - 10s) / 5s = 118 probes.
-	hostedStartupProbeFailureThreshold = (int(hostedStartupBudget/time.Second) - hostedStartupProbeInitialDelaySeconds) / hostedStartupProbePeriodSeconds
+	hostedStartupProbeFailureThreshold = spoke.HostedStartupProbeFailureThreshold
 )
 
 // spokeSecretsMountPrefix is where the hive-secrets Secret is projected in the
@@ -3199,6 +3222,11 @@ data:
           threshold: 10
           guide: 2h
           scanner: 2h
+      # Hosted spokes run under the shared App, which is installed on
+      # hivecommons/hive, so they file self-reports there by default
+      # (#11868, #11878). Operators flip this off in Settings.
+      fleet_report:
+        enabled: true
     github:
 {{- if .UseApp}}
       app_id: {{.AppID}}
@@ -3708,6 +3736,12 @@ spec:
 # (#7405). Here an expired session answers a real 401, and the error backend
 # turns it into a JSON body for /api/ callers. Longest-prefix matching keeps
 # /api/v1 and /api/contribute on their own (ungated) Ingresses below.
+#
+# Machine callers that can never hold a hub session but still land on a gated
+# Ingress are waved through by the auth-check itself, not by a separate
+# Ingress: see publicExactPaths in saas_auth.go (/api/knowledge/export,
+# /api/widget/summary, /mcp/knowledge, /sso, and the hub's own webhook relay
+# target /api/webhook/github — the spoke verifies each of those on its own).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -3791,6 +3825,16 @@ metadata:
     # cross-origin login redirect — and a public path never needs one.
     nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
+    # Pinned explicitly, like hive and hive-api-xhr: an Ingress without this
+    # annotation inherits the controller's GLOBAL custom-http-errors list,
+    # which on the hosted cluster includes 403 and 404. Every /api/contribute
+    # answer is JSON a client reads, and the spoke uses 403 as an answer
+    # (interests, invites), so inheriting that list let nginx swap a JSON 403
+    # for the error backend's HTML — which the "Your contribution" card then
+    # parsed as JSON and reported as a bug (#12111). Only the two statuses
+    # that mean "the hive is not there to answer" are intercepted here.
+    nginx.ingress.kubernetes.io/custom-http-errors: "502,503"
+    nginx.ingress.kubernetes.io/default-backend: hive-error-pages
 spec:
   ingressClassName: {{.IngressClass}}
   rules:

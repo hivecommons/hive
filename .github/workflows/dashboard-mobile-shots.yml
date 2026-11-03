@@ -1,0 +1,56 @@
+name: Dashboard Mobile Shots
+
+# Reporting-only: screenshots the dashboard at phone/tablet viewports and
+# uploads them with the overflow report (#11808). continue-on-error keeps it
+# from ever blocking a merge; do not add it to required checks.
+on:
+  pull_request:
+    paths:
+      - 'src/pkg/dashboard/**'
+      - 'src/scripts/dashboard-mobile-shots.mjs'
+      - '.github/workflows/dashboard-mobile-shots.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-shots:
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      # The self-hosted fleet ships no browser (#11810): fetch Chrome for Testing
+      # into RUNNER_TEMP and hand it to the harness via CHROME_BIN. Best-effort —
+      # if the download fails the harness prints SKIP instead of crashing.
+      - name: Install Chrome for Testing
+        id: chrome
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          out="$(npx --yes @puppeteer/browsers@2 install chrome@stable --path "$RUNNER_TEMP/chrome-for-testing" | tail -n 1)"
+          bin="${out#* }"
+          test -x "$bin"
+          echo "CHROME_BIN=$bin" >> "$GITHUB_ENV"
+          "$bin" --version
+
+      - name: Capture mobile screenshots and overflow report
+        run: node src/scripts/dashboard-mobile-shots.mjs --out dashboard-mobile-shots-out
+
+      - name: Upload screenshots and overflow report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dashboard-mobile-shots
+          path: dashboard-mobile-shots-out/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -160,3 +160,52 @@ func TestVibeKanbanBindingDefaultsOffModesAndYAML(t *testing.T) {
 		t.Fatalf("parsed = %+v mode=%q", v, cfg.VibeKanbanBindingMode())
 	}
 }
+
+func TestClaudeManagedAgentsBindingDefaultsModesAndYAML(t *testing.T) {
+	var nilCfg *Config
+	if nilCfg.ClaudeManagedAgentsBindingEnabled() || nilCfg.ClaudeManagedAgentsBindingMode() != FlueBindingModeOff {
+		t.Fatal("nil config must keep hosted binding off")
+	}
+	var cfg Config
+	if cfg.ClaudeManagedAgentsBindingEnabled() || cfg.ClaudeManagedAgentsBindingMode() != FlueBindingModeOff {
+		t.Fatalf("zero config: enabled=%v mode=%q", cfg.ClaudeManagedAgentsBindingEnabled(), cfg.ClaudeManagedAgentsBindingMode())
+	}
+	cfg.Runs.External.ClaudeManagedAgents.Enabled = true
+	if cfg.ClaudeManagedAgentsBindingMode() != FlueBindingModeShadow {
+		t.Fatalf("enabled hosted binding without mode = %q, want shadow", cfg.ClaudeManagedAgentsBindingMode())
+	}
+	if got := (ClaudeManagedAgentsBindingConfig{Enabled: true, Mode: "report-only"}).EffectiveMode(); got != FlueBindingModeReportOnly {
+		t.Fatalf("report-only mode = %q", got)
+	}
+	if got := (ClaudeManagedAgentsBindingConfig{Enabled: true, Mode: "publish"}).EffectiveMode(); got != FlueBindingModeOff {
+		t.Fatalf("invalid hosted mode = %q, want off", got)
+	}
+	src := `runs:
+  external:
+    claude_managed_agents:
+      enabled: true
+      mode: report-only
+      endpoint: https://api.anthropic.com
+      workflow_version: claude-managed/2026-04-01
+      agent_id: agt_private
+      agent_version: 3
+      toolset_version: hive-tools/1
+      environment_id: env_private
+      environment_type: self_hosted
+      network_policy: forced-egress
+      api_key_env: ANTHROPIC_API_KEY
+      model: claude-sonnet-4-6
+      state_dir: /data/extwork/claude-managed-agents
+      daily_budget_cents: 2500
+      github_write_path: none
+`
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := cfg.Runs.External.ClaudeManagedAgents
+	if !cfg.ClaudeManagedAgentsBindingEnabled() || cfg.ClaudeManagedAgentsBindingMode() != FlueBindingModeReportOnly ||
+		m.AgentID != "agt_private" || m.AgentVersion != 3 || m.EnvironmentType != "self_hosted" ||
+		m.NetworkPolicy != "forced-egress" || m.DailyBudgetCents != 2500 {
+		t.Fatalf("parsed hosted config = %+v mode=%q", m, cfg.ClaudeManagedAgentsBindingMode())
+	}
+}

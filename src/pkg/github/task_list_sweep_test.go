@@ -112,9 +112,10 @@ type taskListSweepFixture struct {
 // taskListMergedPR is a closed+merged PR on the wire whose title/body may
 // reference open issues.
 type taskListMergedPR struct {
-	Number int
-	Title  string
-	Body   string
+	Number   int
+	Title    string
+	Body     string
+	MergedAt time.Time // zero → 30 minutes before the mock started
 }
 
 // sweepObservations records every mutation the sweep performs against the
@@ -131,8 +132,9 @@ type sweepObservations struct {
 }
 
 type sweepMockComment struct {
-	ID   int64
-	Body string
+	ID        int64
+	Body      string
+	CreatedAt time.Time
 }
 
 func newSweepObservations() *sweepObservations {
@@ -218,6 +220,9 @@ func taskListSweepServer(t *testing.T, org, repo string, issues []taskListSweepF
 		for _, pr := range merged {
 			// mergedAt / updatedAt both within window so the sweep counts them.
 			ts := now.Add(-30 * time.Minute).Format(time.RFC3339)
+			if !pr.MergedAt.IsZero() {
+				ts = pr.MergedAt.Format(time.RFC3339)
+			}
 			wire = append(wire, map[string]any{
 				"number":     pr.Number,
 				"title":      pr.Title,
@@ -293,11 +298,15 @@ func taskListSweepServer(t *testing.T, org, repo string, issues []taskListSweepF
 				obs.mu.Unlock()
 				wire := make([]map[string]any, 0, len(list))
 				for _, c := range list {
-					wire = append(wire, map[string]any{
+					entry := map[string]any{
 						"id":   c.ID,
 						"body": c.Body,
 						"user": map[string]any{"login": "hive-app[bot]", "type": "Bot"},
-					})
+					}
+					if !c.CreatedAt.IsZero() {
+						entry["created_at"] = c.CreatedAt.Format(time.RFC3339)
+					}
+					wire = append(wire, entry)
 				}
 				_ = json.NewEncoder(w).Encode(wire)
 				return
@@ -780,10 +789,12 @@ func TestSweepNonTaskListRefsCommentsAndLabelsNeedsHuman(t *testing.T) {
 	fixtures := []taskListSweepFixture{
 		{Number: 830, Body: "Prose finding with no boxes." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
 		{Number: 831, Body: "Another prose finding." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
+		{Number: 832, Body: "Fix-lane finding." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
 	}
 	merged := []taskListMergedPR{
 		{Number: 930, Title: "land staged work", Body: "## Fix\n\nRefs #830 — docs follow-up remains for a later agent phase"},
 		{Number: 931, Title: "land reachable work", Body: "## Fix\n\nRefs #831 (needs-human: denied file requires maintainer edit)\n\n## What this deliberately leaves undone\n\n- Change `.github/settings.yml`; this needs a human with repo settings access."},
+		{Number: 932, Title: "tests only", Body: "Refs #832\n\n## What remains\n\nA production change in `src/learner.ts`; #832 stays open for the fix lane."},
 	}
 	server, obs := taskListSweepServer(t, org, repo, fixtures, merged)
 	defer server.Close()
@@ -809,11 +820,58 @@ func TestSweepNonTaskListRefsCommentsAndLabelsNeedsHuman(t *testing.T) {
 	if labels := obs.labelsAdded[831]; len(labels) != 1 || labels[0] != issueNeedsHumanLabel {
 		t.Fatalf("labelsAdded[831] = %v; want [%s]", labels, issueNeedsHumanLabel)
 	}
+	if labels := obs.labelsAdded[832]; len(labels) != 1 || labels[0] != issueHandoffLabel {
+		t.Fatalf("labelsAdded[832] = %v; want soft [%s], never needs-human", labels, issueHandoffLabel)
+	}
 	if body := obs.commentsPosted[831][0]; !strings.Contains(body, "`.github/settings.yml`") || !strings.Contains(body, "needs human") {
 		t.Errorf("needs-human comment did not carry the PR remainder section: %q", body)
 	}
 	if len(obs.closed) != 0 {
 		t.Fatalf("closed = %v; non-task-list Refs issues must stay open", obs.closed)
+	}
+}
+
+// TestSweepNonTaskListRefsRespectsMaintainerAcceptance pins #13516: once a
+// maintainer has answered (accepted `/hive approve` reply or label approval)
+// after a PR merged, that PR's needs-human marker must not re-add the label;
+// a PR merged after the answer with its own marker still does.
+func TestSweepNonTaskListRefsRespectsMaintainerAcceptance(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	now := time.Now()
+	approvedAt := now.Add(-20 * time.Minute)
+	fixtures := []taskListSweepFixture{
+		{Number: 860, Body: "Prose finding." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
+		{Number: 861, Body: "Another prose finding." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
+		{Number: 862, Body: "Label-approved finding." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
+	}
+	merged := []taskListMergedPR{
+		{Number: 960, Title: "land slice", Body: "Refs #860 (needs-human: owner must pick option A, B or C)", MergedAt: now.Add(-40 * time.Minute)},
+		{Number: 961, Title: "land first slice", Body: "Refs #861 (needs-human: owner must pick option A, B or C)", MergedAt: now.Add(-40 * time.Minute)},
+		{Number: 962, Title: "land second slice", Body: "Refs #861 (needs-human: a new protected file needs a maintainer)", MergedAt: now.Add(-10 * time.Minute)},
+		{Number: 963, Title: "land slice", Body: "Refs #862 (needs-human: owner must pick option A, B or C)", MergedAt: now.Add(-40 * time.Minute)},
+	}
+	server, obs := taskListSweepServer(t, org, repo, fixtures, merged)
+	defer server.Close()
+	accepted := unparkReplyMarkerPrefix + "1 -->\n" + renderUnparkAcceptedReplyKeeping("maintainer", "approve", nil, true, unparkNeedsHumanOutcome{lift: true})
+	obs.comments[860] = []sweepMockComment{{ID: 1_000_700, Body: accepted, CreatedAt: approvedAt}}
+	obs.comments[861] = []sweepMockComment{{ID: 1_000_701, Body: accepted, CreatedAt: approvedAt}}
+	obs.comments[862] = []sweepMockComment{{ID: 1_000_702, Body: labelApprovalMarker(42) + "\nApproved via `approved`.", CreatedAt: approvedAt}}
+	c := newTestClient(t, server, org, []string{repo})
+
+	if _, err := c.SweepCompletedTaskListIssues(context.Background(), TaskListSweepOptions{}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if labels := obs.labelsAdded[860]; len(labels) != 0 {
+		t.Errorf("labelsAdded[860] = %v; an accepted /hive approve newer than the merge must keep needs-human off", labels)
+	}
+	if labels := obs.labelsAdded[862]; len(labels) != 0 {
+		t.Errorf("labelsAdded[862] = %v; a label approval newer than the merge must keep needs-human off", labels)
+	}
+	if labels := obs.labelsAdded[861]; len(labels) != 1 || labels[0] != issueNeedsHumanLabel {
+		t.Errorf("labelsAdded[861] = %v; want [%s] for a PR merged after the approval", labels, issueNeedsHumanLabel)
+	}
+	if len(obs.commentsPosted[860]) != 1 {
+		t.Errorf("commentsPosted[860] = %d; the remainder comment is still posted", len(obs.commentsPosted[860]))
 	}
 }
 
@@ -899,7 +957,7 @@ func TestRefsRemainderMetadataNeedsHumanSignals(t *testing.T) {
 
 	meta = refsRemainderMetadata("Refs #14 — protected file remains\n\n## What this deliberately leaves undone\n\nThese edits must be applied by hand as one atomic diff for a human because the file is denied.", "o/r")
 	got = meta[claimKey("o/r", 14)]
-	if !got.Reference || !got.NeedsHuman {
+	if !got.Reference || got.NeedsHuman || !got.Handoff {
 		t.Fatalf("precise prose fallback meta = %+v", got)
 	}
 
@@ -925,7 +983,7 @@ func TestRefsRemainderMetadataNeedsHumanSignals(t *testing.T) {
 
 	meta = refsRemainderMetadata("Refs #17 — protected file remains\n\n## What remains\n\n- #17 update protected settings:\n  this needs a human with admin access.", "o/r")
 	got = meta[claimKey("o/r", 17)]
-	if !got.Reference || !got.NeedsHuman || !strings.Contains(got.Remainder, "admin access") {
+	if !got.Reference || got.NeedsHuman || !got.Handoff || !strings.Contains(got.Remainder, "admin access") {
 		t.Fatalf("scoped multi-line bullet meta = %+v; want continuation-line needs-human signal", got)
 	}
 
@@ -939,7 +997,7 @@ func TestRefsRemainderMetadataNeedsHumanSignals(t *testing.T) {
 	} {
 		meta = refsRemainderMetadata("Refs #16 — remainder described below\n\n"+tc.text, "o/r")
 		got := meta[claimKey("o/r", 16)]
-		if got.NeedsHuman != tc.wantNeedsHuman {
+		if got.NeedsHuman || got.Handoff != tc.wantNeedsHuman {
 			t.Fatalf("human prose meta for %q = %+v; want needs-human %v", tc.text, got, tc.wantNeedsHuman)
 		}
 	}

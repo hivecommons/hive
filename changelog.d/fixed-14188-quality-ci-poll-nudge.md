@@ -1,0 +1,1 @@
+- The CI-poll guard now exempts the quality lane's mandatory shared-CI baseline triage, alongside reviewer and CI-maintainer lanes, so cross-PR check reads do not trigger a stop-polling nudge or `ci_poll_nudge` self-report (#14188).

@@ -550,6 +550,7 @@ func TestContributeK8sHeadlessCapability(t *testing.T) {
 		{"agy", false, "headless-capable (agy -p) but cannot sign in inside a pod"},
 		{"pi", false, "interactive TUI, no known one-shot entry point"},
 		{"omp", false, "interactive mode only; one-shot pod contract is unverified"},
+		{"omnigent", false, "interactive `omnigent run --server local` only; upstream `run -p` one-shot is documented but not wired or verified by Hive"},
 	} {
 		// The capability map is emitted as a JS object literal keyed by backend.
 		present := strings.Contains(capabilityMap, tc.backend+":1")

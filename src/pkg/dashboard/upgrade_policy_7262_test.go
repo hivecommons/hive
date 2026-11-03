@@ -523,3 +523,60 @@ func TestIndexHTMLHubTabReflectsUpgradePolicy(t *testing.T) {
 		t.Error("index.html still measures the top-bar badge against a hard-wired v4 tip (#7262)")
 	}
 }
+
+// A dashboard-button record settled days ago must not outrank a newer landed
+// outcome: the Channel card read "Last upgrade 0978b9c · 4d ago" on a hive the
+// hub had rolled daily since, while the upgrade banner beside it announced
+// the newer commit.
+func TestSelectUpgradeAttemptNewestEvidenceWins(t *testing.T) {
+	now := time.Date(2026, 10, 14, 15, 20, 0, 0, time.UTC)
+	staleDone := &dashboardUpgradeState{
+		State:     dashboardUpgradeStateDone,
+		Target:    "0978b9c447a3c5eeb6423cae9e00f17a3ae646e2",
+		UpdatedAt: now.Add(-4 * 24 * time.Hour),
+		Reason:    "running commit 0978b9c is at or ahead of requested target fa00a72",
+	}
+	newerOutcome := &upgradeOutcome{
+		TargetSHA:   "df85022",
+		CurrentSHA:  "92be119",
+		RequestedAt: now.Add(-14 * time.Minute),
+		CompletedAt: now.Add(-13 * time.Minute),
+	}
+	running := "df850229a6ac9f60bc1bf1ccd11bdb7f5d2683f4"
+	base := buildUpgradeAttemptStatus(newerOutcome, nil, running)
+
+	got := selectUpgradeAttempt(base, staleDone, newerOutcome, running)
+	if got.State != upgradeAttemptSucceeded || !sameCommitDashboard(got.Target, "df85022") || got.Superseded {
+		t.Fatalf("stale done vs newer outcome = %+v, want the newer landed outcome", got)
+	}
+	if got.CompletedAt != newerOutcome.CompletedAt.UTC().Format(time.RFC3339) {
+		t.Errorf("CompletedAt = %q, want the outcome's landing time", got.CompletedAt)
+	}
+
+	// A done record with no outcome at all, whose target is no longer the
+	// running commit, must say so rather than present the old target as current.
+	noOutcome := selectUpgradeAttempt(buildUpgradeAttemptStatus(nil, nil, running), staleDone, nil, running)
+	if noOutcome.State != upgradeAttemptSucceeded || !noOutcome.Superseded || noOutcome.RunningCommit != "df85022" {
+		t.Fatalf("stale done without outcome = %+v, want succeeded+superseded leading with the running commit", noOutcome)
+	}
+	if !strings.HasPrefix(noOutcome.Detail, "The hive is running df85022.") {
+		t.Errorf("Detail = %q, must lead with the running commit", noOutcome.Detail)
+	}
+
+	// A done record that is still the running commit and newer than the
+	// outcome keeps winning.
+	freshDone := &dashboardUpgradeState{State: dashboardUpgradeStateDone, Target: running, UpdatedAt: now.Add(-time.Minute)}
+	if got := selectUpgradeAttempt(base, freshDone, newerOutcome, running); !sameCommitDashboard(got.Target, running) || got.CompletedAt != freshDone.UpdatedAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("fresh done = %+v, want the dashboard record", got)
+	}
+
+	// An unresolved request is live state and always outranks a past landing.
+	inflight := &dashboardUpgradeState{State: dashboardUpgradeStateStarted, Target: "abcdef0", StartedAt: now.Add(-5 * 24 * time.Hour), UpdatedAt: now.Add(-5 * 24 * time.Hour)}
+	if got := selectUpgradeAttempt(base, inflight, newerOutcome, running); got.State != upgradeAttemptInProgress {
+		t.Fatalf("in-flight = %+v, want in_progress", got)
+	}
+
+	if got := selectUpgradeAttempt(base, nil, newerOutcome, running); got.Target != base.Target {
+		t.Fatalf("nil manual = %+v, want base", got)
+	}
+}

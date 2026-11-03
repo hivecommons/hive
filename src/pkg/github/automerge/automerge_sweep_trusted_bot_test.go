@@ -7,6 +7,10 @@ package automerge
 // and the lane string recorded on the mutation claim distinguishes the two.
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -71,5 +75,118 @@ func TestPrefilterSelfAuthoredPRAdmitsTrustedBot(t *testing.T) {
 	pr.Draft = nil
 	if got := c.prefilterSelfAuthoredPR(pr); got != "not-app-authored" {
 		t.Fatalf("revoked trusted bot should be not-app-authored, got %q", got)
+	}
+}
+
+func TestPrefilterTrustedAuthorPRDoesNotSpecialCaseTrustedBot(t *testing.T) {
+	// The prefilter's contract is genuine skip reasons only; lane hand-off is
+	// the sweep loop's decision, so a trusted bot here is judged by the role
+	// gate like any other author.
+	c := newTrustedBotEngine(t, func() map[string]bool { return map[string]bool{"dependabot[bot]": true} })
+	c.trustedAuthorizer = func(string, string) TrustedAuthorDecision { return TrustedAuthorDecision{} }
+	pr := selfAuthoredListPR(func(pr *gh.PullRequest) {
+		pr.User = &gh.User{Login: gh.Ptr("dependabot[bot]")}
+	})
+	if got := c.prefilterTrustedAuthorPR("acme", "widget", pr, TrustedAuthorPolicy{RequireRole: "merger"}); got != "untrusted-author-role" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want untrusted-author-role", got)
+	}
+}
+
+func TestTrustedAuthorSweepHandsTrustedBotToSelfAuthoredLane(t *testing.T) {
+	fx := trustedSweepFixture{author: "dependabot[bot]"}
+	api := newTrustedSweepAPI(t, &fx)
+	defer api.Close()
+	policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+	trustedAuthorChecks := 0
+	c := newTrustedSweepEngine(api.URL, policy, Options{
+		TrustedBotAuthors: func() map[string]bool { return map[string]bool{"dependabot[bot]": true} },
+	})
+	c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
+		trustedAuthorChecks++
+		return TrustedAuthorDecision{}
+	}
+
+	result, err := c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{SelfAuthoredLaneActive: true})
+	if err != nil {
+		t.Fatalf("SweepTrustedAuthorAutoMerges: %v", err)
+	}
+	if trustedAuthorChecks != 0 {
+		t.Fatalf("trusted-author checks = %d, want 0 for trusted-bot lane", trustedAuthorChecks)
+	}
+	// Seen == Skipped + Candidates + len(Merged): the hand-off is a counted
+	// skip (reason trusted-bot-lane), not a silently dropped PR.
+	if result.Seen != 1 || result.Candidates != 0 || result.Skipped != 1 {
+		t.Fatalf("result = %+v, want trusted bot counted as a skipped hand-off", result)
+	}
+}
+
+func TestTrustedAuthorSweepEvaluatesTrustedBotWhenSelfAuthoredLaneInactive(t *testing.T) {
+	// ACMM below the self-merge floor (or self_authored off): no other sweep
+	// will ever look at the bot's PR, so the trusted-author tier must keep
+	// judging it by role — and may merge it when the operator granted one.
+	fx := trustedSweepFixture{author: "dependabot[bot]"}
+	api := newTrustedSweepAPI(t, &fx)
+	defer api.Close()
+	policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+	trustedAuthorChecks := 0
+	c := newTrustedSweepEngine(api.URL, policy, Options{
+		TrustedBotAuthors: func() map[string]bool { return map[string]bool{"dependabot[bot]": true} },
+	})
+	c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
+		trustedAuthorChecks++
+		return TrustedAuthorDecision{}
+	}
+
+	result, err := c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepTrustedAuthorAutoMerges: %v", err)
+	}
+	if trustedAuthorChecks == 0 {
+		t.Fatal("trusted-author role check must run when the self-authored lane is inactive")
+	}
+	if result.Seen != 1 || result.Candidates != 0 || result.Skipped != 1 {
+		t.Fatalf("result = %+v, want trusted bot skipped as untrusted-author-role", result)
+	}
+}
+
+func TestTrustedAuthorSweepHandsAppAuthoredToSelfLaneWithOwnReason(t *testing.T) {
+	// The self-authored lane owns the App's own PRs, so the trusted-author
+	// tier must hand off under its own reason — not a contradictory
+	// untrusted-author-role, and not the contributor lane's reason, which
+	// read as if that lane had routed the PR (hivecommons/hive#14482) —
+	// whether or not the self-authored lane is active.
+	for _, active := range []bool{false, true} {
+		fx := trustedSweepFixture{author: testHiveAppBotLogin}
+		api := newTrustedSweepAPI(t, &fx)
+		var logs bytes.Buffer
+		policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+		tracker := NewStageTracker()
+		c := newTrustedSweepEngine(api.URL, policy, Options{
+			Logger:           slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+			StageTracker:     tracker,
+		})
+
+		result, err := c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{SelfAuthoredLaneActive: active})
+		api.Close()
+		if err != nil {
+			t.Fatalf("SweepTrustedAuthorAutoMerges(active=%v): %v", active, err)
+		}
+		if result.Seen != 1 || result.Candidates != 0 || result.Skipped != 1 {
+			t.Fatalf("active=%v result = %+v, want App PR counted as a skipped hand-off", active, result)
+		}
+		drained := tracker.drain()
+		if len(drained) != 1 || len(drained[0]) != 1 {
+			t.Fatalf("active=%v drained = %+v, want one observation for the App PR", active, drained)
+		}
+		if obs := drained[0][0]; obs.Lane != stageLaneTrusted || obs.Reason != trustedAuthorReasonAppAuthored {
+			t.Fatalf("active=%v observation lane/reason = %s/%s, want %s/%s", active, obs.Lane, obs.Reason, stageLaneTrusted, trustedAuthorReasonAppAuthored)
+		}
+		if v := classifyStage(drained[0][0]); v.Rank != stageRankNone {
+			t.Fatalf("active=%v hand-off classified as %+v, want no opinion", active, v)
+		}
+		if strings.Contains(logs.String(), "untrusted-author-role") || strings.Contains(logs.String(), contributorLaneReasonAppAuthored) || !strings.Contains(logs.String(), "reason="+trustedAuthorReasonAppAuthored+" tier=trusted-author") {
+			t.Fatalf("active=%v logs = %q, want reason %s under tier=trusted-author and neither untrusted-author-role nor %s", active, logs.String(), trustedAuthorReasonAppAuthored, contributorLaneReasonAppAuthored)
+		}
 	}
 }

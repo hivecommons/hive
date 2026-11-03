@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const advisoryDir = "/data/advisory"
@@ -1447,8 +1447,14 @@ func writeAdviceSection(b *strings.Builder, advice *hiveadvisor.Result, dashboar
 		return
 	}
 	b.WriteString("## Advice\n\n")
-	b.WriteString(fmt.Sprintf("> Frozen for governor mode `%s` until %s (next review in %d day(s)). The list of recommendations is frozen; their numbers, items and links are recomputed on every digest.\n",
-		advice.Epoch.Mode, advice.Epoch.End.Format("2006-01-02"), advice.NextReviewInDays))
+	// Which recommendations show is picked once a week (the epoch); what is
+	// under them is recomputed for every digest. A mode change picks early.
+	kept := "Hive keeps this list until " + advice.Epoch.End.Format("2006-01-02")
+	if !advice.Epoch.Start.IsZero() {
+		kept = "Hive picked this list on " + advice.Epoch.Start.Format("2006-01-02") + " and keeps it until " + advice.Epoch.End.Format("2006-01-02")
+	}
+	b.WriteString(fmt.Sprintf("> %s, so it does not jump around between reports. The numbers, items and links under each one are worked out fresh for every report. If Hive's mode changes from `%s`, it picks a new list sooner.\n",
+		kept, advice.Epoch.Mode))
 	c := advice.Counts
 	b.WriteString(fmt.Sprintf(">\n> Counts quoted: governor actionable queue %d PRs / %d issues (what mode and cadence key on; excludes held, draft, in-review and human-gated items) — Overview chart %d open PRs / %d open issues (every open or held item across repo cards; the queue-health advice counts these).\n\n",
 		c.GovernorPRs, c.GovernorIssues, c.OverviewPRs, c.OverviewIssues))
@@ -1458,28 +1464,30 @@ func writeAdviceSection(b *strings.Builder, advice *hiveadvisor.Result, dashboar
 			b.WriteString(fmt.Sprintf("- ~~**%s**~~ — %s\n", rec.Title, rec.Rationale))
 			continue
 		}
-		b.WriteString(fmt.Sprintf("- **%s** — %s", rec.Title, rec.Rationale))
-		if len(rec.Signals) > 0 {
-			parts := make([]string, 0, len(rec.Signals))
-			for _, s := range rec.Signals {
-				parts = append(parts, fmt.Sprintf("%s=%s", s.Name, s.Value))
+		// One idea per line: the headline, why the items wait, how to help,
+		// where to start, the full list, and last the raw signals.
+		b.WriteString(fmt.Sprintf("- **%s** — %s\n", rec.Title, rec.Rationale))
+		if len(rec.Why) > 0 {
+			b.WriteString("  - Why they wait:\n")
+			for _, w := range rec.Why {
+				b.WriteString("    - " + w + "\n")
 			}
-			b.WriteString(" (signals: " + strings.Join(parts, ", ") + ")")
 		}
-		b.WriteString("\n")
+		if rec.Help != "" {
+			b.WriteString("  - **How to help:** " + rec.Help + ".\n")
+		}
 		if len(rec.Items) > 0 {
-			parts := make([]string, 0, len(rec.Items))
+			b.WriteString("  - First:\n")
 			for _, it := range rec.Items {
 				ref := fmt.Sprintf("%s#%d", it.Repo, it.Number)
 				if it.URL != "" {
 					ref = fmt.Sprintf("[%s](%s)", ref, it.URL)
 				}
 				if it.Note != "" {
-					ref += " (" + it.Note + ")"
+					ref += " — " + it.Note
 				}
-				parts = append(parts, ref)
+				b.WriteString("    - " + ref + "\n")
 			}
-			b.WriteString("  - First: " + strings.Join(parts, ", ") + "\n")
 		}
 		if len(rec.Links) > 0 {
 			parts := make([]string, 0, len(rec.Links))
@@ -1491,6 +1499,13 @@ func writeAdviceSection(b *strings.Builder, advice *hiveadvisor.Result, dashboar
 				}
 			}
 			b.WriteString("  - Full list: " + strings.Join(parts, ", ") + "\n")
+		}
+		if len(rec.Signals) > 0 {
+			parts := make([]string, 0, len(rec.Signals))
+			for _, s := range rec.Signals {
+				parts = append(parts, fmt.Sprintf("%s=%s", s.Name, s.Value))
+			}
+			b.WriteString("  - Numbers behind this: " + strings.Join(parts, ", ") + "\n")
 		}
 	}
 	if len(advice.Bands) > 0 {

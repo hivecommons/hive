@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
-var runTraceGit agent.CommitMessageReader
+var runTraceGit agentaudit.CommitMessageReader
 
 type runTraceCommitReader struct {
 	client *ghpkg.Client
@@ -25,14 +25,14 @@ type runTraceAuditReader struct {
 	log *AuditLog
 }
 
-func (r runTraceAuditReader) RecentAudit(n int) []agent.AuditRecord {
+func (r runTraceAuditReader) RecentAudit(n int) []agentaudit.AuditRecord {
 	if r.log == nil {
 		return nil
 	}
 	entries := r.log.Recent(n)
-	out := make([]agent.AuditRecord, 0, len(entries))
+	out := make([]agentaudit.AuditRecord, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, agent.AuditRecord{
+		out = append(out, agentaudit.AuditRecord{
 			Timestamp: e.Timestamp,
 			User:      e.User,
 			Action:    e.Action,
@@ -60,10 +60,10 @@ func (s *Server) handleRunTrace(w http.ResponseWriter, r *http.Request) {
 			repo := runRepoFromKey(key)
 			reader = runTraceCommitReader{client: s.deps.GHClient, repo: repo}
 		} else {
-			reader = agent.LocalGit{}
+			reader = agentaudit.LocalGit{}
 		}
 	}
-	links, err := agent.ArtifactResolver{
+	links, err := agentaudit.Resolver{
 		Git:      reader,
 		Timeline: s.LifecycleTimeline(),
 		Audit:    runTraceAuditReader{log: s.audit},

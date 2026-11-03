@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
@@ -165,11 +166,11 @@ func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) (b
 	return agentsDue, held
 }
 
-// resumeKickStatusSource is the subset of *agent.Manager the resume-kick-held
+// resumeKickStatusSource is the subset of crux.Runtime the resume-kick-held
 // reconcile reads.
 type resumeKickStatusSource interface {
-	GetStatusFast(name string) (*agent.AgentProcess, error)
-	AllStatuses() map[string]*agent.AgentProcess
+	GetStatusFast(name string) (*crux.Process, error)
+	AllStatuses() map[string]*crux.Process
 }
 
 // resumeKickHeldFacts wires the resume-kick-held reconcile (#9612) to the
@@ -178,15 +179,15 @@ type resumeKickStatusSource interface {
 // lazily at most once per call, settles whether the agent is still in the
 // roster, so a busy manager never reads as a roster removal.
 func resumeKickHeldFacts(status resumeKickStatusSource, gate func(string) (governor.ResumeRefusal, time.Duration)) spokealerts.ResumeKickHeldFacts {
-	var roster map[string]*agent.AgentProcess
-	lookup := func(name string) (*agent.AgentProcess, bool) {
+	var roster map[string]*crux.Process
+	lookup := func(name string) (*crux.Process, bool) {
 		if st, err := status.GetStatusFast(name); err == nil && st != nil {
 			return st, true
 		}
 		if roster == nil {
 			roster = status.AllStatuses()
 			if roster == nil {
-				roster = map[string]*agent.AgentProcess{}
+				roster = map[string]*crux.Process{}
 			}
 		}
 		st, ok := roster[name]
@@ -205,7 +206,7 @@ func resumeKickHeldFacts(status resumeKickStatusSource, gate func(string) (gover
 			if !ok {
 				return true // no longer in the roster
 			}
-			return st.Paused || st.State == agent.StatePaused || !st.Config.Enabled
+			return st.Paused || st.State == crux.StatePaused || !st.Config.Enabled
 		},
 		WorkedSince: func(name string, since time.Time) bool {
 			st, ok := lookup(name)
@@ -226,6 +227,7 @@ func kickSkipReason(
 	agents map[string]config.AgentConfig,
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
+	pauseTrigger func(string) string,
 ) string {
 	name, _ = config.SplitCadenceTargetKey(name)
 	if ac, ok := agents[name]; ok && ac.OnDemand {
@@ -235,9 +237,26 @@ func kickSkipReason(
 		return "on-demand-in-pack"
 	}
 	if isPaused(name) {
-		return "operator-paused"
+		var trigger string
+		if pauseTrigger != nil {
+			trigger = pauseTrigger(name)
+		}
+		return pausedSkipReason(trigger)
 	}
 	return ""
+}
+
+// pausedSkipReason names who paused an agent in the eval-cycle log. A pause
+// from the thrash breaker, login detector, rotation, etc. used to be reported
+// as "operator-paused" (#12015), sending operators looking for a human who
+// never touched the agent.
+func pausedSkipReason(trigger string) string {
+	switch trigger = strings.TrimSpace(trigger); trigger {
+	case "", "dashboard-api":
+		return "operator-paused"
+	default:
+		return "paused by " + trigger
+	}
 }
 
 // partitionKickableAgents splits the due list into the agents that will
@@ -251,9 +270,10 @@ func partitionKickableAgents(
 	agents map[string]config.AgentConfig,
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
+	pauseTrigger func(string) string,
 ) (kickable []string, skipped []string) {
 	for _, name := range agentsDue {
-		if reason := kickSkipReason(name, agents, onDemandSet, isPaused); reason != "" {
+		if reason := kickSkipReason(name, agents, onDemandSet, isPaused, pauseTrigger); reason != "" {
 			skipped = append(skipped, name+" ("+reason+")")
 			continue
 		}
@@ -275,7 +295,7 @@ func filterKickableAgents(
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
 ) []string {
-	kickable, _ := partitionKickableAgents(agentsDue, agents, onDemandSet, isPaused)
+	kickable, _ := partitionKickableAgents(agentsDue, agents, onDemandSet, isPaused, nil)
 	return kickable
 }
 
@@ -367,12 +387,17 @@ type advisoryPostFailure int
 const (
 	advisoryPostWriteForbidden advisoryPostFailure = iota
 	advisoryPostRateLimited
+	advisoryPostRepoArchived
 	advisoryPostAuthProbe
 )
 
 // githubWriteForbiddenText is GitHub's body when an installation token holds
 // the permission but the repo is not in the installation's selected repos.
 const githubWriteForbiddenText = "Resource not accessible by integration"
+
+// githubRepoArchivedText is GitHub's 403 body for writes to an archived repo,
+// a permanent condition that retrying cannot fix.
+const githubRepoArchivedText = "Repository was archived"
 
 func classifyAdvisoryPostError(err error) advisoryPostFailure {
 	if err == nil {
@@ -381,6 +406,9 @@ func classifyAdvisoryPostError(err error) advisoryPostFailure {
 	text := err.Error()
 	if strings.Contains(text, "403") && strings.Contains(text, githubWriteForbiddenText) {
 		return advisoryPostWriteForbidden
+	}
+	if strings.Contains(text, "403") && strings.Contains(text, githubRepoArchivedText) {
+		return advisoryPostRepoArchived
 	}
 	if isGitHubRateLimitText(err) {
 		return advisoryPostRateLimited
@@ -452,6 +480,9 @@ type kickDispatchDeps struct {
 	backoffRemaining func(agent string) (time.Duration, string, string, bool)
 	// sendKick delivers the kick. A non-nil error means nothing was sent.
 	sendKick func(agent, message string) error
+	// startStoppedAgent starts an agent that is stopped but selected for a
+	// governor kick. A non-nil error means the kick cannot be delivered.
+	startStoppedAgent func(agent string) error
 	// startKickSpan opens the agent.kick tracing span and returns its closer;
 	// the closer takes the SendKick error (nil on success) so a failed kick is
 	// recorded on the span before it ends.
@@ -464,8 +495,13 @@ type kickDispatchDeps struct {
 	onReviewDelivered func(msg scheduler.KickMessage)
 	// onDelivered runs last, for the effects that must NOT happen when a kick
 	// was withheld or failed: governor repo accounting, audit log, lifecycle
-	// timeline, token snapshot.
-	onDelivered func(msg scheduler.KickMessage)
+	// timeline, token snapshot. deliveredAt is when the lane finished typing
+	// the kick, not when this callback runs: effects are applied in message
+	// order, so a fast agent's callback can run minutes after its kick while
+	// an earlier agent's lane waits out a prompt timeout. The governor needs
+	// the real delivery time to tell whether the kicked turn has already
+	// ended (hivecommons/hive continuous re-kick lost after a slow lane).
+	onDelivered func(msg scheduler.KickMessage, deliveredAt time.Time)
 	// onFailed runs when a kick was selected but could not be delivered. The
 	// continuous-mode scheduler uses this to exponential-backoff instead of
 	// returning the same due agent on every eval while the CLI is stalled.
@@ -477,12 +513,42 @@ type kickDispatchDeps struct {
 	now func() time.Time
 }
 
+// kickDeliveryOutcome is what one delivery lane reports back for one message:
+// which step failed (start or send), if any.
+type kickDeliveryOutcome struct {
+	deferred bool
+	startErr error
+	sendErr  error
+	// deliveredAt is the lane's clock reading right after a successful send.
+	deliveredAt time.Time
+}
+
 // dispatchAgentKicks sends this cycle's kick messages, applying the two skip
 // rules and the single-probe rule.
 //
-// It returns the agents whose kicks were actually delivered, in order, which
-// is what lets a caller (and a test) distinguish "withheld" from "failed" from
-// "sent" without reaching into the effects.
+// It returns the agents whose kicks were actually delivered, in message order,
+// which is what lets a caller (and a test) distinguish "withheld" from "failed"
+// from "sent" without reaching into the effects.
+//
+// Delivery is CONCURRENT ACROSS AGENTS and SERIAL WITHIN an agent. SendKick
+// blocks until the agent's CLI shows its input prompt, up to
+// inputPromptTimeout (120s) per kick, and a busy agent routinely takes most of
+// that. Delivering strictly in sequence made the governor tick's wall time the
+// SUM of those waits: measured live on hive's hive, 8-9 due kicks took 10-13
+// minutes between "governor eval complete" and the first sweep, so a 120s
+// eval interval produced one cycle every ~20 minutes and a webhook wake was
+// no faster than the cadence. Kicks to different agents are independent
+// (separate tmux panes; SendKick is already called concurrently by the
+// dashboard and the request watchers), so each agent gets its own delivery
+// lane and the tick waits only for the SLOWEST agent, not for all of them.
+// Messages to the same agent keep their priority: a fix kick ordered ahead of
+// the governor kick goes first. Once a kick lands or finds a live turn, the
+// remaining messages in that lane are deferred until a later cycle.
+//
+// Only the slow legs — startStoppedAgent and sendKick — run on the lanes. The
+// backoff check, the span, and every delivered/failed effect run on the
+// calling goroutine, in message order, so the effect ORDER per message is
+// unchanged and callers' effect closures need no locking.
 //
 // The rules, all of which are load-bearing and individually guarded:
 //
@@ -497,7 +563,15 @@ type kickDispatchDeps struct {
 //     the entire point of releasing a probe.
 func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps kickDispatchDeps, logger *slog.Logger) []string {
 	var delivered []string
-	for _, msg := range msgs {
+	now := deps.now
+	if now == nil {
+		now = time.Now
+	}
+	// Decide, open spans and log in message order BEFORE any lane starts, so a
+	// withheld agent never has a lane and the audit log reads in plan order.
+	attempted := make([]bool, len(msgs))
+	endSpans := make([]func(error), len(msgs))
+	for i, msg := range msgs {
 		if remaining, class, line, ok := deps.backoffRemaining(msg.Agent); ok {
 			logger.Warn("provider inference error: withholding agent kick during backoff",
 				"agent", msg.Agent,
@@ -506,13 +580,74 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 				"error", line)
 			continue
 		}
-		endSpan := deps.startKickSpan(msg.Agent)
+		attempted[i] = true
+		endSpans[i] = deps.startKickSpan(msg.Agent)
 		logger.Info("audit: governor kicking agent", "agent", msg.Agent, "trigger", "governor-eval")
-		if err := deps.sendKick(msg.Agent, msg.Message); err != nil {
-			endSpan(err)
-			logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
+	}
+
+	// One lane per agent, each delivering that agent's messages in order and
+	// closing the per-message result channel as it goes.
+	results := make([]chan kickDeliveryOutcome, len(msgs))
+	lanes := map[string][]int{}
+	var laneOrder []string
+	for i, msg := range msgs {
+		if !attempted[i] {
+			continue
+		}
+		results[i] = make(chan kickDeliveryOutcome, 1)
+		if _, seen := lanes[msg.Agent]; !seen {
+			laneOrder = append(laneOrder, msg.Agent)
+		}
+		lanes[msg.Agent] = append(lanes[msg.Agent], i)
+	}
+	for _, agentName := range laneOrder {
+		go func(indexes []int) {
+			deferLane := false
+			for _, i := range indexes {
+				msg := msgs[i]
+				var out kickDeliveryOutcome
+				if deferLane {
+					results[i] <- kickDeliveryOutcome{deferred: true}
+					continue
+				}
+				if out.startErr = deps.startStoppedAgent(msg.Agent); out.startErr == nil {
+					if out.sendErr = deps.sendKick(msg.Agent, msg.Message); out.sendErr == nil {
+						out.deliveredAt = now()
+					}
+				}
+				// Success or a busy bounce leaves this lane occupied.
+				deferLane = out.startErr == nil && (out.sendErr == nil || errors.Is(out.sendErr, crux.ErrAgentBusy))
+				results[i] <- out
+			}
+		}(lanes[agentName])
+	}
+
+	// Apply effects in message order. Waiting on message i's result never
+	// blocks a later lane: every lane runs independently of this loop.
+	for i, msg := range msgs {
+		if !attempted[i] {
+			continue
+		}
+		out := <-results[i]
+		endSpan := endSpans[i]
+		if out.deferred || errors.Is(out.sendErr, crux.ErrAgentBusy) {
+			endSpan(nil)
+			logger.Info("agent busy: deferring kick", "agent", msg.Agent)
+			continue
+		}
+		if out.startErr != nil {
+			endSpan(out.startErr)
+			logger.Warn("failed to start stopped agent before kick", "agent", msg.Agent, "error", out.startErr)
 			if deps.onFailed != nil {
-				deps.onFailed(msg, err)
+				deps.onFailed(msg, out.startErr)
+			}
+			continue
+		}
+		if out.sendErr != nil {
+			endSpan(out.sendErr)
+			logger.Warn("failed to send kick", "agent", msg.Agent, "error", out.sendErr)
+			if deps.onFailed != nil {
+				deps.onFailed(msg, out.sendErr)
 			}
 			continue
 		}
@@ -522,10 +657,26 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 			deps.markProbeReleased(deps.now())
 			releaseProbe = false
 		}
-		deps.onDelivered(msg)
+		deps.onDelivered(msg, out.deliveredAt)
 		delivered = append(delivered, msg.Agent)
 	}
 	return delivered
+}
+
+func stoppedAgentStartErrorIsBenign(err error) bool {
+	if err == nil {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "already running") ||
+		strings.Contains(msg, "launch already in progress") ||
+		isSharedPoolBusyErr(err)
+}
+
+// isSharedPoolBusyErr reports the shared CLI session pool refusing a slot.
+// crux/agent does not export its busy sentinel, so match the message.
+func isSharedPoolBusyErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "shared session pool is busy")
 }
 
 // advisoryIngestDeps are the side effects of recording an ioscan canary leak

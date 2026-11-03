@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/advisorhook"
 )
 
 // HookSubcommand is the `hive advisor-hook` subcommand every supported
@@ -18,7 +20,7 @@ import (
 // backend provides on stdin, asks the hub's loopback advise endpoint for the
 // verdict, and prints the answer in the calling backend's dialect. Keeping
 // the backend-specific part to formatting is what makes each adapter thin.
-const HookSubcommand = "advisor-hook"
+const HookSubcommand = advisorhook.HookSubcommand
 
 // hookFormatClaude renders the Claude Code `Stop` hook dialect: `{}` to let
 // the turn end, `{"decision":"block","reason":...}` to hold it with a reason
@@ -30,8 +32,8 @@ const hookFormatClaude = "claude"
 // prompt). HookFormatCodex is the Codex CLI `Stop` dialect, which matches
 // Claude Code's payload and answer.
 const (
-	HookFormatCopilot = "copilot"
-	HookFormatCodex   = "codex"
+	HookFormatCopilot = advisorhook.HookFormatCopilot
+	HookFormatCodex   = advisorhook.HookFormatCodex
 )
 
 const hookUsage = `usage: hive advisor-hook [--format claude|copilot|codex] [--endpoint <url>] [--timeout <dur>]
@@ -100,27 +102,27 @@ func RunHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // decodeClaudeStop extracts the session and transcript path from a Claude Code
 // or Codex CLI Stop-hook payload.
-func decodeClaudeStop(payload []byte) (session, transcriptPath string, err error) {
+func decodeClaudeStop(payload []byte) (session, transcriptPath string, stopHookActive bool, err error) {
 	var in claudeStopInput
 	if err := json.Unmarshal(payload, &in); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	return in.SessionID, in.TranscriptPath, nil
+	return in.SessionID, in.TranscriptPath, in.StopHookActive, nil
 }
 
 // decodeCopilotStop extracts the same from a Copilot CLI agentStop payload.
-func decodeCopilotStop(payload []byte) (session, transcriptPath string, err error) {
+func decodeCopilotStop(payload []byte) (session, transcriptPath string, stopHookActive bool, err error) {
 	var in copilotStopInput
 	if err := json.Unmarshal(payload, &in); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	return in.SessionID, in.TranscriptPath, nil
+	return in.SessionID, in.TranscriptPath, false, nil
 }
 
 // runStopHook handles one turn-end event (Claude Code / Codex Stop, Copilot
 // agentStop — all answer with the same block-decision JSON). Failures never
 // block: the worst an advisor outage can do is print `{}`.
-func runStopHook(endpoint string, timeout time.Duration, decode func([]byte) (string, string, error), stdin io.Reader, stdout, stderr io.Writer) int {
+func runStopHook(endpoint string, timeout time.Duration, decode func([]byte) (string, string, bool, error), stdin io.Reader, stdout, stderr io.Writer) int {
 	allow := func() int {
 		fmt.Fprintln(stdout, "{}")
 		return 0
@@ -130,7 +132,7 @@ func runStopHook(endpoint string, timeout time.Duration, decode func([]byte) (st
 		fmt.Fprintf(stderr, "hive %s: reading hook input: %v\n", HookSubcommand, err)
 		return allow()
 	}
-	session, transcriptPath, err := decode(payload)
+	session, transcriptPath, stopHookActive, err := decode(payload)
 	if err != nil {
 		fmt.Fprintf(stderr, "hive %s: hook input is not Stop-hook JSON: %v\n", HookSubcommand, err)
 		return allow()
@@ -139,7 +141,7 @@ func runStopHook(endpoint string, timeout time.Duration, decode func([]byte) (st
 	if strings.TrimSpace(transcript) == "" {
 		return allow() // nothing to review
 	}
-	resp, err := callAdvise(endpoint, Request{Turn: session, Transcript: transcript}, timeout)
+	resp, err := callAdvise(endpoint, Request{Turn: session, Transcript: transcript, StopHookActive: stopHookActive}, timeout)
 	if err != nil {
 		fmt.Fprintf(stderr, "hive %s: %v\n", HookSubcommand, err)
 		return allow()
@@ -150,9 +152,9 @@ func runStopHook(endpoint string, timeout time.Duration, decode func([]byte) (st
 	}
 	// Concerns and blockers are both interrupting deliveries: the Stop hook's
 	// block decision is the one channel that puts text in front of the model
-	// before its next step. The consecutive-block limit is enforced hub-side,
-	// so a chain of blockers is bounded there — well under Claude's own
-	// stop_hook_active loop guard.
+	// before its next step. The hub bounds the chain: it downgrades blockers
+	// past the consecutive-block limit, and a concern that arrives while the
+	// backend is already continuing (stop_hook_active) to an aside.
 	out := claudeStopOutput{Decision: "block", Reason: hookReason(resp)}
 	data, err := json.Marshal(out)
 	if err != nil {

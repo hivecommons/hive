@@ -73,7 +73,7 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6.3.0
         with:
           node-version: "22"
       - name: Toolchains resolve on PATH
@@ -139,7 +139,13 @@ jobs:
     timeout-minutes: 15
     permissions:
       actions: read
+      contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+      - name: Watchdog regression tests
+        run: node --test .github/scripts/test-ci-runner-canary.cjs
       - name: Canary jobs are picked up and no runs are stalled in queue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -147,6 +153,11 @@ jobs:
           QUEUE_STALL_MINUTES: ${{ env.QUEUE_STALL_MINUTES }}
           QUEUE_ZOMBIE_HOURS: ${{ env.QUEUE_ZOMBIE_HOURS }}
         with:
+          # A transient jobs API 502 must not immediately report a pool outage
+          # when the runner probes pass (#12973). Retry these read-only calls;
+          # exhausted retries still fail the watchdog within its job timeout.
+          retries: 3
+          retry-exempt-status-codes: 400,401,403,404,422
           script: |
             const {owner, repo} = context.repo;
             const pickupMs = Number(process.env.CANARY_PICKUP_MINUTES) * 60_000;
@@ -155,8 +166,8 @@ jobs:
             const sleep = ms => new Promise(r => setTimeout(r, ms));
             const failures = [];
 
-            // 1. Repository-wide queue: anything waiting longer than the stall
-            //    threshold means the pool is not draining.
+            // 1. Check job age, not run age: downstream jobs may only just
+            //    have become runnable in an otherwise old workflow (#14567).
             const queued = await github.paginate(github.rest.actions.listWorkflowRunsForRepo,
               {owner, repo, status: 'queued', per_page: 100});
             const age = r => Date.now() - Date.parse(r.created_at);
@@ -167,14 +178,17 @@ jobs:
             for (const r of candidates) {
               const runJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
                 {owner, repo, run_id: r.id, per_page: 100});
-              if (runJobs.some(j => j.status === 'queued')) {
-                stalled.push(r);
+              const waiting = runJobs.filter(j => j.status === 'queued' &&
+                Date.now() - Date.parse(j.created_at) > stallMs);
+              if (waiting.length > 0) {
+                stalled.push({...r, created_at: new Date(Math.min(
+                  ...waiting.map(j => Date.parse(j.created_at)))).toISOString()});
               } else {
                 noJobs++;
-                core.warning(`ignoring queued run ${r.html_url} (${r.name}, created ${r.created_at}): no queued jobs — never requested a runner`);
+                core.warning(`ignoring queued run ${r.html_url} (${r.name}, created ${r.created_at}): no jobs queued beyond the stall threshold`);
               }
             }
-            core.info(`queued runs: ${queued.length}, stalled > ${process.env.QUEUE_STALL_MINUTES}m: ${stalled.length}, discarded for no queued jobs: ${noJobs}, ignored zombies > ${process.env.QUEUE_ZOMBIE_HOURS}h: ${zombies.length}`);
+            core.info(`queued runs: ${queued.length}, stalled > ${process.env.QUEUE_STALL_MINUTES}m: ${stalled.length}, discarded for no stalled jobs: ${noJobs}, ignored zombies > ${process.env.QUEUE_ZOMBIE_HOURS}h: ${zombies.length}`);
             for (const z of zombies) core.warning(`ignoring zombie queued run ${z.html_url} (${z.name}, created ${z.created_at})`);
             if (stalled.length > 0) {
               const oldest = Math.min(...stalled.map(r => Date.parse(r.created_at)));

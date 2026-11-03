@@ -282,8 +282,13 @@ func TestCreatePR_DuplicateTreeOnlyComparesTheSameBase(t *testing.T) {
 	d.mu.Lock()
 	bases := append([]string(nil), d.listedBases...)
 	d.mu.Unlock()
-	if len(bases) != 1 || bases[0] != "main" {
-		t.Errorf("guard listed bases %v, want exactly [main] — an unscoped scan would compare unrelated diffs", bases)
+	if len(bases) == 0 {
+		t.Fatal("guard never listed open PRs")
+	}
+	for _, b := range bases {
+		if b != "main" {
+			t.Errorf("guard listed bases %v, want only main — an unscoped scan would compare unrelated diffs", bases)
+		}
 	}
 }
 
@@ -401,6 +406,10 @@ func TestCommitTreeSHA_CachesImmutableMapping(t *testing.T) {
 // sits past the cap on purpose: the guard is allowed to miss it, but it must
 // stop looking rather than fan out over an unbounded number of open PRs.
 func TestFindOpenPRWithIdenticalTree_CapsCandidates(t *testing.T) {
+	// ~60 serial requests: a caution window left by another test would pace
+	// each one ~2-3s apart and stall the package past its timeout (#15700).
+	ResetRateLimitPacingForTest()
+	t.Cleanup(ResetRateLimitPacingForTest)
 	d := &dupTreeServer{
 		branches: map[string]string{"dup": "cafe1111"},
 		trees:    map[string]string{"cafe1111": "eb0b85ab"},
@@ -467,7 +476,7 @@ func TestPRRequestWatcher_DuplicateTreeDoesNotLabelTheOtherPR(t *testing.T) {
 	}
 	srv := d.start(t)
 	c := testClient(t, srv.URL)
-	c.prHoldLabel = func(agent string) bool { return true }
+	c.prHoldLabel = func(agent, repo string) bool { return true }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -523,7 +532,7 @@ func TestPRRequestWatcher_DuplicateTreeIsNotSelfAuthorizationJudged(t *testing.T
 	srv := d.start(t)
 	c := testClient(t, srv.URL)
 	c.SetAppBotLogin("kubestellar-hive[bot]")
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir

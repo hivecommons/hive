@@ -1,0 +1,1 @@
+- review: a not-hive-authored head whose fix is withheld is now reported in `FixExclusions` only on the cycle that first withholds it, matching `auditWithheldReviewFixes`' doc instead of repeating every eval cycle (#14882, #14883).

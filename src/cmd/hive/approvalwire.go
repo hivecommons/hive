@@ -5,10 +5,15 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
+
+// The tool-approval desk scans payload text through pkg/ioscan, wired here
+// because pkg/toolapprove sits inside the Crux ring and cannot import it.
+func init() { toolapprove.SetDefaultTextScanner(ioscan.ToolApproveScanner{}) }
 
 // buildApprovalDesk constructs the desk and its durable operator inbox from
 // config.
@@ -18,8 +23,16 @@ import (
 // still authoritative. That is strictly safer than running with a half-applied
 // rule set, and it matches celEngineFor's posture — a bad rule must never crash
 // the fleet nor silently change what is permitted.
+//
+// The plan-approval kinds are answered by planPolicyFromConfig: the desk lives
+// inside the Crux boundary and cannot read the ACMM packs or PlanningConfig,
+// so the host installs the legacy predicates and cmd/hive's parity tests pin
+// the desk against them.
 func buildApprovalDesk(cfg *config.Config, logger *slog.Logger) (*toolapprove.Desk, *toolapprove.Inbox) {
-	desk, inbox, err := toolapprove.DeskFromConfig(cfg, nil, logger)
+	if cfg == nil {
+		return nil, nil
+	}
+	desk, inbox, err := toolapprove.DeskFromConfig(cfg.ToolApproval, nil, logger)
 	if err != nil {
 		if logger != nil {
 			logger.Error("tool-approval: rejecting malformed approval rules; approval desk disabled until fixed",
@@ -27,11 +40,27 @@ func buildApprovalDesk(cfg *config.Config, logger *slog.Logger) (*toolapprove.De
 		}
 		return nil, nil
 	}
+	desk.SetPlanPolicy(planPolicyFromConfig(cfg))
 	if desk != nil && logger != nil {
 		logger.Info("tool-approval: approval desk enabled",
-			"rules", len(desk.RuleNames()), "acmm_level", toolapprove.ACMMLevelOf(cfg))
+			"rules", len(desk.RuleNames()), "acmm_level", cfg.ACMMLevelOrZero())
 	}
 	return desk, inbox
+}
+
+// planPolicyFromConfig adapts the two legacy plan gates — the ACMM pack's
+// plan_auto_approve (config.PlanAutoApproveForLevel) and
+// PlanningConfig.PlanFromLabelEnabled — to the desk's PlanPolicy, so the desk
+// auto-permits exactly what those gates permit today at every level.
+func planPolicyFromConfig(cfg *config.Config) toolapprove.PlanPolicy {
+	var planning config.PlanningConfig
+	if cfg != nil {
+		planning = cfg.Planning
+	}
+	return toolapprove.PlanPolicyFuncs{
+		AutoApprove: config.PlanAutoApproveForLevel,
+		FromLabel:   planning.PlanFromLabelEnabled,
+	}
 }
 
 // approvalDeskAllowsLegacyOperation wraps an existing legacy gate result in the
@@ -61,7 +90,7 @@ func approvalDeskAllowsLegacyOperation(
 		LegacyAllowed:    true,
 		HasLegacyAllowed: true,
 	}
-	acmmLevel := toolapprove.ACMMLevelOf(cfg)
+	acmmLevel := cfg.ACMMLevelOrZero()
 	v := desk.Resolve(ctx, req, acmmLevel)
 	if v.Decision == toolapprove.DecisionAutoApprove {
 		return true
@@ -97,7 +126,7 @@ func newSelfMergeDeskHook(
 	cfg *config.Config,
 	logger *slog.Logger,
 ) ghpkg.ApprovalDeskHook {
-	acmmLevel := toolapprove.ACMMLevelOf(cfg)
+	acmmLevel := cfg.ACMMLevelOrZero()
 
 	return func(ctx context.Context, in ghpkg.ApprovalDeskRequest) (bool, string) {
 		req := toolapprove.Request{

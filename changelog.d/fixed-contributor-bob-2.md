@@ -1,0 +1,1 @@
+- Contributor images now select Bob 1.x/2.x launch flags at runtime and accept both `BOB_API_KEY` and legacy `BOBSHELL_API_KEY` credentials, matching hub-side agents (#14334).

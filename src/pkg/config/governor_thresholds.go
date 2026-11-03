@@ -19,16 +19,6 @@ const (
 	DefaultThresholdQuiet = 2
 )
 
-// Threshold scaling curves (GovernorConfig.ThresholdScaling).
-const (
-	// CadenceScopeAggregate keeps the historical governor behavior: one hive
-	// mode is computed from the aggregate actionable issue+PR queue.
-	CadenceScopeAggregate = "aggregate"
-	// CadenceScopePerRepo computes a separate mode for each successfully
-	// scanned repo from that repo's own actionable issue+PR queue.
-	CadenceScopePerRepo = "per_repo"
-)
-
 // ValidCadenceScopes are the accepted cadence_scope values. "" means "unset",
 // which resolves to aggregate.
 var ValidCadenceScopes = map[string]bool{

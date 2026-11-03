@@ -1,0 +1,1 @@
+- Pack apply now moves every late-added pack-owned CLI agent onto the hive's gateway when two or more operator-picked agents unanimously use it and most agents not waiting on the apply do too (#14721)

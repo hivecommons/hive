@@ -1,6 +1,9 @@
 package hub
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -183,4 +186,160 @@ func braceDepth(src string) int {
 		}
 	}
 	return depth
+}
+
+// TestDashboardScriptStringsTerminateOnTheirLine guards the 2026-10-16 outage:
+// a <th title="... the hive's own evidence ..."> fragment was pasted into a
+// single-quoted JS string, so the apostrophe closed the string early and the
+// whole dashboard block failed to parse ("SyntaxError: Unexpected identifier
+// 's'"). My Hives sat on "Loading your hives..." for every user. Quote and
+// double-quote literals cannot span lines in JavaScript, so any line that ends
+// inside one is a hard syntax error — flag it with its line number so the
+// author sees exactly which prose needs \' or a template literal.
+func TestDashboardScriptStringsTerminateOnTheirLine(t *testing.T) {
+	for i, block := range dashboardScriptBlocks(t) {
+		for _, bad := range unterminatedStringLines(block) {
+			t.Errorf("script block %d line %d ends inside a %q string literal: %s",
+				i, bad.line, bad.quote, strings.TrimSpace(bad.text))
+		}
+	}
+}
+
+// TestDashboardScriptParsesWithNode is the authoritative check when node is
+// installed (developer machines, most CI images): every inline block must pass
+// `node --check`. Skips cleanly where node is absent so the Go-only guards
+// above remain the floor.
+func TestDashboardScriptParsesWithNode(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("node not on PATH in CI; the hub test lane installs it via setup-node — this check must not silently skip there")
+		}
+		t.Skip("node not on PATH; relying on Go-only structure checks")
+	}
+	for i, block := range dashboardScriptBlocks(t) {
+		f := filepath.Join(t.TempDir(), "block.js")
+		if err := os.WriteFile(f, []byte(block), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command(node, "--check", f).CombinedOutput()
+		if err != nil {
+			t.Errorf("script block %d fails node --check:\n%s", i, out)
+		}
+	}
+}
+
+type unterminatedString struct {
+	line  int
+	quote byte
+	text  string
+}
+
+// unterminatedStringLines walks src tracking '...', "..." and `...` literals,
+// // and /* */ comments, and /regex/ literals (which legally contain quotes), reporting every line that
+// ends while a quote or double-quote literal is still open. Template literals
+// legitimately span lines and are ignored; block comments are skipped so
+// apostrophes in prose comments never trip it.
+func unterminatedStringLines(src string) []unterminatedString {
+	var out []unterminatedString
+	var quote byte
+	inLineComment, inBlockComment := false, false
+	line := 1
+	lineStart := 0
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if c == '\n' {
+			if quote == '\'' || quote == '"' {
+				out = append(out, unterminatedString{line: line, quote: quote, text: src[lineStart:i]})
+				quote = 0
+			}
+			inLineComment = false
+			line++
+			lineStart = i + 1
+			continue
+		}
+		switch {
+		case inLineComment:
+		case inBlockComment:
+			if c == '*' && i+1 < len(src) && src[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+		case quote != 0:
+			if c == '\\' {
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			inLineComment = true
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			inBlockComment = true
+			i++
+		case c == '/' && regexCanStart(src[lineStart:i]):
+			i = skipRegexLiteral(src, i)
+		case c == '\'' || c == '"' || c == '`':
+			quote = c
+		}
+	}
+	return out
+}
+
+func TestUnterminatedStringLinesDetectsStrayApostrophe(t *testing.T) {
+	bad := "var a = 1;\nvar t = '<th title=\"the hive's own\">';\nvar ok = \"it's fine\";\n"
+	got := unterminatedStringLines(bad)
+	if len(got) != 1 || got[0].line != 2 {
+		t.Fatalf("want exactly line 2 flagged, got %+v", got)
+	}
+	clean := "var t = `multi\nline`; // it's a comment\n/* don't */ var s = 'it\\'s';\nvar r = a / b / c;\n" +
+		"x = s.replace(/'/g, \"\\\\'\");\nif (m = t.match(/^[\"']|[\"']$/g)) y = (on ? \"''\" : \"'\");\nreturn /it's/.test(z);\n"
+	if got := unterminatedStringLines(clean); len(got) != 0 {
+		t.Fatalf("false positives: %+v", got)
+	}
+}
+
+// regexCanStart reports whether a `/` at the end of prefix begins a regex
+// literal rather than a division: it does when the previous significant token
+// is an operator, opener, separator or `return`/`typeof`, or the line is empty
+// so far.
+func regexCanStart(prefix string) bool {
+	p := strings.TrimRight(prefix, " \t")
+	if p == "" {
+		return true
+	}
+	switch p[len(p)-1] {
+	case '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^':
+		return true
+	}
+	for _, kw := range []string{"return", "typeof", "case", "in", "of"} {
+		if strings.HasSuffix(p, kw) && (len(p) == len(kw) || !isIdentByte(p[len(p)-len(kw)-1])) {
+			return true
+		}
+	}
+	return false
+}
+
+func isIdentByte(c byte) bool {
+	return c == '_' || c == '$' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// skipRegexLiteral returns the index of the closing `/` of the regex literal
+// opening at src[i], honouring escapes and [...] classes (where `/` is literal).
+func skipRegexLiteral(src string, i int) int {
+	inClass := false
+	for j := i + 1; j < len(src) && src[j] != '\n'; j++ {
+		switch src[j] {
+		case '\\':
+			j++
+		case '[':
+			inClass = true
+		case ']':
+			inClass = false
+		case '/':
+			if !inClass {
+				return j
+			}
+		}
+	}
+	return i
 }

@@ -1,0 +1,1 @@
+- Close-on-merge backfill now reads a pull request that cross-references an issue from another repo in that PR's own repo, instead of looking up the same number in the issue's repo and logging a 404 warning every pass.

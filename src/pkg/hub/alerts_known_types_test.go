@@ -122,7 +122,7 @@ func TestAckFailedUpgradeSucceedsAndSurvivesRestart(t *testing.T) {
 	entry.UpgradeError = "image pull failed"
 
 	s := newTestAlertServer()
-	summary := s.fleetAlerts([]MyHiveEntry{entry})
+	summary := s.fleetAlerts([]MyHiveEntry{entry}, nil)
 	if !hasUnackedAlertOfType(summary.Alerts, AlertTypeFailedUpgrade) {
 		t.Fatalf("expected a live %s alert to acknowledge, got %+v", AlertTypeFailedUpgrade, summary.Alerts)
 	}
@@ -137,7 +137,7 @@ func TestAckFailedUpgradeSucceedsAndSurvivesRestart(t *testing.T) {
 
 	// The alert must now be marked acknowledged, which is what moves it out of
 	// the live rows and behind the "N acknowledged" disclosure in the panel.
-	after := s.fleetAlerts([]MyHiveEntry{entry})
+	after := s.fleetAlerts([]MyHiveEntry{entry}, nil)
 	if hasUnackedAlertOfType(after.Alerts, AlertTypeFailedUpgrade) {
 		t.Errorf("%s is still listed as unacknowledged after a successful ack", AlertTypeFailedUpgrade)
 	}
@@ -146,7 +146,7 @@ func TestAckFailedUpgradeSucceedsAndSurvivesRestart(t *testing.T) {
 	// the acknowledgement.
 	restarted := newTestAlertServer()
 	restarted.loadAlertAcks()
-	afterRestart := restarted.fleetAlerts([]MyHiveEntry{entry})
+	afterRestart := restarted.fleetAlerts([]MyHiveEntry{entry}, nil)
 	if hasUnackedAlertOfType(afterRestart.Alerts, AlertTypeFailedUpgrade) {
 		t.Errorf("the %s acknowledgement did not survive a hub restart", AlertTypeFailedUpgrade)
 	}

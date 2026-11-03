@@ -3,8 +3,11 @@ package automerge
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
@@ -48,6 +51,55 @@ func greenLanePR(number int) sweepPR {
 
 func greenSelfPR(number int) selfAuthoredPR {
 	return selfAuthoredPR{number: number, author: testHiveAppBotLogin, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"}
+}
+
+type laneNativeQueueTransport struct {
+	*nativeQueueFake
+	gate hgithub.SerializedLaneGate
+}
+
+func (f *laneNativeQueueTransport) SerializedLane() (func(string) string, hgithub.SerializedLaneGate) {
+	return func(string) string { return config.MergeStrategyHiveSerialized }, f.gate
+}
+
+func TestLaneSweep_SerializedStrategyKeepsNativeQueueBehindItsGate(t *testing.T) {
+	for _, lane := range []string{stageLaneSelf, nativeQueueLaneQueued} {
+		for _, state := range []string{"clean", "behind"} {
+			for _, skipBase := range []bool{false, true} {
+				t.Run(lane+"/"+state+"/"+map[bool]string{false: "gate-kept", true: "gate-skipped"}[skipBase], func(t *testing.T) {
+					pr := greenLanePR(7)
+					pr.nodeID = "PR_7"
+					pr.mergeableState = state
+					if lane == stageLaneSelf {
+						pr.author = testHiveAppBotLogin
+					}
+					var merged []int
+					api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{pr}, &merged)
+					defer api.Close()
+					g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeDeferred, "deferred: not at the front of the lane")}
+					c := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{})
+					c.requireCurrentBase = func(string) bool { return true }
+					f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
+					c.transport = &laneNativeQueueTransport{nativeQueueFake: f, gate: g.gate}
+					enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, SkipCurrentBaseGate: skipBase})
+					var event AutoMergeSweepEvent
+					var reason string
+					var err error
+					if lane == stageLaneSelf {
+						event, reason, err = c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 7, false)
+					} else {
+						event, reason, err = c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
+					}
+					if err != nil || reason != "deferred: not at the front of the lane" || event.Number != 0 {
+						t.Fatalf("event=%+v reason=%q error=%v, want the serialized deferral", event, reason, err)
+					}
+					if len(g.reqs) != 1 || g.reqs[0].FrontOnly || f.enqueues != 0 || len(merged) != 0 {
+						t.Fatalf("lane requests=%+v native enqueues=%d direct merges=%v", g.reqs, f.enqueues, merged)
+					}
+				})
+			}
+		}
+	}
 }
 
 // AC2: a direct repo never consults the lane and merges exactly as today.
@@ -166,7 +218,7 @@ func TestLaneSweep_RefusalAndErrorAreSkips(t *testing.T) {
 	}
 }
 
-// AC4: auto-merge off or a held PR never reaches the lane.
+// Auto-merge off never consults the lane.
 func TestLaneSweep_GatesAheadOfTheLane(t *testing.T) {
 	var merged []int
 	held := greenLanePR(7)
@@ -178,10 +230,6 @@ func TestLaneSweep_GatesAheadOfTheLane(t *testing.T) {
 	off := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{RepoAutoMergeEnabled: func(string) bool { return false }})
 	if result, err := off.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil || len(result.Merged) != 0 {
 		t.Fatalf("auto-merge off: result = %+v, err = %v", result, err)
-	}
-	on := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{})
-	if result, err := on.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil || len(result.Merged) != 0 {
-		t.Fatalf("held PR: result = %+v, err = %v", result, err)
 	}
 	if len(g.reqs) != 0 || len(merged) != 0 {
 		t.Fatalf("lane requests = %d, merges = %v; want none", len(g.reqs), merged)
@@ -325,4 +373,272 @@ func TestLaneSweep_RejectedPRIsHandedToTheLaneFrontOnly(t *testing.T) {
 	if len(merged) != 0 {
 		t.Fatalf("merge calls = %v, want none", merged)
 	}
+}
+
+func newContributorLaneSweepEngine(apiURL, strategy string, gate hgithub.SerializedLaneGate, clock *contributorLaneClock, opts Options) *Engine {
+	policy := defaultContributorLanePolicy()
+	opts.ContributorLanePolicy = func() ContributorLanePolicy { return policy }
+	if opts.ContributorLaneVerdict == nil {
+		opts.ContributorLaneVerdict = approvedVerdict
+	}
+	opts.ContributorSoak = soakedTracker(clock)
+	opts.Now = clock.now
+	opts.SentinelLabel = func() string { return "hive-sentinel" }
+	return newLaneSweepEngine(apiURL, strategy, gate, opts)
+}
+
+func TestLaneSweep_ContributorLaneGoesThroughLane(t *testing.T) {
+	for _, strategy := range []string{config.MergeStrategyHiveSerialized, config.MergeStrategyDirect} {
+		t.Run(strategy, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.baseRef = "main"
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+			boundary := &recordingBoundary{}
+			g := &laneGate{answer: func(ctx context.Context, req hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+				if strategy == config.MergeStrategyDirect {
+					t.Fatal("a direct contributor PR must not consult the lane")
+				}
+				if err := req.Authorize(ctx, "sha7"); err != nil {
+					t.Fatalf("eligible head authorization: %v", err)
+				}
+				if err := req.Authorize(ctx, "moved"); err == nil {
+					t.Error("authorization must reject a different head")
+				}
+				return laneAnswer(hgithub.LaneOutcomeMerged, "merged")(ctx, req)
+			}}
+			c := newContributorLaneSweepEngine(api.URL, strategy, g.gate, clock, Options{MutationBoundary: boundary})
+			event, reason, err := c.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, defaultContributorLanePolicy())
+			if err != nil || reason != "" || event.Number != 7 || event.HeadSHA != "sha7" || event.Tier != contributorLaneTier {
+				t.Fatalf("event = %+v, reason = %q, err = %v", event, reason, err)
+			}
+			if strategy == config.MergeStrategyHiveSerialized {
+				if fx.merges != 0 || len(boundary.claims) != 0 || event.MergeSHA != "lanesha" || len(g.reqs) != 1 {
+					t.Fatalf("merges = %d, claims = %+v, event = %+v, requests = %+v", fx.merges, boundary.claims, event, g.reqs)
+				}
+				if req := g.reqs[0]; req.Repo != "acme/widget" || req.Branch != "main" || req.Number != 7 || req.Path != hgithub.PRAuditPathSweep || req.Method == "" || req.FrontOnly {
+					t.Fatalf("lane request = %+v", req)
+				}
+			} else if fx.merges != 1 || len(boundary.claims) != 1 || len(g.reqs) != 0 {
+				t.Fatalf("direct merges = %d, claims = %+v, requests = %+v", fx.merges, boundary.claims, g.reqs)
+			}
+		})
+	}
+}
+
+func TestLaneSweep_ContributorLaneNotAtFrontIsDeferred(t *testing.T) {
+	fx := validContributorFixture()
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+	g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeDeferred, "deferred: not at the front of the lane")}
+	c := newContributorLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, clock, Options{})
+	event, reason, err := c.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, defaultContributorLanePolicy())
+	if err != nil || reason != "deferred: not at the front of the lane" || event.Number != 0 || fx.merges != 0 || len(g.reqs) != 1 {
+		t.Fatalf("event = %+v, reason = %q, err = %v, merges = %d, requests = %+v", event, reason, err, fx.merges, g.reqs)
+	}
+}
+
+func TestLaneSweep_ContributorLaneAuthorizationRechecksGates(t *testing.T) {
+	for _, change := range []string{"verdict", "soak", "head"} {
+		t.Run(change, func(t *testing.T) {
+			fx := validContributorFixture()
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+			approved := true
+			var c *Engine
+			g := &laneGate{answer: func(ctx context.Context, req hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+				switch change {
+				case "verdict":
+					approved = false
+				case "soak":
+					c.contributorSoak = NewContributorSoakTracker()
+				case "head":
+					fx.recheckHeadSHA = "sha8"
+				}
+				if err := req.Authorize(ctx, "sha7"); err == nil {
+					t.Fatalf("authorization ignored changed %s", change)
+				}
+				return laneAnswer(hgithub.LaneOutcomeDeferred, "authorization rejected")(ctx, req)
+			}}
+			c = newContributorLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, clock, Options{
+				ContributorLaneVerdict: func(string, int, string) ContributorLaneVerdict {
+					return ContributorLaneVerdict{Configured: true, Approved: approved, Verdict: "approve"}
+				},
+			})
+			_, reason, err := c.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, defaultContributorLanePolicy())
+			if err != nil || reason != "authorization rejected" || fx.merges != 0 || len(g.reqs) != 1 {
+				t.Fatalf("reason = %q, err = %v, merges = %d, requests = %+v", reason, err, fx.merges, g.reqs)
+			}
+		})
+	}
+}
+
+func TestLaneSweep_ContributorLaneRejectedFrontAndBehindUpdate(t *testing.T) {
+	for _, state := range []string{"held", "behind", "base-moved"} {
+		t.Run(state, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.baseRef = "main"
+			if state == "held" {
+				fx.labels = []string{"hold"}
+			} else if state == "behind" {
+				fx.mergeableState = "behind"
+			} else {
+				fx.behindBy = 1
+			}
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+			g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeUpdated, "updated")}
+			c := newContributorLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, clock, Options{
+				RequireCurrentBase: func(string) bool { return true },
+			})
+			_, reason, err := c.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, defaultContributorLanePolicy())
+			want := "updated-branch"
+			if state == "held" {
+				want = "label:hold"
+			}
+			if err != nil || reason != want || fx.merges != 0 || fx.updates != 0 || len(g.reqs) != 1 {
+				t.Fatalf("reason = %q, err = %v, merges = %d, updates = %d, requests = %+v", reason, err, fx.merges, fx.updates, g.reqs)
+			}
+			if g.reqs[0].FrontOnly != (state == "held") {
+				t.Fatalf("lane request = %+v", g.reqs[0])
+			}
+		})
+	}
+}
+
+// List-time prefilters must release a rejected front too: those PRs never
+// reach trySweepContributorLanePR during a real sweep.
+func TestLaneSweep_ContributorLanePrefilterRejectsFrontOnly(t *testing.T) {
+	fx := validContributorFixture()
+	fx.labels = []string{"hold"}
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+	g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeLeft, "held")}
+	c := newContributorLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, clock, Options{})
+	result, err := c.SweepContributorLaneAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil || len(result.Merged) != 0 || result.Skipped != 1 || fx.merges != 0 || len(g.reqs) != 1 {
+		t.Fatalf("result = %+v, err = %v, merges = %d, requests = %+v", result, err, fx.merges, g.reqs)
+	}
+	if !g.reqs[0].FrontOnly || g.reqs[0].Authorize != nil {
+		t.Fatalf("lane request = %+v", g.reqs[0])
+	}
+}
+
+// #14934: list-response label rejections must still release a serialized
+// front. FrontOnly also ensures a held non-front PR cannot join waiting.
+func TestLaneSweep_HeldQueuedFrontLeavesTheLane(t *testing.T) {
+	for _, label := range []string{"hold", "needs-human", "needs-rebase", "do-not-merge/review"} {
+		for _, self := range []bool{false, true} {
+			for _, strategy := range []string{config.MergeStrategyHiveSerialized, config.MergeStrategyDirect} {
+				for _, outcome := range []string{hgithub.LaneOutcomeLeft, hgithub.LaneOutcomeDeferred} {
+					name := strategy + "/" + outcome + "/queued"
+					if self {
+						name = strategy + "/" + outcome + "/self-authored"
+					}
+					t.Run(label+"/"+name, func(t *testing.T) {
+						var merged []int
+						var api *httptest.Server
+						if self {
+							pr := greenSelfPR(7)
+							pr.extraLabels = []string{label}
+							api = newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+						} else {
+							pr := greenLanePR(7)
+							pr.extraLabels = []string{label}
+							pr.baseRef = "main"
+							api = newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{pr}, &merged)
+						}
+						defer api.Close()
+						gets := 0
+						counted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7" {
+								gets++
+							}
+							api.Config.Handler.ServeHTTP(w, r)
+						}))
+						defer counted.Close()
+						g := &laneGate{answer: laneAnswer(outcome, "a hold label is present")}
+						c := newLaneSweepEngine(counted.URL, strategy, g.gate, Options{})
+						var result *AutoMergeSweepResult
+						var err error
+						if self {
+							result, err = c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+						} else {
+							result, err = c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+						}
+						if err != nil || result.Seen != 1 || result.Skipped != 1 || len(result.Merged) != 0 || len(merged) != 0 {
+							t.Fatalf("result = %+v, err = %v, merges = %v; want one skip", result, err, merged)
+						}
+						wantGets := 0
+						if strategy == config.MergeStrategyHiveSerialized {
+							if !self {
+								wantGets = 1
+							}
+							if len(g.reqs) != 1 {
+								t.Fatalf("lane requests = %+v; want one", g.reqs)
+							}
+							path := hgithub.PRAuditPathQueue
+							if self {
+								path = hgithub.PRAuditPathSweep
+							}
+							if req := g.reqs[0]; !req.FrontOnly || req.Authorize != nil || req.Repo != "acme/widget" || req.Branch != "main" || req.Number != 7 || req.Path != path {
+								t.Fatalf("lane request = %+v; want front-only without authorization", req)
+							}
+						} else if len(g.reqs) != 0 {
+							t.Fatalf("direct lane requests = %+v; want none", g.reqs)
+						}
+						if gets != wantGets {
+							t.Fatalf("PR gets = %d; want %d", gets, wantGets)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// A front PR closed or merged outside the lane is not in the open-PR lists
+// the lanes walk, so no path calls in for it again. Every pass asks the lane,
+// once per hive-serialized repo it covers, to release such fronts; a direct
+// repo and a repo the pass does not target are never consulted.
+func TestLaneSweep_PassReleasesGoneFronts(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, nil, &merged)
+	defer api.Close()
+	g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeLeft, "#25: front check: pull request is closed")}
+	c := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{})
+
+	c.sweepPass(context.Background(), 5, true, nil, "tick")
+	if len(g.reqs) != 1 {
+		t.Fatalf("lane requests = %+v, want one front check", g.reqs)
+	}
+	if req := g.reqs[0]; !req.ReleaseGoneFronts || req.Repo != "acme/widget" || req.Number != 0 || req.Branch != "" || req.FrontOnly || req.Authorize != nil || req.Path != hgithub.PRAuditPathSweep {
+		t.Fatalf("lane request = %+v, want a repo-wide front check from the sweep", req)
+	}
+
+	g.reqs = nil
+	g.answer = func(context.Context, hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+		return hgithub.LaneMergeResult{Outcome: hgithub.LaneOutcomeWaiting}, errors.New("lane record unwritable")
+	}
+	c.sweepPass(context.Background(), 5, true, SweepTargets{"acme/widget": {7: true}}, "event")
+	if len(g.reqs) != 1 || !g.reqs[0].ReleaseGoneFronts {
+		t.Fatalf("targeted pass lane requests = %+v, want the repo's front check (a lane error is only logged)", g.reqs)
+	}
+
+	g.reqs = nil
+	c.sweepPass(context.Background(), 5, true, SweepTargets{"acme/other": {7: true}}, "event")
+	if len(g.reqs) != 0 {
+		t.Fatalf("pass targeting another repo consulted the lane: %+v", g.reqs)
+	}
+
+	direct := &laneGate{answer: func(context.Context, hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+		t.Fatal("a direct repo must never consult the lane")
+		return hgithub.LaneMergeResult{}, nil
+	}}
+	newLaneSweepEngine(api.URL, config.MergeStrategyDirect, direct.gate, Options{}).sweepPass(context.Background(), 5, true, nil, "tick")
 }

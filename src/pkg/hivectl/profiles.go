@@ -69,6 +69,9 @@ var ErrNoProfiles = errors.New("no hive profiles configured")
 // ErrProfileNotFound reports that no profile carries the requested name.
 var ErrProfileNotFound = errors.New("no such hive profile")
 
+// ErrHubNotFound reports that no tracked hub carries the requested name.
+var ErrHubNotFound = errors.New("no such tracked hub")
+
 // Profile is one named hive a contributor lends a CLI to.
 //
 // RegistrationToken is a secret. It is present in the struct because it is
@@ -78,23 +81,146 @@ var ErrProfileNotFound = errors.New("no such hive profile")
 // or a CI log. Redacted() is what the commands print.
 type Profile struct {
 	// Disabled pauses new work without forgetting credentials. Omitted means enabled.
-	Disabled          bool      `yaml:"disabled,omitempty" json:"disabled"`
-	Name              string    `yaml:"name" json:"name"`
-	Hub               string    `yaml:"hub" json:"hub"`
-	ContributorID     string    `yaml:"contributor_id,omitempty" json:"contributor_id,omitempty"`
-	RegistrationToken string    `yaml:"registration_token" json:"-"`
-	Session           string    `yaml:"session,omitempty" json:"session,omitempty"`
-	Backend           string    `yaml:"backend,omitempty" json:"backend,omitempty"`
-	Model             string    `yaml:"model,omitempty" json:"model,omitempty"`
-	AddedAt           time.Time `yaml:"added_at,omitempty" json:"added_at,omitempty"`
+	// AuditLevel is the relay's local audit level (#13456); empty means lifecycle.
+	Disabled          bool                 `yaml:"disabled,omitempty" json:"disabled"`
+	Name              string               `yaml:"name" json:"name"`
+	Hub               string               `yaml:"hub" json:"hub"`
+	ContributorID     string               `yaml:"contributor_id,omitempty" json:"contributor_id,omitempty"`
+	RegistrationToken string               `yaml:"registration_token" json:"-"`
+	Session           string               `yaml:"session,omitempty" json:"session,omitempty"`
+	Backend           string               `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Model             string               `yaml:"model,omitempty" json:"model,omitempty"`
+	AuditLevel        string               `yaml:"audit_level,omitempty" json:"audit_level,omitempty"`
+	AddedAt           time.Time            `yaml:"added_at,omitempty" json:"added_at,omitempty"`
+	Selection         *RepositorySelection `yaml:"selection,omitempty" json:"-"`
 }
 
 // ProfileSet is the whole file: every hive, plus which one is active.
 type ProfileSet struct {
-	Version         int       `yaml:"version"`
-	Active          string    `yaml:"active,omitempty"`
-	CommonsStrategy string    `yaml:"commons_strategy,omitempty"`
-	Profiles        []Profile `yaml:"profiles"`
+	Version          int                `yaml:"version"`
+	Active           string             `yaml:"active,omitempty"`
+	CommonsStrategy  string             `yaml:"commons_strategy,omitempty"`
+	Profiles         []Profile          `yaml:"profiles"`
+	Presets          []PresetProvenance `yaml:"presets,omitempty" json:"-"`
+	Hubs             []HubEntry         `yaml:"hubs,omitempty" json:"-"`
+	RepoScopeVersion uint64             `yaml:"repo_scope_version,omitempty" json:"-"`
+
+	// revision is the content hash of the profiles.yml this set was read
+	// from or last written to; "" for a set that never touched the file.
+	// See Revision and ProfileStore.CommitExpecting.
+	revision string
+}
+
+// Hub follow policies. Off requires confirmation for new Hives; current
+// snapshots their repositories, and current-and-future-repos also records
+// future repository following for newly enrolled Hives.
+const (
+	HubFollowOff                   = "off"
+	HubFollowCurrent               = "current"
+	HubFollowCurrentAndFutureRepos = "current-and-future-repos"
+)
+
+// HubEntry is a tracked hub: a federation endpoint whose advertised Hives can
+// be discovered. It stores no credentials; each Hive still needs its own
+// profile to contribute. Reviewed is the last normalized Hive set the
+// contributor accepted as the hub's current advertisement.
+type HubEntry struct {
+	Name     string   `yaml:"name" json:"name"`
+	URL      string   `yaml:"url" json:"url"`
+	Follow   string   `yaml:"follow,omitempty" json:"follow"`
+	Reviewed []string `yaml:"reviewed,omitempty" json:"reviewed,omitempty"`
+}
+
+// EffectiveFollow reports the follow policy, treating an unset value as off.
+func (h HubEntry) EffectiveFollow() string {
+	if h.Follow == "" {
+		return HubFollowOff
+	}
+	return h.Follow
+}
+
+// ValidateHubFollow accepts the documented hub follow policies; empty means off.
+func ValidateHubFollow(follow string) error {
+	switch follow {
+	case "", HubFollowOff, HubFollowCurrent, HubFollowCurrentAndFutureRepos:
+		return nil
+	default:
+		return fmt.Errorf("hub follow policy %q must be one of %s, %s or %s", follow, HubFollowOff, HubFollowCurrent, HubFollowCurrentAndFutureRepos)
+	}
+}
+
+// FindHub returns the tracked hub with the given name (case-insensitive) and
+// its index.
+func (set *ProfileSet) FindHub(name string) (*HubEntry, int) {
+	for i := range set.Hubs {
+		if strings.EqualFold(set.Hubs[i].Name, name) {
+			return &set.Hubs[i], i
+		}
+	}
+	return nil, -1
+}
+
+// AddHub tracks a hub for discovery. Names are unique case-insensitively and
+// URLs are unique by NormalizeHiveID origin.
+func (set *ProfileSet) AddHub(entry HubEntry) error {
+	if entry.Follow == "" {
+		entry.Follow = HubFollowOff
+	}
+	if err := validateHubEntry(entry); err != nil {
+		return err
+	}
+	if existing, _ := set.FindHub(entry.Name); existing != nil {
+		return fmt.Errorf("hub %q is already tracked", existing.Name)
+	}
+	id, _ := NormalizeHiveID(entry.URL)
+	for _, h := range set.Hubs {
+		if other, err := NormalizeHiveID(h.URL); err == nil && other == id {
+			return fmt.Errorf("hub URL %s is already tracked as %q", id, h.Name)
+		}
+	}
+	set.Hubs = append(set.Hubs, entry)
+	return nil
+}
+
+// RemoveHub stops tracking a hub. Profiles of its Hives are untouched.
+func (set *ProfileSet) RemoveHub(name string) (HubEntry, error) {
+	entry, i := set.FindHub(name)
+	if entry == nil {
+		return HubEntry{}, fmt.Errorf("%w: %q", ErrHubNotFound, name)
+	}
+	removed := *entry
+	set.Hubs = append(set.Hubs[:i], set.Hubs[i+1:]...)
+	if len(set.Hubs) == 0 {
+		set.Hubs = nil
+	}
+	return removed, nil
+}
+
+func validateHubEntry(entry HubEntry) error {
+	if err := ValidateProfileName(entry.Name); err != nil {
+		return fmt.Errorf("hub: %w", err)
+	}
+	if err := ValidateHubURL(entry.URL); err != nil {
+		return fmt.Errorf("hub %q: %w", entry.Name, err)
+	}
+	if _, err := NormalizeHiveID(entry.URL); err != nil {
+		return fmt.Errorf("hub %q: %w", entry.Name, err)
+	}
+	if err := ValidateHubFollow(entry.Follow); err != nil {
+		return fmt.Errorf("hub %q: %w", entry.Name, err)
+	}
+	reviewed := map[string]struct{}{}
+	for _, id := range entry.Reviewed {
+		normalized, err := NormalizeHiveID(id)
+		if err != nil {
+			return fmt.Errorf("hub %q reviewed Hive %q: %w", entry.Name, id, err)
+		}
+		if _, duplicate := reviewed[normalized]; duplicate {
+			return fmt.Errorf("hub %q reviews Hive %q more than once", entry.Name, normalized)
+		}
+		reviewed[normalized] = struct{}{}
+	}
+	return nil
 }
 
 // ProfileStore reads and writes profiles.yml and its contributor.env
@@ -141,27 +267,51 @@ func (s *ProfileStore) RelayPIDPath() string { return filepath.Join(s.dir, relay
 // authenticated or heartbeated successfully.
 func (s *ProfileStore) HubsSeenPath() string { return filepath.Join(s.dir, hubsSeenFileName) }
 
-// LoadHubsSeen reads hubs-seen.json. A missing file is not an error: it simply
-// means no relay has recorded reachability yet.
-func (s *ProfileStore) LoadHubsSeen() (map[string]time.Time, error) {
+// HubObservation is relay reachability plus per-contributor scope status.
+// Old relays write a bare timestamp instead of this object.
+type HubObservation struct {
+	LastSeen      time.Time         `json:"last_seen"`
+	Subscriptions map[string]string `json:"subscriptions,omitempty"`
+}
+
+func (s *ProfileStore) LoadHubObservations() (map[string]HubObservation, error) {
 	data, err := os.ReadFile(s.HubsSeenPath())
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]time.Time{}, nil
+		return map[string]HubObservation{}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read hive last-seen file %s: %w", s.HubsSeenPath(), err)
 	}
-	var raw map[string]string
+	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse hive last-seen file %s: %w", s.HubsSeenPath(), err)
 	}
-	seen := make(map[string]time.Time, len(raw))
-	for hub, stamp := range raw {
-		t, err := time.Parse(time.RFC3339, stamp)
-		if err != nil {
-			return nil, fmt.Errorf("parse last-seen timestamp for %s in %s: %w", hub, s.HubsSeenPath(), err)
+	seen := make(map[string]HubObservation, len(raw))
+	for hub, value := range raw {
+		var observation HubObservation
+		var stamp string
+		if err := json.Unmarshal(value, &stamp); err == nil {
+			observation.LastSeen, err = time.Parse(time.RFC3339, stamp)
+			if err != nil {
+				return nil, fmt.Errorf("parse last-seen timestamp for %s in %s: %w", hub, s.HubsSeenPath(), err)
+			}
+		} else if err := json.Unmarshal(value, &observation); err != nil {
+			return nil, fmt.Errorf("parse hive last-seen file %s: %w", s.HubsSeenPath(), err)
 		}
-		seen[hub] = t
+		seen[hub] = observation
+	}
+	return seen, nil
+}
+
+// LoadHubsSeen reads both legacy timestamps and scope-aware observations.
+func (s *ProfileStore) LoadHubsSeen() (map[string]time.Time, error) {
+	observations, err := s.LoadHubObservations()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]time.Time, len(observations))
+	for hub, observation := range observations {
+		seen[hub] = observation.LastSeen
 	}
 	return seen, nil
 }
@@ -216,6 +366,8 @@ func (set *ProfileSet) Ordered() []Profile {
 // Redacted returns a copy safe to print or serialize: the registration token is
 // replaced by a fixed placeholder so `hives list -o json` never leaks it.
 func (p Profile) Redacted() Profile {
+	// Local consent and provenance are not portable profile exports.
+	p.Selection = nil
 	if p.RegistrationToken != "" {
 		p.RegistrationToken = "(set)"
 	}
@@ -244,6 +396,14 @@ func (set *ProfileSet) Validate() error {
 		if err := ValidateHubURL(p.Hub); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
 		}
+		if err := p.Selection.Validate(); err != nil {
+			return fmt.Errorf("profile %q: %w", p.Name, err)
+		}
+		if p.Selection != nil {
+			if _, err := NormalizeHiveID(p.Hub); err != nil {
+				return fmt.Errorf("profile %q: %w", p.Name, err)
+			}
+		}
 		if err := validateEnvValue("registration_token", p.RegistrationToken); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
 		}
@@ -258,6 +418,42 @@ func (set *ProfileSet) Validate() error {
 		if err := validateEnvValue("contributor_id", p.ContributorID); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
 		}
+		if p.AuditLevel != "" {
+			if err := ValidateAuditLevel(p.AuditLevel); err != nil {
+				return fmt.Errorf("profile %q: %w", p.Name, err)
+			}
+		}
+	}
+	presetIDs := map[string]bool{}
+	for _, preset := range set.Presets {
+		if err := ValidateProfileName(preset.ID); err != nil {
+			return fmt.Errorf("preset: %w", err)
+		}
+		key := strings.ToLower(preset.ID)
+		if presetIDs[key] {
+			return fmt.Errorf("duplicate preset id %q", preset.ID)
+		}
+		presetIDs[key] = true
+		if strings.TrimSpace(preset.Source) == "" || strings.TrimSpace(preset.ReviewedRevision) == "" {
+			return fmt.Errorf("preset %q requires source and reviewed_revision", preset.ID)
+		}
+	}
+	hubNames := map[string]bool{}
+	hubIDs := map[string]string{}
+	for _, hub := range set.Hubs {
+		if err := validateHubEntry(hub); err != nil {
+			return err
+		}
+		key := strings.ToLower(hub.Name)
+		if hubNames[key] {
+			return fmt.Errorf("duplicate hub name %q", hub.Name)
+		}
+		hubNames[key] = true
+		id, _ := NormalizeHiveID(hub.URL)
+		if prev, dup := hubIDs[id]; dup {
+			return fmt.Errorf("hub %q duplicates the URL of hub %q (%s)", hub.Name, prev, id)
+		}
+		hubIDs[id] = hub.Name
 	}
 	if set.Active != "" {
 		if p, _ := set.Find(set.Active); p == nil {
@@ -424,6 +620,7 @@ func (s *ProfileStore) Load() (*ProfileSet, error) {
 	if err := set.Validate(); err != nil {
 		return nil, fmt.Errorf("hive profiles %s: %w", s.Path(), err)
 	}
+	set.revision = profilesRevision(data)
 	return &set, nil
 }
 
@@ -447,7 +644,22 @@ func (s *ProfileStore) Save(set *ProfileSet) error {
 	header := "# Named hive profiles for the Hive contributor relay (hivectl hives).\n" +
 		"# Holds live registration tokens — keep this file mode 0600.\n" +
 		"# contributor.env in this directory is GENERATED from this file.\n"
-	return s.writeFile(s.Path(), "profiles-*.yml.tmp", append([]byte(header), data...))
+	content := append([]byte(header), data...)
+	if err := s.writeFile(s.Path(), "profiles-*.yml.tmp", content); err != nil {
+		return err
+	}
+	set.revision = profilesRevision(content)
+	return nil
+}
+
+// LoadForReview reads profiles or legacy configuration without writing either
+// file. Consent-gated onboarding must not migrate credentials before approval.
+func (s *ProfileStore) LoadForReview() (*ProfileSet, error) {
+	set, err := s.Load()
+	if err != nil || set != nil {
+		return set, err
+	}
+	return s.migrateFromEnv()
 }
 
 // LoadOrMigrate returns the profile set, migrating a legacy positional
@@ -597,6 +809,15 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 		env.unset("HIVE_SESSION")
 	}
 	env.set("HIVE_COMMONS_STRATEGY", set.EffectiveCommonsStrategy())
+	projectAuditLevels(env, ordered)
+	scopes, err := set.RepositoryScopes()
+	if err != nil {
+		return err
+	}
+	// Semicolons separate repositories, so quote this value for shell sourcing.
+	// Canonical IDs cannot contain quotes or shell expansions.
+	env.set("HIVE_REPO_SCOPE", "'"+strings.Join(scopes, ",")+"'")
+	env.set("HIVE_REPO_SCOPE_VERSION", fmt.Sprint(set.RepoScopeVersion))
 
 	if _, statErr := os.Stat(s.EnvPath()); statErr == nil {
 		if err := s.backupEnv(); err != nil {

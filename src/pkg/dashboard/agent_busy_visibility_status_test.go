@@ -5,18 +5,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestBuildAgents_BusyVisibilityFieldsAndBadge(t *testing.T) {
 	busySince := time.Date(2026, 9, 29, 4, 16, 0, 0, time.UTC)
 	lastActivity := busySince.Add(-47 * time.Minute)
-	proc := &agent.AgentProcess{
+	proc := &crux.Process{
 		Name:                   "scanner",
 		Config:                 config.AgentConfig{Backend: "copilot", Enabled: true},
-		State:                  agent.StateRunning,
-		OutputBuffer:           agent.NewRingBuffer(10),
+		State:                  crux.StateRunning,
+		OutputBuffer:           cruxtest.NewRingBuffer(10),
 		KicksUndeliverable:     5,
 		BusySince:              busySince,
 		LastTranscriptActivity: lastActivity,

@@ -317,7 +317,7 @@ func TestHiveOpenPRScript_MultilineBodyIsValidJSONWithoutPython3(t *testing.T) {
 	if err := os.MkdirAll(stubBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"bash", "awk", "cat", "date", "mkdir", "tr"} {
+	for _, tool := range []string{"bash", "awk", "cat", "date", "dirname", "mkdir", "tr"} {
 		real, lookErr := exec.LookPath(tool)
 		if lookErr != nil {
 			t.Skipf("%s not available: %v", tool, lookErr)
@@ -339,8 +339,12 @@ func TestHiveOpenPRScript_MultilineBodyIsValidJSONWithoutPython3(t *testing.T) {
 	)
 	cmd.Dir = root
 	cmd.Env = []string{"HIVE_AGENT=scanner", "PATH=" + stubBin, "HOME=" + root}
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("script failed with no python3 on PATH: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "command not found") {
+		t.Fatalf("script needs a tool missing from the stub PATH:\n%s", out)
 	}
 
 	entries, err := filepath.Glob(filepath.Join(reqDir, "*.json"))

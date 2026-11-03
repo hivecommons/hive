@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 // maxBulkApprovalsPerRequest caps how many approvals one bulk call may resolve.
@@ -70,7 +70,7 @@ type ApprovalRow struct {
 	// RuleAction is what that rule asks for.
 	RuleAction string `json:"rule_action,omitempty"`
 	// PolicyBug marks an item queued on a hive at ACMM L6+. Per requirement 4
-	// of the throughput contract, an inbox accumulating at full autonomy is a
+	// of the throughput contract, an inbox accumulating at L6 (Autonomous) is a
 	// misconfiguration signal, not a normal wait — the UI renders these
 	// distinctly rather than letting them sit politely.
 	PolicyBug bool `json:"policy_bug,omitempty"`
@@ -326,7 +326,7 @@ func approvalOperator(r *http.Request) string {
 
 // currentACMMLevel reads the hive's configured level for display, defaulting to
 // the most restrictive reading when unset — the same fail-closed default
-// toolapprove.ACMMLevelOf applies.
+// Config.ACMMLevelOrZero applies.
 func (s *Server) currentACMMLevel() int {
 	if s.deps == nil || s.deps.Config == nil || s.deps.Config.ACMMLevel == nil {
 		return 0

@@ -89,6 +89,9 @@ func (v Verdict) Delivery() string {
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// Estimated marks counts derived from text length because the endpoint
+	// reported no usage.
+	Estimated bool `json:"-"`
 }
 
 // Total is the review's token spend counted against the daily budget.
@@ -220,9 +223,10 @@ func (e *Evaluator) Review(ctx context.Context, agentName, transcript string) (V
 		return Verdict{Severity: SeverityAside}, Usage{}, nil // nothing to judge
 	}
 
+	messages := buildPrompt(agentName, e.instructions, tail)
 	body, err := json.Marshal(chatRequest{
 		Model:       e.model,
-		Messages:    buildPrompt(agentName, e.instructions, tail),
+		Messages:    messages,
 		Temperature: 0,
 		MaxTokens:   400,
 	})
@@ -262,7 +266,17 @@ func (e *Evaluator) Review(ctx context.Context, agentName, transcript string) (V
 	if len(cr.Choices) == 0 {
 		return Verdict{}, usage, fmt.Errorf("advisor returned no choices")
 	}
-	v, err := ParseVerdict(cr.Choices[0].Message.Content)
+	content := cr.Choices[0].Message.Content
+	if usage.Total() == 0 {
+		// Endpoint reported no usage: estimate at ~4 chars per token so the
+		// daily budget still applies.
+		promptChars := 0
+		for _, m := range messages {
+			promptChars += len(m.Content)
+		}
+		usage = Usage{InputTokens: promptChars / 4, OutputTokens: max(len(content)/4, 1), Estimated: true}
+	}
+	v, err := ParseVerdict(content)
 	return v, usage, err
 }
 

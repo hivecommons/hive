@@ -1,0 +1,1 @@
+- Retrofit Hive-authored `Refs #N` pull requests from the claim-label sweep too, so existing open implementation PRs gain GitHub's issue-list link even after their issue has moved out of the in-progress stage lane.

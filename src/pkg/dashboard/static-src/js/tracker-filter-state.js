@@ -1,0 +1,206 @@
+    function stageTrackerLoadFilter() {
+      try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
+      _stageTrackerFilter.page = 1;
+    }
+    function stageTrackerSaveFilter() {
+      try { const f = Object.assign({}, _stageTrackerFilter); delete f.page; localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f)); } catch {}
+    }
+    // Repo chip / group settings and the per-repo collapsed set (localStorage).
+    function stageTrackerRepoChipSetting() {
+      let v = '';
+      try { v = localStorage.getItem(STAGE_TRACKER_REPO_CHIP_KEY) || ''; } catch { v = ''; }
+      return STAGE_TRACKER_REPO_CHIP_MODES.some(m => m.id === v) ? v : STAGE_TRACKER_REPO_CHIP_DEFAULT;
+    }
+    function stageTrackerSetRepoChip(id) {
+      const v = STAGE_TRACKER_REPO_CHIP_MODES.some(m => m.id === id) ? id : STAGE_TRACKER_REPO_CHIP_DEFAULT;
+      try { localStorage.setItem(STAGE_TRACKER_REPO_CHIP_KEY, v); } catch {}
+      return v;
+    }
+    function stageTrackerGroupSetting() {
+      let v = '';
+      try { v = localStorage.getItem(STAGE_TRACKER_GROUP_KEY) || ''; } catch { v = ''; }
+      return STAGE_TRACKER_GROUPS.indexOf(v) >= 0 ? v : STAGE_TRACKER_GROUP_DEFAULT;
+    }
+    function stageTrackerSetGroup(id) {
+      const v = STAGE_TRACKER_GROUPS.indexOf(id) >= 0 ? id : STAGE_TRACKER_GROUP_DEFAULT;
+      try { localStorage.setItem(STAGE_TRACKER_GROUP_KEY, v); } catch {}
+      return v;
+    }
+    function stageTrackerLoadCollapsed() {
+      try {
+        const o = JSON.parse(localStorage.getItem(STAGE_TRACKER_GROUP_COLLAPSED_KEY) || '{}');
+        if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+        const out = {};
+        for (const k of Object.keys(o)) if (o[k]) out[k] = true;
+        return out;
+      } catch { return {}; }
+    }
+    function stageTrackerSaveCollapsed(c) {
+      try { localStorage.setItem(STAGE_TRACKER_GROUP_COLLAPSED_KEY, JSON.stringify(c || {})); } catch {}
+    }
+    // Pure: the collapsed set with one repo toggled.
+    function stageTrackerToggleCollapsed(collapsed, repo) {
+      const out = Object.assign({}, collapsed || {});
+      if (out[repo]) delete out[repo]; else out[repo] = true;
+      return out;
+    }
+    function stageTrackerLoadGrouping() {
+      _stageTrackerGroup = stageTrackerGroupSetting();
+      _stageTrackerCollapsed = stageTrackerLoadCollapsed();
+    }
+    function stageTrackerPrimaryRepo() { return (typeof window !== 'undefined' && window._primaryRepo) || ''; }
+    function hamGroup(value) {
+      _stageTrackerGroup = stageTrackerSetGroup(value);
+      _stageTrackerFilter.page = 1;
+      renderStageTracker();
+      stageTrackerRenderSettings();
+    }
+    function hamGroupToggle(repo) {
+      _stageTrackerCollapsed = stageTrackerToggleCollapsed(_stageTrackerCollapsed, repo);
+      stageTrackerSaveCollapsed(_stageTrackerCollapsed);
+      renderStageTracker();
+    }
+    // A row's repo chip: filter to that repo, or back to all when it already is.
+    function hamRepoChip(repo) { hamFilter('repo', _stageTrackerFilter.repo === repo ? '' : repo); }
+    function stageTrackerRepoChipChange(value) {
+      stageTrackerSetRepoChip(value);
+      renderStageTracker();
+    }
+
+    function hamFilter(key, value) {
+      const f = _stageTrackerFilter;
+      switch (key) {
+        case 'kind': f.kind = value || 'all'; break;
+        case 'repo': f.repo = value || ''; break;
+        case 'q': f.q = value || ''; break;
+        case 'age': f.age = value || 'any'; break;
+        case 'author': f.author = value || 'any'; break;
+        case 'attention': f.attention = value === 'toggle' ? !f.attention : !!value; break;
+        case 'acted': f.acted = value || 'any'; break;
+        case 'sort': f.sort = value || 'furthest'; break;
+        case 'dir': f.dir = value === 'toggle' ? (f.dir === 'asc' ? 'desc' : 'asc') : value; break;
+        case 'size': f.size = Number(value) || STAGE_TRACKER_DEFAULT_PAGE_SIZE; break;
+        case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
+        case 'needsHuman': f.needsHuman = value === 'toggle' ? !f.needsHuman : !!value; break;
+        case 'onHold': f.onHold = value === 'toggle' ? !f.onHold : !!value; break;
+        case 'waitingOnYou': f.waitingOnYou = value === 'toggle' ? !f.waitingOnYou : !!value; break;
+        case 'labelsClear': f.labels = []; f.needsHuman = false; f.onHold = false; break;
+        case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
+        case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
+      }
+      if (key !== 'page') _stageTrackerFilter.page = 1;
+      _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      stageTrackerSaveFilter();
+      renderStageTracker();
+    }
+
+    // Push the filter state into the toolbar controls (they may have been
+    // restored from storage or reset).
+    function stageTrackerSyncToolbar(f) {
+      document.querySelectorAll('#activity-monitor-toolbar .ham-chip[data-arg0="kind"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.kind ? 'true' : 'false'));
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el && el.value !== String(v) && document.activeElement !== el) el.value = String(v); };
+      setVal('activity-monitor-q', f.q);
+      setVal('activity-monitor-age', f.age);
+      setVal('activity-monitor-author', f.author);
+      setVal('activity-monitor-acted', f.acted);
+      setVal('activity-monitor-sort', f.sort);
+      setVal('activity-monitor-group', _stageTrackerGroup);
+      setVal('activity-monitor-size', f.size);
+      const att = document.getElementById('activity-monitor-attention');
+      if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const wait = document.getElementById('activity-monitor-waiting');
+      if (wait) wait.setAttribute('aria-pressed', f.waitingOnYou ? 'true' : 'false');
+      const dir = document.getElementById('activity-monitor-dir');
+      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
+      const reset = document.getElementById('activity-monitor-reset');
+      if (reset) reset.hidden = !stageTrackerFilterActive(f);
+    }
+
+    function stageTrackerLabelChipHtml(c) {
+      return `<button type="button" class="ham-chip ham-label-chip" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc((c.on ? 'Remove label filter ' : 'Filter by label ') + c.label)}">${esc(c.label)}<span class="ham-chip-n">${c.count}</span></button>`;
+    }
+    function stageTrackerNeedsHumanChipHtml(nh) {
+      if (!nh) return '';
+      const tip = (nh.on ? 'Remove the Needs human filter. ' : '') + STAGE_TRACKER_NEEDS_HUMAN_TIP;
+      return `<button type="button" class="ham-chip ham-needs-human-chip" data-action="hamFilter" data-arg0="needsHuman" data-arg1="toggle" aria-pressed="${nh.on ? 'true' : 'false'}" title="${esc(tip)}">🙋 Needs human<span class="ham-chip-n">${nh.count}</span></button>`;
+    }
+    function stageTrackerOnHoldChipHtml(oh) {
+      if (!oh) return '';
+      const tip = (oh.on ? 'Remove the On hold filter. ' : '') + STAGE_TRACKER_ON_HOLD_TIP;
+      return `<button type="button" class="ham-chip ham-on-hold-chip" data-action="hamFilter" data-arg0="onHold" data-arg1="toggle" aria-pressed="${oh.on ? 'true' : 'false'}" title="${esc(tip)}">⏸ On hold<span class="ham-chip-n">${oh.count}</span></button>`;
+    }
+    function stageTrackerLabelsHtml(facets) {
+      if (!facets.chips.length && !facets.needsHuman && !facets.onHold) return '';
+      return stageTrackerNeedsHumanChipHtml(facets.needsHuman)
+        + stageTrackerOnHoldChipHtml(facets.onHold)
+        + facets.chips.map(stageTrackerLabelChipHtml).join('')
+        + (facets.hidden ? `<button type="button" class="ham-chip ham-labels-more" data-action="openStageTrackerLabelDialog" aria-haspopup="dialog" title="Show all ${facets.all.length} labels with counts; pick any to filter">+${facets.hidden} more</button>` : '');
+    }
+
+    // "All labels" dialog: every label with its count, same order as the
+    // row, a type-to-filter box, the same toggle the chips use and Clear.
+    // In-app modal (config-overlay recipe), never a native prompt.
+    function stageTrackerLabelDialogHtml(data) {
+      return `<div class="ham-label-dialog-tools"><input type="search" class="ham-input" id="activity-monitor-labels-q" placeholder="Type to filter labels…" autocomplete="off" spellcheck="false" aria-label="Filter the label list" value="${esc(data.query)}" data-input-action="stageTrackerLabelDialogQuery" data-arg-types="w"><span class="ham-count">${esc(stageTrackerLabelDialogCountText(data))}</span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="hamFilter" data-arg0="labelsClear"${data.selected ? '' : ' disabled'} title="Clear every label filter">Clear</button></div>`
+        + (data.needsHuman || data.onHold ? `<div class="ham-labels ham-label-dialog-needs-human">${stageTrackerNeedsHumanChipHtml(data.needsHuman)}${stageTrackerOnHoldChipHtml(data.onHold)}</div>` : '')
+        + `<div class="ham-labels ham-label-dialog-list" role="group" aria-label="All labels">${stageTrackerLabelDialogListHtml(data)}</div>`;
+    }
+    function stageTrackerLabelDialogListHtml(data) {
+      return data.rows.length ? data.rows.map(stageTrackerLabelChipHtml).join('') : `<div class="ham-empty">No label matches “${esc(data.query)}”</div>`;
+    }
+    function stageTrackerLabelDialogCountText(data) {
+      return (data.rows.length === data.total ? data.total + ' labels' : data.rows.length + ' of ' + data.total + ' labels') + ' · ' + data.selected + ' selected';
+    }
+    // Redraw the open dialog. While the filter box has focus only the list,
+    // the count, the Clear button and the Needs human chip are patched so a
+    // poll-driven render never steals the caret.
+    function stageTrackerRenderLabelDialog() {
+      const body = document.getElementById('activity-monitor-labels-body');
+      if (!body || !_stageTracker || !Array.isArray(_stageTracker.items)) return;
+      const facets = stageTrackerLabelFacets(_stageTracker.items, _stageTrackerFilter);
+      const data = stageTrackerLabelDialogData(facets, _stageTrackerLabelQuery);
+      const q = document.getElementById('activity-monitor-labels-q');
+      if (!q || document.activeElement !== q) { setIfChanged(body, stageTrackerLabelDialogHtml(data)); return; }
+      const list = body.querySelector('.ham-label-dialog-list');
+      if (list) setIfChanged(list, stageTrackerLabelDialogListHtml(data));
+      const count = body.querySelector('.ham-label-dialog-tools .ham-count');
+      if (count && count.textContent !== stageTrackerLabelDialogCountText(data)) count.textContent = stageTrackerLabelDialogCountText(data);
+      const clear = body.querySelector('.ham-label-dialog-tools .hv-btn');
+      if (clear) clear.disabled = !data.selected;
+      const nh = body.querySelector('.ham-label-dialog-needs-human');
+      if (nh) setIfChanged(nh, stageTrackerNeedsHumanChipHtml(data.needsHuman) + stageTrackerOnHoldChipHtml(data.onHold));
+    }
+    var _stageTrackerLabelDialogReturnFocus = null;
+    function openStageTrackerLabelDialog() {
+      if (document.getElementById('activity-monitor-labels-overlay')) return;
+      _stageTrackerLabelDialogReturnFocus = document.activeElement;
+      const overlay = document.createElement('div');
+      overlay.id = 'activity-monitor-labels-overlay';
+      overlay.className = 'config-overlay';
+      hiveRememberModalOpen(overlay);
+      overlay.innerHTML = `<div class="config-modal overview-settings-modal ham-label-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-monitor-labels-title">
+        <div class="config-header">
+          <h2 class="config-title" id="activity-monitor-labels-title">All labels</h2>
+          <button type="button" class="config-close" data-action="closeStageTrackerLabelDialog" aria-label="Close the label list">&times;</button>
+        </div>
+        <div class="config-body overview-settings-body modal-scroll" id="activity-monitor-labels-body"></div>
+      </div>`;
+      overlay.addEventListener('click', e => { if (e.target === overlay) closeStageTrackerLabelDialog(); });
+      document.body.appendChild(overlay);
+      stageTrackerRenderLabelDialog();
+      const q = document.getElementById('activity-monitor-labels-q');
+      if (q) setTimeout(() => q.focus(), 0);
+    }
+    function closeStageTrackerLabelDialog() {
+      const overlay = document.getElementById('activity-monitor-labels-overlay');
+      if (overlay) overlay.remove();
+      _stageTrackerLabelQuery = '';
+      const ret = _stageTrackerLabelDialogReturnFocus;
+      _stageTrackerLabelDialogReturnFocus = null;
+      if (ret && ret.focus && document.contains(ret)) setTimeout(() => ret.focus({ preventScroll: true }), 0);
+    }
+    function stageTrackerLabelDialogQuery(value) {
+      _stageTrackerLabelQuery = String(value || '');
+      stageTrackerRenderLabelDialog();
+    }
+

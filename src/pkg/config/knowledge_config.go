@@ -14,6 +14,17 @@ type DocSourceConfigYAML struct {
 	Layer    string `yaml:"layer"`
 }
 
+// KnowledgeContext7Import is one library imported from Context7 at startup.
+type KnowledgeContext7Import struct {
+	ID    string `yaml:"id"`
+	Query string `yaml:"query,omitempty"`
+}
+
+// KnowledgeContext7 holds the legacy Context7 auto-import list.
+type KnowledgeContext7 struct {
+	AutoImport []KnowledgeContext7Import `yaml:"auto_import,omitempty"`
+}
+
 type KnowledgeConfig struct {
 	Enabled         bool                  `yaml:"enabled"`
 	Engine          string                `yaml:"engine"`
@@ -22,6 +33,7 @@ type KnowledgeConfig struct {
 	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
 	Documents       []DocSourceConfigYAML `yaml:"documents"`
 	Connectors      []KnowledgeConnector  `yaml:"connectors,omitempty"`
+	Context7        KnowledgeContext7     `yaml:"context7,omitempty"`
 	Publish         KnowledgePublish      `yaml:"publish,omitempty"`
 	Public          PublicKnowledgeConfig `yaml:"public,omitempty"`
 	Curator         KnowledgeCurator      `yaml:"curator"`
@@ -45,13 +57,172 @@ type PublicKnowledgeConfig struct {
 // BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.
 // Enabled defaults to true when knowledge is enabled; set to false to opt out.
 type BeadSynthesizerConfig struct {
-	Enabled          *bool            `yaml:"enabled,omitempty"`
-	Schedule         string           `yaml:"schedule"`
-	MinConfidence    float64          `yaml:"min_confidence"`
-	TargetLayer      string           `yaml:"target_layer"`
-	MaxFactsPerCycle int              `yaml:"max_facts_per_cycle"`
-	VaultPath        string           `yaml:"vault_path"`
-	RetentionPolicy  *RetentionPolicy `yaml:"retention_policy"`
+	Enabled          *bool                  `yaml:"enabled,omitempty"`
+	Schedule         string                 `yaml:"schedule"`
+	MinConfidence    float64                `yaml:"min_confidence"`
+	TargetLayer      string                 `yaml:"target_layer"`
+	MaxFactsPerCycle int                    `yaml:"max_facts_per_cycle"`
+	VaultPath        string                 `yaml:"vault_path"`
+	RetentionPolicy  *RetentionPolicy       `yaml:"retention_policy"`
+	Publish          BeadSynthPublishConfig `yaml:"publish,omitempty"`
+	// MaxAPICallsPerCycle caps charged GitHub PR GETs per synthesis cycle.
+	// 0/unset defaults to 40; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.
+	MaxAPICallsPerCycle int `yaml:"max_api_calls_per_cycle"`
+}
+
+// BeadSynthPublishConfig stores the owner's intended repository publication
+// settings. It is separate from connector publishing (KnowledgeConfig.Publish).
+// This block alone does not enable publishing; policy and sensitivity gates
+// must be enforced by a future publisher, including for mode=commit.
+// Empty Repo selects the hive's primary repository; empty BaseBranch selects
+// that repository's default branch.
+type BeadSynthPublishConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	Repo       string `yaml:"repo" json:"repo"`
+	Path       string `yaml:"path" json:"path"`
+	BaseBranch string `yaml:"base_branch" json:"base_branch"`
+	Mode       string `yaml:"mode" json:"mode"`
+	Cadence    string `yaml:"cadence" json:"cadence"`
+}
+
+// WithDefaults returns settings with cleared fields restored to safe defaults.
+func (p BeadSynthPublishConfig) WithDefaults() BeadSynthPublishConfig {
+	if p.Path == "" {
+		p.Path = DefaultBeadSynthPublishPath
+	}
+	if p.Mode == "" {
+		p.Mode = DefaultBeadSynthPublishMode
+	}
+	if p.Cadence == "" {
+		p.Cadence = DefaultBeadSynthPublishCadence
+	}
+	return p
+}
+
+// DefaultBeadSynthMaxAPICallsPerCycle is the default per-cycle PR GET cap.
+const DefaultBeadSynthMaxAPICallsPerCycle = 40
+
+// Knowledge pipeline defaults that applyDefaults sets at Load; runtime editors
+// substitute the same values so a cleared field restores the default.
+const (
+	DefaultBeadSynthPublishPath         = "docs/knowledge/"
+	DefaultBeadSynthPublishMode         = "pr"
+	DefaultBeadSynthPublishCadence      = "per_run"
+	DefaultBeadSynthSchedule            = "hourly"
+	DefaultBeadSynthMinConfidence       = 0.5
+	DefaultBeadSynthTargetLayer         = "project"
+	DefaultBeadSynthMaxFactsPerCycle    = 20
+	DefaultBeadSynthVaultPath           = "/data/vaults/bead-synth-wiki"
+	DefaultCuratorSchedule              = "daily"
+	DefaultCuratorAutoPromoteThreshold  = 0.9
+	DefaultKnowledgePrimerMaxFacts      = 25
+	DefaultKnowledgePrimerMaxBytes      = 4096
+	DefaultKnowledgePrimerMergeStrategy = "precedence"
+)
+
+// KnowledgeSchedules are the schedule values the bead synthesizer, curator
+// and code map loops understand (knowledge.ParseSynthSchedule).
+var KnowledgeSchedules = []string{"hourly", "daily"}
+
+// ValidateKnowledgePipeline checks the scalar bead_synthesizer, curator,
+// code_maps and primer keys the dashboard edits: schedules must be hourly or
+// daily (empty uses the default), layers must be personal, project, org or
+// community, confidences lie in [0, 1], counts and byte caps are not
+// negative, and scheduled promotion may not promote a layer into itself.
+// Bead-synth publish paths must be relative without parent components; modes
+// are pr or commit and cadences are per_run or daily.
+// Unset (zero) fields pass, so callers can validate just the keys they edit.
+func ValidateKnowledgePipeline(k KnowledgeConfig) error {
+	p := k.BeadSynthesizer.Publish
+	if p.Mode != "" && p.Mode != "pr" && p.Mode != "commit" {
+		return fmt.Errorf("knowledge.bead_synthesizer.publish.mode must be pr or commit")
+	}
+	if p.Cadence != "" && p.Cadence != "per_run" && p.Cadence != "daily" {
+		return fmt.Errorf("knowledge.bead_synthesizer.publish.cadence must be per_run or daily")
+	}
+	// Repository paths use forward slashes. Reject Windows separators and
+	// drive paths too, so validation is independent of the host platform.
+	if strings.HasPrefix(p.Path, "/") || strings.ContainsAny(p.Path, "\\:\x00") {
+		return fmt.Errorf("knowledge.bead_synthesizer.publish.path must be relative with no .. components")
+	}
+	for _, part := range strings.Split(p.Path, "/") {
+		if part == ".." {
+			return fmt.Errorf("knowledge.bead_synthesizer.publish.path must be relative with no .. components")
+		}
+	}
+	for _, s := range []struct{ field, v string }{
+		{"knowledge.bead_synthesizer.schedule", k.BeadSynthesizer.Schedule},
+		{"knowledge.curator.schedule", k.Curator.Schedule},
+		{"knowledge.code_maps.schedule", k.CodeMaps.Schedule},
+	} {
+		v := strings.ToLower(strings.TrimSpace(s.v))
+		if v != "" && v != "hourly" && v != "daily" {
+			return fmt.Errorf("%s %q must be hourly or daily", s.field, s.v)
+		}
+	}
+	for _, l := range []struct{ field, v string }{
+		{"knowledge.bead_synthesizer.target_layer", k.BeadSynthesizer.TargetLayer},
+		{"knowledge.curator.promote_from", k.Curator.PromoteFrom},
+		{"knowledge.curator.promote_to", k.Curator.PromoteTo},
+		{"knowledge.code_maps.layer", k.CodeMaps.Layer},
+	} {
+		if v := strings.TrimSpace(l.v); v != "" && !knowledgeLayerNames[v] {
+			return fmt.Errorf("%s %q must be personal, project, org or community", l.field, l.v)
+		}
+	}
+	from, to := strings.TrimSpace(k.Curator.PromoteFrom), strings.TrimSpace(k.Curator.PromoteTo)
+	if from == "" {
+		from = "project"
+	}
+	if to == "" {
+		to = "org"
+	}
+	if from == to {
+		return fmt.Errorf("knowledge.curator.promote_from and promote_to must name different layers (both %q)", from)
+	}
+	for _, f := range []struct {
+		field string
+		v     float64
+	}{
+		{"knowledge.bead_synthesizer.min_confidence", k.BeadSynthesizer.MinConfidence},
+		{"knowledge.curator.auto_promote_threshold", k.Curator.AutoPromoteThreshold},
+	} {
+		if f.v < 0 || f.v > 1 {
+			return fmt.Errorf("%s must be between 0 and 1", f.field)
+		}
+	}
+	type intField struct {
+		field string
+		v     int
+	}
+	ints := []intField{
+		{"knowledge.bead_synthesizer.max_facts_per_cycle", k.BeadSynthesizer.MaxFactsPerCycle},
+		{"knowledge.bead_synthesizer.max_api_calls_per_cycle", k.BeadSynthesizer.MaxAPICallsPerCycle},
+		{"knowledge.code_maps.max_bytes", k.CodeMaps.MaxBytes},
+		{"knowledge.primer.max_facts", k.Primer.MaxFacts},
+		{"knowledge.primer.max_bytes", k.Primer.MaxBytes},
+	}
+	if rp := k.BeadSynthesizer.RetentionPolicy; rp != nil {
+		ints = append(ints,
+			intField{"knowledge.bead_synthesizer.retention_policy.max_beads", rp.MaxBeads},
+			intField{"knowledge.bead_synthesizer.retention_policy.archive_after_synth_days", rp.ArchiveAfterSynthDays},
+			intField{"knowledge.bead_synthesizer.retention_policy.high_priority_retain_days", rp.HighPriorityRetainDays},
+		)
+	}
+	for _, f := range ints {
+		if f.v < 0 {
+			return fmt.Errorf("%s must be 0 (default) or greater", f.field)
+		}
+	}
+	return nil
+}
+
+// EffectiveMaxAPICallsPerCycle returns the configured cap or the default.
+func (b BeadSynthesizerConfig) EffectiveMaxAPICallsPerCycle() int {
+	if b.MaxAPICallsPerCycle <= 0 {
+		return DefaultBeadSynthMaxAPICallsPerCycle
+	}
+	return b.MaxAPICallsPerCycle
 }
 
 // RetentionPolicy controls intelligent bead lifecycle management.
@@ -127,6 +298,10 @@ type KnowledgePrimer struct {
 	MaxFacts      int      `yaml:"max_facts"`
 	Priority      []string `yaml:"priority"`
 	MergeStrategy string   `yaml:"merge_strategy"`
+	// MaxBytes caps the rendered knowledge primer per kick; facts past it are
+	// dropped whole and a marker says so. Zero takes the knowledge package
+	// default (4096).
+	MaxBytes int `yaml:"max_bytes"`
 }
 
 // KnowledgeAgentScope is one `knowledge.agent_scopes` entry. Each field is an

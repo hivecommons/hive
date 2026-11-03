@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/crux/taskmcp"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 // #10282: the task MCP URL handed to hub-launched agents must name a host this

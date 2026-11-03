@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,23 @@ type repoHoldResponse struct {
 	HoldLabel    string   `json:"hold_label"`
 	Removed      []string `json:"removed"`
 	MinStatusSeq uint64   `json:"minStatusSeq"`
+	// Result is the shared row-action outcome for the dashboard's toast.
+	Result *RowActionResult `json:"result,omitempty"`
+}
+
+// repoHoldResult reads a hold toggle into the shared row-action result.
+func repoHoldResult(repoFull string, number int, itemType string, held bool, label string, removed []string) *RowActionResult {
+	target := rowActionTarget(repoFull, itemType, number)
+	if held {
+		return &RowActionResult{Action: rowActionHeld, Target: target, Outcome: "`" + label + "` applied.",
+			Next: "Agents leave this item alone until the hold is released; the chevron reads hold on the next refresh."}
+	}
+	if len(removed) == 0 {
+		res := rowActionNoopResult(target, "no hold label was on this item", time.Time{}, "")
+		return &res
+	}
+	return &RowActionResult{Action: rowActionReleased, Target: target, Outcome: "Hold released: `" + strings.Join(removed, "`, `") + "` removed.",
+		Next: "The hive picks it up on its next pass."}
 }
 
 type repoHoldPermissionCacheEntry struct {
@@ -368,8 +386,12 @@ func repoHoldRemoveFirst(items []any, number int) ([]any, any, bool) {
 	for i, item := range items {
 		if repoHoldItemNumber(item) == number {
 			removed := item
-			copy(items[i:], items[i+1:])
-			return items[:len(items)-1], removed, true
+			// Build a new slice: status snapshots share the old backing
+			// array and are marshaled after statusMu is released.
+			kept := make([]any, 0, len(items)-1)
+			kept = append(kept, items[:i]...)
+			kept = append(kept, items[i+1:]...)
+			return kept, removed, true
 		}
 	}
 	return items, nil, false
@@ -424,8 +446,10 @@ func repoHoldSummaryHas(items []any, repoFull string, number int, itemType strin
 func repoHoldRemoveSummary(items []any, repoFull string, number int, itemType string) ([]any, bool) {
 	for i, item := range items {
 		if repoHoldSummaryMatches(item, repoFull, number, itemType) {
-			copy(items[i:], items[i+1:])
-			return items[:len(items)-1], true
+			kept := make([]any, 0, len(items)-1)
+			kept = append(kept, items[:i]...)
+			kept = append(kept, items[i+1:]...)
+			return kept, true
 		}
 	}
 	return items, false
@@ -453,6 +477,9 @@ func repoHoldAdjustBreakdown(repo *FrontendRepo, itemType string, held bool) {
 	if repo == nil || repo.WorkBreakdown == nil {
 		return
 	}
+	// Copy-on-write: lock-free status readers share this struct.
+	wb := *repo.WorkBreakdown
+	repo.WorkBreakdown = &wb
 	deltaHold, deltaActionable := 1, -1
 	if !held {
 		deltaHold, deltaActionable = -1, 1
@@ -505,16 +532,16 @@ func (s *Server) applyRepoHoldToStatus(repoFull string, number int, itemType str
 				repo.OpenPrs, moved, didMove = repoHoldRemoveFirst(repo.OpenPrs, number)
 				if didMove {
 					moved = repoHoldSetItemLabels(moved, repoHoldLabelsAfter(moved, true, label, nil, label))
-					repo.HeldPrs = append(repo.HeldPrs, moved)
+					repo.HeldPrs = append(slices.Clip(repo.HeldPrs), moved)
 				}
 			} else {
 				repo.ActionableIssues, moved, didMove = repoHoldRemoveFirst(repo.ActionableIssues, number)
 				if didMove {
-					repo.HeldIssues = append(repo.HeldIssues, repoHoldItemForSummary(moved, repoFull, number, itemType, label))
+					repo.HeldIssues = append(slices.Clip(repo.HeldIssues), repoHoldItemForSummary(moved, repoFull, number, itemType, label))
 				}
 			}
 			if didMove && !repoHoldSummaryHas(status.Hold.Items, repoFull, number, itemType) {
-				status.Hold.Items = append(status.Hold.Items, repoHoldItemForSummary(moved, repoFull, number, itemType, label))
+				status.Hold.Items = append(slices.Clip(status.Hold.Items), repoHoldItemForSummary(moved, repoFull, number, itemType, label))
 				if itemType == "pr" {
 					status.Hold.PRs++
 				} else {
@@ -527,13 +554,13 @@ func (s *Server) applyRepoHoldToStatus(repoFull string, number int, itemType str
 				repo.HeldPrs, moved, didMove = repoHoldRemoveFirst(repo.HeldPrs, number)
 				if didMove {
 					moved = repoHoldSetItemLabels(moved, repoHoldLabelsAfter(moved, false, label, removed, label))
-					repo.OpenPrs = append(repo.OpenPrs, moved)
+					repo.OpenPrs = append(slices.Clip(repo.OpenPrs), moved)
 				}
 			} else {
 				repo.HeldIssues, moved, didMove = repoHoldRemoveFirst(repo.HeldIssues, number)
 				if didMove {
 					moved = repoHoldSetItemLabels(moved, repoHoldLabelsAfter(moved, false, label, removed, label))
-					repo.ActionableIssues = append(repo.ActionableIssues, moved)
+					repo.ActionableIssues = append(slices.Clip(repo.ActionableIssues), moved)
 				}
 			}
 			if didMove {
@@ -548,6 +575,22 @@ func (s *Server) applyRepoHoldToStatus(repoFull string, number int, itemType str
 		}
 		if didMove {
 			repoHoldAdjustBreakdown(repo, itemType, held)
+			// The stored decision was made while the item sat on the other
+			// side of the hold; never attach it to the moved row. The next
+			// status refresh decides it again.
+			kind := ownershipKindIssue
+			if itemType == "pr" {
+				kind = ownershipKindPR
+			}
+			// Copy-on-write: lock-free status readers share this map.
+			dropKey := ownershipKey(kind, number)
+			trimmed := make(map[string]Ownership, len(repo.Ownership))
+			for k, v := range repo.Ownership {
+				if k != dropKey {
+					trimmed[k] = v
+				}
+			}
+			repo.Ownership = trimmed
 		}
 		break
 	}
@@ -652,5 +695,6 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		HoldLabel:    canonical,
 		Removed:      removed,
 		MinStatusSeq: minStatusSeq,
+		Result:       repoHoldResult(repoFull, number, itemType, body.Held, canonical, removed),
 	})
 }

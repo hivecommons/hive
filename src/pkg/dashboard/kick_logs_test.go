@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 )
 
 // kickHistoryServer wires apiServer's manager at a temp archive dir and
@@ -22,7 +22,7 @@ func kickHistoryServer(t *testing.T, content string) (*Server, string) {
 	t.Helper()
 	s, deps := apiServer(t)
 	dir := t.TempDir()
-	deps.AgentMgr.SetKickLogDir(dir)
+	agentManager(deps.AgentMgr).SetKickLogDir(dir)
 	id := "20260820-070000.000-kick.log"
 	agentDir := filepath.Join(dir, "scanner")
 	if err := os.MkdirAll(agentDir, 0o700); err != nil {
@@ -46,12 +46,12 @@ func TestHandleAgentKickLogList_UnknownAgent(t *testing.T) {
 // an error — the "less history than normal" requirement from #4296.
 func TestHandleAgentKickLogList_NoHistoryYet(t *testing.T) {
 	s, deps := apiServer(t)
-	deps.AgentMgr.SetKickLogDir(t.TempDir())
+	agentManager(deps.AgentMgr).SetKickLogDir(t.TempDir())
 	rec := doGet(s, "/api/agents/scanner/kicks")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var infos []agent.KickLogInfo
+	var infos []crux.KickLogInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
 		t.Fatalf("bad JSON: %v\n%s", err, rec.Body.String())
 	}
@@ -66,7 +66,7 @@ func TestHandleAgentKickLogList_ReturnsArchives(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var infos []agent.KickLogInfo
+	var infos []crux.KickLogInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestHandleAgentKickHistoryPage(t *testing.T) {
 
 func TestHandleAgentKickHistoryPage_EmptyHistory(t *testing.T) {
 	s, deps := apiServer(t)
-	deps.AgentMgr.SetKickLogDir(t.TempDir())
+	agentManager(deps.AgentMgr).SetKickLogDir(t.TempDir())
 	rec := doGet(s, "/agents/scanner/kicks")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -174,8 +174,42 @@ func TestHandleAgentKickHistoryPage_EmptyHistory(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "No archived kick logs yet") {
 		t.Errorf("empty-history page missing placeholder:\n%s", rec.Body.String())
 	}
+	// The copy must tell an operator that a finished turn is archived at
+	// once, not only at the next kick/restart/shutdown rotation point.
+	for _, want := range []string{"once a kick's turn ends", "as soon as the kick's turn ends"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("history page copy missing %q:\n%s", want, rec.Body.String())
+		}
+	}
 	rec = doGet(s, "/agents/nonexistent/kicks")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown agent: status = %d, want 404", rec.Code)
+	}
+}
+
+// The history page and list endpoint surface the archive header's source:
+// line (#11762) so a tester can tell transcript from scrollback archives
+// without opening them; header-less archives show a dash.
+func TestHandleAgentKickHistoryPage_ShowsSource(t *testing.T) {
+	s, id := kickHistoryServer(t, "==== hive kick log ====\nagent: scanner\nsource: transcript\n=======================\nbody\n")
+	rec := doGet(s, "/api/agents/scanner/kicks")
+	var infos []crux.KickLogInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != id || infos[0].Source != "transcript" {
+		t.Fatalf("infos = %+v, want source transcript", infos)
+	}
+	page := doGet(s, "/agents/scanner/kicks")
+	if page.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", page.Code)
+	}
+	if body := page.Body.String(); !strings.Contains(body, "<th>source</th>") || !strings.Contains(body, "<td>transcript</td>") {
+		t.Errorf("history page missing source column:\n%s", body)
+	}
+
+	s2, _ := kickHistoryServer(t, "no header")
+	if body := doGet(s2, "/agents/scanner/kicks").Body.String(); !strings.Contains(body, `<span class="muted">—</span>`) {
+		t.Errorf("header-less archive should show a dash:\n%s", body)
 	}
 }

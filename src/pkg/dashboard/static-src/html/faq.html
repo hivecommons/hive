@@ -1,0 +1,268 @@
+  <div class="mt-6 mb-8" id="faq-section" data-dashboard-section="faq-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="faq-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move FAQ section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> ❓ FAQ</h2>
+    <div class="section-body">
+      <div id="faq-panel" class="faq-panel">
+
+        <p class="faq-intro">Short answers to the questions people ask once a hive is running. Everything below describes what this hive
+        actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
+        source doc, so this panel stays a map, not a second source of truth.</p>
+        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>.</p>
+
+        <div class="faq-filter-row">
+          <label for="faq-filter" class="faq-filter-label">Filter</label>
+          <input id="faq-filter" class="faq-filter" type="search" placeholder="Filter questions…" autocomplete="off" data-input-action="faqFilter" aria-controls="faq-panel">
+          <span id="faq-filter-count" class="faq-filter-count" aria-live="polite"></span>
+        </div>
+
+        <section class="faq-group" data-faq-group="getting-started">
+        <h3 class="faq-group-title">Getting started (L1–L2)</h3>
+
+        <details class="faq-q" id="faq-l1-l2">
+          <summary>What are L1 and L2 for?</summary>
+          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception panel; it asks clarifying questions and stops when you approve. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+          <p>The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement: point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
+        </details>
+
+        <details class="faq-q" id="faq-advisory-digest">
+          <summary>What is the Advisory Digest for?</summary>
+          <p><strong>The Advisory Digest is the work ledger.</strong> Agents record findings as <em>beads</em> (small tracked notes created with <code>bd create</code>); the digest rolls up every open <code>advisory</code>, <code>bug</code>, or <code>feature</code> bead, grouped by the agent that filed it. Internal items such as <code>task</code> and <code>decision</code> are left out so the ledger stays readable. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#advisory-digest" target="_blank" rel="noopener noreferrer">Advisory Digest</a>.</p>
+          <p>The same ledger is mirrored to GitHub: the hive opens one issue named <strong>🐝 Hive Advisory Report</strong> in your default repo and keeps a digest comment current. That report is the whole of the normal L2 GitHub footprint.</p>
+        </details>
+
+        <details class="faq-q" id="faq-colors">
+          <summary>What do the colors in the digest mean?</summary>
+          <p>The left bar and dot encode severity, derived directly from the bead priority set by the filing agent:</p>
+          <ul class="faq-list">
+            <li>🔴 <strong>critical</strong> (priority 0) — red bar</li>
+            <li>🟠 <strong>high</strong> (priority 1) — orange bar</li>
+            <li>🟡 <strong>medium</strong> (priority 2) — yellow bar</li>
+            <li>🔵 <strong>low</strong> (priority 3) — grey bar</li>
+            <li>⚪ <strong>info</strong> — anything else; grey bar</li>
+          </ul>
+          <p class="faq-muted">Only critical, high, and medium have dedicated bar colors, so the low row has a blue dot but a grey bar. Severity is a judgement call by the filing agent, not a measurement. See the L2 advisory mode in the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-digest-order">
+          <summary>How are digest items selected and ordered?</summary>
+          <p><strong>They are not ranked by severity.</strong> Findings are grouped by agent (agents sorted alphabetically) and within each agent they appear oldest first, so a critical finding filed this morning sits below a low finding filed last week. Selection is every open advisory/bug/feature bead; recently closed beads appear separately as recently resolved. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-timezone">
+          <summary>Can I change the dashboard timezone?</summary>
+          <p><strong>Yes.</strong> Open <strong>Settings → Appearance → Display timezone</strong> and pick browser local time, the hive server timezone, UTC, or an IANA timezone such as <code>America/Los_Angeles</code>. Absolute timestamps include the timezone abbreviation; relative ages like <code>1m ago</code> stay relative. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/settings.md" target="_blank" rel="noopener noreferrer">Dashboard settings explained</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-sections">
+          <summary>Why can't I see a section, and how do I reorder or hide sections?</summary>
+          <p>Some sections only appear at certain ACMM levels or when their feature is on (Experiment Lab, for example, needs L4 and <code>dashboard.experiment_lab</code>), and a browser that has never seen this hive starts non-critical cards collapsed. To reorder, drag the <code>⠿</code> grip in a section header, or focus it and press Space, Up/Down, then Space/Enter. To hide a section, hover its sidebar row and press the eye-off control; the row stays in the sidebar, muted, and clicking it brings the card back. Layout is browser-local; the avatar menu's <strong>Layout</strong> section saves presets and offers <strong>Reset layout to default</strong>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard.md#reorder-sections" target="_blank" rel="noopener noreferrer">Reorder sections</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md" target="_blank" rel="noopener noreferrer">Dashboard sections explained</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-mobile-menu">
+          <summary>On a phone, where is the profile menu?</summary>
+          <p>Tap your GitHub avatar at the right end of the top bar. On narrow screens the chip strip scrolls sideways, so swipe left if the avatar is off-screen; the menu then opens pinned under the navbar and scrolls on its own. If tapping did nothing on iOS Safari, you are on a build older than <a href="https://github.com/hivecommons/hive/pull/12193" target="_blank" rel="noopener noreferrer">#12193</a> — upgrade. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard.md" target="_blank" rel="noopener noreferrer">Spoke dashboard</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="trust-ladder">
+        <h3 class="faq-group-title">Trust ladder (L3–L6)</h3>
+
+        <details class="faq-q" id="faq-l2-to-l3">
+          <summary>How do I move from L2 to L3?</summary>
+          <p><strong>Change to L3 when you trust the findings — there is no gate.</strong> The ACMM Eval page and recommendation API are read-only advice; they never change the level and do not license or block the move. The supported path is the level dialog behind the level chip in the top bar (or <code>acmm_level</code> through config ownership rules), which applies the level pack and reconciles agents. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">changing ACMM level</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/config-layering.md" target="_blank" rel="noopener noreferrer">config layering</a>.</p>
+          <p>At L3 the quality lane builds the safety net: hold-gated test and CI PRs, plus CI health measurement. It is about making later automation safe, not about handing the hive production-code autonomy.</p>
+        </details>
+
+        <details class="faq-q" id="faq-levels">
+          <summary>What do L3, L4, L5, and L6 allow?</summary>
+          <ul class="faq-list">
+            <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; ci-maintainer watches build health. The reviewer agent works the hold-gated PR queue every 30 minutes and comments for the human who lifts the hold; it never approves or merges.</li>
+            <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs. The reviewer agent works the hold-gated PR queue every 30 minutes and comments for the human who lifts the hold; it never approves or merges.</li>
+            <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer keeps working the queue every 30 minutes; adjudicator and dedupe join and recommend, never merge or close.</li>
+            <li><strong>L6 — Autonomous:</strong> eligible App-authored PRs auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos afterward. The reviewer still never merges — and its <code>requires_human</code> / <code>reject</code> verdicts do <em>not</em> stop the App auto-merge sweep; use a <code>hold</code> label or a GitHub branch rule when merging must stop.</li>
+          </ul>
+          <p>Promotion adds agents and capability; demotion narrows them again. Hive removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/running-at-level-6.md#does-the-hive-reviewer-stop-a-merge" target="_blank" rel="noopener noreferrer">Running at Level 6</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-auto-promote">
+          <summary>Does Hive auto-promote or auto-demote me?</summary>
+          <p>The shipped advisor is advisory-only: it can say a hive appears ready for the next level, but a human applies the change. The separate autonomy controls are opt-in and default off, under <code>autonomy.auto_promote</code> and <code>autonomy.auto_demote</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">ACMM level changes</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-hold">
+          <summary>Why did a PR get a <code>hold</code> label? What does "hold-gated" mean?</summary>
+          <p><strong>Hold-gated</strong> means an agent may open a PR, but a literal <code>hold</code> label keeps it out of every merge lane until a human removes the label. At L3–L5 the PR watcher applies that hold to every agent PR from the level gate; a PR can also be held because its only rationale is an unacknowledged hive-filed issue (#5117), or because it traces to an issue from an untrusted reporter (#9665, held at every level); the same label also lands on <code>kind/bug</code> issues that lack a reproducing SHA. Hive releases only holds it applied itself — a hold a person added is never removed automatically. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/labels-and-control-signals.md" target="_blank" rel="noopener noreferrer">Hive labels and control signals</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-shadow">
+          <summary>What is shadow mode? Does it ever block a merge?</summary>
+          <p><strong>No — shadow never blocks a merge.</strong> <code>review.shadow</code> evaluates the review-approval gate, and <code>intent.shadow</code> the intent-verification gate, exactly as if enforcement were on, then only records the answer (<code>would_have_held</code> / <code>would_have_blocked</code>) on the PR's evidence bundle and in the log. A PR that is otherwise merge-eligible stays eligible, and shadow is ignored when real enforcement is already on. The review toggle is under <strong>Settings → Features → Review Gate</strong>; the intent toggle is under <strong>Settings → Security</strong>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-swarm.md#configuration" target="_blank" rel="noopener noreferrer">Review swarm configuration</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/intent-verification.md#shadow-mode" target="_blank" rel="noopener noreferrer">Intent verification: shadow mode</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="evidence-releases">
+        <h3 class="faq-group-title">Evidence, releases and upgrades</h3>
+
+        <details class="faq-q" id="faq-evidence-card">
+          <summary>What is the Evidence card, and what do its charts prove?</summary>
+          <p>The Evidence card in the Throughput section summarises <em>review evidence bundles</em>: one JSON record per PR head commit of what Hive reviewed, what CI said, who acted and how it merged. Its panels (outcome by author kind, reviewer calibration, reviewer accuracy × model family, maintainability trend, boundary enforcement, claim vs verdict, work balance, and shadow gates) follow the 24h / 7d / 30d / custom window pills, and each panel shows a letter grade (A+ … C-, or — when there is not enough data) next to its title, a one-sentence plain-English summary under it, and a ⓘ button that opens a popover with the full explainer, the details and "what this does not show", and the rubric behind the grade. The charts show what was recorded; they do not prove a merge was correct ("merged" is not "correct", an open PR counts as not merged, and evidence only exists since the feature shipped), and nothing in them is read by anything that decides a merge. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-evidence.md#how-to-read-the-evidence-card" target="_blank" rel="noopener noreferrer">How to read the Evidence card</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-behind">
+          <summary>Why does "N behind" measure against my release channel, not the v4 head?</summary>
+          <p>The version badge compares the running commit with the newest build <em>your deployment can actually reach</em>: the hub-delivered target for the channel or branch tag this spoke tracks, else the tip of the build's own branch. A <code>:stable</code> spoke is not "behind" commits that only <code>candidate</code> carries, and a v5 spoke is never measured against v4. Hover the badge to see which target the count is against. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/release-channels.md#channel-aware-upgrade-targeting" target="_blank" rel="noopener noreferrer">Channel-aware upgrade targeting</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-channels">
+          <summary>What are release channels, and how does an upgrade happen?</summary>
+          <p>A <em>release channel</em> is a moving image tag: <code>candidate</code> moves on every green merge to <code>v5</code>, <code>stable</code> is promoted from candidate by digest after a 24-hour soak, and <code>edge</code> follows the development branch <code>v6</code>. When a channel moves, the hub notices within a few minutes and, if your hive's upgrade policy allows, delivers the new target on the spoke's next heartbeat; the pod rolls and keeps the channel tag. Hosted hives switch channels from the version pill on the hub's My Hives list or the spoke's <strong>Follow channel</strong> selector (owner only); self-hosted Podman spokes change <code>Image=</code> by hand. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/release-channels.md" target="_blank" rel="noopener noreferrer">Release channels</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/stable-soak-policy.md" target="_blank" rel="noopener noreferrer">Stable soak policy</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="runs">
+        <h3 class="faq-group-title">Runs, inception and the Experiment Lab</h3>
+
+        <details class="faq-q" id="faq-run">
+          <summary>What is a run?</summary>
+          <p>A run is staged work on one lease: <strong>spec → plan → implement</strong>. The Runs section and <code>/api/runs</code> show stage, generation, triage verdicts, receipts, checkpoints, and whether a person must intervene; run-stage work is only offered to relays that declare the <code>run-stage</code> capability. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular (Spek) stage runner</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/work-sources.md" target="_blank" rel="noopener noreferrer">work sources</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">relay capabilities</a>.</p>
+          <p>Long-running pieces are default-off. Spek does nothing unless <code>runs.spektacular.enabled</code> is true; incoming issue triage does nothing unless <code>runs.triage.enabled</code> is true. The live worktree cap is <code>runs.max_worktrees</code>; the stage retry budget is <code>runs.max_stage_retries</code>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-spek-l1">
+          <summary>How does Spek fit with L1?</summary>
+          <p>Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-external-engines">
+          <summary>What are external engines like Flue and OMP allowed to do?</summary>
+          <p>External engines are report-only admission surfaces, not extra credentials: they receive bounded context and return receipts that Hive verifies, and they never receive target-repo write credentials or dashboard tokens. Flue and OMP are independent, default-off bindings (<code>runs.external.flue.enabled</code>, <code>runs.external.omp.enabled</code>), and dispatch additionally requires the relay to advertise <code>ext-exec/flue</code> or <code>ext-exec/omp</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener noreferrer">external workflow admission</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay capability tokens</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-experiment-lab">
+          <summary>What is the Experiment Lab?</summary>
+          <p>The Experiment Lab ("Nous" in the API) runs small, approved experiments against your repositories' code — tests, CI config, automation scripts — measures each against a recorded baseline, and keeps a ledger of results. It is <strong>repo-only</strong>: experiments on the hive's own cadences, models or thresholds are out of scope since <a href="https://github.com/hivecommons/hive/pull/12207" target="_blank" rel="noopener noreferrer">#12207</a>. The section appears only at L4+ with <code>dashboard.experiment_lab: true</code>, and you approve or stop every experiment. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">Experiment Lab section guide</a>, which links the full guide.</p>
+        </details>
+
+        <details class="faq-q" id="faq-create-experiment">
+          <summary>Where do I create an experiment?</summary>
+          <p>On the Experiment Lab section itself: press <strong>+ New experiment</strong> and fill in the research question, an optional hypothesis and the scope (which repos it may touch; none selected = hive-wide) in the <em>New experiment</em> dialog. That dialog is the only place an experiment is defined. The ⚙ <em>Experiment Lab Configuration</em> dialog holds <strong>lab-wide guardrails</strong> only — the Trust Ladder, the Output Mode and safety labels, fast-fail bounds, timing, and <em>Repos experiments may target</em>, the allow-list the scope pills are drawn from (none selected = any repo). If the allow-list changes later, running experiments keep their scope and their card shows a muted note for any repo that is no longer allowed. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">defining experiments</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-edit-experiment">
+          <summary>Can I change an experiment after it starts?</summary>
+          <p>Yes — the ✎ <em>Edit experiment</em> icon on its card opens the same dialog pre-filled (titled <em>Edit experiment #N</em>; finish or cancel an open form before opening another). Changing only the hypothesis (or tags) is saved in place and keeps the baseline. Changing the <strong>research question or the scope</strong> invalidates the baseline and the hypotheses judged against it, so the lab asks first: <em>"Changing the question or scope restarts this experiment: baseline resets to 0/672 (≈7 days) and hypotheses/proposals so far are archived with the old version."</em> <strong>Restart experiment</strong> archives the current card as version N (it stays readable under <em>Previous experiments</em>) and creates version N+1 with the edited fields and a fresh baseline — after running the same scope-conflict check as a new experiment; <strong>Keep as is</strong> changes nothing. The new card reads <em>v2 · restarted from #1</em>. Paused and concluded experiments follow the same rule. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">editing an experiment</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-multiple-experiments">
+          <summary>Can I run more than one experiment at once?</summary>
+          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, the same way the Inception section lists its campaigns. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
+          <p>Each card also says where it is: <em>collecting baseline</em>, <em>ready — generate proposals</em> (one button; the lab switches to Suggest for you), <em>proposals awaiting your review</em>, <em>running</em> or <em>concluded</em>. Entering a question is what creates the card — you never have to find a mode switch first.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="contributors">
+        <h3 class="faq-group-title">Contributors, relays and models</h3>
+
+        <details class="faq-q" id="faq-clanker">
+          <summary>What is ClankeR?</summary>
+          <p>ClankeR lets contributors lend their own local AI CLI subscription to a hive. They run <code>just contribute-hive</code>; the relay connects to <code>/api/contribute/ws</code>, accepts one task at a time, works locally, and reports PR metadata back. The contributor's credentials stay on their machine; Hive mints short-lived task-scoped GitHub tokens for accepted tasks. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">ClankeR contributor relay</a>.</p>
+          <p>Trust is tiered. Newcomers start rate-limited; contributors auto-promote after completed PR tasks; trusted, merger, and advisor tiers are maintainer/operator grants. Delegated roles are bounded by tier, explicit grants, and the hive allow-list at <code>hub.contribute_delegatable_roles</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-trust-and-roles.md" target="_blank" rel="noopener noreferrer">contributor trust and roles</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-model-gateway">
+          <summary>What is a Model Gateway? Can I use OpenRouter instead of a CLI login?</summary>
+          <p><strong>Yes.</strong> Agents use one of two method families: subscription CLIs (<code>claude</code>, <code>copilot</code>, <code>gemini</code>, <code>goose</code>) that you log into once from the dashboard, and inference endpoints (<code>vllm</code>, <code>llm-d</code>, <code>litellm</code>, <code>openrouter</code>) that need only a base URL and a key reference. A <em>Model Gateway</em> is a named inference endpoint configured under <strong>Settings → Governor → Model Gateways</strong>; the OpenRouter gateway works with a key or the scan-to-fund flow and no CLI login, and the key value lives in <code>/data/secrets/</code>, never in YAML. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#methods-subscription-clis-vs-self-hosted-inference" target="_blank" rel="noopener noreferrer">subscription CLIs vs self-hosted inference</a> and <a href="https://github.com/hivecommons/hive/blob/v5/docs/inference-backends.md" target="_blank" rel="noopener noreferrer">inference backends</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="footprint">
+        <h3 class="faq-group-title">Issue claims, attribution and the audit log</h3>
+
+        <details class="faq-q" id="faq-claims">
+          <summary>Why did an agent comment on or label my issue as claimed?</summary>
+          <p>Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>stage/030-pr-in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
+          <p>Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
+        </details>
+
+        <details class="faq-q" id="faq-footprint">
+          <summary>How much GitHub footprint should I expect?</summary>
+          <p>At L2, expect only the 🐝 Hive Advisory Report issue and its digest comment. Higher levels add App-bot authored issues, comments, PRs, hold labels, review verdicts, claim labels, and — at L6 — auto-merge when checks pass for eligible App-authored PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-write-surface.md" target="_blank" rel="noopener noreferrer">GitHub write surface</a>.</p>
+          <p class="faq-muted">Two GitHub-adjacent toggles are intentionally default-off. Audit finding publication requires <code>publication.enabled</code> and still refuses sensitive findings unless <code>publication.private_channel</code> is configured. Plan-match reviews require <code>review.plan_match.enabled</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-campaign.md" target="_blank" rel="noopener noreferrer">audit campaign</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#which-levels-may-publish-audit-findings" target="_blank" rel="noopener noreferrer">publication level rules</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/planning-intelligence.md" target="_blank" rel="noopener noreferrer">planning intelligence</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-attribution">
+          <summary>What does the attribution trailer do?</summary>
+          <p>Every PR the hive opens ends with a <code>— hive:</code> line naming the agent and, when known, its backend, model, effort, tool versions, session and who requested the work, so a reader can tell at a glance which agent and model produced it. The trailer is controlled by <code>governor.attribution_trailer</code> (default on); turning it off hides the visible line but the matching <code>agent_pr_created</code> audit entry is written regardless, so attribution is never lost. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md#the-opened-pr-carries-an-attribution-trailer" target="_blank" rel="noopener noreferrer">the attribution trailer</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-audit">
+          <summary>Where is the audit log, and how do I find out who did something?</summary>
+          <p>The <strong>Audit Log</strong> section of this dashboard reads <code>/data/audit.jsonl</code>, one JSON line per action, newest first, with a search box (words are OR'd; <code>/regex/</code> works) and a <strong>Sensitive only</strong> filter. Each entry's <code>user</code> is who performed it — a GitHub login, or a pseudo-user such as <code>system</code> for automated paths — and GitHub writes also carry <code>repo</code> and <code>target</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log format</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#audit-log" target="_blank" rel="noopener noreferrer">the Audit Log section</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="cost">
+        <h3 class="faq-group-title">Cost, cadence and pausing</h3>
+
+        <details class="faq-q" id="faq-cost-level">
+          <summary>My spend jumped after I raised my ACMM level. How do I manage cost?</summary>
+          <p><strong>Higher levels increase throughput and spend by design.</strong> The strongest lever is cadence: the Governor grid sets each agent's interval per mode (idle, quiet, busy, surge). Widening busy/surge from <code>1h</code> to <code>6h</code> roughly cuts that agent's kick count sixfold; <code>0</code> disables that agent in that mode. Cadences use Go durations, so write one day as <code>24h</code>, not <code>1d</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences and the governor</a>.</p>
+          <p>Budgets are token budgets, not dollar budgets. <code>governor.budget.total_tokens</code> set to 0 disables budget tracking; otherwise the governor warns near <code>governor.budget.critical_pct</code> and suppresses kicks at 100% until the <code>governor.budget.period_days</code> window resets. The mode thresholds that decide idle/quiet/busy/surge scale by repo count unless you pin them; see <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a>.</p>
+          <p>Move routine agents to cheaper backends or models when the work allows it. The agent card and Governor grid expose backend, model, and effort; model rotation is opt-in under <code>governor.rotation.enabled</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-cadence">
+          <summary>Does a shorter cadence make an agent work harder?</summary>
+          <p><strong>No. Cadence is the wait between runs, not a maximum run length.</strong> A busy agent facing a deep queue can run, finish, and be kicked again soon after; widening cadence spreads the same queue over more wall-clock time. A growing backlog can also push the governor from idle to quiet to busy to surge, selecting shorter cadence columns without any per-agent setting changing. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-first-day-cost">
+          <summary>Is the first day supposed to cost this much?</summary>
+          <p>Yes. A first run against a mature repo is a backlog drain: old technical debt appears all at once, agents have enough queued work to stay busy, and the governor may choose busy/surge. Steady-state cost should fall as the queue drains. If you need to slow the spike, start lower, widen cadences before the first run, pause nonessential agents, or set a real token budget. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-where-money">
+          <summary>Where did the money actually go?</summary>
+          <p>Use the 💵 Cost section for estimated spend by timeframe, then drill into agent cards and Prior Prompts to see what each kick was asked to do. Treat cost as attribution, not an invoice: token counts and list prices can diverge from subscriptions, discounts, and self-hosted inference. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/telemetry.md" target="_blank" rel="noopener noreferrer">telemetry</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#cost" target="_blank" rel="noopener noreferrer">the Cost section</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-pause">
+          <summary>How do I pause the whole hive, or stop one agent?</summary>
+          <p>Three stops, smallest to largest: the <strong>⏸</strong> button on an agent's card in the Agents section pauses that agent; the <strong>⏸ pause</strong> button on a Projects card stops every agent working that one repository (owner only, asks for a reason); and the <strong>fleet breaker</strong> chip in the top bar pauses every running agent at once (owner only) and, when released, resumes only the agents it paused. None of these is a merge brake — PRs already open keep their own state — and the dashboard, heartbeats and polling keep running. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/operator-reference.md#fleet-breaker" target="_blank" rel="noopener noreferrer">fleet breaker</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/repo-pause.md" target="_blank" rel="noopener noreferrer">per-repo pause</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/running-at-level-6.md#stops-smallest-to-largest" target="_blank" rel="noopener noreferrer">stops, smallest to largest</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="help">
+        <h3 class="faq-group-title">Where to get help</h3>
+
+        <details class="faq-q" id="faq-guide-agent">
+          <summary>Why couldn't the Guide agent answer my Hive questions?</summary>
+          <p>Because the guide agent documents your project, not Hive itself. It audits your README, getting-started, architecture, and contributing docs; it does not operate the hive or explain ACMM policy. For Hive operations, use these docs and the dashboard. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-first-week">
+          <summary>What should my first week look like?</summary>
+          <ol class="faq-list">
+            <li>Start at L1 for inception or L2 for advisory calibration.</li>
+            <li>Let the ledger populate, then scan for 🔴/🟠 without assuming list order means priority.</li>
+            <li>Audit a few findings with a local agent you control.</li>
+            <li>Advance to L3 when you trust the findings and want Hive to build the test/CI safety net.</li>
+            <li>Review hold-gated PRs before considering L4–L6.</li>
+          </ol>
+          <p>For operator setup and community-facing contributor flows, start with <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hosted-hub.md" target="_blank" rel="noopener noreferrer">hosted hub</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/getting-started.md" target="_blank" rel="noopener noreferrer">getting started</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/troubleshooting.md" target="_blank" rel="noopener noreferrer">troubleshooting</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay</a>.</p>
+        </details>
+        </section>
+
+        <p id="faq-empty" class="faq-empty" hidden>No question matches that filter.</p>
+
+        <div class="faq-footer">
+          <strong>Was this answered?</strong> If not, ask on <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Discord</a>,
+          <button type="button" class="faq-footer-link" data-action="openFeedbackModal" data-arg0="bug">report it from this dashboard</button>,
+          or <a class="text-accent fw-semibold" href="https://github.com/hivecommons/hive/issues/new/choose" target="_blank" rel="noopener noreferrer">open an issue</a> — a missing FAQ entry is a docs bug.
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div><!-- /#hive-dashboard-root -->
+

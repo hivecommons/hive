@@ -1,0 +1,53 @@
+  <div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab</h2>
+    <div class="section-body">
+      <div id="nous-panel"></div>
+      <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="mt-6 mb-8" id="inception-section" data-dashboard-section="inception-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Project Inception section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💡 Project Inception · powered by Spektacular</h2>
+    <div class="section-body">
+      <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
+    </div>
+  </div>
+
+  <div class="mt-6 mb-8" id="knowledge-section" data-dashboard-section="knowledge-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Knowledge section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📚 Knowledge <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span><span id="public-knowledge-header-control" data-public-knowledge-control="header" data-stop="1"></span></h2>
+    <div class="section-body">
+      <div id="knowledge-panel"></div>
+    </div>
+  </div>
+
+  <!-- Portfolio search (#14888). Hidden until GET /api/search answers: a 404
+       ("search not enabled") or 403 (not an owner or merger) keeps it hidden. -->
+  <div class="mt-6 mb-8" id="search-section" data-dashboard-section="search-section" style="display:none">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="search-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Search section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔍 Search</h2>
+    <div class="section-body">
+      <div id="search-card" class="search-card">
+        <div class="search-bar">
+          <input id="search-query" type="search" autocomplete="off" spellcheck="false" placeholder="Search pull requests, issues, beads, findings and review evidence…" aria-label="Search query" data-keydown-action="searchPaneRun" data-keys="Enter" class="search-input">
+          <button type="button" class="hv-btn btn-secondary btn" data-action="searchPaneRun">Search</button>
+        </div>
+        <div id="search-results" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-6 mb-8" id="contributors-section" data-dashboard-section="contributors-section">
+    <div style="display:flex;align-items:center;gap:var(--sp-5);margin-bottom:var(--sp-5);flex-wrap:wrap" class="section-header-toggle" data-action="toggleSection" data-arg0="contributors-section">
+      <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Contributors section" aria-pressed="false">⠿</button>
+      <span class="section-chevron">▼</span>
+      <h2 class="section-label m-0">👥 Contributors <span id="contributors-status-badge" class="contrib-status-badge" title="0 online · 0 registered"></span></h2>
+      <a href="/contribute" target="_blank" data-action="gh3" style="font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-5);background:var(--green);color:var(--bg);border-radius:var(--r);text-decoration:none;font-weight:600">Share /contribute link &rarr;</a>
+      <a href="/leaderboard" target="_blank" data-action="gh3" style="font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-5);background:transparent;color:var(--blue);border:1px solid var(--blue);border-radius:var(--r);text-decoration:none">🏆 Leaderboard</a>
+    </div>
+    <div class="section-body">
+      <div id="contributors-filters" style="display:flex;flex-wrap:wrap;gap:var(--sp-3);margin-bottom:var(--sp-5)"></div>
+      <div id="contributors-panel"></div>
+    </div>
+  </div>
+
+  </div>
+

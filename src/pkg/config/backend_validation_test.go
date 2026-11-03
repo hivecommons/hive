@@ -70,8 +70,10 @@ func TestValidateBackend_RejectsUnknownWithHelpfulMessage(t *testing.T) {
 // the configured gateways when there are any.
 func TestValidateBackend_AcceptsConfiguredGatewayName(t *testing.T) {
 	g := GovernorConfig{
-		Gateways: []GatewayConfig{
-			{Name: "ibm-granite-prod", Kind: GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			Gateways: []GatewayConfig{
+				{Name: "ibm-granite-prod", Kind: GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+			},
 		},
 	}
 	if err := g.ValidateBackend("ibm-granite-prod"); err != nil {
@@ -112,7 +114,9 @@ func TestValidate_AgentBackendGate(t *testing.T) {
 		return &Config{
 			Project: ProjectConfig{Org: "my-org"},
 			GitHub:  GitHubConfig{Token: "t"},
-			Agents:  map[string]AgentConfig{"ci-maintainer": {Backend: backend}},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{"ci-maintainer": {Backend: backend}},
+			},
 		}
 	}
 	if err := base("watsonx").validate(); err != nil {

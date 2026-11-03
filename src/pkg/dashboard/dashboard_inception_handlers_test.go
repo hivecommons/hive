@@ -9,13 +9,16 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 func newMinimalServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
@@ -28,6 +31,13 @@ func newMinimalServer(t *testing.T) *Server {
 	return srv
 }
 
+// enableBrainstormAgent adds an enabled brainstorm agent to a testDeps config
+// so the inception start/scan handlers admit the request. testDeps itself
+// stays at exactly one agent ("scanner"); several tests assert on that.
+func enableBrainstormAgent(deps *Dependencies) {
+	deps.Config.Agents["brainstorm"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true}
+}
+
 func TestHandleInceptionStartNilEngine(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader(`{"idea":"test"}`))
@@ -37,6 +47,34 @@ func TestHandleInceptionStartNilEngine(t *testing.T) {
 	srv.handleInceptionStart(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleInceptionStartRefusesWithoutBrainstormAgent(t *testing.T) {
+	tests := []struct {
+		name   string
+		agents map[string]config.AgentConfig
+	}{
+		{name: "missing", agents: map[string]config.AgentConfig{"scanner": {Enabled: true}}},
+		{name: "disabled", agents: map[string]config.AgentConfig{"brainstorm": {Enabled: false}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, deps := apiServer(t)
+			deps.Config.Agents = tt.agents
+			deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+
+			rec := doOwnerPost(s, "/api/inception/start", map[string]string{"idea": "no brainstorm"})
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "brainstorm agent") {
+				t.Fatalf("body = %q, want brainstorm agent message", rec.Body.String())
+			}
+			if state := deps.Inception.GetState(); state != nil && state.Phase != "" {
+				t.Fatalf("inception started despite refusal: %+v", state)
+			}
+		})
 	}
 }
 

@@ -70,7 +70,8 @@ func (s *Server) handleRunSpecStart(w http.ResponseWriter, r *http.Request) {
 		if title == "" {
 			title = repo + "#" + strconv.Itoa(number)
 		}
-		epic, key, err := s.startDesignSpektacular(r.Context(), store, github.Issue{Repo: repo, Number: number, Title: title}, "", true)
+		ctx := worksource.WithSolicitedWriteback(r.Context(), worksource.Ref{Repo: repo, Number: number}, requestUser(r))
+		epic, key, err := s.startDesignSpektacular(ctx, store, github.Issue{Repo: repo, Number: number, Title: title}, "", true)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return

@@ -2,6 +2,7 @@ package intent
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -110,6 +111,9 @@ type PR struct {
 	Files       []ChangedFile
 	Author      string
 	AgentAuthor bool
+	// HeadSHA is the PR head commit when known; it keys the alignment
+	// verdict cache (see AlignmentContext.HeadSHA).
+	HeadSHA string
 }
 
 type Classification struct {
@@ -153,6 +157,28 @@ func (v Verdict) MergeAllowed() bool {
 // single function so neither lane can merge at a tier the other refuses.
 func (v Verdict) BlocksMerge(enforce bool) bool {
 	return enforce && v.AgentPR && !v.MergeAllowed()
+}
+
+// BlockReason is the reason a merge lane reports when BlocksMerge refuses v:
+// the alignment rationale for an authorized-but-misaligned verdict, else the
+// authorization reason.
+func (v Verdict) BlockReason() string {
+	if v.Authorized && v.Alignment != nil && v.Alignment.Misaligned() {
+		return ReasonAlignmentMisaligned + ": " + v.Alignment.Rationale
+	}
+	return v.Reason
+}
+
+// ShadowConfidence is the confidence recorded with an intent.shadow
+// observation: the alignment model's confidence when it reported one in
+// (0,1], else 1 (the tier gate is deterministic).
+func (v Verdict) ShadowConfidence() float64 {
+	if v.Alignment != nil && v.Alignment.Model != nil {
+		if c := v.Alignment.Model.Confidence; c > 0 && c <= 1 {
+			return c
+		}
+	}
+	return 1
 }
 
 func Classify(pr PR, cfg Config) Classification {
@@ -322,6 +348,17 @@ func externalRefMatchesIssue(ref string, refs []IssueRef) bool {
 	return false
 }
 
+// DefaultConfig returns copies of the built-in patterns used when the
+// corresponding intent.* list is empty, so callers can show them.
+func DefaultConfig() Config {
+	return Config{
+		TestPathPatterns:      append([]string(nil), defaultTestPathPatterns...),
+		DocsPathPatterns:      append([]string(nil), defaultDocsPathPatterns...),
+		GuardrailPathPatterns: append([]string(nil), defaultGuardrailPathPatterns...),
+		FeatureSignals:        append([]string(nil), defaultFeatureSignals...),
+	}
+}
+
 func withDefaults(cfg Config) Config {
 	if len(cfg.TestPathPatterns) == 0 {
 		cfg.TestPathPatterns = defaultTestPathPatterns
@@ -415,12 +452,12 @@ func globMatch(pattern, path string) bool {
 	if ok, _ := filepath.Match(pattern, path); ok {
 		return true
 	}
-	if strings.HasPrefix(pattern, "**/*") {
-		return strings.HasSuffix(path, strings.TrimPrefix(pattern, "**/*"))
+	if rest, ok := strings.CutPrefix(pattern, "**/*"); ok && !strings.ContainsAny(rest, "*?[\\") {
+		return strings.HasSuffix(path, rest)
 	}
 	if strings.HasPrefix(pattern, "**/") {
 		trimmed := strings.TrimPrefix(pattern, "**/")
-		if ok, _ := filepath.Match(trimmed, path); ok {
+		if matchAnyDepth(trimmed, path) {
 			return true
 		}
 		return globMatch(trimmed, path)
@@ -431,9 +468,28 @@ func globMatch(pattern, path string) bool {
 	}
 	if strings.Contains(pattern, "**/") {
 		parts := strings.SplitN(pattern, "**/", 2)
-		return strings.HasPrefix(path, parts[0]) && strings.Contains(path, strings.TrimPrefix(parts[1], "/"))
+		rest, ok := strings.CutPrefix(path, parts[0])
+		if !ok {
+			return false
+		}
+		return strings.Contains(path, strings.TrimPrefix(parts[1], "/")) || globMatch("**/"+parts[1], rest)
 	}
 	return false
+}
+
+// matchAnyDepth reports whether pattern matches path or any suffix of path
+// that begins after a '/', so "*luks*" matches a basename at any depth.
+func matchAnyDepth(pattern, p string) bool {
+	for {
+		if ok, _ := path.Match(pattern, p); ok {
+			return true
+		}
+		i := strings.IndexByte(p, '/')
+		if i < 0 {
+			return false
+		}
+		p = p[i+1:]
+	}
 }
 
 func allBeads(stores map[string]*beads.Store) []*beads.Bead {

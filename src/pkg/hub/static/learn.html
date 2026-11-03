@@ -273,7 +273,7 @@
       <div class="section-heading">
         <p class="section-label">Autonomy framework</p>
         <h2>The ACMM ladder</h2>
-        <p>The <strong class="text-default">AI Codebase Maturity Model (ACMM)</strong> defines six levels of AI agent autonomy, from advisory-only to fully autonomous. Each level controls which agents are active and what actions they can take. Start conservative, climb when you&rsquo;re ready &mdash; raising the level is always a human decision.</p>
+        <p>The <strong class="text-default">AI Codebase Maturity Model (ACMM)</strong> defines six levels of AI agent autonomy, from advisory-only to autonomous. Each level controls which agents are active and what actions they can take. Start conservative, climb when you&rsquo;re ready &mdash; raising the level is always a human decision.</p>
       </div>
       <div class="acmm-grid">
         <div class="acmm-card"><span class="level lv-1">L1 &mdash; Inception (Assisted)</span><h3>Inception &amp; advisory</h3><p>An interactive brainstorm agent turns ideas into project scaffolding; a guide agent audits docs. Every action needs human approval. No feedback loops.</p></div>
@@ -281,7 +281,7 @@
         <div class="acmm-card"><span class="level lv-3">L3 &mdash; Quality-Gated (Measured)</span><h3>Quality &amp; test coverage</h3><p>The quality agent opens issues and hold-gated PRs about testing gaps, coverage, and CI health. Every PR keeps a <code>hold</code> label &mdash; no agent merges. This measurement foundation is what earns automation in the levels above.</p></div>
         <div class="acmm-card"><span class="level lv-4">L4 &mdash; Security-Aware (Adaptive)</span><h3>Closed-loop, issues</h3><p>All agents now file issues &mdash; bugs, doc gaps, workflow failures, vulnerabilities. Security agent joins. Still no PRs; the loop is closing.</p></div>
         <div class="acmm-card"><span class="level lv-5">L5 &mdash; Semi-Autonomous (Semi-Automated)</span><h3>Hold-gated PRs</h3><p>All agents open PRs, each auto-labeled <code>hold</code> for human batch-review. Architect (RFCs) and strategist join. The system proposes; it does not merge on its own.</p></div>
-        <div class="acmm-card"><span class="level lv-6">L6 &mdash; Fully Autonomous</span><h3>Merge when checks pass</h3><p>Agents open pull/merge requests and auto-merge when checks pass &mdash; no <code>hold</code> label. Outreach agent handles community engagement. Highest trust; governor at fastest cadence.</p></div>
+        <div class="acmm-card"><span class="level lv-6">L6 &mdash; Autonomous</span><h3>Merge when checks pass</h3><p>Agents open pull/merge requests and auto-merge when checks pass &mdash; no <code>hold</code> label. Outreach agent handles community engagement. Highest trust; governor at fastest cadence.</p></div>
       </div>
     </section>
 
@@ -394,7 +394,7 @@ flowchart LR
         <div class="agent-card"><span>Quality</span><p>Test coverage, integration tests, quality gates.</p></div>
         <div class="agent-card"><span>Sec-Check</span><p>Security scanning, PR security gate.</p></div>
         <div class="agent-card"><span>Architect</span><p>Cross-cutting RFCs, refactors, new features.</p></div>
-        <div class="agent-card"><span>Strategist</span><p>Experiment design, A/B testing, strategy lab.</p></div>
+        <div class="agent-card"><span>Strategist</span><p>Experiment design, A/B testing, experiment lab.</p></div>
         <div class="agent-card"><span>Outreach</span><p>ADOPTERS outreach, community engagement.</p></div>
         <div class="agent-card"><span>Brainstorm</span><p>On-demand ideation via Inception.</p></div>
       </div>
@@ -466,6 +466,7 @@ flowchart LR
   <footer class="footer">
     <div class="footer-links">
       <a href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>
+      <a href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Live stream (Twitch)</a>
       <a href="https://github.com/hivecommons/hive">Source Code</a>
       <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
       <a href="https://hivecommons.dev">Hive Commons</a>

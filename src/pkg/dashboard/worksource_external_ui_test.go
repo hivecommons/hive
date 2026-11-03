@@ -63,7 +63,7 @@ func TestWorkSourceExternalPickerUIHasNoUndefinedCallees(t *testing.T) {
 		// Accept plain functions, const/let/var bindings and entries in the
 		// data-change-action dispatch table (`name: function (event, A) {`).
 		defined := regexp.MustCompile(`(?:function\s+` + regexp.QuoteMeta(fn) + `\s*\(|(?:const|let|var)\s+` + regexp.QuoteMeta(fn) + `\s*=|\b` + regexp.QuoteMeta(fn) + `\s*:\s*function\s*\()`)
-		if !defined.MatchString(html) {
+		if !jsDeclaredNear(html, fn, defined) {
 			t.Errorf("index.html calls %s() from the external work-source UI but never defines it", fn)
 		}
 	}

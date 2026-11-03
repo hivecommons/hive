@@ -1,0 +1,1 @@
+- The contributor relay's one-shot hub-registry relocation (after a certificate hostname mismatch) now follows only an `https://` entry under the hub's own spoke domain; registry entries naming any other host, a plain-http URL, or a spoke-domain lookalike are skipped and the hub stays parked with the existing remediation line.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -75,6 +76,12 @@ type PackGovernor struct {
 	// via IoscanFailModeForLevel; the tradeoff of the closed default is that a
 	// Critical false-positive stalls the queue item until an operator clears it.
 	IoscanFailMode string `json:"ioscanFailMode,omitempty" yaml:"ioscan_fail_mode,omitempty"`
+	// IoscanClassifier is the ACMM-level default for ioscan.classifier.enabled
+	// when a hive does not set it: "on" from L4 up, where agents open PRs and
+	// a paraphrased injection the rules miss has somewhere to go, and empty
+	// (off) below. An explicit ioscan.classifier.enabled always overrides it.
+	// Read via IoscanClassifierForLevel.
+	IoscanClassifier string `json:"ioscanClassifier,omitempty" yaml:"ioscan_classifier,omitempty"`
 }
 
 // PlanAutoApproveForLevel reports whether the ACMM pack at the given level
@@ -100,6 +107,17 @@ func IoscanFailModeForLevel(level int) string {
 		return ""
 	}
 	return p.Governor.IoscanFailMode
+}
+
+// IoscanClassifierForLevel reports whether the ACMM pack at the given level
+// turns the semantic injection classifier on by default ("on" at L4-L6).
+// Unknown levels return false so the no-model-call default wins.
+func IoscanClassifierForLevel(level int) bool {
+	p, err := ACMMPackByLevel(level)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(p.Governor.IoscanClassifier, "on")
 }
 
 // ACMMPacks returns the built-in ACMM level pack definitions loaded from

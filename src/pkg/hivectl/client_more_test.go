@@ -381,3 +381,47 @@ func TestClientDoNonJSONContentTypeButJSONBody(t *testing.T) {
 		t.Fatalf("result = %#v, want decoded JSON map", result)
 	}
 }
+
+// TestDoDiscardReturnsMetadataWithoutBody covers Client.DoDiscard.
+func TestDoDiscardReturnsMetadataWithoutBody(t *testing.T) {
+	t.Parallel()
+	var gotMethod, gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotAuth = r.Method, r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/api/blob":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("X-Hive-Digest", "sha256:abc")
+			_, _ = w.Write(bytes.Repeat([]byte("x"), 4096))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"no such route"}`))
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "secret", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := client.DoDiscard(context.Background(), http.MethodHead, "/api/blob", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodHead || gotAuth != "Bearer secret" {
+		t.Fatalf("method %q auth %q", gotMethod, gotAuth)
+	}
+	if meta.ContentType != "application/octet-stream" || meta.Headers.Get("X-Hive-Digest") != "sha256:abc" {
+		t.Fatalf("metadata = %+v", meta)
+	}
+	if _, err := client.DoDiscard(context.Background(), http.MethodGet, "/api/missing", nil, nil); err == nil || !strings.Contains(err.Error(), "no such route") {
+		t.Fatalf("missing route err = %v", err)
+	}
+	if _, err := client.DoDiscard(context.Background(), "bad method", "/api/blob", nil, nil); err == nil {
+		t.Fatal("invalid method accepted")
+	}
+	dead, _ := NewClient("http://127.0.0.1:1", "", 50*time.Millisecond)
+	var connErr *ConnectionError
+	if _, err := dead.DoDiscard(context.Background(), http.MethodGet, "/api/blob", nil, nil); !errors.As(err, &connErr) {
+		t.Fatalf("connection failure err = %v", err)
+	}
+}

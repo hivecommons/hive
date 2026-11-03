@@ -3,6 +3,7 @@ package config
 import (
 	"path"
 	"strings"
+	"time"
 )
 
 // GitHubActivityConfig gates the hub's org-wide GitHub issue/PR activity feed.
@@ -59,7 +60,40 @@ type ContributeAnnouncement struct {
 // ContributeConfig groups operator-facing settings for contributor surfaces that
 // are not admission/queue controls.
 type ContributeConfig struct {
-	HelpLinks []ContributeHelpLink `yaml:"help_links,omitempty" json:"help_links,omitempty"`
+	// TokenMaxAge bounds registration tokens (Go duration; default 2160h / 90 days).
+	TokenMaxAge string `yaml:"token_max_age,omitempty" json:"token_max_age,omitempty"`
+	// TokenIdleMax optionally expires unused registration tokens (default off).
+	TokenIdleMax string               `yaml:"token_idle_max,omitempty" json:"token_idle_max,omitempty"`
+	HelpLinks    []ContributeHelpLink `yaml:"help_links,omitempty" json:"help_links,omitempty"`
+	// MaxParallelFixes caps how many red-PR fix sessions the hive dispatches
+	// to one contributor at a time, regardless of what their relay advertises
+	// (hivecommons/hive#12436). 0/unset = DefaultMaxParallelFixes. A relay
+	// that advertises no parallel capability always gets capacity 1.
+	MaxParallelFixes int `yaml:"max_parallel_fixes,omitempty" json:"max_parallel_fixes,omitempty"`
+	// MinFocusWindow is the minimum uninterrupted time a preempted primary
+	// task runs after resuming before the hive may preempt it again
+	// (default 30m). Only applies to relays without parallel sessions.
+	MinFocusWindow string `yaml:"min_focus_window,omitempty" json:"min_focus_window,omitempty"`
+}
+
+// DefaultMaxParallelFixes is contribute.max_parallel_fixes's default.
+const DefaultMaxParallelFixes = 2
+
+// DefaultMinFocusWindow is contribute.min_focus_window's default.
+const DefaultMinFocusWindow = 30 * time.Minute
+
+// EffectiveMaxParallelFixes returns the server-side ceiling on per-contributor
+// fix sessions.
+func (c ContributeConfig) EffectiveMaxParallelFixes() int {
+	if c.MaxParallelFixes <= 0 {
+		return DefaultMaxParallelFixes
+	}
+	return c.MaxParallelFixes
+}
+
+// EffectiveMinFocusWindow parses MinFocusWindow with the 30m default.
+func (c ContributeConfig) EffectiveMinFocusWindow() time.Duration {
+	return parseDurationOr(c.MinFocusWindow, DefaultMinFocusWindow)
 }
 
 type ContributeHelpLink struct {
@@ -79,6 +113,10 @@ type HubConfig struct {
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
 	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// UpgradeDrainTimeoutS bounds how long a hub-instructed self-upgrade waits
+	// for in-flight agent kicks to finish. 0/unset uses the default; negative
+	// disables draining. Resolve with EffectiveUpgradeDrainTimeout.
+	UpgradeDrainTimeoutS int `yaml:"upgrade_drain_timeout_s,omitempty" json:"upgrade_drain_timeout_s,omitempty"`
 	// TaskStatusPush controls the separate task-status push loop, not the core
 	// heartbeat or hub-managed upgrade/config delivery. Nil defaults to true.
 	// HIVE_HUB_TASK_STATUS_PUSH overrides it; resolve with TaskStatusPushEnabled.
@@ -138,6 +176,14 @@ type HubConfig struct {
 	// needs-decision label; an explicit empty string disables relay labelling and
 	// does not add a decision label to the skip set.
 	ContributeNeedsDecisionLabel *string `yaml:"contribute_needs_decision_label,omitempty"`
+	// ContributeAuditShareRequest is the relay audit level this hive ASKS
+	// contributors to share with it (hivecommons/hive#13458): "lifecycle",
+	// "commands" or "reasoning". It is advertised on auth_ok and on the
+	// /contribute page so a contributor sees it before deciding; it is a
+	// request only — nothing is uploaded unless the contributor opts in with
+	// `hivectl hives set <name> --share-audit`, and a contributor who does not
+	// is admitted exactly as before. Empty (the default) requests nothing.
+	ContributeAuditShareRequest string `yaml:"contribute_audit_share_request,omitempty"`
 	// ContributeSkipLabels is the hive-wide "not contributor work" label set.
 	// Matching is case-insensitive and uses path.Match-style glob patterns (not
 	// substring matching), so "discussion" matches that label and
@@ -205,8 +251,11 @@ type HubConfig struct {
 	// default is comment + label, so maintainers can close after reviewing.
 	ContributeCloseAlreadyDone *bool `yaml:"contribute_close_already_done,omitempty"`
 	// ContributeAlreadyDoneLabel is applied to issues a contributor found already
-	// resolved. It is also in the default contribute skip label set, so labelled
-	// issues stay out of the offer queue until a maintainer removes it.
+	// resolved when the cited PR verifies as merged. An "already done" verdict
+	// with no cited PR/commit, or one that fails verification, gets a comment and
+	// the ContributeAlreadyDoneHoldDays hold instead, never this label. It is also
+	// in the default contribute skip label set, so labelled issues stay out of
+	// the offer queue until a maintainer removes it.
 	ContributeAlreadyDoneLabel string `yaml:"contribute_already_done_label,omitempty"`
 	// ContributeAlreadyDoneHoldDays is the longer offer suppression for
 	// an "already done" verdict while the label/comment path is pending or if
@@ -351,8 +400,8 @@ const (
 	// rounding to zero.
 	contributeCooldownMinHours        = 1
 	contributeCooldownMaxHours        = 8760
-	contributeAlreadyDoneLabelDefault = "hive/already-done"
-	contributeAlreadyDoneDefaultDays  = 30
+	contributeAlreadyDoneLabelDefault = DefaultContributeAlreadyDoneLabel
+	contributeAlreadyDoneDefaultDays  = DefaultContributeAlreadyDoneHoldDays
 	contributeAlreadyDoneMinDays      = 1
 	contributeAlreadyDoneMaxDays      = 365
 )
@@ -426,7 +475,8 @@ var defaultContributeSkipLabels = []string{
 	"epic",
 	"discussion",
 	"question",
-	"needs-decision",
+	DefaultNeedsDecisionLabel,
+	LegacyNeedsDecisionLabel,
 	"needs-triage",
 }
 
@@ -477,7 +527,7 @@ func normalizeContributeSkipLabels(labels []string, needsDecisionLabel string) [
 
 const (
 	blockedWorkflowSkipLabel  = "blocked"
-	defaultNeedsDecisionLabel = "needs-decision"
+	defaultNeedsDecisionLabel = DefaultNeedsDecisionLabel
 )
 
 // ContributeNeedsDecisionLabelOrDefault resolves the label relays should apply
@@ -488,6 +538,30 @@ func (h HubConfig) ContributeNeedsDecisionLabelOrDefault() string {
 		return defaultNeedsDecisionLabel
 	}
 	return strings.TrimSpace(*h.ContributeNeedsDecisionLabel)
+}
+
+// RelayAuditShareLevels are the relay audit levels a contributor may share
+// with a hive, lowest first (hivecommons/hive#13458). Each is a strict superset
+// of the one before it; they mirror the relay's local capture levels minus
+// "off", which shares nothing.
+var RelayAuditShareLevels = []string{"lifecycle", "commands", "reasoning"}
+
+// NormalizeRelayAuditShareLevel returns the canonical spelling of a relay audit
+// share level, or "" when v is empty or not one of RelayAuditShareLevels.
+func NormalizeRelayAuditShareLevel(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, l := range RelayAuditShareLevels {
+		if v == l {
+			return l
+		}
+	}
+	return ""
+}
+
+// ContributeAuditShareRequestOrNone resolves the share level this hive requests
+// from contributors. An unset or unrecognised value requests nothing ("").
+func (h HubConfig) ContributeAuditShareRequestOrNone() string {
+	return NormalizeRelayAuditShareLevel(h.ContributeAuditShareRequest)
 }
 
 // ContributeSkipLabelPatterns resolves the effective hive-wide "not contributor

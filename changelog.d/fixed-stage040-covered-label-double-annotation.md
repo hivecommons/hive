@@ -1,0 +1,1 @@
+- Issue stage sweep writes `stage/040-covered-by-pr` again for issues an open PR covers: the second in-cycle `annotateIssueWithClaim` pass no longer re-grades the hive's synthesised covered label as GitHub's, which had left issues with an open `Fixes #N` PR stuck at 010 (#14397).

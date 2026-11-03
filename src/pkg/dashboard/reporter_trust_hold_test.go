@@ -26,8 +26,10 @@ func TestReporterTrustHoldSurfacesHumanReason(t *testing.T) {
 		t.Fatalf("missing reporter reason: %+v", band.Signals)
 	}
 	status := &StatusPayload{Repos: []FrontendRepo{{Name: "o/r", HeldPrs: []any{FrontendPR{PullRequest: pr}}}}}
+	decideRepoOwnership(status.Repos, config.DashboardIssueBandsConfig{}, ownershipEnv11565(5))
 	queue := (&Server{}).buildHiveAdvisorQueue(status, time.Now())
-	if len(queue.PRs) != 1 || !queue.PRs[0].NeedsHuman || queue.PRs[0].NeedsHumanReason != reason {
-		t.Fatalf("advice queue=%+v", queue.PRs)
+	stored := status.Repos[0].Ownership[ownershipKey(ownershipKindPR, 42)]
+	if len(queue.PRs) != 1 || queue.PRs[0].Ownership.YourTurn != stored.YourTurn || queue.PRs[0].Ownership.Reason != stored.Reason || queue.PRs[0].Ownership.ReasonCode != stored.ReasonCode {
+		t.Fatalf("advice queue=%+v, stored decision %+v", queue.PRs, stored)
 	}
 }

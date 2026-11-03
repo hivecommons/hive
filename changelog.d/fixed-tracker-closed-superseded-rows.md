@@ -1,0 +1,1 @@
+- Activity Monitor: a PR the hive closed when it opened its replacement (close-first supersession) no longer renders under its issue as a bare sub-row with an empty ladder; the live replacement PR carries a small "supersedes #N" chip (hover: when it was closed, link) as the only trace, and the issue's ladder follows the live PR alone.

@@ -41,6 +41,21 @@ func TestParseMarker_FindsMarkerInsideLongerComment(t *testing.T) {
 	}
 }
 
+func TestParseMarker_ReadsKindAndHive(t *testing.T) {
+	body := "<!-- hive:claim who=mrbobbytables kind=contributor id=mrbobbytables:sess hive=hive-prod at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z -->\n🔒 Claimed."
+	claim, ok := ParseMarker(body)
+	if !ok {
+		t.Fatal("hub-shaped marker did not parse")
+	}
+	if claim.Identity != "mrbobbytables" || claim.Kind != "contributor" || claim.Hive != "hive-prod" {
+		t.Fatalf("kind/hive lost: %+v", claim)
+	}
+	legacy, ok := ParseMarker(Marker("agent-1", started, expires))
+	if !ok || legacy.Kind != "contributor" || legacy.Hive != "" {
+		t.Fatalf("Marker() has kind=contributor and no hive, got ok=%v %+v", ok, legacy)
+	}
+}
+
 func TestParseMarker_AcceptsLegacyMarker(t *testing.T) {
 	body := LegacyMarker("agent-1", started, expires) + "\nClaimed by agent-1."
 	claim, ok := ParseMarker(body)
@@ -193,4 +208,101 @@ func TestResolve(t *testing.T) {
 			t.Fatal("no evidence must yield no claim")
 		}
 	})
+}
+
+// tier= and verified= are read from contributor markers; a marker written
+// before they existed reads as the lowest tier and unverified (#12041).
+func TestParseMarker_ContributorTierAndVerified(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body         string
+		wantTier     string
+		wantVerified bool
+	}{
+		"stamped":           {body: "<!-- hive:claim who=a kind=contributor hive=h tier=Trusted verified=true until=2026-09-23T05:30:00Z -->", wantTier: "trusted", wantVerified: true},
+		"unverified":        {body: "<!-- hive:claim who=a kind=contributor hive=h tier=merger verified=false until=2026-09-23T05:30:00Z -->", wantTier: "merger"},
+		"legacy fields":     {body: "<!-- hive:claim who=a kind=contributor hive=h until=2026-09-23T05:30:00Z -->", wantTier: ContributorTierDefault},
+		"odd verified":      {body: "<!-- hive:claim who=a kind=contributor tier=trusted verified=yes until=2026-09-23T05:30:00Z -->", wantTier: "trusted"},
+		"agent has none":    {body: "<!-- hive:claim who=a kind=agent tier=trusted verified=true until=2026-09-23T05:30:00Z -->"},
+		"legacy positional": {body: LegacyMarker("a", started, expires)},
+	} {
+		claim, ok := ParseMarker(tc.body)
+		if !ok {
+			t.Fatalf("%s: did not parse", name)
+		}
+		if claim.Tier != tc.wantTier || claim.Verified != tc.wantVerified {
+			t.Fatalf("%s: tier=%q verified=%v, want %q/%v", name, claim.Tier, claim.Verified, tc.wantTier, tc.wantVerified)
+		}
+	}
+}
+
+// hivecommons/hive#13069: pr_started= is the marker's PR evidence; absent
+// or anything but "true" is false.
+func TestParseMarker_ReadsPRStarted(t *testing.T) {
+	with := "<!-- hive:claim who=scanner kind=agent hive=h pr_started=true at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z -->"
+	claim, ok := ParseMarker(with)
+	if !ok || !claim.PRStarted || claim.Kind != "agent" {
+		t.Fatalf("pr_started=true lost: ok=%v %+v", ok, claim)
+	}
+	without := "<!-- hive:claim who=scanner kind=agent hive=h at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z -->"
+	if claim, ok := ParseMarker(without); !ok || claim.PRStarted {
+		t.Fatalf("absent pr_started parsed true: ok=%v %+v", ok, claim)
+	}
+	odd := "<!-- hive:claim who=scanner kind=agent pr_started=yes until=2026-09-23T05:30:00Z -->"
+	if claim, ok := ParseMarker(odd); !ok || claim.PRStarted {
+		t.Fatalf("pr_started=yes parsed true: ok=%v %+v", ok, claim)
+	}
+}
+
+func TestLatest_ReleaseMarkerEndsTheClaimItNames(t *testing.T) {
+	started := time.Date(2026, 10, 20, 14, 21, 15, 0, time.UTC)
+	claim := Marker("scanner", started, started.Add(2*time.Hour))
+	release := "<!-- hive:release who=scanner kind=agent reason=holding_agent_relaunched at=2026-10-20T15:35:00Z -->\n🔓 released"
+	now := started.Add(30 * time.Minute)
+
+	got, ok := Latest([]string{claim, release}, 4*time.Hour)
+	if !ok || !got.Released || got.Live(now) {
+		t.Fatalf("release after claim: ok=%v released=%v live=%v", ok, got.Released, got.Live(now))
+	}
+	if c, live := Resolve([]string{claim, release}, []string{"alice"}, started, 4*time.Hour, now); live {
+		t.Fatalf("Resolve fell back to a claim after release: %+v", c)
+	}
+
+	// A release that predates the claim (an earlier hold by the same agent
+	// that was let go) does not end the newer claim.
+	stale := "<!-- hive:release who=scanner kind=agent reason=x at=2026-10-20T13:00:00Z -->"
+	if got, _ := Latest([]string{stale, claim}, 4*time.Hour); got.Released || !got.Live(now) {
+		t.Fatalf("release before claim must not end it: %+v", got)
+	}
+	// Nor does a release of another holder.
+	other := "<!-- hive:release who=quality kind=agent reason=x at=2026-10-20T15:35:00Z -->"
+	if got, _ := Latest([]string{claim, other}, 4*time.Hour); got.Released {
+		t.Fatalf("release of another holder ended the claim: %+v", got)
+	}
+	// A legacy release marker without at= is ordered by position.
+	legacy := "<!-- hive:release who=scanner kind=agent reason=x -->"
+	if got, _ := Latest([]string{legacy, claim}, 4*time.Hour); got.Released {
+		t.Fatal("positional release before the claim must not end it")
+	}
+	if got, _ := Latest([]string{claim, legacy}, 4*time.Hour); !got.Released {
+		t.Fatal("positional release after the claim must end it")
+	}
+}
+
+func TestParseReleaseMarker(t *testing.T) {
+	rel, ok := ParseReleaseMarker("text <!-- hive:release who=scanner kind=agent at=2026-10-20T15:35:00Z --> more")
+	if !ok || rel.Identity != "scanner" || !rel.At.Equal(time.Date(2026, 10, 20, 15, 35, 0, 0, time.UTC)) {
+		t.Fatalf("ParseReleaseMarker: %+v %v", rel, ok)
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:release kind=agent -->"); ok {
+		t.Fatal("marker without who= must not parse")
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:release who=x at=yesterday -->"); ok {
+		t.Fatal("unparseable at= must not parse")
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:release who=x"); ok {
+		t.Fatal("unterminated marker must not parse")
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:claim who=x until=2026-10-20T15:35:00Z -->"); ok {
+		t.Fatal("claim marker is not a release")
+	}
 }

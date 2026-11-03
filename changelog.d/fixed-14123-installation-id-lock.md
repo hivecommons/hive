@@ -1,0 +1,1 @@
+- GitHub App token minting, installation verification and `InstallationID()` now read the installation ID under the auth lock, so adopting a discovered installation can no longer race a concurrent scoped-token mint or send a request with a torn ID ([#14123](https://github.com/hivecommons/hive/issues/14123)).

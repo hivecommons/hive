@@ -213,16 +213,17 @@ func TestBattleLogClassificationAndGourceHelpers(t *testing.T) {
 	}
 
 	t.Setenv("HIVE_PUBLIC_REPOS", "Org/Public, other/x")
-	if !validPublicGourceProject(hiveGourceDefaultProject) {
+	pub := publicReposFromEnv()
+	if !validPublicGourceProject(hiveGourceDefaultProject, pub) {
 		t.Error("default project must be valid")
 	}
-	if !validPublicGourceProject("org/public") || validPublicGourceProject("org/private") || validPublicGourceProject("") {
+	if !validPublicGourceProject("org/public", pub) || validPublicGourceProject("org/private", pub) || validPublicGourceProject("", pub) {
 		t.Error("validPublicGourceProject allowlist")
 	}
-	if got := publicRepoFromTask("work on org/public#4 now"); got != "org/public" {
+	if got := publicRepoFromTask("work on org/public#4 now", pub); got != "org/public" {
 		t.Errorf("publicRepoFromTask = %q", got)
 	}
-	if got := publicRepoFromTask("work on org/private#4"); got != "" {
+	if got := publicRepoFromTask("work on org/private#4", pub); got != "" {
 		t.Errorf("private repo leaked: %q", got)
 	}
 

@@ -1,0 +1,1 @@
+- Empty-diff autoclose head age is floored at the PR's `created_at`, so a PR just opened from an old branch keeps its just-opened grace period, and a head already on the base is measured from its own commit date rather than the label-bumped `updated_at` ([#15603](https://github.com/hivecommons/hive/issues/15603))

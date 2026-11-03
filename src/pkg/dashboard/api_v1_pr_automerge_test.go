@@ -53,6 +53,10 @@ func newAPIV1QueueServer(t *testing.T, role, tokenUser, prAuthor, headSHA string
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
 			labelAdded = true
 			json.NewEncoder(w).Encode([]map[string]any{{"name": ghpkg.AutoMergeQueuedLabel}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/statuses/"+headSHA:
+			// Prow's commit-bound lgtm needs a prow/lgtm status beside the label (hivecommons/hive#13616).
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
 		default:
 			t.Fatalf("unexpected GitHub API call: %s %s", r.Method, r.URL.Path)
 		}
@@ -236,5 +240,33 @@ func TestAPIV1QueuePRAutoMergeAcceptsLegacyTokenScheme(t *testing.T) {
 	}
 	if !*reviewCreated || !*labelAdded {
 		t.Fatalf("reviewCreated=%v labelAdded=%v, want both true", *reviewCreated, *labelAdded)
+	}
+}
+
+// The dashboard's shared operator credential authenticates successfully but
+// must not create an approval attributed to an actor the sweep will refuse.
+func TestDashboardQueueInternalCredentialChecksRecordedMerger(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		users      []string
+		wantStatus int
+		wantError  string
+	}{
+		{"empty allowlist", nil, http.StatusForbidden, "dashboard.authorized_users is empty"},
+		{"untrusted internal", []string{"alice:merger"}, http.StatusForbidden, "@internal cannot merge"},
+		{"trusted internal", []string{"internal:merger"}, http.StatusOK, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, reviewCreated, labelAdded := newAPIV1QueueServer(t, config.RoleMerger, "alice", "bob", "head7")
+			s.deps.Config.Dashboard.AuthorizedUsers = tt.users
+			rr := queueAPIV1Request(t, s, "/api/prs/acme/widget/7/queue-automerge", "", map[string]string{"X-Hive-Internal": "dashboard-token"})
+			if rr.Code != tt.wantStatus || !strings.Contains(rr.Body.String(), tt.wantError) {
+				t.Fatalf("status=%d body=%s, want %d containing %q", rr.Code, rr.Body.String(), tt.wantStatus, tt.wantError)
+			}
+			wantMutation := tt.wantStatus == http.StatusOK
+			if *reviewCreated != wantMutation || *labelAdded != wantMutation {
+				t.Fatalf("review=%v label=%v, want mutations=%v", *reviewCreated, *labelAdded, wantMutation)
+			}
+		})
 	}
 }

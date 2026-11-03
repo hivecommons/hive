@@ -77,10 +77,12 @@ func rescanRepos(
 	// Held PRs are enriched on the same terms as the eval tick so a manual
 	// rescan produces the same red-held-PR view (hivecommons/hive#7438).
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
-	ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
+	ghClient.EnrichReviewSignalsAndWorkPRs(ctx, actionable.PRs.StaleDrafts, actionable.WorkDetailsByRepo)
+	ghClient.EnrichLinkedIssueTitles(ctx, actionable.WorkDetailsByRepo, actionable.PRs.Items, actionable.PRs.Held, actionable.PRs.StaleDrafts)
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
-	lastActionable.Store(actionable)
+	publishEnumeratedSnapshot(lastActionable, actionable, logger)
+	publishStageSharedCIIncidents(actionable)
 	if data, marshalErr := json.Marshal(actionable); marshalErr == nil {
 		atomicWrite(lastActionablePath, data)
 	}

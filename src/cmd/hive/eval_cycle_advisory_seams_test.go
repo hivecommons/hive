@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // --- pinDigestSnapshot -----------------------------------------------------
@@ -148,10 +150,13 @@ type publishRecorder struct {
 	forbidden int
 	authFail  int
 	proven    int
+	moved     []*github.RepoMovedError
+	backoffs  []string
 	github    []string
 	linear    []string
 	githubErr error
 	linearErr error
+	pausedFor []string
 }
 
 func (r *publishRecorder) deps() advisoryPublishDeps {
@@ -169,6 +174,11 @@ func (r *publishRecorder) deps() advisoryPublishDeps {
 		onWriteForbidden: func(context.Context) { r.forbidden++ },
 		onAuthFailure:    func(context.Context) { r.authFail++ },
 		onWriteProven:    func(context.Context) { r.proven++ },
+		onRepoMoved: func(_ context.Context, m *github.RepoMovedError) {
+			r.moved = append(r.moved, m)
+		},
+		recordWriteForbidden: func(repo string) { r.backoffs = append(r.backoffs, repo) },
+		recordRepoPaused:     func(repo string) { r.pausedFor = append(r.pausedFor, repo) },
 	}
 }
 
@@ -235,6 +245,42 @@ func TestPublishAdvisoryDigest_GitHubFailureClassification(t *testing.T) {
 				t.Fatalf("recorder = %+v", r)
 			}
 		})
+	}
+}
+
+// A write-forbidden failure pauses further attempts (recordWriteForbidden) and,
+// when the error chain carries a *github.RepoMovedError, routes to onRepoMoved
+// INSTEAD of the generic write-forbidden banner — whose "tick the repo in this
+// installation" remedy is wrong for a transferred repository (#11791).
+func TestPublishAdvisoryDigest_WriteForbiddenBackoffAndRepoMoved(t *testing.T) {
+	moved := &github.RepoMovedError{Configured: "IBM/docling-pipelines", Current: "docling-project/docling-pipelines"}
+	r := &publishRecorder{githubErr: fmt.Errorf("posting advisory digest to IBM/docling-pipelines#27: %w: 403 Resource not accessible by integration", moved)}
+	got := publishAdvisoryDigest(context.Background(), "md", twoFindingDigest(), githubRoute(), r.deps(), restoreTestLogger())
+	if got != advisoryPublishFailed {
+		t.Fatalf("outcome = %v", got)
+	}
+	if len(r.moved) != 1 || r.moved[0] != moved {
+		t.Fatalf("onRepoMoved = %v, want the wrapped move", r.moved)
+	}
+	if r.forbidden != 0 {
+		t.Fatalf("onWriteForbidden must not fire for a moved repo, fired %d", r.forbidden)
+	}
+	if len(r.backoffs) != 1 || r.backoffs[0] != "acme/widget" {
+		t.Fatalf("recordWriteForbidden = %v, want the route's primary repo", r.backoffs)
+	}
+
+	// Plain write-forbidden: generic hook, still backed off.
+	r = &publishRecorder{githubErr: errors.New("403 Resource not accessible by integration")}
+	publishAdvisoryDigest(context.Background(), "md", twoFindingDigest(), githubRoute(), r.deps(), restoreTestLogger())
+	if r.forbidden != 1 || len(r.moved) != 0 || len(r.backoffs) != 1 {
+		t.Fatalf("recorder = %+v", r)
+	}
+
+	// Other failures never back off — they are retried next cycle as before.
+	r = &publishRecorder{githubErr: errors.New("502 Bad Gateway")}
+	publishAdvisoryDigest(context.Background(), "md", twoFindingDigest(), githubRoute(), r.deps(), restoreTestLogger())
+	if len(r.backoffs) != 0 {
+		t.Fatalf("transient failure must not back off: %v", r.backoffs)
 	}
 }
 

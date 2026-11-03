@@ -12,14 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/tracing"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 type persistStateFakeFleet struct {
@@ -59,24 +61,26 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 	cfg := &config.Config{
 		SourcePath: cfgPath,
 		Project:    config.ProjectConfig{Org: "testorg", Name: "testhive", Repos: []string{"repo"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {
-				Role:            "scanner",
-				Backend:         "claude",
-				Model:           "sonnet",
-				DisplayName:     "Scanner Agent",
-				Description:     "Finds actionable work",
-				Enabled:         true,
-				ClearOnKick:     true,
-				StaleTimeout:    staleTimeout,
-				RestartStrategy: "always",
-				LaunchCmd:       "hive-agent scanner",
-			},
-			"worker": {
-				Role:    "worker",
-				Backend: "claude",
-				Model:   "sonnet",
-				Enabled: true,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {
+					Role:            "scanner",
+					Backend:         "claude",
+					Model:           "sonnet",
+					DisplayName:     "Scanner Agent",
+					Description:     "Finds actionable work",
+					Enabled:         true,
+					ClearOnKick:     true,
+					StaleTimeout:    staleTimeout,
+					RestartStrategy: "always",
+					LaunchCmd:       "hive-agent scanner",
+				},
+				"worker": {
+					Role:    "worker",
+					Backend: "claude",
+					Model:   "sonnet",
+					Enabled: true,
+				},
 			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
@@ -91,7 +95,7 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{ACMMLevel: level})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{ACMMLevel: level})
 	// Anchor relative to now: SeedRestartTelemetry prunes restart events older
 	// than 24h, so a fixed calendar date turns this test into a time bomb.
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
@@ -102,10 +106,10 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 		t.Fatalf("PauseBy: %v", err)
 	}
 	mgr.SeedPauseState("scanner", pausedAt, "dashboard-api", "owner maintenance", "owner@example")
-	if err := mgr.Pause("worker", agent.BreakerTrigger, "fleet breaker engaged"); err != nil {
+	if err := mgr.Pause("worker", crux.BreakerTrigger, "fleet breaker engaged"); err != nil {
 		t.Fatalf("Pause worker: %v", err)
 	}
-	mgr.SeedPauseState("worker", pausedAt, agent.BreakerTrigger, "fleet breaker engaged", "")
+	mgr.SeedPauseState("worker", pausedAt, crux.BreakerTrigger, "fleet breaker engaged", "")
 	if err := mgr.PinCLI("scanner", "copilot-cli-v1"); err != nil {
 		t.Fatalf("PinCLI: %v", err)
 	}
@@ -116,15 +120,15 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 		t.Fatalf("SetBackendOverride: %v", err)
 	}
 	mgr.SeedLastKick("scanner", lastKick)
-	mgr.SeedKickHistory("scanner", []agent.KickRecord{{Timestamp: lastKick, Agent: "scanner", Snippet: "please scan"}})
-	mgr.SeedRestartTelemetry("scanner", 3, []agent.RestartEvent{{At: restartAt, Reason: "watchdog"}}, "watchdog")
+	mgr.SeedKickHistory("scanner", []crux.KickRecord{{Timestamp: lastKick, Agent: "scanner", Snippet: "please scan"}})
+	mgr.SeedRestartTelemetry("scanner", 3, []crux.RestartEvent{{At: restartAt, Reason: "watchdog"}}, "watchdog")
 	sinceOutput := 2 * time.Minute
-	mgr.SeedTurnLoss("scanner", agent.TurnLoss{
+	mgr.SeedTurnLoss("scanner", crux.TurnLoss{
 		Interruptions: 2,
 		Producing:     1,
 		UpperBound:    7 * time.Minute,
 		Bytes:         2048,
-		Recent: []agent.TurnInterruption{{
+		Recent: []crux.TurnInterruption{{
 			At:          restartAt,
 			Reason:      "restart",
 			SinceKick:   5 * time.Minute,
@@ -277,6 +281,7 @@ func persistStateTestPaths(dir string) persistPaths {
 		TokenSparklineHistory: filepath.Join(dir, "token-sparkline-history.json"),
 		FactHistory:           filepath.Join(dir, "fact-history.json"),
 		CostHistory:           filepath.Join(dir, "cost-history.json"),
+		CostDailyRollup:       filepath.Join(dir, "cost-daily-rollup.json"),
 		TrendHistory:          filepath.Join(dir, "trend-history.json"),
 		BudgetWindowHistory:   filepath.Join(dir, "budget-window-history.json"),
 		ConvergenceSoak:       filepath.Join(dir, "convergence-soak-history.json"),
@@ -356,8 +361,10 @@ func TestPersistStateResolvesPathsThroughRuntimeSeam(t *testing.T) {
 	cfg := &config.Config{
 		SourcePath: cfgPath,
 		Project:    config.ProjectConfig{Org: "testorg", Name: "testhive", Repos: []string{"repo"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Role: "scanner", Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Role: "scanner", Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"surge": {Threshold: 20},
@@ -369,7 +376,7 @@ func TestPersistStateResolvesPathsThroughRuntimeSeam(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("project:\n  org: testorg\nagents:\n  scanner:\n    role: scanner\n"), 0o644); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
 	// One evaluation gives the governor a non-empty eval and mode history, so
 	// the history files are the observable proof that the seam's path set —

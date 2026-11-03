@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ func TestPRThroughputCardPinned(t *testing.T) {
 	for _, snippet := range []string{
 		`id="pr-throughput-section"`,
 		`id="pr-throughput-card"`,
-		`📊 Throughput`,
+		`📈 Throughput`,
 		`pull/merge requests across tracked forges`,
 		`data-arg0="pr-throughput-section"`,
 		"function renderPRThroughput",
@@ -25,7 +26,7 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		`data-action="setPRThroughputHours"`,
 		"window.setPRThroughputHours = setPRThroughputHours",
 		"window.setPRThroughputRole = setPRThroughputRole",
-		"'pr-throughput-section': { title: '📊 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' }",
+		"'pr-throughput-section': { title: '📈 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' }",
 		`<div class="lbl">Opened</div>`,
 		`<div class="lbl">Merged</div>`,
 		`<div class="lbl">Closed without merging</div>`,
@@ -65,7 +66,7 @@ func TestPRThroughputSectionIsTopLevel(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
 		`<div id="pr-throughput-section" data-dashboard-section="pr-throughput-section" hidden>`,
-		`data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Throughput</span>`,
+		`data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span>`,
 		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section'`,
 		`h === 'throughput' || h.startsWith('section-')`,
 		`if (h === 'throughput') return 'pr-throughput-section';`,
@@ -177,6 +178,8 @@ assert.match(tile, /data-change-action="setPRThroughputRole"/);
 assert.match(tile, /miniature 100% stacked area trend/);
 assert.match(tile, /class="area human"/);
 assert.doesNotMatch(tile, /sparkline-area/);
+const PRT_TREND_VIEWS = [['counts', 'Counts'], ['share', 'Hive share %'], ['area', 'Share area']];
+let prtTrendView = 'area';
 ` + jsFunc(t, html, "prtActorTrend") + `
 const trend = prtActorTrend(dto);
 assert.match(trend, /class="prt-trend"/);
@@ -189,5 +192,120 @@ assert.match(trend, /hive 53% of PRs merged \+ issues closed in last 1d, up from
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node Change Throughput actor trend failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+// TestPRThroughputTrendViews pins the Hive vs human trend's view dropdown:
+// "counts" (default) stacks real counts per bucket, "share" draws the hive
+// share over a trailing window, and "area" keeps the original 100% share
+// area. A 100% area shows one merge and sixteen at the same height and drops
+// to zero between busy buckets, so it cannot say when or how much.
+func TestPRThroughputTrendViews(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Hive vs human trend views were not executed")
+	}
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		"const PRT_TREND_VIEWS = [['counts', 'Counts'], ['share', 'Hive share %'], ['area', 'Share area']];",
+		"window.setPRThroughputTrendView = setPRThroughputTrendView",
+		`.prt-trend-svg .bar.hive { fill:var(--prt-actor-hive); }`,
+		`.prt-trend-head { display:flex; flex-wrap:wrap;`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("Hive vs human trend views missing snippet %q", snippet)
+		}
+	}
+	script := `const assert = require('node:assert/strict');
+let prtRole = 'merged';
+function escapeHtml(v) { return String(v).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+const PRT_TREND_VIEWS = [['counts', 'Counts'], ['share', 'Hive share %'], ['area', 'Share area']];
+const PRT_TREND_VIEW_STORAGE_KEY = 'hive.prThroughput.trendView';
+let prtTrendView = 'counts';
+const stored = {};
+const localStorage = { setItem: (k, v) => { stored[k] = v; } };
+let prtLast = { hours: 6 };
+let renders = 0;
+function renderPRThroughput() { renders++; }
+` + jsFunc(t, html, "prtSeriesAllZero") + "\n" + jsFunc(t, html, "prtTrendSvg") + "\n" +
+		jsFunc(t, html, "prtTrendBucketSeconds") + "\n" + jsFunc(t, html, "prtDurationLabel") + "\n" +
+		jsFunc(t, html, "prtTrendTimeLabel") + "\n" + jsFunc(t, html, "prtTrendRangeLabel") + "\n" +
+		jsFunc(t, html, "prtNiceTicks") + "\n" + jsFunc(t, html, "prtTrendPlot") + "\n" +
+		jsFunc(t, html, "prtRoleNoun") + "\n" + jsFunc(t, html, "prtWindowPhrase") + "\n" +
+		jsFunc(t, html, "prtActorDefinition") + "\n" + jsFunc(t, html, "prtTrendStats") + "\n" +
+		jsFunc(t, html, "prtTrendCaption") + "\n" + jsFunc(t, html, "prtActorTrend") + "\n" +
+		jsFunc(t, html, "setPRThroughputTrendView") + `
+// 6h at 15-minute buckets; one human close, then bursts of hive and other.
+// 11:00 local, so clock labels read the same in every zone the test runs in.
+const start = new Date(2026, 9, 26, 11, 0).getTime();
+const series = Array.from({ length: 24 }, (_, i) => ({ t: new Date(start + i * 900000).toISOString(), hive: 0, human: 0, other: 0 }));
+series[1].human = 1; series[4].hive = 3; series[10].other = 3; series[11].human = 2;
+series[14].hive = 2; series[16].other = 2; series[23].hive = 3;
+const dto = { hours: 6, bucket_seconds: 900, series };
+const titles = svg => Array.from(svg.matchAll(/<rect class="hit"[^>]*><title>([^<]*)<\/title>/g)).map(m => m[1]);
+
+const counts = prtTrendPlot(series, dto, 'counts');
+assert.equal(Array.from(counts.matchAll(/<rect class="bar (hive|human|other)"/g)).length, 7, 'one bar segment per non-zero actor bucket');
+assert.match(counts, /preserveAspectRatio="none"/);
+const ct = titles(counts);
+assert.equal(ct.length, 24, 'every bucket has a hover title, empty ones too');
+assert.equal(ct[0], '11:00–11:15 · none');
+assert.equal(ct[4], '12:00–12:15 · hive 3 · human 0 · other 0');
+assert.equal(ct[10], '13:30–13:45 · hive 0 · human 0 · other 3');
+// Heights follow the counts: 3 fills the 0..3 scale, 2 is two thirds of it.
+assert.match(counts, /class="bar hive" x="[^"]+" y="0\.00" width="[^"]+" height="100\.00"/);
+assert.match(counts, /class="bar hive" x="[^"]+" y="33\.33" width="[^"]+" height="66\.67"/);
+assert.deepEqual(Array.from(counts.matchAll(/<span style="bottom:[^"]+">([^<]+)<\/span>/g)).map(m => m[1]), ['0', '1', '2', '3']);
+assert.deepEqual(Array.from(counts.matchAll(/<span style="left:[^"]+">([^<]+)<\/span>/g)).map(m => m[1]), ['11:00', '12:00', '13:00', '14:00', '15:00', '16:00']);
+assert.match(counts, /Bars: count per 15m bucket/);
+
+const share = prtTrendPlot(series, dto, 'share');
+assert.match(share, /<path class="share-line" d="M/);
+assert.match(share, /<line class="ref"/);
+const st = titles(share);
+assert.equal(st[0], '11:00–11:15 (trailing 1h) · no activity in window');
+assert.equal(st[4], '12:00–12:15 (trailing 1h) · hive 75% · 3 of 4');
+assert.equal(st[8], '13:00–13:15 (trailing 1h) · no activity in window', 'a quiet window is a gap, not 0%');
+assert.deepEqual(Array.from(share.matchAll(/<span style="bottom:[^"]+">([^<]+)<\/span>/g)).map(m => m[1]), ['0%', '25%', '50%', '75%', '100%']);
+// The line restarts after each quiet window: active runs are buckets 1-7, 10-19 and 23.
+assert.equal((share.match(/class="share-line" d="[^"]*"/)[0].match(/M/g) || []).length, 3);
+
+// Daily buckets are UTC days and label by their UTC date in every zone;
+// the ticks stay whole numbers.
+const days = [{ t: '2026-10-25T00:00:00Z', hive: 16, human: 3, other: 5 }, { t: '2026-10-26T00:00:00Z', hive: 9, human: 0, other: 1 }];
+const daily = prtTrendPlot(days, { bucket_seconds: 86400 }, 'counts');
+assert.match(daily, /<title>Oct 25–Oct 26 · hive 16 · human 3 · other 5<\/title>/);
+assert.deepEqual(Array.from(daily.matchAll(/<span style="bottom:[^"]+">([^<]+)<\/span>/g)).map(m => m[1]), ['0', '10', '20', '30']);
+assert.deepEqual(Array.from(daily.matchAll(/<span style="left:[^"]+">([^<]+)<\/span>/g)).map(m => m[1]), ['Oct 25', 'Oct 26']);
+// x labels land on round times even when the window starts mid-step.
+const odd = Array.from({ length: 25 }, (_, i) => ({ t: new Date(start + (i - 2) * 900000).toISOString(), hive: 1, human: 0, other: 0 }));
+assert.deepEqual(Array.from(prtTrendPlot(odd, dto, 'counts').matchAll(/<span style="left:[^"]+">([^<]+)<\/span>/g)).map(m => m[1]), ['11:00', '12:00', '13:00', '14:00', '15:00', '16:00']);
+assert.equal(prtTrendPlot([series[0]], dto, 'counts'), '');
+
+let trend = prtActorTrend(dto);
+assert.match(trend, /data-change-action="setPRThroughputTrendView"/);
+assert.match(trend, /<option value="counts" selected>Counts<\/option>/);
+assert.match(trend, /class="prt-trend-plot prt-trend-counts"/);
+assert.doesNotMatch(trend, /class="area /);
+prtTrendView = 'area';
+trend = prtActorTrend(dto);
+assert.match(trend, /<option value="area" selected>Share area<\/option>/);
+assert.match(trend, /class="area hive"/);
+assert.doesNotMatch(trend, /prt-trend-plot/);
+
+setPRThroughputTrendView('share');
+assert.equal(prtTrendView, 'share');
+assert.equal(stored[PRT_TREND_VIEW_STORAGE_KEY], 'share');
+assert.equal(renders, 1);
+setPRThroughputTrendView('<bogus>');
+assert.equal(prtTrendView, 'counts');
+`
+	for _, tz := range []string{"UTC", "America/New_York"} {
+		cmd := exec.Command(node, "-e", script)
+		cmd.Env = append(os.Environ(), "TZ="+tz)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("node Hive vs human trend views (TZ=%s) failed: %v\n%s", tz, err, strings.TrimSpace(string(out)))
+		}
 	}
 }

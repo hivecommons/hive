@@ -214,3 +214,35 @@ func TestAdvisoryQueueHealthRoundTrip(t *testing.T) {
 		t.Fatalf("unset queue_health must be omitted from yaml, got: %s", out)
 	}
 }
+
+// TestAdvisoryPostRetryBackoff pins post_retry_backoff_s resolution (#11791):
+// unset falls back to the env override, then the one-hour default; a positive
+// yaml value wins over the env; negative (yaml or env) disables the backoff.
+func TestAdvisoryPostRetryBackoff(t *testing.T) {
+	t.Setenv(AdvisoryPostRetryBackoffEnvVar, "")
+	if got := (AdvisoryConfig{}).PostRetryBackoff(); got != DefaultAdvisoryPostRetryBackoffS*time.Second {
+		t.Errorf("unset: got %v, want default %ds", got, DefaultAdvisoryPostRetryBackoffS)
+	}
+	if got := (AdvisoryConfig{PostRetryBackoffS: 120}).PostRetryBackoff(); got != 2*time.Minute {
+		t.Errorf("set: got %v, want 2m", got)
+	}
+	if got := (AdvisoryConfig{PostRetryBackoffS: -1}).PostRetryBackoff(); got != 0 {
+		t.Errorf("negative disables: got %v, want 0", got)
+	}
+
+	t.Setenv(AdvisoryPostRetryBackoffEnvVar, "600")
+	if got := (AdvisoryConfig{}).PostRetryBackoff(); got != 10*time.Minute {
+		t.Errorf("env override: got %v, want 10m", got)
+	}
+	if got := (AdvisoryConfig{PostRetryBackoffS: 120}).PostRetryBackoff(); got != 2*time.Minute {
+		t.Errorf("yaml beats env: got %v, want 2m", got)
+	}
+	t.Setenv(AdvisoryPostRetryBackoffEnvVar, "-5")
+	if got := (AdvisoryConfig{}).PostRetryBackoff(); got != 0 {
+		t.Errorf("negative env disables: got %v, want 0", got)
+	}
+	t.Setenv(AdvisoryPostRetryBackoffEnvVar, "not-a-number")
+	if got := (AdvisoryConfig{}).PostRetryBackoff(); got != DefaultAdvisoryPostRetryBackoffS*time.Second {
+		t.Errorf("garbage env falls back to default: got %v", got)
+	}
+}

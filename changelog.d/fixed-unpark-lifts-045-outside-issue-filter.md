@@ -1,0 +1,1 @@
+- Fixed an accepted `/hive approve` / `/hive decision` leaving `stage/045-needs-decision` on an issue that `project.issue_filter` refuses, under a reply saying it was removed. The un-park now hands the stage writer the labels the issue really carries, and its replies name only the stage labels that are gone once the engine has run.

@@ -1,1 +1,0 @@
-- Add compact visual summary strips to collapsed dashboard section headers.

@@ -1,0 +1,3056 @@
+package automerge
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
+)
+
+// adoptAPI layers the git-ref / pull-request routes the adoption needs on
+// top of stageAPI and records what the hive did.
+type adoptAPI struct {
+	mu          sync.Mutex
+	refs        map[string]string // refs/heads/x → sha
+	refUpdates  []string
+	pulls       []map[string]any
+	nextPR      int
+	superseders map[int]map[string]any // number → GET payload
+	prEdits     []string
+	newCommits  []map[string]any // POST git/commits bodies
+	commits     map[string]adoptCommit
+	// failRefs makes POST git/refs answer 500; refAttempts counts them.
+	failRefs    bool
+	refAttempts int
+	// compareFiles are the base-side files served by GET compare/head...base;
+	// failCompare makes it answer 500.
+	compareFiles []string
+	failCompare  bool
+	// prFiles are the files served by GET pulls/n/files (the adopted PR's
+	// diff); failPRFiles makes it answer 500.
+	prFiles     []map[string]any
+	failPRFiles bool
+	// heads is the head GET pulls/n reports for an observed PR (the
+	// harness keeps it in step with what the lane saw); liveHead, when set,
+	// overrides it: the author pushed after the lane recorded its head.
+	heads     map[int]string
+	liveHead  string
+	failPRGet bool // GET pulls/n answers 500
+	// changedFiles is the changed_files count GET pulls/n reports for an
+	// observed PR; 0 omits it.
+	changedFiles int
+	// permissions is the role GET collaborators/<login>/permission reports
+	// per login (default "write"); failPermission makes it answer 500;
+	// permissionReads counts the calls; onPermission runs inside each read.
+	permissions     map[string]string
+	failPermission  bool
+	permissionReads int
+	onPermission    func()
+	// failEditStatus, when non-zero, is the status PATCH pulls/n answers.
+	failEditStatus int
+	// Stale-red recovery fixtures (hivecommons/hive#14500): compareBehind
+	// and compareBase are what GET compare/base...head reports; baseChecks
+	// is name → conclusion served by GET commits/<base>/check-runs;
+	// failedRuns are the workflow runs GET actions/runs?head_sha= lists;
+	// updateBranchStatus, when non-zero, is the status PUT update-branch
+	// answers with updateBranchMessage. The recorder slices count calls.
+	compareBehind       int
+	compareBase         string
+	baseChecks          map[string]string
+	failBaseChecks      bool
+	failedRuns          []int64
+	updateBranchStatus  int
+	updateBranchMessage string
+	branchUpdates       []string
+	reruns              []int64
+	baseCheckReads      int
+	// issueComments are served by GET issues/n/comments (the adoption
+	// marker scan, hivecommons/hive#15052); commentReads counts the calls.
+	issueComments map[int][]map[string]any
+	commentReads  int
+	// mergeStatus, when non-zero, is the status POST merges answers (the
+	// supersede replay onto the base); merges records base←head pairs;
+	// deletedRefs records DELETE git/refs targets.
+	mergeStatus int
+	merges      []string
+	deletedRefs []string
+	// failComments makes POST issues/n/comments answer 500.
+	failComments bool
+}
+
+type adoptCommit struct {
+	login    string // GitHub login of author/committer, or git:<name> for an unlinked identity
+	verified bool
+}
+
+func newAdoptAPI() *adoptAPI {
+	return &adoptAPI{refs: map[string]string{}, nextPR: 90, superseders: map[int]map[string]any{}, commits: map[string]adoptCommit{}, heads: map[int]string{}}
+}
+
+func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	path := r.URL.Path
+	switch {
+	case r.Method == http.MethodGet && strings.Contains(path, "/collaborators/") && strings.HasSuffix(path, "/permission"):
+		a.permissionReads++
+		if a.onPermission != nil {
+			a.onPermission()
+		}
+		if a.failPermission {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		login := strings.TrimSuffix(path[strings.Index(path, "/collaborators/")+len("/collaborators/"):], "/permission")
+		role := nonEmpty(a.permissions[login], "write")
+		permission := role
+		if role == "maintain" {
+			permission = "write" // GitHub's legacy field; role_name carries maintain
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"permission": permission, "role_name": role, "user": map[string]string{"login": login}})
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/files"):
+		if a.failPRFiles {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		files := a.prFiles
+		if files == nil {
+			files = []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}
+		}
+		_ = json.NewEncoder(w).Encode(files)
+		return true
+	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/commits":
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.newCommits = append(a.newCommits, body)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": fmt.Sprintf("signed%d", len(a.newCommits))})
+		return true
+	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/refs":
+		var body struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.refAttempts++
+		if a.failRefs {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		if _, exists := a.refs[body.Ref]; exists {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Reference already exists"})
+			return true
+		}
+		a.refs[body.Ref] = body.SHA
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ref": body.Ref, "object": map[string]string{"sha": body.SHA}})
+		return true
+	case r.Method == http.MethodPost && a.failComments && strings.HasSuffix(path, "/comments"):
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+		return true
+	case r.Method == http.MethodPost && path == "/repos/acme/widget/merges":
+		var body struct {
+			Base string `json:"base"`
+			Head string `json:"head"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.merges = append(a.merges, body.Base+"<-"+body.Head)
+		if a.mergeStatus != 0 {
+			w.WriteHeader(a.mergeStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Merge conflict"})
+			return true
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": "merged" + body.Base})
+		return true
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/repos/acme/widget/git/refs/"):
+		ref := "refs/" + strings.TrimPrefix(path, "/repos/acme/widget/git/refs/")
+		delete(a.refs, ref)
+		a.deletedRefs = append(a.deletedRefs, ref)
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/git/ref/"):
+		ref := "refs/" + strings.TrimPrefix(path, "/repos/acme/widget/git/ref/")
+		sha, ok := a.refs[ref]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Not Found"})
+			return true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ref": ref, "object": map[string]string{"sha": sha}})
+		return true
+	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/git/refs/"):
+		var body struct {
+			SHA string `json:"sha"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		ref := "refs/" + strings.TrimPrefix(path, "/repos/acme/widget/git/refs/")
+		a.refs[ref] = body.SHA
+		a.refUpdates = append(a.refUpdates, ref+"="+body.SHA)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ref": ref, "object": map[string]string{"sha": body.SHA}})
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && strings.HasSuffix(path, "/comments"):
+		var n int
+		_, _ = sscanInt(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), &n)
+		a.commentReads++
+		out := a.issueComments[n]
+		if out == nil {
+			out = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+		return true
+	case r.Method == http.MethodPost && path == "/repos/acme/widget/pulls":
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.pulls = append(a.pulls, body)
+		n := a.nextPR
+		a.nextPR++
+		a.superseders[n] = map[string]any{"number": n, "state": "open", "merged": false}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "html_url": "https://github.com/acme/widget/pull/90"})
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && !strings.HasSuffix(path, "/commits"):
+		if a.failPRGet {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		var n int
+		_, _ = sscanInt(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), &n)
+		payload, ok := a.superseders[n]
+		head, observed := a.heads[n]
+		if !ok && !observed {
+			w.WriteHeader(http.StatusNotFound)
+			return true
+		}
+		if observed {
+			served := map[string]any{"number": n, "state": "open"}
+			for k, v := range payload {
+				served[k] = v
+			}
+			if a.liveHead != "" {
+				head = a.liveHead
+			}
+			served["head"] = map[string]any{"sha": head}
+			if a.changedFiles > 0 {
+				served["changed_files"] = a.changedFiles
+			}
+			payload = served
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/compare/"):
+		if a.failCompare {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		files := []map[string]string{}
+		for _, f := range a.compareFiles {
+			files = append(files, map[string]string{"filename": f})
+		}
+		payload := map[string]any{"files": files, "behind_by": a.compareBehind}
+		if a.compareBase != "" {
+			payload["base_commit"] = map[string]any{"sha": a.compareBase}
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/") && strings.HasSuffix(path, "/check-runs"):
+		a.baseCheckReads++
+		if a.failBaseChecks {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		runs := []map[string]any{}
+		id := int64(1)
+		for name, conclusion := range a.baseChecks {
+			run := map[string]any{"id": id, "name": name, "status": "completed", "conclusion": conclusion}
+			if conclusion == "pending" {
+				run["status"] = "in_progress"
+				delete(run, "conclusion")
+			}
+			runs = append(runs, run)
+			id++
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+		return true
+	case r.Method == http.MethodPut && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/update-branch"):
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		expected, _ := body["expected_head_sha"].(string)
+		a.branchUpdates = append(a.branchUpdates, strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/update-branch")+"@"+expected)
+		if a.updateBranchStatus != 0 {
+			w.WriteHeader(a.updateBranchStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": nonEmpty(a.updateBranchMessage, "scripted refusal")})
+			return true
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+		return true
+	case r.Method == http.MethodGet && path == "/repos/acme/widget/actions/runs":
+		sha := r.URL.Query().Get("head_sha")
+		runs := []map[string]any{}
+		for _, id := range a.failedRuns {
+			runs = append(runs, map[string]any{"id": id, "workflow_id": id, "run_number": 1, "run_attempt": 1, "head_sha": sha, "status": "completed", "conclusion": "failure"})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
+		return true
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/repos/acme/widget/actions/runs/") && strings.HasSuffix(path, "/rerun-failed-jobs"):
+		var id int
+		_, _ = sscanInt(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/actions/runs/"), "/rerun-failed-jobs"), &id)
+		a.reruns = append(a.reruns, int64(id))
+		w.WriteHeader(http.StatusCreated)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
+		sha := strings.TrimPrefix(path, "/repos/acme/widget/commits/")
+		commit, ok := a.commits[sha]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return true
+		}
+		verification := map[string]any{"verified": commit.verified}
+		if name, ok := strings.CutPrefix(commit.login, "git:"); ok {
+			// Unlinked identity: bare git author/committer name, no GitHub user.
+			_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": nil, "committer": nil, "commit": map[string]any{"author": map[string]any{"name": name}, "committer": map[string]any{"name": name}, "verification": verification}})
+			return true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": map[string]any{"login": commit.login}, "committer": map[string]any{"login": commit.login}, "commit": map[string]any{"verification": verification}})
+		return true
+	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/pulls/"):
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.prEdits = append(a.prEdits, strings.TrimPrefix(path, "/repos/acme/widget/pulls/")+":"+body["state"].(string))
+		if a.failEditStatus != 0 {
+			w.WriteHeader(a.failEditStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted refusal"})
+			return true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+		return true
+	}
+	return false
+}
+
+func sscanInt(s string, n *int) (int, error) {
+	v := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			break
+		}
+		v = v*10 + int(c-'0')
+	}
+	*n = v
+	return 1, nil
+}
+
+// allowMaintainerEdits makes GET pulls/n report maintainer_can_modify.
+func (a *adoptAPI) allowMaintainerEdits(n int, allow bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.superseders[n] = map[string]any{"number": n, "state": "open", "merged": false, "maintainer_can_modify": allow}
+}
+
+func (a *adoptAPI) setCommitAuthor(sha, login string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.commits[sha] = adoptCommit{login: login}
+}
+
+func (a *adoptAPI) setVerifiedCommitAuthor(sha, login string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.commits[sha] = adoptCommit{login: login, verified: true}
+}
+
+func (a *adoptAPI) setSuperseder(n int, state string, merged bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.superseders[n] = map[string]any{"number": n, "state": state, "merged": merged}
+}
+
+// adoptPR is a contributor PR from a branch of the base repository: the
+// shape the hive may supersede or re-home (adoptionFromFork). forkPR is the
+// same PR from mallory's fork.
+// setSupersederHead is setSuperseder with the superseder's head SHA served.
+func (a *adoptAPI) setSupersederHead(n int, state string, merged bool, head string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.superseders[n] = map[string]any{"number": n, "state": state, "merged": merged, "head": map[string]any{"sha": head}}
+}
+
+func adoptPR(number int, head string, labels ...string) *gh.PullRequest {
+	pr := nudgePR(number, head, labels...)
+	pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr("v5")}
+	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("acme/widget")}
+	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n\n— hive: backend=pi model=gpt-6\n")
+	return pr
+}
+
+func forkPR(number int, head string, labels ...string) *gh.PullRequest {
+	pr := adoptPR(number, head, labels...)
+	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("mallory/widget")}
+	return pr
+}
+
+func workflowRefusedComments(api *stageAPI) []string {
+	var out []string
+	for _, c := range api.comments {
+		if strings.HasPrefix(c, AdoptionWorkflowRefusedMarker) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func adoptionComments(api *stageAPI) []string {
+	var out []string
+	for _, c := range api.comments {
+		if strings.HasPrefix(c, AdoptionMarkerPrefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+type adoptHarness struct {
+	t     *testing.T
+	api   *stageAPI
+	adopt *adoptAPI
+	clock *contributorLaneClock
+	sink  *fakeNudgeSink
+	e     *Engine
+}
+
+func newAdoptHarness(t *testing.T, outcome ContributorNudgeOutcome, policy StageLabelPolicy) (*adoptHarness, func()) {
+	t.Helper()
+	sink := &fakeNudgeSink{outcome: outcome}
+	return newAdoptHarnessWith(t, sink, sink, policy)
+}
+
+// newAdoptHarnessWith wires an arbitrary sink (wrapping fake) into the engine.
+func newAdoptHarnessWith(t *testing.T, fake *fakeNudgeSink, sink ContributorNudgeSink, policy StageLabelPolicy) (*adoptHarness, func()) {
+	t.Helper()
+	api, closeAPI := seededStageAPI(t)
+	adopt := newAdoptAPI()
+	api.extra = adopt.handle
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e := newNudgeEngine(t, apiURLOf(t, api), clock, sink, policy)
+	return &adoptHarness{t: t, api: api, adopt: adopt, clock: clock, sink: fake, e: e}, closeAPI
+}
+
+func (h *adoptHarness) observe(pr *gh.PullRequest, reason string) StageLabelResult {
+	h.t.Helper()
+	h.adopt.mu.Lock()
+	h.adopt.heads[pr.GetNumber()] = pr.GetHead().GetSHA()
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
+	h.e.noteStageRole("acme", "widget", pr.GetNumber(), stagelabels.RoleContributor)
+	res, err := h.e.ApplyStageLabels(context.Background())
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return res
+}
+
+// observeSelf is observe through the self-authored sweep's recordStage:
+// the lane the trusted-bot hand-off (github-actions and friends) and the
+// App's own PRs are observed under.
+func (h *adoptHarness) observeSelf(pr *gh.PullRequest, reason string) StageLabelResult {
+	h.t.Helper()
+	h.adopt.mu.Lock()
+	h.adopt.heads[pr.GetNumber()] = pr.GetHead().GetSHA()
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, reason, false, nil)
+	h.e.noteStageRole("acme", "widget", pr.GetNumber(), stagelabels.RoleTrusted)
+	res, err := h.e.ApplyStageLabels(context.Background())
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return res
+}
+
+func (h *adoptHarness) addedLabels() []string {
+	var out []string
+	for _, a := range h.api.added {
+		out = append(out, a...)
+	}
+	return out
+}
+
+func adoptPolicy() StageLabelPolicy {
+	return StageLabelPolicy{Enabled: true, ContributorNudge: true, Adoption: true, AdoptionStrictAttribution: true, GraceOnline: 2 * time.Hour, GraceOffline: time.Hour, HiveID: "acme-hive"}
+}
+
+func TestAdoptionGraceSelection(t *testing.T) {
+	p := adoptPolicy()
+	if got := adoptionGrace(stagelabels.Record{NudgeOnline: true}, p); got != 2*time.Hour {
+		t.Fatalf("online grace %v", got)
+	}
+	if got := adoptionGrace(stagelabels.Record{}, p); got != time.Hour {
+		t.Fatalf("offline grace %v", got)
+	}
+	if got := adoptionGrace(stagelabels.Record{NudgeOnline: true}, StageLabelPolicy{}); got != 2*time.Hour {
+		t.Fatalf("default online grace %v", got)
+	}
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	rec := stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1, FirstNudgeAt: now}
+	none := ContributorPresence{}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(59*time.Minute), none, false); due {
+		t.Fatal("due before grace")
+	}
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(time.Hour), none, false); !due || reason != AdoptReasonGrace {
+		t.Fatalf("not due at grace: %v %q", due, reason)
+	}
+	if due, _ := adoptionDue(rec, "bbb", p, now.Add(2*time.Hour), none, false); due {
+		t.Fatal("due for a head that was never nudged")
+	}
+	// Live presence: online relay keeps the online grace; an offline relay is
+	// adopted AdoptAfterOffline after its last heartbeat (not the nudge);
+	// an unregistered author after AdoptAfterUnregistered.
+	online := ContributorPresence{Registered: true, Online: true}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(time.Hour), online, true); due {
+		t.Fatal("online relay adopted before the online grace")
+	}
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(2*time.Hour), online, true); !due || reason != AdoptReasonGrace {
+		t.Fatalf("online relay at grace: %v %q", due, reason)
+	}
+	offline := ContributorPresence{Registered: true, LastSeen: now.Add(10 * time.Minute)}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(24*time.Minute), offline, true); due {
+		t.Fatal("offline relay adopted before 15m since its last heartbeat")
+	}
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(25*time.Minute), offline, true); !due || reason != AdoptReasonOffline {
+		t.Fatalf("offline relay: %v %q", due, reason)
+	}
+	p.AdoptAfterOffline = 5 * time.Minute
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(15*time.Minute), offline, true); !due {
+		t.Fatal("after_offline knob ignored")
+	}
+	unregistered := ContributorPresence{}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(14*time.Minute), unregistered, true); due {
+		t.Fatal("unregistered author adopted before 15m")
+	}
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(15*time.Minute), unregistered, true); !due || reason != AdoptReasonUnregistered {
+		t.Fatalf("unregistered author: %v %q", due, reason)
+	}
+	// Records nudged before FirstNudgeAt existed carry only LastNudgeAt;
+	// the grace counts from there instead of never becoming due.
+	legacy := stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1, LastNudgeAt: now}
+	if due, _ := adoptionDue(legacy, "aaa", StageLabelPolicy{}, now.Add(24*time.Minute), offline, true); due {
+		t.Fatal("legacy record adopted before the offline wait")
+	}
+	if due, reason := adoptionDue(legacy, "aaa", StageLabelPolicy{}, now.Add(40*time.Minute), offline, true); !due || reason != AdoptReasonOffline {
+		t.Fatalf("legacy record not adopted: %v %q", due, reason)
+	}
+	if due, _ := adoptionDue(stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1}, "aaa", StageLabelPolicy{}, now.Add(24*time.Hour), offline, true); due {
+		t.Fatal("record with no nudge time adopted")
+	}
+	p.AdoptAfterUnregistered = time.Hour
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(time.Hour), unregistered, true); !due {
+		t.Fatal("after_unregistered knob ignored")
+	}
+	rec.AdoptedHead = "aaa"
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(3*time.Hour), none, false); due {
+		t.Fatal("due twice for one head")
+	}
+	rec.AdoptedHead = ""
+	rec.AdoptMode = stagelabels.AdoptModeInPlace
+	if due, _ := adoptionDue(rec, "ccc", p, now.Add(3*time.Hour), none, false); due {
+		t.Fatal("due while adopted in place")
+	}
+	if got := adoptionCloses("Closes #12\nfixes acme/other#3\nnot closes #9 here\n\nHive-Run: acme/widget#44\n"); len(got) != 3 || got[0] != "Closes #12" || got[1] != "fixes acme/other#3" || got[2] != "Fixes #44" {
+		t.Fatalf("closes lines %q", got)
+	}
+}
+
+func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
+	obs := stageObservation{
+		Number:  7,
+		Author:  "mallory",
+		Title:   "✨ feature: add widgets",
+		BaseRef: "v5",
+		Body:    "Implements widgets.\n\nHive-Run: acme/widget#44\n",
+		Detail:  stageDetail{DCO: stagelabels.DCONo, DCOTotal: 3, DCOUnsigned: 2},
+	}
+	if !adoptionNeedsDCORehome(obs, false) {
+		t.Fatal("unsigned commits without branch push permission must re-home")
+	}
+	if !adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("unknown unsigned commit ownership must re-home")
+	}
+	obs.Detail.DCOUnsignedHive = 2
+	if !adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("a fork head must re-home even when only hive-authored commits are unsigned: the engine cannot rewrite a fork branch")
+	}
+	obs.Owner, obs.Repo, obs.HeadRepo = "acme", "widget", "acme/widget"
+	if adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("branch push permission with only hive-authored unsigned commits on a base-repo head allows in-place repair")
+	}
+	if !adoptionNeedsDCORehome(obs, false) {
+		t.Fatal("hive-authored unsigned commits without branch push permission must still re-home")
+	}
+	inPlace := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace}
+	if adoptedHeadNeedsDCORehome(obs, inPlace, true) {
+		t.Fatal("already adopted in place with App-owned unsigned commits and push access stays in place")
+	}
+	if !adoptedHeadNeedsDCORepair(obs, inPlace, true) {
+		t.Fatal("that head is the in-place repair's job")
+	}
+	obs.HeadRepo = ""
+	if !adoptedHeadNeedsDCORehome(obs, inPlace, true) {
+		t.Fatal("already adopted in place on a fork must re-home")
+	}
+	if !adoptedHeadNeedsDCORehome(obs, inPlace, false) {
+		t.Fatal("already adopted in place without push access must re-home")
+	}
+	if adoptedHeadNeedsDCORehome(obs, stagelabels.Record{AdoptedHead: "aaa", AdoptedBy: 90, AdoptMode: stagelabels.AdoptModeSupersede}, false) {
+		t.Fatal("a superseded adoption is never re-homed again")
+	}
+	obs.Detail.DCOUnsignedHive = 0
+	obs.Detail.DCOUnsigned = 0
+	if adoptionNeedsDCORehome(obs, false) {
+		t.Fatal("signed head does not need DCO re-home")
+	}
+	obs.Detail.DCOUnsigned = 2
+	body := AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true, "")
+	for _, want := range []string{
+		"**DCO repair required:**",
+		"cherry-pick each original commit with `git cherry-pick -s`",
+		"git commit --author",
+		"same title",
+		"close #7",
+		"✨ feature: add widgets",
+		"Supersedes #7 (adopted; re-pushed with DCO sign-off, original authorship preserved).",
+		"Fixes #44",
+		"Credit: original work by @mallory.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+	// A successful re-sign replay names the new tip and drops the manual
+	// re-home steps the hive already performed.
+	body = AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true, "5e5e5e5e5e5e5e5e")
+	if !strings.Contains(body, "re-signed as `"+shortSHA("5e5e5e5e5e5e5e5e")+"`") || strings.Contains(body, ", unchanged.") {
+		t.Fatalf("re-signed body must name the re-signed tip:\n%s", body)
+	}
+	for _, unwanted := range []string{"**DCO repair required:**", "git cherry-pick -s"} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("re-signed body still carries %q:\n%s", unwanted, body)
+		}
+	}
+}
+
+// Online author: nudge + 2h grace; nothing is adopted before the grace, then
+// the hive supersedes the PR, comments once and moves it to 074.
+func TestAdoptionOnlineGraceThenAdopt(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "spawn", Online: true}, adoptPolicy())
+	defer done()
+
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	if len(nudgeComments(h.api)) != 1 || len(adoptionComments(h.api)) != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("first cycle: comments=%v pulls=%d", h.api.comments, len(h.adopt.pulls))
+	}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+
+	// Just under the online grace: still the contributor's.
+	h.api.reset()
+	h.clock.advance(2*time.Hour - time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if h.api.writes() != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("adopted before the online grace: added=%v pulls=%d", h.api.added, len(h.adopt.pulls))
+	}
+
+	// Grace elapsed: branch pushed at the contributor head, App PR opened,
+	// one comment, stage flips to 074.
+	h.clock.advance(time.Minute)
+	res := h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "aaa" {
+		t.Fatalf("adopt branch sha=%q refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	pull := h.adopt.pulls[0]
+	if pull["head"] != "hive/adopt-7" || pull["base"] != "v5" || pull["title"] != "fix: widget" {
+		t.Fatalf("superseding PR=%v", pull)
+	}
+	body, _ := pull["body"].(string)
+	for _, want := range []string{
+		"Supersedes #7 (adopted after CI went red and the contributor was unavailable; original commits by @mallory preserved)",
+		"Closes #12", "fixes #13", "rebase this branch on `v5`", "`check-failing:unit`", "Do not open another PR",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("superseding body missing %q:\n%s", want, body)
+		}
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || !strings.Contains(comments[0], "by=acme-hive reason=grace-elapsed mode=supersede superseded_by=90 head=aaa") || !strings.Contains(comments[0], "@mallory") ||
+		!strings.Contains(comments[0], "red for 2h") || !strings.Contains(comments[0], "relay nudge went unanswered") || !strings.Contains(comments[0], "#90") {
+		t.Fatalf("adoption comment: %v", h.api.comments)
+	}
+	if res.Comments != 1 {
+		t.Fatalf("res=%+v", res)
+	}
+	// The stage flips on the next cycle (the record is adopted at this head).
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	added := h.addedLabels()
+	if len(added) != 1 || added[0] != "stage/074-adopted-by-hive" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/072-returned-to-contributor" {
+		t.Fatalf("074 transition: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if len(h.sink.resolved) != 1 || h.sink.resolved[0] != 7 {
+		t.Fatalf("fix queue not resolved on adoption: %v", h.sink.resolved)
+	}
+	// Steady state: no churn, one adoption per head, superseder polled at most every 10m.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	if h.api.writes() != 0 || len(h.adopt.pulls) != 1 {
+		t.Fatalf("churn after adoption: added=%v removed=%v comments=%v pulls=%d", h.api.added, h.api.removed, h.api.comments, len(h.adopt.pulls))
+	}
+}
+
+// Offline / external author: comment-only nudge, 1h grace, then 074 and the
+// superseding PR. Once the superseder merges the original is closed.
+func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
+	// A sink without Presence: the nudge-time graces apply (the author's
+	// `— hive:` trailer still makes the PR a clanker's).
+	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
+	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
+	defer done()
+
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(59 * time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 {
+		t.Fatal("adopted before the offline grace")
+	}
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("offline grace did not adopt: pulls=%d", len(h.adopt.pulls))
+	}
+	if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "red for 1h") || !strings.Contains(c[0], "no relay session was reachable") {
+		t.Fatalf("adoption comment: %v", h.api.comments)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074: %v", h.api.added)
+	}
+
+	// Superseder merges: close note + close the original (polled after 10m).
+	h.adopt.setSuperseder(90, "closed", true)
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	res := h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed: %v", h.adopt.prEdits)
+	}
+	if len(h.api.comments) != 1 || !strings.HasPrefix(h.api.comments[0], adoptionCloseMarker) || !strings.Contains(h.api.comments[0], "#90") || res.Comments != 1 {
+		t.Fatalf("close note: %v res=%+v", h.api.comments, res)
+	}
+}
+
+// A new head from the author before the grace re-arms the nudge and is never
+// adopted; a green head leaves 072 entirely.
+func TestAdoptionNewHeadFromAuthorNotAdopted(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	// The author is pushing, so their relay is online: the 2h online grace.
+	h.sink.presence = &ContributorPresence{Registered: true, Online: true}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(50 * time.Minute)
+	h.api.reset()
+	// Still red at a new head: fresh nudge, grace restarts.
+	h.observe(adoptPR(7, "bbb", labels...), "check-failing:unit")
+	if len(nudgeComments(h.api)) != 1 || !strings.Contains(nudgeComments(h.api)[0], "head=bbb n=1") || len(h.adopt.pulls) != 0 {
+		t.Fatalf("new head: comments=%v pulls=%d", h.api.comments, len(h.adopt.pulls))
+	}
+	h.api.reset()
+	h.clock.advance(50 * time.Minute) // 100m since first nudge, 50m since the second head's
+	h.observe(adoptPR(7, "bbb", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || h.api.writes() != 0 {
+		t.Fatalf("adopted a freshly re-nudged head: pulls=%d writes=%d", len(h.adopt.pulls), h.api.writes())
+	}
+	// Author goes green: back on the normal path, no adoption ever.
+	h.api.reset()
+	h.clock.advance(3 * time.Hour)
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "ccc", labels...), "contributor-lane:no-verdict", false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/050-review-pending" || len(h.adopt.pulls) != 0 {
+		t.Fatalf("green head: added=%v pulls=%d", h.api.added, len(h.adopt.pulls))
+	}
+	if len(h.sink.resolved) != 1 {
+		t.Fatalf("resolved=%v", h.sink.resolved)
+	}
+}
+
+// Adoption disabled: the PR stays in 072 past every grace.
+func TestAdoptionDisabledStaysReturned(t *testing.T) {
+	p := adoptPolicy()
+	p.Adoption = false
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.api.reset()
+	h.clock.advance(5 * time.Hour)
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 {
+		t.Fatalf("adopted with adoption off: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+}
+
+// Self-authored (App) PRs are never adopted: they are in 070, not 072.
+func TestAdoptionSkipsSelfAuthored(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	rec := stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1, FirstNudgeAt: now.Add(-5 * time.Hour)}
+	if due, _ := adoptionDue(rec, "aaa", adoptPolicy(), now, ContributorPresence{}, false); !due {
+		t.Fatal("precondition")
+	}
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	pr := adoptPR(8, "aaa")
+	pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+	h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "check-failing:unit", false, nil)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The App's own PR is author/hive even though its body carries the
+	// relay-style trailer: the App login wins (authorkind rule 1).
+	if added := h.addedLabels(); strings.Join(added, " ") != "author/hive stage/070-fixing" {
+		t.Fatalf("self PR stage: %v", h.api.added)
+	}
+	h.clock.advance(5 * time.Hour)
+	h.api.reset()
+	pr = adoptPR(8, "aaa", "stage/070-fixing", "author/hive")
+	pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+	h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "check-failing:unit", false, nil)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.adopt.pulls) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("self PR touched: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+}
+
+// hivecommons/hive#12527: the contributor's relay registered here, answered
+// nothing and dropped off. Adoption follows AdoptAfterOffline (15m default)
+// counted from its last heartbeat — not the nudge-time graces.
+func TestAdoptionRelayOfflineAdoptsAfterOfflineWindow(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	start := h.clock.at
+	h.sink.presence = &ContributorPresence{Registered: true, Online: true}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	if len(nudgeComments(h.api)) != 1 {
+		t.Fatalf("nudge: %v", h.api.comments)
+	}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+
+	// Relay went away 20m after the nudge. A heartbeat after the nudge
+	// buys at most one offline window (15m) past it: the clock counts from
+	// nudge+15m, not from the heartbeat, so adoption is due at +30m.
+	h.sink.presence = &ContributorPresence{Registered: true, LastSeen: start.Add(20 * time.Minute)}
+	h.api.reset()
+	h.clock.advance(29 * time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if h.api.writes() != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("adopted before 15m offline: added=%v comments=%v", h.api.added, h.api.comments)
+	}
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	comments := adoptionComments(h.api)
+	if len(h.adopt.pulls) != 1 || len(comments) != 1 ||
+		!strings.Contains(comments[0], "by=acme-hive reason=contributor-offline mode=supersede superseded_by=90 head=aaa") ||
+		!strings.Contains(comments[0], "your hive has been offline since the nudge") {
+		t.Fatalf("offline adoption: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074: %v", h.api.added)
+	}
+}
+
+// An author with no contributor profile here (another hive posted the PR)
+// is adopted after AdoptAfterUnregistered.
+func TestAdoptionUnregisteredAuthor(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptAfterUnregistered = 90 * time.Minute
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.sink.presence = &ContributorPresence{}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(89 * time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 {
+		t.Fatal("adopted before after_unregistered")
+	}
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "reason=contributor-unregistered") || !strings.Contains(c[0], "no hive of yours is registered here") {
+		t.Fatalf("unregistered adoption: %v", h.api.comments)
+	}
+}
+
+// A base that moved past a .github/workflows/ change cannot be synced into the
+// PR branch by the App (#12865, #6985): supersede instead of adopting in place.
+func TestAdoptionInPlaceWorkflowGuard(t *testing.T) {
+	cases := []struct {
+		name        string
+		files       []string
+		failCompare bool
+		wantInPlace bool
+	}{
+		{name: "base moved with workflow change", files: []string{"src/a.go", ".github/workflows/x.yml"}},
+		{name: "base moved with only non-workflow files", files: []string{"src/a.go", ".github/CODEOWNERS"}, wantInPlace: true},
+		{name: "compare error", failCompare: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.adopt.compareFiles = tc.files
+			h.adopt.failCompare = tc.failCompare
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+			h.clock.advance(30 * time.Minute)
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			comments := adoptionComments(h.api)
+			if len(comments) != 1 {
+				t.Fatalf("adoption comments: %v", h.api.comments)
+			}
+			if got := strings.Contains(comments[0], "mode=in-place"); got != tc.wantInPlace {
+				t.Fatalf("in-place = %v, want %v: %s", got, tc.wantInPlace, comments[0])
+			}
+			if superseded := len(h.adopt.pulls) == 1; superseded == tc.wantInPlace {
+				t.Fatalf("superseding PRs = %d, in-place want %v", len(h.adopt.pulls), tc.wantInPlace)
+			}
+		})
+	}
+}
+
+// In-place adoption: the PR allows maintainer edits, so the hive takes over
+// the PR's own branch (no superseding PR), flips to 074, keeps the adoption
+// across its own pushes and yields when the contributor pushes.
+func TestAdoptionInPlaceWhenMaintainerCanModify(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(30 * time.Minute)
+	res := h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("superseded instead of adopting in place: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || res.Comments != 1 ||
+		!strings.Contains(comments[0], "by=acme-hive reason=contributor-offline mode=in-place head=aaa") ||
+		!strings.Contains(comments[0], "@mallory") || !strings.Contains(comments[0], "stage/074-adopted-by-hive") {
+		t.Fatalf("in-place comment: %v", h.api.comments)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonOffline || rec.AdoptedBy != 0 {
+		t.Fatalf("record: %+v", rec)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/072-returned-to-contributor" {
+		t.Fatalf("074 transition: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if len(h.sink.resolved) != 1 || h.sink.resolved[0] != 7 {
+		t.Fatalf("fix queue not resolved: %v", h.sink.resolved)
+	}
+	adopted := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+
+	// The hive's fixer pushes: still red, adoption follows the new head, no churn.
+	h.adopt.setCommitAuthor("bbb", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", adopted...), "check-failing:unit")
+	if h.api.writes() != 0 {
+		t.Fatalf("churn after hive push: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" {
+		t.Fatalf("adoption did not follow the hive's head: %+v", rec)
+	}
+
+	// A fixer agent pushes with a bare git identity (no GitHub login): the
+	// hive keeps ownership only when it recorded this exact pushed head.
+	h.adopt.setCommitAuthor("bb2", "git:scanner")
+	h.e.stageStoreOrShared().MarkHivePushedHead(stageKey("acme", "widget", 7), "bb2")
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bb2", adopted...), "check-failing:unit")
+	if h.api.writes() != 0 {
+		t.Fatalf("churn after fixer push: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bb2" {
+		t.Fatalf("adoption did not follow the fixer's head: %+v", rec)
+	}
+
+	// The contributor is back and pushes: one yield note, adoption forgotten,
+	// the ordinary 072 flow (fresh nudge for the new head) resumes.
+	h.adopt.setCommitAuthor("ccc", "mallory")
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	res = h.observe(adoptPR(7, "ccc", adopted...), "check-failing:unit")
+	var yields int
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionYieldMarker) {
+			yields++
+		}
+	}
+	if yields != 1 || len(nudgeComments(h.api)) != 1 || res.Comments != 2 {
+		t.Fatalf("yield: comments=%v res=%+v", h.api.comments, res)
+	}
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/072-returned-to-contributor" {
+		t.Fatalf("back to 072: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); rec.AdoptedInPlace() || rec.YieldedHead != "ccc" {
+		t.Fatalf("adoption not released: %+v", rec)
+	}
+	// Same head again: the yield note is not repeated.
+	h.api.reset()
+	h.observe(adoptPR(7, "ccc", labels...), "check-failing:unit")
+	if len(h.api.comments) != 0 {
+		t.Fatalf("yield repeated: %v", h.api.comments)
+	}
+}
+
+func TestAdoptionInPlaceForConflictingOfflineContributor(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "conflicting")
+	if got := nudgeComments(h.api); len(got) != 1 || !strings.Contains(got[0], "needs a rebase") {
+		t.Fatalf("conflict nudge: %v", h.api.comments)
+	}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "conflicting")
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 ||
+		!strings.Contains(comments[0], "reason=contributor-offline mode=in-place head=aaa") ||
+		!strings.Contains(comments[0], "your hive has been offline since the nudge") {
+		t.Fatalf("conflicting offline adoption: %v", h.api.comments)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonOffline {
+		t.Fatalf("record: %+v", rec)
+	}
+}
+
+func TestAlreadyAdoptedInPlaceDCOFailureRehomesAndClosesOriginal(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commits = map[int][]string{7: {"fix: unsigned agent commit"}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	res := h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if res.Comments != 1 {
+		t.Fatalf("comments=%d, want 1", res.Comments)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "aaa" {
+		t.Fatalf("rehome branch sha=%q refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	for _, want := range []string{"**DCO repair required:**", "git cherry-pick -s", "Supersedes #7"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rehome body missing %q:\n%s", want, body)
+		}
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || !strings.Contains(comments[0], "reason=dco-rehome mode=supersede superseded_by=90 head=aaa") {
+		t.Fatalf("rehome comment: %v", h.api.comments)
+	}
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed after DCO rehome: %v", h.adopt.prEdits)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.AdoptedBy != 90 || rec.AdoptMode != stagelabels.AdoptModeSupersede || rec.AdoptReason != AdoptReasonDCORehome {
+		t.Fatalf("record not moved to supersede adoption: %+v", rec)
+	}
+}
+
+// The dco-rehome branch must not inherit the contributor's unsigned commits
+// (#14666): each is replayed with a Signed-off-by and the branch points at the
+// new tip.
+func TestDCORehomeBranchCarriesResignedCommits(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+	h.observe(adoptPR(7, "c0"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c0", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "c0", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 1 {
+		t.Fatalf("re-signed commits=%v", h.adopt.newCommits)
+	}
+	msg, _ := h.adopt.newCommits[0]["message"].(string)
+	if !strings.Contains(msg, "fix: unsigned contributor commit") || !signedOffByRE.MatchString(msg) {
+		t.Fatalf("re-signed message lacks sign-off or original text: %q", msg)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "signed1" {
+		t.Fatalf("rehome branch sha=%q, want the re-signed tip; refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	if !strings.Contains(body, "re-signed as `signed1`") || strings.Contains(body, "**DCO repair required:**") || strings.Contains(body, "git cherry-pick -s") {
+		t.Fatalf("re-signed rehome body must name the new tip and omit the manual DCO repair block:\n%s", body)
+	}
+}
+
+// The ownership split is cached on the store record, so the decision does
+// not depend on the stage label being present on the PR.
+func TestAlreadyAdoptedInPlaceDCOFailureRehomesFromCachedSplitWithoutStageLabel(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	if rec, _ := store.Get(key); rec.DCOUnsigned != 1 || rec.DCOUnsignedHive != 0 {
+		t.Fatalf("cached split: %+v", rec)
+	}
+	store.MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	reads := h.api.commitReads
+	h.observe(adoptPR(7, "aaa", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	// The cached split spares the DCO decision a commit read; the re-sign
+	// replay needs the commit trees and messages, so it lists them exactly once.
+	if h.api.commitReads != reads+1 {
+		t.Fatalf("commit reads=%d, want cached decision plus one re-sign listing (%d)", h.api.commitReads, reads+1)
+	}
+	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 {
+		t.Fatalf("expected re-home from cached split: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
+	}
+}
+
+func TestAlreadyAdoptedInPlaceRehomeIsTriedOncePerHead(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.adopt.failRefs = true
+	h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	labels := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "aaa", labels...), "check-failing:DCO", false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("ApplyStageLabels should surface the failed re-home push")
+	}
+	if h.adopt.refAttempts != 1 {
+		t.Fatalf("ref attempts=%d, want 1", h.adopt.refAttempts)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || !rec.Adopted("aaa") || rec.AdoptedBy != 0 || rec.AdoptReason != AdoptReasonDCORehome {
+		t.Fatalf("attempt not recorded: %+v", rec)
+	}
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:DCO")
+	if h.adopt.refAttempts != 1 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("failed re-home retried: attempts=%d pulls=%v", h.adopt.refAttempts, h.adopt.pulls)
+	}
+}
+
+// hiveUnsignedFixture is a signed contributor commit followed by an unsigned
+// commit the hive's fix lane pushed (hivecommons/hive#14666: the inherited
+// unsigned commit on an adopted PR is the hive's own more often than not).
+func hiveUnsignedFixture() []stageCommitFixture {
+	return []stageCommitFixture{
+		{message: "feat: signed contributor\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
+		{message: "fix: unsigned hive fixer", authorLogin: testHiveAppBotLogin, authorName: "architect", authorEmail: "12345+hive[bot]@users.noreply.github.com"},
+	}
+}
+
+// A DCO repair never copies fork code into the base repository's trusted CI.
+func TestAlreadyAdoptedInPlaceAppAuthoredDCOFailureOnForkRefusesRehome(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commitDetails = map[int][]stageCommitFixture{7: hiveUnsignedFixture()}
+	h.observe(adoptPR(7, "c1"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.DCOUnsigned != 1 || rec.DCOUnsignedHive != 1 {
+		t.Fatalf("cached split: %+v", rec)
+	}
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c1", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "c1", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatalf("fork must not be copied: commits=%v pulls=%v edits=%v", h.adopt.newCommits, h.adopt.pulls, h.adopt.prEdits)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.AdoptedBy != 0 {
+		t.Fatalf("fork should remain in place during its fix window: %+v", rec)
+	}
+}
+
+// basePR is adoptPR with its head in the base repository on branch fix/widget.
+func basePR(number int, head string, labels ...string) *gh.PullRequest {
+	pr := adoptPR(number, head, labels...)
+	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("acme/widget")}
+	pr.Head.Ref = gh.Ptr("fix/widget")
+	return pr
+}
+
+// A base-repo head whose unsigned commits are all the hive's is rewritten in
+// place: the commits are replayed with the App's sign-off, the PR branch is
+// force-updated to the new tip, no superseding PR opens, the adoption stays
+// in place and the push is recorded as the hive's. The rewrite runs once per
+// head.
+func TestAlreadyAdoptedInPlaceAppAuthoredDCOFailureInBaseRepoResignsInPlace(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.api.commitDetails = map[int][]stageCommitFixture{7: hiveUnsignedFixture()}
+	h.adopt.refs["refs/heads/fix/widget"] = "c1"
+	h.observe(basePR(7, "c1"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	store.MarkAdoptedInPlace(key, "c1", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	labels := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+	res := h.observe(basePR(7, "c1", labels...), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 2 {
+		t.Fatalf("re-signed commits=%v", h.adopt.newCommits)
+	}
+	first, _ := h.adopt.newCommits[0]["message"].(string)
+	second, _ := h.adopt.newCommits[1]["message"].(string)
+	if strings.Count(first, "Signed-off-by:") != 1 || !strings.Contains(second, "fix: unsigned hive fixer") || !signedOffByRE.MatchString(second) {
+		t.Fatalf("replay must keep the signed commit and sign the hive's: %q / %q", first, second)
+	}
+	if got := h.adopt.refs["refs/heads/fix/widget"]; got != "signed2" || len(h.adopt.refUpdates) != 1 {
+		t.Fatalf("PR branch sha=%q updates=%v, want force-update to the re-signed tip", got, h.adopt.refUpdates)
+	}
+	if res.Comments != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatalf("in-place repair must not supersede or comment: res=%+v pulls=%v edits=%v comments=%v", res, h.adopt.pulls, h.adopt.prEdits, h.api.comments)
+	}
+	rec, _ := store.Get(key)
+	if !rec.AdoptedInPlace() || rec.AdoptedBy != 0 || !rec.HivePushedHead("signed2") || !rec.DCORepairAttempted("c1") {
+		t.Fatalf("record should stay in place, own the new head and remember the attempt: %+v", rec)
+	}
+
+	// The same head is not rewritten twice while the lane re-reads it.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(basePR(7, "c1", labels...), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 2 || len(h.adopt.refUpdates) != 1 {
+		t.Fatalf("repair retried on the same head: commits=%d updates=%v", len(h.adopt.newCommits), h.adopt.refUpdates)
+	}
+}
+
+// The branch is re-read before the force-update: a head that moved since
+// the lane observed it is left alone, the attempt is recorded, and the error
+// surfaces so the sweep re-evaluates the new head.
+func TestInPlaceDCORepairRefusesWhenHeadMoved(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.api.commitDetails = map[int][]stageCommitFixture{7: hiveUnsignedFixture()}
+	h.adopt.refs["refs/heads/fix/widget"] = "bbb"
+	h.observe(basePR(7, "c1"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c1", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	labels := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", basePR(7, "c1", labels...), "check-failing:DCO", false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("ApplyStageLabels should surface the refused rewrite")
+	}
+	if len(h.adopt.newCommits) != 0 || len(h.adopt.refUpdates) != 0 || h.adopt.refs["refs/heads/fix/widget"] != "bbb" {
+		t.Fatalf("moved head must not be rewritten: commits=%v updates=%v refs=%v", h.adopt.newCommits, h.adopt.refUpdates, h.adopt.refs)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || !rec.DCORepairAttempted("c1") {
+		t.Fatalf("attempt not recorded or adoption lost: %+v", rec)
+	}
+}
+
+// A base-sync merge commit on the adopted head (hivecommons/hive#14500's
+// recovery) no longer blocks the re-sign: it replays with its tree and both
+// parents, the in-PR parent mapped to its rewritten counterpart, and keeps
+// its message (the DCO checks exempt merges).
+func TestDCORehomeReplaysMergeCommitWithMappedParents(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	fixture := hiveUnsignedFixture()
+	fixture[0].message = "feat: unsigned contributor"
+	fixture = append(fixture, stageCommitFixture{message: "Merge branch 'v5' into fix/widget", authorLogin: testHiveAppBotLogin, authorName: "hive[bot]", authorEmail: "12345+hive[bot]@users.noreply.github.com", parents: []string{"c1", "base"}})
+	h.api.commitDetails = map[int][]stageCommitFixture{7: fixture}
+	h.observe(basePR(7, "c2"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c2", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(basePR(7, "c2", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 3 {
+		t.Fatalf("replayed commits=%v", h.adopt.newCommits)
+	}
+	merge := h.adopt.newCommits[2]
+	msg, _ := merge["message"].(string)
+	if signedOffByRE.MatchString(msg) {
+		t.Fatalf("merge commit must keep its message unsigned: %q", msg)
+	}
+	parents, _ := merge["parents"].([]any)
+	if len(parents) != 2 || parents[0] != "signed2" || parents[1] != "base" {
+		t.Fatalf("merge parents=%v, want [signed2 base]", parents)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "signed3" {
+		t.Fatalf("rehome branch sha=%q, want the replayed merge tip; refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	if !strings.Contains(body, "re-signed as `signed3`") || strings.Contains(body, "**DCO repair required:**") {
+		t.Fatalf("body must name the re-signed tip and omit the manual DCO block:\n%s", body)
+	}
+}
+
+// A lane-looking git email is contributor-controlled and never makes an
+// unsigned commit hive-owned: without App linkage the PR re-homes.
+func TestAlreadyAdoptedInPlaceForgedLaneEmailDCOFailureRehomes(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commitDetails = map[int][]stageCommitFixture{7: {
+		{message: "feat: signed contributor\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
+		{message: "fix: looks like the hive", authorName: "architect", authorEmail: "architect@hive.kubestellar.io"},
+	}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("forged lane email must re-home: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
+	}
+}
+
+// Without push access even App-owned unsigned commits cannot be rewritten
+// on the contributor branch, so the adopted PR re-homes.
+// projectbluefin/utah-packages#609 → #626: an in-place adoption on a fork
+// whose head needs a DCO re-home. Re-homing would move the fork's commits
+// into the base repository and run them as trusted, so nothing is pushed or
+// closed, and the next pass parks the PR at 085 for a maintainer.
+func TestAlreadyAdoptedInPlaceForkDCOFailureIsNotRehomed(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, false)
+	h.api.commitDetails = map[int][]stageCommitFixture{7: {
+		{message: "fix: unsigned hive fixer", authorLogin: testHiveAppBotLogin, authorName: "architect", authorEmail: "12345+hive[bot]@users.noreply.github.com"},
+	}}
+	h.observe(forkPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	labels := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+	h.observe(forkPR(7, "aaa", labels...), "check-failing:DCO")
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatalf("fork PR re-homed into the base repo: pulls=%v refs=%v edits=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.ForkRehomeRefused("aaa") {
+		t.Fatalf("refusal not recorded: %+v", rec)
+	}
+	assertForkRehomeParked(t, h, forkPR(7, "aaa", labels...), "check-failing:DCO")
+}
+
+// assertForkRehomeParked runs the next pass and checks the PR is at 085 with
+// the fork-rehome maintainer ask, still never re-homed.
+func assertForkRehomeParked(t *testing.T, h *adoptHarness, pr *gh.PullRequest, reason string) {
+	t.Helper()
+	h.clock.advance(time.Minute)
+	h.observe(pr, reason)
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", pr.GetNumber()))
+	want := stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
+	if rec.Stage != stagelabels.NeedsDecision || rec.Reason != want {
+		t.Fatalf("record %+v, want 085 on %s", rec, want)
+	}
+	notes := stalledComments(h.api)
+	if len(notes) != 1 {
+		t.Fatalf("stall note: %v", h.api.comments)
+	}
+	for _, s := range []string{"reason=" + want, "comes from a fork (`mallory/widget`)", "trusted CI", "**Ask (maintainer):**"} {
+		if !strings.Contains(notes[0], s) {
+			t.Fatalf("note missing %q:\n%s", s, notes[0])
+		}
+	}
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("re-homed after parking: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+}
+
+// The same head from a branch in the base repository is still re-homed:
+// its code already runs with the repository's trust.
+func TestAlreadyAdoptedInPlaceInRepoDCOFailureWithoutPushRehomes(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.api.commitDetails = map[int][]stageCommitFixture{7: {
+		{message: "fix: unsigned contributor commit", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
+	}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("in-repo DCO failure must re-home: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
+	}
+}
+
+func TestAdoptionYieldsOnForgeableCommitIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		identity string
+	}{
+		{name: "forged scanner author name", identity: "git:scanner"},
+		{name: "forged app login in git name", identity: "git:" + testHiveAppBotLogin},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			h.clock.advance(30 * time.Minute)
+			h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+			h.e.stageStoreOrShared().MarkHivePushedHead(stageKey("acme", "widget", 7), "prior-hive-head")
+			h.adopt.setCommitAuthor("bbb", tc.identity)
+
+			h.api.reset()
+			h.clock.advance(time.Minute)
+			res := h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+			if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); rec.AdoptedInPlace() || rec.YieldedHead != "bbb" {
+				t.Fatalf("forgeable identity kept adoption: %+v", rec)
+			}
+			var yields int
+			for _, c := range h.api.comments {
+				if strings.HasPrefix(c, AdoptionYieldMarker) {
+					yields++
+				}
+			}
+			if yields != 1 || res.Comments == 0 {
+				t.Fatalf("yield comments=%d res=%+v comments=%v", yields, res, h.api.comments)
+			}
+		})
+	}
+}
+
+func TestAdoptionKeepsOnAppLinkedOrRecordedHead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*adoptHarness, string)
+	}{
+		{name: "app committer login", setup: func(h *adoptHarness, head string) {
+			h.adopt.setVerifiedCommitAuthor(head, testHiveAppBotLogin)
+		}},
+		{name: "recorded hive-pushed head", setup: func(h *adoptHarness, head string) {
+			h.adopt.setCommitAuthor(head, "git:scanner")
+			h.e.stageStoreOrShared().MarkHivePushedHead(stageKey("acme", "widget", 7), head)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			h.clock.advance(30 * time.Minute)
+			h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+			tc.setup(h, "bbb")
+
+			h.api.reset()
+			h.clock.advance(time.Minute)
+			h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+			if h.api.writes() != 0 {
+				t.Fatalf("churn after hive-evidenced push: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+			}
+			if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" {
+				t.Fatalf("adoption did not follow hive-evidenced head: %+v", rec)
+			}
+		})
+	}
+}
+
+func TestAdoptionKeepsWhenHeadCommitLookupFails(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "missing", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	if h.api.writes() != 0 {
+		t.Fatalf("churn after unknown pusher: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "missing" {
+		t.Fatalf("adoption did not stay on unknown pusher: %+v", rec)
+	}
+}
+
+func TestAdoptionStrictAttributionSafetyValveBeforeRepoEvidence(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+	h.adopt.setCommitAuthor("bbb", "git:scanner")
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	if h.api.writes() != 0 {
+		t.Fatalf("safety valve churned: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" {
+		t.Fatalf("safety valve did not keep adoption before repo evidence: %+v", rec)
+	}
+}
+
+// Adoption is an ownership state, not a CI state (hivecommons/hive#12736):
+// once the hive owns a PR in place, its own pushes going pending, green or
+// red again all read 074 — never 050/060/072 — until the merge gate takes
+// the PR; a contributor push releases the adoption even on a green head.
+func TestAdoptionPersistsWhileHiveOwnsThePR(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	returned := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", returned...), "check-failing:unit")
+	h.observe(adoptPR(7, "aaa", returned...), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("not adopted in place at 074: %+v", rec)
+	}
+	adopted := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	stageIs := func(want stagelabels.Stage, step string) {
+		t.Helper()
+		if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != want {
+			t.Fatalf("%s: stage %s, want %s (added=%v removed=%v)", step, rec.Stage, want, h.api.added, h.api.removed)
+		}
+	}
+
+	// The hive's fixer pushes and CI is pending: still 074, nothing written.
+	h.adopt.setCommitAuthor("bbb", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", adopted...), "check-pending")
+	stageIs(stagelabels.AdoptedByHive, "ci pending")
+	if h.api.writes() != 0 {
+		t.Fatalf("ci pending churn: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+
+	// Green, awaiting a verdict (the lane says 050): still 074.
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonNoVerdict)
+	stageIs(stagelabels.AdoptedByHive, "green no-verdict")
+	if h.api.writes() != 0 {
+		t.Fatalf("green churn: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+
+	// Approved but CI still running (the lane says 060): still 074.
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
+	h.observe(adoptPR(7, "bbb", adopted...), "check-pending")
+	stageIs(stagelabels.AdoptedByHive, "approved ci pending")
+
+	// Red again: 074, not 072 — no nudge to the contributor the hive stood in for.
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{})
+	h.observe(adoptPR(7, "bbb", adopted...), "check-failing:unit")
+	stageIs(stagelabels.AdoptedByHive, "red again")
+	if h.api.writes() != 0 || len(nudgeComments(h.api)) != 0 {
+		t.Fatalf("red churn: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+
+	// The label drifted to 050 (the bug this test pins): the reconciler
+	// writes 074 back and removes 050.
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", "stage/050-review-pending", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	stageIs(stagelabels.AdoptedByHive, "drifted label")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/050-review-pending" {
+		t.Fatalf("heal 050 → 074: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+
+	// The merge gate takes it: approved and soaking is 095, the adoption
+	// record stays (it is released by the yield / close paths, not here).
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonSoaking+"(remaining=5m)")
+	stageIs(stagelabels.PreMergeSoak, "merge gate")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/095-pre-merge-soak" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074 → 095: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() {
+		t.Fatalf("adoption dropped at the merge gate: %+v", rec)
+	}
+
+	// The contributor pushes over a green head: the hive yields even though
+	// the lane never saw red — one yield note, then the normal pipeline.
+	h.adopt.setCommitAuthor("ccc", "mallory")
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{})
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "ccc", "stage/095-pre-merge-soak", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	stageIs(stagelabels.ReviewPending, "released")
+	var yields int
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionYieldMarker) {
+			yields++
+		}
+	}
+	if yields != 1 {
+		t.Fatalf("yield on green head: comments=%v", h.api.comments)
+	}
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/050-review-pending" {
+		t.Fatalf("released → 050: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.YieldedHead != "ccc" {
+		t.Fatalf("adoption not released: %+v", rec)
+	}
+}
+
+// A superseding adoption is bound to the adopted head: the original going
+// green at that head stays 074 (the superseder carries it); a new head from
+// the author is the author's again.
+func TestAdoptionSupersedePersistsAtAdoptedHead(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: false}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	returned := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(2 * time.Hour)
+	h.observe(adoptPR(7, "aaa", returned...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("not superseded: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+	key := stageKey("acme", "widget", 7)
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", "stage/050-review-pending", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("green at adopted head: stage %s", rec.Stage)
+	}
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/050-review-pending" {
+		t.Fatalf("heal 050 → 074: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.ReviewPending {
+		t.Fatalf("author's new head: stage %s", rec.Stage)
+	}
+}
+
+// A fork PR the hive cannot push to (no "allow edits by maintainers") is
+// never moved into the base repository (hivecommons/hive#14306), so adopting
+// it only parked it at 085 on the next pass, minutes after its relay went
+// offline (projectbluefin/utah#919). It is not adopted: it stays at 072 with
+// its author's nudge and relay task, and goes to a person (085, one note)
+// only once the head has waited the 072 dwell. A new head re-arms the path.
+func TestAdoptionForkWithoutPushStaysWithAuthorUntilDwell(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: false}
+	h.adopt.allowMaintainerEdits(7, false)
+	key := stageKey("acme", "widget", 7)
+	returned := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	stageIs := func(want stagelabels.Stage, when string) stagelabels.Record {
+		t.Helper()
+		rec, _ := h.e.stageStoreOrShared().Get(key)
+		if rec.Stage != want {
+			t.Fatalf("%s: stage %s, want %s (reason %q)", when, rec.Stage, want, rec.Reason)
+		}
+		return rec
+	}
+
+	h.observe(forkPR(7, "aaa"), "conflicting")
+	stageIs(stagelabels.ReturnedToContributor, "nudged")
+	h.clock.advance(30 * time.Minute)
+	h.observe(forkPR(7, "aaa", returned...), "conflicting")
+	if rec := stageIs(stagelabels.ReturnedToContributor, "relay offline past after_offline"); !rec.ForkRehomeRefused("aaa") || rec.AdoptedHead != "" {
+		t.Fatalf("decline not recorded, or recorded as an adoption: %+v", rec)
+	}
+	if len(adoptionComments(h.api)) != 0 || len(stalledComments(h.api)) != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("fork PR adopted or parked: comments=%v pulls=%v refs=%v", h.api.comments, h.adopt.pulls, h.adopt.refs)
+	}
+
+	// Short of the dwell (24h since the nudge): still the author's.
+	h.clock.advance(23 * time.Hour)
+	h.observe(forkPR(7, "aaa", returned...), "conflicting")
+	stageIs(stagelabels.ReturnedToContributor, "before the dwell")
+	if len(stalledComments(h.api)) != 0 {
+		t.Fatalf("parked before the dwell: %v", h.api.comments)
+	}
+
+	h.clock.advance(time.Hour)
+	h.observe(forkPR(7, "aaa", returned...), "conflicting")
+	want := stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
+	if rec := stageIs(stagelabels.NeedsDecision, "past the dwell"); rec.Reason != want {
+		t.Fatalf("reason %q, want %q", rec.Reason, want)
+	}
+	notes := stalledComments(h.api)
+	if len(notes) != 1 {
+		t.Fatalf("escalation note: %v", h.api.comments)
+	}
+	for _, s := range []string{"reason=" + want, "waited on its author at `stage/072-returned-to-contributor` for 24h", "lane reason `conflicting`", "comes from a fork (`mallory/widget`)", "**Ask (maintainer):**"} {
+		if !strings.Contains(notes[0], s) {
+			t.Fatalf("note missing %q:\n%s", s, notes[0])
+		}
+	}
+
+	// It holds at 085 with no second note.
+	h.clock.advance(time.Hour)
+	h.observe(forkPR(7, "aaa", "stage/085-needs-decision", "role/contributor", "author/clanker"), "conflicting")
+	stageIs(stagelabels.NeedsDecision, "next pass")
+	if n := len(stalledComments(h.api)); n != 1 {
+		t.Fatalf("escalation note repeated: %v", h.api.comments)
+	}
+	if len(adoptionComments(h.api)) != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("fork PR adopted or re-homed: comments=%v pulls=%v refs=%v", h.api.comments, h.adopt.pulls, h.adopt.refs)
+	}
+
+	// The author pushes: the new head is theirs again, not a person's.
+	h.clock.advance(time.Minute)
+	h.observe(forkPR(7, "bbb", "stage/085-needs-decision", "role/contributor", "author/clanker"), "conflicting")
+	stageIs(stagelabels.ReturnedToContributor, "new head")
+}
+
+// The fork escalation note (escalateUnadoptableFork) is recorded only once
+// GitHub accepted it: a 500 on the post is retried on the next sweep, and
+// a weak opinion from a lane that errored on an approved head does not
+// drop the parked PR to 080 for a pass (projectbluefin/utah#919, 10-28).
+func TestForkEscalationNoteRetriedAndHeld(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: false}
+	h.adopt.allowMaintainerEdits(7, false)
+	key := stageKey("acme", "widget", 7)
+	returned := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	parked := []string{"stage/085-needs-decision", "role/contributor", "author/clanker"}
+	want := stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
+
+	h.observe(forkPR(7, "aaa"), "conflicting")
+	h.clock.advance(30 * time.Minute)
+	h.observe(forkPR(7, "aaa", returned...), "conflicting")
+	h.clock.advance(24 * time.Hour)
+	h.api.reset()
+	h.api.failComments, h.api.failCommentsOn = 1, AdoptionStalledMarker
+	if _, err := h.observeErr(forkPR(7, "aaa", returned...), "conflicting"); err == nil {
+		t.Fatal("the refused note was not reported")
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.Stage != stagelabels.NeedsDecision || rec.Reason != want || rec.AdoptionEscalationNoted("aaa", want) || len(stalledComments(h.api)) != 0 {
+		t.Fatalf("failed post: %+v comments=%v", rec, h.api.comments)
+	}
+
+	h.api.reset()
+	h.clock.advance(5 * time.Minute)
+	h.observe(forkPR(7, "aaa", parked...), "conflicting")
+	if notes := stalledComments(h.api); len(notes) != 1 || !strings.Contains(notes[0], "reason="+want) {
+		t.Fatalf("fork note not retried: %v", h.api.comments)
+	}
+	if len(h.api.added) != 0 || len(h.api.removed) != 0 {
+		t.Fatalf("retry churned labels: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+
+	h.api.reset()
+	h.clock.advance(5 * time.Minute)
+	h.observe(forkPR(7, "aaa", parked...), "conflicting")
+	if len(h.api.comments) != 0 {
+		t.Fatalf("fork note repeated: %v", h.api.comments)
+	}
+
+	h.api.reset()
+	h.clock.advance(2 * time.Minute)
+	pr := forkPR(7, "aaa", parked...)
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "", false, errors.New("lane tripped"))
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ = h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision || rec.Reason != want {
+		t.Fatalf("errored lane dropped the fork escalation: %+v", rec)
+	}
+	if len(h.api.added) != 0 || len(h.api.removed) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("fork escalation churned: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+}
+
+// An explicit owner-delegated adoption still goes through the supersede
+// path, which refuses a fork and parks it for a maintainer: the request is
+// one attempt, so it must be recorded, not declined like the timed path.
+func TestDelegatedAdoptionOfForkWithoutPushIsRecordedAndParked(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, false)
+	h.observe(forkPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	h.clock.advance(time.Minute)
+	h.observe(forkPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if !rec.Adopted("aaa") || !rec.ForkRehomeRefused("aaa") || len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("delegated fork adoption: rec=%+v pulls=%v refs=%v", rec, h.adopt.pulls, h.adopt.refs)
+	}
+	h.api.reset()
+	assertForkRehomeParked(t, h, forkPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+}
+
+// A fork PR the hive can push to is still adopted in place: the fix lands
+// on the fork's own branch and CI keeps treating it as a fork.
+func TestAdoptionForkWithPushStaysInPlace(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(forkPR(7, "aaa"), "check-failing:unit")
+	h.clock.advance(30 * time.Minute)
+	h.observe(forkPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+	if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "mode=in-place") || len(h.adopt.pulls) != 0 {
+		t.Fatalf("fork with maintainer edits not adopted in place: comments=%v pulls=%v", h.api.comments, h.adopt.pulls)
+	}
+}
+
+func TestAdoptionFromFork(t *testing.T) {
+	for _, tc := range []struct {
+		head string
+		want bool
+	}{{"acme/widget", false}, {"ACME/Widget", false}, {"mallory/widget", true}, {"", true}} {
+		if got := adoptionFromFork(stageObservation{Owner: "acme", Repo: "widget", HeadRepo: tc.head}); got != tc.want {
+			t.Errorf("adoptionFromFork(%q) = %v, want %v", tc.head, got, tc.want)
+		}
+	}
+}
+
+// hold / do-not-merge parks the PR: adoption is due but never performed.
+func TestAdoptionBlockedByHold(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.api.reset()
+	h.clock.advance(5 * time.Hour)
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker", "hold"), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 {
+		t.Fatalf("adopted a held PR: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+	if got := adoptionBlocked([]string{"size/L", "do-not-merge/hold"}); got != "do-not-merge/hold" {
+		t.Fatalf("adoptionBlocked=%q", got)
+	}
+}
+
+// Adoption is not a merge (hivecommons/hive#13212): a body-marker clanker PR
+// that deletes tests is adopted with a carried fence. Workflow edits refuse
+// supersession before publishing an upstream branch. For test deletions,
+// the fence travels with it — the record carries it, the superseding App
+// PR's body carries the marker the App merge lanes refuse on, and the
+// comment on the original says the merge stays manual. Only a verdict the
+// fence could not reach defers adoption: a head that moved since the lane
+// recorded it is not judged by the new head's diff, and a file list that is
+// unreadable or shorter than changed_files waits for the next sweep, with
+// no attempt recorded.
+func TestAdoptionCarriesDiffFence(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		files        []map[string]any
+		failFiles    bool
+		liveHead     string
+		changedFiles int
+		wantFence    string
+		wantDefer    bool
+	}{
+		{name: "plain diff adopts", files: []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}},
+		{name: "workflow path", files: []map[string]any{{"filename": "src/widget.go", "status": "modified"}, {"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
+		{name: "action definition", files: []map[string]any{{"filename": ".github/actions/setup/action.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
+		{name: "test file removed", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantFence: contributorLaneReasonTestsRemoved},
+		{name: "tests gutted", files: []map[string]any{{"filename": "src/widget_test.go", "status": "modified", "additions": 1, "deletions": 40}}, wantFence: contributorLaneReasonTestsRemoved},
+		{name: "file list unavailable", failFiles: true, wantDefer: true},
+		{name: "head moved since observed", liveHead: "bbb", wantDefer: true},
+		{name: "file list incomplete", changedFiles: 3001, wantDefer: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptAfterUnregistered = 30 * time.Minute
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			// No profile here: author/clanker comes from the PR body alone.
+			h.sink.presence = &ContributorPresence{}
+			h.adopt.prFiles = tc.files
+			h.adopt.failPRFiles = tc.failFiles
+			h.adopt.liveHead = tc.liveHead
+			h.adopt.changedFiles = tc.changedFiles
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+			h.api.reset()
+			h.clock.advance(time.Hour)
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			key := stageKey("acme", "widget", 7)
+			if tc.wantFence == contributorLaneReasonWorkflowPath {
+				// Refused, not deferred: one attempt recorded, one note,
+				// nothing published, and the PR goes to a person (085).
+				rec, _ := h.e.stageStoreOrShared().Get(key)
+				if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
+					t.Fatalf("workflow-path head published: pulls=%d refs=%v comments=%v", len(h.adopt.pulls), h.adopt.refs, h.api.comments)
+				}
+				if c := workflowRefusedComments(h.api); len(c) != 1 || !strings.Contains(c[0], "cherry-pick") {
+					t.Fatalf("refusal note = %v, want one", h.api.comments)
+				}
+				if !rec.Adopted("aaa") || rec.AdoptedBy != 0 || rec.AdoptDiffFence != tc.wantFence || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+					t.Fatalf("refusal not recorded as an attempt: %+v", rec)
+				}
+				h.api.reset()
+				h.clock.advance(time.Minute)
+				h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+				rec, _ = h.e.stageStoreOrShared().Get(key)
+				if len(h.adopt.pulls) != 0 || h.adopt.refAttempts != 0 || len(workflowRefusedComments(h.api)) != 0 || len(stalledComments(h.api)) != 0 || rec.Stage != stagelabels.NeedsDecision {
+					t.Fatalf("refused head looped or missed 085: rec=%+v comments=%v", rec, h.api.comments)
+				}
+				return
+			}
+			if tc.wantDefer {
+				if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
+					t.Fatalf("deferred adoption went ahead: pulls=%d refs=%v comments=%v", len(h.adopt.pulls), h.adopt.refs, h.api.comments)
+				}
+				if added := strings.Join(h.addedLabels(), " "); strings.Contains(added, "stage/074") {
+					t.Fatalf("deferred adoption moved to 074: %v", h.api.added)
+				}
+				if rec, ok := h.e.stageStoreOrShared().Get(key); ok && rec.Adopted("aaa") {
+					t.Fatal("deferred adoption was recorded as an attempt")
+				}
+				// Not sticky: once the fence can read the head, the same
+				// head is adopted on the next sweep.
+				h.adopt.prFiles, h.adopt.failPRFiles = nil, false
+				h.adopt.liveHead, h.adopt.changedFiles = "", 0
+				h.api.reset()
+				h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+				if len(h.adopt.pulls) != 1 {
+					t.Fatalf("readable diff not adopted after deferral: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+				}
+				return
+			}
+			comments := adoptionComments(h.api)
+			if len(h.adopt.pulls) != 1 || len(comments) != 1 {
+				t.Fatalf("not adopted: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			if rec.AdoptDiffFence != tc.wantFence {
+				t.Fatalf("record fence = %q, want %q", rec.AdoptDiffFence, tc.wantFence)
+			}
+			body, _ := h.adopt.pulls[0]["body"].(string)
+			if got := carriedFenceReason(body); got != tc.wantFence {
+				t.Fatalf("superseding PR body carries fence %q, want %q:\n%s", got, tc.wantFence, body)
+			}
+			if tc.wantFence == "" {
+				if strings.Contains(comments[0], "merge stays manual") || strings.Contains(body, "Merge stays manual") {
+					t.Fatalf("clean diff announced a manual merge: comment=%q body=%q", comments[0], body)
+				}
+				return
+			}
+			if !strings.Contains(comments[0], "merge stays manual") || !strings.Contains(comments[0], decisionCause(tc.wantFence)) {
+				t.Fatalf("adoption comment does not say the merge stays manual for %s: %q", tc.wantFence, comments[0])
+			}
+			if !strings.Contains(body, "**Merge stays manual**") || !strings.Contains(body, "#7") {
+				t.Fatalf("superseding PR body does not carry the manual-merge rule:\n%s", body)
+			}
+		})
+	}
+}
+
+// In place, the fence is carried on the record and the adoption comment:
+// the PR stays contributor-authored, the fix lane repairs CI on its branch
+// and the contributor lane's own diff fence routes the green head to 085.
+func TestAdoptionInPlaceCarriesDiffFence(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.AdoptAfterUnregistered = 30 * time.Minute
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.sink.presence = &ContributorPresence{}
+	h.adopt.allowMaintainerEdits(7, true)
+	h.adopt.prFiles = []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 40}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker", "needs-rebase"}
+	h.api.reset()
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonTestsRemoved)
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("in-place adoption superseded: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || !strings.Contains(comments[0], "mode=in-place") {
+		t.Fatalf("in-place adoption comment missing: %v", h.api.comments)
+	}
+	if !strings.Contains(comments[0], "merge stays manual") || !strings.Contains(comments[0], decisionCause(contributorLaneReasonTestsRemoved)) {
+		t.Fatalf("in-place adoption comment does not say the merge stays manual: %q", comments[0])
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !rec.AdoptedInPlace() || rec.AdoptDiffFence != contributorLaneReasonTestsRemoved {
+		t.Fatalf("record = %+v, want in-place adoption carrying %s", rec, contributorLaneReasonTestsRemoved)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonTestsRemoved)
+	if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/074-adopted-by-hive") {
+		t.Fatalf("fenced in-place adoption not at 074: %v", h.api.added)
+	}
+	// The hive's fixer rebases and repairs CI; the contributor lane still
+	// reads the fenced diff on the green head, so the PR is a person's to
+	// merge (085) — never the lane's — and the adoption record holds.
+	adopted := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	h.adopt.setCommitAuthor("bbb", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonTestsRemoved)
+	if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/085-needs-decision") {
+		t.Fatalf("green fenced head not handed to a person: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" || rec.AdoptDiffFence != contributorLaneReasonTestsRemoved {
+		t.Fatalf("adoption did not follow the hive's head with its fence: %+v", rec)
+	}
+	// The contributor pushes again: the yield forgets the fence with the
+	// adoption, so a fresh head is judged afresh.
+	h.adopt.setCommitAuthor("ccc", "mallory")
+	h.api.reset()
+	h.observe(adoptPR(7, "ccc", "stage/085-needs-decision", "role/contributor", "author/clanker"), "check-failing:unit")
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); rec.AdoptedInPlace() || rec.AdoptDiffFence != "" {
+		t.Fatalf("yield kept the fence: %+v", rec)
+	}
+}
+
+// The dco-rehome takeover refuses workflow publication and carries test fences:
+// the App PR is opened with the marker and the original closed, exactly as
+// a clean re-home, instead of releasing the adoption back to 072 where the
+// fence used to hold it (hivecommons/hive#12850). A head that moved since
+// the lane observed it, an incomplete list or a transient files-API failure
+// is only deferred: the adoption stays and the next sweep re-reads.
+func TestAlreadyAdoptedInPlaceDCORehomeCarriesDiffFence(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		files        []map[string]any
+		changedFiles int
+		liveHead     string
+		failFiles    bool
+		wantFence    string
+		wantDefer    bool
+	}{
+		{name: "workflow path refuses publication", files: []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
+		{name: "test file removed carries", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantFence: contributorLaneReasonTestsRemoved},
+		{name: "incomplete file list defers", changedFiles: 3001, wantDefer: true},
+		{name: "head moved defers", liveHead: "bbb", wantDefer: true},
+		{name: "files API failure defers", failFiles: true, wantDefer: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			p.DCORequired = func(string) (bool, bool) { return true, true }
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.api.commits = map[int][]string{7: {"fix: unsigned agent commit"}}
+			h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+			key := stageKey("acme", "widget", 7)
+			h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+			h.adopt.prFiles = tc.files
+			h.adopt.changedFiles = tc.changedFiles
+			h.adopt.liveHead = tc.liveHead
+			h.adopt.failPRFiles = tc.failFiles
+			h.api.reset()
+			h.clock.advance(time.Minute)
+			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			if tc.wantFence == contributorLaneReasonWorkflowPath {
+				if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 || len(workflowRefusedComments(h.api)) != 1 {
+					t.Fatalf("workflow-path re-home not refused once: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
+				}
+				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || rec.AdoptDiffFence != tc.wantFence || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+					t.Fatalf("refused re-home not recorded as terminal: %+v", rec)
+				}
+				return
+			}
+			if tc.wantDefer {
+				if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
+					t.Fatalf("deferred re-home went ahead: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
+				}
+				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || rec.AdoptDiffFence != "" {
+					t.Fatalf("deferred re-home changed the adoption: %+v", rec)
+				}
+				return
+			}
+			if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 || len(adoptionComments(h.api)) != 1 {
+				t.Fatalf("fenced re-home did not go ahead: pulls=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.prEdits, h.api.comments)
+			}
+			if rec.AdoptedInPlace() || !rec.Adopted("aaa") || rec.AdoptedBy == 0 || rec.AdoptReason != AdoptReasonDCORehome || rec.AdoptDiffFence != tc.wantFence {
+				t.Fatalf("re-homed record = %+v, want supersession carrying %s", rec, tc.wantFence)
+			}
+			body, _ := h.adopt.pulls[0]["body"].(string)
+			if got := carriedFenceReason(body); got != tc.wantFence {
+				t.Fatalf("superseding PR body carries fence %q, want %q:\n%s", got, tc.wantFence, body)
+			}
+			if c := adoptionComments(h.api)[0]; !strings.Contains(c, "reason="+AdoptReasonDCORehome) || !strings.Contains(c, "merge stays manual") {
+				t.Fatalf("re-home comment = %q, want dco-rehome marker and the manual-merge note", c)
+			}
+		})
+	}
+}
+
+// The 072 interrupt is for author/clanker only: a human's PR (no hive
+// trailer, no profile) sits at 071 needs-author and a hive-authored PR (the
+// App's own login) at 070 fixing, with neither nudge nor adoption.
+func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stage  string
+		mutate func(pr *gh.PullRequest)
+	}{
+		{"human", "stage/071-needs-author", func(pr *gh.PullRequest) { pr.Body = gh.Ptr("Fixes the widget.\n") }},
+		{"hive", "stage/070-fixing", func(pr *gh.PullRequest) {
+			// The App's own PR; an agent/<lane> stamp on a PR the App did
+			// not author is a stray (#12545) and is not hive evidence.
+			pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+			pr.Labels = append(pr.Labels, &gh.Label{Name: gh.Ptr("agent/scanner")})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+			defer done()
+			h.sink.presence = &ContributorPresence{}
+			pr := adoptPR(7, "aaa")
+			tc.mutate(pr)
+			h.observe(pr, "check-failing:unit")
+			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, tc.stage) || strings.Contains(added, "stage/072-returned-to-contributor") {
+				t.Fatalf("%s: %v", tc.stage, h.api.added)
+			}
+			if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
+				t.Fatalf("interrupt fired for %s author: comments=%v nudges=%d", tc.name, h.api.comments, len(h.sink.nudges))
+			}
+			h.api.reset()
+			h.clock.advance(6 * time.Hour)
+			pr = adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker")
+			tc.mutate(pr)
+			h.observe(pr, "check-failing:unit")
+			if len(h.api.comments) != 0 || len(h.adopt.pulls) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+				t.Fatalf("adopted a %s PR: added=%v comments=%v pulls=%d", tc.name, h.api.added, h.api.comments, len(h.adopt.pulls))
+			}
+		})
+	}
+}
+
+func TestDelegatedSupersedeAdoptsParkedPRWithoutGrace(t *testing.T) {
+	policy := adoptPolicy()
+	policy.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	labels := []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede}
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonNoReviewer)
+	if len(h.adopt.pulls) != 1 || h.adopt.refs["refs/heads/hive/adopt-7"] != "aaa" {
+		t.Fatalf("supersede not executed: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	for _, want := range []string{"Supersedes #7", "@mallory", "Closes #12", "fixes #13"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q: %s", want, body)
+		}
+	}
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonNoReviewer)
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("duplicate adoption: %v", h.adopt.pulls)
+	}
+}
+
+func TestDelegatedSupersedeHonorsHoldAndDisabledAdoption(t *testing.T) {
+	for _, held := range []bool{true, false} {
+		t.Run(map[bool]string{true: "hold", false: "disabled"}[held], func(t *testing.T) {
+			policy := adoptPolicy()
+			policy.Adoption = held
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+			defer done()
+			labels := []string{delegatedecision.LabelAdoptSupersede}
+			if held {
+				labels = append(labels, "hold")
+			}
+			h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonNoReviewer)
+			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+				t.Fatalf("adopted: %v", h.adopt.pulls)
+			}
+		})
+	}
+}
+
+func TestDelegatedSupersedeRehomesInPlaceAdoption(t *testing.T) {
+	policy := adoptPolicy()
+	policy.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if len(h.adopt.pulls) != 1 || rec.AdoptMode != stagelabels.AdoptModeSupersede || rec.AdoptedBy != 90 {
+		t.Fatalf("in-place adoption not superseded: record=%+v pulls=%v", rec, h.adopt.pulls)
+	}
+}
+
+func TestDelegatedSupersedeFailureIsOneAttemptAndClearsLabel(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.failRefs = true
+	labels := []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede}
+	pr := adoptPR(7, "aaa", labels...)
+	h.adopt.mu.Lock()
+	h.adopt.heads[7] = "aaa"
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoReviewer, false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("ApplyStageLabels should surface the failed supersede push")
+	}
+	if h.adopt.refAttempts != 1 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("attempts=%d pulls=%v", h.adopt.refAttempts, h.adopt.pulls)
+	}
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.Adopted("aaa") || rec.AdoptedBy != 0 {
+		t.Fatalf("attempt not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after a recorded attempt: removed=%v", h.api.removed)
+	}
+
+	// With the request consumed the PR re-parks at 085 for the owner: the
+	// next sweep neither retries the push nor touches the label again.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision"), contributorLaneReasonNoReviewer)
+	if h.adopt.refAttempts != 1 || len(h.api.removed) != 0 {
+		t.Fatalf("failed delegated supersede retried: attempts=%d removed=%v", h.adopt.refAttempts, h.api.removed)
+	}
+}
+
+// A delegated supersede of a workflow-path head is refused as one recorded
+// attempt: the request label clears, one note says why, nothing is published
+// and the next sweep does not retry (hivecommons/hive#14055).
+func TestDelegatedSupersedeWorkflowPathIsTerminal(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}
+	pr := adoptPR(7, "aaa", "stage/085-needs-decision", delegatedecision.LabelAdoptSupersede)
+	h.adopt.mu.Lock()
+	h.adopt.heads[7] = "aaa"
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoReviewer, false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.adopt.refAttempts != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("workflow-path head published: attempts=%d refs=%v pulls=%v", h.adopt.refAttempts, h.adopt.refs, h.adopt.pulls)
+	}
+	if c := workflowRefusedComments(h.api); len(c) != 1 {
+		t.Fatalf("refusal notes = %v, want one", h.api.comments)
+	}
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.Adopted("aaa") || rec.AdoptedBy != 0 || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+		t.Fatalf("refusal not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after a refused attempt: removed=%v", h.api.removed)
+	}
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision"), contributorLaneReasonNoReviewer)
+	if h.adopt.refAttempts != 0 || len(h.api.removed) != 0 || len(workflowRefusedComments(h.api)) != 0 {
+		t.Fatalf("refused delegated supersede retried: attempts=%d removed=%v comments=%v", h.adopt.refAttempts, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("refused head left 085: stage %s", rec.Stage)
+	}
+}
+
+// A head already escalated and noted as stalled still gets the refusal note
+// when a maintainer's delegated supersede is refused: the label must not vanish
+// unexplained.
+func TestDelegatedSupersedeWorkflowPathNotesOverStalledNote(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}
+	pr := adoptPR(7, "aaa", "stage/085-needs-decision", delegatedecision.LabelAdoptSupersede)
+	h.adopt.mu.Lock()
+	h.adopt.heads[7] = "aaa"
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoReviewer, false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptionEscalated(key, "aaa", stagelabels.LaneReasonAdoptionStalledPrefix+"stalled")
+	h.e.stageStoreOrShared().MarkAdoptionEscalationNoted(key, "aaa", stagelabels.LaneReasonAdoptionStalledPrefix+"stalled")
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c := workflowRefusedComments(h.api); len(c) != 1 {
+		t.Fatalf("refusal notes = %v, want one", h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+		t.Fatalf("refusal not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after a refused attempt: removed=%v", h.api.removed)
+	}
+	if h.adopt.refAttempts != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("workflow-path head published: attempts=%d", h.adopt.refAttempts)
+	}
+}
+
+// Every caller, including second takeovers, must pass fresh evidence before
+// creating OR updating a ref. A record's old fence is not evidence for a head.
+func TestSupersedeRevalidatesBeforeRefMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(*adoptAPI)
+	}{
+		{"workflow", func(a *adoptAPI) {
+			a.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}
+		}},
+		{"action", func(a *adoptAPI) {
+			a.prFiles = []map[string]any{{"filename": ".github/actions/setup/action.yml", "status": "modified"}}
+		}},
+		{"head moved", func(a *adoptAPI) { a.liveHead = "bbb" }},
+		{"incomplete files", func(a *adoptAPI) { a.changedFiles = 3001 }},
+		{"unreadable files", func(a *adoptAPI) { a.failPRFiles = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+			defer done()
+			h.adopt.heads[7] = "aaa"
+			h.adopt.refs["refs/heads/hive/adopt-7"] = "old"
+			tc.prepare(h.adopt)
+			obs := stageObservation{Owner: "acme", Repo: "widget", Display: "acme/widget", Number: 7, HeadSHA: "aaa", BaseRef: "v5"}
+			n, _ := h.e.supersedeAdoptedPR(context.Background(), h.e.stageStoreOrShared(), stageKey("acme", "widget", 7), obs, stagelabels.Record{}, adoptPolicy(), AdoptReasonDCORehome, 0, false, true, h.clock.at)
+			if n != 0 || h.adopt.refAttempts != 0 || len(h.adopt.refUpdates) != 0 || h.adopt.refs["refs/heads/hive/adopt-7"] != "old" || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
+				t.Fatalf("unsafe supersession mutated repository: n=%d refs=%v updates=%v pulls=%v edits=%v", n, h.adopt.refs, h.adopt.refUpdates, h.adopt.pulls, h.adopt.prEdits)
+			}
+		})
+	}
+}
+
+// adoptThenLeave074 adopts PR 7 at head "aaa" (offline grace) and returns
+// the labels the PR wears at 074. Shared by the hivecommons/hive#14471
+// cases, which then move the PR off 074 before the superseder merges.
+func adoptThenLeave074(t *testing.T) (*adoptHarness, func()) {
+	t.Helper()
+	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
+	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("not adopted: pulls=%d", len(h.adopt.pulls))
+	}
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) == 0 || added[len(added)-1] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074: %v", h.api.added)
+	}
+	return h, done
+}
+
+// hivecommons/hive#14471: a `needs-human` label parks the adopted PR at 085,
+// which does not yield to adoption. The superseder's merge must still close
+// the original, once.
+func TestAdoptionSupersederMergedClosesOriginalParkedAt085(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	parked := []string{"stage/074-adopted-by-hive", "needs-human", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", parked...), "label:needs-human")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/085-needs-decision" {
+		t.Fatalf("085 from needs-human: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	at085 := []string{"stage/085-needs-decision", "needs-human", "role/contributor", "author/clanker"}
+	h.adopt.setSuperseder(90, "closed", true)
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	res := h.observe(adoptPR(7, "aaa", at085...), "label:needs-human")
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed from 085: %v", h.adopt.prEdits)
+	}
+	closeNotes := 0
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, adoptionCloseMarker) && strings.Contains(c, "#90") {
+			closeNotes++
+		}
+	}
+	if closeNotes != 1 || res.Comments < 1 {
+		t.Fatalf("close note: %v res=%+v", h.api.comments, res)
+	}
+	rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !ok || rec.SupersededBy != 90 || rec.SupersededOpen {
+		t.Fatalf("record not marked superseded: ok=%v rec=%+v", ok, rec)
+	}
+	// Idempotent: the PR still reads open to the lane (GitHub lag) but the
+	// note and close never repeat.
+	h.api.reset()
+	h.adopt.prEdits = nil
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "aaa", at085...), "label:needs-human")
+	if len(h.adopt.prEdits) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("repeated settle: edits=%v comments=%v", h.adopt.prEdits, h.api.comments)
+	}
+}
+
+// hivecommons/hive#14471 (#14403 → #14461): the contributor pushes a new
+// head after the adoption, so the PR falls back to 072; the fix lane carries
+// that head into the superseder and merges it. The original closes.
+func TestAdoptionSupersederMergedWithLaterHeadClosesOriginal(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/072-returned-to-contributor" {
+		t.Fatalf("new head should leave 074: added=%v", h.api.added)
+	}
+	at072 := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.adopt.setSupersederHead(90, "closed", true, "bbb")
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed after superseder merged its head: %v", h.adopt.prEdits)
+	}
+}
+
+// hivecommons/hive#14471: the superseder merged the adopted head but the
+// original has commits past it. One note per head, no close.
+func TestAdoptionSupersederMergedDivergedHeadNotesOnce(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	at072 := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	h.adopt.setSupersederHead(90, "closed", true, "aaa")
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 0 {
+		t.Fatalf("closed a PR whose head the superseder did not carry: %v", h.adopt.prEdits)
+	}
+	notes := 0
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionSupersederMergedDivergedMarker) && strings.Contains(c, "#90") && strings.Contains(c, "bbb") {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("diverged note: %v", h.api.comments)
+	}
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+	if len(h.api.comments) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatalf("diverged note repeated: comments=%v edits=%v", h.api.comments, h.adopt.prEdits)
+	}
+}
+
+// hivecommons/hive#14471: GitHub refuses the close (the App cannot close
+// this fork PR). The note stands, the record is superseded-open so the
+// tracker drops the row, nothing repeats and no error is raised.
+func TestAdoptionSupersederMergedCloseRefusedMarksSupersededOpen(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	at074 := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	h.adopt.mu.Lock()
+	h.adopt.failEditStatus = http.StatusForbidden
+	h.adopt.mu.Unlock()
+	h.adopt.setSuperseder(90, "closed", true)
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "aaa", at074...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 1 {
+		t.Fatalf("close not attempted: %v", h.adopt.prEdits)
+	}
+	rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !ok || rec.SupersededBy != 90 || !rec.SupersededOpen {
+		t.Fatalf("record not superseded-open: ok=%v rec=%+v", ok, rec)
+	}
+	h.api.reset()
+	h.adopt.prEdits = nil
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "aaa", at074...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("refused close retried: edits=%v comments=%v", h.adopt.prEdits, h.api.comments)
+	}
+}
+
+// hivecommons/hive#14471: a `Refs #N` line travels into the superseder body;
+// hivecommons/hive#15499: an annotated `Refs #N — partial` travels as the
+// bare reference, so the copy keeps the issue link its original had.
+func TestAdoptionClosesCarriesRefs(t *testing.T) {
+	got := adoptionCloses("Refs #14389 — addresses root cause 2\nRefs #5\nCloses #12\nRefs #15395 - partial\nRefs #5 — again\n")
+	if len(got) != 4 || got[0] != "Refs #5" || got[1] != "Closes #12" || got[2] != "Refs #14389" || got[3] != "Refs #15395" {
+		t.Fatalf("adoptionCloses: %v", got)
+	}
+}
+
+// A workflow-path refusal note GitHub answered with a 500 is posted on the
+// next sweep: the refusing path does not run again for the head, so the
+// held escalation retries it, once.
+func TestWorkflowPathRefusalNoteRetriedAfterFailedPost(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}
+	pr := adoptPR(7, "aaa", "stage/050-review-pending", delegatedecision.LabelAdoptSupersede)
+	h.adopt.mu.Lock()
+	h.adopt.heads[7] = "aaa"
+	h.adopt.mu.Unlock()
+	key := stageKey("acme", "widget", 7)
+	h.api.failComments, h.api.failCommentsOn = 1, AdoptionWorkflowRefusedMarker
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoReviewer, false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("the refused note was not reported")
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason || rec.AdoptionEscalationNoted("aaa", adoptionWorkflowRefusedReason) || len(workflowRefusedComments(h.api)) != 0 {
+		t.Fatalf("failed post: %+v comments=%v", rec, h.api.comments)
+	}
+	for i, want := range []int{1, 0} {
+		h.api.reset()
+		h.clock.advance(5 * time.Minute)
+		// A lane opinion the adoption pin claims (review pending) is what
+		// re-runs the escape for the adopted head.
+		h.observe(adoptPR(7, "aaa", "stage/085-needs-decision", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+		if got := len(workflowRefusedComments(h.api)); got != want {
+			t.Fatalf("sweep %d: refusal notes = %d, want %d: %v", i+1, got, want, h.api.comments)
+		}
+		if rec, _ = h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision {
+			t.Fatalf("sweep %d: stage %s", i+1, rec.Stage)
+		}
+	}
+}
+
+// hivecommons/hive#14975 (adopted as #14980) and #14947 (as #14977): the
+// reviewer swarm's `requires_human` on an adopted original must not park it
+// at 085 — the hive owns the PR and answers the question on the superseding
+// PR, so it stays at 074 in the CI/Review column. A person's `needs-human`
+// label still parks it (TestAdoptionSupersederMergedClosesOriginalParkedAt085).
+func TestAdoptionRequiresHumanVerdictKeepsOriginalAt074(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "close in favour of the superseding PR?"}
+	h.e.contributorLaneVerdict = func(string, int, string) ContributorLaneVerdict { return requiresHuman }
+	adopted := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.e.noteStageVerdict("acme", "widget", 7, requiresHuman)
+	h.observe(adoptPR(7, "aaa", adopted...), stageReasonDecisionRequested)
+	if added := h.addedLabels(); len(added) != 0 || len(h.api.removed) != 0 {
+		t.Fatalf("requires_human on an adopted original must not leave 074: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.Stage != stagelabels.AdoptedByHive || rec.AdoptedBy != 90 {
+		t.Fatalf("record = %+v, want 074 superseded by #90", rec)
+	}
+	for _, c := range h.api.comments {
+		if strings.Contains(c, "Needs human decision") || strings.Contains(c, "needs-decision") {
+			t.Fatalf("no decision may be asked of a person on the adopted original: %q", c)
+		}
+	}
+}
+
+// The same verdict on a PR the pass already wrote 085 for (the swarm
+// answered in the pass that adopted it) is re-derived to 074 in that pass,
+// not on the next sweep: the Activity Monitor never shows "Needs human
+// decision" on an adopted original.
+func TestAdoptionRestagesNeedsDecisionInSamePass(t *testing.T) {
+	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
+	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(time.Hour)
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("not adopted: pulls=%d", len(h.adopt.pulls))
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("adopting pass must leave the record at 074, got %+v", rec)
+	}
+	added := h.addedLabels()
+	if len(added) == 0 || added[len(added)-1] != "stage/074-adopted-by-hive" {
+		t.Fatalf("adopting pass must write 074 itself: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if len(fake.resolved) != 1 || fake.resolved[0] != 7 {
+		t.Fatalf("nudge queue not resolved in the adopting pass: %v", fake.resolved)
+	}
+}
+
+// botAdoptPR is adoptPR authored by github-actions[bot] on a same-repo
+// bot/ branch — hivecommons/docs#500's shape.
+func botAdoptPR(number int, head string, labels ...string) *gh.PullRequest {
+	pr := adoptPR(number, head, labels...)
+	pr.User = &gh.User{Login: gh.Ptr("github-actions[bot]"), Type: gh.Ptr("Bot")}
+	pr.Head.Ref = gh.Ptr("bot/hive-docs-refresh")
+	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("acme/widget")}
+	pr.Body = gh.Ptr("Automated docs refresh.\n")
+	return pr
+}
+
+// A delegated supersede of a trusted-bot PR (github-actions) is executed:
+// the self-authored sweep observes those PRs, and the executor used to
+// return silently on that lane with nothing logged, no attempt recorded and
+// the request label kept forever (hivecommons/docs#500 waited 15h).
+func TestDelegatedSupersedeExecutesForBotAuthorOnSelfLane(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	labels := []string{"stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede}
+	h.observeSelf(botAdoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 || h.adopt.refs["refs/heads/hive/adopt-7"] != "aaa" {
+		t.Fatalf("supersede not executed for a bot author: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	if h.adopt.permissionReads != 0 {
+		t.Fatalf("permission of an App installation was read %d times", h.adopt.permissionReads)
+	}
+	key := stageKey("acme", "widget", 7)
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if !rec.Adopted("aaa") || rec.AdoptedBy != 90 || rec.AdoptMode != stagelabels.AdoptModeSupersede {
+		t.Fatalf("adoption not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after the supersede: removed=%v", h.api.removed)
+	}
+	if len(adoptionComments(h.api)) != 1 {
+		t.Fatalf("adoption comments = %v", h.api.comments)
+	}
+	h.api.reset()
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/trusted"), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("duplicate supersede: %v", h.adopt.pulls)
+	}
+}
+
+// The request label is the durable decision: a hive restarted after the
+// label was applied (fresh store, record without an attempt) executes on
+// its first sweep.
+func TestDelegatedSupersedeExecutesOnFirstSweepAfterRestart(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	// The record a previous process left: observed, never attempted.
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	store.Observe(key, stagelabels.Fixing, "conflicting")
+	store.NoteAuthor(key, "github-actions[bot]")
+	if rec, _ := store.Get(key); rec.AdoptedHead != "" || !rec.AdoptedAt.IsZero() {
+		t.Fatalf("precondition: %+v", rec)
+	}
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	rec, _ := store.Get(key)
+	if len(h.adopt.pulls) != 1 || !rec.Adopted("aaa") || rec.AdoptedBy != 90 {
+		t.Fatalf("restart sweep did not execute: pulls=%v rec=%+v", h.adopt.pulls, rec)
+	}
+}
+
+// A head red on a conflict is replayed onto the base before the copy opens;
+// when that replay conflicts the hive posts one note naming the failure,
+// records the request as consumed (label cleared, no live adoption) and
+// the PR keeps its fixing stage with reason supersede-conflict instead of a
+// 30-minute promise nothing keeps.
+func TestDelegatedSupersedeConflictingReplayNotesOnceAndStagesFixing(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.mergeStatus = http.StatusConflict
+	labels := []string{"stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede}
+	h.observeSelf(botAdoptPR(7, "aaa", labels...), "conflicting")
+	if len(h.adopt.merges) != 1 || h.adopt.merges[0] != "hive/adopt-7<-v5" {
+		t.Fatalf("base not replayed onto the hive branch: %v", h.adopt.merges)
+	}
+	if len(h.adopt.pulls) != 0 {
+		t.Fatalf("conflicting copy opened: %v", h.adopt.pulls)
+	}
+	if _, kept := h.adopt.refs["refs/heads/hive/adopt-7"]; kept || !slices.Contains(h.adopt.deletedRefs, "refs/heads/hive/adopt-7") {
+		t.Fatalf("conflicting hive branch left behind: refs=%v deleted=%v", h.adopt.refs, h.adopt.deletedRefs)
+	}
+	var notes []string
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionSupersedeConflictMarker) {
+			notes = append(notes, c)
+		}
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "`v5`") || !strings.Contains(notes[0], stagelabels.AdoptBlockedSupersedeConflict) {
+		t.Fatalf("conflict notes = %v", h.api.comments)
+	}
+	key := stageKey("acme", "widget", 7)
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptionLive("aaa") || rec.AdoptedBy != 0 || rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedSupersedeConflict {
+		t.Fatalf("conflict not recorded as a consumed request without a live adoption: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept: removed=%v", h.api.removed)
+	}
+
+	// Next sweep: no retry, no second note, fixing stage with the reason.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase"), "conflicting")
+	if len(h.adopt.merges) != 1 || len(h.adopt.pulls) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("retried after a conflict: merges=%v pulls=%v comments=%v", h.adopt.merges, h.adopt.pulls, h.api.comments)
+	}
+	rec, _ = h.e.stageStoreOrShared().Get(key)
+	if rec.Stage != stagelabels.Fixing || rec.Reason != stagelabels.AdoptBlockedSupersedeConflict {
+		t.Fatalf("stage after conflict = %s reason %q, want %s/%s", rec.Stage, rec.Reason, stagelabels.Fixing, stagelabels.AdoptBlockedSupersedeConflict)
+	}
+
+	// A new head is a new attempt: the owner may ask again.
+	h.adopt.mergeStatus = 0
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observeSelf(botAdoptPR(7, "bbb", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("new head not superseded: %v", h.adopt.pulls)
+	}
+}
+
+// A clean replay (base merges into the hive branch) opens the copy.
+func TestDelegatedSupersedeReplaysBaseBeforeOpeningCopy(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede), "conflicting")
+	if len(h.adopt.merges) != 1 || len(h.adopt.pulls) != 1 {
+		t.Fatalf("merges=%v pulls=%v", h.adopt.merges, h.adopt.pulls)
+	}
+	// A green head is not replayed at all.
+	h2, done2 := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done2()
+	h2.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	if len(h2.adopt.merges) != 0 || len(h2.adopt.pulls) != 1 {
+		t.Fatalf("green head replayed: merges=%v pulls=%v", h2.adopt.merges, h2.adopt.pulls)
+	}
+}
+
+// The App's own PR has no contributor branch to re-home: the request is
+// consumed with one note per head and the label cleared, not a silent
+// no-op every sweep.
+func TestDelegatedSupersedeOfAppPRIsRefusedOnce(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	pr := adoptPR(7, "aaa", "stage/070-fixing", delegatedecision.LabelAdoptSupersede)
+	pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+	h.observeSelf(pr, "check-failing:unit")
+	var notes int
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionSelfRefusedMarker) {
+			notes++
+		}
+	}
+	key := stageKey("acme", "widget", 7)
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || notes != 1 || rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedSelfAuthored {
+		t.Fatalf("pulls=%v refs=%v notes=%d rec=%+v", h.adopt.pulls, h.adopt.refs, notes, rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept: removed=%v", h.api.removed)
+	}
+	// The label still on (a slow removal) re-clears without a second note;
+	// once off, the sweep is quiet.
+	h.api.reset()
+	h.observeSelf(pr, "check-failing:unit")
+	if len(h.api.comments) != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("refusal repeated: comments=%v pulls=%v", h.api.comments, h.adopt.pulls)
+	}
+	h.api.reset()
+	pr = adoptPR(7, "aaa", "stage/070-fixing")
+	pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+	h.observeSelf(pr, "check-failing:unit")
+	if len(h.api.comments) != 0 || len(h.api.removed) != 0 {
+		t.Fatalf("not quiet after the request cleared: comments=%v removed=%v", h.api.comments, h.api.removed)
+	}
+}
+
+// Without the request label the self-authored lane stays out of the
+// adoption machinery, and under maintainer_policy: never a bot author is
+// not looked up as a collaborator (the read would 404 and defer forever).
+func TestDelegatedSupersedeSelfLaneGuards(t *testing.T) {
+	policy := adoptPolicy()
+	policy.AdoptionMaintainerPolicy = "never"
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted"), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("unrequested self-lane PR adopted: pulls=%v comments=%v", h.adopt.pulls, h.api.comments)
+	}
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 || h.adopt.permissionReads != 0 {
+		t.Fatalf("pulls=%v permissionReads=%d", h.adopt.pulls, h.adopt.permissionReads)
+	}
+}
+
+// Replay and note failures surface as sweep errors with the attempt
+// recorded, so a broken API neither loops nor hides.
+func TestDelegatedSupersedeReplayFailuresSurface(t *testing.T) {
+	t.Run("replay api error", func(t *testing.T) {
+		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+		defer done()
+		h.adopt.mergeStatus = http.StatusInternalServerError
+		pr := botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede)
+		h.adopt.mu.Lock()
+		h.adopt.heads[7] = "aaa"
+		h.adopt.mu.Unlock()
+		h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+		h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleTrusted)
+		if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+			t.Fatal("replay failure not surfaced")
+		}
+		rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+		if len(h.adopt.pulls) != 0 || !rec.Adopted("aaa") || rec.AdoptedBy != 0 || !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+			t.Fatalf("pulls=%v rec=%+v removed=%v", h.adopt.pulls, rec, h.api.removed)
+		}
+	})
+	t.Run("conflict note error", func(t *testing.T) {
+		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+		defer done()
+		h.adopt.mergeStatus = http.StatusConflict
+		h.adopt.failComments = true
+		pr := botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede)
+		h.adopt.mu.Lock()
+		h.adopt.heads[7] = "aaa"
+		h.adopt.mu.Unlock()
+		h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+		h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleTrusted)
+		if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+			t.Fatal("note failure not surfaced")
+		}
+		rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+		if rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedSupersedeConflict || len(h.adopt.pulls) != 0 {
+			t.Fatalf("rec=%+v pulls=%v", rec, h.adopt.pulls)
+		}
+	})
+	t.Run("self refusal note error", func(t *testing.T) {
+		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+		defer done()
+		h.adopt.failComments = true
+		pr := adoptPR(7, "aaa", "stage/070-fixing", delegatedecision.LabelAdoptSupersede)
+		pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+		h.adopt.mu.Lock()
+		h.adopt.heads[7] = "aaa"
+		h.adopt.mu.Unlock()
+		h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "check-failing:unit", false, nil)
+		h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleTrusted)
+		if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+			t.Fatal("note failure not surfaced")
+		}
+		rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+		if rec.AdoptionBlocked("aaa") != "" || slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+			t.Fatalf("refusal recorded without its note: rec=%+v removed=%v", rec, h.api.removed)
+		}
+	})
+}
+
+func TestAdoptionSupersedeConflictCommentListsFiles(t *testing.T) {
+	obs := stageObservation{HeadSHA: "abcdef0123456789", BaseRef: "v5"}
+	body := AdoptionSupersedeConflictComment(obs, "hive/adopt-7", []string{"docs/a.md", "docs/b.md"})
+	for _, want := range []string{AdoptionSupersedeConflictMarker + " head=abcdef0123456789 -->", "`abcdef012345`", "- `docs/a.md`", "- `docs/b.md`", "Files changed on both sides", "`supersede-conflict`"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(AdoptionSupersedeConflictComment(obs, "hive/adopt-7", nil), "both sides") {
+		t.Fatal("empty file list rendered")
+	}
+}
+
+// hivecommons/hive#15202: an owner's / author-human PR parked at 085 with a
+// delegated `adoption/supersede` request is never adopted. The refusal is
+// recorded on the tracker row, the request label is consumed (one attempt,
+// not a standing order) and the PR never reaches 074.
+func TestDelegatedSupersedeRefusesPersonAuthoredPR(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []string
+		human  bool
+		owner  func(string) bool
+	}{
+		{name: "author/human label", labels: []string{"stage/085-needs-decision", "author/human", delegatedecision.LabelAdoptSupersede}, human: true},
+		{name: "hive owner whose hive opened the PR", labels: []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede},
+			owner: func(login string) bool { return login == "mallory" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := adoptPolicy()
+			policy.OwnerAuthor = tc.owner
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+			defer done()
+			pr := adoptPR(7, "aaa", tc.labels...)
+			if tc.human {
+				// No relay trailer: a person pushed it from their own machine.
+				pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\n")
+			}
+			h.observe(pr, contributorLaneReasonNoReviewer)
+			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+				t.Fatalf("adopted a person's PR: pulls=%v refs=%v added=%v", h.adopt.pulls, h.adopt.refs, h.api.added)
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+			if rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedAuthorPerson {
+				t.Fatalf("refusal not recorded for the tracker: %+v", rec)
+			}
+			if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+				t.Fatalf("request label kept after a terminal refusal: removed=%v", h.api.removed)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#15469: a clanker PR the merge queue holds as the
+// duplicate of another open PR for the same issue lands at 072 as
+// superseded — no "fix it" nudge, no adoption after the grace, even though
+// the author is a clanker with a live relay; adopting it would land the
+// issue twice. Its one notice is the duplicate-fix sweep's.
+func TestDuplicateHeldClankerPRParkedAt072WithoutNudgeOrAdoption(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: true}
+	reason := prstage.MergeTrain{State: prstage.MergeTrainStateDuplicateOf, Front: 15470, Position: 15469}.Reason()
+	h.observe(adoptPR(15473, "aaa", "role/contributor", "author/clanker"), reason)
+	if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
+		t.Fatalf("labels added = %v, want 072", h.api.added)
+	}
+	if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
+		t.Fatalf("interrupt fired on a duplicate: comments=%v nudges=%d", h.api.comments, len(h.sink.nudges))
+	}
+	h.api.reset()
+	h.clock.advance(6 * time.Hour)
+	h.observe(adoptPR(15473, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), reason)
+	if len(h.api.comments) != 0 || len(h.adopt.pulls) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+		t.Fatalf("duplicate adopted: added=%v comments=%v pulls=%d", h.api.added, h.api.comments, len(h.adopt.pulls))
+	}
+}

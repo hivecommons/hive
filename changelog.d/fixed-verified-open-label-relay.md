@@ -1,0 +1,1 @@
+- Fix the label relay for `hive/verified-open`: it now creates the label on repositories that lack it before adding it, the refusal for a request that also removes `hive/likely-done` or `hive/covered-by-pr` tells the agent to resend the add on its own, and the verify-once kick text says to add only `hive/verified-open` and report after the relay result is ok (#11679).

@@ -111,11 +111,16 @@ describe('legacy Nous mutation authorization', () => {
   });
 
 
-  it('keeps the gate client compatible with the protected gate-decision route', () => {
+  // Since RFC #11585 part 3 (#11696) the agent-side gate bridge never holds an
+  // owner credential: it publishes <nous_dir>/gates/pending.json and waits for
+  // the hive to write decision.json after the owner answers via the protected
+  // PUT /api/nous/gate-decision route. Pin that it stays off the HTTP path.
+  it('keeps the gate client off the protected gate-decision route', () => {
     const gateSource = fs.readFileSync(path.join(__dirname, '..', '..', 'bin', 'nous-hive-gate.py'), 'utf8');
-    assert.match(gateSource, /HIVE_DASHBOARD_TOKEN/);
-    assert.match(gateSource, /Authorization/);
-    assert.match(gateSource, /Bearer /);
+    assert.match(gateSource, /PENDING_FILE = "pending\.json"/);
+    assert.match(gateSource, /DECISION_FILE = "decision\.json"/);
+    assert.doesNotMatch(gateSource, /HIVE_DASHBOARD_TOKEN/);
+    assert.doesNotMatch(gateSource, /Authorization/);
   });
 
   for (const [method, route, body] of mutationCases) {

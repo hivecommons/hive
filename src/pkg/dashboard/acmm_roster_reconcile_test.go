@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -132,7 +132,7 @@ func TestApplyPackLiveLookingUIDMapUsesHermeticIsolationMarkers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(markerDir, "home.ready"), []byte("1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	uids := agent.NewUIDMap()
+	uids := cruxtest.NewUIDMap()
 	uids.Agents["supervisor"] = 2012
 	uids.IsolationMarkerDir = markerDir
 	uids.IsolationRevision = "1"

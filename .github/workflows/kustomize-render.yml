@@ -1,0 +1,79 @@
+name: Kustomize Render
+
+# Renders every overlay under src/deploy/kustomize/overlays, plus the k8s/ based
+# overlays with the opt-in monitoring component enabled, so a broken
+# kustomization fails in CI instead of at deploy time.
+
+on:
+  push:
+    branches:
+      - v6
+    paths:
+      - 'src/deploy/**'
+      - '.github/workflows/kustomize-render.yml'
+  pull_request:
+    branches:
+      - v6
+    paths:
+      - 'src/deploy/**'
+      - '.github/workflows/kustomize-render.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  KUSTOMIZE_VERSION: 5.8.3
+  KUSTOMIZE_SHA256: cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61
+
+jobs:
+  render:
+    name: kustomize build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install kustomize
+        run: |
+          set -euo pipefail
+          tarball="kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/${tarball}" \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/${tarball}"
+          echo "${KUSTOMIZE_SHA256}  ${RUNNER_TEMP}/${tarball}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/kustomize"
+          tar -xzf "${RUNNER_TEMP}/${tarball}" -C "${RUNNER_TEMP}/kustomize" kustomize
+          echo "${RUNNER_TEMP}/kustomize" >> "$GITHUB_PATH"
+
+      - name: Build every overlay
+        run: |
+          set -euo pipefail
+          for dir in src/deploy/kustomize/overlays/*/; do
+            echo "::group::kustomize build ${dir}"
+            kustomize build "${dir}" > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: Build the k8s/ based overlays with the monitoring component
+        run: |
+          set -euo pipefail
+          root=src/deploy/kustomize
+          for name in standalone openshift kind; do
+            echo "::group::kustomize build ${name} + monitoring"
+            wrapper="${root}/.render-${name}"
+            mkdir -p "${wrapper}"
+            cat > "${wrapper}/kustomization.yaml" <<EOF
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources:
+            - ../overlays/${name}
+          components:
+            - ../components/monitoring
+          EOF
+            kustomize build "${wrapper}" > /dev/null
+            rm -rf "${wrapper}"
+            echo "::endgroup::"
+          done

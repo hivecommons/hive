@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-stream
+  namespace: hive-stream
+data:
+  # Origin of the dashboard the streamer renders. The overlay points this at
+  # the hive's in-cluster Service; the public route also works (see docs).
+  DASHBOARD_URL: "http://hive.CHANGE-ME-hive-namespace.svc.cluster.local:3002"
+  DASHBOARD_PATH: "/?kiosk=1#section-activity-monitor-section"
+  TWITCH_INGEST: "rtmp://live.twitch.tv/app"
+  VIDEO_SIZE: "1920x1080"
+  FPS: "30"
+  BITRATE: "4500k"
+  X264_PRESET: "veryfast"
+  RELOAD_EVERY: "30m"
+  # pulse: tracker sounds via a PulseAudio null sink; silent: anullsrc + --mute-audio.
+  STREAM_AUDIO: "pulse"

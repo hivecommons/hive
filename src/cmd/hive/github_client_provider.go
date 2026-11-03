@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
 // githubClientRef boxes the live client so the provider can tell "never
@@ -55,6 +55,18 @@ func (b *boot) currentGitHubClient() *github.Client {
 //
 // newClient must already be configured (newConfiguredGitHubAppClient did
 // that); this only swaps references.
+// appMinter builds a push-token minter over the GitHub App credential. The
+// broker takes a pushbroker.TokenScoper interface, so a nil *AppAuth must be
+// left as a nil interface here rather than stored as a typed nil the minter's
+// nil check would miss.
+func appMinter(auth *github.AppAuth, tier string) pushbroker.GitHubAppMinter {
+	m := pushbroker.GitHubAppMinter{Tier: tier}
+	if auth != nil {
+		m.Auth = auth
+	}
+	return m
+}
+
 func (b *boot) adoptGitHubClient(newClient *github.Client, newAppAuth *github.AppAuth) {
 	if b == nil || newClient == nil {
 		return
@@ -69,7 +81,7 @@ func (b *boot) adoptGitHubClient(newClient *github.Client, newAppAuth *github.Ap
 		// The sandbox kick executor opens PRs and mints push tokens itself;
 		// leaving it on the old client/AppAuth is the stale pointer the
 		// dashboard and heartbeat rebuilds used to miss.
-		b.agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: newAppAuth})
+		b.agentMgr.SetSandboxPushMinter(appMinter(newAppAuth, ""))
 		b.agentMgr.SetSandboxPRClient(newClient)
 	}
 	if b.dashSrv != nil {
@@ -136,6 +148,26 @@ func (l liveTriageCommenter) CreateIssueComment(ctx context.Context, repo string
 		return github.ErrNoGitHubClient
 	}
 	return c.CreateIssueComment(ctx, repo, number, body)
+}
+
+// AddLabels lets the clarity gate park an unclear issue
+// (runs.triage.clarity_gate, scheduler.TriageLabeler).
+func (l liveTriageCommenter) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
+	c := l.current()
+	if c == nil {
+		return github.ErrNoGitHubClient
+	}
+	return c.AddLabels(ctx, repo, number, labels)
+}
+
+// IssueLabelEverApplied lets the clarity gate tell a park label that never
+// landed from one a person removed (scheduler.TriageParkHistory).
+func (l liveTriageCommenter) IssueLabelEverApplied(ctx context.Context, repo string, number int, label string) (bool, error) {
+	c := l.current()
+	if c == nil {
+		return false, github.ErrNoGitHubClient
+	}
+	return c.IssueLabelEverApplied(ctx, repo, number, label)
 }
 
 func (l liveTriageCommenter) current() *github.Client {

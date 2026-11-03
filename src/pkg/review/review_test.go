@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
@@ -57,9 +58,21 @@ func TestAggregateReportsMatrix(t *testing.T) {
 		{name: "changes requested enters fix cycle", reps: append(allApprove()[:1], baseReport(PerspectiveSecurity, VerdictChangesRequested)), want: VerdictChangesRequested, fix: true},
 		{name: "severity threshold requires human", reps: []PerspectiveReport{baseReport(PerspectiveSecurity, VerdictApprove, highFinding)}, want: VerdictRequiresHuman, human: true},
 		{name: "explicit requires human wins", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove), baseReport(PerspectiveSecurity, VerdictRequiresHuman)}, want: VerdictRequiresHuman, human: true},
+		{name: "decision request marker wins when backed by a finding", reps: []PerspectiveReport{func() PerspectiveReport {
+			r := baseReport(PerspectiveCorrectness, VerdictApprove)
+			r.DecisionRequested = true
+			r.DecisionQuestion = "@clubanderson should decide whether this workflow trigger change is acceptable."
+			return r
+		}()}, want: VerdictRequiresHuman, human: true},
+		{name: "unbacked decision request on a contributor PR is advisory", reps: []PerspectiveReport{func() PerspectiveReport {
+			r := baseReport(PerspectiveCorrectness, VerdictApprove)
+			r.DecisionRequested = true
+			r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+			return r
+		}()}, want: VerdictApprove, merge: true},
 		{name: "reject recommends close", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictReject)}, want: VerdictReject, close: true},
 		{name: "fix cap requires human", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictChangesRequested)}, opts: AggregateOptions{FixAttempts: DefaultFixCycleCap}, want: VerdictRequiresHuman, human: true},
-		{name: "missing perspectives is disagreement", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictRequiresHuman, human: true},
+		{name: "missing perspectives is incomplete, not a human hold", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictIncomplete},
 	}
 
 	for _, tt := range tests {
@@ -69,6 +82,407 @@ func TestAggregateReportsMatrix(t *testing.T) {
 				t.Fatalf("aggregate = verdict:%s merge:%v fix:%v human:%v close:%v", got.Verdict, got.MergeEligible, got.FixCycle, got.RequiresHuman, got.CloseRecommended)
 			}
 		})
+	}
+}
+
+func TestAggregateReportsCarriesDecisionQuestion(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictApprove)
+	r.DecisionRequested = true
+	r.DecisionQuestion = "@clubanderson should decide whether this CODEOWNERS-protected workflow change is acceptable."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want requires_human decision request", got)
+	}
+	if got.DecisionQuestion != r.DecisionQuestion {
+		t.Fatalf("DecisionQuestion = %q, want %q", got.DecisionQuestion, r.DecisionQuestion)
+	}
+	if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], r.DecisionQuestion) {
+		t.Fatalf("Reasons = %v, want question quoted", got.Reasons)
+	}
+}
+
+func TestAggregateReportsResolvesNonRiskHiveAuthoredDecisionQuestions(t *testing.T) {
+	cases := []string{
+		// Exact live questions from #12808 and #12790: Hive-authored
+		// sequencing/config-shape decisions resolved by the reviewer.
+		"@hanthor should decide whether the contribution-preset loader should land before any hivectl command consumes it",
+		"accept `self_experiments.scheduler` as a new top-level config namespace vs nesting, and a fixed ledger path?",
+		// #13020: the linked issue (#12964) specified the default; the old
+		// allowlist still parked the PR because "default" was not on it.
+		"should the composite action's default `mention_login` be hard-coded to `hivecommons-hive` or stay org-neutral?",
+		"rename flag --foo to --bar?",
+		// Wording the old allowlist never anticipated is still the hive's call.
+		"keep the helper in the same file or split it out?",
+	}
+	for _, question := range cases {
+		t.Run(question, func(t *testing.T) {
+			r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+			r.HiveAuthored = true
+			r.DecisionRequested = true
+			r.DecisionQuestion = question
+
+			got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+			if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman || got.DecisionRequested {
+				t.Fatalf("aggregate = %+v, want resolved approve", got)
+			}
+			if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "decision resolved by policy:") || !strings.Contains(got.Reasons[0], "not a risk question") || !strings.Contains(got.Reasons[0], question) {
+				t.Fatalf("Reasons = %v, want policy-resolution audit line with question", got.Reasons)
+			}
+		})
+	}
+}
+
+func TestDecisionQuestionRiskClassDenylist(t *testing.T) {
+	cases := []struct {
+		question string
+		class    string
+	}{
+		{"should the composite action's default `mention_login` be hard-coded to `hivecommons-hive` or stay org-neutral?", ""},
+		{"rename flag --foo to --bar?", ""},
+		{"should this workflow be granted contents: write?", "permissions-credentials"},
+		{"drop the users table column?", "data-loss-irreversible"},
+		{"rotate the deploy token in this PR?", "permissions-credentials"},
+		{"is this change to OWNERS acceptable?", "sensitive-paths"},
+		{"edit .github/workflows/ci.yml to skip the lint job?", "sensitive-paths"},
+		{"should L6 auto-merge apply to this repo?", "merge-trust-policy"},
+		{"should the author of this PR be notified?", ""},
+		{"publish the release to ghcr now?", "external-side-effects"},
+		{"is the added dependency license acceptable?", "licensing-legal"},
+		{"the requirement is ambiguous; which reading applies?", "unverifiable"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.question, func(t *testing.T) {
+			class, risk := DecisionQuestionRiskClass(tc.question)
+			if risk != (tc.class != "") || class != tc.class {
+				t.Fatalf("DecisionQuestionRiskClass(%q) = %q,%v; want %q", tc.question, class, risk, tc.class)
+			}
+		})
+	}
+}
+
+func TestDecisionRiskClassesAreNamedAndNonEmpty(t *testing.T) {
+	seen := map[string]bool{}
+	for _, class := range DecisionRiskClasses {
+		if class.Name == "" || seen[class.Name] {
+			t.Fatalf("risk class %+v: name must be unique and non-empty", class)
+		}
+		seen[class.Name] = true
+		if len(class.Terms)+len(class.Patterns) == 0 {
+			t.Fatalf("risk class %q has no terms", class.Name)
+		}
+	}
+	// The sensitive-path class is derived from the sentinel list and must
+	// carry its headline entries.
+	for _, want := range []string{"owners", ".github/workflows", "hive.yaml", "dockerfile"} {
+		if _, risk := DecisionQuestionRiskClass("touches " + want); !risk {
+			t.Fatalf("sentinel path %q not in the decision risk denylist", want)
+		}
+	}
+}
+
+func TestAggregateReportsEscalatesHighRiskMarkerOnBenignQuestion(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "rename flag --foo to --bar?"
+	r.DecisionRiskHigh = true
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want hive-decision-risk: high to escalate", got)
+	}
+}
+
+func TestAggregateReportsDecisionQuestionDoesNotMaskRiskHumanHold(t *testing.T) {
+	decision := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	decision.HiveAuthored = true
+	decision.DecisionRequested = true
+	decision.DecisionQuestion = "Should this groundwork land before its consumer?"
+	risk := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	risk.HiveAuthored = true
+	risk.Summary = "Could not read the diff for an authorization change."
+
+	got := AggregateReports([]PerspectiveReport{decision, risk}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want risk human hold", got)
+	}
+}
+
+func TestAggregateReportsEscalatesRiskDecisionQuestions(t *testing.T) {
+	for _, question := range []string{
+		"Should we accept this public-facing auth behavior change?",
+		"Can this data deletion migration run without data loss?",
+		"Is the added dependency license acceptable?",
+		"should this workflow be granted contents: write?",
+		"drop the users table column?",
+	} {
+		t.Run(question, func(t *testing.T) {
+			r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+			r.HiveAuthored = true
+			r.DecisionRequested = true
+			r.DecisionQuestion = question
+
+			got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+			if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+				t.Fatalf("aggregate = %+v, want risk escalation", got)
+			}
+		})
+	}
+}
+
+func TestAggregateReportsRoutesSelfAuthoredConcreteRequiresHumanToFixer(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.Summary = "LaneQueuedWork is plumbed but never populated; add the producer in AgentActivityFor or reword the changelog."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want changes_requested fixer route", got)
+	}
+	if got.Perspectives[PerspectiveCorrectness] != VerdictChangesRequested {
+		t.Fatalf("perspectives = %+v, want normalized changes_requested", got.Perspectives)
+	}
+}
+
+func TestNormalizeLegacyConcreteRequiresHumanAggregate(t *testing.T) {
+	legacy := Aggregate{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		HumanSummaries: []string{"correctness requires human: LaneQueuedWork is plumbed but never populated; add the producer in AgentActivityFor or reword the changelog."},
+		Perspectives: map[Perspective]Verdict{
+			PerspectiveCorrectness:     VerdictRequiresHuman,
+			PerspectiveIntentAlignment: VerdictRequiresHuman,
+		},
+	}
+
+	got := legacy.Normalize()
+
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("normalized = %+v, want changes_requested fixer route", got)
+	}
+	if got.Perspectives[PerspectiveCorrectness] != VerdictChangesRequested || got.Perspectives[PerspectiveIntentAlignment] != VerdictChangesRequested {
+		t.Fatalf("perspectives = %+v, want requires_human perspectives normalized", got.Perspectives)
+	}
+}
+
+func TestNormalizeRepairsKnownHiveConcreteRequiresHumanAggregate(t *testing.T) {
+	knownHive := Aggregate{
+		Repo:              "hivecommons/hive",
+		Number:            12875,
+		HeadSHA:           testSHA,
+		HiveAuthoredKnown: true,
+		HiveAuthored:      true,
+		Verdict:           VerdictRequiresHuman,
+		RequiresHuman:     true,
+		HumanSummaries:    []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+		Perspectives:      map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}
+
+	got := knownHive.Normalize()
+
+	if got.Verdict != VerdictChangesRequested || got.RequiresHuman || !got.FixCycle {
+		t.Fatalf("normalized = %+v, want known hive aggregate repaired to changes_requested", got)
+	}
+}
+
+func TestNormalizeLiveKnownHiveAggregateWithBlockingPerspectives(t *testing.T) {
+	live := Aggregate{
+		Repo:              "hivecommons/hive",
+		Number:            12875,
+		HeadSHA:           "bbb5676",
+		HiveAuthoredKnown: true,
+		HiveAuthored:      true,
+		Verdict:           VerdictRequiresHuman,
+		RequiresHuman:     true,
+		Reasons:           []string{`correctness finding "LaneQueuedWork is never populated" is high (threshold high)`},
+		Findings: []PerspectiveFinding{{Perspective: PerspectiveCorrectness, Finding: outputschema.Finding{
+			Title:       "LaneQueuedWork is never populated",
+			Severity:    outputschema.SeverityHigh,
+			Summary:     "Add the producer in AgentActivityFor or trim the changelog claim.",
+			ReviewScope: "in-scope",
+		}}},
+		Perspectives: map[Perspective]Verdict{
+			PerspectiveCorrectness:     VerdictChangesRequested,
+			PerspectiveIntentAlignment: VerdictChangesRequested,
+		},
+	}
+
+	got := live.Normalize()
+
+	if got.Verdict != VerdictChangesRequested || got.RequiresHuman || !got.FixCycle {
+		t.Fatalf("normalized = %+v, want live aggregate repaired to changes_requested", got)
+	}
+}
+
+func TestAggregateReportsRoutesSelfAuthoredDuplicateChangelogDecisionToFixer(t *testing.T) {
+	r := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman, outputschema.Finding{
+		Title:       "Duplicate changelog claim",
+		Severity:    outputschema.SeverityHigh,
+		Summary:     "Summary and changelog fragment duplicate work that already landed; trim the summary and fragment.",
+		ReviewScope: "in-scope",
+	})
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "Should the maintainer trim the summary/fragment or accept the duplicate changelog entry?"
+	r.Summary = "Trim the summary/changelog fragment that duplicates a prior fix."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictChangesRequested || got.RequiresHuman || !got.FixCycle || got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want duplicate changelog routed to fixer", got)
+	}
+}
+
+func TestNormalizeKeepsKnownNonHiveRequiresHumanAggregate(t *testing.T) {
+	knownHuman := Aggregate{
+		Repo:              "hivecommons/hive",
+		Number:            12875,
+		HeadSHA:           testSHA,
+		HiveAuthoredKnown: true,
+		HiveAuthored:      false,
+		Verdict:           VerdictRequiresHuman,
+		RequiresHuman:     true,
+		HumanSummaries:    []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+		Perspectives:      map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}
+
+	got := knownHuman.Normalize()
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
+		t.Fatalf("normalized = %+v, want known non-hive human hold unchanged", got)
+	}
+}
+
+func TestNormalizeKeepsFixCycleCapRequiresHumanAggregate(t *testing.T) {
+	capped := Aggregate{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		FixAttempts:    DefaultFixCycleCap,
+		MaxFixAttempts: DefaultFixCycleCap,
+		Reasons:        []string{"fix cycle cap reached (3/3)"},
+		HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+		Perspectives:   map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}
+
+	got := capped.Normalize()
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
+		t.Fatalf("normalized = %+v, want capped human hold unchanged", got)
+	}
+}
+
+func TestNormalizeKeepsRiskRequiresHumanAggregate(t *testing.T) {
+	legacy := Aggregate{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		HumanSummaries: []string{"security requires human: Could not read the diff for a public-facing authorization change."},
+		Perspectives:   map[Perspective]Verdict{PerspectiveSecurity: VerdictRequiresHuman},
+	}
+
+	got := legacy.Normalize()
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
+		t.Fatalf("normalized = %+v, want risk hold unchanged", got)
+	}
+}
+
+func TestLoadArtifactNormalizesLegacyConcreteRequiresHumanAggregate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review-verdicts.json")
+	legacy := Artifact{Items: []Aggregate{{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		HumanSummaries: []string{"correctness requires human: LaneQueuedWork is plumbed but never populated; add the producer in AgentActivityFor."},
+		Perspectives:   map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}}}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	loaded, err := LoadArtifact(path)
+	if err != nil {
+		t.Fatalf("LoadArtifact: %v", err)
+	}
+	got := loaded.Items[0]
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.Perspectives[PerspectiveCorrectness] != VerdictChangesRequested {
+		t.Fatalf("loaded = %+v, want normalized changes_requested", got)
+	}
+}
+
+func TestAggregateReportsAdvisesSelfAuthoredNonRiskHumanWithoutRemediation(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.Summary = "This sequencing question is low stakes but worth noting for maintainers."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want advisory approval", got)
+	}
+}
+
+func TestAggregateReportsKeepsSelfAuthoredRiskRequiresHuman(t *testing.T) {
+	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.Summary = "Could not read the diff, so a human must check this public-facing authorization change."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want risk escalation", got)
+	}
+}
+
+func TestAggregateReportsEscalatePolicyKeepsSelfAuthoredDecisionHold(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "Should this groundwork land before its consumer?"
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{SelfAuthoredDecisionPolicy: "escalate"})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want configured escalation", got)
+	}
+}
+
+func TestAggregateReportsCarriesRequiresHumanSummary(t *testing.T) {
+	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	r.Summary = "Trust-surface file by location; a relay owner should confirm before merge."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want requires_human", got)
+	}
+	if len(got.HumanSummaries) != 1 || !strings.Contains(got.HumanSummaries[0], "relay owner should confirm") {
+		t.Fatalf("HumanSummaries = %v, want reviewer summary", got.HumanSummaries)
+	}
+	if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "security requires human") {
+		t.Fatalf("Reasons = %v, want requires_human summary", got.Reasons)
 	}
 }
 
@@ -167,6 +581,90 @@ func TestValidateRoundTripAndCollect(t *testing.T) {
 	}
 }
 
+func TestCollectKeepsBodyDigestsSeparate(t *testing.T) {
+	dir := t.TempDir()
+	oldBody := PullRequestBodyDigest("fix links", "Closes #12397")
+	newBody := PullRequestBodyDigest("fix links", "Refs #12397")
+	reports := []PerspectiveReport{
+		func() PerspectiveReport {
+			r := baseReport(PerspectiveIntentAlignment, VerdictChangesRequested)
+			r.BodyDigest = oldBody
+			r.Summary = "closing keyword contradicts refs"
+			return r
+		}(),
+		func() PerspectiveReport {
+			r := baseReport(PerspectiveSecurity, VerdictApprove)
+			r.BodyDigest = newBody
+			return r
+		}(),
+	}
+	for _, r := range reports {
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, ReviewReportFilePrefix+string(r.Perspective)+ReviewReportFileSuffix)
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	artifact, err := Collect(dir, AggregateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Items) != 2 {
+		t.Fatalf("items = %+v, want separate aggregates per body digest", artifact.Items)
+	}
+	if agg, ok := artifact.AggregateForBody("hivecommons/hive", 2807, testSHA, newBody); !ok || agg.BodyDigest != newBody {
+		t.Fatalf("new-body aggregate = %+v, %v", agg, ok)
+	}
+}
+
+// Perspective reports that omit body_digest must join the digest-keyed
+// aggregate for the same head; apart, a full approval reads as two
+// "incomplete" items (hivecommons/hive#12332 @19b51e2).
+func TestCollectFoldsDigestlessReportsIntoHeadGroup(t *testing.T) {
+	dir := t.TempDir()
+	body := PullRequestBodyDigest("fix links", "Refs #12397")
+	for _, p := range []Perspective{PerspectiveCorrectness, PerspectiveSecurity, PerspectiveIntentAlignment, PerspectiveStyle, PerspectiveDocsCurrency} {
+		r := baseReport(p, VerdictApprove)
+		if p != PerspectiveStyle && p != PerspectiveCorrectness {
+			r.BodyDigest = body
+		}
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ReviewReportFilePrefix+string(p)+ReviewReportFileSuffix), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artifact, err := Collect(dir, AggregateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Items) != 1 {
+		t.Fatalf("items = %+v, want one aggregate for the head", artifact.Items)
+	}
+	agg := artifact.Items[0]
+	if agg.BodyDigest != body || len(agg.Perspectives) != 5 || agg.Verdict != VerdictApprove || !agg.MergeEligible {
+		t.Fatalf("aggregate = %+v, want 5/5 approve with digest %s", agg, body)
+	}
+}
+
+func TestHasAggregateApprovalUsesNewestHeadAggregate(t *testing.T) {
+	old := time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC)
+	artifact := Artifact{Items: []Aggregate{
+		{Repo: "hivecommons/hive", Number: 2807, HeadSHA: testSHA, BodyDigest: "old", Verdict: VerdictApprove, MergeEligible: true, RecordedAt: old},
+		{Repo: "hivecommons/hive", Number: 2807, HeadSHA: testSHA, BodyDigest: "new", Verdict: VerdictChangesRequested, RecordedAt: old.Add(time.Hour)},
+	}}
+
+	if artifact.HasAggregateApproval("hivecommons/hive", 2807, testSHA) {
+		t.Fatal("stale approval for an older body digest must not approve the current head")
+	}
+}
+
 func TestValidateRejectsBadExtension(t *testing.T) {
 	r := baseReport(PerspectiveSecurity, VerdictApprove)
 	raw, _ := json.Marshal(r)
@@ -180,5 +678,132 @@ func TestValidateRejectsBadExtension(t *testing.T) {
 	raw, _ = json.Marshal(r)
 	if _, err := ValidateReport(raw); err == nil {
 		t.Fatal("expected bare repo to fail")
+	}
+}
+
+// hivecommons/hive#15499: a hive-authored PR whose reviewer found its
+// change already on the base (hive-redundant-of) is not a question the
+// hive answers by approving; the aggregate keeps the decision and names
+// the superseding PR for the closer.
+func TestAggregateReportsKeepsRedundantOfDecisionOnHiveAuthoredPR(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "close this as a no-op?"
+	r.RedundantOf = 15427
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+	if got.Verdict != VerdictRequiresHuman || !got.DecisionRequested || got.RedundantOf != 15427 || got.MergeEligible {
+		t.Fatalf("aggregate = %+v, want requires_human with redundant_of 15427", got)
+	}
+}
+
+// Owner rule (hivecommons/hive#15640): no human decision while a
+// contributor PR is in CI/Review unless the review found something fishy
+// or insecure; everything else keeps moving and the person has the last
+// word at the merge gate. hive's own #15312 (duplicate of #15309), #15410
+// (workflow pin) and friends sat 3–21h on decision-requested verdicts.
+func TestAggregateReportsContributorDecisionNeedsBacking(t *testing.T) {
+	ask := func(q string, findings ...outputschema.Finding) PerspectiveReport {
+		r := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman, findings...)
+		r.DecisionRequested = true
+		r.DecisionQuestion = q
+		return r
+	}
+	tests := []struct {
+		name    string
+		rep     PerspectiveReport
+		opts    AggregateOptions
+		want    Verdict
+		finding string
+	}{
+		{name: "bare product question keeps moving", rep: ask("@clubanderson should decide whether this groundwork lands before its consumer."), want: VerdictApprove},
+		{name: "duplicate question is a merge-gate call, not a CI/Review one", rep: ask("@clubanderson should decide whether #15312 is closed in favour of #15309, which clears the same ledger row."), want: VerdictApprove},
+		{name: "redundant-of marker likewise", rep: func() PerspectiveReport {
+			r := ask("close as superseded?")
+			r.RedundantOf = 15309
+			return r
+		}(), want: VerdictApprove},
+		{name: "workflow question is a sensitive-paths finding", rep: ask("@clubanderson should decide whether to accept this workflow-trigger change."), want: VerdictRequiresHuman, finding: "sensitive-paths question"},
+		{name: "credential question is a security finding", rep: ask("should the relay token be read from the environment here?"), want: VerdictRequiresHuman, finding: "permissions-credentials question"},
+		{name: "licensing question is not", rep: ask("@clubanderson is the copyright header acceptable?"), want: VerdictApprove},
+		{name: "high-risk marker is a finding", rep: func() PerspectiveReport {
+			r := ask("should this land?")
+			r.DecisionRiskHigh = true
+			return r
+		}(), want: VerdictRequiresHuman, finding: "high-risk"},
+		{name: "finding on a default sensitive path is a finding", rep: ask("should this land?", outputschema.Finding{Title: "new job runs on pull_request_target", Severity: outputschema.SeverityMedium, ReviewScope: "in-scope", File: ".github/workflows/ci.yml"}), want: VerdictRequiresHuman, finding: "sensitive path .github/workflows/ci.yml"},
+		{name: "finding on an operator sensitive path is a finding", rep: ask("should this land?", outputschema.Finding{Title: "changes the proxy allowlist", Severity: outputschema.SeverityLow, ReviewScope: "in-scope", File: "internal/proxy/allow.go"}), opts: AggregateOptions{SensitivePaths: []string{"internal/proxy/**"}}, want: VerdictRequiresHuman, finding: "sensitive path internal/proxy/allow.go"},
+		{name: "finding flagging insecure behaviour is a finding", rep: ask("should this land?", outputschema.Finding{Title: "Shells out with user input", Severity: outputschema.SeverityMedium, Summary: "command injection via the branch name", ReviewScope: "in-scope"}), want: VerdictRequiresHuman, finding: "flags insecure behaviour"},
+		{name: "ordinary high finding goes back to the clanker", rep: ask("should this land?", outputschema.Finding{Title: "Clears the wrong ledger key", Severity: outputschema.SeverityHigh, ReviewScope: "in-scope"}), want: VerdictChangesRequested},
+		{name: "ordinary low finding goes back to the clanker", rep: ask("should this land?", outputschema.Finding{Title: "Get-before-Clear is redundant", Severity: outputschema.SeverityLow, ReviewScope: "in-scope"}), want: VerdictChangesRequested},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AggregateReports([]PerspectiveReport{tt.rep}, tt.opts)
+			if got.Verdict != tt.want {
+				t.Fatalf("aggregate = %+v, want %s", got, tt.want)
+			}
+			switch tt.want {
+			case VerdictRequiresHuman:
+				if !got.DecisionRequested || got.DecisionQuestion != tt.rep.DecisionQuestion {
+					t.Fatalf("aggregate = %+v, want decision request kept", got)
+				}
+				if !strings.Contains(got.DecisionFinding, tt.finding) {
+					t.Fatalf("DecisionFinding = %q, want it to name %q", got.DecisionFinding, tt.finding)
+				}
+			case VerdictApprove:
+				if !got.MergeEligible || got.RequiresHuman || got.DecisionRequested || got.DecisionQuestion != "" || got.DecisionFinding != "" {
+					t.Fatalf("aggregate = %+v, want advisory approve", got)
+				}
+				if got.Perspectives[PerspectiveIntentAlignment] != VerdictApprove {
+					t.Fatalf("perspectives = %v, want the forced requires_human read as approve", got.Perspectives)
+				}
+				if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "no security finding") || !strings.Contains(got.Reasons[0], tt.rep.DecisionQuestion) {
+					t.Fatalf("Reasons = %v, want one advisory carrying the question", got.Reasons)
+				}
+			case VerdictChangesRequested:
+				if !got.FixCycle || got.RequiresHuman || got.DecisionRequested || got.DecisionFinding != "" {
+					t.Fatalf("aggregate = %+v, want the fixer lane", got)
+				}
+			}
+		})
+	}
+}
+
+// A bare requires_human (no decision marker) on a contributor PR follows
+// the same rule: only a security finding parks it.
+func TestAggregateReportsContributorRequiresHumanNeedsSecurityFinding(t *testing.T) {
+	plain := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman)
+	plain.Summary = "Unclear whether the groundwork should land before its consumer."
+	got := AggregateReports([]PerspectiveReport{plain}, AggregateOptions{})
+	if got.Verdict != VerdictApprove || got.RequiresHuman || !got.MergeEligible {
+		t.Fatalf("aggregate = %+v, want advisory approve", got)
+	}
+	sec := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	sec.Summary = "Trust-surface file by location; a relay owner should confirm before merge."
+	got = AggregateReports([]PerspectiveReport{sec}, AggregateOptions{})
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !strings.Contains(got.DecisionFinding, "security review withheld approval") {
+		t.Fatalf("aggregate = %+v, want the security perspective's hold kept with its finding", got)
+	}
+}
+
+func TestAggregateReportsContributorDecisionEscalatePolicyKeepsQuestion(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.DecisionRequested = true
+	r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{SelfAuthoredDecisionPolicy: "escalate"})
+	if got.Verdict != VerdictRequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want escalate policy to keep every decision question", got)
+	}
+}
+
+func TestAggregateReportsContributorUnbackedDecisionWithChangesRoutesToFixer(t *testing.T) {
+	ask := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman)
+	ask.DecisionRequested = true
+	ask.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+	changes := baseReport(PerspectiveCorrectness, VerdictChangesRequested, outputschema.Finding{Title: "nil deref", Severity: outputschema.SeverityMedium, ReviewScope: "in-scope"})
+	got := AggregateReports([]PerspectiveReport{ask, changes}, AggregateOptions{})
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.DecisionRequested || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want the sibling change request to route to the fixer, question advisory", got)
 	}
 }

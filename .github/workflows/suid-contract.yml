@@ -65,6 +65,7 @@ permissions:
 jobs:
   contract-check:
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -79,6 +80,7 @@ jobs:
   # bounding set (--cap-add), and asserts bit 12 survives the drop to dev.
   ambient-cap-runtime:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -99,6 +101,7 @@ jobs:
   # SETUID/SETGID, which breaks agent launch in the pod, and CI stayed green.
   manifest-cap-runtime:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -120,6 +123,7 @@ jobs:
   # and as an agent UID to prove the hive-launch gate still refuses.
   image-suid-inventory:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

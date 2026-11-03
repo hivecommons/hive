@@ -22,6 +22,10 @@ func TestParseAttributionTrailerWithIdentityFooter(t *testing.T) {
 		strings.ReplaceAll(contributorAttributionBody, "\n", "\r\n"),
 		strings.ReplaceAll(contributorAttributionBody, " | **SHA:**", " | **Instance:** `hive-bold-fox` | **SHA:**"),
 		strings.ReplaceAll(contributorAttributionBody, " `contributor`", ""),
+		// The origin marker that replaced the hive/<id> label (#12539) ends
+		// the footer block.
+		contributorAttributionBody + "\n<!-- hive:origin hive=hive-bold-fox at=2026-10-16T20:00:00Z -->",
+		contributorAttributionBody + "\n<!-- hive:origin hive=hive-bold-fox at=2026-10-16T20:00:00Z -->\n\n",
 	} {
 		meta, ok := ParseAttributionTrailer(body)
 		if !ok || meta.Backend != "codex" || meta.Model != "gpt-6-astra" {

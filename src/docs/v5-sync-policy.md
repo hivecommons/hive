@@ -1,15 +1,22 @@
 # v4 → v5 forward-port sync policy
 
-> **Status: active.** This page documents the v4→v5 sync practice used by
+> **Status: historical (superseded 2026-09-21).** `v4` has been feature-frozen
+> since 2026-09-21 (policy [#6346](https://github.com/hivecommons/hive/issues/6346);
+> see [CONTRIBUTING.md](../../CONTRIBUTING.md#branches)), so bulk forward-port
+> sync PRs no longer run: `v5` is the active development branch and v4→v5
+> movement is cherry-pick-only for security/critical fixes. The procedure below
+> is kept as the record of how the pre-freeze syncs were done.
+>
+> This page documented the v4→v5 sync practice used by
 > [#5845](https://github.com/hivecommons/hive/pull/5845),
 > [#6046](https://github.com/hivecommons/hive/pull/6046), and
 > [#6053](https://github.com/hivecommons/hive/pull/6053). Tracking issue:
 > [#6051](https://github.com/hivecommons/hive/issues/6051).
 
-Hive develops on two lines ([ROADMAP.md](../../ROADMAP.md)): `v4` is the
-supported stable default branch, and `v5` is the RFC-gated next generation.
-Most day-to-day work targets `v4` ([CONTRIBUTING.md](../../CONTRIBUTING.md)),
-so `v5` must be topped up by **forward-port sync PRs**. Historically these
+Before the freeze Hive developed on two lines ([ROADMAP.md](../../ROADMAP.md)):
+`v4` was the supported stable default branch, and `v5` the RFC-gated next
+generation. Most day-to-day work targeted `v4` ([CONTRIBUTING.md](../../CONTRIBUTING.md)),
+so `v5` had to be topped up by **forward-port sync PRs**. Historically these
 have been ad hoc: #4058, #4087, #4313, #5017 (436 commits), #5472, #5845,
 #6046, and #6053. This page makes the trigger, owner, procedure, and review
 expectations explicit because the [v5 GA bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
@@ -140,7 +147,9 @@ different identity. A common example is an author email such as
 checks compare the trailer email to the commit author email, not just the human
 name.
 
-Do not hand-swap the `dco-signoff` label as the normal response. Instead:
+Do not hand-swap the `dco` / `no-dco` label (or Prow's `dco-signoff: yes|no` pair,
+which coexist on Prow-gated repos) as the normal response — the hive rewrites it
+from the commits on the next cycle anyway. Instead:
 
 **Merge-method policy (decided by #6312):** `hive` PRs are merged by
 **rebase**, not squash. Squash is not used on `v4`/`v5` because Tide rebuilds
@@ -209,6 +218,20 @@ already asks for ("listing every affected SHA and the reason"), and it is the
 only one that can clear a commit that carries no trailer at all. Reach for the
 email allowlist only when the intent really is to accept an identity's alternate
 address going forward.
+
+Before reaching for either, check whether the checker can resolve the commit
+itself. A squash whose author is a GitHub noreply address
+(`<id>+<login>@users.noreply.github.com`) and whose sign-off is the same
+contributor's real address is accepted as `same-person-noreply` when the
+branch's history (last `DCO_SAME_PERSON_WINDOW` commits, default 500) carries
+local evidence of the link — the same name authored under the sign-off
+address before, or both identities appear on one earlier commit. Each
+acceptance is printed with the evidence commit; no GitHub API call is made.
+`DCO_SAME_PERSON_EVIDENCE_REFS` adds refs (for example a fetched
+`refs/pull/N/head`) to that search for a local check. Only a contributor's
+first such squash, which has no prior history, needs a waiver — and that
+waiver is reported `STALE-WAIVER` once their next commit under that address
+lands ([#15401](https://github.com/hivecommons/hive/issues/15401)).
 
 Neither instrument is silent. A waived commit is reported on every run as
 `WAIVED <sha> …` above the failures, the summary line counts waivers, and a

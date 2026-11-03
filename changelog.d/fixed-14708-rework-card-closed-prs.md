@@ -1,0 +1,1 @@
+- The contributor card's "PRs awaiting rework" count no longer includes PRs that have merged or closed while their stage record still said 072 or 074; a PR is only dropped when its repo's open-PR listing is complete (hivecommons/hive#14708).

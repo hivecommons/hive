@@ -1,0 +1,1 @@
+- CI failure log reads (`gh run view --log` and `--log-failed`) no longer trigger stop-polling nudges or fleet reports while agents diagnose failed jobs.

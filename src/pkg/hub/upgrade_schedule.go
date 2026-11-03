@@ -17,9 +17,9 @@ import (
 // inside working hours so a bad roll is caught while someone is around.
 const (
 	// AutoUpgradeModeInstant upgrades as soon as the hive is seen behind latest.
-	// This is the historical behaviour and the meaning of an EMPTY mode, so the
-	// ~42 existing PVC records that carry only `auto_upgrade: true` keep
-	// behaving exactly as they do today.
+	// It is only ever an explicit choice: an EMPTY mode resolves to daily, so
+	// legacy records that carry only `auto_upgrade: true` are not restarted at
+	// arbitrary hours (#11822).
 	AutoUpgradeModeInstant = "instant"
 
 	// AutoUpgradeModeDaily upgrades at most once per calendar day, during the
@@ -89,18 +89,24 @@ var validAutoUpgradeModes = map[string]bool{
 }
 
 // isValidAutoUpgradeMode reports whether mode is acceptable on the API. The
-// empty string is allowed and means "instant" (see normalizeAutoUpgradeMode) so
-// that older clients which send only auto_upgrade keep working unchanged.
+// empty string is allowed and means "daily" (see normalizeAutoUpgradeMode) so
+// that older clients which send only auto_upgrade keep working.
 func isValidAutoUpgradeMode(mode string) bool {
 	return mode == "" || validAutoUpgradeModes[mode]
 }
 
 // normalizeAutoUpgradeMode maps a stored/legacy value onto a concrete mode.
-// Empty (a legacy record, or a client that never sent the field) is instant.
+// Empty or whitespace-only (a legacy record, or a client that never sent the
+// field) is daily (#11822). Unrecognised non-empty values stay instant: the API
+// rejects them, so one can only come from a corrupted record, and failing
+// toward upgrading sooner matches the timezone-unavailable fallback.
 func normalizeAutoUpgradeMode(mode string) string {
 	switch mode {
 	case AutoUpgradeModeDaily, AutoUpgradeModeWeekly:
 		return mode
+	}
+	if strings.TrimSpace(mode) == "" {
+		return AutoUpgradeModeDaily
 	}
 	return AutoUpgradeModeInstant
 }
@@ -213,12 +219,30 @@ func shouldAutoUpgradeNowForChannel(mode, lastFiredDate, channel string, now tim
 	return shouldAutoUpgradeNow(mode, lastFiredDate, now)
 }
 
+// autoUpgradeScheduleCandidateBypass names the effective schedule of a
+// candidate-channel hive whose stored daily/weekly mode is not being honored.
+const autoUpgradeScheduleCandidateBypass = "candidate-bypass"
+
+// effectiveAutoUpgradeSchedule reports the schedule actually in force for a
+// hive. It returns the normalized configured mode unless the candidate bypass
+// applies, in which case it returns autoUpgradeScheduleCandidateBypass. The
+// dashboard and the audit log read this instead of re-deriving the env logic.
+func effectiveAutoUpgradeSchedule(mode, channel string) string {
+	if channel == ReleaseChannelCandidate && !candidateAutoUpgradeScheduleOverride() {
+		return autoUpgradeScheduleCandidateBypass
+	}
+	return normalizeAutoUpgradeMode(mode)
+}
+
 func candidateAutoUpgradeScheduleOverride() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(candidateRespectAutoUpgradeScheduleEnv))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
+	case "0", "false", "no", "off":
 		return false
+	default:
+		// The dashboard renders a candidate hive's stored daily/weekly mode as
+		// the operator-visible cadence. Respect that cadence unless a deployment
+		// explicitly opts back into candidate-continuous tracking.
+		return true
 	}
 }
 
@@ -233,4 +257,46 @@ const defaultUpgradeWaveSize = 10
 // initial default. Read every trigger tick, so a saved change is live.
 func upgradeWaveSize() int {
 	return settingOrEnv(getScaleSettings().UpgradeWaveSize, "HIVE_UPGRADE_WAVE_SIZE", defaultUpgradeWaveSize)
+}
+
+// autoUpgradeHoldNow is the clock the hold recording reads; a var so tests can
+// open a daily window deterministically.
+var autoUpgradeHoldNow = time.Now
+
+// scheduledUpgradeWindowOpen reports whether a daily/weekly hive's window is
+// open right now, i.e. the schedule itself would let it upgrade this cycle.
+// Instant hives have no window and report false.
+func scheduledUpgradeWindowOpen(mode, lastFiredDate string, now time.Time) bool {
+	return shouldAutoUpgradeNow(mode, lastFiredDate, now).FireDate != ""
+}
+
+// noteScheduledUpgradeHold persists why a scheduled hive was not upgraded while
+// its window was open (#11196), or clears the record when reason is "". The
+// heartbeat relays it to the spoke so its dashboard can say WHY the 13:00
+// window passed without an upgrade instead of only showing the last one. It
+// writes only when the reason changes, so a hold that persists across poll
+// cycles costs one save, not one per cycle. Same re-read-before-save pattern as
+// recordAutoUpgradeFired; a save failure is logged, not fatal.
+func (s *HubServer) noteScheduledUpgradeHold(h *SaaSHive, reason string, now time.Time) {
+	if h == nil || h.AutoUpgradeHoldReason == reason {
+		return
+	}
+	at := time.Time{}
+	if reason != "" {
+		at = now.UTC()
+		s.logger.Info("scheduled auto-upgrade held while its window is open",
+			"hive_id", h.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode), "reason", reason)
+	}
+	h.AutoUpgradeHoldReason = reason
+	h.AutoUpgradeHoldAt = at
+	stored := loadSaaSHive(h.ID)
+	if stored == nil {
+		stored = h
+	}
+	stored.AutoUpgradeHoldReason = reason
+	stored.AutoUpgradeHoldAt = at
+	if err := saveSaaSHive(stored); err != nil {
+		s.logger.Warn("failed to persist scheduled auto-upgrade hold reason",
+			"hive_id", h.ID, "error", err)
+	}
 }

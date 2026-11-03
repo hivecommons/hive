@@ -31,6 +31,10 @@ type protectionServer struct {
 	closingIssues   []map[string]any
 	signalsRejected bool
 	restCalls       int
+	// statuses are commit-status contexts answered by the combined-status
+	// endpoint; statusesFail makes that endpoint 500.
+	statuses     []string
+	statusesFail bool
 }
 
 func (p *protectionServer) start(t *testing.T) *httptest.Server {
@@ -89,6 +93,16 @@ func (p *protectionServer) start(t *testing.T) *httptest.Server {
 				"mergeable":       false,
 				"mergeable_state": p.mergeableState,
 			})
+		case strings.Contains(r.URL.Path, "/status"):
+			if p.statusesFail {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			sts := []map[string]any{}
+			for _, c := range p.statuses {
+				sts = append(sts, map[string]any{"context": c, "state": "success"})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "statuses": sts})
 		case strings.Contains(r.URL.Path, "/check-runs"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"total_count": len(p.checkRuns),
@@ -170,6 +184,9 @@ func TestEnrichCIStatus_NoRequiredCheckObservedMakesNoMissingClaim(t *testing.T)
 		checkRuns: []map[string]any{
 			{"name": "some-unrelated-check", "status": "completed", "conclusion": "success"},
 		},
+		// The required contexts exist, as commit statuses; only a context
+		// absent from both listings is "never created" (#11892).
+		statuses: []string{"validate", "dco"},
 	}
 	pr := enrichOnePR(t, p, map[string]bool{"validate": true, "dco": true})
 	if pr.Protection == nil {
@@ -315,5 +332,44 @@ func TestEnrichCIStatus_ReviewDecisionIsOneQueryPerRepo(t *testing.T) {
 	p.mu.Unlock()
 	if calls != 1 {
 		t.Errorf("graphQL called %d times for 5 PRs in one repository, want 1", calls)
+	}
+}
+
+// #11892: the only required context was never created anywhere — not as a
+// check run, not as a commit status — on a blocked head. It must be reported
+// missing so the PR is not merge-eligible.
+func TestEnrichCIStatus_NeverCreatedRequiredCheckIsMissing(t *testing.T) {
+	tests := []struct {
+		name         string
+		mergeable    string
+		statuses     []string
+		statusesFail bool
+		want         []string
+	}{
+		{name: "absent from check runs and statuses", mergeable: "blocked", want: []string{"build-gate"}},
+		{name: "reported as a commit status", mergeable: "blocked", statuses: []string{"build-gate"}},
+		{name: "status listing unavailable makes no claim", mergeable: "blocked", statusesFail: true},
+		{name: "not blocked makes no claim", mergeable: "clean"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &protectionServer{
+				mergeableState: tt.mergeable,
+				reviewDecision: "APPROVED",
+				statuses:       tt.statuses,
+				statusesFail:   tt.statusesFail,
+				checkRuns: []map[string]any{
+					{"name": "CodeQL", "status": "completed", "conclusion": "success"},
+				},
+			}
+			pr := enrichOnePR(t, p, map[string]bool{"build-gate": true})
+			if pr.Protection == nil {
+				t.Fatal("Protection is nil")
+			}
+			got := pr.Protection.MissingRequiredChecks
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("MissingRequiredChecks = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

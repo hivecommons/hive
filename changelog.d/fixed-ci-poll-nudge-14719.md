@@ -1,0 +1,1 @@
+- The CI-poll stop nudge and `ci_poll_nudge` self-report now also skip replica and variant names of the exempt `ci-maintainer` and `quality` lanes (e.g. `ci-maintainer-2`), not only the exact lane name (#14719).

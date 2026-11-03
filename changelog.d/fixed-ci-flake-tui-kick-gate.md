@@ -1,0 +1,1 @@
+- `TestKickHitsTheEscapedEndpointExactlyOnceAndRendersTheQueuedStatus` now gates the fixture's kick response while the three `K` presses are delivered, so the `kickPending` bound is asserted inside the in-flight window instead of racing the first response ([#13191](https://github.com/hivecommons/hive/issues/13191)).

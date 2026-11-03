@@ -1,0 +1,1 @@
+- The CI-poll stop nudge and its `ci_poll_nudge` self-report no longer fire for reviewer-lane agents, which read check status on the PRs they review as evidence rather than waiting on a PR of their own.

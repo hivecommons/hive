@@ -4,10 +4,59 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+// #12973: all runner probes passed, but one jobs API 502 made the watchdog
+// report an unhealthy pool. Check the action inputs that enable its built-in
+// request retries; removing them must restore the failing zero-retry policy.
+func TestCIRunnerCanaryRetriesTransientAPIFailures(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci-runner-canary.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Uses string `yaml:"uses"`
+				With struct {
+					Retries     int    `yaml:"retries"`
+					ExemptCodes string `yaml:"retry-exempt-status-codes"`
+				} `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &wf); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range wf.Jobs["watchdog"].Steps {
+		if !strings.HasPrefix(step.Uses, "actions/github-script@") {
+			continue
+		}
+		if step.With.Retries < 1 || step.With.Retries > 3 {
+			t.Fatalf("watchdog retries = %d; need a bounded retry budget of 1–3", step.With.Retries)
+		}
+		exempt := make(map[string]bool)
+		for _, code := range strings.Split(step.With.ExemptCodes, ",") {
+			exempt[strings.TrimSpace(code)] = true
+		}
+		for _, code := range []string{"500", "502", "503", "504"} {
+			if exempt[code] {
+				t.Errorf("transient HTTP %s must be eligible for retry", code)
+			}
+		}
+		for _, code := range []string{"400", "401", "403", "404", "422"} {
+			if !exempt[code] {
+				t.Errorf("non-retryable HTTP %s must remain exempt", code)
+			}
+		}
+		return
+	}
+	t.Fatal("watchdog GitHub API step missing")
+}
 
 // #10518: a missing npm fails the PATH probe before the integrity step.
 // GitHub implicitly applies success() unless a status function is present,

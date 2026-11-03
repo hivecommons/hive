@@ -8,7 +8,7 @@
 # NOTE: tmux reads history-limit at PANE creation, so the attach-time raise
 # cannot deepen an already-created pane. The authoritative deep-scrollback
 # setting is applied at session creation by the agent manager
-# (newSessionCommands in src/pkg/agent/manager.go, override
+# (newSessionCommands in src/crux/agent/manager.go, override
 # HIVE_TMUX_HISTORY_LIMIT).
 #
 # NOTE: The container uses src/deploy/ttyd-tmux.sh (copied to
@@ -67,7 +67,7 @@ fi
 
 # Scrollback state legibility (#4399, #4681). Kept character-for-character
 # identical to src/deploy/ttyd-tmux.sh and to tmuxStatusRight in
-# src/pkg/agent/manager.go — test_terminal_scrollback_status.sh asserts all
+# src/crux/agent/manager.go — test_terminal_scrollback_status.sh asserts all
 # three match, because a terminal that scrolls differently depending on which
 # wrapper attached is worse than one that is uniformly wrong.
 TTYD_STATUS_RIGHT="${HIVE_TTYD_STATUS_RIGHT:-#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,#{?mouse_any_flag,[live - this app handles its own scrolling#, so tmux has no line position] ,[live] }}now %H:%M:%S }"

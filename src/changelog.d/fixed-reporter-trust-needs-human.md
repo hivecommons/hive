@@ -1,1 +1,0 @@
-- A reporter-trust PR hold now applies `needs-human` alongside `hold`, and its notice names the untrusted reporter and states the PR was authored by the hive, so maintainers can see the PR is waiting on them.

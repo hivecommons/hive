@@ -184,7 +184,9 @@ func TestHealGitHubAppInstallationAdoptsAndPersists(t *testing.T) {
 		Project:    config.ProjectConfig{Org: "acme"},
 		// One agent satisfies validateSaveGuard, which otherwise refuses the
 		// write as a corrupt/minimal config.
-		Agents: map[string]config.AgentConfig{"quality": {Backend: "claude"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"quality": {Backend: "claude"}},
+		},
 		GitHub: config.GitHubConfig{InstallationID: 2},
 	}
 

@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
@@ -99,7 +101,7 @@ func TestCreateIssueAndCreateIssueCommentAgreeOnCanaryFailClosed(t *testing.T) {
 	defer issueServer.Close()
 	issueClient := newTestClient(t, issueServer, "org", []string{"org/repo"})
 	issueClient.SetCanaryScanner(true, true, r, nil)
-	_, issueErr := issueClient.CreateIssue(context.Background(), "org/repo", "title", body, nil)
+	_, issueErr := issueClient.CreateIssue(context.Background(), CreateIssueRequest{Repo: "org/repo", Title: "title", Body: body, Origin: "governor"})
 	if issueErr == nil || !strings.Contains(issueErr.Error(), "ioscan canary leak") {
 		t.Fatalf("CreateIssue error = %v, want canary block", issueErr)
 	}
@@ -141,7 +143,7 @@ func TestCreateIssueCommentCanaryFailOpenMatchesCreateIssue(t *testing.T) {
 	issueClient := newTestClient(t, issueServer, "org", []string{"org/repo"})
 	issueLeakSeen := false
 	issueClient.SetCanaryScanner(true, false, r, func(ioscan.CanaryLeak) { issueLeakSeen = true })
-	if _, err := issueClient.CreateIssue(context.Background(), "org/repo", "title", body, nil); err != nil {
+	if _, err := issueClient.CreateIssue(context.Background(), CreateIssueRequest{Repo: "org/repo", Title: "title", Body: body, Origin: "governor"}); err != nil {
 		t.Fatalf("CreateIssue with fail-closed off: %v", err)
 	}
 	if created != 1 {
@@ -290,5 +292,29 @@ func TestReviewRequestBlocksCanaryWhenFailClosed(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error, "ioscan canary leak") {
 		t.Fatalf("review result error = %q, want ioscan canary leak", resp.Error)
+	}
+}
+
+// A 403 on the comment POST is a definite refusal: the journal records
+// NotApplied, so the error is not wrapped as an uncertain outcome.
+func TestCreateIssueCommentForbiddenIsDefiniteRefusal(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"org/repo"})
+	err := c.CreateIssueComment(context.Background(), "org/repo", 7, "cleared")
+	if err == nil {
+		t.Fatal("CreateIssueComment succeeded, want 403 error")
+	}
+	if strings.Contains(err.Error(), "outcome uncertain") {
+		t.Fatalf("403 classified as uncertain: %v", err)
+	}
+	if !errors.Is(err, effects.ErrNotApplied) {
+		t.Fatalf("error = %v, want ErrNotApplied", err)
 	}
 }

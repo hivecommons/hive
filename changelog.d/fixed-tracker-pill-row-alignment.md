@@ -1,0 +1,1 @@
+- Hive activity monitor: the `since` age now sits in line with the chevron strip and the status pill (`hold`, `stalled`, `unauthorized`, …) hugs the last title line directly over its own strip, with a hairline between entries and a whole-row hover tint, so a tall row (wrapped title, `↳ #PR` line) no longer floats its pill and age into the gap between two rows (#14640).

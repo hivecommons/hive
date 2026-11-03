@@ -352,18 +352,20 @@ func TestContinuousBoolShorthandAllNonQuietModes(t *testing.T) {
 		{mode: "surge", want: true},
 		{mode: "quiet", want: false},
 	} {
-		if got := ac.ContinuousInMode(tc.mode, "1h"); got != tc.want {
+		if got := ac.ContinuousInMode(tc.mode, config.Cadence("1h")); got != tc.want {
 			t.Fatalf("ContinuousInMode(%q) = %v, want %v", tc.mode, got, tc.want)
 		}
 	}
-	if !(config.AgentConfig{}).ContinuousInMode("quiet", "continuous") {
+	if !(config.AgentConfig{}).ContinuousInMode("quiet", config.Cadence("continuous")) {
 		t.Fatal("explicit continuous cadence must opt quiet mode in")
 	}
 }
 
 func TestContinuousBusyTurnDoesNotUseCadence(t *testing.T) {
 	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
-	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "30m")
+	// The ceiling is disabled here so the test pins the cadence guard alone;
+	// continuous_turn_ceiling_test.go covers the presumed-end path.
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute, ContinuousTurnCeiling: -1}, "30m")
 	g.RecordKick("scanner")
 	now = now.Add(time.Hour)
 	if contains(g.Evaluate(0, 0, 0, 0), "scanner") {

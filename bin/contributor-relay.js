@@ -40,7 +40,11 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const { randomUUID } = require('crypto');
 const DEFAULT_NEEDS_DECISION_LABEL = 'needs-decision';
+// Leveled local audit (hivecommons/hive#13456): levels, redaction, the
+// commands shim's row shape and reasoning binding. See bin/lib/relay-audit.js.
+const relayAudit = require('./lib/relay-audit.js');
 const {
   parsePiModelSelection,
   redactPiCredentials,
@@ -172,10 +176,35 @@ const CONTRIBUTOR_CONFIG_DIR = process.env.HIVE_CONTRIBUTOR_CONFIG_DIR || path.j
 const CONTRIBUTOR_ENV_FILE = process.env.HIVE_CONTRIBUTOR_ENV || path.join(CONTRIBUTOR_CONFIG_DIR, 'contributor.env');
 const RELAY_PID_FILE = process.env.HIVE_RELAY_PID_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'contributor-relay.pid');
 const HUBS_SEEN_FILE = process.env.HIVE_HUBS_SEEN_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'hubs-seen.json');
+const RELAY_STATUS_FILE = process.env.HIVE_RELAY_STATUS_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'relay-status.json');
+const relaySession = randomUUID();
+const relayStartedAt = new Date().toISOString();
 const HUBS_SEEN_MIN_WRITE_MS = 60000;
 let hubsSeenWriteTimer = null;
 let hubsSeenDirty = false;
 let lastHubsSeenWrite = 0;
+// #13293: owner-only, bounded JSONL of terminal task attempts ("what I've
+// done"). Retained history, not lifetime totals: pruned to the newest
+// RELAY_ACTIVITY_MAX_ENTRIES within RELAY_ACTIVITY_RETENTION_DAYS. Never holds
+// prompts, task payloads, tokens, credentials or log text.
+const RELAY_ACTIVITY_FILE = process.env.HIVE_RELAY_ACTIVITY_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'relay-activity.jsonl');
+const RELAY_ACTIVITY_MAX_ENTRIES = parsePositiveIntegerEnv('HIVE_RELAY_ACTIVITY_MAX_ENTRIES', 1000);
+const RELAY_ACTIVITY_RETENTION_DAYS = parsePositiveIntegerEnv('HIVE_RELAY_ACTIVITY_RETENTION_DAYS', 90);
+// #13456: the same file is a leveled audit stream. Each row class has its own
+// cap so chatty command rows can never evict lifecycle history or terminal
+// attempts: HIVE_RELAY_ACTIVITY_MAX_ENTRIES still bounds terminal attempts,
+// lifecycle rows have a row cap and command rows a byte cap.
+const RELAY_AUDIT_LIFECYCLE_MAX_ENTRIES = parsePositiveIntegerEnv('HIVE_RELAY_AUDIT_LIFECYCLE_MAX_ENTRIES', 10000);
+const RELAY_AUDIT_COMMANDS_MAX_BYTES = parsePositiveIntegerEnv('HIVE_RELAY_AUDIT_COMMANDS_MAX_BYTES', 4 * 1024 * 1024);
+// Owner-only working directory for the `commands` level: the gh/git shim
+// wrappers (bin/), the current task's capture state and the spool the shim
+// appends to. Nothing in it is a credential.
+const RELAY_AUDIT_DIR = process.env.HIVE_RELAY_AUDIT_DIR || path.join(CONTRIBUTOR_CONFIG_DIR, 'relay-audit');
+const RELAY_AUDIT_SHIM_DIR = path.join(RELAY_AUDIT_DIR, 'bin');
+const RELAY_AUDIT_STATE_FILE = path.join(RELAY_AUDIT_DIR, 'state.json');
+const RELAY_AUDIT_SPOOL_FILE = path.join(RELAY_AUDIT_DIR, 'commands.spool.jsonl');
+const RELAY_AUDIT_DRAIN_MS = 15000;
+const activityAttempts = new Map();
 const MCP_CONFIG_FILE = process.env.HIVE_MCP_CONFIG_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'mcp.json');
 
 // --- Delivery mode (kubestellar/hive#2538) -------------------------------
@@ -1006,6 +1035,19 @@ function warnQuotaGuardAwaitingPublisherOnce() {
     'published for this pool yet — holding until the reading lands or the marker goes stale (kubestellar/hive#6987).');
 }
 
+// agy publishes Claude/GPT (`3p-*`) and Gemini (`gemini-*`) windows in one
+// reading, and the two provider pools are independent. A window whose id names
+// the other family must not hold this contributor. Unknown models and windows
+// outside either family stay evaluated (conservative).
+function quotaWindowAppliesToModel(window, backend = BACKEND, model = MODEL) {
+  if (backend !== 'agy') return true;
+  const m = (model || '').toLowerCase();
+  const id = (window.id || '').toString().toLowerCase();
+  if (/^gemini/.test(m)) return !id.startsWith('3p-');
+  if (/claude|opus|sonnet|haiku|gpt/.test(m)) return !id.startsWith('gemini');
+  return true;
+}
+
 // opts.baseReserveOnly evaluates against the window reserve alone, ignoring the
 // per-complexity tier reserves. #6833 specifies the base window reserve for the
 // `ready` hold; the tier reserves exist to judge a SPECIFIC task, and `ready`
@@ -1036,6 +1078,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     && Number.isInteger(reading.reset_credits_available) && reading.reset_credits_available > 0;
   let usedBankedReset = false;
   for (const window of (reading.limits || [])) {
+    if (!quotaWindowAppliesToModel(window)) continue;
     const kind = (window.kind || '').toString();
     // Every window is evaluated, including kinds this build has never heard of
     // (kubestellar/hive#6951). Skipping unrecognized kinds meant an EXHAUSTED
@@ -1060,6 +1103,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
       // assignment -- it must never silently become a standing spend authority.
       if (quotaOverrideApplies(override, window, reading)) {
         contributorQuotaPaused = false;
+        writeRelayStatus();
         return { admit: true, reason: `override_${override.directive}`, override: override.directive, window_id: window.id || kind, remaining_pct: remaining, required_reserve_pct: required, complexity };
       }
       // Same refusal either way -- only the label differs, so an operator can
@@ -1082,6 +1126,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     return { admit: false, wait: true, reason: 'pool_reserved' };
   }
   contributorQuotaPaused = false;
+  writeRelayStatus();
   return usedBankedReset ? { admit: true, reason: 'banked_reset_available' } : { admit: true };
 }
 
@@ -1113,6 +1158,7 @@ function retryContributorQuota() {
   const decision = evaluateContributorQuota(null, readContributorQuotaReading(), { baseReserveOnly: true });
   if (!decision.admit) { armContributorQuotaRetry(); return; }
   contributorQuotaPaused = false;
+  writeRelayStatus();
   console.log('Contributor quota guard released — a fresh reading clears every effective reserve. Asking for work again.');
   if (!currentTask && !cliReadyFailed && !quotaHoldActive()) {
     requestWork(hubs[activeHubIndex], 'quota_guard_released');
@@ -1121,6 +1167,7 @@ function retryContributorQuota() {
 
 function logContributorQuotaDecision(task, decision) {
   contributorQuotaPaused = true;
+  writeRelayStatus();
   // Nothing else will restart the loop once `ready` is being suppressed
   // (kubestellar/hive#6951).
   armContributorQuotaRetry();
@@ -1238,25 +1285,67 @@ const RELAY_PROTOCOL_VERSION = '1.4';
 // contributorProtocolVersion), so RELAY_PROTOCOL_VERSION is deliberately NOT
 // bumped here and stays in step with the hub, keeping
 // TestRelayProtocolVersionMatchesHub honest.
-const RELAY_CAPABILITIES = ['quota_preflight_v1', 'standby_v1', 'run-stage'];
+const RELAY_CAPABILITIES = ['quota_preflight_v1', 'standby_v1', 'run-stage', 'fix_pr_interrupt_v1'];
+
+// ── Stage-072 `fix-pr` interrupts (hivecommons/hive#12436) ──────────────────
+// When one of this contributor's earlier PRs goes red the hub pushes a
+// task_assign of kind `fix-pr` with priority `interrupt` WHILE a task is
+// running. Two client-side modes, chosen by the hub from what this relay
+// advertised:
+//   spawn   — a parallel one-shot (headless) child works the red PR while the
+//             primary session keeps its task. Advertised as the
+//             `parallel_sessions` capability + `max_parallel_fixes`, only when
+//             the backend has a headless entry point (the fix child is one).
+//   preempt — no parallel capacity: the primary agent is told to park its
+//             current work (WIP committed/stashed, claim kept alive by the
+//             relay's unchanged lease), fix the PR, print a done marker, then
+//             resume. In headless mode there is no pane to interrupt, so the
+//             fix is DEFERRED and runs before the next `ready`.
+// A fix never replaces currentTask: the primary lease stays owned and renewed.
+const FIX_PR_KIND = 'fix-pr';
+// Every follow-up commit must be signed off or the PR bounces to no-dco
+// (hivecommons/hive#14605).
+const FIX_PR_SIGNOFF_REQUIREMENT = 'REQUIRED: every follow-up commit MUST carry a Signed-off-by trailer — commit with `git commit -s`, and run `git rebase --signoff` before pushing if any new commit lacks one.';
+const FIX_PR_MAX_PARALLEL = Math.max(0, Math.min(16, Number(process.env.HIVE_MAX_PARALLEL_FIXES || 1) || 0));
+const FIX_PR_DONE_MARKER = 'HIVE_FIX_PR_DONE';
+const FIX_PR_FAILED_MARKER = 'HIVE_FIX_PR_FAILED';
+const FIX_PR_CHILD_TIMEOUT_MS = Number(process.env.HIVE_FIX_PR_TIMEOUT_MS || 2 * 60 * 60 * 1000);
+// task_id → { task, hub, child, mode, startedAt }
+const parallelFixes = new Map();
+// Fix tasks accepted while a headless primary is running; dispatched before
+// the next `ready` so the hub's "fix what you broke before new work" ordering
+// holds on the client too.
+const deferredFixes = [];
+// The fix currently preempting the interactive primary (at most one).
+let preemptingFix = null;
 
 const KNOWLEDGE_AGENT_MD = process.env.HIVE_AGENT_MD || path.join(process.env.HOME || require('os').homedir() || process.cwd(), 'agent.md');
 const KNOWLEDGE_STATE_POLL_MS = Number(process.env.HIVE_KNOWLEDGE_STATE_POLL_MS || (RELAY_TEST_TIMING ? 200 : 30000));
 const KNOWLEDGE_ERROR_MAX = 500;
+
+// Report the contributor's home as "~" so the local username does not travel
+// to every hive in the fleet view.
+function tildePath(file) {
+  const home = process.env.HOME || require('os').homedir() || '';
+  if (home && home !== '/' && (file === home || file.startsWith(`${home}${path.sep}`))) return `~${file.slice(home.length)}`;
+  return file;
+}
 
 function boundKnowledgeError(reason) {
   reason = String(reason || '').replace(/\s+/g, ' ').trim();
   return reason.length > KNOWLEDGE_ERROR_MAX ? `${reason.slice(0, KNOWLEDGE_ERROR_MAX)}…` : reason;
 }
 
-function knowledgeExportLooksValid(file) {
+function knowledgeExportLooksValid(realFile) {
+  const file = tildePath(realFile);
   let text;
   try {
-    const st = fs.statSync(file);
+    const st = fs.statSync(realFile);
     if (!st.isFile() || st.size <= 0) return { ok: false, reason: `${file} is absent or empty` };
-    text = fs.readFileSync(file, 'utf8');
+    text = fs.readFileSync(realFile, 'utf8');
   } catch (e) {
-    return { ok: false, reason: `${file} is not readable: ${e.message}` };
+    if (e.code === 'ENOENT') return { ok: false, reason: `${file} is absent (knowledge export not available from the hub)` };
+    return { ok: false, reason: `${file} is not readable: ${boundKnowledgeError(e.message).split(realFile).join(file)}` };
   }
   const lines = text.split(/\r?\n/);
   if (lines[0] !== '# Agent Knowledge') return { ok: false, reason: `${file} is not a knowledge export (expected first line "# Agent Knowledge")` };
@@ -1293,7 +1382,7 @@ const TASK_RESTART_MAX_BACKOFF_MS = 60000;
 const GIVE_UP_MEMORY_MS = 3600000;
 
 if (rawTokenList.length === 0) {
-  console.error('FATAL: HIVE_REGISTRATION_TOKEN not set. Run `just contribute-register` first.');
+  console.error('FATAL: HIVE_REGISTRATION_TOKEN not set. Run `just contribute-setup` first.');
   process.exit(1);
 }
 
@@ -1301,12 +1390,203 @@ if (rawTokenList.length === 0) {
 // state. currentTask, cliReady and everything CLI-facing stay single global
 // values below — there is exactly one CLI/tmux session, shared across
 // whichever hub currently holds the active task or is being polled for work.
+// ── Retired hosted-hive domains ──────────────────────────────────────────────
+// The hosted fleet moved apex from *.hive.kubestellar.io to
+// *.hive.hivecommons.dev on 2026-09-04. The old wildcard is no longer in the
+// serving certificate, so a contributor whose contributor.env still carries the
+// URL `just contribute-setup` wrote before the move fails the TLS handshake on
+// every attempt ("Hostname/IP does not match certificate's altnames") and the
+// close handler used to retry it forever at MAX_RECONNECT_DELAY_MS. The old
+// apex still answers HTTP with a 301, but a WebSocket handshake does not
+// follow redirects, so nothing downstream ever told the contributor to move.
+//
+// Keyed by host SUFFIX so the per-hive label (hosted-<slug>, or a vanity host)
+// is preserved verbatim — only the apex changes. Order: most specific first.
+const RETIRED_HIVE_HOST_SUFFIXES = [
+  ['.hive.kubestellar.io', '.hive.hivecommons.dev'],
+];
+const RETIRED_HIVE_APEX_HOSTS = new Map([
+  ['hive.kubestellar.io', 'hive.hivecommons.dev'],
+]);
+const DEFAULT_HUB_PUBLIC_URL = 'https://hive.hivecommons.dev';
+const DEFAULT_HUB_SPOKE_DOMAIN = 'hive.hivecommons.dev';
+
+// relocateRetiredHiveURL returns `url` with a retired apex replaced by its
+// successor, or null when the URL does not name a retired host (including
+// unparseable input — the caller falls back to the string it had).
+function relocateRetiredHiveURL(url) {
+  let u;
+  try { u = new URL(String(url || '').trim()); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  const apex = RETIRED_HIVE_APEX_HOSTS.get(host);
+  if (apex) { u.hostname = apex; return u.toString(); }
+  for (const [from, to] of RETIRED_HIVE_HOST_SUFFIXES) {
+    if (host.endsWith(from)) {
+      u.hostname = host.slice(0, -from.length) + to;
+      return u.toString();
+    }
+  }
+  return null;
+}
+
+// Logged once per distinct saved URL, not once per reconnect: the relocation
+// happens in hubWsURL()/hubPublicURL(), which run on every connect and every
+// SIGUSR1 reload of contributor.env.
+const retiredHiveURLWarned = new Set();
+function normalizeRetiredHiveURL(url) {
+  const raw = String(url || '').trim();
+  const moved = relocateRetiredHiveURL(raw);
+  if (!moved) return raw;
+  if (!retiredHiveURLWarned.has(raw)) {
+    retiredHiveURLWarned.add(raw);
+    console.warn(`Hive URL ${raw} uses the retired *.hive.kubestellar.io domain; connecting to ${moved} instead. ` +
+      `Update the HIVE_HUB line in ${CONTRIBUTOR_ENV_FILE} (or re-run \`just contribute-setup\`) to silence this.`);
+  }
+  return moved;
+}
+
 function hubWsURL(url) {
-  return String(url || '').trim().replace(/\/contribute\/?$/, '/api/contribute/ws');
+  return normalizeRetiredHiveURL(url).replace(/\/contribute\/?$/, '/api/contribute/ws');
 }
 
 function hubPublicURL(url) {
-  return String(url || '').trim().replace(/\/api\/contribute\/ws\/?$/, '/contribute');
+  return normalizeRetiredHiveURL(url).replace(/\/api\/contribute\/ws\/?$/, '/contribute');
+}
+
+// ── TLS hostname mismatch: stop, explain, re-resolve once ───────────────────
+// Node surfaces a certificate that does not cover the dialed host as an
+// ERR_TLS_CERT_ALTNAME_INVALID error whose message names the altnames. It is
+// never transient — the same URL will fail identically until the contributor
+// changes it — so backing off and redialing is pure noise.
+const TLS_ALTNAME_MISMATCH_RE = /does not match certificate'?s altnames/i;
+function isTLSHostMismatchError(err) {
+  if (!err) return false;
+  if (err.code === 'ERR_TLS_CERT_ALTNAME_INVALID') return true;
+  return TLS_ALTNAME_MISMATCH_RE.test(String(err.message || err));
+}
+
+// tlsHostMismatchRemediation is the one line a contributor needs to act on
+// a hostname mismatch: what moved, where the stale value lives, and how to
+// get a fresh one. `resolved` is the URL the relay is about to retry with (or
+// null when it has nothing better to try).
+function tlsHostMismatchRemediation(hub, resolved) {
+  const saved = hub.sourceURL || hub.url;
+  const parts = [`The hive at ${saved} presented a certificate for another host — the hive has moved and your saved URL is stale (${CONTRIBUTOR_ENV_FILE}, HIVE_HUB line).`];
+  if (resolved) {
+    parts.push(`The hub lists it at ${resolved}; retrying there once.`);
+  } else {
+    parts.push('Not retrying this URL.');
+  }
+  parts.push(`Fix: export HIVE_HUB=wss://<new-hive-host>/contribute, or re-run \`just contribute-setup\` to pick the hive again from ${DEFAULT_HUB_PUBLIC_URL}.`);
+  return parts.join(' ');
+}
+
+// hubRegistryURL is the public hive listing of the hub a hosted hive belongs
+// to — the same lookup `just contribute-setup` performs. Hosted hives live one
+// label under the hub's spoke domain, so the hub is the apex of the hive host;
+// anything else (a standalone hive) has no hub we can ask and resolves to null.
+function hubRegistryURLFor(hiveURL) {
+  let u;
+  try { u = new URL(String(hiveURL || '').trim()); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  const idx = host.indexOf('.');
+  if (idx <= 0) return null;
+  const apex = host.slice(idx + 1);
+  if (apex !== DEFAULT_HUB_SPOKE_DOMAIN) return null;
+  return `https://${apex}/api/registry`;
+}
+
+// currentHiveURLFromRegistry picks the hive matching `hiveURL` out of a
+// /api/registry body: by id (hosted-<slug>) or by the host of its dashboardUrl
+// (vanity hosts). Returns the registry's dashboardUrl as a wss:// contribute
+// URL, or null when the registry does not know the hive or lists the same
+// host we just failed on (so the retry would be identical).
+//
+// Only an https dashboardUrl under the hub's own spoke domain is followed.
+// dashboardUrl is reported by each spoke in its heartbeat, so the registry can
+// list any host; the relay dials the result with the contributor's token and
+// runs whatever that host hands it, which must stay with hosts the hub fronts.
+// Entries elsewhere are skipped, never redialed.
+function currentHiveURLFromRegistry(hiveURL, registry) {
+  let u;
+  try { u = new URL(String(hiveURL || '').trim()); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  const label = host.split('.')[0];
+  const hives = registry && Array.isArray(registry.hives) ? registry.hives : [];
+  for (const h of hives) {
+    if (!h || typeof h !== 'object' || typeof h.dashboardUrl !== 'string') continue;
+    let d;
+    try { d = new URL(h.dashboardUrl); } catch (_) { continue; }
+    const dHost = d.hostname.toLowerCase().replace(/\.$/, '');
+    if (h.id !== label && dHost.split('.')[0] !== label) continue;
+    if (d.protocol !== 'https:' || !dHost.endsWith('.' + DEFAULT_HUB_SPOKE_DOMAIN)) continue;
+    if (dHost === host) return null;
+    d.hostname = dHost;
+    d.protocol = 'wss:';
+    d.pathname = '/contribute';
+    d.search = '';
+    d.hash = '';
+    return d.toString();
+  }
+  return null;
+}
+
+// fetchHubRegistry GETs the hub's /api/registry and calls back with the parsed
+// body (or null on any failure). Replaceable from tests via __setRegistryFetch
+// so the resolution path runs without a network or a timer.
+const HUB_REGISTRY_TIMEOUT_MS = 5000;
+let fetchHubRegistry = (registryURL, cb) => {
+  let done = false;
+  const finish = v => { if (!done) { done = true; cb(v); } };
+  try {
+    const req = https.get(registryURL, { timeout: HUB_REGISTRY_TIMEOUT_MS }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { if (body.length < 4 * 1024 * 1024) body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return finish(null);
+        try { finish(JSON.parse(body)); } catch (_) { finish(null); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.on('error', () => finish(null));
+  } catch (_) { finish(null); }
+};
+
+// handleTLSHostMismatch is the `error` handler's branch for a certificate
+// that does not cover the dialed host. It marks the hub so the close handler
+// does not schedule a reconnect, prints the remediation once, and — when the
+// hive belongs to a hub we can ask and we have not already retried — looks the
+// hive up in that hub's registry and redials its current URL exactly once.
+function handleTLSHostMismatch(hub, err) {
+  hub.tlsHostMismatch = true;
+  hub.authenticated = false;
+  const registryURL = hub.relocationAttempted ? null : hubRegistryURLFor(hub.sourceURL || hub.url);
+  if (!registryURL) {
+    console.error(tlsHostMismatchRemediation(hub, null));
+    writeRelayStatus();
+    return;
+  }
+  hub.relocationAttempted = true;
+  fetchHubRegistry(registryURL, registry => {
+    const resolved = currentHiveURLFromRegistry(hub.sourceURL || hub.url, registry);
+    console.error(tlsHostMismatchRemediation(hub, resolved));
+    if (!resolved) { writeRelayStatus(); return; }
+    hub.relocatedFrom = hub.sourceURL || hub.url;
+    hub.sourceURL = hubPublicURL(resolved);
+    hub.url = hubWsURL(resolved);
+    hub.tlsHostMismatch = false;
+    hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
+    connectHub(hub);
+  });
+}
+
+// One audit level per hub (#13456). Unlike the credential lists, a bad value
+// never stops the relay: it degrades to the default level with a warning.
+function auditLevelsFromEnv(env, count) {
+  const { levels, error } = relayAudit.auditLevelsFromEnv(env.HIVE_RELAY_AUDIT_LEVEL, count);
+  if (error) console.error(`WARNING: ${error}`);
+  return levels;
 }
 
 function disabledHubFlags(env, count) {
@@ -1319,10 +1599,101 @@ function disabledHubFlags(env, count) {
   return flags.map(s => s === 'true');
 }
 
-function makeHub(url, token, disabled = false, contributorId = '') {
+// null is legacy/unrestricted; [] is deliberately no work. Preserve empty
+// comma slots: dropping one would attach another Hive's scope to this token.
+function repoScopesFromEnv(env, count) {
+  if (env.HIVE_REPO_SCOPE === undefined) return Array(count).fill(null);
+  const entries = String(env.HIVE_REPO_SCOPE).split(',');
+  if (entries.length !== count) throw new Error('HIVE_REPO_SCOPE must contain one entry per HIVE_HUB');
+  return entries.map(entry => {
+    if (entry.trim() === '*') return null;
+    return [...new Set(entry.split(';').map(s => s.trim()).filter(Boolean).map(id => {
+      const normalized = canonicalRepositoryID(id);
+      if (!normalized) throw new Error(`Invalid HIVE_REPO_SCOPE repository: ${id}`);
+      return normalized;
+    }))];
+  });
+}
+
+function canonicalRepositoryID(id) {
+  if (typeof id !== 'string') return null;
+  const parts = id.toLowerCase().split('/');
+  if (parts.length !== 4 || !['github', 'gitlab', 'gitea'].includes(parts[0])) return null;
+  if (!/^[a-z0-9.-]+(?::[0-9]+)?$/.test(parts[1]) || parts.slice(1).some(p => p === '.' || p === '..')) return null;
+  if (parts.slice(2).some(p => !/^[a-z0-9_.-]+$/.test(p))) return null;
+  return parts.join('/');
+}
+
+function repoScopeVersionFromEnv(env, scopes) {
+  const raw = env.HIVE_REPO_SCOPE_VERSION;
+  if (raw === undefined && scopes.every(scope => scope === null)) return 0;
+  if (!/^[0-9]+$/.test(String(raw)) || !Number.isSafeInteger(Number(raw))) {
+    throw new Error('HIVE_REPO_SCOPE_VERSION must be a nonnegative safe integer');
+  }
+  return Number(raw);
+}
+
+function hubHasSelectedWork(hub) {
+  return !!hub && !hub.disabled && !hub.authFailed && !hub.scopeUnsupported &&
+    (hub.repoScope == null || hub.repoScope.length > 0);
+}
+
+function hubScopeReady(hub) {
+  return hubHasSelectedWork(hub) && !hub.scopePending &&
+    (hub.repoScope == null || hub.scopeAckVersion === hub.scopeVersion);
+}
+
+function assignmentInScope(hub, msg) {
+  if (!hubs.includes(hub)) return false;
+  if (hub.repoScope == null) return true;
+  // Never infer an unknown forge/host from a bare owner/name. New hubs can
+  // supply explicit identity; the existing GitHub task URL also identifies it.
+  const id = assignmentRepositoryID(msg);
+  return hubScopeReady(hub) && !!id && hub.repoScope.includes(id);
+}
+
+function refuseOutOfScopeAssignment(hub, msg) {
+  if (assignmentInScope(hub, msg)) return false;
+  console.log(`Declining ${taskKey(msg)} — out of contributor repository scope`);
+  sendTo(hub, { type: 'task_declined', seq: nextSeq(), task_id: msg.task_id,
+    task_gen: msg.task_gen, reason: 'out_of_contributor_scope' });
+  if (msg.task_id != null) appendTaskActivity(activityTaskFacts(hub, msg), 'scope-refused');
+  return true;
+}
+
+function negotiateRepoScope(hub) {
+  hub.scopeAckVersion = null;
+  hub.scopePending = hub.repoScope !== null || !!hub.scopeSent;
+  hub.scopeUnsupported = hub.scopePending && !hub.serverCapabilities.includes('repo_scope_v1');
+  if (hub.scopeUnsupported) {
+    if (!hub.scopeUnsupportedReported) console.log(`hive ${hub.sourceURL} cannot enforce your repository selection — not taking work from it`);
+    hub.scopeUnsupportedReported = true;
+  } else if (hub.scopePending) {
+    hub.scopeSent = true;
+    sendTo(hub, { type: 'repo_scope', scope_version: hub.scopeVersion,
+      mode: hub.repoScope === null ? 'all' : 'selected', repositories: hub.repoScope || [] });
+  }
+  recordHubSeen(hub);
+  writeRelayStatus();
+}
+
+function logRepoScopeIdle() {
+  if (hubs.every(h => h.disabled || (h.repoScope !== null && h.repoScope.length === 0))) {
+    console.log('no repositories selected on any hive — idle');
+  }
+}
+
+function makeHub(url, token, disabled = false, contributorId = '', repoScope = null, scopeVersion = 0) {
   return {
     disabled,
     contributorId,
+    repoScope,
+    scopeVersion,
+    // #13456: this hive's local audit level (HIVE_RELAY_AUDIT_LEVEL).
+    auditLevel: relayAudit.AUDIT_DEFAULT_LEVEL,
+    scopeAckVersion: null,
+    scopePending: repoScope !== null,
+    scopeUnsupported: false,
     url: hubWsURL(url),
     sourceURL: hubPublicURL(url),
     regToken: token,
@@ -1339,6 +1710,13 @@ function makeHub(url, token, disabled = false, contributorId = '') {
     readyRequestSeq: 0,
     authenticated: false,
     authFailed: false,
+    // Set by handleTLSHostMismatch when the dialed host is not in the served
+    // certificate; parks the hub (no reconnect loop) until contributor.env
+    // changes. relocationAttempted bounds the hub-registry re-resolution to
+    // one try per hub lifetime; relocatedFrom records the stale URL it left.
+    tlsHostMismatch: false,
+    relocationAttempted: false,
+    relocatedFrom: null,
     // #2547: set once we have reported a contributor-protocol difference with
     // this hub, so a reconnect loop does not repeat the same advisory line.
     protocolDriftReported: false,
@@ -1369,20 +1747,108 @@ function makeHub(url, token, disabled = false, contributorId = '') {
 
 const initialContributorIds = String(process.env.CONTRIBUTOR_ID || '').split(',').map(s => s.trim());
 const initiallyDisabledHubs = disabledHubFlags(process.env, rawHubList.length);
-const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0], initiallyDisabledHubs[i], initialContributorIds[i] || ''));
+const initialRepoScopes = repoScopesFromEnv(process.env, rawHubList.length);
+const initialScopeVersion = repoScopeVersionFromEnv(process.env, initialRepoScopes);
+const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0], initiallyDisabledHubs[i], initialContributorIds[i] || '', initialRepoScopes[i], initialScopeVersion));
+auditLevelsFromEnv(process.env, hubs.length).forEach((level, i) => { hubs[i].auditLevel = level; });
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
 // explicit task_unavailable from the active hub; sticks with the same hub
 // across a completed/failed/revoked task rather than switching eagerly, since
 // task_unavailable is the only signal (kubestellar/hive#2436/#2546 — the hub
 // always sends it, never stays silent) that a hub genuinely has no work.
-let activeHubIndex = hubs.findIndex(h => !h.disabled);
-if (activeHubIndex < 0) console.log('All hive profiles are disabled — idle until a hive is enabled.');
+let activeHubIndex = hubs.findIndex(hubHasSelectedWork);
+logRepoScopeIdle();
+if (hubs.every(h => h.disabled)) console.log('All hive profiles are disabled — idle until a hive is enabled.');
 let commonsCompletedTasks = 0;
 let commonsSpreadCursor = 0;
 
 let seq = 0;
 let currentTask = null;
+let adoptedScopeVersion = initialScopeVersion;
+let adoptedAt = relayStartedAt;
+let currentTaskStartedAt = null;
+
+function canonicalHiveID(url) {
+  const parsed = new URL(url);
+  const scheme = parsed.protocol === 'wss:' ? 'https:' : parsed.protocol === 'ws:' ? 'http:' : parsed.protocol;
+  return `${scheme}//${parsed.host.toLowerCase()}`;
+}
+
+function currentTaskRepository(task) {
+  if (!task) return null;
+  if (task.forge && task.host) return canonicalRepositoryID(`${task.forge}/${task.host}/${task.repo}`);
+  try {
+    const url = new URL(task.url);
+    if (url.protocol === 'https:' && url.host === 'github.com') {
+      return canonicalRepositoryID(`github/github.com/${task.repo}`);
+    }
+  } catch (_) {}
+  return null;
+}
+
+function relayIdleReason() {
+  if (hubs.every(hub => hub.disabled)) return 'all-subscriptions-disabled';
+  if (hubs.every(hub => hub.disabled || (hub.repoScope !== null && hub.repoScope.length === 0))) return 'no-repositories-selected';
+  return null;
+}
+
+function relayReadiness(hub) {
+  if (hub.disabled) return 'disabled';
+  if (hub.tlsHostMismatch) return 'hive-moved';
+  if (contributorQuotaPaused || quotaHoldActive()) return 'quota-held';
+  if (!hub.authenticated || hub.authFailed) return 'discovery-unavailable';
+  if (hub.scopeUnsupported) return 'scope-unsupported';
+  if (hub.scopePending) return 'scope-pending';
+  return 'connected';
+}
+
+function writeRelayStatus() {
+  let temporary;
+  try {
+    const now = new Date().toISOString();
+    const taskHub = currentTask && currentTask._hub;
+    const repository = currentTaskRepository(currentTask);
+    const draining = !!currentTask && !!taskHub &&
+      (!hubs.includes(taskHub) || taskHub.disabled ||
+        (taskHub.repoScope !== null && (!repository || !taskHub.repoScope.includes(repository))));
+    const status = {
+      pid: process.pid, started_at: relayStartedAt, session: relaySession,
+      adopted_scope_version: adoptedScopeVersion, adopted_at: adoptedAt,
+      subscriptions: hubs.map(hub => {
+        const readiness = relayReadiness(hub);
+        if (hub.statusReadiness !== readiness || hub.statusAckVersion !== hub.scopeAckVersion ||
+            hub.statusScopeVersion !== hub.scopeVersion) {
+          hub.statusObservedAt = now;
+          hub.statusReadiness = readiness;
+          hub.statusAckVersion = hub.scopeAckVersion;
+          hub.statusScopeVersion = hub.scopeVersion;
+        }
+        return {
+          hive: canonicalHiveID(hub.sourceURL), readiness,
+          acknowledged_scope_version: hub.scopeAckVersion,
+          observed_at: hub.statusObservedAt,
+        };
+      }),
+      current_task: currentTask && !currentTask.synthetic ? {
+        hive: taskHub ? canonicalHiveID(taskHub.sourceURL) : null,
+        repository, task_id: typeof currentTask.task_id === 'string' &&
+          currentTask.task_id.length <= 256 && !/\s/.test(currentTask.task_id) ? currentTask.task_id : null,
+        issue: Number.isSafeInteger(currentTask.number) ? currentTask.number : null,
+        started_at: currentTaskStartedAt || now, draining,
+      } : null,
+      idle_reason: relayIdleReason(),
+    };
+    fs.mkdirSync(path.dirname(RELAY_STATUS_FILE), { recursive: true, mode: 0o700 });
+    temporary = `${RELAY_STATUS_FILE}.${process.pid}.${randomUUID()}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(status, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    fs.renameSync(temporary, RELAY_STATUS_FILE);
+  } catch (e) {
+    if (temporary) { try { fs.unlinkSync(temporary); } catch (_) {} }
+    console.error(`WARNING: could not write relay status file ${RELAY_STATUS_FILE}: ${e.message}`);
+  }
+}
+
 let progressInterval = null;
 let verdictWatchInterval = null;
 let verdictFastPathLine = null;
@@ -1513,6 +1979,7 @@ function enterQuotaHold(hint) {
   if (until <= quotaHoldUntil) return;
 
   quotaHoldUntil = until;
+  writeRelayStatus();
   quotaRecoveryRequired = requiresRecovery;
   quotaExhaustedAt = Date.now();
   quotaHoldReason = (hint && hint.line) || 'provider quota exhausted';
@@ -1589,6 +2056,7 @@ function releaseQuotaHold(why, { skipReady = false } = {}) {
   if (!quotaHoldUntil) return;
   const was = quotaHoldReason;
   quotaHoldUntil = 0;
+  writeRelayStatus();
   quotaHoldReason = '';
   quotaRecoveryRequired = false;
   quotaExhaustedAt = 0;
@@ -1854,7 +2322,14 @@ function invalidateAllReadyRetries(reason) {
 }
 
 function requestWork(hub, trigger, expectedConnectGeneration = null) {
-  if (!hub || hub.disabled) return false;
+  // Standby is passive on every hub, including peers without standby_v1.
+  // Guard the shared request path so CLI startup and cross-hub retries cannot
+  // bypass the auth/task-exit guards and acquire ordinary work (#14831).
+  if (STANDBY_MODE) {
+    logSkippedWorkRequest(hub, trigger, 'standby mode');
+    return false;
+  }
+  if (!hubScopeReady(hub)) return false;
   const conn = readyConnLabel(hub);
   if (expectedConnectGeneration !== null && hub.connectGeneration !== expectedConnectGeneration) {
     logSkippedWorkRequest(hub, trigger, `stale connection generation (expected ${expectedConnectGeneration}, current ${hub.connectGeneration})`);
@@ -1864,6 +2339,10 @@ function requestWork(hub, trigger, expectedConnectGeneration = null) {
     logSkippedWorkRequest(hub, trigger, `already working on ${currentTask.task_id || taskKey(currentTask)}`);
     return false;
   }
+  // hivecommons/hive#12436: a fix accepted while the previous task ran is
+  // served before asking for new work — "clean up your mess before taking on
+  // new stuff" holds on the client as well as on the hub.
+  if (startDeferredFix(hub, trigger)) return false;
   if (hub.readyOutstanding) {
     logSkippedWorkRequest(hub, trigger, 'ready already outstanding');
     return false;
@@ -1916,6 +2395,8 @@ function sendTo(hub, msg) {
   // rationale. Everything else about the task is unchanged — it still runs,
   // still ticks locally, and still reports task_complete/ready when it ends.
   if (msg && HUB_OWNERSHIP_FRAMES.has(msg.type) && isLocalOnlyTaskId(msg.task_id)) return;
+  recordAuditForFrame(hub, msg);
+  recordActivityForFrame(msg);
   // #6541: while the provider has refused this account on quota, do not ask for
   // work. Enforced HERE, at the one point every frame passes through, rather
   // than at each of the eight `ready` call sites — a guard per call site is the
@@ -1923,7 +2404,10 @@ function sendTo(hub, msg) {
   // failure being fixed is a `ready` that should not have been sent. Only
   // `ready` is withheld: progress, completion and failure frames for work
   // already in flight must still reach the hub.
-  if (msg && msg.type === 'ready' && hub && hub.disabled) return;
+  if (msg && msg.type === 'ready') {
+    if (!hubScopeReady(hub)) return;
+    if (hub.repoScope !== null || hub.scopeSent) msg = { ...msg, scope_version: hub.scopeVersion };
+  }
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
   // #7996: same choke point for an expired CLI login — see enterLoginHold.
   if (msg && msg.type === 'ready' && loginHoldActive()) return;
@@ -2029,7 +2513,7 @@ function chooseSpreadHub() {
   if (hubs.length === 0) return null;
   const cycle = [];
   for (let i = 0; i < hubs.length; i++) {
-    if (hubs[i].authFailed || hubs[i].disabled) continue;
+    if (!hubHasSelectedWork(hubs[i])) continue;
     for (let n = 0; n < commonsRankWeight(i); n++) cycle.push(i);
   }
   if (cycle.length === 0) return null;
@@ -2048,7 +2532,7 @@ function chooseNeediestHub() {
   let bestScore = -1;
   for (let i = 0; i < hubs.length; i++) {
     const hub = hubs[i];
-    if (!hub || hub.authFailed || hub.disabled) continue;
+    if (!hubHasSelectedWork(hub)) continue;
     const score = Number.isFinite(hub.lastNeediestScore)
       ? hub.lastNeediestScore
       : (Number.isFinite(hub.lastActionableItems) ? hub.lastActionableItems : -1);
@@ -2061,7 +2545,7 @@ function chooseNeediestHub() {
     activeHubIndex = best;
     return hubs[best];
   }
-  activeHubIndex = hubs.findIndex(h => !h.authFailed && !h.disabled);
+  activeHubIndex = hubs.findIndex(hubHasSelectedWork);
   return hubs[activeHubIndex] || null;
 }
 
@@ -2076,7 +2560,7 @@ function chooseHubForNextTask(reason) {
     default:
       if (reason === 'unavailable') return advanceActiveHub(hubs[activeHubIndex]);
       for (let i = 0; i < hubs.length; i++) {
-        if (!hubs[i].authFailed && !hubs[i].disabled) {
+        if (hubHasSelectedWork(hubs[i])) {
           activeHubIndex = i;
           return hubs[i];
         }
@@ -2149,7 +2633,7 @@ function hubSupportsQuotaPreflight(hub) {
 function advanceActiveHub(fromHub) {
   const fromIndex = hubs.indexOf(fromHub);
   const start = fromIndex >= 0 ? fromIndex : activeHubIndex;
-  const eligible = (hub) => hub && !hub.authFailed && !hub.disabled;
+  const eligible = (hub) => hubHasSelectedWork(hub);
   const socketOpen = (hub) => !!(hub.ws && hub.ws.readyState === 1);
   const passes = [
     (hub) => eligible(hub) && socketOpen(hub),
@@ -2175,7 +2659,13 @@ function parseContributorEnvFile(file) {
     if (!line || line.startsWith('#')) continue;
     const idx = line.indexOf('=');
     if (idx <= 0) continue;
-    out[line.slice(0, idx)] = line.slice(idx + 1);
+    let value = line.slice(idx + 1).trim();
+    // WriteEnvProjection single-quotes HIVE_REPO_SCOPE so the file can be shell-sourced;
+    // strip one matching outer pair like `source` would.
+    if (value.length >= 2 && (value[0] === "'" || value[0] === '"') && value[value.length - 1] === value[0]) {
+      value = value.slice(1, -1);
+    }
+    out[line.slice(0, idx)] = value;
   }
   return out;
 }
@@ -2190,7 +2680,10 @@ function hubListFromEnv(env) {
   }
   const contributorIds = String(env.CONTRIBUTOR_ID || '').split(',').map(s => s.trim());
   const disabled = disabledHubFlags(env, hubList.length);
-  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i], contributorId: contributorIds[i] || '' }));
+  const scopes = repoScopesFromEnv(env, hubList.length);
+  const scopeVersion = repoScopeVersionFromEnv(env, scopes);
+  const auditLevels = auditLevelsFromEnv(env, hubList.length);
+  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i], contributorId: contributorIds[i] || '', repoScope: scopes[i], scopeVersion, auditLevel: auditLevels[i] }));
 }
 
 function stopHub(hub, reason) {
@@ -2208,9 +2701,14 @@ function stopHub(hub, reason) {
   hub.authenticated = false;
   hub.readyOutstanding = false;
   hub.connectGeneration++;
+  writeRelayStatus();
 }
 
 function maybeAskActiveHubForWork() {
+  // Standby stays connected (and negotiates its repository selection) but
+  // never asks for ordinary work — mirror the auth_ok guard here so the
+  // repo_scope_ack and profile-reload paths cannot leak a ready.
+  if (STANDBY_MODE) return;
   const hub = hubs[activeHubIndex];
   if (!hub || currentTask || !hub.authenticated || hub.readyOutstanding) return;
   if (cliReadyFailed) {
@@ -2247,26 +2745,44 @@ function reloadHubsFromProjection() {
       existing.sourceURL = hubPublicURL(entry.url);
       existing.contributorId = entry.contributorId || existing.contributorId;
       existing.disabled = entry.disabled;
+      // A running task keeps the level it started with; this applies next task.
+      existing.auditLevel = entry.auditLevel;
       if (existing.disabled) invalidateReadyRetry(existing, 'hive disabled');
+      const scopeChanged = JSON.stringify(existing.repoScope) !== JSON.stringify(entry.repoScope) || existing.scopeVersion !== entry.scopeVersion;
+      existing.repoScope = entry.repoScope;
+      // Even a hand-edited projection cannot reuse a version for a new scope.
+      existing.scopeVersion = scopeChanged ? Math.max(entry.scopeVersion, existing.scopeVersion + 1) : existing.scopeVersion;
+      if (scopeChanged) {
+        existing.scopeAckVersion = null;
+        existing.readyOutstanding = false;
+        invalidateReadyRetry(existing, 'repository selection changed');
+        if (existing.authenticated && !tokenChanged) negotiateRepoScope(existing);
+      }
       remaining.delete(existing);
       if (tokenChanged) {
         stopHub(existing, 'registration token changed');
         existing.regToken = entry.token;
         existing.authFailed = false;
+        existing.tlsHostMismatch = false;
         existing.reconnectDelay = BASE_RECONNECT_DELAY_MS;
         connectHub(existing);
       }
       return existing;
     }
-    const hub = makeHub(entry.url, entry.token, entry.disabled, entry.contributorId);
+    const hub = makeHub(entry.url, entry.token, entry.disabled, entry.contributorId, entry.repoScope, entry.scopeVersion);
+    hub.auditLevel = entry.auditLevel;
     connectHub(hub);
     return hub;
   });
   for (const removed of remaining) stopHub(removed, 'removed from contributor.env');
   hubs.splice(0, hubs.length, ...next);
-  activeHubIndex = hubs.findIndex(h => !h.disabled && !h.authFailed);
+  adoptedScopeVersion = repoScopeVersionFromEnv(projection, entries.map(entry => entry.repoScope));
+  adoptedAt = new Date().toISOString();
+  activeHubIndex = hubs.findIndex(hubHasSelectedWork);
   if (hubs.every(h => h.disabled)) console.log('All hive profiles are disabled — idle until a hive is enabled.');
+  logRepoScopeIdle();
   hubs.forEach(refreshHubStatus);
+  writeRelayStatus();
   console.log(`Reloaded ${hubs.length} hive profile(s) from ${CONTRIBUTOR_ENV_FILE}; active hive is ${hubs[activeHubIndex] ? hubs[activeHubIndex].sourceURL : '(none)'}`);
   maybeAskActiveHubForWork();
   return hubs.length;
@@ -2276,6 +2792,14 @@ function handleProfileSwitchSignal() {
   try {
     reloadHubsFromProjection();
   } catch (e) {
+    // A broken latest projection must not leave the old, wider scope live.
+    for (const hub of hubs) {
+      hub.repoScope = [];
+      hub.scopeAckVersion = null;
+      invalidateReadyRetry(hub, 'invalid repository projection');
+    }
+    logRepoScopeIdle();
+    writeRelayStatus();
     console.error(`Failed to reload hive profiles from ${CONTRIBUTOR_ENV_FILE}: ${e.message}`);
   }
 }
@@ -2285,10 +2809,25 @@ function writeRelayPidFile() {
     fs.mkdirSync(path.dirname(RELAY_PID_FILE), { recursive: true, mode: 0o700 });
     const record = {
       pid: process.pid,
-      started_at: new Date().toISOString(),
+      started_at: relayStartedAt,
+      session: relaySession,
+      // The tmux session the relay drives, so `just contribute-stop` can end
+      // it with the relay it stops (hivecommons/hive#14833).
+      agent_session: (process.env.HIVE_AGENT_SESSION || '').trim() || undefined,
       env_file: CONTRIBUTOR_ENV_FILE,
       container_runtime: (process.env.HIVE_CONTAINER_RUNTIME || '').trim() || undefined,
       container_name: (process.env.HIVE_CONTAINER_NAME || '').trim() || undefined,
+      tmux_session: CONTRIBUTOR_MODE === MODE_HEADLESS ? undefined : TMUX_SESSION,
+      // Interactive krun (#12199/#12202): the launcher names the microVM with
+      // HIVE_ISOLATION_CLASS=microvm-krun. Its session lives on the VM console
+      // and the krun handler refuses exec, so the viewer needs its own mode.
+      // Headless krun is a plain headless container: the viewer follows logs.
+      mode: CONTRIBUTOR_MODE === MODE_HEADLESS ? 'headless'
+        : (process.env.HIVE_CONTAINER_NAME ? (ISOLATION_CLASS === 'microvm-krun' ? 'krun' : 'container') : 'local'),
+      // The launcher's isolation signal, kept on headless records too so Stop can
+      // clean up a krun container like `just contribute-stop` does.
+      isolation_class: process.env.HIVE_CONTAINER_NAME && ISOLATION_CLASS ? ISOLATION_CLASS : undefined,
+      log_file: process.env.HIVE_CONTAINER_NAME ? undefined : (process.env.HIVE_RELAY_LOG_FILE || undefined),
     };
     fs.writeFileSync(RELAY_PID_FILE, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
   } catch (e) {
@@ -2305,7 +2844,17 @@ function writeHubsSeenNow() {
   if (!hubsSeenDirty) return;
   const seen = {};
   for (const hub of hubs) {
-    if (hub.lastSeenAt) seen[hub.sourceURL || hubPublicURL(hub.url)] = hub.lastSeenAt;
+    if (hub.lastSeenAt) {
+      const key = hub.sourceURL || hubPublicURL(hub.url);
+      // Keep legacy timestamps byte-compatible; scoped subscriptions carry
+      // per-profile status so shared URLs do not hide an unsupported profile.
+      if (hub.repoScope !== null || hub.scopeSent) {
+        const previous = seen[key];
+        const subscriptions = previous && typeof previous === 'object' ? previous.subscriptions : {};
+        subscriptions[hub.contributorId || ''] = hub.scopeUnsupported ? 'unsupported' : (hub.scopePending ? 'pending' : (hub.repoScope === null ? 'all' : (hub.repoScope.length ? 'selected' : 'empty')));
+        seen[key] = { last_seen: hub.lastSeenAt, subscriptions };
+      } else if (!seen[key] || typeof seen[key] === 'string') seen[key] = hub.lastSeenAt;
+    }
   }
   try {
     fs.mkdirSync(path.dirname(HUBS_SEEN_FILE), { recursive: true, mode: 0o700 });
@@ -2328,6 +2877,456 @@ function recordHubSeen(hub, now = Date.now()) {
     hubsSeenWriteTimer = setTimeout(writeHubsSeenNow, wait);
     if (typeof hubsSeenWriteTimer.unref === 'function') hubsSeenWriteTimer.unref();
   }
+}
+
+function activityAttemptKey(taskId, taskGen) {
+  return `${taskId}\u0000${taskGen == null ? '' : taskGen}`;
+}
+
+function assignmentRepositoryID(msg) {
+  let forge = msg.forge, host = msg.host;
+  if (!forge && !host && typeof msg.url === 'string') {
+    try {
+      const url = new URL(msg.url);
+      if (url.protocol === 'https:' && url.host === 'github.com' &&
+          url.pathname.toLowerCase().startsWith(`/${String(msg.repo).toLowerCase()}/`)) {
+        forge = 'github'; host = 'github.com';
+      }
+    } catch (_) {}
+  }
+  return canonicalRepositoryID(`${forge}/${host}/${msg.repo}`);
+}
+
+// Only identity fields are copied: the assignment also carries the prompt,
+// a task-scoped token and MCP config, none of which may reach the store.
+function activityTaskFacts(hub, msg) {
+  const number = Number(msg.number);
+  return {
+    hub: hub ? (hub.sourceURL || hubPublicURL(hub.url)) : '',
+    contributor_id: (hub && hub.contributorId) || '',
+    repository: assignmentRepositoryID(msg) || '',
+    repo: typeof msg.repo === 'string' ? msg.repo : '',
+    number: Number.isSafeInteger(number) && number > 0 ? number : undefined,
+    kind: typeof msg.kind === 'string' ? msg.kind : '',
+    task_id: String(msg.task_id),
+    task_gen: msg.task_gen == null ? undefined : msg.task_gen,
+  };
+}
+
+function noteTaskAttemptStart(hub, msg) {
+  if (!msg || msg.task_id == null || isLocalOnlyTaskId(msg.task_id)) return;
+  const facts = {
+    ...activityTaskFacts(hub, msg),
+    started_at: new Date().toISOString(),
+  };
+  activityAttempts.set(activityAttemptKey(msg.task_id, msg.task_gen), facts);
+  noteAuditTaskStart(hub, msg, facts);
+}
+
+// Terminal frames all pass through sendTo; a frame for an attempt this relay
+// never started (an assignment rejected before work began) is not activity.
+function recordActivityForFrame(msg) {
+  if (!msg || (msg.type !== 'task_complete' && msg.type !== 'task_failed')) return;
+  // Rejecting a duplicate offer of the running task is not its outcome.
+  if (msg.type === 'task_failed' && msg.reason === 'Already has active task') return;
+  const key = activityAttemptKey(msg.task_id, msg.task_gen);
+  const facts = activityAttempts.get(key);
+  if (!facts) return;
+  activityAttempts.delete(key);
+  endCommandAudit(facts);
+  appendTaskActivity(facts, msg.type === 'task_complete' ? 'success' : 'failure');
+}
+
+function recordCancelledActivity(task) {
+  if (!task) return;
+  const key = activityAttemptKey(task.task_id, task.task_gen);
+  const facts = activityAttempts.get(key);
+  if (!facts) return;
+  activityAttempts.delete(key);
+  endCommandAudit(facts);
+  appendTaskActivity(facts, 'cancelled');
+}
+
+function readActivityRecords() {
+  let raw;
+  try { raw = fs.readFileSync(RELAY_ACTIVITY_FILE, 'utf8'); } catch (_) { return []; }
+  const records = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line);
+      if (relayAudit.isAuditRow(record)) records.push(record);
+    } catch (_) {}
+  }
+  return records;
+}
+
+function pruneActivityRecords(records, now = Date.now()) {
+  return relayAudit.pruneAuditRows(records, {
+    now,
+    retentionDays: RELAY_ACTIVITY_RETENTION_DAYS,
+    maxTerminal: RELAY_ACTIVITY_MAX_ENTRIES,
+    maxLifecycle: RELAY_AUDIT_LIFECYCLE_MAX_ENTRIES,
+    maxCommandBytes: RELAY_AUDIT_COMMANDS_MAX_BYTES,
+  });
+}
+
+// writeActivityRecords is the store's one write path: 0700 directory, 0600
+// temp file, atomic rename. Throws; callers log and carry on.
+function writeActivityRecords(records) {
+  const dir = path.dirname(RELAY_ACTIVITY_FILE);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${RELAY_ACTIVITY_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, records.map(r => JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+  try { fs.chmodSync(tmp, 0o600); } catch (_) {}
+  fs.renameSync(tmp, RELAY_ACTIVITY_FILE);
+}
+
+function appendTaskActivity(facts, outcome, now = Date.now()) {
+  // Keyed by subscription (hub + contributor) and Hive task/lease generation,
+  // so a replayed frame or a reconnect cannot count one attempt twice. A scope
+  // refusal is an offer, not a run, so it never shadows a later execution.
+  const key = [facts.hub, facts.contributor_id, facts.task_id, facts.task_gen == null ? '' : facts.task_gen,
+    outcome === 'scope-refused' ? 'offer' : 'run'].join('|');
+  const record = {
+    v: 1,
+    key,
+    hub: facts.hub,
+    contributor_id: facts.contributor_id || undefined,
+    repository: facts.repository || undefined,
+    repo: facts.repo || undefined,
+    number: facts.number,
+    kind: facts.kind || undefined,
+    task_id: facts.task_id,
+    task_gen: facts.task_gen,
+    outcome,
+    started_at: facts.started_at || new Date(now).toISOString(),
+    ended_at: new Date(now).toISOString(),
+    backend: BACKEND,
+    model: MODEL || undefined,
+  };
+  try {
+    const existing = readActivityRecords();
+    if (existing.some(r => r.key === key)) return false;
+    writeActivityRecords(pruneActivityRecords([...existing, record], now));
+    return true;
+  } catch (e) {
+    console.error(`WARNING: could not record task activity in ${RELAY_ACTIVITY_FILE}: ${e.message}`);
+    return false;
+  }
+}
+
+// ── Leveled local audit (hivecommons/hive#13456) ────────────────────────────
+//
+// Levels off < lifecycle (default) < commands < reasoning, per hive
+// (HIVE_RELAY_AUDIT_LEVEL, projected by `hivectl hives set <name>
+// --audit-level`). A task is audited at the level its hive had when the task
+// started. Terminal rows above are written at every level; everything below
+// is skipped at `off`. Capture only — nothing here is sent to any hive.
+
+function auditLevelForHub(hub) {
+  return (hub && relayAudit.normalizeAuditLevel(hub.auditLevel)) || relayAudit.AUDIT_DEFAULT_LEVEL;
+}
+
+// Lifecycle rows can arrive after a task's terminal frame (the exit sweep's
+// stash runs last), so facts outlive activityAttempts for a short while.
+const AUDIT_FACTS_MEMORY = 16;
+const auditTaskFacts = new Map();
+
+function rememberAuditFacts(facts) {
+  const key = activityAttemptKey(facts.task_id, facts.task_gen);
+  auditTaskFacts.delete(key);
+  auditTaskFacts.set(key, facts);
+  while (auditTaskFacts.size > AUDIT_FACTS_MEMORY) auditTaskFacts.delete(auditTaskFacts.keys().next().value);
+}
+
+function auditFactsForTask(task) {
+  if (!task || task.task_id == null) return null;
+  return auditTaskFacts.get(activityAttemptKey(String(task.task_id), task.task_gen)) || null;
+}
+
+// Identity only: the same fields a terminal row carries, never the payload.
+function auditIdentity(facts) {
+  return {
+    hub: facts.hub,
+    contributor_id: facts.contributor_id || undefined,
+    repository: facts.repository || undefined,
+    repo: facts.repo || undefined,
+    number: facts.number,
+    kind: facts.kind || undefined,
+    task_id: facts.task_id,
+    task_gen: facts.task_gen,
+  };
+}
+
+function auditText(value, maxBytes = 512) {
+  return relayAudit.truncateBytes(relayAudit.redactAuditText(sanitizeHubText(String(value == null ? '' : value)), RELAY_SECRET_PATTERNS), maxBytes);
+}
+
+// Events that describe a whole attempt are written once even when the frame
+// that triggers them is replayed; token renewals, holds and stashes repeat.
+const AUDIT_ONCE_PER_ATTEMPT = new Set(['assigned', 'declined', 'token_received', 'mcp_configured', 'pr_opened', 'revoked']);
+
+function appendAuditRows(rows, now = Date.now()) {
+  if (!rows.length) return false;
+  try {
+    const existing = readActivityRecords();
+    const fresh = rows.filter(row => !AUDIT_ONCE_PER_ATTEMPT.has(row.event) || !existing.some(r =>
+      r.event === row.event && r.hub === row.hub && r.contributor_id === row.contributor_id &&
+      r.task_id === row.task_id && r.task_gen === row.task_gen));
+    if (!fresh.length) return false;
+    writeActivityRecords(pruneActivityRecords([...existing, ...fresh], now));
+    return true;
+  } catch (e) {
+    console.error(`WARNING: could not record relay audit in ${RELAY_ACTIVITY_FILE}: ${e.message}`);
+    return false;
+  }
+}
+
+function recordLifecycleEvent(facts, event, fields = {}, now = Date.now()) {
+  if (!facts || facts.task_id == null) return false;
+  if (!relayAudit.auditLevelAtLeast(facts.audit_level, 'lifecycle')) return false;
+  return appendAuditRows([{
+    v: 2,
+    level: 'lifecycle',
+    event,
+    ts: new Date(now).toISOString(),
+    ...auditIdentity(facts),
+    ...fields,
+  }], now);
+}
+
+function noteAuditTaskStart(hub, msg, facts) {
+  facts.audit_level = auditLevelForHub(hub);
+  facts.token_gens = [];
+  rememberAuditFacts(facts);
+  const commands = relayAudit.auditLevelAtLeast(facts.audit_level, 'commands');
+  const headless = CONTRIBUTOR_MODE === MODE_HEADLESS;
+  if (commands && currentTask === msg) beginCommandAudit(facts);
+  recordLifecycleEvent(facts, 'assigned', {
+    backend: BACKEND,
+    // At `commands` and above, say whether the shim can see this task's
+    // commands, so an absence of command rows is distinguishable from
+    // "nothing ran" (the entrypoint's first launch predates the shim).
+    capture: commands ? ((headless || auditShimInPane) && facts.command_audit ? 'shim' : 'none') : undefined,
+  });
+  if (msg.github_token) noteAuditTokenEvent(facts, 'token_received');
+}
+
+function noteAuditTokenEvent(facts, event, now = Date.now()) {
+  if (!facts) return;
+  const gen = (facts.token_gens.length ? facts.token_gens[facts.token_gens.length - 1].gen : 0) + 1;
+  facts.token_gens.push({ at: now, gen });
+  recordLifecycleEvent(facts, event, { token_gen: gen }, now);
+}
+
+function auditTokenGenAt(facts, ts) {
+  const t = Date.parse(ts);
+  let gen;
+  for (const entry of (facts && facts.token_gens) || []) {
+    if (!Number.isFinite(t) || entry.at <= t) gen = entry.gen;
+  }
+  return gen;
+}
+
+// recordAuditForFrame turns outgoing frames into lifecycle rows. Called from
+// sendTo BEFORE recordActivityForFrame, while the attempt is still tracked.
+function recordAuditForFrame(hub, msg) {
+  if (!msg || msg.task_id == null || isLocalOnlyTaskId(msg.task_id)) return;
+  const key = activityAttemptKey(msg.task_id, msg.task_gen);
+  const tracked = activityAttempts.get(key);
+  // A task_failed for an attempt this relay never started is a rejection.
+  const declined = msg.type === 'task_declined' || (msg.type === 'task_failed' && !tracked && !auditFactsForTask(msg));
+  if (declined) {
+    const facts = {
+      hub: hub ? (hub.sourceURL || hubPublicURL(hub.url)) : '',
+      contributor_id: (hub && hub.contributorId) || '',
+      task_id: String(msg.task_id),
+      task_gen: msg.task_gen == null ? undefined : msg.task_gen,
+      audit_level: auditLevelForHub(hub),
+    };
+    recordLifecycleEvent(facts, 'declined', { reason: auditText(msg.reason || 'unspecified', 256) });
+    return;
+  }
+  const facts = tracked && auditFactsForTask(msg);
+  if (!facts) return;
+  if (msg.type === 'task_complete' && typeof msg.pr_url === 'string' && /^https:\/\//.test(msg.pr_url)) {
+    recordLifecycleEvent(facts, 'pr_opened', { url: auditText(msg.pr_url, 512) });
+  } else if (msg.type === 'task_progress') {
+    const blocked = msg.status === 'blocked_on_human';
+    if (blocked && !facts.blocked_on_human) recordLifecycleEvent(facts, 'blocked_on_human');
+    facts.blocked_on_human = blocked;
+  }
+}
+
+function recordCurrentTaskAuditEvent(event, fields) {
+  recordLifecycleEvent(auditFactsForTask(currentTask), event, fields);
+}
+
+// ── `commands` / `reasoning`: the gh/git PATH shim ──────────────────────────
+
+let auditShimInPane = false;
+let auditShimWarned = false;
+let auditDrainTimer = null;
+
+function anyHubAuditsCommands() {
+  return hubs.some(h => !h.disabled && relayAudit.auditLevelAtLeast(auditLevelForHub(h), 'commands'));
+}
+
+// installAuditShim writes the gh and git wrappers into RELAY_AUDIT_SHIM_DIR
+// (0700). Returns the directory, or '' when the shim cannot be installed — in
+// which case commands are simply not captured; the task is unaffected.
+function installAuditShim() {
+  const shim = path.join(__dirname, 'lib', 'relay-audit-shim.js');
+  try {
+    if (!fs.existsSync(shim)) return '';
+    fs.mkdirSync(RELAY_AUDIT_SHIM_DIR, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(RELAY_AUDIT_DIR, 0o700); fs.chmodSync(RELAY_AUDIT_SHIM_DIR, 0o700); } catch (_) {}
+    for (const op of ['gh', 'git']) {
+      const file = path.join(RELAY_AUDIT_SHIM_DIR, op);
+      const body = `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(shim)} ${shellQuote(RELAY_AUDIT_STATE_FILE)} ${op} "$@"\n`;
+      let current = null;
+      try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
+      if (current === body) continue;
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, body, { mode: 0o700 });
+      try { fs.chmodSync(tmp, 0o700); } catch (_) {}
+      fs.renameSync(tmp, file);
+    }
+    return RELAY_AUDIT_SHIM_DIR;
+  } catch (e) {
+    console.error(`WARNING: could not install the relay audit shim in ${RELAY_AUDIT_SHIM_DIR}: ${e.message} — commands will not be audited`);
+    return '';
+  }
+}
+
+// withAuditShimPath prefixes the CLI launch the relay types into the pane with
+// a PATH that starts at the shim directory. The assignment applies to that one
+// command — the pane's shell, shell rc files and the image are untouched.
+function withAuditShimPath(launchCmd) {
+  auditShimInPane = false;
+  if (!anyHubAuditsCommands()) return launchCmd;
+  if (/[;&|()`<>\n]/.test(launchCmd)) {
+    if (!auditShimWarned) console.error('WARNING: the CLI launch command is compound; commands-level audit cannot prefix its PATH and will record capture "none"');
+    auditShimWarned = true;
+    return launchCmd;
+  }
+  const dir = installAuditShim();
+  if (!dir) return launchCmd;
+  auditShimInPane = true;
+  return `PATH=${shellQuote(dir)}:"$PATH" ${launchCmd}`;
+}
+
+// headlessAuditEnv is the headless counterpart: the one-shot child's env.
+function headlessAuditEnv(env) {
+  const facts = auditFactsForTask(currentTask);
+  if (!facts || !facts.command_audit) return env;
+  const dir = installAuditShim();
+  if (!dir) return env;
+  return { ...env, PATH: [dir, env.PATH || ''].filter(Boolean).join(path.delimiter) };
+}
+
+function writeAuditState(state) {
+  fs.mkdirSync(RELAY_AUDIT_DIR, { recursive: true, mode: 0o700 });
+  const tmp = `${RELAY_AUDIT_STATE_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
+  try { fs.chmodSync(tmp, 0o600); } catch (_) {}
+  fs.renameSync(tmp, RELAY_AUDIT_STATE_FILE);
+}
+
+// beginCommandAudit tells the shim which task is current and at what level.
+// The state holds identifiers, paths and the redaction patterns — no token.
+function beginCommandAudit(facts) {
+  const dir = installAuditShim();
+  if (!dir) return;
+  const resolve = op => relayAudit.resolveRealBinary(op, null, process.env.PATH, dir);
+  try {
+    try { fs.unlinkSync(RELAY_AUDIT_SPOOL_FILE); } catch (_) {}
+    writeAuditState({
+      v: 1,
+      level: facts.audit_level,
+      task_id: facts.task_id,
+      task_gen: facts.task_gen,
+      checkout: taskCheckoutDir(facts.repo) || AGENT_CWD || TASK_WORKSPACE_DIR,
+      spool: RELAY_AUDIT_SPOOL_FILE,
+      real: { gh: resolve('gh'), git: resolve('git') },
+      secret_patterns: relayAudit.serializeSecretPatterns(RELAY_SECRET_PATTERNS),
+    });
+    facts.command_audit = true;
+  } catch (e) {
+    console.error(`WARNING: could not start command audit in ${RELAY_AUDIT_DIR}: ${e.message}`);
+    return;
+  }
+  if (auditDrainTimer) clearInterval(auditDrainTimer);
+  auditDrainTimer = setInterval(() => drainCommandSpool(facts), RELAY_AUDIT_DRAIN_MS);
+  if (typeof auditDrainTimer.unref === 'function') auditDrainTimer.unref();
+}
+
+function endCommandAudit(facts) {
+  if (!facts || !facts.command_audit) return;
+  drainCommandSpool(facts);
+  facts.command_audit = false;
+  if (auditDrainTimer) { clearInterval(auditDrainTimer); auditDrainTimer = null; }
+  try { fs.unlinkSync(RELAY_AUDIT_STATE_FILE); } catch (_) {}
+}
+
+// Transcript tail read for reconciliation/reasoning. Larger than the model
+// detector's window because tool output sits between turns; only assistant
+// text and tool calls survive parsing (relayAudit.parseTranscriptEntries).
+const AUDIT_TRANSCRIPT_TAIL_BYTES = 262144;
+
+function auditTranscriptFile() {
+  if (BACKEND === 'claude' || BACKEND === 'litellm') return newestByMtime(claudeTranscriptFiles());
+  if (BACKEND === 'copilot') return newestByMtime(copilotTranscriptFiles());
+  return null;
+}
+
+function loadAuditTranscriptEntries() {
+  try {
+    const file = auditTranscriptFile();
+    if (!file) return null;
+    return relayAudit.parseTranscriptEntries(BACKEND, readFileTail(file, AUDIT_TRANSCRIPT_TAIL_BYTES).split('\n'));
+  } catch (_) {
+    return null;
+  }
+}
+
+// drainCommandSpool moves the shim's rows into the store, adding the task's
+// identity, the token generation each command ran under and — at reasoning —
+// the agent's stated reason. Rows for any other task are dropped.
+function drainCommandSpool(facts, now = Date.now()) {
+  if (!facts) return 0;
+  const ingest = `${RELAY_AUDIT_SPOOL_FILE}.${process.pid}.ingest`;
+  try { fs.renameSync(RELAY_AUDIT_SPOOL_FILE, ingest); } catch (_) { return 0; }
+  let raw = '';
+  try { raw = fs.readFileSync(ingest, 'utf8'); } catch (_) {}
+  try { fs.unlinkSync(ingest); } catch (_) {}
+  const rows = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let row;
+    try { row = JSON.parse(line); } catch (_) { continue; }
+    if (!row || row.event !== relayAudit.COMMAND_EVENT || String(row.task_id) !== String(facts.task_id)) continue;
+    if (!relayAudit.auditLevelAtLeast(facts.audit_level, row.level)) continue;
+    rows.push(row);
+  }
+  if (!rows.length) return 0;
+  const reasoning = relayAudit.auditLevelAtLeast(facts.audit_level, 'reasoning');
+  const entries = loadAuditTranscriptEntries();
+  const out = rows.map(row => {
+    const bound = entries
+      ? relayAudit.bindCommandReason(entries, row, { includeReason: reasoning, patterns: RELAY_SECRET_PATTERNS })
+      : (reasoning ? { reason_source: 'unavailable' } : {});
+    return {
+      ...row,
+      ...auditIdentity(facts),
+      task_gen: facts.task_gen,
+      token_gen: auditTokenGenAt(facts, row.ts),
+      ...bound,
+    };
+  });
+  appendAuditRows(out, now);
+  return out.length;
 }
 
 function injectGhToken(token) {
@@ -2374,6 +3373,8 @@ function installTaskMCPConfig(mcp) {
     process.env.HIVE_MCP_CONFIG_FILE = MCP_CONFIG_FILE;
     process.env.MCP_CONFIG_FILE = MCP_CONFIG_FILE;
     console.log(`Task MCP config installed at ${MCP_CONFIG_FILE}`);
+    // The event only: the config itself (URL, bearer) is never audited.
+    recordCurrentTaskAuditEvent('mcp_configured');
   } catch (e) {
     console.error(`Failed to write Task MCP config ${MCP_CONFIG_FILE}: ${e.message} — continuing without remote MCP`);
   }
@@ -2400,8 +3401,16 @@ const CONTAINER_NAME = process.env.HIVE_CONTAINER_NAME || 'hive-contributor';
 //     every podman operator a command that fails. It defaults to docker, so a
 //     bare-docker launch prints exactly what it printed before.
 const CONTAINER_RUNTIME = process.env.HIVE_CONTAINER_RUNTIME || 'docker';
+// HIVE_ISOLATION_CLASS — the isolation class the LAUNCHER names, e.g.
+// "microvm-krun" for a krun launch (#12200). The relay never detects it from
+// inside the container; unset means nothing is declared.
+const ISOLATION_CLASS = (process.env.HIVE_ISOLATION_CLASS || '').trim();
+// Apptainer/Singularity use instance URIs instead of Docker's -it/name syntax.
+const CONTAINER_EXEC_TARGET = ['apptainer', 'singularity'].includes(CONTAINER_RUNTIME)
+  ? `instance://${CONTAINER_NAME}`
+  : `-it ${CONTAINER_NAME}`;
 const ATTACH_COMMAND = process.env.HIVE_CONTAINER_NAME
-  ? `${CONTAINER_RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t ${TMUX_SESSION}`
+  ? `${CONTAINER_RUNTIME} exec ${CONTAINER_EXEC_TARGET} tmux attach -t ${TMUX_SESSION}`
   : `tmux attach -t ${TMUX_SESSION}`;
 
 // detectCapabilities builds the OPTIONAL, client-declared capability object the
@@ -2422,6 +3431,10 @@ function detectCapabilities() {
     // (kubestellar/hive#6954). Copied so a caller cannot mutate the constant.
     relay_capabilities: RELAY_CAPABILITIES.slice(),
   };
+  if (relaySupportsParallelFixes()) {
+    caps.relay_capabilities.push('parallel_sessions');
+    caps.max_parallel_fixes = FIX_PR_MAX_PARALLEL;
+  }
   // Container runtime: prefer docker, then podman, else none. `command -v` is a
   // cheap presence check; failure just means the runtime is absent.
   let runtime = 'none';
@@ -2433,6 +3446,9 @@ function detectCapabilities() {
     } catch (_) { /* not installed */ }
   }
   caps.container_runtime = runtime;
+  // Isolation class (#12200): passed in by the launcher, declared verbatim,
+  // display-only on the hub. Omitted entirely when the launcher set none.
+  if (ISOLATION_CLASS) caps.isolation_class = ISOLATION_CLASS;
   // Credential type: the KIND of GitHub credential the relay authenticates with
   // (never the credential itself). App-token cache present → "app"; an explicit
   // GH_TOKEN/GITHUB_TOKEN in the environment → "pat"; otherwise leave unset.
@@ -2716,16 +3732,16 @@ const NO_MODEL_FLAG_BACKENDS = ['goose', 'bob', 'openhands'];
 // the environment wins, so an operator can still pin it directly.
 function headlessChildEnv() {
   if (BACKEND === 'openhands' && MODEL && !process.env.LLM_MODEL) {
-    return { ...process.env, LLM_MODEL: MODEL };
+    return headlessAuditEnv({ ...process.env, LLM_MODEL: MODEL });
   }
-  return process.env;
+  return headlessAuditEnv(process.env);
 }
 
 // agy (Google's Antigravity CLI) REQUIRES --effort whenever --model is given:
 // without it agy warns "--model <m> requires --effort (available: low, medium,
 // high)" and silently IGNORES the model, so the contributor's configured model
 // never takes effect. AGY_DEFAULT_EFFORT mirrors agyDefaultEffort in the
-// hub-side launcher (src/pkg/agent/manager.go) so a relay agent and a pod agent
+// hub-side launcher (src/crux/agent/manager.go) so a relay agent and a pod agent
 // resolve the same effort. AGENT_REASONING_EFFORT can override it, but only
 // with a value agy actually accepts — codex's vocabulary is wider (it takes
 // "minimal"), and forwarding an unknown token here would make agy reject the
@@ -2844,7 +3860,9 @@ const MUSE_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'
 // the flag; inference routes (litellm) that drive the same binary do not.
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-function effectiveReasoningEffort() {
+// requestedReasoningEffort is the effort the launch command builder applies:
+// what buildLaunchCommand() and buildHeadlessArgv() pass to the CLI.
+function requestedReasoningEffort() {
   // agy is the only backend whose effort is conditional on a model being passed.
   if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
   // muse applies effort with or without a model, but only for values it takes.
@@ -2855,6 +3873,87 @@ function effectiveReasoningEffort() {
   // selection), read by detectOmpSelection; the env var still wins when set,
   // the same precedence effectiveModel() applies (#7760).
   return REASONING_EFFORT || detectedEffort || '';
+}
+
+// effortFlagFor is the effort flag the builder adds for this backend, or ''
+// when the backend gets none. At most one backend case applies.
+function effortFlagFor() {
+  if (BACKEND === 'codex') return REASONING_EFFORT ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'` : '';
+  const effort = requestedReasoningEffort();
+  if (!effort) return '';
+  // agy: paired with --model, never on its own — requestedReasoningEffort()
+  // is '' without one. claude: only claude-valid levels (#8377). muse: only
+  // values muse accepts, so the report never advertises an effort it rejected.
+  if (BACKEND === 'agy' || BACKEND === 'claude') return `--effort ${effort}`;
+  if (BACKEND === 'muse') return `--reasoning-effort ${effort}`;
+  return '';
+}
+
+// --- Launch line reconciliation (hivecommons/hive#16222) ---------------------
+//
+// An entrypoint-resolved AGENT_LAUNCH_CMD is reused verbatim (see
+// buildLaunchCommand), so the flags the builder would add are NOT added to it.
+// When that line lacks the --model or effort flag, the CLI never received the
+// value, and reporting AGENT_MODEL / AGENT_REASONING_EFFORT to the hub would
+// advertise a configuration that is not running — standby model tiers and the
+// PR attribution trailer both read that report. The relay then reports only
+// what it can observe (the transcript-detected model/effort, or nothing).
+// Headless mode never types that line, so it is unaffected.
+
+// shellWords splits a shell command line into words with the quoting the
+// launchers use removed: '…' around a word, and backslash escapes (printf %q).
+function shellWords(line) {
+  return line.split(/\s+/).filter(Boolean).map((w) => {
+    if (w.length >= 2 && w.startsWith("'") && w.endsWith("'")) return w.slice(1, -1);
+    return w.replace(/\\(.)/g, '$1');
+  });
+}
+
+// entrypointLineCarries reports whether the entrypoint launch line contains
+// flag's words, consecutively.
+function entrypointLineCarries(flag) {
+  const line = shellWords(ENTRYPOINT_LAUNCH_CMD);
+  const want = shellWords(flag);
+  for (let i = 0; i + want.length <= line.length; i++) {
+    if (want.every((w, j) => line[i + j] === w)) return true;
+  }
+  return false;
+}
+
+function entrypointLineGoverns() {
+  return !!ENTRYPOINT_LAUNCH_CMD && CONTRIBUTOR_MODE === MODE_INTERACTIVE;
+}
+
+const warnedLaunchLineDrops = new Set();
+function warnLaunchLineDrop(what, flag) {
+  if (warnedLaunchLineDrops.has(what)) return;
+  warnedLaunchLineDrops.add(what);
+  console.error(`AGENT_LAUNCH_CMD does not carry \`${flag}\`; the CLI is not running with that ${what}, so it is not reported to the hub (#16222)`);
+}
+
+function launchLineDropsModel() {
+  if (!entrypointLineGoverns() || !MODEL || NO_MODEL_FLAG_BACKENDS.includes(BACKEND)) return false;
+  const flag = `--model ${MODEL}`;
+  if (entrypointLineCarries(flag)) return false;
+  warnLaunchLineDrop('model', flag);
+  return true;
+}
+
+function launchLineDropsEffort() {
+  if (!entrypointLineGoverns()) return false;
+  // agy applies effort only alongside a model the CLI actually received.
+  if (BACKEND === 'agy' && launchLineDropsModel()) return true;
+  const flag = effortFlagFor();
+  if (!flag || entrypointLineCarries(flag)) return false;
+  warnLaunchLineDrop('effort', flag);
+  return true;
+}
+
+// effectiveReasoningEffort is the effort reported to the hub: the requested
+// one, unless the entrypoint launch line never applied it.
+function effectiveReasoningEffort() {
+  if (launchLineDropsEffort()) return detectedEffort || '';
+  return requestedReasoningEffort();
 }
 
 // --- Model auto-detection from the CLI's own session transcript (#4117) ----
@@ -2937,7 +4036,7 @@ function looksLikeModelName(m) {
 
 // detectClaudeModel: newest ~/.claude/projects/*/*.jsonl, latest assistant
 // turn's message.model (same source claude_scanner.go aggregates for cost).
-function detectClaudeModel() {
+function claudeTranscriptFiles() {
   const files = [];
   for (const d of fs.readdirSync(CLAUDE_PROJECTS_DIR, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
@@ -2946,7 +4045,11 @@ function detectClaudeModel() {
       if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
     }
   }
-  const newest = newestByMtime(files);
+  return files;
+}
+
+function detectClaudeModel() {
+  const newest = newestByMtime(claudeTranscriptFiles());
   if (!newest) return '';
   for (const obj of tailLinesReversed(newest)) {
     const m = obj && obj.message && obj.message.model;
@@ -2958,13 +4061,17 @@ function detectClaudeModel() {
 // detectCopilotModel: newest ~/.copilot/session-state/*/events.jsonl, latest
 // event carrying a model field (session.start selectedModel, per-tool model,
 // or shutdown currentModel — same fields copilot_scanner.go reads).
-function detectCopilotModel() {
+function copilotTranscriptFiles() {
   const files = [];
   for (const d of fs.readdirSync(COPILOT_SESSIONS_DIR, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
     files.push(path.join(COPILOT_SESSIONS_DIR, d.name, 'events.jsonl'));
   }
-  const newest = newestByMtime(files);
+  return files;
+}
+
+function detectCopilotModel() {
+  const newest = newestByMtime(copilotTranscriptFiles());
   if (!newest) return '';
   for (const obj of tailLinesReversed(newest)) {
     const data = (obj && obj.data) || {};
@@ -3325,8 +4432,10 @@ function advisorFields() {
 }
 
 // effectiveModel is the model counterpart of effectiveReasoningEffort(): the
-// single source of truth for the model actually reported to the hub.
+// single source of truth for the model actually reported to the hub. A model
+// the entrypoint launch line never passed is not reported (#16222).
 function effectiveModel() {
+  if (launchLineDropsModel()) return detectedModel || '';
   return MODEL || detectedModel || '';
 }
 
@@ -3350,24 +4459,11 @@ function buildLaunchCommand() {
     return cachedLaunchCommand;
   }
   const { cmd, perm } = resolveBackendShell();
-  const modelFlag = modelFlagFor();
-  const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
-    ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
-    : '';
-  // Paired with modelFlag, never on its own: agy without --model needs no
-  // --effort, and passing one alone would be a flag agy has no model to apply.
-  const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${effectiveReasoningEffort()}` : '';
-  // muse takes effort on its own, independent of --model (unlike agy), and
-  // validates the value itself. Only values muse actually accepts are passed,
-  // so effectiveReasoningEffort() never advertises an effort muse rejected.
-  const museEffortFlag = BACKEND === 'muse' && effectiveReasoningEffort()
-    ? `--reasoning-effort ${effectiveReasoningEffort()}`
-    : '';
-  // claude: `--effort <v>` only when a claude-valid effort is set (#8377).
-  const claudeEffortFlag = BACKEND === 'claude' && effectiveReasoningEffort()
-    ? `--effort ${effectiveReasoningEffort()}`
-    : '';
-  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag, museEffortFlag, claudeEffortFlag].filter(Boolean).join(' ');
+  // effortFlagFor() pairs agy's --effort with --model, never on its own: agy
+  // without --model needs no --effort, and passing one alone would be a flag
+  // agy has no model to apply. config/backends.conf's
+  // backend_selection_flags_shell emits the same two flags for local mode.
+  cachedLaunchCommand = [cmd, perm, modelFlagFor(), effortFlagFor()].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
 
@@ -3494,12 +4590,12 @@ function buildHeadlessArgv(prompt) {
   // tokens for backends needing a sub-command plus a flag (goose). Normalize
   // to an array so both shapes spread the same way ahead of the prompt.
   const oneShotArgs = Array.isArray(spec.flag) ? spec.flag : [spec.flag];
-  const museEffortArgs = BACKEND === 'muse' && effectiveReasoningEffort()
-    ? ['--reasoning-effort', effectiveReasoningEffort()]
+  const museEffortArgs = BACKEND === 'muse' && requestedReasoningEffort()
+    ? ['--reasoning-effort', requestedReasoningEffort()]
     : [];
   // Same claude-valid-only rule as the interactive launch (#8377).
-  const claudeEffortArgs = BACKEND === 'claude' && effectiveReasoningEffort()
-    ? ['--effort', effectiveReasoningEffort()]
+  const claudeEffortArgs = BACKEND === 'claude' && requestedReasoningEffort()
+    ? ['--effort', requestedReasoningEffort()]
     : [];
   const flagArgs = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...museEffortArgs, ...claudeEffortArgs];
   // Sub-command-first CLIs parse their options on the sub-command, not the
@@ -3604,7 +4700,9 @@ function headlessProgressTick(task) {
 const WORKSPACE_DIR_VARIABLE = /\$\{?HIVE_WORKSPACE_DIR\}?/g;
 function resolveTaskPrompt(task) {
   const prompt = task.prompt || `Work on ${task.kind} ${taskDisplay(task)}: ${task.title || ''}`;
-  return prompt.replace(WORKSPACE_DIR_VARIABLE, TASK_WORKSPACE_DIR);
+  const resolved = prompt.replace(WORKSPACE_DIR_VARIABLE, TASK_WORKSPACE_DIR);
+  if (task.kind !== FIX_PR_KIND) return resolved;
+  return `${resolved}\n\n${FIX_PR_SIGNOFF_REQUIREMENT}`;
 }
 
 // installRepoToolchain runs bin/repo-toolchain.sh against the task's checkout
@@ -3652,6 +4750,205 @@ function installRepoToolchain(task, then) {
     if (code !== 0) console.error(`repo-toolchain exited ${code} — continuing without the declared tools`);
     finish();
   });
+}
+
+// ── fix-pr interrupt implementation (hivecommons/hive#12436) ─────────────────
+
+function relaySupportsParallelFixes() {
+  return FIX_PR_MAX_PARALLEL > 0 && headlessSupportsBackend();
+}
+
+function fixPRLabel(task) {
+  const prs = Array.isArray(task && task.fix_prs) ? task.fix_prs : [];
+  if (!prs.length) return `${sanitizeHubText(task && task.repo)}#${task && task.number}`;
+  return prs.map(p => `${sanitizeHubText(p.repo)}#${p.number}`).join(', ');
+}
+
+function fixPRWorkspaceDir(task) {
+  const safe = String(task.task_id || Date.now()).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 64);
+  return path.join(TASK_WORKSPACE_DIR, `.hive-fix-${safe}`);
+}
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// handleFixPRInterrupt decides spawn / preempt / defer for a fix-pr task that
+// arrived while currentTask is running.
+function handleFixPRInterrupt(msg, hub) {
+  if (parallelFixes.has(msg.task_id) || deferredFixes.some(d => d.task.task_id === msg.task_id)
+    || (preemptingFix && preemptingFix.task_id === msg.task_id)) {
+    console.log(`Ignoring duplicate fix-pr ${sanitizeHubText(msg.task_id)} — already handling it`);
+    return;
+  }
+  noteTaskAttemptStart(hub, msg);
+  if (msg.github_token) {
+    // The fix works the same repos the primary task was authorized for; a
+    // fresh task-scoped credential supersedes the primary's for both.
+    injectGhToken(msg.github_token);
+    tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
+    tokenRefreshFailedAt = null;
+  }
+  recordAuthorizedRepo(msg.repo);
+  const wantSpawn = msg.mode !== 'preempt';
+  if (wantSpawn && relaySupportsParallelFixes() && parallelFixes.size < FIX_PR_MAX_PARALLEL) {
+    spawnParallelFix(msg, hub);
+    return;
+  }
+  if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
+    // One-shot child in flight: nothing to interrupt. Run it next.
+    deferredFixes.push({ task: msg, hub });
+    sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+    console.log(`fix-pr ${fixPRLabel(msg)} deferred until the current headless task exits (${deferredFixes.length} queued)`);
+    return;
+  }
+  if (preemptingFix) {
+    deferredFixes.push({ task: msg, hub });
+    sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+    console.log(`fix-pr ${fixPRLabel(msg)} queued behind the fix already preempting the primary task`);
+    return;
+  }
+  preemptInteractiveSession(msg, hub);
+}
+
+// spawnParallelFix runs the fix as a one-shot headless child beside the
+// interactive/headless primary. Its exit is the fix's verdict.
+function spawnParallelFix(msg, hub) {
+  let built;
+  try {
+    built = buildHeadlessArgv(resolveTaskPrompt(msg));
+  } catch (e) {
+    sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen, reason: e.message, failure_kind: 'environment' });
+    return;
+  }
+  const dir = fixPRWorkspaceDir(msg);
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* cwd falls back below */ }
+  sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+  const { bin, args } = built;
+  console.log(`fix-pr ${fixPRLabel(msg)}: spawning a parallel fix session (${parallelFixes.size + 1}/${FIX_PR_MAX_PARALLEL}); the primary task keeps running`);
+  const output = createBoundedOutputCapture(HEADLESS_MAX_OUTPUT_BYTES);
+  const entry = { task: msg, hub, child: null, mode: 'spawn', startedAt: Date.now() };
+  parallelFixes.set(msg.task_id, entry);
+  let settled = false;
+  let timeout = null;
+  const finish = (ok, reason) => {
+    if (settled) return;
+    settled = true;
+    if (timeout) clearTimeout(timeout);
+    parallelFixes.delete(msg.task_id);
+    const outTail = output.text().split('\n').slice(-TMUX_TAIL_LINES);
+    if (ok) {
+      sendTo(hub, { type: 'task_complete', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen, result: 'completed', summary: `fix-pr ${fixPRLabel(msg)}: parallel fix session exited 0`, tmux_output: outTail });
+    } else {
+      sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen, reason, tmux_output: outTail });
+    }
+    console.log(`fix-pr ${fixPRLabel(msg)}: parallel fix session ${ok ? 'completed' : 'failed: ' + reason}`);
+  };
+  timeout = setTimeout(() => {
+    if (entry.child && !entry.child.killed) entry.child.kill('SIGKILL');
+    finish(false, `fix session exceeded ${formatDuration(FIX_PR_CHILD_TIMEOUT_MS)}`);
+  }, FIX_PR_CHILD_TIMEOUT_MS);
+  if (timeout.unref) timeout.unref();
+  let child;
+  try {
+    child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], cwd: fs.existsSync(dir) ? dir : TASK_WORKSPACE_DIR, env: headlessChildEnv() });
+  } catch (e) {
+    finish(false, `spawn failed: ${e.message}`);
+    return;
+  }
+  entry.child = child;
+  if (child.stdout) child.stdout.on('data', chunk => output.append(chunk));
+  if (child.stderr) child.stderr.on('data', chunk => output.append(chunk));
+  child.on('error', err => finish(false, `spawn error: ${err.message}`));
+  if (child.stdin) child.stdin.end();
+  child.on('close', (code, signal) => {
+    if (code === 0) finish(true);
+    else finish(false, `fix session exited ${code === null ? `on ${signal}` : code}`);
+  });
+}
+
+// preemptInteractiveSession tells the primary agent, in its own pane, to park
+// its work and fix the PR first. The primary lease is untouched; completion
+// of the fix is read back from the pane markers.
+function preemptInteractiveSession(msg, hub) {
+  preemptingFix = msg;
+  Object.defineProperty(preemptingFix, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
+  sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+  const parked = currentTask ? `${sanitizeHubText(currentTask.repo)}#${currentTask.number}` : 'your current task';
+  const prompt = [
+    `INTERRUPT (hive fix-pr, preempt mode): one of your earlier PRs needs fixing before you continue.`,
+    `1. Park ${parked}: commit or stash your work in progress on its branch (its claim stays alive; do not close or abandon it).`,
+    `2. ${resolveTaskPrompt(msg).trim()}`,
+    `3. When the fix is pushed, print exactly this line on its own: ${FIX_PR_DONE_MARKER} ${msg.task_id}`,
+    `   If you cannot fix it, print exactly: ${FIX_PR_FAILED_MARKER} ${msg.task_id} <short reason>`,
+    `4. Then resume ${parked} where you left off.`,
+  ].join('\n');
+  console.log(`fix-pr ${fixPRLabel(msg)}: preempting the primary task (no parallel capacity)`);
+  tmuxSendKeys(prompt);
+}
+
+// scanPaneForFixMarkers settles the preempting fix when the agent prints its
+// done/failed marker, and dispatches the next queued fix if any.
+function scanPaneForFixMarkers(lines) {
+  if (!preemptingFix || !Array.isArray(lines)) return;
+  const id = escapeRegExp(preemptingFix.task_id);
+  const done = new RegExp(`${FIX_PR_DONE_MARKER}\\s+${id}(\\s|$)`);
+  const failed = new RegExp(`${FIX_PR_FAILED_MARKER}\\s+${id}\\s*(.*)$`);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = String(lines[i] || '');
+    // Skip the echoed instruction: it names the marker followed by the id too.
+    if (/print exactly/.test(line)) continue;
+    let m;
+    if ((m = failed.exec(line))) {
+      settlePreemptingFix(false, (m[1] || 'agent reported failure').trim().slice(0, 300));
+      return;
+    }
+    if (done.test(line)) {
+      settlePreemptingFix(true);
+      return;
+    }
+  }
+}
+
+function settlePreemptingFix(ok, reason) {
+  const fix = preemptingFix;
+  if (!fix) return;
+  preemptingFix = null;
+  const hub = fix._hub || currentTaskHub() || hubs[activeHubIndex];
+  if (ok) {
+    sendTo(hub, { type: 'task_complete', seq: nextSeq(), task_id: fix.task_id, task_gen: fix.task_gen, result: 'completed', summary: `fix-pr ${fixPRLabel(fix)}: agent reported the fix pushed (preempt mode)` });
+  } else {
+    sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: fix.task_id, task_gen: fix.task_gen, reason });
+  }
+  console.log(`fix-pr ${fixPRLabel(fix)}: preempting fix ${ok ? 'completed' : 'failed: ' + reason}`);
+  if (deferredFixes.length && currentTask && CONTRIBUTOR_MODE !== MODE_HEADLESS) {
+    while (deferredFixes.length) {
+      const next = deferredFixes.shift();
+      if (refuseOutOfScopeAssignment(next.hub, next.task)) continue;
+      preemptInteractiveSession(next.task, next.hub);
+      break;
+    }
+  }
+}
+
+// startDeferredFix dispatches the oldest deferred fix as the next task instead
+// of sending `ready`. Returns true when it took the slot.
+function startDeferredFix(hub, trigger) {
+  if (currentTask || !deferredFixes.length) return false;
+  const next = deferredFixes.shift();
+  const target = next.hub || hub;
+  console.log(`Running deferred fix-pr ${fixPRLabel(next.task)} before asking for new work (trigger=${trigger})`);
+  // Re-enter the ordinary assignment path: the hub still owns the task.
+  handleMessage(JSON.stringify(next.task), target);
+  return true;
+}
+
+function fixPRState() {
+  return {
+    parallel: Array.from(parallelFixes.keys()),
+    deferred: deferredFixes.map(d => d.task.task_id),
+    preempting: preemptingFix ? preemptingFix.task_id : null,
+  };
 }
 
 function runHeadlessTask(task) {
@@ -3762,10 +5059,11 @@ function runHeadlessTask(task) {
         const quota = wasTimedOut || spawnError ? null : headlessQuotaExhaustion(diagnostic, BACKEND);
         if (quota) {
           enterQuotaHold(quota);
-          failCurrentTask(reason, { permanent: false, kind: 'environment', skipReady: true });
+          failCurrentTask(reason, { permanent: false, kind: 'environment', skipReady: true, outputTail: outTail });
           return;
         }
         failCurrentTask(reason, {
+          outputTail: outTail,
           permanent: false,
           kind: BACKEND === 'pi' ? 'environment' : undefined,
         });
@@ -3773,8 +5071,6 @@ function runHeadlessTask(task) {
       return;
     }
     finish(() => {
-      setPiInvocationState('succeeded');
-      console.log(`Headless task ${task.task_id} completed (exit 0)`);
       const prFinding = resolveTaskPR(outScan, {
         repo: task.repo,
         taskId: task.task_id,
@@ -3788,6 +5084,17 @@ function runHeadlessTask(task) {
       // does; see resolveTaskPR.
       const noWork = prFinding.suppressesVerdict ? null : detectNoWorkVerdict(outTail);
       if (noWork) console.log(`Detected ${noWork.verdict} verdict for ${task.task_id}: ${noWork.reason || '(no reason)'}`);
+      // #14940: exit 0 only means the CLI exited cleanly. A verdict about
+      // its broken runtime must be failed just as it is in finishCurrentTask.
+      if (noWork && noWork.environmentFailure) {
+        const reason = `agent reported an environment failure: ${noWork.reason || '(no reason given)'}`;
+        setPiInvocationState('failed');
+        writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, task_gen: task.task_gen, result: 'failed', reason });
+        failCurrentTask(reason, { kind: 'environment', skipCLI: true, outputTail: outTail });
+        return;
+      }
+      setPiInvocationState('succeeded');
+      console.log(`Headless task ${task.task_id} completed (exit 0)`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, task_gen: task.task_gen, result: 'completed', pr_url: prURL });
       // #7924: the label goes on with the task credential, so it must be
       // applied BEFORE stopAgentForTaskExit drops it below.
@@ -3801,6 +5108,8 @@ function runHeadlessTask(task) {
       stopAgentForTaskExit();
       send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, ...verdictWireFields(noWork), ...effectiveSelectionFields() });
       currentTask = null;
+      currentTaskStartedAt = null;
+      writeRelayStatus();
       releaseQuotaPoolReservation();
       taskAssignedAt = 0;
       tasksCompletedCount++;
@@ -4093,7 +5402,7 @@ const BACKEND_LOGIN_HELP = {
     steps: () => [
       'bob authenticates with an API key, not an interactive login.',
       'Stop the relay, set the key, and start it again:',
-      '  export BOBSHELL_API_KEY=<your-bob-api-key>',
+      '  export BOB_API_KEY=<your-bob-api-key>',
       '  just contribute-hive bob',
     ],
     // The generic closing line would be a lie here: no login is coming, and the
@@ -4187,8 +5496,14 @@ function typeLaunchCommand() {
   return launchCmd;
 }
 
+// Bounds the onboarding auto-dismiss loop so a dialog that never clears (or a
+// CLI that exited back to a shell) fails loudly instead of looping forever.
+const MAX_ONBOARDING_DISMISS_ATTEMPTS = 8;
+
 function waitForCLI() {
   let loginMessageShown = false;
+  let dismissAttempts = 0;
+  let relaunchedAfterExit = false;
   let needsLoginTicks = 0;
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -4228,6 +5543,22 @@ function waitForCLI() {
         else setTimeout(check, CLI_READY_POLL_MS);
       } else if (state === 'onboarding') {
         needsLoginTicks = 0;
+        if (paneIsRunningShell()) {
+          // The dismissal ended the CLI (e.g. "No, exit"); Enter into a bare shell helps nothing.
+          if (relaunchedAfterExit) {
+            reject(new Error(`${BACKEND} exited during onboarding twice and the pane is back at a shell prompt. Trust the folder manually once (run \`${BACKEND}\` in ${AGENT_CWD || 'the agent cwd'} and accept the trust prompt), then restart the relay.`));
+            return;
+          }
+          relaunchedAfterExit = true;
+          console.error(`${BACKEND} exited during onboarding (pane is at a shell prompt) — relaunching once.`);
+          try { typeLaunchCommand(); } catch (_) {}
+          setTimeout(check, CLI_READY_POLL_MS);
+          return;
+        }
+        if (++dismissAttempts > MAX_ONBOARDING_DISMISS_ATTEMPTS) {
+          reject(new Error(`Trust/onboarding dialog did not clear after ${MAX_ONBOARDING_DISMISS_ATTEMPTS} auto-dismiss attempts. Workaround: trust the folder manually once (run \`${BACKEND}\` in ${AGENT_CWD || 'the agent cwd'} and choose "Yes, I trust this folder"), then restart the relay.`));
+          return;
+        }
         // A numbered menu needs its option typed before Enter; a yes/no confirm
         // takes a bare Enter. blockingPromptKey() tells the two apart from the
         // pane text, so this no longer loops uselessly on menu-shaped prompts.
@@ -4778,7 +6109,7 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
-// Keep category names in exact parity with src/pkg/logscrub/handler.go. The Go
+// Keep category names in exact parity with src/crux/logscrub/handler.go. The Go
 // test reads this declaration and fails if one implementation gains or loses a
 // category without the other (kubestellar/hive#5478).
 const RELAY_SECRET_PATTERNS = [
@@ -4790,6 +6121,7 @@ const RELAY_SECRET_PATTERNS = [
   { category: 'jwt', pattern: /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g },
   { category: 'api-key', pattern: /(^|[^A-Za-z0-9._-])(sk-[A-Za-z0-9._\-]{6,})/g },
   { category: 'aws-access-key', pattern: /\b(AKIA|ASIA)[0-9A-Z]{16}\b/g },
+  { category: 'basic-auth', pattern: /\bauthorization["']?\s*[:=]\s*["']?basic\s+[A-Za-z0-9+/_-]{4,}={0,2}/gi },
   { category: 'bearer-token', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b/gi },
   { category: 'private-key', pattern: /-----BEGIN\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----/gs },
   { category: 'encrypted-private-key', pattern: /-----BEGIN\s+ENCRYPTED\s+PRIVATE\s+KEY-----.*?-----END\s+ENCRYPTED\s+PRIVATE\s+KEY-----/gs },
@@ -5099,7 +6431,7 @@ function resolveTaskPR(lines, opts) {
 //
 //   HIVE_VERDICT: <verdict> — <short reason>
 //
-// Three verdicts are defined:
+// Four verdicts are defined:
 //
 //   no_work_needed  (#3987) — the agent affirmatively determined there is
 //     NOTHING shippable (the remainder is gated on an unanswered maintainer
@@ -5122,6 +6454,12 @@ function resolveTaskPR(lines, opts) {
 //     label. `no_work_needed — blocked: <reason>` is accepted as the same
 //     verdict, for an agent that reaches for the older sentinel first.
 //
+//   wrong_base     (hivecommons/hive#13146) — the issue is actionable, but
+//     the referenced code is absent from the dispatched base and exists on a
+//     different release branch. The target branch travels on the wire for the
+//     hub to validate and retain as the next dispatch's base. It is never an
+//     already-done verdict.
+//
 //   complete        (#5376) — the agent is DONE with the task, whatever it
 //     shipped. This is the completion signal the interactive relay lacked:
 //     before it, "is this task done" was inferred from the vendor's terminal
@@ -5140,13 +6478,105 @@ function resolveTaskPR(lines, opts) {
 const HIVE_VERDICT_NO_WORK = 'no_work_needed';
 const HIVE_VERDICT_COMPLETE = 'complete';
 const HIVE_VERDICT_BLOCKED = 'blocked';
+const HIVE_VERDICT_WRONG_BASE = 'wrong_base';
 // Every sentinel the scanner recognises, for the callers that want "any
 // verdict at all" (completion, the #5650 delivery baseline, PR-URL ranking).
-const HIVE_VERDICT_TOKENS = [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED];
+const HIVE_VERDICT_TOKENS = [
+  HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED, HIVE_VERDICT_WRONG_BASE,
+];
 // The `no_work_needed — blocked: <reason>` spelling (#7924): the older
 // sentinel with the blocked marker as the reason's first word. Read as the
 // blocked verdict, with the marker stripped from the reason.
 const NO_WORK_BLOCKED_REASON_RE = /^blocked\s*(?:(?:[:—–-])|(?:(?:on|by)\b))\s*/i;
+// BLOCKED_TOOLING_FAILURE_RE (hivecommons/hive#11775, #11776): a blocked
+// verdict whose reason describes the CONTRIBUTOR'S OWN tooling failing — the
+// push to the fork rejected, a token without the `workflow` scope, permission
+// denied, the gh/git wrappers, a stale fork — is not blocked on anything
+// outside the repository. Bob's agent printed exactly that for two issues it
+// could not push, the relay labelled both `blocked`, and the fleet-wide
+// workflow gate parked them with no PR and nothing coming to release them.
+// Such a verdict is demoted on the relay: no label, no blocked marker on the
+// wire, so the hub books an ordinary idle completion and re-offers the issue
+// to a contributor whose tooling works. Keep in sync with
+// blockedVerdictToolingFailurePattern in
+// src/pkg/dashboard/contribute_blocked_tooling.go, which is the hub's own
+// defence for relays older than this one.
+const BLOCKED_TOOLING_FAILURE_RE = new RegExp([
+  String.raw`\bpush(?:ed|ing)?\b.{0,80}\b(?:rejected|denied|refused|failed|forbidden|not permitted)\b`,
+  String.raw`\b(?:rejected|denied|refused|failed|cannot|can't|could not|unable to)\b.{0,40}\bpush\b`,
+  String.raw`\b(?:token|credential|PAT)s?\b.{0,60}\b(?:lacks?|lacking|missing|without|does not (?:have|carry|include|grant)|doesn't (?:have|carry|include|grant)|no|insufficient)\b.{0,40}\b(?:scope|permission)s?\b`,
+  String.raw`\b(?:workflow|repo|write)\s+scope\b`,
+  String.raw`\bHTTP\s*40[13]\b`, String.raw`\b40[13]\s+forbidden\b`, String.raw`\b401\s+unauthorized\b`,
+  String.raw`\bpermission denied\b`,
+  String.raw`\bauthentication failed\b`,
+  String.raw`\b(?:gh|go|git)[\s-]wrapper\b`,
+  String.raw`\bfork(?:'s)?\b.{0,80}\b(?:behind|out[\s-]of[\s-]date|stale|sync(?:ed|ing)?|diverged)\b`,
+  String.raw`\bsync(?:ing)?\b.{0,40}\bfork\b`,
+].join('|'), 'i');
+
+// isToolingFailureBlockedReason says whether a blocked verdict's reason is the
+// contributor's own environment failing rather than an external dependency.
+function isToolingFailureBlockedReason(reason) {
+  reason = String(reason || '').trim();
+  return !!reason && BLOCKED_TOOLING_FAILURE_RE.test(reason);
+}
+// BLOCKED_ON_PERSON_RE (hivecommons/hive#12376): a blocked verdict whose
+// reason says a PERSON must act — an org admin must restore an app install, a
+// maintainer has to apply a change, only an owner can grant access — is not
+// waiting on another item. Labelled `blocked` it read the same as an external
+// dependency: no owner, no "What to reply", nothing in the inbox. Such a
+// verdict is routed to the parking path a person answers (NEEDS_HUMAN_LABEL).
+// BLOCKED_ON_ITEM_RE wins over it: a reason that names another issue/PR, an
+// upstream or a release is waiting on that item, so it keeps `blocked`.
+const BLOCKED_PERSON_ROLE = String.raw`(?:human|person|(?:org(?:anization)?\s+|repo(?:sitory)?\s+)?(?:admin(?:istrator)?|owner|maintainer|operator)s?)`;
+const BLOCKED_ON_PERSON_RE = new RegExp([
+  String.raw`\b${BLOCKED_PERSON_ROLE}\b.{0,40}\b(?:must|needs? to|has to|have to|is required to)\b`,
+  String.raw`\b(?:requires?|needs?|waiting (?:on|for))\s+(?:an?\s+|the\s+)?${BLOCKED_PERSON_ROLE}\b`,
+  String.raw`\bonly\s+(?:an?\s+|the\s+)?${BLOCKED_PERSON_ROLE}\b.{0,30}\bcan\b`,
+  String.raw`\bmanual(?:ly)?\s+(?:action|step|intervention|approval)\b`,
+].join('|'), 'i');
+const BLOCKED_ON_ITEM_RE = /\b[\w.-]+\/[\w.-]+#\d+\b|(?:^|[\s(])#\d+\b|\bupstream\b|\brelease[sd]?\b|\bpublish(?:es|ed|ing)?\b/i;
+
+// isPersonBlockedReason says whether a blocked verdict's reason waits on a
+// person rather than on another item. Tooling failures are classified first
+// (isToolingFailureBlockedReason) and never reach this.
+function isPersonBlockedReason(reason) {
+  reason = String(reason || '').trim();
+  return !!reason && BLOCKED_ON_PERSON_RE.test(reason) && !BLOCKED_ON_ITEM_RE.test(reason);
+}
+
+// ENVIRONMENT_FAILURE_REASON_PATTERNS (hivecommons/hive#14832): a verdict whose
+// reason says the agent's OWN runtime cannot run commands at all. On Ubuntu's
+// AppArmor user-namespace restriction, Claude's native sandbox started, then
+// every Bash call failed (`apply-seccomp: write /proc/self/setgroups ...`), and
+// the agent printed `HIVE_VERDICT: complete — environment failure: Bash tool
+// broken ...`. Booked as complete, the hub counted it as a finished task and
+// the relay took the next issue to drop it the same way. Such a verdict — under
+// any token except wrong_base — is read as blocked on this contributor's own
+// environment and handed back as an `environment` task failure (see
+// finishCurrentTask), never labelled and never booked as completed.
+//
+// Kept deliberately narrow: each entry names the runtime itself being broken,
+// not a repository problem the agent could legitimately report. A verdict
+// backed by a PR this task opened is unaffected — a confirmed PR suppresses the
+// verdict before it is acted on.
+const ENVIRONMENT_FAILURE_REASON_PATTERNS = [
+  String.raw`\benvironment(?:al)?\s+(?:failure|failed|is broken|broken)\b`,
+  String.raw`\bbroken\s+(?:environment|sandbox)\b`,
+  String.raw`\b(?:bash|shell)\s+tool\b.{0,40}\b(?:broken|unusable|unavailable)\b`,
+  String.raw`\bsandbox\b.{0,40}\b(?:is |was )?(?:broken|unusable)\b`,
+  String.raw`\bevery\s+(?:shell\s+|bash\s+)?command\b.{0,60}\bfail(?:s|ed|ing)?\b`,
+  String.raw`\bapply-seccomp\b`,
+  String.raw`/proc/self/setgroups\b`,
+];
+const ENVIRONMENT_FAILURE_REASON_RE = new RegExp(ENVIRONMENT_FAILURE_REASON_PATTERNS.join('|'), 'i');
+
+// isEnvironmentFailureReason says whether a verdict's reason reports the
+// agent's own runtime as unable to run commands.
+function isEnvironmentFailureReason(reason) {
+  reason = String(reason || '').trim();
+  return !!reason && ENVIRONMENT_FAILURE_REASON_RE.test(reason);
+}
 const NO_WORK_NEEDS_DECISION_REASON_RE = /^(?:decision|needs[_ -]?decision|maintainer[_ -]?decision)\s*[:—–-]\s*/i;
 const NATURAL_NEEDS_DECISION_REASON_RE = /(?:maintainer|design|policy|approval|\/approve).{0,80}(?:decision|approval|\/approve)|(?:decision|approval).{0,80}maintainer/i;
 const ALREADY_DONE_REASON_KIND = 'already_done';
@@ -5155,24 +6585,37 @@ const ALREADY_DONE_TEXT_RE = /\b(?:already\s+(?:resolved|fixed|implemented|merge
 const COMMIT_SHA_RE = /\b[0-9a-f]{7,40}\b/i;
 const ALREADY_DONE_WORKFLOW_LABEL = process.env.HIVE_ALREADY_DONE_LABEL || 'hive/already-done';
 
-// isNoWorkVerdict says whether a verdict object is one of the "nothing to
-// ship" family — no_work_needed or blocked — which the hub books the same way
-// (task_complete verdict/verdict_reason) and a confirmed PR overrides the same
-// way (resolveTaskPR's suppressesVerdict).
+// isNoWorkVerdict says whether a verdict object is one of the "nothing this
+// dispatch can ship" family. A confirmed PR overrides all three in the same
+// way, while the hub gives each outcome different routing/cooldown semantics.
 function isNoWorkVerdict(v) {
-  return !!v && (v.verdict === HIVE_VERDICT_NO_WORK || v.verdict === HIVE_VERDICT_BLOCKED);
+  return !!v && (v.verdict === HIVE_VERDICT_NO_WORK ||
+    v.verdict === HIVE_VERDICT_BLOCKED ||
+    v.verdict === HIVE_VERDICT_WRONG_BASE);
 }
 
-// verdictWireFields renders a "nothing to ship" verdict (or null) as the
+// verdictWireFields renders a terminal no-PR verdict (or null) as the
 // task_complete fields the hub reads. A blocked verdict goes on the wire as
 // `verdict: no_work_needed` plus `verdict_blocked: true` — the marker, not a
 // new token — so a hub that predates #7924 sees exactly the no_work_needed it
-// already books (long offer-suppression), instead of an unknown verdict it
-// would normalize to a bare idle and re-offer on the short cooldown. A hub
-// that knows the marker books it as blocked (normalizeCompletionVerdict in
+// already books. `wrong_base` is deliberately a new token plus a separately
+// parsed target branch: an older hub safely treats it as idle and re-offers
+// instead of suppressing the issue as already done. A current hub validates
+// and persists that branch (normalizeCompletionVerdict in
 // src/pkg/dashboard/contribute_ledgers.go).
 function verdictWireFields(noWork) {
   if (!isNoWorkVerdict(noWork)) return {};
+  if (noWork.verdict === HIVE_VERDICT_WRONG_BASE) {
+    return {
+      verdict: HIVE_VERDICT_WRONG_BASE,
+      verdict_reason: noWork.reason,
+      verdict_target_branch: noWork.targetBranch,
+    };
+  }
+  // A tooling-failure blocked verdict goes out with its reason but NO verdict
+  // (hivecommons/hive#11775): the hub books it idle on the short cooldown, and
+  // the reason still reaches its log and run record.
+  if (noWork.toolingFailure) return { verdict_reason: noWork.reason };
   const alreadyDone = alreadyDoneVerdictFields(noWork.reason);
   return {
     verdict: HIVE_VERDICT_NO_WORK,
@@ -5198,8 +6641,13 @@ function alreadyDoneVerdictFields(reason) {
 }
 
 function isAlreadyDoneNoWork(noWork) {
-  if (!isNoWorkVerdict(noWork)) return false;
+  if (!noWork || noWork.verdict !== HIVE_VERDICT_NO_WORK) return false;
   return alreadyDoneVerdictFields(noWork.reason).verdict_reason_kind === ALREADY_DONE_REASON_KIND;
+}
+
+function wrongBaseTarget(reason) {
+  const match = /^(?:target(?: branch)?\s*[:=]\s*)?(v[0-9]+)$/i.exec(String(reason || '').trim());
+  return match ? match[1].toLowerCase() : undefined;
 }
 
 // hiveVerdictLineRe builds the one regex that recognises a sentinel line, for
@@ -5257,6 +6705,9 @@ function detectHiveVerdict(lines, wanted) {
 function withoutPaneIndex(v) {
   const out = { verdict: v.verdict, reason: v.reason, line: v.line };
   if (v.needsDecision) out.needsDecision = true;
+  if (v.toolingFailure) out.toolingFailure = true;
+  if (v.environmentFailure) out.environmentFailure = true;
+  if (v.targetBranch) out.targetBranch = v.targetBranch;
   return out;
 }
 
@@ -5306,25 +6757,42 @@ function detectHiveVerdicts(lines, wanted) {
     // compares it against the line that was already on the pane when the task's
     // prompt was delivered, which is how a verdict gets attributed to a task at
     // all (#5650).
-    found.push({ verdict, reason, line: lines[i], index: i, needsDecision });
+    // hivecommons/hive#11775: a blocked verdict about the contributor's own
+    // push/token/credential failure is demoted — the issue is not blocked on
+    // anything outside the repo and must not be labelled as such.
+    // hivecommons/hive#14832: a verdict saying the agent's own runtime is
+    // broken is blocked on this contributor's environment, whatever token
+    // the agent chose — most often `complete`, which the hub would otherwise
+    // count as a finished task.
+    let environmentFailure = false;
+    if (verdict !== HIVE_VERDICT_WRONG_BASE && isEnvironmentFailureReason(reason)) {
+      verdict = HIVE_VERDICT_BLOCKED;
+      needsDecision = false;
+      environmentFailure = true;
+    }
+    const toolingFailure = verdict === HIVE_VERDICT_BLOCKED && (environmentFailure || isToolingFailureBlockedReason(reason));
+    const targetBranch = verdict === HIVE_VERDICT_WRONG_BASE ? wrongBaseTarget(reason) : undefined;
+    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure, environmentFailure, targetBranch });
   }
   return found;
 }
 
-// Best-effort scan for the "nothing to ship" sentinels — no_work_needed, and
-// since #7924 its blocked sibling. Unchanged in behaviour from #3987/#4265
-// for the first; it shares the scanner above. Returns null when no marker is
+// Best-effort scan for sentinels that finish without shipping a PR:
+// no_work_needed, blocked, and wrong_base. Returns null when no marker is
 // found — the hub then treats the completion exactly as an idle one.
 function detectNoWorkVerdict(lines) {
-  return detectHiveVerdict(lines, [HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED]);
+  // Classify every token before filtering: a `complete` about a broken
+  // environment is rewritten to `blocked` by detectHiveVerdicts (#14940).
+  const verdict = detectHiveVerdicts(lines, HIVE_VERDICT_TOKENS).find(isNoWorkVerdict);
+  return verdict ? withoutPaneIndex(verdict) : null;
 }
 
 // detectCompletionVerdict reports whether the agent SAID it finished (#5376).
 //
-// Either verdict counts as "the agent declared this task over": no_work_needed
-// is a completion too — it is the agent concluding the task with nothing to
-// ship — and requiring a second `complete` line after it would make a
-// compliant agent look non-compliant.
+// Every accepted verdict counts as "the agent declared this task over":
+// no_work_needed, blocked, and wrong_base are completions too, and requiring
+// a second `complete` line after one would make a compliant agent look
+// non-compliant.
 //
 // #7861: when the agent prints BOTH sentinels for the same task — a
 // no_work_needed with its real reason, then a narrated "complete" (the prompt
@@ -5696,9 +7164,10 @@ function checkTmuxPaneState() {
 // first stall recovery. Fall back to process.cwd() so an older entrypoint that
 // does not export the variable keeps its previous behaviour.
 function launchCommandWithCwd(launchCmd) {
+  const cmd = withAuditShimPath(launchCmd);
   const cwd = AGENT_CWD || process.cwd();
-  if (!cwd) return launchCmd;
-  return `cd ${shellQuote(cwd)} && ${launchCmd}`;
+  if (!cwd) return cmd;
+  return `cd ${shellQuote(cwd)} && ${cmd}`;
 }
 
 function relaunchCLI() {
@@ -5824,6 +7293,7 @@ function preserveTaskLeftovers(task, reason) {
       encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'],
     });
     console.log(`Set aside ${paths.length} uncommitted path(s) ${label} left in ${dir} after ${reason} as git stash "${message}" — recover with 'git -C ${dir} stash list'`);
+    recordLifecycleEvent(auditFactsForTask(task), 'stash_leftover', { stash: auditText(message, 512), paths: paths.length });
   } catch (e) {
     console.error(`Could not stash the ${paths.length} uncommitted path(s) ${label} left in ${dir} after ${reason}: ${e.message} — a later task on ${task.repo} will start from a dirty tree`);
   }
@@ -6391,7 +7861,7 @@ const authorizedRepos = new Set();
 
 // isSafeRepoName reports whether `name` has the GitHub `owner/name` shape.
 // The names in authorizedRepos end up interpolated verbatim into shell command
-// lines the review prompt pre-authorizes ("Run these, and only these"), so a
+// lines the review prompt tells the agent to start with, so a
 // hub-supplied value must be proven to be an identifier — not a command
 // fragment — before it can cross from data into an executable line (#6938).
 const SAFE_REPO_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/;
@@ -6511,9 +7981,14 @@ function buildReviewPrompt(shippedRepos, authorized, login) {
     .join('\n');
 
   return 'Check the open PRs you have filed, in the repositories this hive has assigned you work in, ' +
-    'for base drift first, then review comments. Run these, and only these:\n' +
+    'for base drift first, then review comments. Start by listing them with:\n' +
     commands + '\n' +
-    'Those repositories are the whole scope of this task. Do not search across your account, ' +
+    'Those repositories are the whole scope of this task. Within them you may run whatever gh and git ' +
+    'commands the follow-up needs on your own PRs — for example `gh pr view <n> --repo <repo> --comments`, ' +
+    '`gh pr view <n> --repo <repo> --json mergeable,mergeStateStatus`, `gh pr checks <n> --repo <repo>`, ' +
+    '`gh api repos/<repo>/pulls/<n>` (to resolve an UNKNOWN merge state), `gh api repos/<repo>/pulls/<n>/comments`, ' +
+    '`gh api repos/<repo>/pulls/<n>/reviews`, and git fetch, merge, rebase, commit and push on your PR branch. ' +
+    'Do not search across your account, ' +
     'and do not read, comment on, or push to a PR in any other repository — a PR outside that list ' +
     'was not opened on this hive\'s behalf, even if you have access to it. ' +
     'Before review work, repair your own PRs whose mergeStateStatus is DIRTY or BEHIND, including fork PRs. ' +
@@ -6522,8 +7997,11 @@ function buildReviewPrompt(shippedRepos, authorized, login) {
     'Reply on each repaired PR with a short hive-base-moved note naming the base commit. ' +
     'For each PR with review comments, read the comments, address the feedback, push fixes, and respond. ' +
     'If no PRs need base repair or have comments, say so and stop — do not look for other work. ' +
+    'No human is attached to this session: never ask for permission or wait for confirmation. ' +
+    'If a command is unavailable or refused, skip that check, note the limitation, and carry on with the rest. ' +
     'When you HAVE finished — every PR needing base repair or comment follow-up is addressed, or there were none — print, as the very ' +
-    'last thing you output and on a line by itself, in plain text, no Markdown formatting: ' +
+    'last thing you output and on a line by itself, in plain text, no Markdown formatting (if a check could not run, ' +
+    'still print it and name the skipped check and blocker in the reason): ' +
     "'HIVE_VERDICT: complete — <short reason>'. Print it exactly once, only when you are actually done.";
 }
 
@@ -6620,6 +8098,11 @@ function restartBackoffMs(attempt) {
 // the pane — it quit and relaunched the CLI itself, or the CLI is already gone.
 // The credential is still dropped; only the quit/relaunch is skipped, so a
 // relaunch already in flight is not nested inside another one.
+//
+// opts.outputTail is the caller's already-captured (and redacted) output lines.
+// Only headless callers pass it: they have no pane of their own, and any tmux
+// session that happens to share TMUX_SESSION's name on the host belongs to
+// someone else, so when it is supplied it is used instead of a pane capture.
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
@@ -6629,7 +8112,9 @@ function failCurrentTask(reason, opts) {
   // Captured BEFORE the agent is stopped: the pane text is the evidence the
   // hub and the operator read to understand the failure, and quitLiveCLI()
   // followed by a relaunch overwrites it with launch chrome.
-  const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
+  const tmuxLines = (opts && Array.isArray(opts.outputTail))
+    ? opts.outputTail
+    : captureTmuxLines(TMUX_TAIL_LINES);
   // Cause B (#5353): the hub is about to release this issue and offer it to
   // someone else. Stop the agent and drop its token FIRST, so the report and
   // the reality agree at the instant the hub acts on it.
@@ -6651,6 +8136,8 @@ function failCurrentTask(reason, opts) {
   // relaunched CLI after the task has been handed back.
   discardPendingTask('the task failed');
   currentTask = null;
+  currentTaskStartedAt = null;
+  writeRelayStatus();
   releaseQuotaPoolReservation();
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -6714,6 +8201,11 @@ function postUnaddressedNotesComment(prURL, notes) {
 // surface until a human removes it (blockedWorkflowLabel in
 // src/pkg/dashboard/contribute_admission.go). Keep the two spellings in sync.
 const BLOCKED_WORKFLOW_LABEL = 'blocked';
+// NEEDS_HUMAN_LABEL parks an issue on a person: the label a blocked verdict
+// that waits on a person applies instead of BLOCKED_WORKFLOW_LABEL
+// (hivecommons/hive#12376), so the your-turn inbox and the un-park "What to
+// reply" notice pick it up exactly as for any other needs-human issue.
+const NEEDS_HUMAN_LABEL = 'needs-human';
 
 // hubGrantsIssuesWrite reports whether the credential this hub mints for the
 // task can write to issues — the hub says so on auth_ok (`permissions`, per
@@ -6779,6 +8271,15 @@ function markIssueLabel(task, reason, label, description, issueTag) {
 }
 
 function markIssueBlocked(task, reason) {
+  if (isToolingFailureBlockedReason(reason) || isEnvironmentFailureReason(reason)) {
+    console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: blocked verdict describes this contributor's own tooling (${String(reason).trim().slice(0, 160)}) — not applying the '${BLOCKED_WORKFLOW_LABEL}' label; the hub re-offers the issue on the short cooldown (hivecommons/hive#11775)`);
+    return;
+  }
+  if (isPersonBlockedReason(reason)) {
+    console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: blocked verdict waits on a person (${String(reason).trim().slice(0, 160)}) — applying '${NEEDS_HUMAN_LABEL}' instead of '${BLOCKED_WORKFLOW_LABEL}' so it is that person's turn (hivecommons/hive#12376)`);
+    markIssueLabel(task, reason, NEEDS_HUMAN_LABEL, 'Waiting on a person (an admin, maintainer or operator) to act; not contributor work until a human clears the label', 'blocked');
+    return;
+  }
   markIssueLabel(task, reason, BLOCKED_WORKFLOW_LABEL, 'Waiting on something outside this repository; not contributor work until a human clears the label', 'blocked');
 }
 
@@ -6823,6 +8324,15 @@ function markIssueAlreadyDone(task, reason) {
 
 function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork, unaddressedNotes = [] }) {
   if (!currentTask) return;
+  // hivecommons/hive#14832: the agent ended the task because its own runtime
+  // cannot run commands. That is not a completion: hand it back as an
+  // `environment` failure so the hub books outcome=failed and keeps this
+  // contributor off the issue, instead of counting a finished task.
+  if (noWork && noWork.environmentFailure) {
+    console.warn(`Task ${currentTask.task_id}: the agent's HIVE_VERDICT reports a broken environment (${String(noWork.reason || '').slice(0, 160)}) — reporting the task failed [environment] instead of complete (hivecommons/hive#14832)`);
+    failCurrentTask(`agent reported an environment failure: ${noWork.reason || '(no reason given)'}`, { kind: 'environment' });
+    return;
+  }
   // #7879: the PR comment must go out BEFORE stopAgentForTaskExit drops the
   // task credential below — it is posted with the same token the agent used.
   if (prURL && unaddressedNotes.length) postUnaddressedNotesComment(prURL, unaddressedNotes);
@@ -6875,6 +8385,8 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
   // the review-cycle prompt queued below is for the NEXT task and is unaffected.)
   discardPendingTask('the task completed');
   currentTask = null;
+  currentTaskStartedAt = null;
+  writeRelayStatus();
   releaseQuotaPoolReservation();
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -6912,6 +8424,7 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
     // scoped to it.
     const reviewRepo = shippedRepos[shippedRepos.length - 1] || completedRepo;
     currentTask = { task_id: `${LOCAL_TASK_ID_PREFIX}${Date.now()}`, kind: 'review', repo: reviewRepo, number: 0, title: 'Review open PRs for comments', synthetic: true };
+    writeRelayStatus();
     taskAssignedAt = Date.now();
     tmuxSendKeys(reviewPrompt);
     startProgressReporting();
@@ -7574,6 +9087,7 @@ function progressTick() {
   // destructive to the paneStalled() fingerprint (#5333).
   const paneScanLines = captureTmuxLines(PR_SCAN_LINES);
   const tmuxLines = paneScanLines.slice(-TMUX_TAIL_LINES);
+  scanPaneForFixMarkers(paneScanLines);
 
   // #5321: forward progress renews the max-duration lease. Recorded here,
   // before any branch below can return, so EVERY pane state gets the credit —
@@ -8086,6 +9600,9 @@ function handleMessage(data, hub) {
       hub.connectionId = msg.connection_id || '';
       hub.serverCapabilities = Array.isArray(msg.server_capabilities) ? msg.server_capabilities.slice() : [];
       declareStandby(hub);
+      hub.scopeSent = false;
+      negotiateRepoScope(hub);
+      if (!currentTask && !hubHasSelectedWork(hubs[activeHubIndex])) chooseHubForNextTask('auth_scope');
       refreshHubStatus(hub);
       // #7924: the permission set the hub mints task credentials with, per
       // trust tier. Read by markIssueBlocked to decide whether a label call
@@ -8138,6 +9655,27 @@ function handleMessage(data, hub) {
           console.log('Authenticated, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
         }
       }
+      if (!currentTask && !hubHasSelectedWork(hub)) maybeAskActiveHubForWork();
+      break;
+
+    case 'repo_scope_ack':
+      if (!hub.authenticated || !hub.scopePending || msg.scope_version !== hub.scopeVersion) break;
+      if (msg.accepted !== true) {
+        console.log(`Hive ${hub.sourceURL} rejected repository selection — withholding work`);
+        hub.scopeUnsupported = true;
+        writeRelayStatus();
+        recordHubSeen(hub);
+        if (!currentTask && hub === hubs[activeHubIndex]) chooseHubForNextTask('scope_rejected');
+        maybeAskActiveHubForWork();
+        break;
+      }
+      hub.scopeUnsupported = false;
+      hub.scopeAckVersion = msg.scope_version;
+      hub.scopePending = false;
+      writeRelayStatus();
+      recordHubSeen(hub);
+      if (!currentTask && !hubHasSelectedWork(hubs[activeHubIndex])) chooseHubForNextTask('scope_ack');
+      maybeAskActiveHubForWork();
       break;
 
     case 'auth_failed':
@@ -8151,6 +9689,7 @@ function handleMessage(data, hub) {
       // another — only abort the whole process when every configured hub has
       // failed auth (or there is only one, matching the prior behaviour).
       hub.authFailed = true;
+      writeRelayStatus();
       if (hubs.every(h => h.authFailed)) {
         process.exit(1);
       } else {
@@ -8182,6 +9721,9 @@ function handleMessage(data, hub) {
       // #7732: an assignment answers the `ready` it was sent for, whatever
       // this relay does with it below.
       hub.readyOutstanding = false;
+      // Runs before interrupts, credentials, authorized-repo recording and
+      // quota/continue-once accounting, using THIS hub's latest saved scope.
+      if (refuseOutOfScopeAssignment(hub, msg)) break;
       if (hub.disabled) {
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hive disabled by contributor', failure_kind: 'environment' });
         break;
@@ -8189,6 +9731,13 @@ function handleMessage(data, hub) {
       if (!currentTask && hub !== hubs[activeHubIndex]) {
         console.log(`Rejecting task ${taskDisplay(msg)} from ${hub.url} — hub is not the active polling slot`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
+        break;
+      }
+      // hivecommons/hive#12436: a fix-pr interrupt arriving mid-task runs
+      // BESIDE the primary (spawn) or preempts it; it is never "Already has
+      // active task". With no task running it takes the ordinary path below.
+      if (currentTask && msg.kind === FIX_PR_KIND) {
+        handleFixPRInterrupt(msg, hub);
         break;
       }
       if (currentTask) {
@@ -8259,6 +9808,7 @@ function handleMessage(data, hub) {
       }
       invalidateAllReadyRetries('task assigned');
       currentTask = msg;
+      currentTaskStartedAt = new Date().toISOString();
       // #6908: assignment is where a hub grants authority over a repo, so this
       // is where the review cycle's scope is earned. Recorded before anything
       // below can fail, and never cleared, so a PR opened during this task
@@ -8278,6 +9828,8 @@ function handleMessage(data, hub) {
       // (TypeError: Converting circular structure to JSON), which crashed the
       // process, on the very first task after adding multi-hub support.
       Object.defineProperty(currentTask, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
+      noteTaskAttemptStart(hub, msg);
+      writeRelayStatus();
       activeHubIndex = hubs.indexOf(hub);
       console.log(`Task assigned: ${sanitizeHubText(msg.kind)} ${sanitizeHubText(taskDisplay(msg))} — ${sanitizeHubText(msg.title)} (from ${hub.url})`);
       if (msg.github_token) {
@@ -8346,6 +9898,7 @@ function handleMessage(data, hub) {
         tokenRefreshFailedAt = null;
         lastTokenExpiryWarnAt = 0;
         console.log('GitHub token refreshed');
+        noteAuditTokenEvent(auditFactsForTask(currentTask), 'token_renewed');
       }
       break;
 
@@ -8409,7 +9962,11 @@ function handleMessage(data, hub) {
       // produced the utah leftovers, and it is the one path that clears
       // currentTask before stopping the agent.
       const revokedTask = currentTask;
+      recordLifecycleEvent(auditFactsForTask(revokedTask), 'revoked', { reason: auditText(msg.reason || 'unspecified', 256) });
+      recordCancelledActivity(revokedTask);
       currentTask = null;
+      currentTaskStartedAt = null;
+      writeRelayStatus();
       releaseQuotaPoolReservation();
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -8459,6 +10016,10 @@ function handleMessage(data, hub) {
       // on a guessed timeout — means we never sit idle on a hub with no work
       // while a different configured hub has some.
       console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
+      // #14002: some refusals carry a plain-language explanation (for example
+      // app_not_installed names the org and the install link the operator must
+      // use). Print it so the contributor knows whether the fix is theirs.
+      if (msg.message) console.log(sanitizeHubText(msg.message));
       scheduleReadyRetry(hub, 'task_unavailable');
       break;
 
@@ -8592,12 +10153,29 @@ function connectHub(hub) {
 
   hub.ws.on('close', (code, reason) => {
     if (gen !== hub.connectGeneration) return;
+    if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+    if (hub.tlsHostMismatch) {
+      // The error handler already printed the remediation and either redialed
+      // the hub-resolved URL (bumping connectGeneration, so we never get here)
+      // or had nothing better to try. Redialing the same host would fail the
+      // same handshake; leave the hub parked until contributor.env changes.
+      console.log(`Connection to ${hub.url} closed (${describeWsClose(code, reason)}). ` +
+        'Not reconnecting: the certificate does not cover this host (see the line above).');
+      hub.readyOutstanding = false;
+      hub.authenticated = false;
+      writeRelayStatus();
+      invalidateReadyRetry(hub, 'tls hostname mismatch');
+      return;
+    }
     console.log(`Connection to ${hub.url} closed (${describeWsClose(code, reason)}). ` +
       `${wsCloseCorrelation(hub)}. Reconnecting in ${hub.reconnectDelay}ms...`);
-    if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
     // #7732: a `ready` in flight on this socket died with it; the auth_ok of
     // the reconnect asks afresh.
     hub.readyOutstanding = false;
+    hub.authenticated = false;
+    hub.scopeAckVersion = null;
+    hub.scopePending = hub.repoScope !== null || !!hub.scopeSent;
+    writeRelayStatus();
     invalidateReadyRetry(hub, 'socket closed');
     hub.reconnectTimer = setTimeout(() => connectHub(hub), hub.reconnectDelay);
     hub.reconnectDelay = Math.min(hub.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
@@ -8606,6 +10184,7 @@ function connectHub(hub) {
   hub.ws.on('error', (err) => {
     if (gen !== hub.connectGeneration) return;
     console.error(`WebSocket error on ${hub.url}:`, err.message);
+    if (isTLSHostMismatchError(err)) handleTLSHostMismatch(hub, err);
   });
 }
 
@@ -8620,6 +10199,7 @@ function cleanup() {
   if (hubsSeenWriteTimer) { clearTimeout(hubsSeenWriteTimer); hubsSeenWriteTimer = null; }
   writeHubsSeenNow();
   removeRelayPidFile();
+  try { fs.unlinkSync(RELAY_STATUS_FILE); } catch (_) {}
   hubs.forEach(hub => {
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
   });
@@ -8643,6 +10223,8 @@ function cleanup() {
   // the release through the disconnect handler's cooldown path (#5097).
   if (currentTask) {
     stopAgentForTaskExit({ reason: 'relay shutdown', noRelaunch: true });
+    // A local shutdown is a terminal attempt, recorded like a revocation.
+    recordCancelledActivity(currentTask);
     currentTask = null;
     releaseQuotaPoolReservation();
   }
@@ -8842,12 +10424,18 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     HIVE_VERDICT_COMPLETE,
     HIVE_VERDICT_NO_WORK,
     HIVE_VERDICT_BLOCKED,
+    HIVE_VERDICT_WRONG_BASE,
     HIVE_VERDICT_TOKENS,
     BLOCKED_WORKFLOW_LABEL,
     DEFAULT_NEEDS_DECISION_LABEL,
     ALREADY_DONE_WORKFLOW_LABEL,
     isNoWorkVerdict,
     isAlreadyDoneNoWork,
+    isToolingFailureBlockedReason,
+    isPersonBlockedReason,
+    NEEDS_HUMAN_LABEL,
+    isEnvironmentFailureReason,
+    ENVIRONMENT_FAILURE_REASON_PATTERNS,
     verdictWireFields,
     alreadyDoneVerdictFields,
     markIssueBlocked,
@@ -8969,6 +10557,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getLastResetAtCount: () => lastResetAtCount,
     getCurrentTask: () => currentTask,
     setCurrentTask: (v) => { currentTask = v; },
+    // Stage-072 fix-pr interrupt surface (hivecommons/hive#12436).
+    FIX_PR_KIND,
+    FIX_PR_DONE_MARKER,
+    FIX_PR_FAILED_MARKER,
+    fixPRState,
+    scanPaneForFixMarkers,
+    relaySupportsParallelFixes,
     blockingPromptKey,
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },
@@ -9064,18 +10659,45 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     GIVE_UP_MEMORY_MS,
     parseContributorEnvFile,
     hubListFromEnv,
+    canonicalRepositoryID,
+    assignmentInScope,
     reloadHubsFromProjection,
+    relocateRetiredHiveURL,
+    normalizeRetiredHiveURL,
+    hubWsURL,
+    hubPublicURL,
+    isTLSHostMismatchError,
+    tlsHostMismatchRemediation,
+    hubRegistryURLFor,
+    currentHiveURLFromRegistry,
+    handleTLSHostMismatch,
+    connectHub,
+    __setRegistryFetch: fn => { fetchHubRegistry = fn; },
     recordHubSeen,
     writeHubsSeenNow,
+    appendTaskActivity,
+    RELAY_ACTIVITY_FILE,
+    // Leveled local audit (#13456).
+    drainCommandSpool,
+    auditFactsForTask,
+    RELAY_AUDIT_STATE_FILE,
+    RELAY_AUDIT_SPOOL_FILE,
+    RELAY_AUDIT_SHIM_DIR,
     handleProfileSwitchSignal,
     hubs,
     HUBS_SEEN_FILE,
     RELAY_PID_FILE,
+    writeRelayPidFile,
+    RELAY_STATUS_FILE,
+    writeRelayStatus,
     // Test hook: mark a task key given-up at a chosen timestamp so isGivenUp's
     // expiry pruning can be exercised without waiting an hour.
     __setGivenUp: (key, at) => { givenUpTasks.set(key, at); },
   };
 } else {
+  if (process.env.HIVE_RELAY_LOG_FILE && !process.env.HIVE_CONTAINER_NAME) {
+    require('./lib/contributor-relay-log.js').mirrorRelayOutput(process.env.HIVE_RELAY_LOG_FILE);
+  }
   if (BACKEND === 'pi' && !PI_SELECTION.valid) {
     console.error(`FATAL: ${PI_SELECTION.error}`);
     if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
@@ -9091,5 +10713,6 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   // already absorbed field-by-field, so this cannot stop the relay starting.
   detectCapabilities();
   writeRelayPidFile();
+  writeRelayStatus();
   connect();
 }

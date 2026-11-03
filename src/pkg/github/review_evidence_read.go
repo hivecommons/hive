@@ -3,6 +3,7 @@ package github
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,76 @@ import (
 // them automatically; what an operator (or a volume wipe) removes is reported
 // as expired, never as silent absence (hivecommons/hive#11061).
 const ReviewEvidenceRetention = "review evidence bundles under /data/evidence are kept until an operator removes them; a bundle this hive can prove existed (its PR directory remains, or a newer bundle links to it) is reported expired"
+
+// ReviewEvidenceVerifier verifies bundles against the configured signing key.
+// A zero-value verifier accepts only correctly hashed unsigned bundles. When a
+// key is configured, every bundle must carry a valid signature under that key;
+// an unsigned replacement is not accepted as a downgrade.
+type ReviewEvidenceVerifier struct {
+	publicKey ed25519.PublicKey
+}
+
+// NewReviewEvidenceVerifier loads the public half of the configured signing
+// key once. The private key is not retained. An empty path produces a
+// verifier for unsigned bundles. A configured but missing key fails closed:
+// otherwise deleting the key could downgrade dashboard reads to unsigned.
+func NewReviewEvidenceVerifier(signingKeyFile string) (ReviewEvidenceVerifier, error) {
+	signingKeyFile = strings.TrimSpace(signingKeyFile)
+	key, err := evidence.LoadSigningKey(signingKeyFile)
+	if err != nil {
+		return ReviewEvidenceVerifier{}, err
+	}
+	if len(key) == 0 {
+		if signingKeyFile != "" {
+			return ReviewEvidenceVerifier{}, errors.New("evidence: configured signing key is unavailable")
+		}
+		return ReviewEvidenceVerifier{}, nil
+	}
+	return ReviewEvidenceVerifier{publicKey: key.Public().(ed25519.PublicKey)}, nil
+}
+
+func reviewEvidenceVerifierForKey(key ed25519.PrivateKey) ReviewEvidenceVerifier {
+	if len(key) != ed25519.PrivateKeySize {
+		return ReviewEvidenceVerifier{}
+	}
+	return ReviewEvidenceVerifier{publicKey: key.Public().(ed25519.PublicKey)}
+}
+
+// Verify rejects modified bundles. Signed bundles require the configured
+// public key; unsigned bundles are accepted only in unsigned mode and only
+// when their content hash still matches.
+func (v ReviewEvidenceVerifier) Verify(b *evidence.Bundle) error {
+	if b == nil {
+		return errors.New("evidence: nil bundle")
+	}
+	if len(v.publicKey) > 0 {
+		return evidence.Verify(b, v.publicKey)
+	}
+	if b.Signed {
+		return errors.New("evidence: signed bundle cannot be verified without the signing key")
+	}
+	hash, err := evidence.Hash(b)
+	if err != nil {
+		return err
+	}
+	if hash != b.Hash {
+		return errors.New("evidence: hash mismatch: bundle content changed after sealing")
+	}
+	return nil
+}
+
+// LoadVerifiedReviewEvidence reads one bundle and verifies its integrity
+// before returning any fields to the caller.
+func LoadVerifiedReviewEvidence(path string, verifier ReviewEvidenceVerifier) (*evidence.Bundle, error) {
+	b, err := LoadReviewEvidence(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifier.Verify(b); err != nil {
+		return nil, fmt.Errorf("verifying %s: %w", path, err)
+	}
+	return b, nil
+}
 
 // ReviewEvidenceEntry is one bundle as stored: the parsed bundle plus the
 // exact bytes on disk, so a download serves what was sealed byte for byte.
@@ -45,12 +116,25 @@ func ReviewEvidenceDir(root, repo string, number int) string {
 }
 
 // ListReviewEvidence returns every readable bundle for repo#number, oldest
-// first. A PR with no directory has no bundles and is not an error. Files
-// that do not parse, or that belong to a different PR, are skipped: the list
-// is what the reader can stand behind.
+// first, including bundles a writer put in a <pr>.uid<N> fallback sibling
+// because it could not write the PR directory (#13836). A PR with no
+// directory has no bundles and is not an error. Files that do not parse, or
+// that belong to a different PR, are skipped: the list is what the reader can
+// stand behind.
 func ListReviewEvidence(root, repo string, number int) ([]ReviewEvidenceEntry, error) {
+	return listReviewEvidence(root, repo, number, nil)
+}
+
+// ListVerifiedReviewEvidence is ListReviewEvidence with fail-closed integrity
+// verification. A matching bundle with an invalid hash or signature makes the
+// whole lookup fail instead of being omitted as though it never existed.
+func ListVerifiedReviewEvidence(root, repo string, number int, verifier ReviewEvidenceVerifier) ([]ReviewEvidenceEntry, error) {
+	return listReviewEvidence(root, repo, number, &verifier)
+}
+
+func listReviewEvidence(root, repo string, number int, verifier *ReviewEvidenceVerifier) ([]ReviewEvidenceEntry, error) {
 	dir := ReviewEvidenceDir(root, repo, number)
-	dirEntries, err := os.ReadDir(dir)
+	names, err := reviewEvidenceFileNames(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -58,20 +142,22 @@ func ListReviewEvidence(root, repo string, number int) ([]ReviewEvidenceEntry, e
 		return nil, fmt.Errorf("reading %s: %w", dir, err)
 	}
 	var out []ReviewEvidenceEntry
-	for _, e := range dirEntries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
+	for _, name := range names {
+		path := resolveReviewEvidencePath(filepath.Join(dir, name))
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		b, err := LoadReviewEvidence(path)
-		if err != nil || b.Number != number || !strings.EqualFold(b.Repo, strings.TrimSpace(repo)) {
+		var b evidence.Bundle
+		if err := json.Unmarshal(raw, &b); err != nil || b.Number != number || !strings.EqualFold(b.Repo, strings.TrimSpace(repo)) {
 			continue
 		}
-		out = append(out, ReviewEvidenceEntry{Bundle: b, Raw: raw, Path: path})
+		if verifier != nil {
+			if err := verifier.Verify(&b); err != nil {
+				return nil, fmt.Errorf("verifying %s: %w", path, err)
+			}
+		}
+		out = append(out, ReviewEvidenceEntry{Bundle: &b, Raw: raw, Path: path})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i].Bundle, out[j].Bundle
@@ -87,7 +173,17 @@ func ListReviewEvidence(root, repo string, number int) ([]ReviewEvidenceEntry, e
 // the newest bundle (the latest head Hive reviewed); otherwise head matches a
 // bundle's head SHA exactly or as a unique prefix of at least 7 characters.
 func FindReviewEvidence(root, repo string, number int, head string) (ReviewEvidenceLookup, error) {
-	entries, err := ListReviewEvidence(root, repo, number)
+	return findReviewEvidence(root, repo, number, head, nil)
+}
+
+// FindVerifiedReviewEvidence is FindReviewEvidence over integrity-verified
+// entries. Invalid matching evidence is reported as an error, never served.
+func FindVerifiedReviewEvidence(root, repo string, number int, head string, verifier ReviewEvidenceVerifier) (ReviewEvidenceLookup, error) {
+	return findReviewEvidence(root, repo, number, head, &verifier)
+}
+
+func findReviewEvidence(root, repo string, number int, head string, verifier *ReviewEvidenceVerifier) (ReviewEvidenceLookup, error) {
+	entries, err := listReviewEvidence(root, repo, number, verifier)
 	if err != nil {
 		return ReviewEvidenceLookup{}, err
 	}
@@ -137,6 +233,31 @@ func reviewEvidenceMissing(root, repo string, number int, head string, entries [
 		return ReviewEvidenceLookup{Reason: "no review evidence was recorded for this PR"}
 	}
 	return ReviewEvidenceLookup{Reason: fmt.Sprintf("no review evidence was recorded for head %s", head)}
+}
+
+// reviewEvidenceFileNames lists the distinct bundle file names (<head>.json)
+// in the PR directory dir and its fallback siblings. The error is the PR
+// directory's own read error; an unreadable sibling is skipped.
+func reviewEvidenceFileNames(dir string) ([]string, error) {
+	seen := map[string]bool{}
+	var names []string
+	for i, d := range reviewEvidenceDirs(dir) {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			if i == 0 {
+				return nil, err
+			}
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".json" || seen[e.Name()] {
+				continue
+			}
+			seen[e.Name()] = true
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
 }
 
 // ReviewEvidencePublicKey is the hex Ed25519 public key for the signing key

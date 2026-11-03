@@ -1,0 +1,1 @@
+- Activity Monitor bulk “Let hive decide” now works when a multi-PR parent issue is selected, confirming and deciding each open PR once even when its sub-rows are also selected ([#15061](https://github.com/hivecommons/hive/issues/15061)).

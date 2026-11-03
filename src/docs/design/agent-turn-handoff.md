@@ -77,7 +77,7 @@ than as a stale paragraph nobody re-reads.
   `logscrub` on the way out. This closes residual item 3 from the stage-2 report
   on the issue, which listed atomic persistence as assumed rather than done.
 - **The motivating problem now has an instrument.** `TurnLoss`
-  (`src/pkg/agent/turn_loss.go:96`), recorded by `noteTurnInterruptedLocked`
+  (`src/crux/agent/turn_loss.go:96`), recorded by `noteTurnInterruptedLocked`
   (`:117`) through the single teardown funnel `tearDownTurnLocked` (`:185`).
 
 What steps 1 and 2 explicitly did **not** settle is concurrency: the stage-2
@@ -284,7 +284,7 @@ the whole decision reduces to: **does resuming mid-turn context save enough to
 justify hive owning the conversation?**
 
 **And the instrument cannot answer it yet.** `TurnLoss`
-(`src/pkg/agent/turn_loss.go:96`) is honest about what it measures: `UpperBound`
+(`src/crux/agent/turn_loss.go:96`) is honest about what it measures: `UpperBound`
 is explicitly the most a restart *could* have cost, `Producing` is the
 threshold-free count of interruptions that certainly hit a working agent. Both
 are collected on the **tmux path** — the path where, by §4, hive cannot own the

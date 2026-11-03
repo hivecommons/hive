@@ -116,3 +116,57 @@ func TestAdvisoryPostDue_ClampLogsOnce(t *testing.T) {
 		t.Fatal("clamped value must set the one-shot warning flag")
 	}
 }
+
+// TestAdvisoryPostDue_WriteForbiddenBackoffClosesGate pins #11791: after a
+// write-forbidden 403 the gate stays closed for the configured backoff even
+// with update_interval_s unset (which would otherwise post every cycle), then
+// reopens on its own once the window ends. No time.Sleep — the clock is passed.
+func TestAdvisoryPostDue_WriteForbiddenBackoffClosesGate(t *testing.T) {
+	gate := NewPostGate()
+	now := time.Now()
+	cfg := config.AdvisoryConfig{}
+	const backoff = time.Hour
+
+	if !gate.Due(cfg, "IBM/docling-pipelines", now, slog.Default()) {
+		t.Fatal("first attempt must be due")
+	}
+	gate.RecordWriteForbidden("IBM/docling-pipelines", now, backoff)
+	for _, dt := range []time.Duration{time.Minute, 30 * time.Minute, backoff - time.Second} {
+		if gate.Due(cfg, "IBM/docling-pipelines", now.Add(dt), slog.Default()) {
+			t.Fatalf("gate must stay closed %s into a %s backoff", dt, backoff)
+		}
+	}
+	if gate.Due(cfg, "other/repo", now.Add(time.Minute), slog.Default()) == false {
+		t.Fatal("backoff is per repo — other repos must stay due")
+	}
+	if until, ok := gate.BackoffUntil("IBM/docling-pipelines"); !ok || !until.Equal(now.Add(backoff)) {
+		t.Fatalf("BackoffUntil = %v,%v; want %v,true", until, ok, now.Add(backoff))
+	}
+	if !gate.Due(cfg, "IBM/docling-pipelines", now.Add(backoff), slog.Default()) {
+		t.Fatal("gate must reopen when the backoff elapses")
+	}
+	if _, ok := gate.BackoffUntil("IBM/docling-pipelines"); ok {
+		t.Fatal("an elapsed backoff must be forgotten")
+	}
+}
+
+// A successful post clears an active backoff early (e.g. the operator fixed
+// the installation and a manual re-check wrote), and a zero/negative backoff
+// is a no-op so operators can keep per-cycle retries.
+func TestAdvisoryPostDue_WriteForbiddenBackoffClearedBySuccessAndDisabledByZero(t *testing.T) {
+	gate := NewPostGate()
+	now := time.Now()
+	cfg := config.AdvisoryConfig{}
+
+	gate.RecordWriteForbidden("org/repo", now, time.Hour)
+	gate.RecordSuccess("org/repo", now.Add(time.Minute))
+	if !gate.Due(cfg, "org/repo", now.Add(2*time.Minute), slog.Default()) {
+		t.Fatal("a successful post must clear the backoff")
+	}
+
+	gate.RecordWriteForbidden("org/repo", now, 0)
+	gate.RecordWriteForbidden("org/repo", now, -time.Hour)
+	if _, ok := gate.BackoffUntil("org/repo"); ok {
+		t.Fatal("a non-positive backoff must not close the gate")
+	}
+}

@@ -33,6 +33,11 @@ func mkIssues(n int, band string, opt func(i int, is *IssueItem)) []IssueItem {
 	return out
 }
 
+// yours marks a PR or issue as your turn, the way the stored decision does.
+func yours(verb string) Ownership {
+	return Ownership{YourTurn: true, Verb: verb, ReasonCode: "test", Reason: "test"}
+}
+
 func ciFailing(check string) func(int, *PRItem) {
 	return func(_ int, pr *PRItem) { pr.CIFailing = true; pr.FailingChecks = []string{check} }
 }
@@ -83,14 +88,14 @@ func TestQueueHealthThresholds(t *testing.T) {
 		{
 			name:  "needs-human PRs ≥ 25%",
 			id:    "clear-human-gate-prs",
-			below: Queue{PRs: append(mkPRs(24, PRBandWaiting, nil), mkPRs(76, "open", nil)...)},
-			at:    Queue{PRs: append(mkPRs(25, PRBandWaiting, nil), mkPRs(75, "open", nil)...)},
+			below: Queue{PRs: append(mkPRs(24, PRBandWaiting, func(_ int, pr *PRItem) { pr.Ownership = yours("REVIEW") }), mkPRs(76, "open", nil)...)},
+			at:    Queue{PRs: append(mkPRs(25, PRBandWaiting, func(_ int, pr *PRItem) { pr.Ownership = yours("REVIEW") }), mkPRs(75, "open", nil)...)},
 		},
 		{
 			name:  "needs-human issues ≥ 30%",
 			id:    "unblock-human-issues",
-			below: Queue{Issues: append(mkIssues(29, IssueBandWait, nil), mkIssues(71, "ready", nil)...)},
-			at:    Queue{Issues: append(mkIssues(30, IssueBandWait, nil), mkIssues(70, "ready", nil)...)},
+			below: Queue{Issues: append(mkIssues(29, IssueBandWait, func(_ int, is *IssueItem) { is.Ownership = yours("DECIDE") }), mkIssues(71, "ready", nil)...)},
+			at:    Queue{Issues: append(mkIssues(30, IssueBandWait, func(_ int, is *IssueItem) { is.Ownership = yours("DECIDE") }), mkIssues(70, "ready", nil)...)},
 		},
 		{
 			name:  "confirm & close > 0",
@@ -194,9 +199,9 @@ func TestIssueScenarioLeadsWithBlockedPRs(t *testing.T) {
 	prs = append(prs, mkPRs(23, "in-review", nil)...)
 	issues := mkIssues(117, IssueBandWait, func(i int, is *IssueItem) {
 		if i%2 == 0 {
-			is.NeedsDecision = true
+			is.Ownership = Ownership{YourTurn: true, Verb: "DECIDE", ReasonCode: "parked_needs_decision", Reason: "parked for a decision"}
 		} else {
-			is.Blocked = true
+			is.Ownership = Ownership{YourTurn: true, Verb: "STEER", ReasonCode: "parked_needs_direction", Reason: "parked for direction"}
 		}
 	})
 	issues = append(issues, mkIssues(92, IssueBandDone, nil)...)
@@ -236,8 +241,18 @@ func TestIssueScenarioLeadsWithBlockedPRs(t *testing.T) {
 		t.Fatalf("throttle-lane = %+v", lane)
 	}
 	human := find(t, got.Recommendations, "unblock-human-issues")
-	if !strings.Contains(human.Rationale, "117 of 295 open issues (39%) need a human: 59 needs-decision, 58 blocked, 0 discussing") {
+	if !strings.Contains(human.Rationale, "117 of 295 open issues (39%) are waiting on a person") {
 		t.Fatalf("unblock-human-issues = %q", human.Rationale)
+	}
+	wantWhy := []string{
+		"59 parked until a maintainer decides (all in octo/demo).",
+		"58 parked until a maintainer gives direction (all in octo/demo).",
+	}
+	if !reflect.DeepEqual(human.Why, wantWhy) || human.Help != "answer the parked decisions in octo/demo; give direction on the parked items in octo/demo" {
+		t.Fatalf("unblock-human-issues why=%q help=%q", human.Why, human.Help)
+	}
+	if !hasSignal(human.Signals, "verbs", "59 DECIDE, 58 STEER") {
+		t.Fatalf("the per-verb split moved to the signals: %+v", human.Signals)
 	}
 	done := find(t, got.Recommendations, "confirm-and-close")
 	if !strings.Contains(done.Rationale, "92 issues are agent-marked done; confirming them shrinks the backlog by 31%") || done.Links[0].URL != "/api/overview/issues.csv?band=done" {
@@ -252,13 +267,12 @@ func TestIssueScenarioLeadsWithBlockedPRs(t *testing.T) {
 
 	wantBands := []BandRule{
 		{Kind: "pr", Key: "blocked", Label: "Blocked", Rule: "blocked sweep verdict, merge conflicts, or failing CI"},
-		{Kind: "issue", Key: "waiting", Label: "Needs human", Rule: "labelled blocked, needs-decision"},
 		{Kind: "issue", Key: "done", Label: "Confirm & close", Rule: "an agent applied hive/likely-done"},
 	}
 	if !reflect.DeepEqual(got.Bands, wantBands) {
 		t.Fatalf("bands = %+v", got.Bands)
 	}
-	if got.Counts != (Counts{GovernorIssues: 12, GovernorPRs: 0, OverviewIssues: 295, OverviewPRs: 93}) {
+	if got.Counts != (Counts{GovernorIssues: 12, GovernorPRs: 0, OverviewIssues: 295, OverviewPRs: 93, YourTurn: 117}) {
 		t.Fatalf("counts = %+v", got.Counts)
 	}
 }
@@ -288,24 +302,36 @@ func TestBlockedFirstActionByDominantCause(t *testing.T) {
 	}
 }
 
-func TestSummarizePRsSplitsWaitingAndOrdersOldestFirst(t *testing.T) {
+// The needs-human rules count the stored your-turn decision and nothing else:
+// a held PR the decision says is not your turn (a person's hold) is not
+// counted, and a your-turn PR outside the waiting band (a sentinel-flagged
+// one) is.
+func TestYourTurnPRsAreCountedFromTheDecisionOldestFirst(t *testing.T) {
+	review := Ownership{YourTurn: true, Verb: "REVIEW", ReasonCode: "level_gate_hold", Reason: "held by the level gate"}
 	prs := []PRItem{
-		{Repo: "a/b", Number: 1, Band: PRBandWaiting, Held: true, IdleDays: 3},
-		{Repo: "a/b", Number: 2, Band: PRBandWaiting, NeedsHuman: true, IdleDays: 9},
-		{Repo: "a/b", Number: 3, Band: PRBandWaiting, NeedsDecision: true, Held: true, IdleDays: 9},
-		{Repo: "a/b", Number: 4, Band: "open"},
+		{Repo: "a/b", Number: 1, Band: PRBandWaiting, Ownership: review, IdleDays: 3},
+		{Repo: "a/b", Number: 2, Band: PRBandWaiting, Ownership: Ownership{YourTurn: true, Verb: "REVIEW", ReasonCode: "person_pr_needs_human", Reason: "needs-human PR"}, IdleDays: 9},
+		{Repo: "a/b", Number: 3, Band: "open", Ownership: Ownership{YourTurn: true, Verb: "CLOSE", ReasonCode: "adjudicator_recommended_close", Reason: "recommended closing"}, IdleDays: 9},
+		{Repo: "a/b", Number: 4, Band: PRBandWaiting, IdleDays: 20},
+		{Repo: "a/b", Number: 5, Band: "open"},
 	}
 	recs := queueCandidates(Queue{PRs: prs}, Thresholds{})
 	r := find(t, recs, "clear-human-gate-prs")
-	if !strings.Contains(r.Rationale, "3 of 4 open PRs (75%) wait on a human: 2 held, 1 labelled needs-human, 1 needs-decision") {
-		t.Fatalf("rationale = %q", r.Rationale)
+	if !strings.Contains(r.Rationale, "3 of 5 open PRs (60%) are waiting on a person") || !hasSignal(r.Signals, "verbs", "2 REVIEW, 1 CLOSE") {
+		t.Fatalf("rationale = %q signals = %+v", r.Rationale, r.Signals)
 	}
 	gotOrder := []int{r.Items[0].Number, r.Items[1].Number, r.Items[2].Number}
-	if !reflect.DeepEqual(gotOrder, []int{2, 3, 1}) {
+	if !reflect.DeepEqual(gotOrder, []int{2, 3, 1}) || len(r.Items) != 3 {
 		t.Fatalf("items ordered %v, want idle-desc then number", gotOrder)
 	}
-	if r.Items[2].Note != "held" || r.Items[1].Note != "held, needs-decision" {
+	if r.Items[2].Note != "REVIEW — held by the level gate" {
 		t.Fatalf("notes = %+v", r.Items)
+	}
+	if n, m := YourTurnCounts(Queue{PRs: prs}); n != 2 || m != 1 {
+		t.Fatalf("N/M = %d/%d, want 2/1", n, m)
+	}
+	if got := NeedsHumanItems(Queue{PRs: prs}); len(got) != 3 {
+		t.Fatalf("needs-human items = %+v, want the 3 your-turn PRs", got)
 	}
 }
 

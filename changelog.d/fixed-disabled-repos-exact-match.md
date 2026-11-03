@@ -1,0 +1,1 @@
+- Contribute `hub.disabled_repos` now matches a plain entry against the exact repository name (full or bare, case-insensitive), so disabling `owner/dakota` no longer also disables `owner/dakota-iso`; `*` globs and `/regex/` entries work as before, and the **Repos for contribute** toggles in the dashboard follow the same rule.

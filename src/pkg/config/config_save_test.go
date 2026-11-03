@@ -15,8 +15,10 @@ func TestSaveNewFile(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "testorg", Name: "test"},
-		Agents: map[string]AgentConfig{
-			"scanner": {Role: "scanner"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Role: "scanner"},
+			},
 		},
 		ACMMLevel: &level,
 	}
@@ -43,8 +45,10 @@ func TestSaveExistingFile(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "testorg", Name: "test"},
-		Agents: map[string]AgentConfig{
-			"scanner": {Role: "scanner"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Role: "scanner"},
+			},
 		},
 		ACMMLevel: &level,
 	}
@@ -65,7 +69,9 @@ func TestSaveExistingFile(t *testing.T) {
 func TestSaveNoSourcePath(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "testorg"},
-		Agents:  map[string]AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}},
+		},
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -77,7 +83,9 @@ func TestSaveEmptyOrg(t *testing.T) {
 	cfg := &Config{
 		SourcePath: "/tmp/test.yaml",
 		Project:    ProjectConfig{},
-		Agents:     map[string]AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}},
+		},
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -89,7 +97,9 @@ func TestSaveNoAgents(t *testing.T) {
 	cfg := &Config{
 		SourcePath: "/tmp/test.yaml",
 		Project:    ProjectConfig{Org: "testorg"},
-		Agents:     map[string]AgentConfig{},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		},
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -105,7 +115,9 @@ func TestSaveReadOnlyDir(t *testing.T) {
 	cfg := &Config{
 		SourcePath: readOnlyPath,
 		Project:    ProjectConfig{Org: "testorg"},
-		Agents:     map[string]AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}},
+		},
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -150,8 +162,10 @@ func TestSaveWritesDashboardOverlayInK8sMode(t *testing.T) {
 	cfg := &Config{
 		SourcePath: filepath.Join(dir, "hive.yaml"),
 		Project:    ProjectConfig{Org: "testorg"},
-		Agents:     map[string]AgentConfig{"scanner": {Role: "scanner"}},
-		GitHub:     GitHubConfig{Token: "ghp_secrettoken12345"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
+		GitHub: GitHubConfig{Token: "ghp_secrettoken12345"},
 	}
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -214,12 +228,14 @@ agents:
 		SourcePath: sourcePath,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
 		GitHub:     GitHubConfig{Token: "ghp_test123456789"},
-		Agents: map[string]AgentConfig{
-			"quality": {
-				Backend:      "copilot",
-				Enabled:      true,
-				KickTemplate: "quality-holdgated.md",
-				Mode:         "ISSUES_AND_PRS",
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"quality": {
+					Backend:      "copilot",
+					Enabled:      true,
+					KickTemplate: "quality-holdgated.md",
+					Mode:         "ISSUES_AND_PRS",
+				},
 			},
 		},
 	}
@@ -266,8 +282,10 @@ func TestSaveWritesDashboardOverlayEvenWhenPrimaryWriteFails(t *testing.T) {
 		SourcePath: sourcePath,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
 		GitHub:     GitHubConfig{Token: "ghp_test123456789"},
-		Agents: map[string]AgentConfig{
-			"quality": {Backend: "copilot", Enabled: true, KickTemplate: "quality-holdgated.md"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"quality": {Backend: "copilot", Enabled: true, KickTemplate: "quality-holdgated.md"},
+			},
 		},
 	}
 	if err := cfg.Save(); err != nil {
@@ -301,7 +319,9 @@ func TestSaveSkipsDashboardOverlayOutsideK8s(t *testing.T) {
 	cfg := &Config{
 		SourcePath: filepath.Join(dir, "hive.yaml"),
 		Project:    ProjectConfig{Org: "testorg"},
-		Agents:     map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
 	}
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -349,8 +369,10 @@ func TestSave_RedactsOTelHeadersInSource(t *testing.T) {
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
 		GitHub:     GitHubConfig{Token: "ghp_test123456789"},
-		Agents:     map[string]AgentConfig{"scanner": {Backend: "copilot", Enabled: true}},
-		OTel:       OTelConfig{Enabled: true, Headers: map[string]string{"authorization": "Bearer save-secret"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "copilot", Enabled: true}},
+		},
+		OTel: OTelConfig{Enabled: true, Headers: map[string]string{"authorization": "Bearer save-secret"}},
 	}
 
 	if err := cfg.Save(); err != nil {

@@ -1,0 +1,1 @@
+- Document that `publish.verify` runs the configured commands in the run's workspace at HEAD, so test-runner configuration the agent committed (conftest.py, pytest.ini, Makefile) is executed as-is; this is a determinism/regression preflight, not an integrity gate (#15006).

@@ -157,8 +157,9 @@ func TestAppearanceThemeHoverCannotResizeSettingsModal(t *testing.T) {
 	}
 	block := html[start : start+end]
 	for _, want := range []string{
-		"width: 1200px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap));",
-		"height: min(84vh, 760px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap));",
+		"--config-modal-max-h: 1200px;",
+		"width: 1320px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap));",
+		"height: min(calc(100vh - var(--modal-gap) - var(--modal-gap)), var(--config-modal-max-h)); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap));",
 		"font-family: var(--font-ui); font-size: var(--fs-base);",
 		"contain: layout;",
 		"--font-ui: Inter, ui-sans-serif",

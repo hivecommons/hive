@@ -531,6 +531,7 @@ func TestComputeAgentRosterMismatch_WarningReason(t *testing.T) {
 		{Name: "quality"},
 		{Name: "guide"},
 		{Name: "supervisor"},
+		{Name: "reviewer"},
 		{Name: "outreach"},
 	}
 	got := computeAgentRosterMismatch(2, agents)
@@ -555,6 +556,7 @@ func TestComputeAgentRosterMismatch_NoWarningForMatchingOrUnknown(t *testing.T) 
 		{Name: "quality"},
 		{Name: "scanner"},
 		{Name: "supervisor"},
+		{Name: "reviewer"},
 	}
 	if got := computeAgentRosterMismatch(2, matching); got != nil {
 		t.Fatalf("matching roster got warning %+v", got)
@@ -649,6 +651,13 @@ func TestApplyAgentRestartResetBaselines(t *testing.T) {
 	}, now)
 	if agents[0].Restarts.Last24h != 2 || agents[0].Restarts.ResetBy != "andy" {
 		t.Fatalf("reset-adjusted restarts = %+v, want delta 2 by andy", agents[0].Restarts)
+	}
+
+	applyAgentRestartResetBaselines(agents, map[string]AgentRestartReset{
+		"scanner": {ResetAt: now.Add(-time.Minute).Format(time.RFC3339), By: "andy", TotalBaseline: agents[0].Restarts.Total},
+	}, now)
+	if r := rollupAgents(agents, hiveBlockers{}, 0, now); r.RestartStorms != 0 || r.Problems != 0 {
+		t.Fatalf("reset-to-current baseline still reports storm: %+v (agent %+v)", r, agents[0].Restarts)
 	}
 }
 

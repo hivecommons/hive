@@ -54,11 +54,26 @@ that status is the thing to check before treating a page as current behaviour:
   impossible rather than merely unwise, including why `POST /api/contribute/invite` cannot work
   from a role-derived credential at all — and the one real gap it does not close: writes audit as
   `local`, so an assistant-mediated action is indistinguishable from a dashboard one.
+- [Crux: the agent runtime boundary](crux.md) — **Stage 1 shipped (v5); Stage 2 blocked on `pkg/config`.** RFC [#13536](https://github.com/hivecommons/hive/issues/13536): names the agent runtime inside Hive (`pkg/agent` and its ring) as Crux, lists what stays in Hive, records the staged plan (in-repo boundary → nested module → `crux serve`) and the naming decision. Inbound and outbound ratchets in `src/internal/testutil/crux_*_ratchet_test.go`, the tmux funnel, `crux.Runtime`, Crux-owned value types, CI path filters and the `crux` CLI are live; the nested module waits on an agent-runtime config leaf (the doc lists the measured outbound edges and prerequisites).
+
+- [Crux: generic tool policy for the MITM proxy](crux-tool-policy.md) — **Design only (proposed).** #14228, child of #14138: a shared operation vocabulary with per-forge adapters, a `relay(<command>)` verdict, deny-by-default for unrecognised operations, and the proxy's evaluation pipeline written down once. It also covers migrating behind a parity test and treating #14211 as the first non-GitHub adapter.
+
 - [PR follow-up session resume](pr-follow-up-resume.md) - **shipped (v5, default off).** #9583: ties each agent-opened PR to the CLI session that authored it (a `pkg/turn` envelope per PR) and feeds CI failures, changes-requested reviews, new review-bot threads and comments from people with write access back into that session without `/clear` while it is still live. When the session is gone (a restart or the next regular kick), the follow-up takes the fix-before-new path and the agent's next kick carries a compact handoff note of the PR's original reasoning. Pointers are pruned on merge or close; a live-review soak is the remaining follow-up.
 
 - [Achievement system 2.0](achievements-2.md) — **shipped (v5).** Spektacular-ready spec for #8832: teamwork-first Solo/Dual/Fireteam/Raid tiers, local-model achievements, the “local always wins” mastery tier, dark-pattern guardrails, anti-gaming rules, data sources, and shipped dossier/leaderboard rollout.
 
 - [External workflow admission](external-workflow-admission.md) - **Gate 0 decided; Gate 1 pilot shipped (v5, default off).** Records the #8201 Gate 0 selection for #8302 (option 2, one bounded report-only Flue generation workflow through the existing contributor protocol, the source-to-guarantee matrix, native Flue receipt probe, conformance split) and the #8361 Gate 1 pilot: the engine-neutral `pkg/extwork` binding, the Flue adapter and deterministic fixture, the side-effect inventory, operational status and recovery, and the local-versus-binding comparison, and the OMP workbench as the second host behind the same adapter (#8361 step 9, answering #6899: relay-channel frames, accept before context, progress events, receipt binding, confinement note). Publication remains deferred.
+
+- [Mobile checkpoint payload](mobile-checkpoint.md) — **shipped (v5).** The
+  single server-owned `RunCheckpointPayload` behind `GET /api/runs/{key}/checkpoint`
+  that mobile, chat, push and PWA checkpoint prompts render instead of rebuilding
+  run state per surface (`src/pkg/dashboard/api_runs_checkpoint.go`).
+
+- [Headroom library boundary](headroom-library.md) — **shipped (v5).** The
+  `rotation.HeadroomSource` seam ([#8753](https://github.com/hivecommons/hive/issues/8753))
+  that lets the provider headroom probers live in the standalone `ccleft`
+  library while `pkg/rotation` keeps the Hive-facing reading types
+  (`src/pkg/rotation/ccleft.go`).
 
 - [Run artifacts](run-artifacts.md) — **shipped (v5).** How long-running runs
   keep review state in the existing plan and lease artifacts with no new store,
@@ -203,7 +218,7 @@ that status is the thing to check before treating a page as current behaviour:
   whether Copilot token usage can be captured per request with repo context and
   timestamps at the proxy. Its answer is a recommendation **against** building
   phase 4 as scoped: per-request usage is available and already captured
-  (`src/pkg/proxy/github_proxy.go:2662`), but per-request repo context is not
+  (`src/crux/proxy/github_proxy_copilot.go:236`), but per-request repo context is not
   available at the proxy in any form, and the nearest substitute — a "last
   `api.github.com` repo seen" from `ExtractRepo` — is an inference from read
   traffic, weaker than the audited `repo=` events phase 3 already joins against.
@@ -249,7 +264,7 @@ that status is the thing to check before treating a page as current behaviour:
   benign work on an assigned third-party repo ran that repo's own test suite,
   which reached the operator's real bootloader via `rpm-ostree kargs`, stopped
   only by polkit. Maps the default tmux launch path
-  (`src/pkg/agent/manager.go`, `bin/agent-launch.sh`) against the three
+  (`src/crux/agent/manager.go`, `bin/agent-launch.sh`) against the three
   deployment modes (hub pod, containerized `contribute-hive`, `contribute-hive
   ... local`) and establishes precisely what #4938's merged host-state denylist
   covers — the reported command family, on the `Bash` tool surface, by bare

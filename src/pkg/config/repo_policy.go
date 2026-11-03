@@ -4,20 +4,63 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/redmain"
 )
 
 // RepoPolicy records optional per-repository policy overrides. It is separate
 // from project.repos so existing configs keep their string-list repo shape.
 type RepoPolicy struct {
-	Repo                  string               `yaml:"repo" json:"repo"`
-	SelfAuthorizationHold *bool                `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
-	ReporterTrustHold     *bool                `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
-	AutoMerge             *bool                `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
-	LabelDriven           bool                 `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
-	MergeStrategy         string               `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
-	ACMMLevel             *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
-	ACMMPinned            bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
-	ACMMLastAutomatic     *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
+	Repo                  string `yaml:"repo" json:"repo"`
+	SelfAuthorizationHold *bool  `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
+	ReporterTrustHold     *bool  `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
+	AutoMerge             *bool  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	LabelDriven           bool   `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
+	ReleaseOnApprove      bool   `yaml:"release_on_approve,omitempty" json:"release_on_approve,omitempty"`
+	// ReleaseVersionSource is an optional repository-relative text file whose
+	// trimmed value must match the approved tag (with an optional leading v).
+	ReleaseVersionSource string `yaml:"release_version_source,omitempty" json:"release_version_source,omitempty"`
+	// LabelDrivenApprovalLabels overrides project.label_driven_approval_labels
+	// for this repo (hivecommons/hive#11313). Only read when LabelDriven is set.
+	LabelDrivenApprovalLabels []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
+	MergeStrategy             string   `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
+	// MergeFrontTimeout overrides project.merge_front_timeout for this repo's
+	// serialized lane (hivecommons/hive#12952): a Go duration such as "2h".
+	MergeFrontTimeout string `yaml:"merge_front_timeout,omitempty" json:"merge_front_timeout,omitempty"`
+	// RedMainThreshold overrides project.red_main_threshold for this repo
+	// (hivecommons/hive#13630): how long a required check may stay red on
+	// the default branch before the red-main circuit breaker trips. A Go
+	// duration such as "6h".
+	RedMainThreshold string `yaml:"red_main_threshold,omitempty" json:"red_main_threshold,omitempty"`
+	// MaxOpenHeldPRs caps the PRs the hive App opened in this repo that still
+	// carry a hold (hivecommons/hive#13645). At the cap hive-open-pr refuses
+	// new PRs in the repo and PR-opening agents are told so in their kick.
+	// Unset (the default) means no cap; 0 means DefaultMaxOpenHeldPRs; a
+	// positive value is the cap. See RepoMaxOpenHeldPRs.
+	MaxOpenHeldPRs *int `yaml:"max_open_held_prs,omitempty" json:"max_open_held_prs,omitempty"`
+	// LabelDrivenSupersedeParkActors overrides
+	// project.label_driven_supersede_park_actors for this repo
+	// (hivecommons/hive#13605). Only read when LabelDriven is set.
+	LabelDrivenSupersedeParkActors []string             `yaml:"label_driven_supersede_park_actors,omitempty" json:"label_driven_supersede_park_actors,omitempty"`
+	ACMMLevel                      *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
+	ACMMPinned                     bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
+	ACMMLastAutomatic              *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
+	// CompanionRepos lists sibling repositories (bare or org-qualified) this
+	// repo's tooling expects checked out beside it under the agent workspace
+	// root, at <root>/<org>/<companion> (hivecommons/hive#13059). Agents are
+	// told to clone them alongside the primary checkout instead of parking
+	// when a repo-local tool reports the path missing.
+	CompanionRepos []string `yaml:"companion_repos,omitempty" json:"companion_repos,omitempty"`
+	// Forge overrides project.forge for this repo: "github", "gitlab" or
+	// "gitea" (hivecommons/hive#14112). Empty inherits project.forge, so a
+	// config that never sets it behaves exactly as before. Read it through
+	// Config.ForgeKindForRepo.
+	Forge string `yaml:"forge,omitempty" json:"forge,omitempty"`
+	// ForgeURL is the instance root of this repo's forge, e.g.
+	// "https://gitlab.example.com" or "https://codeberg.org". Empty inherits
+	// gitlab.gitlab_url / gitea.gitea_url / github's base URL for the repo's
+	// forge kind. Read it through Config.ForgeURLForRepo.
+	ForgeURL string `yaml:"forge_url,omitempty" json:"forge_url,omitempty"`
 }
 
 // Per-repo merge strategies (hivecommons/hive#10886). The strategy decides how
@@ -80,6 +123,116 @@ func (c *Config) EffectiveACMMLevelForRepo(repo string) int {
 func (c *Config) RepoLabelDriven(repo string) bool {
 	rp, ok := c.RepoPolicyFor(repo)
 	return ok && rp.LabelDriven
+}
+
+// RepoReleaseOnApprove reports whether repo opted in to release-on-approve
+// (hivecommons/hive#12631). It is only the opt-in switch; unset means false and
+// a kind=release owner step behaves as it does today. A label-driven repo
+// never executes a release: its sweep answers `/hive approve` with the
+// triage-label pointer before reaching the release executor, so the dashboard
+// action and the command share the same refusal (hivecommons/hive#12635).
+func (c *Config) RepoReleaseOnApprove(repo string) bool {
+	rp, ok := c.RepoPolicyFor(repo)
+	return ok && rp.ReleaseOnApprove && !rp.LabelDriven
+}
+
+// RepoReleaseVersionSource returns the optional repository-relative version
+// file checked before a release-on-approve write.
+func (c *Config) RepoReleaseVersionSource(repo string) string {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(rp.ReleaseVersionSource)
+}
+
+// DefaultLabelDrivenApprovalLabel is the acceptance label Prow-style
+// organisations use; it is what label-driven approval maps to "approve" when
+// project.label_driven_approval_labels is unset.
+const DefaultLabelDrivenApprovalLabel = "triage/accepted"
+
+// DefaultLabelDrivenTrustedBots are the command bots whose label additions
+// count as an acceptance on a label-driven repo when
+// project.label_driven_trusted_bots is unset: the Prow instance hivecommons
+// runs (hivecommons/hive#11313). github-actions[bot] is deliberately absent:
+// it is the shared identity of every workflow in a repo, so operators must
+// opt in per deployment (hivecommons/hive#11737).
+var DefaultLabelDrivenTrustedBots = []string{"kubestellar-prow[bot]"}
+
+// LabelDrivenApprovalLabels returns the labels whose trusted addition approves
+// an issue on repo (hivecommons/hive#11313), or nil when repo is not
+// label-driven, so the feature is a no-op everywhere it was not opted into.
+// A label-driven repo resolves its own repo_policies override first, then
+// project.label_driven_approval_labels, then DefaultLabelDrivenApprovalLabel.
+// An explicit empty override turns label approval off for that repo while
+// keeping the rest of label-driven behaviour.
+func (c *Config) LabelDrivenApprovalLabels(repo string) []string {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || !rp.LabelDriven {
+		return nil
+	}
+	if rp.LabelDrivenApprovalLabels != nil {
+		return normalizeLabelList(rp.LabelDrivenApprovalLabels)
+	}
+	if c.Project.LabelDrivenApprovalLabels != nil {
+		return normalizeLabelList(c.Project.LabelDrivenApprovalLabels)
+	}
+	return []string{DefaultLabelDrivenApprovalLabel}
+}
+
+// LabelDrivenApprovalLabelsDefault returns the project-wide approval labels
+// that label-driven repos without their own override inherit.
+func (c *Config) LabelDrivenApprovalLabelsDefault() []string {
+	if c != nil && c.Project.LabelDrivenApprovalLabels != nil {
+		return normalizeLabelList(c.Project.LabelDrivenApprovalLabels)
+	}
+	return []string{DefaultLabelDrivenApprovalLabel}
+}
+
+// LabelDrivenTrustOrgMembers reports whether public members of the repo's
+// owning organisation may approve by label (default true: Prow itself lets
+// only org members add `triage/accepted`).
+func (c *Config) LabelDrivenTrustOrgMembers() bool {
+	if c == nil || c.Project.LabelDrivenTrustOrgMembers == nil {
+		return true
+	}
+	return *c.Project.LabelDrivenTrustOrgMembers
+}
+
+// LabelDrivenTrustedBots returns the bot logins whose label additions count
+// as acceptances on label-driven repos.
+func (c *Config) LabelDrivenTrustedBots() []string {
+	if c == nil || c.Project.LabelDrivenTrustedBots == nil {
+		return append([]string(nil), DefaultLabelDrivenTrustedBots...)
+	}
+	return normalizeLabelList(c.Project.LabelDrivenTrustedBots)
+}
+
+// LabelDrivenSupersedeParkActors returns the automation logins whose park
+// labels a later trusted acceptance on repo supersedes and removes
+// (hivecommons/hive#13605), or nil when repo is not label-driven. A
+// label-driven repo resolves its own repo_policies override first, then
+// project.label_driven_supersede_park_actors. The default is empty: Hive
+// removes only the park labels it added itself.
+func (c *Config) LabelDrivenSupersedeParkActors(repo string) []string {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || !rp.LabelDriven {
+		return nil
+	}
+	if rp.LabelDrivenSupersedeParkActors != nil {
+		return normalizeLabelList(rp.LabelDrivenSupersedeParkActors)
+	}
+	return normalizeLabelList(c.Project.LabelDrivenSupersedeParkActors)
+}
+
+func normalizeLabelList(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (c *Config) RepoACMMPinned(repo string) bool {
@@ -203,7 +356,7 @@ func (c *Config) SelfAuthorizationHoldEnabledForRepoAtLevel(repo string, acmmLev
 	if rp, ok := c.RepoPolicyFor(repo); ok && rp.SelfAuthorizationHold != nil {
 		return *rp.SelfAuthorizationHold
 	}
-	return c.GitHub.SelfAuthorizationHoldEnabledAtLevel(acmmLevel)
+	return c.GitHubSelfAuthorizationHoldEnabledAtLevel(acmmLevel)
 }
 
 // SetSelfAuthorizationHoldForRepoAndSave records, clears, and persists one
@@ -261,7 +414,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && rp.MergeStrategy == ""
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && rp.RedMainThreshold == "" && rp.MaxOpenHeldPRs == nil && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0
 }
 
 // ValidateRepoMergeStrategy accepts "" (unset, meaning direct), "direct" and
@@ -296,6 +449,107 @@ func (c *Config) RepoMergeStrategy(repo string) string {
 		return rp.MergeStrategy
 	}
 	return MergeStrategyDirect
+}
+
+// ValidateMergeFrontTimeout accepts "" (unset) or a positive Go duration.
+func ValidateMergeFrontTimeout(field, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if d, err := time.ParseDuration(value); err != nil || d <= 0 {
+		return fmt.Errorf("%s: invalid merge_front_timeout %q (must be a positive duration such as 90m or 2h)", field, value)
+	}
+	return nil
+}
+
+// RepoMergeFrontTimeout returns the serialized lane's front timeout for repo
+// (hivecommons/hive#12952): the repo_policies override, else
+// project.merge_front_timeout, else 0, which leaves the lane's own default
+// (60 minutes). An unparsable or non-positive value counts as unset.
+func (c *Config) RepoMergeFrontTimeout(repo string) time.Duration {
+	if c == nil {
+		return 0
+	}
+	if rp, ok := c.RepoPolicyFor(repo); ok {
+		if d := parseMergeFrontTimeout(rp.MergeFrontTimeout); d > 0 {
+			return d
+		}
+	}
+	return parseMergeFrontTimeout(c.Project.MergeFrontTimeout)
+}
+
+// ValidateRedMainThreshold accepts "" (unset) or a positive Go duration.
+func ValidateRedMainThreshold(field, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if d, err := time.ParseDuration(value); err != nil || d <= 0 {
+		return fmt.Errorf("%s: invalid red_main_threshold %q (must be a positive duration such as 6h or 90m)", field, value)
+	}
+	return nil
+}
+
+// RepoRedMainThreshold returns how long a required check may stay red on
+// repo's default branch before the red-main circuit breaker trips
+// (hivecommons/hive#13630): the repo_policies override, else
+// project.red_main_threshold, else redmain.DefaultThreshold (6h). An
+// unparsable or non-positive value counts as unset.
+func (c *Config) RepoRedMainThreshold(repo string) time.Duration {
+	if c == nil {
+		return redmain.DefaultThreshold
+	}
+	if rp, ok := c.RepoPolicyFor(repo); ok {
+		if d := parseMergeFrontTimeout(rp.RedMainThreshold); d > 0 {
+			return d
+		}
+	}
+	if d := parseMergeFrontTimeout(c.Project.RedMainThreshold); d > 0 {
+		return d
+	}
+	return redmain.DefaultThreshold
+}
+
+// DefaultMaxOpenHeldPRs is the cap repo_policies[].max_open_held_prs: 0
+// stands for (hivecommons/hive#13645).
+const DefaultMaxOpenHeldPRs = 12
+
+// ValidateMaxOpenHeldPRs accepts nil (unset), 0 (the default cap) or a
+// positive cap.
+func ValidateMaxOpenHeldPRs(field string, value *int) error {
+	if value != nil && *value < 0 {
+		return fmt.Errorf("%s: invalid max_open_held_prs %d (must be 0 for the default of %d, or a positive number)", field, *value, DefaultMaxOpenHeldPRs)
+	}
+	return nil
+}
+
+// RepoMaxOpenHeldPRs returns how many open, still-held PRs the hive App may
+// have in repo before new PRs there are refused (hivecommons/hive#13645), or
+// 0 when repo has no cap. The cap is per repo, never per agent, and opt-in:
+// repo_policies[].max_open_held_prs unset means no cap, 0 means
+// DefaultMaxOpenHeldPRs, a positive value is the cap. A negative value counts
+// as unset.
+func (c *Config) RepoMaxOpenHeldPRs(repo string) int {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || rp.MaxOpenHeldPRs == nil {
+		return 0
+	}
+	switch n := *rp.MaxOpenHeldPRs; {
+	case n == 0:
+		return DefaultMaxOpenHeldPRs
+	case n > 0:
+		return n
+	}
+	return 0
+}
+
+func parseMergeFrontTimeout(raw string) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // SetRepoMergeStrategyForRepoAndSave persists one repo's merge strategy.
@@ -355,6 +609,34 @@ func (c *Config) SetRepoMergeStrategyForRepoAndSave(repo, strategy string) (bool
 	return true, c.saveLocked()
 }
 
+// CompanionReposFor returns the org-qualified companion repositories
+// configured for repo via project.repo_policies[].companion_repos, in config
+// order, deduplicated case-insensitively, with the repo itself and malformed
+// entries dropped. Nil when none are configured.
+func (c *Config) CompanionReposFor(repo string) []string {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || len(rp.CompanionRepos) == 0 {
+		return nil
+	}
+	self := repoPauseKey(c.Project.Org, repo)
+	seen := map[string]bool{self: true}
+	var out []string
+	for _, raw := range rp.CompanionRepos {
+		full := QualifyRepo(c.Project.Org, raw)
+		owner, name, found := strings.Cut(full, "/")
+		if !found || strings.TrimSpace(owner) == "" || strings.TrimSpace(name) == "" || strings.Contains(name, "/") {
+			continue
+		}
+		key := strings.ToLower(full)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, full)
+	}
+	return out
+}
+
 // ReporterTrustHoldEnabledForRepo resolves the #9665 reporter-trust hold for
 // one repository: env override, then the repo's own override, then the
 // hive-wide value (which itself follows reporter_trust.enabled when unset).
@@ -412,10 +694,69 @@ func (c *Config) SetReporterTrustHoldForRepos(values map[string]*bool) {
 	}
 }
 
+// LabelDrivenRepoSetting is one repo's label-driven policy as edited from the
+// dashboard Repos tab (hivecommons/hive#11313). ApprovalLabels nil or empty
+// keeps the project default.
+type LabelDrivenRepoSetting struct {
+	Enabled        bool
+	ApprovalLabels *[]string
+}
+
+// SetLabelDrivenForRepos records or clears per-repo label-driven policies. A
+// nil entry (or Enabled false) switches the repo back to the default
+// comment-driven flow and drops the approval-label override with it; the
+// policy row is pruned when nothing else is set on it.
+func (c *Config) SetLabelDrivenForRepos(values map[string]*LabelDrivenRepoSetting) {
+	if c == nil || len(values) == 0 {
+		return
+	}
+	repoPauseMu.Lock()
+	defer repoPauseMu.Unlock()
+	for repo, setting := range values {
+		name := strings.TrimSpace(repo)
+		if name == "" {
+			continue
+		}
+		name, _ = NormalizeRepoForOrg(c.Project.Org, name)
+		key := repoPauseKey(c.Project.Org, name)
+		idx := -1
+		for i, rp := range c.Project.RepoPolicies {
+			if repoPauseKey(c.Project.Org, rp.Repo) == key {
+				idx = i
+				break
+			}
+		}
+		if setting == nil || !setting.Enabled {
+			if idx >= 0 {
+				c.Project.RepoPolicies[idx].LabelDriven = false
+				c.Project.RepoPolicies[idx].LabelDrivenApprovalLabels = nil
+				if repoPolicyHasNoOverrides(c.Project.RepoPolicies[idx]) {
+					c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+				}
+			}
+			continue
+		}
+		// An empty override cannot round-trip through yaml omitempty, so it
+		// means "inherit the project default" here.
+		var labels []string
+		if setting.ApprovalLabels != nil {
+			if labels = normalizeLabelList(*setting.ApprovalLabels); len(labels) == 0 {
+				labels = nil
+			}
+		}
+		if idx >= 0 {
+			c.Project.RepoPolicies[idx].LabelDriven = true
+			c.Project.RepoPolicies[idx].LabelDrivenApprovalLabels = labels
+		} else {
+			c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, LabelDriven: true, LabelDrivenApprovalLabels: labels})
+		}
+	}
+}
+
 // RepoAutoMergeEnabled resolves the effective per-repo auto-merge switch.
 // Auto-merge is fail-closed below L6, regardless of the stored per-repo
 // override. At L6, an unset repo override means enabled so hives keep their
-// prior fully-autonomous behavior until an owner switches a repo off.
+// prior autonomous behavior until an owner switches a repo off.
 func (c *Config) RepoAutoMergeEnabled(repo string) bool {
 	if c == nil || c.ACMMLevelOrZero() < SelfMergeMinACMMLevel {
 		return false

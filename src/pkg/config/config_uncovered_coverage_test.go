@@ -665,8 +665,10 @@ func TestValidate_ChannelsToolsConnectionsPropagate(t *testing.T) {
 		return &Config{
 			Project: ProjectConfig{Org: "acme"},
 			GitHub:  GitHubConfig{Token: "x"},
-			Agents: map[string]AgentConfig{
-				"scanner": {Backend: "claude"},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{
+					"scanner": {Backend: "claude"},
+				},
 			},
 		}
 	}
@@ -710,7 +712,9 @@ func TestSaveLocked_CreateFallbackWhenOpenFails(t *testing.T) {
 	cfg := &Config{
 		SourcePath: asDir,
 		Project:    ProjectConfig{Org: "acme"},
-		Agents:     map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
 	}
 	if err := cfg.Save(); err == nil {
 		t.Fatal("expected error writing config over a directory path")
@@ -731,7 +735,9 @@ func TestSaveLocked_FileDoesNotExistYet(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "acme"},
-		Agents:     map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
 	}
 	if err := cfg.Save(); err == nil {
 		t.Fatal("expected error writing config to a path whose parent dir does not exist")
@@ -754,8 +760,10 @@ func TestDashboardOverlayBytes_ScrubsAuthToken(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(tt.envVar, "super-secret-token")
 			c := &Config{
-				Project:   ProjectConfig{Org: "acme"},
-				Agents:    map[string]AgentConfig{"scanner": {Role: "scanner"}},
+				Project: ProjectConfig{Org: "acme"},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+				},
 				Dashboard: DashboardConfig{AuthToken: "super-secret-token"},
 			}
 			data, err := c.dashboardOverlayBytes()
@@ -776,8 +784,10 @@ func TestDashboardOverlayBytes_ScrubsAuthToken(t *testing.T) {
 func TestDashboardOverlayBytes_NoScrubWhenTokenDiffers(t *testing.T) {
 	t.Setenv("DASHBOARD_AUTH_TOKEN", "env-token")
 	c := &Config{
-		Project:   ProjectConfig{Org: "acme"},
-		Agents:    map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		Project: ProjectConfig{Org: "acme"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
 		Dashboard: DashboardConfig{AuthToken: "different-token-not-from-env"},
 	}
 	data, err := c.dashboardOverlayBytes()
@@ -1036,10 +1046,12 @@ func TestResolveReviewer_KeyFromTrajectoryFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &GovernorConfig{
-		Trajectory: TrajectoryConfig{
-			Endpoint:   "https://reviewer.example.com",
-			Model:      "reviewer-model",
-			APIKeyFile: keyPath,
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			Trajectory: TrajectoryConfig{
+				Endpoint:   "https://reviewer.example.com",
+				Model:      "reviewer-model",
+				APIKeyFile: keyPath,
+			},
 		},
 	}
 	_, apiKey, _ := g.ResolveReviewer()
@@ -1056,11 +1068,13 @@ func TestResolveReviewer_KeyFromTrajectoryEnvWhenFileEmpty(t *testing.T) {
 	}
 	t.Setenv("REVIEWER_TEST_ENV_KEY", "reviewer-env-key")
 	g := &GovernorConfig{
-		Trajectory: TrajectoryConfig{
-			Endpoint:   "https://reviewer.example.com",
-			Model:      "reviewer-model",
-			APIKeyFile: keyPath,
-			APIKeyEnv:  "REVIEWER_TEST_ENV_KEY",
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			Trajectory: TrajectoryConfig{
+				Endpoint:   "https://reviewer.example.com",
+				Model:      "reviewer-model",
+				APIKeyFile: keyPath,
+				APIKeyEnv:  "REVIEWER_TEST_ENV_KEY",
+			},
 		},
 	}
 	_, apiKey, _ := g.ResolveReviewer()
@@ -1071,9 +1085,11 @@ func TestResolveReviewer_KeyFromTrajectoryEnvWhenFileEmpty(t *testing.T) {
 
 func TestResolveReviewer_KeyFallsBackToLiteLLMWhenTrajectoryUnset(t *testing.T) {
 	g := &GovernorConfig{
-		LiteLLM: LiteLLMConfig{
-			Endpoint:  "https://litellm.example.com",
-			APIKeyEnv: "LITELLM_FALLBACK_KEY_TEST",
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			LiteLLM: LiteLLMConfig{
+				Endpoint:  "https://litellm.example.com",
+				APIKeyEnv: "LITELLM_FALLBACK_KEY_TEST",
+			},
 		},
 	}
 	t.Setenv("LITELLM_FALLBACK_KEY_TEST", "litellm-fallback-key")
@@ -1100,7 +1116,9 @@ func TestSaveDashboardOverlay_OpenTempFileFails(t *testing.T) {
 	cfg := &Config{
 		SourcePath: filepath.Join(dir, "hive.yaml"),
 		Project:    ProjectConfig{Org: "acme"},
-		Agents:     map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
 	}
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save should succeed even when the dashboard overlay write fails: %v", err)

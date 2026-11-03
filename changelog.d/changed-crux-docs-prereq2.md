@@ -1,0 +1,1 @@
+- `src/docs/design/crux.md`: Stage 2 prerequisite 2 recorded as done with the per-edge move/alias/invert table, the outbound baseline after it, the ring package list including `pkg/pushbroker` and `pkg/watsonx`, and prerequisite 3 (proxy and `cmd/crux` edges) scoped with symbol counts (hivecommons/hive#13536).

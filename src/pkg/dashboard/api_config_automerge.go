@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"net/http"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -150,13 +152,39 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
 		// disables the trusted-bot lane, absent leaves it untouched.
 		TrustedBotAuthors []string `json:"trusted_bot_authors"`
-		TrustedAuthors    *struct {
+		// SquashOnly, RequireCurrentBase and HumanMergePaths are the FULL
+		// desired values, keyed by repos in project.repos and stored as
+		// owner/repo; an empty (non-nil) value clears the setting, absent
+		// leaves it untouched.
+		SquashOnly         []string            `json:"squash_only"`
+		RequireCurrentBase []string            `json:"require_current_base"`
+		HumanMergePaths    map[string][]string `json:"human_merge_paths"`
+		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
+		// dialog's plain toggle can stage it.
+		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
+		// RequireCurrentBaseDefault is auto_merge.require_current_base_default,
+		// the Features toggle "Merge only on current base" (#15335). Per-repo
+		// overrides travel on PUT /api/config/governor/repos.
+		RequireCurrentBaseDefault *bool `json:"require_current_base_default"`
+		TrustedAuthors            *struct {
 			Enabled                 *bool    `json:"enabled"`
 			Repos                   []string `json:"repos"`
 			RequireRole             *string  `json:"require_role"`
 			RequireGitHubPermission *bool    `json:"require_github_permission"`
 			ExcludeLabels           []string `json:"exclude_labels"`
 		} `json:"trusted_authors"`
+		ContributorLane *struct {
+			Enabled                            *bool    `json:"enabled"`
+			SoakMinutes                        *int     `json:"soak_minutes"`
+			RequireReviewerVerdict             *bool    `json:"require_reviewer_verdict"`
+			Repos                              []string `json:"repos"`
+			ExcludeLabels                      []string `json:"exclude_labels"`
+			RequireTiers                       []string `json:"require_tiers"`
+			RegistryTiersSufficient            *bool    `json:"registry_tiers_sufficient"`
+			AutoPromotionScope                 *string  `json:"auto_promotion_scope"`
+			ApproveHeldRunsForRegistryTrusted  *bool    `json:"approve_held_runs_for_registry_trusted"`
+			OwnerApprovalReleasesWorkflowFence *bool    `json:"owner_approval_releases_workflow_fence"`
+		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -176,6 +204,32 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		minHeadAge = parsed
+	}
+	var squashOnly, requireCurrentBase []string
+	if body.SquashOnly != nil {
+		repos, msg := s.autoMergeWatchedRepoList("squash_only", body.SquashOnly)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		squashOnly = repos
+	}
+	if body.RequireCurrentBase != nil {
+		repos, msg := s.autoMergeWatchedRepoList("require_current_base", body.RequireCurrentBase)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		requireCurrentBase = repos
+	}
+	var humanMergePaths map[string][]string
+	if body.HumanMergePaths != nil {
+		paths, msg := s.autoMergeHumanMergePaths(body.HumanMergePaths)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		humanMergePaths = paths
 	}
 	var trustedAuthorRepos []string
 	var trustedAuthorLabels []string
@@ -198,6 +252,45 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			trustedAuthorLabels = normalizeAutoMergeRepoList(body.TrustedAuthors.ExcludeLabels)
+		}
+	}
+	var contributorLaneRepos []string
+	var contributorLaneLabels []string
+	var contributorLaneTiers []string
+	var contributorLaneScope string
+	if body.ContributorLane != nil {
+		if body.ContributorLane.SoakMinutes != nil && *body.ContributorLane.SoakMinutes < 0 {
+			jsonError(w, "contributor_lane.soak_minutes must be 0 (default 30) or greater", http.StatusBadRequest)
+			return
+		}
+		if body.ContributorLane.Repos != nil {
+			contributorLaneRepos = normalizeAutoMergeRepoList(body.ContributorLane.Repos)
+		}
+		if body.ContributorLane.ExcludeLabels != nil {
+			for _, label := range body.ContributorLane.ExcludeLabels {
+				if strings.TrimSpace(label) == "" {
+					jsonError(w, "contributor_lane.exclude_labels entries must be non-empty strings", http.StatusBadRequest)
+					return
+				}
+			}
+			contributorLaneLabels = normalizeAutoMergeRepoList(body.ContributorLane.ExcludeLabels)
+		}
+		if body.ContributorLane.RequireTiers != nil {
+			for _, tier := range body.ContributorLane.RequireTiers {
+				if !config.IsContributorLaneGrantableTier(tier) {
+					jsonError(w, "contributor_lane.require_tiers entries must be operator-granted tiers ("+strings.Join(config.ContributorLaneGrantableTiers, ", ")+")", http.StatusBadRequest)
+					return
+				}
+			}
+			contributorLaneTiers = normalizeAutoMergeRepoList(body.ContributorLane.RequireTiers)
+		}
+		if body.ContributorLane.AutoPromotionScope != nil {
+			scope := config.ContributorLaneAutoMergeConfig{AutoPromotionScope: *body.ContributorLane.AutoPromotionScope}
+			if err := scope.Validate(); err != nil {
+				jsonError(w, "contributor_lane.auto_promotion_scope must be one of "+strings.Join(config.ContributorLaneAutoPromotionScopes, ", "), http.StatusBadRequest)
+				return
+			}
+			contributorLaneScope = scope.EffectiveAutoPromotionScope()
 		}
 	}
 
@@ -232,6 +325,23 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.TrustedBotAuthors != nil {
 		cfg.AutoMerge.TrustedBotAuthors = normalizeBotLoginList(body.TrustedBotAuthors)
 	}
+	if body.SquashOnly != nil {
+		cfg.AutoMerge.SquashOnly = squashOnly
+	}
+	if body.RequireCurrentBase != nil {
+		cfg.AutoMerge.RequireCurrentBase = requireCurrentBase
+	}
+	if body.HumanMergePaths != nil {
+		cfg.AutoMerge.HumanMergePaths = humanMergePaths
+	}
+	if body.BotTakeoverEnabled != nil {
+		v := *body.BotTakeoverEnabled
+		cfg.AutoMerge.BotTakeover.Enabled = &v
+	}
+	if body.RequireCurrentBaseDefault != nil {
+		v := *body.RequireCurrentBaseDefault
+		cfg.AutoMerge.RequireCurrentBaseDefault = &v
+	}
 	if body.TrustedAuthors != nil {
 		if body.TrustedAuthors.Enabled != nil {
 			cfg.AutoMerge.TrustedAuthors.Enabled = *body.TrustedAuthors.Enabled
@@ -248,6 +358,43 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.TrustedAuthors.ExcludeLabels != nil {
 			cfg.AutoMerge.TrustedAuthors.ExcludeLabels = trustedAuthorLabels
+		}
+	}
+	if body.ContributorLane != nil {
+		if body.ContributorLane.Enabled != nil {
+			v := *body.ContributorLane.Enabled
+			cfg.AutoMerge.ContributorLane.Enabled = &v
+		}
+		if body.ContributorLane.SoakMinutes != nil {
+			cfg.AutoMerge.ContributorLane.SoakMinutes = *body.ContributorLane.SoakMinutes
+		}
+		if body.ContributorLane.RequireReviewerVerdict != nil {
+			v := *body.ContributorLane.RequireReviewerVerdict
+			cfg.AutoMerge.ContributorLane.RequireReviewerVerdict = &v
+		}
+		if body.ContributorLane.RegistryTiersSufficient != nil {
+			v := *body.ContributorLane.RegistryTiersSufficient
+			cfg.AutoMerge.ContributorLane.RegistryTiersSufficient = &v
+		}
+		if body.ContributorLane.ApproveHeldRunsForRegistryTrusted != nil {
+			v := *body.ContributorLane.ApproveHeldRunsForRegistryTrusted
+			cfg.AutoMerge.ContributorLane.ApproveHeldRunsForRegistryTrusted = &v
+		}
+		if body.ContributorLane.OwnerApprovalReleasesWorkflowFence != nil {
+			v := *body.ContributorLane.OwnerApprovalReleasesWorkflowFence
+			cfg.AutoMerge.ContributorLane.OwnerApprovalReleasesWorkflowFence = &v
+		}
+		if body.ContributorLane.Repos != nil {
+			cfg.AutoMerge.ContributorLane.Repos = contributorLaneRepos
+		}
+		if body.ContributorLane.ExcludeLabels != nil {
+			cfg.AutoMerge.ContributorLane.ExcludeLabels = contributorLaneLabels
+		}
+		if body.ContributorLane.RequireTiers != nil {
+			cfg.AutoMerge.ContributorLane.RequireTiers = contributorLaneTiers
+		}
+		if body.ContributorLane.AutoPromotionScope != nil {
+			cfg.AutoMerge.ContributorLane.AutoPromotionScope = contributorLaneScope
 		}
 	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
@@ -283,6 +430,24 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if noCIOK == nil {
 		noCIOK = []string{}
 	}
+	squashOnly := am.SquashOnly
+	if squashOnly == nil {
+		squashOnly = []string{}
+	}
+	requireCurrentBase := am.RequireCurrentBase
+	if requireCurrentBase == nil {
+		requireCurrentBase = []string{}
+	}
+	humanMergePaths := am.HumanMergePaths
+	if humanMergePaths == nil {
+		humanMergePaths = map[string][]string{}
+	}
+	projectRepos := make([]string, 0, len(cfg.Project.Repos))
+	for _, repo := range cfg.Project.Repos {
+		if full := config.QualifyRepo(cfg.Project.Org, repo); full != "" {
+			projectRepos = append(projectRepos, full)
+		}
+	}
 	trustedBots := am.TrustedBotAuthors
 	if trustedBots == nil {
 		trustedBots = append([]string{}, config.DefaultTrustedBotAuthors...)
@@ -296,16 +461,32 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if trustedAuthorLabels == nil {
 		trustedAuthorLabels = append([]string{}, config.DefaultTrustedAuthorExcludeLabels...)
 	}
+	cl := am.ContributorLane
+	contributorLaneRepos := cl.Repos
+	if contributorLaneRepos == nil {
+		contributorLaneRepos = []string{}
+	}
+	contributorLaneLabels := cl.ExcludeLabels
+	if contributorLaneLabels == nil {
+		contributorLaneLabels = append([]string{}, config.DefaultContributorLaneExcludeLabels...)
+	}
 	return map[string]interface{}{
-		"self_authored":           selfAuthored,
-		"self_authored_set":       am.SelfAuthored != nil,
-		"max_merges":              am.MaxMerges,
-		"min_head_age":            am.EffectiveMinHeadAge().String(),
-		"required_checks":         checks,
-		"allow_unprotected_base":  allowUnprotected,
-		"no_ci_ok":                noCIOK,
-		"trusted_bot_authors":     trustedBots,
-		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
+		"self_authored":                selfAuthored,
+		"self_authored_set":            am.SelfAuthored != nil,
+		"max_merges":                   am.MaxMerges,
+		"min_head_age":                 am.EffectiveMinHeadAge().String(),
+		"required_checks":              checks,
+		"allow_unprotected_base":       allowUnprotected,
+		"no_ci_ok":                     noCIOK,
+		"squash_only":                  squashOnly,
+		"require_current_base":         requireCurrentBase,
+		"human_merge_paths":            humanMergePaths,
+		"project_repos":                projectRepos,
+		"trusted_bot_authors":          trustedBots,
+		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
+		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
+		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
+		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
 		"trusted_authors": map[string]interface{}{
 			"enabled":                   ta.Enabled,
 			"repos":                     trustedAuthorRepos,
@@ -313,6 +494,20 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"require_github_permission": ta.EffectiveRequireGitHubPermission(),
 			"exclude_labels":            trustedAuthorLabels,
 			"roles":                     []string{config.RoleMerger, config.RoleOwner},
+		},
+		"contributor_lane": map[string]interface{}{
+			"enabled":                                cl.IsEnabled(),
+			"soak_minutes":                           cl.EffectiveSoakMinutes(),
+			"require_reviewer_verdict":               cl.EffectiveRequireReviewerVerdict(),
+			"repos":                                  contributorLaneRepos,
+			"exclude_labels":                         contributorLaneLabels,
+			"require_tiers":                          cl.EffectiveRequireTiers(),
+			"registry_tiers_sufficient":              cl.EffectiveRegistryTiersSufficient(),
+			"auto_promotion_scope":                   cl.EffectiveAutoPromotionScope(),
+			"auto_promotion_scopes":                  config.ContributorLaneAutoPromotionScopes,
+			"grantable_tiers":                        config.ContributorLaneGrantableTiers,
+			"approve_held_runs_for_registry_trusted": cl.EffectiveApproveHeldRunsForRegistryTrusted(),
+			"owner_approval_releases_workflow_fence": cl.EffectiveOwnerApprovalReleasesWorkflowFence(),
 		},
 	}
 }
@@ -326,6 +521,7 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *ghpkg.Clien
 	ghClient.SetRequiredChecksForRepo(cfg.AutoMerge.RequiredCheckSetForRepo)
 	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
+	ghClient.SetHumanMergePaths(cfg.AutoMerge.HumanMergePaths)
 	ghClient.SetAutoMergeMinHeadAge(cfg.AutoMerge.EffectiveMinHeadAge())
 }
 
@@ -338,4 +534,75 @@ func normalizeAutoMergeRepoList(repos []string) []string {
 		}
 	}
 	return out
+}
+
+// autoMergeWatchedRepoList validates a per-repo auto_merge list sent by the
+// dashboard. Every entry must name a repository in project.repos, bare or
+// owner/repo, and is stored as owner/repo because the sweep matches the
+// owner/repo name (SquashOnlyFor, RequireCurrentBaseFor). A non-empty msg is
+// the 400 to return.
+func (s *Server) autoMergeWatchedRepoList(key string, repos []string) ([]string, string) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(repos))
+	for _, repo := range normalizeAutoMergeRepoList(repos) {
+		full, msg := s.autoMergeWatchedRepo(key, repo)
+		if msg != "" {
+			return nil, msg
+		}
+		if lower := strings.ToLower(full); !seen[lower] {
+			seen[lower] = true
+			out = append(out, full)
+		}
+	}
+	return out, ""
+}
+
+func (s *Server) autoMergeWatchedRepo(key, repo string) (full, msg string) {
+	full = config.QualifyRepo(s.deps.Config.Project.Org, repo)
+	owner, name, ok := strings.Cut(full, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") || strings.ContainsAny(full, " \t") {
+		return "", key + ": " + repo + " is not an owner/repo name"
+	}
+	if !s.watchesRepo(full) {
+		return "", key + ": " + repo + " is not in project.repos"
+	}
+	return full, ""
+}
+
+// autoMergeHumanMergePaths validates auto_merge.human_merge_paths sent by the
+// dashboard: keys follow autoMergeWatchedRepoList, patterns must be valid
+// globs (the syntax intent.PathMatchesAny uses), and a repo left with no
+// patterns is dropped.
+func (s *Server) autoMergeHumanMergePaths(paths map[string][]string) (map[string][]string, string) {
+	keys := make([]string, 0, len(paths))
+	for k := range paths {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := map[string][]string{}
+	for _, k := range keys {
+		full, msg := s.autoMergeWatchedRepo("human_merge_paths", strings.TrimSpace(k))
+		if msg != "" {
+			return nil, msg
+		}
+		for _, pattern := range normalizeAutoMergeRepoList(paths[k]) {
+			if _, err := filepath.Match(pattern, ""); err != nil {
+				return nil, "human_merge_paths: " + full + ": " + pattern + " is not a valid glob"
+			}
+			if !slices.Contains(out[full], pattern) {
+				out[full] = append(out[full], pattern)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, ""
+	}
+	return out, ""
+}
+
+func emptyIfNilStrings(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }

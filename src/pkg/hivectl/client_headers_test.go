@@ -57,3 +57,34 @@ func TestClientDoWithHeadersPropagatesAPIError(t *testing.T) {
 		t.Fatal("expected API error to propagate through DoWithHeaders")
 	}
 }
+
+func TestClientSendsConfiguredUserAgent(t *testing.T) {
+	t.Parallel()
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("User-Agent"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "secret", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ua := range []string{"", "hive-admin-mcp/1.0.0+abc1234", ""} {
+		client.SetUserAgent(ua)
+		if _, err := client.Do(context.Background(), http.MethodGet, "/api/test", nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{DefaultUserAgent, "hive-admin-mcp/1.0.0+abc1234", DefaultUserAgent}
+	if len(got) != len(want) {
+		t.Fatalf("user agents = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("user agents = %q, want %q", got, want)
+		}
+	}
+}

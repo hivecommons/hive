@@ -241,7 +241,7 @@ reviewer could post "Confidence: 5/5 (safe)" minutes after Codex left a correct
 P1 finding on the same commit, without mentioning it.
 
 When `review_bots.logins` names any bot, each review kick
-(`buildReviewBotFindingsInstruction`, `pkg/review/prompts.go`) carries a
+(`buildReviewBotFindingsInstruction`, `pkg/review/prompts_instructions.go`) carries a
 `gh api graphql` read of the PR's `reviewThreads`, filtered to unresolved
 threads whose first comment is from a configured bot. Logins are compared
 lower-cased with the `[bot]` suffix removed, because GraphQL reports an App's

@@ -17,6 +17,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/github"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -39,85 +40,93 @@ const (
 // pkg/dashboard/api_*.go (config_* and approval decisions),
 // pkg/dashboard/{api_auth,copilot_auth,claude_auth,backup_key,gateways}.go
 // (auth/key/gateway changes), pkg/agentaudit/agentaudit.go (agent, token and
-// lease actions), pkg/github/write_surface*.go (write refusals and signed
+// lease actions, plus the relay_token_minted / relay_task_revoked credential
+// boundaries of the contributor relay), pkg/github/write_surface*.go (write refusals and signed
 // commit reauthorship), and pkg/convergence/publish/publisher.go (publication
-// refusals). Keep it explicit so the collapsed Audit Log risk chip changes
+// refusals), and pkg/scheduler/ioscan_enforce.go (classifier
+// daily-quota exhaustion). Keep it explicit so the collapsed Audit Log risk chip changes
 // only when a real audit action name is added or reclassified.
 var auditSensitiveActions = map[string]bool{
-	"agent_added":                           true,
-	"agent_backend_changed":                 true,
-	"agent_model_changed":                   true,
-	"agent_removed":                         true,
-	"agent_write_refused":                   true,
-	"approval-bulk":                         true,
-	"approval-resolve":                      true,
-	"claude_auth_complete":                  true,
-	"claude_auth_logout":                    true,
-	"claude_auth_start":                     true,
-	"claude_token_missing":                  true,
-	"config_agent_cadences":                 true,
-	"config_agent_channels":                 true,
-	"config_agent_connections":              true,
-	"config_agent_general":                  true,
-	"config_agent_hooks":                    true,
-	"config_agent_models":                   true,
-	"config_agent_pipeline":                 true,
-	"config_agent_prompt":                   true,
-	"config_agent_restrictions":             true,
-	"config_agent_stats":                    true,
-	"config_agent_tools":                    true,
-	"config_auto_merge":                     true,
-	"config_compliance":                     true,
-	"config_convergence":                    true,
-	"config_escalation":                     true,
-	"config_github":                         true,
-	"config_governor_advisory":              true,
-	"config_governor_attribution":           true,
-	"config_governor_backup_key":            true,
-	"config_governor_bob_key":               true,
-	"config_governor_budget":                true,
-	"config_governor_cadence_scope":         true,
-	"config_governor_features":              true,
-	"config_governor_gateway_delete":        true,
-	"config_governor_gateway_upsert":        true,
-	"config_governor_general_advanced":      true,
-	"config_governor_health":                true,
-	"config_governor_hub":                   true,
-	"config_governor_inference_auth":        true,
-	"config_governor_labels":                true,
-	"config_governor_litellm":               true,
-	"config_governor_logging":               true,
-	"config_governor_notifications":         true,
-	"config_governor_project_observability": true,
-	"config_governor_question_autoclose":    true,
-	"config_governor_replan":                true,
-	"config_governor_repos":                 true,
-	"config_governor_security":              true,
-	"config_governor_sensing":               true,
-	"config_governor_threshold_scaling":     true,
-	"config_governor_thresholds":            true,
-	"config_governor_trajectory":            true,
-	"config_governor_watchdog":              true,
-	"config_governor_work_source":           true,
-	"config_review":                         true,
-	"config_write_surface":                  true,
-	"copilot_auth_logout":                   true,
-	"copilot_auth_start":                    true,
-	"copilot_token_missing":                 true,
-	"design_approved":                       true,
-	"finding_publication_refused":           true,
-	"gh_auth_logout":                        true,
-	"gh_auth_start":                         true,
-	"ioscan_fail_closed":                    true,
-	"lease_stage_refused":                   true,
-	"lease_stage_reset":                     true,
-	"login_denied":                          true,
-	"model_discovery_failed":                true,
-	"plan_approve":                          true,
-	"plan_reject":                           true,
-	"run_stage_reset":                       true,
-	"signed_commit_reauthored":              true,
-	"tool_approval":                         true,
+	"agent_added":                             true,
+	"agent_backend_changed":                   true,
+	"agent_model_changed":                     true,
+	"agent_removed":                           true,
+	"agent_write_refused":                     true,
+	"approval-bulk":                           true,
+	"approval-resolve":                        true,
+	"claude_auth_complete":                    true,
+	"claude_auth_logout":                      true,
+	"claude_auth_start":                       true,
+	"claude_token_missing":                    true,
+	"config_agent_cadences":                   true,
+	"config_agent_channels":                   true,
+	"config_agent_connections":                true,
+	"config_agent_general":                    true,
+	"config_agent_hooks":                      true,
+	"config_agent_models":                     true,
+	"config_agent_pipeline":                   true,
+	"config_agent_prompt":                     true,
+	"config_agent_restrictions":               true,
+	"config_agent_stats":                      true,
+	"config_agent_tools":                      true,
+	"config_auto_merge":                       true,
+	"config_compliance":                       true,
+	"config_convergence":                      true,
+	"config_escalation":                       true,
+	"config_github":                           true,
+	"config_governor_advisory":                true,
+	"config_governor_attribution":             true,
+	"config_governor_backup_key":              true,
+	"config_governor_bob_key":                 true,
+	"config_governor_budget":                  true,
+	"config_governor_cadence_scope":           true,
+	"config_governor_features":                true,
+	"config_governor_gateway_delete":          true,
+	"config_governor_gateway_upsert":          true,
+	"config_governor_general_advanced":        true,
+	"config_governor_health":                  true,
+	"config_governor_fleet_report":            true,
+	"config_governor_hub":                     true,
+	"config_governor_inference_auth":          true,
+	"config_governor_labels":                  true,
+	"config_governor_litellm":                 true,
+	"config_governor_logging":                 true,
+	"config_governor_notifications":           true,
+	"config_governor_project_observability":   true,
+	"config_governor_question_autoclose":      true,
+	"config_governor_release_sentinel":        true,
+	"config_governor_replan":                  true,
+	"config_governor_repos":                   true,
+	"config_governor_security":                true,
+	"config_governor_sensing":                 true,
+	"config_governor_threshold_scaling":       true,
+	"config_governor_thresholds":              true,
+	"config_governor_trajectory":              true,
+	"config_governor_watchdog":                true,
+	"config_governor_work_source":             true,
+	"config_review":                           true,
+	"config_write_surface":                    true,
+	"contributor-tier-changed":                true,
+	"copilot_auth_logout":                     true,
+	"copilot_auth_start":                      true,
+	"copilot_token_missing":                   true,
+	"design_approved":                         true,
+	"finding_publication_refused":             true,
+	"gh_auth_logout":                          true,
+	"gh_auth_start":                           true,
+	"ioscan_classifier_daily_quota_exhausted": true,
+	"ioscan_fail_closed":                      true,
+	"lease_stage_refused":                     true,
+	"lease_stage_reset":                       true,
+	"login_denied":                            true,
+	"model_discovery_failed":                  true,
+	"plan_approve":                            true,
+	"plan_reject":                             true,
+	"relay_task_revoked":                      true,
+	"relay_token_minted":                      true,
+	"run_stage_reset":                         true,
+	"signed_commit_reauthored":                true,
+	"tool_approval":                           true,
 }
 
 type auditSummary struct {
@@ -160,6 +169,26 @@ type AuditLog struct {
 	// they persist; "" keeps them in memory only (no /data volume, tests).
 	prCounters     PRThroughputCounters
 	prCountersPath string
+	// Writer lease state (#13046, audit_writer_lease.go). logPath is the
+	// canonical audit.jsonl; "" (bare struct literals, no /data) disables the
+	// lease entirely and writer is used as-is.
+	logPath       string
+	writerID      string
+	owner         bool
+	leaseReleased bool
+	stopLease     chan struct{}
+	// onPRMerged, when set, is called (outside the lock) with each pr_merged
+	// entry the log accepts — the first record of a PR's merge, the
+	// duplicates having been dropped by notePRThroughput. The merged ledger
+	// (merged_ledger.go) is its consumer.
+	onPRMerged func(AuditEntry)
+}
+
+// SetPRMergedHook installs the pr_merged observer; nil removes it.
+func (a *AuditLog) SetPRMergedHook(fn func(AuditEntry)) {
+	a.mu.Lock()
+	a.onPRMerged = fn
+	a.mu.Unlock()
 }
 
 func newAuditLog() *AuditLog {
@@ -170,15 +199,13 @@ func newAuditLog() *AuditLog {
 
 	dir := "/data"
 	if _, err := os.Stat(dir); err == nil {
-		a.writer = &lumberjack.Logger{
-			Filename:   auditLogPath,
-			MaxSize:    auditMaxSizeMB,
-			MaxBackups: auditMaxBackups,
-			MaxAge:     auditMaxAgeDays,
-			Compress:   true,
-		}
+		// initWriterLease must run before loadFromDisk: acquiring the lease
+		// merges orphaned spill files into audit.jsonl, and loadFromDisk is
+		// the only replay of that file into the in-memory ring.
+		a.initWriterLease(auditLogPath, auditWriterID())
 		a.loadFromDisk()
 		a.loadPRThroughputCounters(prThroughputCountersPath, auditLogPath)
+		go a.runWriterLease(a.stopLease)
 	}
 
 	return a
@@ -188,6 +215,17 @@ func (a *AuditLog) loadFromDisk() {
 	a.loadFromDiskPath(auditLogPath)
 }
 
+// parseAuditLine is the single accept-rule for a persisted audit line, shared
+// by the boot-time replay and the spill merge: non-empty, valid JSON, and
+// carrying a timestamp.
+func parseAuditLine(line []byte) (AuditEntry, bool) {
+	var entry AuditEntry
+	if len(line) == 0 || json.Unmarshal(line, &entry) != nil || entry.Timestamp == "" {
+		return AuditEntry{}, false
+	}
+	return entry, true
+}
+
 func (a *AuditLog) loadFromDiskPath(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -195,12 +233,7 @@ func (a *AuditLog) loadFromDiskPath(path string) {
 	}
 	lines := bytes.Split(data, []byte("\n"))
 	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var entry AuditEntry
-		if json.Unmarshal(line, &entry) == nil && entry.Timestamp != "" {
+		if entry, ok := parseAuditLine(bytes.TrimSpace(line)); ok {
 			a.ring = append(a.ring, entry)
 			a.noteUserAction(entry.User, entry.Timestamp)
 		}
@@ -244,23 +277,28 @@ func (a *AuditLog) logRecordAt(timestamp, user, action, detail, agent, repo stri
 	}
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if len(a.ring) >= auditRingCap {
 		a.ring = a.ring[1:]
 	}
 	if prThroughputActions[entry.Action] && !a.notePRThroughput(entry) && prThroughputTerminalAction(entry.Action) {
+		a.mu.Unlock()
 		return
 	}
 	a.ring = append(a.ring, entry)
 	a.noteUserAction(entry.User, entry.Timestamp)
 
+	a.reopenSpillIfRemovedLocked()
 	if a.writer != nil {
 		if data, err := json.Marshal(entry); err == nil {
 			if _, err := a.writer.Write(append(data, '\n')); err != nil {
 				slog.Error("audit log write failed", "error", err)
 			}
 		}
+	}
+	onMerged := a.onPRMerged
+	a.mu.Unlock()
+	if onMerged != nil && entry.Action == github.AuditActionPRMerged {
+		onMerged(entry)
 	}
 }
 
@@ -569,6 +607,28 @@ func auditRequestSensitiveOnly(r *http.Request) bool {
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
+// auditRequestContributor returns the ?contributor=<login> filter, or "" when
+// the request does not narrow the page to one contributor.
+func auditRequestContributor(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("contributor"))
+}
+
+// auditContributorEntries keeps the entries whose user is login (GitHub logins
+// are case-insensitive), newest first as given, capped at limit.
+func auditContributorEntries(entries []AuditEntry, login string, limit int) []AuditEntry {
+	filtered := make([]AuditEntry, 0)
+	for i := range entries {
+		if !strings.EqualFold(entries[i].User, login) {
+			continue
+		}
+		filtered = append(filtered, entries[i])
+		if len(filtered) >= limit {
+			break
+		}
+	}
+	return filtered
+}
+
 func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	if !config.RoleAtLeast(role, config.RoleReadWrite) {
@@ -591,10 +651,20 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	summary := auditLogSummary(summaryEntries, now)
-	if auditRequestSensitiveOnly(r) {
+	contributor := auditRequestContributor(r)
+	switch {
+	case auditRequestSensitiveOnly(r):
 		entries = auditSensitiveWindowEntries(summaryEntries, now)
-	} else {
+	case contributor != "":
+		// Scan the whole ring, like ?sensitive=1, so a contributor's rows
+		// older than the default 200-row page can still be found.
+		entries = append([]AuditEntry(nil), summaryEntries...)
 		auditMarkSensitiveEntries(entries)
+	default:
+		auditMarkSensitiveEntries(entries)
+	}
+	if contributor != "" {
+		entries = auditContributorEntries(entries, contributor, auditMaxEntries)
 	}
 	if summary.Last != nil {
 		summary.Last.Sensitive = auditEntryIsSensitive(*summary.Last)
@@ -629,6 +699,15 @@ func (s *Server) auditFromRequest(r *http.Request, action, detail, agent string)
 // config watcher, startup, login detector).
 func (s *Server) AuditLog(user, action, detail, agent string) {
 	s.audit.Log(user, action, detail, agent)
+}
+
+// ReleaseAuditWriter hands the shared audit.jsonl to the replacement pod at
+// shutdown (#13046); see AuditLog.ReleaseWriterLease.
+func (s *Server) ReleaseAuditWriter() {
+	if s == nil {
+		return
+	}
+	s.audit.ReleaseWriterLease()
 }
 
 // AuditLogRecord records a hive-mediated GitHub write with its typed repo and

@@ -67,11 +67,18 @@ var evaluators = map[string]evaluator{
 		},
 	},
 	EvalNonEmpty: {
-		kinds:            []string{kindList},
+		kinds:            []string{kindList, kindString},
 		checkRecommended: literal(recNonEmpty),
 		eval: func(v any, _ string) (Status, string) {
-			if l, _ := v.([]string); len(l) > 0 {
-				return StatusMeets, formatValue(l)
+			switch current := v.(type) {
+			case []string:
+				if len(current) > 0 {
+					return StatusMeets, formatValue(current)
+				}
+			case string:
+				if strings.TrimSpace(current) != "" {
+					return StatusMeets, formatValue(current)
+				}
 			}
 			return StatusOff, recNone
 		},

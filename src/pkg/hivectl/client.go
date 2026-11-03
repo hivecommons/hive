@@ -26,6 +26,10 @@ const maxResponseBytes = 16 << 20
 // client-side error instead of an opaque server-side HTTP 400.
 const maxRequestBytes = 1 << 20
 
+// DefaultUserAgent is the User-Agent a Client sends unless SetUserAgent
+// overrides it.
+const DefaultUserAgent = "hivectl/0.1"
+
 // RequestTooLargeError is returned before sending when the JSON-encoded request
 // body would exceed the Hive API request-size limit.
 type RequestTooLargeError struct {
@@ -80,6 +84,9 @@ type Client struct {
 	// too narrow, and telling that operator to log in again would send them
 	// through a flow that changes nothing.
 	loginHint string
+	// userAgent identifies the caller to the hive; embedders such as the stdio
+	// admin MCP binary set their own so the hub can tell them apart.
+	userAgent string
 	http      *http.Client
 }
 
@@ -89,6 +96,12 @@ type Client struct {
 // in a log. Empty clears the lane and the header is omitted entirely.
 func (c *Client) SetSessionCookie(header string) {
 	c.cookie = strings.TrimSpace(header)
+}
+
+// SetUserAgent overrides the User-Agent header. Empty restores
+// DefaultUserAgent.
+func (c *Client) SetUserAgent(ua string) {
+	c.userAgent = strings.TrimSpace(ua)
 }
 
 // SetLoginHint attaches advice to append to 401 responses — see the field doc.
@@ -318,7 +331,11 @@ func (c *Client) request(ctx context.Context, method, apiPath string, query url.
 		// every intermediary between here and the hive.
 		req.Header.Set("Cookie", c.cookie)
 	}
-	req.Header.Set("User-Agent", "hivectl/0.1")
+	ua := c.userAgent
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
+	req.Header.Set("User-Agent", ua)
 	for key, values := range headers {
 		for _, value := range values {
 			req.Header.Add(key, value)

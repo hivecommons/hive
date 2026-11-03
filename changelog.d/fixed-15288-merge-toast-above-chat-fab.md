@@ -1,0 +1,1 @@
+- The Activity Monitor's merged toasts now render above the chat button: the `--z-merge-banner` / `--z-cue-flight` layer tokens were scoped to the section while the toast stack mounts on `<body>`, so the stack had no z-index and the chat FAB covered the lowest toast's close × and truncated its text ([#15288](https://github.com/hivecommons/hive/issues/15288)).

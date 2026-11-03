@@ -10,6 +10,8 @@ import (
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // fleetReportStatePath is where the issue-lifecycle state (posted /
@@ -73,11 +75,122 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		ACMMLevel:  status.ACMMLevel,
 		Unmet:      unmet,
 		Evidence:   s.buildFleetReportEvidence(status),
+		HiveSlug:   s.FleetReportHiveSlug(),
+		HiveName:   s.FleetReportHiveName(),
+		SpokeURL:   s.FleetReportSpokeURL(),
+		ProjectOrg: func() string {
+			if s.deps == nil || s.deps.Config == nil {
+				return ""
+			}
+			return strings.TrimSpace(s.deps.Config.Project.Org)
+		}(),
+		Cluster: os.Getenv("HIVE_CLUSTER_ID"),
+		Repos:   s.FleetReportRepos(),
+		Owners:  s.FleetReportOwners(),
+		OwnersHidden: func() bool {
+			return s.deps != nil && s.deps.Config != nil && !s.deps.Config.Governor.FleetReport.IncludesOwners()
+		}(),
+		Now:       time.Now(),
+		HiveState: s.hiveStateTrends(),
 	}
 	res := fleetreport.Evaluate(obs, state, dryRun)
 	s.persistFleetReportState(res.State)
 	status.FleetReport = &res
 	return &res
+}
+
+// FleetReportHubManaged reports whether this spoke is hub-managed (a
+// heartbeat key was injected), which is the hosted default signal for
+// governor.fleet_report.enabled (#11868).
+func (s *Server) FleetReportHubManaged() bool {
+	return spoke.SpokeHeartbeatKey() != ""
+}
+
+// FleetReportHiveSlug is the identity a self-report names: the hub-assigned
+// hive ID for a hub-managed spoke, "" (anonymous digest) otherwise.
+func (s *Server) FleetReportHiveSlug() string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || !s.FleetReportHubManaged() {
+		return ""
+	}
+	return strings.TrimSpace(s.deps.Config.HiveID)
+}
+
+// FleetReportHiveName is the display name a self-report carries next to the
+// hive id (#13211): project.name, which hub provisioning seeds from the
+// hive's project_name. "" on a hive that is not hub-managed, so an anonymous
+// report stays anonymous; the hub overlays its own (renamed) project_name on
+// relay.
+func (s *Server) FleetReportHiveName() string {
+	if s.FleetReportHiveSlug() == "" {
+		return ""
+	}
+	return fleetreport.NormalizeHiveName(s.deps.Config.Project.Name)
+}
+
+// FleetReportSpokeURL is the dashboard URL a self-report links to (#13211):
+// dashboard.public_url, else the hub-delivered hub.dashboard_url — the same
+// precedence as the advisory digest and OAuth origins. "" unless hub-managed.
+func (s *Server) FleetReportSpokeURL() string {
+	if s.FleetReportHiveSlug() == "" {
+		return ""
+	}
+	cfg := s.deps.Config
+	if v := fleetreport.NormalizeSpokeURL(cfg.Dashboard.PublicURL); v != "" {
+		return v
+	}
+	return fleetreport.NormalizeSpokeURL(cfg.Hub.DashboardURL)
+}
+
+// FleetReportRepos is the owner/repo list a self-report may name: the
+// project's watched repos when governor.fleet_report.include_repos is on
+// (the default), nil when the operator opted out (#12338).
+func (s *Server) FleetReportRepos() []string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.Governor.FleetReport.IncludesRepos() {
+		return nil
+	}
+	return fleetreport.NormalizeRepos(s.deps.Config.Project.Repos)
+}
+
+// fleetReportOperatorLogin resolves the GitHub login behind the persisted
+// device-flow token (/data/gh-user-token), "" when there is none or it no
+// longer validates. Overridable for tests; the identity lookup is cached.
+var fleetReportOperatorLogin = func(apiURL string) string {
+	data, err := os.ReadFile(userTokenPath)
+	if err != nil || strings.TrimSpace(string(data)) == "" {
+		return ""
+	}
+	user, err := github.ValidateTokenCached(strings.TrimSpace(string(data)), apiURL)
+	if err != nil || user == nil {
+		return ""
+	}
+	return user.Login
+}
+
+// FleetReportOwners is the GitHub login list a self-report names as the
+// hive's owner(s): dashboard.authorized_users entries holding the owner
+// role plus the device-flow operator, normalised and deduped. nil when the
+// operator opted out via governor.fleet_report.include_owners: false (the
+// report then renders "(anonymous)") or when no GitHub owner identity is
+// known.
+func (s *Server) FleetReportOwners() []string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.Governor.FleetReport.IncludesOwners() {
+		return nil
+	}
+	cfg := s.deps.Config
+	logins := append([]string(nil), cfg.Dashboard.OwnerLogins()...)
+	if op := fleetReportOperatorLogin(cfg.GitHub.OAuthAPIURL()); op != "" {
+		logins = append(logins, op)
+	}
+	return fleetreport.NormalizeLogins(logins)
+}
+
+// FleetReportFilesUpstream resolves governor.fleet_report against the
+// hub-managed signal.
+func (s *Server) FleetReportFilesUpstream() bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	return s.deps.Config.Governor.FleetReport.FilesUpstream(s.FleetReportHubManaged())
 }
 
 func (s *Server) loadFleetReportState() fleetreport.State {
@@ -112,12 +225,14 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		return nil
 	}
 	var out []fleetreport.Evidence
+	// Runtime error classes (#11868) observed by the hook sites since boot.
+	out = append(out, fleetreport.DefaultTracker().Evidence()...)
 	for _, fault := range s.GatewayHealthState() {
 		class := strings.ToLower(strings.TrimSpace(fault.ErrorClass))
 		component := "inference-gateway"
-		if class == "auth" {
-			component = "backend-auth"
-		} else if class == "budget" {
+		if class == "auth" || class == "budget" {
+			// auth and budget are operator/upstream conditions, not hive
+			// code defects.
 			continue
 		}
 		errClass := class
@@ -126,52 +241,45 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		}
 		out = append(out, fleetreport.Evidence{Component: component, Agent: fault.Name, ErrorClass: errClass, Count: 1, Window: time.Hour, Severity: "high", Attributable: true})
 	}
-	for _, a := range status.Agents {
-		if strings.Contains(strings.ToLower(a.StructuredStatus), "blocked") && strings.Contains(strings.ToLower(a.StatusEvidence), "inference") {
-			out = append(out, fleetreport.Evidence{Component: "backend-auth", Agent: a.Name, Lane: a.Role, ErrorClass: "backend authentication failure", Count: 1, Window: time.Hour, Severity: "high", Attributable: true})
-			continue
-		}
-		// a.Restarts is a cumulative process restart counter that every cadence
-		// kick increments, so it cannot distinguish a crash loop from healthy
-		// scheduled cycling. Only an explicit crash state is evidence here.
-		if strings.Contains(strings.ToLower(a.State), "crash") {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent crash loop", Count: maxInt(1, a.Restarts), Severity: "high", Attributable: true})
-			continue
-		}
-		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || a.StallNudges > 0 {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, a.StallNudges), Window: 24 * time.Hour, Severity: "medium", Attributable: true})
-		}
-		// #9673: the harness backstop nudges an agent that keeps polling CI
-		// on its own PR, but a nonzero count here means the nudge fired at
-		// least once and is worth fleet-level visibility even though the
-		// per-kick cap keeps any single incident from repeating.
-		if a.CIPollNudges > 0 {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "CI-poll nudge", Count: a.CIPollNudges, Window: 24 * time.Hour, Severity: "low", Attributable: true})
-		}
-	}
+	// Agent stalls, crash loops and CI-poll nudges used to be synthesised
+	// here from the status payload's bare counters into a standalone
+	// hive-code-defect report. They are runtime-tracker classes now
+	// (agent_stall, agent_crash_loop, ci_poll_nudge; #13470), observed at
+	// the hook site that owns each counter with the kick/pane context the
+	// counter alone never carried, so they arrive via DefaultTracker above.
 	return out
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+func (s *Server) MarkFleetReportPosted(fp string, number int, url string, openedByHive bool, body string) {
+	s.UpdateFleetReportState(func(st *fleetreport.State) {
+		open := st.Open[fp]
+		open.Number = number
+		open.URL = url
+		open.OpenedByHive = open.OpenedByHive || openedByHive
+		open.BodyHash = fleetreport.StableBodyHash(body)
+		open.PostedAt = time.Now().UTC()
+		open.Deferred = ""
+		st.Open[fp] = open
+	})
 }
 
-func (s *Server) MarkFleetReportPosted(fp string, number int, url string, openedByHive bool, body string) {
+// UpdateFleetReportState applies fn to the persisted state under the
+// load/persist pair. The publisher uses it for the join/rate-limit bookkeeping
+// (#11868) so pkg/dashboard owns the file and cmd/hive owns the policy.
+func (s *Server) UpdateFleetReportState(fn func(st *fleetreport.State)) {
 	st := s.loadFleetReportState()
 	if st.Open == nil {
 		st.Open = map[string]fleetreport.OpenIssue{}
 	}
-	open := st.Open[fp]
-	open.Number = number
-	open.URL = url
-	open.OpenedByHive = open.OpenedByHive || openedByHive
-	open.BodyHash = fleetreport.StableBodyHash(body)
-	st.Open[fp] = open
+	if st.Criteria == nil {
+		st.Criteria = map[string]fleetreport.CriterionState{}
+	}
+	fn(&st)
 	s.persistFleetReportState(st)
 }
+
+// FleetReportState returns a copy of the persisted state.
+func (s *Server) FleetReportState() fleetreport.State { return s.loadFleetReportState() }
 
 func (s *Server) FleetReportOpenIssue(fp string) (fleetreport.OpenIssue, bool) {
 	st := s.loadFleetReportState()

@@ -90,6 +90,26 @@ func TestShouldCollectHeartbeatClusterHealthUsesResolvedClusterID(t *testing.T) 
 	}
 }
 
+func TestAdoptHubDeliveredClusterID(t *testing.T) {
+	hub := config.HubConfig{}
+	if !adoptHubDeliveredClusterID(&hub, " vllm-d ") || hub.ClusterID != "vllm-d" {
+		t.Fatalf("empty cluster id not adopted: %+v", hub)
+	}
+	if !shouldCollectHeartbeatClusterHealth(hub.ClusterID) {
+		t.Fatal("adopted cluster id must enable heartbeat cluster health")
+	}
+	if adoptHubDeliveredClusterID(&hub, "other") || hub.ClusterID != "vllm-d" {
+		t.Fatalf("configured cluster id overridden: %+v", hub)
+	}
+	blank := config.HubConfig{}
+	if adoptHubDeliveredClusterID(&blank, "  ") || blank.ClusterID != "" {
+		t.Fatalf("blank delivery adopted: %+v", blank)
+	}
+	if adoptHubDeliveredClusterID(nil, "vllm-d") {
+		t.Fatal("nil hub config reported an adoption")
+	}
+}
+
 func intp(n int) *int { return &n }
 
 var errTest = errors.New("test error")

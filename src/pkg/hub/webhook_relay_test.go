@@ -89,6 +89,12 @@ func TestRelayWebhookToSpokeIgnoresUnmanagedRepos(t *testing.T) {
 // self-reported by the spoke, so a private/internal target must never be
 // relayed to. The production guard (isPrivateURL) rejects loopback, so the
 // httptest spoke here must receive nothing.
+//
+// The relay evaluates the guard on its own goroutine, so this test wraps the
+// production guard (still isPrivateURL underneath) to observe each verdict and
+// waits for every relay to finish evaluating before returning. Without that
+// wait the goroutines outlived the test and raced the next test's
+// allowLoopbackRelay swap of spokeWebhookRelayGuard under -race.
 func TestRelayWebhookToSpokeRefusesPrivateDashboardURL(t *testing.T) {
 	hit := make(chan struct{}, 1)
 	spoke := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -97,16 +103,39 @@ func TestRelayWebhookToSpokeRefusesPrivateDashboardURL(t *testing.T) {
 	}))
 	defer spoke.Close()
 
+	targets := []string{spoke.URL, "http://169.254.169.254", "http://10.0.0.5:8080", "http://localhost:8080"}
+	verdicts := make(chan bool, len(targets))
+	orig := spokeWebhookRelayGuard
+	spokeWebhookRelayGuard = func(ctx context.Context, u string) bool {
+		refused := orig(ctx, u)
+		verdicts <- refused
+		return refused
+	}
+	t.Cleanup(func() { spokeWebhookRelayGuard = orig })
+
 	s := newWebhookHub()
 	s.registry.Hives = []RegistryEntry{{ID: "h1", Org: "acme", Repos: []string{"widgets"}, DashboardURL: spoke.URL}}
-	for _, u := range []string{spoke.URL, "http://169.254.169.254", "http://10.0.0.5:8080", "http://localhost:8080"} {
+	for _, u := range targets {
 		s.registry.Hives[0].DashboardURL = u
 		s.relayWebhookToSpoke("pull_request", http.Header{}, []byte(`{"repository":{"name":"widgets","full_name":"acme/widgets","owner":{"login":"acme"}}}`))
+	}
+	deadline := time.After(5 * time.Second)
+	for i := range targets {
+		select {
+		case refused := <-verdicts:
+			if !refused {
+				t.Errorf("guard allowed a private dashboard URL (verdict %d of %d)", i+1, len(targets))
+			}
+		case <-hit:
+			t.Fatal("relay reached a private dashboard URL; the SSRF guard must refuse it")
+		case <-deadline:
+			t.Fatalf("only %d of %d relays evaluated the guard before the deadline", i, len(targets))
+		}
 	}
 	select {
 	case <-hit:
 		t.Fatal("relay reached a private dashboard URL; the SSRF guard must refuse it")
-	case <-time.After(500 * time.Millisecond):
+	default:
 	}
 }
 
@@ -136,4 +165,75 @@ func TestRelayWebhookToSpokeDoesNotFollowRedirects(t *testing.T) {
 	}
 	// Give a (wrongly) followed redirect time to land before the test ends.
 	<-time.After(200 * time.Millisecond)
+}
+
+func TestRelayWebhookToSpokeFansOutToEveryTrackingHive(t *testing.T) {
+	allowLoopbackRelay(t)
+	got := make(chan relayedWebhook, 4)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got <- relayedWebhook{path: r.URL.Path, event: r.Header.Get("X-GitHub-Event"), signature: r.Header.Get("X-Hub-Signature-256"), body: body}
+		w.WriteHeader(http.StatusOK)
+	})
+	spokeA := httptest.NewServer(handler)
+	defer spokeA.Close()
+	spokeB := httptest.NewServer(handler)
+	defer spokeB.Close()
+
+	s := newWebhookHub()
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", Org: "acme", Repos: []string{"widgets"}, DashboardURL: spokeA.URL},
+		{ID: "nodash", Org: "acme", Repos: []string{"widgets"}},
+		{ID: "h2", Org: "acme", PrimaryRepo: "widgets", DashboardURL: spokeB.URL},
+		{ID: "other", Org: "acme", Repos: []string{"gadgets"}, DashboardURL: spokeB.URL},
+	}
+	body := []byte(`{"repository":{"name":"widgets","full_name":"acme/widgets","owner":{"login":"acme"}}}`)
+	hdr := http.Header{}
+	hdr.Set("X-GitHub-Event", "pull_request")
+	hdr.Set("X-Hub-Signature-256", "sha256=abc")
+	s.relayWebhookToSpoke("pull_request", hdr, body)
+
+	for i := 0; i < 2; i++ {
+		select {
+		case r := <-got:
+			if r.path != spokeWebhookPath || r.event != "pull_request" || r.signature != "sha256=abc" || !bytes.Equal(r.body, body) {
+				t.Fatalf("relayed %+v, want the original delivery on %s", r, spokeWebhookPath)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of 2 tracking hives received the relay", i)
+		}
+	}
+	select {
+	case r := <-got:
+		t.Fatalf("unexpected third relay: %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestFindHivesByOrgRepos(t *testing.T) {
+	s := newWebhookHub()
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", Org: "acme", Repos: []string{"widgets"}},
+		{ID: "h2", Org: "acme", PrimaryRepo: "Widgets"},
+		{ID: "h3", Org: "acme", Repos: []string{"gadgets"}},
+	}
+	ids := func(hs []*RegistryEntry) string {
+		out := ""
+		for _, h := range hs {
+			out += h.ID + ","
+		}
+		return out
+	}
+	if got := ids(s.findHivesByOrgRepos("acme", []string{"widgets"})); got != "h1,h2," {
+		t.Errorf("exact match = %q, want h1,h2,", got)
+	}
+	if got := ids(s.findHivesByOrgRepos("acme", nil)); got != "h1,h2,h3," {
+		t.Errorf("org-only fallback = %q, want h1,h2,h3,", got)
+	}
+	if got := s.findHivesByOrgRepos("acme", []string{"unknown"}); len(got) != 0 {
+		t.Errorf("unknown repo matched %q", ids(got))
+	}
+	if h := s.findHiveByOrgRepos("acme", nil); h == nil || h.ID != "h1" {
+		t.Errorf("single lookup org fallback = %+v, want h1", h)
+	}
 }

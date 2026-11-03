@@ -3,7 +3,8 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -31,32 +32,36 @@ func TestBuildAgentsIncludesActiveAgentOutsideCurrentPack(t *testing.T) {
 	}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"supervisor": supervisorCfg,
-			"scanner":    ghostCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": supervisorCfg,
+				"scanner":    ghostCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"scanner": {
 			Name:          "scanner",
 			Config:        ghostCfg,
-			State:         agent.StatePaused,
+			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
-			OutputBuffer:  agent.NewRingBuffer(10),
+			OutputBuffer:  cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -95,25 +100,29 @@ func TestBuildAgentsWithHidden_RuntimePausedGhostNotResurrectedByConfigPass(t *t
 	}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"scanner": ghostCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": ghostCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:          "scanner",
 			Config:        ghostCfg,
-			State:         agent.StatePaused,
+			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
-			OutputBuffer:  agent.NewRingBuffer(10),
+			OutputBuffer:  cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -149,32 +158,36 @@ func TestBuildAgentsWithHidden_ReportsPackInactiveGhost(t *testing.T) {
 	}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"supervisor": supervisorCfg,
-			"scanner":    ghostCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": supervisorCfg,
+				"scanner":    ghostCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"scanner": {
 			Name:          "scanner",
 			Config:        ghostCfg,
-			State:         agent.StatePaused,
+			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
-			OutputBuffer:  agent.NewRingBuffer(10),
+			OutputBuffer:  cruxtest.NewRingBuffer(10),
 		},
 	}
 

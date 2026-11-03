@@ -1,0 +1,41 @@
+@@ -1,19 +1,16 @@
+ name: Import Rawhide package
+ 
+-# Imports one Fedora dist-git recipe into this factory, then writes every
+-# artifact the recipe-set agreement gate (`tests/test_recipe_set_agreement.py`)
+-# checks for it, so the pull request is born green rather than needing a
+-# follow-up like #320.
++# Imports one Fedora dist-git recipe into this factory and keeps its package
++# name in agreement across packages/, the source lock, and .packit.yaml
++# (`tests/test_recipe_set_agreement.py`). The architecture counts have their
++# own gate (`tests/test_architecture_counts.py`).
+ #
+-# Four files must move together or the gate fails: the recipe directory
+-# (`tools/import_rawhide.py`), the SHA-512 source lock
+-# (`tools/bootstrap_upstream_sources.py --package <name> --merge`; runs inside
+-# the pinned `quay.io/packit/packit` image because it needs `rpmspec`), the
+-# regenerated `.packit.yaml` block (`tools/render_packit_config.py --write`),
+-# and the recipe counts in the four count tests plus `docs/architecture.md`
+-# (they used to be hardcoded literals; this workflow keeps them as
+-# data-driven assertions so adding or removing a recipe does not require a
+-# hand edit of every count).
++# Bootstrap runs in the pinned image because it needs rpmspec. It writes an
++# isolated --output candidate and --report, without --merge. A fresh proposal
++# job uses tools/import_proposal.py to validate the uploaded data and merge
++# the candidate into the source lock, then regenerates .packit.yaml and
++# docs/architecture.md. The bootstrap report is diagnostic data carried in
++# the pull request, not another inventory compared by the agreement gate.
+ 
+ on:
+   workflow_dispatch:
+@@ -147,8 +144,8 @@ jobs:
+         with:
+           branch: import/rawhide-${{ inputs.package }}
+           delete-branch: true
+-          # The five files the agreement gate compares. Anything outside this
+-          # list does not belong on the import branch.
++          # Recipe, source lock, generated config/counts, and diagnostic report.
++          # Anything outside this list does not belong on the import branch.
+           add-paths: |
+             packages/${{ inputs.package }}/
+             .packit.yaml

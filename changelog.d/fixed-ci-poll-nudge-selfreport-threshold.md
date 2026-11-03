@@ -1,0 +1,1 @@
+- The `ci_poll_nudge` fleet self-report now fires only when an agent polled CI more than once since the kick; a single post-push check still gets the in-session nudge but no longer files a report.

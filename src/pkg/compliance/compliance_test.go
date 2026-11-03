@@ -75,13 +75,30 @@ func TestProfileSchema(t *testing.T) {
 	}
 }
 
-func TestSOC2ProfileCoversRequiredSeries(t *testing.T) {
+func TestSOC2ProfileCoversFullTrustServicesCriteria(t *testing.T) {
 	p := mustProfile(t, "soc2-type2")
-	series := map[string]bool{}
+	wantIDs := []string{
+		"CC1.1", "CC1.2", "CC1.3", "CC1.4", "CC1.5",
+		"CC2.1", "CC2.2", "CC2.3",
+		"CC3.1", "CC3.2", "CC3.3", "CC3.4",
+		"CC4.1", "CC4.2",
+		"CC5.1", "CC5.2", "CC5.3",
+		"CC6.1", "CC6.2", "CC6.3", "CC6.4", "CC6.5", "CC6.6", "CC6.7", "CC6.8",
+		"CC7.1", "CC7.2", "CC7.3", "CC7.4", "CC7.5",
+		"CC8.1",
+		"CC9.1", "CC9.2",
+		"A1.1", "A1.2", "A1.3",
+		"C1.1", "C1.2",
+		"PI1.1", "PI1.2", "PI1.3", "PI1.4", "PI1.5",
+		"P1.1", "P2.1", "P3.1", "P3.2", "P4.1", "P4.2", "P4.3",
+		"P5.1", "P5.2", "P6.1", "P6.2", "P6.3", "P6.4", "P6.5", "P6.6", "P6.7",
+		"P7.1", "P8.1",
+	}
+	gotIDs := make([]string, 0, len(p.Controls))
 	paths := map[string]bool{}
 	notCovered := 0
 	for _, c := range p.Controls {
-		series[c.ID[:3]] = true
+		gotIDs = append(gotIDs, c.ID)
 		if c.NotCovered {
 			notCovered++
 		}
@@ -89,15 +106,14 @@ func TestSOC2ProfileCoversRequiredSeries(t *testing.T) {
 			paths[m.SettingPath] = true
 		}
 	}
-	for _, s := range []string{"CC6", "CC7", "CC8", "CC9"} {
-		if !series[s] {
-			t.Errorf("soc2-type2 has no %s control", s)
-		}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Errorf("soc2-type2 control IDs = %v, want complete TSC list %v", gotIDs, wantIDs)
 	}
 	for _, want := range []string{
 		"dashboard.authorized_users", "review.require_approval", "auto_merge.human_merge_paths",
 		"auto_merge.trusted_authors.enabled", "sentinel.enabled", "agent_sandbox.enabled",
 		"audit.retention_days", "env." + config.ProxyInjectGHAuthEnv, "acmm_level",
+		"governor.backup.key_file",
 	} {
 		if !paths[want] {
 			t.Errorf("soc2-type2 maps nothing to %s", want)
@@ -131,6 +147,27 @@ func TestShippedProfilesCoverTheirScope(t *testing.T) {
 		}
 		if covered < 10 || notCovered == 0 {
 			t.Errorf("%s: covered=%d not_covered=%d", id, covered, notCovered)
+		}
+	}
+	for _, tc := range []struct {
+		profile string
+		ids     []string
+	}{
+		{"fedramp-moderate", []string{"AC-17", "AU-8", "AU-9", "CM-2", "CM-7", "CM-8", "IA-8", "IR-4", "IR-6", "SC-7", "SC-8", "SC-28", "SI-2", "SI-3", "CP-9", "SR-2", "ELIG-1"}},
+		{"iso27001-annex-a", []string{"A.5.23", "A.5.28", "A.8.3", "A.8.5", "A.8.12", "A.8.13", "A.8.20", "A.8.21", "A.8.22", "A.8.23", "A.8.24", "A.8.26", "A.8.30"}},
+	} {
+		pp := mustProfile(t, tc.profile)
+		got := map[string]bool{}
+		for _, c := range pp.Controls {
+			got[c.ID] = c.NotCovered
+		}
+		if _, ok := got["AC-2.ELIG"]; ok {
+			t.Errorf("%s: AC-2.ELIG is not a NIST identifier", tc.profile)
+		}
+		for _, id := range tc.ids {
+			if nc, ok := got[id]; !ok || !nc {
+				t.Errorf("%s: %s must be present and not_covered", tc.profile, id)
+			}
 		}
 	}
 	fed := mustProfile(t, "fedramp-moderate")
@@ -206,7 +243,13 @@ func yamlPathExists(typ reflect.Type, parts []string) bool {
 	}
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
-		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		name, opts, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if f.Anonymous && name == "" && strings.Contains(opts, "inline") {
+			if yamlPathExists(f.Type, parts) {
+				return true
+			}
+			continue
+		}
 		if name == parts[0] {
 			return yamlPathExists(f.Type, parts[1:])
 		}

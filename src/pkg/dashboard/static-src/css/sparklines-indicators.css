@@ -1,0 +1,147 @@
+    /* Sparklines */
+    .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
+    .sparkline svg { display: block; overflow: visible; }
+    .sparkline--flush { margin-left: var(--sp-0); margin-top: var(--sp-2); }
+    .sparkline--tight { margin-left: var(--sp-2); }
+    .cell-spark { display: inline-block; vertical-align: middle; margin-left: var(--sp-2); }
+    .sparkline-line { stroke-dashoffset: 0; }
+    .sparkline-area { opacity: 0.14; }
+    .sparkline-dot { transform-box: fill-box; transform-origin: center; }
+    .sparkline.is-redrawing .sparkline-line { will-change: stroke-dashoffset; }
+    .sparkline.is-redrawing .sparkline-area { opacity: 0; }
+    .sparkline.is-redrawing .sparkline-dot { opacity: 0; transform: scale(0.3); }
+    .sparkline.is-glowing svg { filter: drop-shadow(0 0 5px var(--sparkline-glow, currentColor)); }
+    @media (prefers-reduced-motion: reduce) {
+      .sparkline.is-redrawing .sparkline-line,
+      .sparkline.is-redrawing .sparkline-area,
+      .sparkline.is-redrawing .sparkline-dot { transition: none !important; animation: none !important; }
+    }
+    .spark-row { display: flex; align-items: center; gap: var(--sp-3); overflow: hidden; }
+
+    .contributors-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr)); gap:var(--sp-5); }
+    /* Contributors header pill and card presence dot: "online" is the
+       tracker's presence window (governor.labels.stage.presence_window). */
+    .contrib-status-badge { font-size: 0.7rem; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-pill); margin-left: var(--sp-4); background: var(--line); color: var(--fg); }
+    .contrib-status-badge:empty { display: none; }
+    .contrib-status-badge.is-online { background: var(--status-ok); color: var(--bg); }
+    .contrib-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--status-neutral); }
+    .contrib-status-dot.online { background: var(--status-ok); }
+    .contrib-card {
+      --contrib-accent: #5aa7ff;
+      --contrib-accent-2: #74df9a;
+      background:
+        radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--contrib-accent) 18%, transparent), transparent 48%),
+        linear-gradient(155deg, color-mix(in srgb, var(--contrib-accent-2) 12%, transparent), var(--card-bg) 58%);
+      border: 1px solid color-mix(in srgb, var(--contrib-accent) 35%, var(--border));
+      border-radius: 8px;
+      padding: var(--sp-6);
+      transition: border-color var(--duration-fast), box-shadow var(--duration-fast), background var(--duration-fast);
+    }
+    .contrib-card:hover { box-shadow: 0 10px 28px color-mix(in srgb, var(--contrib-accent) 14%, transparent); }
+    .contrib-card img { box-shadow: 0 0 0 2px color-mix(in srgb, var(--contrib-accent) 58%, transparent), 0 0 24px color-mix(in srgb, var(--contrib-accent-2) 16%, transparent); }
+    .contrib-card .contrib-role-pill > span, .contrib-card .trust-badge { border-color: color-mix(in srgb, var(--contrib-accent) 45%, transparent) !important; }
+    body.light-mode .contrib-card {
+      background:
+        radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--contrib-accent) 14%, transparent), transparent 48%),
+        linear-gradient(155deg, color-mix(in srgb, var(--contrib-accent-2) 9%, transparent), var(--card-bg) 62%);
+    }
+    @media (prefers-reduced-motion: reduce) { .contrib-card { transition: none; } }
+
+    /* Connection indicator */
+    .connection {
+      position: fixed; top: 8px; right: 12px;
+      font-size: 0.7rem; color: var(--muted);
+    }
+    .connection .dot-live { color: var(--green); }
+    .connection .dot-dead { color: var(--red); }
+
+    /* Slow blink for LIVE indicator */
+    @keyframes slow-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+    .connection.live { animation: slow-blink 3s ease-in-out infinite; }
+
+    /* Pulse animation for working agents */
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+    .agent-card.working .agent-name { animation: pulse 2s ease-in-out infinite; }
+
+    /* Breathing green indicator for working agent cards — top right */
+    @keyframes anchor-flash {
+      0% { box-shadow: inset 0 0 0 2px rgba(88,166,255,0.6); }
+      100% { box-shadow: inset 0 0 0 2px transparent; }
+    }
+    .anchor-highlight { animation: anchor-flash 1.2s ease-out; }
+    /* Infinite pulses animate opacity only (compositor thread). Animating
+       box-shadow forced a main-thread paint of the page every frame. The glow
+       is a static shadow on the dot and fades with the dot's opacity. */
+    @keyframes breathe-green {
+      0%,100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
+    .working-indicator {
+      position: absolute; top: 12px; right: 12px;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); display: none;
+    }
+    .agent-card.working .working-indicator {
+      display: block;
+      box-shadow: 0 0 6px 2px color-mix(in srgb, var(--green) 50%, transparent);
+      animation: breathe-green 4s ease-in-out infinite;
+    }
+
+    /* Green pulsing dot for active agents in cadence matrix */
+    @keyframes green-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .active-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--green); margin-right: var(--sp-3); vertical-align: middle;
+      box-shadow: 0 0 4px var(--green);
+      animation: green-pulse 6s ease-in-out infinite;
+    }
+
+    /* Temperature gauge */
+    .temp-gauge { margin: var(--sp-5) var(--sp-0) var(--sp-4); }
+    .temp-gauge-label { font-size: 0.7rem; color: var(--muted); margin-bottom: var(--sp-2); display: flex; justify-content: space-between; }
+    .temp-gauge-track {
+      position: relative; height: 24px; border-radius: var(--r-lg); overflow: visible;
+      /* semantic zone gradient (keep) over a --panel-strong track */
+      background: linear-gradient(to right, var(--green) 0%, var(--green) 7%, var(--blue) 7%, var(--blue) 33%, var(--yellow) 33%, var(--yellow) 67%, var(--red) 67%, var(--red) 100%) var(--panel-strong);
+      border: 1px solid var(--line);
+    }
+    .temp-gauge-glow {
+      position: absolute; top: 0; left: 0; height: 100%; border-radius: var(--r-lg);
+      background: linear-gradient(to right,
+        color-mix(in srgb, var(--green) 25%, transparent),
+        color-mix(in srgb, var(--red) 25%, transparent));
+      filter: blur(6px); pointer-events: none;
+    }
+    .temp-gauge-ticks {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      font-size: var(--fs-2xs); color: #fff; font-weight: 600; pointer-events: none;
+    }
+    .temp-gauge-ticks span { position: absolute; top: 50%; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
+    .temp-gauge-needle {
+      position: absolute; top: -4px; width: 4px; height: 32px;
+      transform: translateX(-50%);
+      background: var(--text); border-radius: 2px;
+      box-shadow: 0 0 8px color-mix(in srgb, var(--text) 80%, transparent),
+                  0 0 16px color-mix(in srgb, var(--text) 40%, transparent);
+      transition: left 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 2;
+    }
+    .temp-gauge-needle::after {
+      content: attr(data-val); position: absolute; bottom: -16px; left: 50%;
+      transform: translateX(calc(-1 * var(--gauge-position, 50%))); font-size: var(--fs-sm); font-weight: 700;
+      color: var(--text); text-shadow: 0 1px 4px var(--bg);
+    }
+    .temp-gauge-labels {
+      position: relative; margin-top: var(--sp-2); height: 1em;
+      font-size: var(--fs-2xs); color: var(--muted);
+    }
+    .temp-gauge-labels span { position: absolute; transform: translateX(-50%); text-align: center; }
+    .temp-gauge-labels .lbl-idle  { left: 3.5%; }
+    .temp-gauge-labels .lbl-quiet { left: 20%; }
+    .temp-gauge-labels .lbl-busy  { left: 50%; }
+    .temp-gauge-labels .lbl-surge { left: 83.5%; }
+    .tl-idle { color: var(--green); }
+    .tl-quiet { color: var(--blue); }
+    .tl-busy { color: var(--yellow); }
+    .tl-surge { color: var(--red); }
+

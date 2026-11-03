@@ -38,7 +38,7 @@ Use ReadWriteMany storage for hosted spoke PVCs. The provisioning template in `p
 | `HIVE_MODE=hub` | Yes | Selects hub mode. |
 | `HIVE_HUB_PORT` | No | Defaults to `3001`. Set to `80` for the published hub image contract if needed. |
 | `HIVE_CONFIG` or `--config` | No | Defaults to `/etc/hive/hive.yaml`; `Dockerfile.hub` passes `--config /etc/hive/hive.yaml`. |
-| `HIVE_HUB_SECRET` | Strongly recommended | Master secret from which heartbeat bearers and per-hive keys derive. If unset, the hub reads `/data/saas/hub-secret.key` when present. The hub additionally maintains a rotation generation set alongside it — see [security-model.md](security-model.md#master-key-rotation); rotate via the admin endpoint, never by swapping the master in place. |
+| `HIVE_HUB_SECRET` | Strongly recommended | Master secret from which heartbeat bearers and per-hive keys derive. If unset, the hub reads `/data/saas/hub-secret.key` when present. The hub additionally maintains a rotation generation set alongside it — see [security-model.md](security-model.md#9-platform-and-supply-chain); rotate via the admin endpoint, never by swapping the master in place. |
 | `HIVE_HUB_OAUTH_CLIENT_ID` / `HIVE_HUB_OAUTH_CLIENT_SECRET` | Enables **GitHub** login | These two enable the GitHub provider specifically. Human login is multi-provider: Google, IBMid, Red Hat, Microsoft Entra ID, and a generic OIDC slot are each enabled independently via `HIVE_HUB_OIDC_<PROVIDER>_CLIENT_ID` (+ `_CLIENT_SECRET`, `_ISSUER`, `_SCOPES`, `_DISPLAY` — see [env-vars.md](env-vars.md#hub-login-providers)). With two or more providers configured the hub shows a provider picker at `/login`; with exactly one it redirects straight into it; with none it logs OAuth disabled and registers no login routes. A provider with a client id but a missing/invalid issuer is silently skipped (check the `hub login enabled providers=` startup log line). |
 | `HIVE_GITHUB_TOKEN` or GitHub App config | Required for operations that call GitHub | Same GitHub auth rules as a spoke. |
 | `HIVE_HUB_SLACK_BOT_TOKEN`, `HIVE_NTFY_SERVER`, `HIVE_NTFY_TOPIC` | No | Optional hub notifications. |
@@ -139,6 +139,16 @@ The hub registers heartbeat, registry, SaaS, contributor, OAuth, webhook, backup
 
 See `api-reference.md` and the dashboard OpenAPI file for route details, and `manual-provisioning.md` for known failure modes.
 
+### Search engine indexing
+
+Only the hub's public landing pages (`/`, `/learn`, `/get-started`, `/reading`, `/contribute`) are meant to be indexed; everything else is an API, an auth gate, or an operator console, and a crawler walking it just collects 401/403s (the "Blocked due to unauthorized request" errors in Google Search Console). The hub enforces that in three layers, all in `src/pkg/hub/robots.go`:
+
+- `GET /robots.txt` is generated per request host. On the configured public host (`HIVE_HUB_PUBLIC_URL`, default `hive.hivecommons.dev`, plus `localhost`) it allows `/` and emits one `Disallow:` line per gated route group (`/api/`, `/metrics`, `/openapi.json`, `/login`, `/logout`, `/auth/`, `/oauth`, `/openrouter/`, `/dashboard`, `/access-denied`, `/error/`, `/fleet`, `/my-hives`, `/gh-setup`, `/ws`, `/static/`) followed by the `Sitemap:` pointer; `sitemap.xml` lists public pages only. On any other host — a hosted tenant, an internal Service name, a preview hostname — it answers `User-agent: *` / `Disallow: /`. A CI test derives the auth-gated routes from the mux registrations and fails if one is not covered by a `Disallow` line.
+- Every response under a disallowed group, every 401 or 403, and every redirect into `/login` carries `X-Robots-Tag: noindex, nofollow`; the login pages also carry `<meta name="robots" content="noindex, nofollow">`.
+- Hosted spoke dashboards (`<id>.hive.hivecommons.dev`) are never indexable: the hub's ingress auth-check lets `/robots.txt` through unauthenticated and the spoke serves `Disallow: /` for it, and every spoke response — including the 401 login page — carries `X-Robots-Tag: noindex, nofollow` (`src/pkg/dashboard/robots.go`).
+
+Verify from outside with `curl -A Googlebot https://hive.hivecommons.dev/robots.txt` and `curl -sI https://hive.hivecommons.dev/api/hub/stats | grep -i x-robots`.
+
 ## Running several spokes under one hub
 
 Splitting one large hive into several subject-scoped spokes stops agents competing over unrelated work. It also surfaces things that are fleet-wide in reality but per-hive in the implementation — provider quota, the shared GitHub App rate limit, agent credentials, and repo ownership ([#5691](https://github.com/hivecommons/hive/issues/5691) is the RFC tracking those).
@@ -159,7 +169,7 @@ The hub now compares those lists and reports any repo claimed by more than one s
     "repoOverlaps": [
       {
         "host": "github.com",
-        "repo": "tunaos/docs",
+        "repo": "tuna-os/docs",
         "hives": [
           { "id": "h-hive", "name": "hive" },
           { "id": "h-reef", "name": "reef" }
@@ -175,8 +185,8 @@ Matching is deliberate about what counts as the same repo, because two spokes ar
 
 | Compared | Rule |
 |---|---|
-| `docs`, `tunaos/docs`, `https://github.com/tunaos/docs.git` | the same repo — bare, owner-qualified and URL forms all resolve to `owner/repo` |
-| `TunaOS/Docs` vs `tunaos/docs` | the same repo — GitHub owner/repo names are case-insensitive |
+| `docs`, `tuna-os/docs`, `https://github.com/tuna-os/docs.git` | the same repo — bare, owner-qualified and URL forms all resolve to `owner/repo` |
+| `Tuna-OS/Docs` vs `tuna-os/docs` | the same repo — GitHub owner/repo names are case-insensitive |
 | `acme/ui` on `github.com` vs on `github.ibm.com` | **different** repos — the GitHub host is part of the identity |
 | a spoke listing its own primary repo in `repos[]` | one claim, not a conflict with itself |
 | a repo with no owner (no `org` recorded) | ignored — inventing an owner would invent conflicts between unrelated repos that share a name |

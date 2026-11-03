@@ -1,0 +1,1 @@
+- Headless contributor runs now report broken-environment verdicts as environment failures even when the CLI exits successfully, so unfinished issues can be reassigned instead of counted as completed.

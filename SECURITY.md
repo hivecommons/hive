@@ -1,5 +1,7 @@
 # Security Policy
 
+Last reviewed: 2026-10-23
+
 The Hive maintainers take the security of this project seriously. Thank you for
 helping keep Hive and its users safe by disclosing vulnerabilities responsibly.
 
@@ -35,6 +37,15 @@ Please include, as much as you can:
   timeline with you. We ask that you give us a reasonable opportunity to
   remediate before any public disclosure.
 - **Credit:** with your permission, we are happy to credit you for the report.
+
+## Automated scanning
+
+Hive is enrolled in [Anthropic's OSS Scanner](https://red.anthropic.com/oss-scanner/),
+which builds the `v5` branch from [`.oss-scanner/Dockerfile`](.oss-scanner/Dockerfile),
+reads [`.oss-scanner/threat_model.md`](.oss-scanner/threat_model.md), and
+emails model-generated findings privately to the maintainers. Those reports
+are triaged through the same process as any other private report. Private
+vulnerability reporting (above) remains the public channel for everyone else.
 
 ## Scope
 

@@ -27,7 +27,7 @@ func TestBackendsConfig_Allowed(t *testing.T) {
 			if got := tt.cfg.Allowed(tt.backend); got != tt.want {
 				t.Errorf("Allowed(%q) = %v, want %v", tt.backend, got, tt.want)
 			}
-			c := &Config{Backends: tt.cfg}
+			c := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Backends: tt.cfg}}
 			if got := c.BackendAllowed(tt.backend); got != tt.want {
 				t.Errorf("Config.BackendAllowed(%q) = %v, want %v", tt.backend, got, tt.want)
 			}

@@ -56,7 +56,7 @@ func writeOverlayConfig(t *testing.T, overlays map[string]string) (configPath, a
 // validatableConfig returns a Config that clears every non-agent gate in
 // validate(), so the only thing a test's agents can trip is the agent loop.
 func validatableConfig(agents map[string]AgentConfig) *Config {
-	cfg := &Config{Agents: agents}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: agents}}
 	cfg.Project.Org = "my-org"
 	cfg.GitHub.Token = "ghp_tok"
 	return cfg
@@ -146,13 +146,19 @@ func TestLoadWithOverrides_BadOverlayDoesNotBlockGoodOverlay(t *testing.T) {
 // RejectInvalidAgentOverlays is the seam itself: bad entries out, good ones
 // through, base config untouched.
 func TestRejectInvalidAgentOverlays(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{
-		"supervisor": {Backend: "copilot"},
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Agents: map[string]AgentConfig{
+			"supervisor": {Backend: "copilot"},
+		},
 	}}
 	overlays := map[string]AgentConfig{
-		"supervisor": {Backend: "copilot", LaunchCmd: "bob --model auto", sourceFile: "/data/agent-configs/supervisor.yaml"},
-		"worker":     {Backend: "claude", sourceFile: "/data/agent-configs/worker.yaml"},
-		"badmode":    {Backend: "claude", CavemanMode: "nonsense", sourceFile: "/data/agent-configs/badmode.yaml"},
+		"supervisor": {Backend: "copilot", LaunchCmd: "bob --model auto"},
+		"worker":     {Backend: "claude"},
+		"badmode":    {Backend: "claude", CavemanMode: "nonsense"},
+	}
+	for name, a := range overlays {
+		a.SetLoadState("", "/data/agent-configs/"+name+".yaml")
+		overlays[name] = a
 	}
 
 	kept := cfg.RejectInvalidAgentOverlays(overlays)
@@ -205,7 +211,8 @@ func TestLoadAgentOverrides_RecordsSourceFile(t *testing.T) {
 // make it a config field.
 func TestSaveAgentFile_DropsSourceFile(t *testing.T) {
 	dir := t.TempDir()
-	agent := AgentConfig{Backend: "claude", sourceFile: "/somewhere/else.yaml"}
+	agent := AgentConfig{Backend: "claude"}
+	agent.SetLoadState("", "/somewhere/else.yaml")
 	if err := SaveAgentFile(dir, "worker", agent); err != nil {
 		t.Fatalf("SaveAgentFile() error = %v", err)
 	}
@@ -222,13 +229,9 @@ func TestSaveAgentFile_DropsSourceFile(t *testing.T) {
 // agent is what made #6024 take hours: hive.yaml, the ConfigMap seed and the
 // overlay directory all feed the same agent map.
 func TestValidate_ErrorNamesOverlaySourceFile(t *testing.T) {
-	cfg := validatableConfig(map[string]AgentConfig{
-		"supervisor": {
-			Backend:    "copilot",
-			LaunchCmd:  "bob --model auto",
-			sourceFile: "/data/agent-configs/supervisor.yaml",
-		},
-	})
+	supervisor := AgentConfig{Backend: "copilot", LaunchCmd: "bob --model auto"}
+	supervisor.SetLoadState("", "/data/agent-configs/supervisor.yaml")
+	cfg := validatableConfig(map[string]AgentConfig{"supervisor": supervisor})
 
 	err := cfg.validate()
 	if err == nil {

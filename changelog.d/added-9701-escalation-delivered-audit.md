@@ -1,0 +1,1 @@
+- escalation: successful email/push deliveries are now audited as `escalation_delivered` (sink, severity, title, `attempts=N` after retries) and logged at info, so operators have hive-side evidence for pages and decision mails, not only for failures (#9701)

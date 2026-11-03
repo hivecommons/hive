@@ -2,6 +2,8 @@ package knowledge
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -36,7 +38,7 @@ const (
 	prEnricherMissTTLEnv         = "HIVE_BEAD_SYNTH_MISS_TTL"
 	prEnricherDefaultMissTTL     = 24 * time.Hour
 	prEnricherMaxAPICallsEnv     = "HIVE_BEAD_SYNTH_MAX_API_CALLS"
-	prEnricherDefaultMaxAPICalls = 200
+	prEnricherDefaultMaxAPICalls = 40
 	prEnricherUnlimitedAPICalls  = 0
 )
 
@@ -51,6 +53,7 @@ type BeadSynthesizer struct {
 	enricher         *PREnricher
 	lifecycleManager *BeadLifecycleManager
 	graphStore       *GraphStore
+	publisher        *beadPublishBatch
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -80,6 +83,7 @@ func NewBeadSynthesizer(
 
 	if ghClient != nil && config.Org != "" {
 		s.enricher = NewPREnricher(ghClient, config.Org, config.Repos, logger)
+		s.enricher.maxAPICalls = beadSynthMaxAPICalls(config.MaxAPICallsPerCycle)
 	}
 
 	if config.RetentionPolicy != nil {
@@ -181,6 +185,16 @@ type beadCandidate struct {
 // RunSynthesis scans all bead stores for unsynthesized done/closed beads,
 // classifies them into facts, deduplicates, and ingests into the wiki.
 func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	publisher := s.publisher
+	s.mu.Unlock()
+	// Flush even when there are no new candidates: daily batches and failed
+	// publishes must not depend on another bead completing to be retried.
+	defer func() {
+		if err := publisher.flush(ctx); err != nil {
+			s.logger.Warn("bead fact publish failed; batch retained", "error", err)
+		}
+	}()
 	var candidates []beadCandidate
 
 	for agentName, store := range s.beadStores {
@@ -233,6 +247,7 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			SourcePR:   fmt.Sprintf("bead:%s/%s", c.agent, c.bead.ID),
 			SourceDate: c.bead.UpdatedAt.Time,
 		}
+		fact.Sensitive = IsSensitiveFact(fact)
 
 		classified = append(classified, classifiedFact{fact: fact, candidate: c})
 	}
@@ -254,6 +269,8 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			)
 			continue
 		}
+
+		publisher.enqueue(cf.fact)
 
 		store := s.beadStores[cf.candidate.agent]
 		if err := store.SetMetadata(cf.candidate.bead.ID, beadSynthMetaKeySynthesizedAt, time.Now().UTC().Format(time.RFC3339)); err != nil {
@@ -522,7 +539,7 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 		return fmt.Errorf("creating vault dir: %w", err)
 	}
 
-	slug := slugify(fact.Title)
+	slug := vaultFileSlug(fact.Title)
 	filename := strings.ReplaceAll(slug+".md", "/", "_")
 	path := filepath.Join(dir, filename)
 
@@ -797,6 +814,14 @@ type PREnricher struct {
 	missTTL     time.Duration
 	maxAPICalls int
 	apiCalls    int
+	// etags survives ClearCache so unchanged PRs revalidate with
+	// If-None-Match; a 304 is not charged against the GitHub rate limit.
+	etags map[string]prETagEntry
+}
+
+type prETagEntry struct {
+	etag string
+	pr   *gh.PullRequest
 }
 
 type prFetchStatus int
@@ -824,7 +849,8 @@ func NewPREnricher(client *gh.Client, org string, repos []string, logger *slog.L
 		misses:      make(map[string]time.Time),
 		now:         time.Now,
 		missTTL:     beadSynthMissTTL(),
-		maxAPICalls: beadSynthMaxAPICalls(),
+		maxAPICalls: beadSynthMaxAPICalls(0),
+		etags:       make(map[string]prETagEntry),
 	}
 }
 
@@ -957,7 +983,7 @@ func (e *PREnricher) fetchPRWithStatus(ctx context.Context, owner, repo string, 
 	}
 	e.mu.Unlock()
 
-	pr, resp, err := e.ghClient.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:bead_synthesizer"), owner, repo, number)
+	pr, resp, err := e.getPRConditional(ctx, key, owner, repo, number)
 	if err != nil {
 		// Only a definitive 404 is a cacheable miss. A transient failure
 		// (rate limit, network) must stay retryable, or one bad window would
@@ -982,6 +1008,38 @@ func (e *PREnricher) fetchPRWithStatus(ctx context.Context, owner, repo string, 
 	e.mu.Unlock()
 
 	return pr, prFetchFound
+}
+
+// getPRConditional GETs a PR, sending If-None-Match when a previous body is
+// remembered and returning that body on 304.
+func (e *PREnricher) getPRConditional(ctx context.Context, key, owner, repo string, number int) (*gh.PullRequest, *gh.Response, error) {
+	req, err := e.ghClient.NewRequest("GET", fmt.Sprintf("repos/%v/%v/pulls/%d", owner, repo, number), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	e.mu.Lock()
+	prev, hadPrev := e.etags[key]
+	e.mu.Unlock()
+	if hadPrev {
+		req.Header.Set("If-None-Match", prev.etag)
+	}
+
+	pr := new(gh.PullRequest)
+	resp, err := e.ghClient.Do(hgithub.WithRESTCaller(ctx, "hive:bead_synthesizer"), req, pr)
+	if resp != nil && resp.StatusCode == http.StatusNotModified && hadPrev {
+		return prev.pr, resp, nil
+	}
+	if err != nil {
+		return nil, resp, err
+	}
+	if etag := resp.Header.Get("ETag"); etag != "" {
+		e.mu.Lock()
+		if _, ok := e.etags[key]; ok || len(e.etags) < prEnricherMissCacheSize {
+			e.etags[key] = prETagEntry{etag: etag, pr: pr}
+		}
+		e.mu.Unlock()
+	}
+	return pr, resp, nil
 }
 
 // fetchPRFromRepos tries each configured repo to find the PR.
@@ -1099,14 +1157,20 @@ func beadSynthMissTTL() time.Duration {
 	return prEnricherDefaultMissTTL
 }
 
-func beadSynthMaxAPICalls() int {
+// beadSynthMaxAPICalls resolves the per-cycle cap: the env var wins, then the
+// configured value, then the default.
+func beadSynthMaxAPICalls(configured int) int {
+	fallback := prEnricherDefaultMaxAPICalls
+	if configured > 0 {
+		fallback = configured
+	}
 	raw := strings.TrimSpace(os.Getenv(prEnricherMaxAPICallsEnv))
 	if raw == "" {
-		return prEnricherDefaultMaxAPICalls
+		return fallback
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		return prEnricherDefaultMaxAPICalls
+		return fallback
 	}
 	return n
 }
@@ -1121,4 +1185,20 @@ func ParseSynthSchedule(schedule string) time.Duration {
 	default:
 		return time.Duration(beadSynthDefaultScheduleHours) * time.Hour
 	}
+}
+
+// maxVaultSlugLen keeps "<slug>.md.tmp" well under the 255-byte NAME_MAX.
+const maxVaultSlugLen = 200
+
+// vaultFileSlug slugs a title for use as a vault filename. Slugs within the
+// limit are unchanged; longer ones are truncated with a short hash suffix of
+// the full slug so distinct long titles stay distinct.
+func vaultFileSlug(title string) string {
+	slug := slugify(title)
+	if len(slug) <= maxVaultSlugLen {
+		return slug
+	}
+	sum := sha256.Sum256([]byte(slug))
+	suffix := hex.EncodeToString(sum[:])[:8]
+	return strings.TrimRight(slug[:maxVaultSlugLen-len(suffix)-1], "-") + "-" + suffix
 }

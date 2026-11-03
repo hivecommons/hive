@@ -8,12 +8,12 @@ Every agent CLI hive drives is baked into the images at a fixed version:
 | Codex | `CODEX_VERSION` | npm `@openai/codex` | npm |
 | Copilot | `COPILOT_VERSION` | npm `@github/copilot` | npm |
 | pi | `PI_VERSION` (hub), `PI_CODING_AGENT_VERSION` (contributor) | npm `@earendil-works/pi-coding-agent` | npm |
-| Goose | `GOOSE_VERSION`, `GOOSE_SHA256_{AMD64,ARM64}` | GitHub releases `block/goose` | SHA-256 per arch |
+| Goose | `GOOSE_VERSION`, `GOOSE_SHA256_{AMD64,ARM64}` | GitHub releases `aaif-goose/goose` | SHA-256 per arch |
 | Antigravity (agy) | `AGY_VERSION` + `AGY_BUILD`, `AGY_SHA512_*` (hub); `AGY_VERSION=<ver>-<build>`, `AGY_SHA256_*` (contributor) | Google's updater artifact, as tracked by the Homebrew `antigravity-cli` cask | SHA-512 (hub) / SHA-256 (contributor) per arch |
 | Oh My Pi (omp) | `OMP_VERSION`, `OMP_SHA256_*` | GitHub releases `can1357/oh-my-pi` | SHA-256 per arch, cross-checked with `SHA256SUMS.txt` |
 | Muse Code | `MUSE_VERSION`, `MUSE_SHA256_*` | `api.meta.ai/muse-code/channels/muse-stable` and its release manifest | SHA-256 per arch, cross-checked with the manifest |
 | bobshell (bob) | `BOBSHELL_VERSION`, `BOBSHELL_SHA256_*` | `bobshell2-version.txt` on IBM COS | SHA-256, cross-checked with the vendor `.tgz.sha256` |
-| gh | `GH_VERSION`, `GH_SHA256_*` (hub only) | GitHub releases `cli/cli` | SHA-256 per arch, cross-checked with `gh_<v>_checksums.txt` |
+| gh | `GH_VERSION`, `GH_SHA256_*` (hub only); also `GITHUB_CLI_VERSION` in `src/deploy/ci-runners/Dockerfile` | GitHub releases `cli/cli` | SHA-256 per arch, cross-checked with `gh_<v>_checksums.txt` |
 
 The pins live in `src/Dockerfile` (hub and spoke image) and
 `src/Dockerfile.contributor` (containerized contributors), and the two must
@@ -88,7 +88,7 @@ Most CLIs ship features on major/minor releases, so patch-only bumps are
 skipped. **Claude Code is patch-eligible**: it ships new models as 2.1.x
 patches (for example Sonnet 5.5 needs 2.1.284), so skipping patches left the
 image unable to launch models Hive lists. `cli-pin-bump.sh` bumps patch
-releases of the CLIs in `HIVE_PIN_PATCH_ELIGIBLE` (default `claude`; set it to
+releases of the CLIs in `HIVE_PIN_PATCH_ELIGIBLE` (default `claude gh`; set it to
 empty to restore the strict rule). Add a CLI there when it starts shipping
 models in patches.
 

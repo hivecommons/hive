@@ -1,0 +1,1 @@
+- Preserve UTF-8 rune boundaries when truncating contributor verdict reasons in the persisted ledger, preventing replacement characters in long multilingual reasons ([#13110](https://github.com/hivecommons/hive/issues/13110)).

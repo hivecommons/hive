@@ -17,6 +17,52 @@ func writeEnv(t *testing.T, dir, contents string) string {
 	return path
 }
 
+func TestScopeGenerationSurvivesProjectionFailure(t *testing.T) {
+	store := NewProfileStore(t.TempDir())
+	set := &ProfileSet{Version: ProfilesVersion, Profiles: []Profile{{Name: "a", Hub: "https://a.example", Selection: &RepositorySelection{Mode: SelectionSelected}}}}
+	// A directory at the env path forces projection to fail after YAML saves.
+	if err := os.Mkdir(store.EnvPath(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(set); err == nil {
+		t.Fatal("expected projection failure")
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.RepoScopeVersion != 1 || loaded.Profiles[0].Selection == nil {
+		t.Fatal("failed projection lost persisted consent/generation")
+	}
+	if err := os.Remove(store.EnvPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(loaded); err != nil {
+		t.Fatal(err)
+	}
+	env, err := readEnvFile(store.EnvPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.value("HIVE_REPO_SCOPE") != "''" || env.value("HIVE_REPO_SCOPE_VERSION") != "2" {
+		t.Fatal("retry broadened empty selection or reused generation")
+	}
+}
+
+func TestScopeGenerationRefusesOverflow(t *testing.T) {
+	store := NewProfileStore(t.TempDir())
+	set := &ProfileSet{Version: ProfilesVersion, RepoScopeVersion: ^uint64(0)}
+	if err := store.Commit(set); err == nil {
+		t.Fatal("expected generation exhaustion error")
+	}
+	if set.RepoScopeVersion != ^uint64(0) {
+		t.Fatal("generation wrapped around")
+	}
+	if _, err := os.Stat(store.Path()); !os.IsNotExist(err) {
+		t.Fatal("overflow wrote profiles")
+	}
+}
+
 func TestProfileStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := NewProfileStore(dir)
@@ -622,5 +668,24 @@ func assertAligned(t *testing.T, env map[string]string) {
 	ids := splitList(env["CONTRIBUTOR_ID"])
 	if len(hubs) != len(tokens) || len(hubs) != len(ids) {
 		t.Fatalf("positional lists misaligned: %d hub(s), %d token(s), %d id(s)", len(hubs), len(tokens), len(ids))
+	}
+}
+
+func TestLoadScopeAwareHubObservations(t *testing.T) {
+	store := NewProfileStore(t.TempDir())
+	body := `{"wss://a.example/contribute":{"last_seen":"2026-10-17T19:00:00Z","subscriptions":{"c1":"unsupported","c2":"selected"}},"wss://b.example/contribute":"2026-10-17T18:00:00Z"}`
+	if err := os.WriteFile(store.HubsSeenPath(), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	observations, err := store.LoadHubObservations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := observations["wss://a.example/contribute"].Subscriptions["c1"]; got != "unsupported" {
+		t.Fatalf("scope status = %q", got)
+	}
+	seen, err := store.LoadHubsSeen()
+	if err != nil || len(seen) != 2 {
+		t.Fatalf("legacy view = %v, %v", seen, err)
 	}
 }

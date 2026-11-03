@@ -1,0 +1,1 @@
+- Activity monitor: sidelined PRs (drafts, exempt labels) now carry GitHub's closing references too, so a draft with a valid `Fixes #N` pairs with its issue instead of showing "no linked issue"; linked issues keep their title on both the batch and per-repo GraphQL paths.

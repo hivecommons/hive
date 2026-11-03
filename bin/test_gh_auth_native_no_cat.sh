@@ -71,11 +71,18 @@ fi
 if [ ! -f "$AGENT_LAUNCH" ]; then
   fail "agent-launch.sh exists" "not found at $AGENT_LAUNCH"
 else
-  if grep -qE "gh auth login --with-token" "$AGENT_LAUNCH"; then
+  if grep -qE "auth login --with-token" "$AGENT_LAUNCH"; then
     pass "agent-launch.sh authenticates gh's own credential store (gh auth login --with-token)"
   else
     fail "agent-launch.sh authenticates gh's own credential store" \
          "expected a 'gh auth login --with-token' step so native agents never handle the raw token themselves"
+  fi
+
+  if grep -qE -- '--hostname[[:space:]]+"\$GH_HOST"' "$AGENT_LAUNCH"; then
+    pass "native gh auth login honors GH_HOST for GitHub Enterprise"
+  else
+    fail "native gh auth login honors GH_HOST for GitHub Enterprise" \
+         "expected gh auth login to pass --hostname \"$GH_HOST\" when GH_HOST is an enterprise host"
   fi
 
   # The fallback must be gated on the ABSENCE of the per-agent scoped cache —

@@ -3,7 +3,7 @@ package config
 import "testing"
 
 // TestPlanAutoApproveForLevel checks the plan_auto_approve knob resolves from
-// the embedded pack YAML: true only for fully autonomous L6, false for L1-L5
+// the embedded pack YAML: true only for autonomous L6, false for L1-L5
 // and unknown levels.
 func TestPlanAutoApproveForLevel(t *testing.T) {
 	cases := []struct {

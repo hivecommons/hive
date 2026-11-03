@@ -2,7 +2,9 @@ package hub
 
 import (
 	cryptoRand "crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -135,11 +137,12 @@ func writeLinkPreview(w http.ResponseWriter) {
 	publicURL := hubPublicURL()
 	previewHTML := `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
+` + robotsMetaNoIndex + `
 <title>Hive — AI agents that maintain your repo</title>
-<meta name="description" content="Hive — the AI maintainer you own outright. AI agents triage issues, write fixes, patch CVEs, and merge on green behind six autonomy levels.">
+<meta name="description" content="Hive is a co-maintainer system for your GitHub projects: AI agents (Claude, Copilot, Codex, Antigravity, Goose) do the chores. You decide how much they may do.">
 <meta property="og:site_name" content="Hive">
 <meta property="og:title" content="Hive — AI agents that maintain your repo">
-<meta property="og:description" content="Put your repo on autopilot. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — test coverage earns the confidence to raise a level, and you (the admin) choose when to raise it.">
+<meta property="og:description" content="A co-maintainer that never sleeps. Hive sends AI coding agents to the work that piles up in your repo, under six trust levels (ACMM L1 advise-only → L6 merge on green CI). Humans keep every decision that matters.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="` + publicURL + `">
 <meta property="og:image" content="` + publicURL + `/og-card.png">
@@ -149,7 +152,7 @@ func writeLinkPreview(w http.ResponseWriter) {
 <meta property="og:image:alt" content="Hive — AI agents that maintain your repo">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Hive — AI agents that maintain your repo">
-<meta name="twitter:description" content="Put your repo on autopilot. AI agents on your backlog behind six autonomy levels.">
+<meta name="twitter:description" content="A co-maintainer that never sleeps. Governed AI coding agents work your repo; you decide how much they may do.">
 <meta name="twitter:image" content="` + publicURL + `/og-card.png">
 </head><body>
 <h1>Hive</h1>
@@ -578,9 +581,25 @@ func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "login unavailable", http.StatusInternalServerError)
 		return
 	}
+	// GitHub (PKCE): mint the code_verifier up front so its S256 challenge can
+	// be bound to this login's state transaction. The state cookie then carries
+	// "nonce.challenge", and the callback refuses to redeem the code unless the
+	// verifier cookie hashes to exactly that challenge — checked locally, before
+	// any request to GitHub's token endpoint (#14598).
+	stateCookieValue := nonce
+	var verifier string
+	if !p.IsOIDC {
+		verifier, err = oauthPKCEVerifier()
+		if err != nil {
+			s.logger.Warn("OAuth: cannot mint PKCE verifier", "error", err)
+			http.Error(w, "login unavailable", http.StatusInternalServerError)
+			return
+		}
+		stateCookieValue = nonce + oauthStateChallengeSeparator + pkceS256Challenge(verifier)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     oauthStateCookieName,
-		Value:    nonce,
+		Value:    stateCookieValue,
 		Path:     "/",
 		MaxAge:   int(oauthStateTTL.Seconds()),
 		HttpOnly: true,
@@ -600,8 +619,24 @@ func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p
 		// scope is deliberate — the hub only needs WHO is logging in, and GitHub
 		// serves /user's public profile (including "login") unscoped. Do NOT add a
 		// scope without a feature that needs it.
-		authURL := fmt.Sprintf("%s?client_id=%s&scope=&redirect_uri=%s&state=%s",
-			p.AuthorizeURL, p.ClientID, oauthRedirectURI(), state)
+		//
+		// PKCE (RFC 7636, S256): mint a per-login code_verifier, keep it in its
+		// own short-lived host-scoped cookie (mirroring the state cookie), and
+		// send only its S256 challenge. The callback must present the verifier
+		// at token exchange, binding the authorization code to the browser that
+		// started the login as defence-in-depth. The verifier was minted above
+		// and its challenge is bound into the state cookie.
+		http.SetCookie(w, &http.Cookie{
+			Name:     oauthPKCECookieName,
+			Value:    verifier,
+			Path:     "/",
+			MaxAge:   int(oauthStateTTL.Seconds()),
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		authURL := fmt.Sprintf("%s?client_id=%s&scope=&redirect_uri=%s&state=%s&code_challenge=%s&code_challenge_method=S256",
+			p.AuthorizeURL, p.ClientID, oauthRedirectURI(), state, pkceS256Challenge(verifier))
 		http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 		return
 	}
@@ -686,6 +721,7 @@ func (s *HubServer) writeProviderPicker(w http.ResponseWriter, providers []*auth
 			html.EscapeString(p.Name), html.EscapeString(p.Name), rd, providerGlyph(p.Name), html.EscapeString(p.DisplayName)))
 	}
 	page := `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+` + robotsMetaNoIndex + `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in — Hive</title>
 <style>
@@ -716,6 +752,11 @@ text-decoration:none;font-size:16px;font-weight:600;transition:background .12s,b
 }
 
 func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	// PKCE verifier: read once and clear immediately, on every outcome, so it is
+	// single-use whether this callback succeeds or is rejected below.
+	pkceVerifier := s.oauthPKCEVerifierFromCookie(r)
+	s.clearOAuthPKCECookie(w)
+
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		http.Error(w, "missing code", http.StatusBadRequest)
@@ -788,7 +829,26 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		displayName = claims.Name
 		s.logger.Info("audit: hub OIDC login", "provider", p.Name, "user", canonicalID)
 	} else {
-		login, avatar, token, ok := s.exchangeGitHubLogin(w, code)
+		// Fail closed BEFORE the exchange: a missing or malformed verifier means
+		// this browser never started a PKCE login (or already used it), and the
+		// code must not be redeemed. In-flight logins from before PKCE land here
+		// too and are asked to start again.
+		if !validPKCEVerifier(pkceVerifier) {
+			s.logger.Warn("OAuth: rejected callback with missing or malformed PKCE verifier")
+			http.Error(w, "invalid login state — please start the login again", http.StatusBadRequest)
+			return
+		}
+		// The verifier must also belong to THIS login: its S256 must equal the
+		// challenge bound to the state cookie at login start. A well-formed but
+		// substituted verifier (or a state cookie with no or a different bound
+		// challenge) is rejected here, locally, so the code is never sent to
+		// GitHub. Both cookies were already cleared above.
+		if !pkceVerifierMatchesChallenge(pkceVerifier, s.oauthStateBoundChallenge(r)) {
+			s.logger.Warn("OAuth: rejected callback whose PKCE verifier does not match the login's bound challenge")
+			http.Error(w, "invalid login state — please start the login again", http.StatusBadRequest)
+			return
+		}
+		login, avatar, token, ok := s.exchangeGitHubLogin(w, code, pkceVerifier)
 		if !ok {
 			return // exchangeGitHubLogin already wrote the error
 		}
@@ -929,16 +989,24 @@ func (s *HubServer) parseCallbackState(r *http.Request) (provider, redirect stri
 // login, avatar, and user access token. On any failure it writes the HTTP error
 // and returns ok=false. This is the original callback logic, factored out so the
 // dispatcher can share the surrounding cookie/persistence code with OIDC.
-func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (login, avatar, token string, ok bool) {
+//
+// The exchange is a form-encoded POST: the client secret, the one-time code and
+// the PKCE code_verifier travel in the body, never in the URL where request
+// logs could retain them.
+func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code, codeVerifier string) (login, avatar, token string, ok bool) {
 	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("HIVE_HUB_OAUTH_CLIENT_SECRET")
 
-	tokenReq, _ := http.NewRequest("POST", defaultGHTokenURL, nil)
-	q := tokenReq.URL.Query()
-	q.Set("client_id", clientID)
-	q.Set("client_secret", clientSecret)
-	q.Set("code", code)
-	tokenReq.URL.RawQuery = q.Encode()
+	// Credentials and code go in the form body, never the URL, so proxy and
+	// request logs cannot retain them. See src/docs/hub-login-token.md.
+	form := url.Values{}
+	form.Set("client_id", clientID)
+	form.Set("client_secret", clientSecret)
+	form.Set("code", code)
+	form.Set("redirect_uri", oauthRedirectURI())
+	form.Set("code_verifier", codeVerifier)
+	tokenReq, _ := http.NewRequest("POST", defaultGHTokenURL, strings.NewReader(form.Encode()))
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenReq.Header.Set("Accept", "application/json")
 
 	client := &http.Client{Timeout: oauthTimeout}
@@ -1396,13 +1464,21 @@ const (
 	// oauthStateCookieName holds the per-login nonce that binds an OAuth
 	// callback to the browser that started it (audit F11). Host-scoped
 	// deliberately: unlike hive_hub_user it carries no Domain, so sibling
-	// tenants never receive it.
+	// tenants never receive it. For the GitHub login its value is
+	// "nonce.challenge", binding the PKCE S256 challenge to the transaction.
 	oauthStateCookieName = "hive_oauth_state"
 
 	// oauthStateSeparator splits the nonce from the redirect target inside the
 	// state parameter. ":" cannot appear in a nonce (hex) and any ":" in the
 	// redirect lands in the second half, which strings.Cut keeps intact.
 	oauthStateSeparator = ":"
+
+	// oauthStateChallengeSeparator splits the state nonce from the PKCE S256
+	// challenge bound to it inside the GitHub login's state cookie value
+	// ("nonce.challenge"). "." appears in neither a hex nonce nor a base64url
+	// challenge. Only the cookie carries the challenge; the state parameter
+	// format is unchanged.
+	oauthStateChallengeSeparator = "."
 
 	// oauthStateTTL bounds how long a started login may sit unfinished. Long
 	// enough to authorize on GitHub (including a fresh GitHub login), short
@@ -1412,7 +1488,103 @@ const (
 	// oauthStateNonceBytes is the entropy behind the nonce. 32 bytes is far
 	// beyond guessing and matches the other random values minted in this package.
 	oauthStateNonceBytes = 32
+
+	// oauthPKCECookieName holds the per-login PKCE code_verifier (RFC 7636) for
+	// the GitHub browser login. Separate from the state cookie so the state
+	// parameter format is untouched; host-scoped and single-use like it. Its
+	// S256 must match the challenge bound into the state cookie.
+	oauthPKCECookieName = "hive_oauth_pkce"
+
+	// oauthPKCEVerifierBytes is the entropy behind the code_verifier. 32 bytes
+	// base64url-encode to 43 characters, the RFC 7636 minimum length.
+	oauthPKCEVerifierBytes = 32
 )
+
+// oauthPKCEVerifier mints a PKCE code_verifier: 32 random bytes, base64url
+// without padding (43 unreserved characters).
+func oauthPKCEVerifier() (string, error) {
+	buf := make([]byte, oauthPKCEVerifierBytes)
+	if _, err := io.ReadFull(cryptoRand.Reader, buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// pkceS256Challenge returns BASE64URL(SHA256(verifier)), the S256 code_challenge.
+func pkceS256Challenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// validPKCEVerifier reports whether v is a well-formed RFC 7636 code_verifier:
+// 43–128 characters from the unreserved set [A-Za-z0-9-._~].
+func validPKCEVerifier(v string) bool {
+	if len(v) < 43 || len(v) > 128 {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '-', c == '.', c == '_', c == '~':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// splitOAuthStateCookie splits a state cookie value into the nonce and the
+// PKCE challenge bound to it. An OIDC (or pre-binding) cookie is a bare nonce
+// and yields an empty challenge.
+func splitOAuthStateCookie(value string) (nonce, challenge string) {
+	nonce, challenge, _ = strings.Cut(value, oauthStateChallengeSeparator)
+	return nonce, challenge
+}
+
+// oauthStateBoundChallenge returns the PKCE S256 challenge bound to this
+// browser's login state at login start, or "" if none was bound.
+func (s *HubServer) oauthStateBoundChallenge(r *http.Request) string {
+	c, err := r.Cookie(oauthStateCookieName)
+	if err != nil {
+		return ""
+	}
+	_, challenge := splitOAuthStateCookie(c.Value)
+	return challenge
+}
+
+// pkceVerifierMatchesChallenge reports whether verifier is a well-formed RFC
+// 7636 code_verifier whose S256 challenge equals the bound challenge. Fails
+// closed on an empty challenge; compared in constant time.
+func pkceVerifierMatchesChallenge(verifier, challenge string) bool {
+	if challenge == "" || !validPKCEVerifier(verifier) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(pkceS256Challenge(verifier)), []byte(challenge)) == 1
+}
+
+// oauthPKCEVerifierFromCookie returns the PKCE verifier this browser was issued
+// at login start, or "" if absent.
+func (s *HubServer) oauthPKCEVerifierFromCookie(r *http.Request) string {
+	c, err := r.Cookie(oauthPKCECookieName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+// clearOAuthPKCECookie expires the PKCE verifier, making it single-use.
+func (s *HubServer) clearOAuthPKCECookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthPKCECookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
 
 // oauthStateNonce mints an unguessable login nonce.
 func oauthStateNonce() (string, error) {
@@ -1495,6 +1667,12 @@ func (s *HubServer) matchedCallbackState(r *http.Request) (state string, depth i
 	if err != nil || cookie.Value == "" {
 		return "", 0, false, "no_cookie"
 	}
+	// The GitHub cookie also carries the bound PKCE challenge; only the nonce
+	// half is compared against the state parameter.
+	cookieNonce, _ := splitOAuthStateCookie(cookie.Value)
+	if cookieNonce == "" {
+		return "", 0, false, "no_cookie"
+	}
 	cands := callbackStateCandidates(r)
 	if len(cands) == 0 {
 		return "", 0, false, "no_state"
@@ -1510,7 +1688,7 @@ func (s *HubServer) matchedCallbackState(r *http.Request) (state string, depth i
 		if !found || nonce == "" {
 			continue
 		}
-		if subtle.ConstantTimeCompare([]byte(nonce), []byte(cookie.Value)) == 1 {
+		if subtle.ConstantTimeCompare([]byte(nonce), []byte(cookieNonce)) == 1 {
 			return cands[i], i, true, ""
 		}
 	}

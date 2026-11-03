@@ -105,13 +105,16 @@ func ShouldPostDigest(digest *Digest, hasGitHubClient, hasPinnedIssue bool) bool
 type PostGate struct {
 	mu          sync.Mutex
 	lastSuccess map[string]time.Time
-	clampLogged bool
+	// backoffUntil holds, per repo, the time before which a post is NOT due
+	// because the last write was refused with a non-transient 403 (#11791).
+	backoffUntil map[string]time.Time
+	clampLogged  bool
 }
 
 // NewPostGate returns a gate with no recorded posts, so the first attempt for
 // any repo is always due.
 func NewPostGate() *PostGate {
-	return &PostGate{lastSuccess: map[string]time.Time{}}
+	return &PostGate{lastSuccess: map[string]time.Time{}, backoffUntil: map[string]time.Time{}}
 }
 
 // Due reports whether the update-interval gate is open for a post attempt to
@@ -124,10 +127,21 @@ func NewPostGate() *PostGate {
 // skip-guard records its hash): a failed attempt is retried on the very next
 // cycle instead of waiting out the interval, keeping error recovery — and the
 // hub's staleness signal — as prompt as today.
+//
+// The one exception is a write-forbidden backoff (RecordWriteForbidden): a
+// 403 "Resource not accessible by integration" is not transient, so the gate
+// stays closed for governor.advisory.post_retry_backoff_s regardless of the
+// interval, and reopens on its own when the window ends.
 func (g *PostGate) Due(advCfg config.AdvisoryConfig, repo string, now time.Time, logger *slog.Logger) bool {
 	interval := advCfg.UpdateInterval()
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if until, ok := g.backoffUntil[repo]; ok {
+		if now.Before(until) {
+			return false
+		}
+		delete(g.backoffUntil, repo)
+	}
 	if raw := advCfg.UpdateIntervalS; raw > 0 && time.Duration(raw)*time.Second != interval && !g.clampLogged {
 		g.clampLogged = true
 		logger.Warn("advisory update_interval_s outside allowed bounds — clamped",
@@ -144,9 +158,39 @@ func (g *PostGate) Due(advCfg config.AdvisoryConfig, repo string, now time.Time,
 // RecordSuccess advances the update-interval gate for repo after a successful
 // digest write. Skip-if-unchanged cycles count too: pkg/github returns nil for
 // them by design so freshness advances (#4818/#4821), and an unchanged digest
-// is exactly the case the throttle exists to quiet.
+// is exactly the case the throttle exists to quiet. A repo-paused skip
+// (#6203) advances it as well, so the "skipped: repo paused" log line lands
+// once per interval; the pause is re-read on the next due cycle, so lifting
+// it posts within one interval.
 func (g *PostGate) RecordSuccess(repo string, now time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.lastSuccess[repo] = now
+	delete(g.backoffUntil, repo)
+}
+
+// RecordWriteForbidden closes the gate for repo until now+backoff after GitHub
+// refused the digest write with 403 "Resource not accessible by integration"
+// (#11791). The refusal is structural — foreign-authored comment, repo outside
+// the installation, or repo transferred to another owner — so retrying every
+// eval cycle cannot succeed and only burns API quota while re-logging the same
+// error. A backoff <= 0 is a no-op, preserving per-cycle retries for operators
+// who disable the knob. The recorded health error stays visible on the hub for
+// the whole window; a successful post (RecordSuccess) clears the backoff early.
+func (g *PostGate) RecordWriteForbidden(repo string, now time.Time, backoff time.Duration) {
+	if backoff <= 0 {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.backoffUntil[repo] = now.Add(backoff)
+}
+
+// BackoffUntil reports when the write-forbidden backoff for repo ends; the
+// zero time and false mean no backoff is active.
+func (g *PostGate) BackoffUntil(repo string) (time.Time, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	until, ok := g.backoffUntil[repo]
+	return until, ok
 }

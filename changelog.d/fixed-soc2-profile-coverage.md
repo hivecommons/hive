@@ -1,0 +1,1 @@
+- List all 61 SOC 2 Trust Services Criteria in the compliance profile, with explicit not-covered rationales and mappings for monitoring, protected credential movement, and encrypted backups. The A1.2 backup mapping reports the effective key source (governor key_file, default Secret/PVC mounts, or the HIVE_BACKUP_KEY fallback) rather than the raw key_file path.

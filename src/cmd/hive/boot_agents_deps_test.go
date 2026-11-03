@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -27,6 +31,9 @@ import (
 type bootAgentsFake struct {
 	deps bootAgentsDeps
 	log  bytes.Buffer
+	// supervised is the sidecar supervision bootAgentsWith handed to the
+	// superviseRuntime seam; nil in-process.
+	supervised *cruxRuntimeSupervision
 
 	// relayMu guards the relay/sweep fields: since #9621 the relay
 	// supervisor starts them on its own goroutine. sweepStarted receives once
@@ -35,7 +42,7 @@ type bootAgentsFake struct {
 	sweepStarted chan struct{}
 	relayStarts  int
 
-	loopsMgr        *agent.Manager
+	loopsMgr        crux.Runtime
 	dirsPrepared    bool
 	auditStarted    bool
 	relays          *requestRelays
@@ -46,12 +53,13 @@ type bootAgentsFake struct {
 	sweepLevel      *int
 	minterCalls     int
 	permWatcherRuns int
+	exitCodes       []int
 }
 
 func newBootAgentsFake() *bootAgentsFake {
 	f := &bootAgentsFake{sweepStarted: make(chan struct{}, fakeRelayStartBuffer)}
 	f.deps = bootAgentsDeps{
-		startAgentLoops:       func(_ context.Context, mgr *agent.Manager) { f.loopsMgr = mgr },
+		startAgentLoops:       func(_ context.Context, mgr crux.Runtime) { f.loopsMgr = mgr },
 		prepareRequestDirs:    func(*slog.Logger) { f.dirsPrepared = true },
 		startTokenAccessAudit: func(context.Context, *slog.Logger) { f.auditStarted = true },
 		startRequestRelays: func(ctx context.Context, c *github.Client, r requestRelays) <-chan struct{} {
@@ -68,11 +76,16 @@ func newBootAgentsFake() *bootAgentsFake {
 			f.sweepStarted <- struct{}{}
 			return ctx.Done()
 		},
-		buildMinter: func(*config.Config, *slog.Logger) (agent.AgentMintIssuer, error) {
+		buildMinter: func(*config.Config, *slog.Logger) (crux.AgentMintIssuer, error) {
 			f.minterCalls++
 			return nil, errors.New("no signing key in test")
 		},
 		startPermissionsWatcher: func(*slog.Logger) { f.permWatcherRuns++ },
+		// Construction is pure, so the real in-process runtime is used: the
+		// tests assert on the wiring installed on it.
+		newRuntime:       newHostedRuntime,
+		superviseRuntime: func(_ context.Context, s *cruxRuntimeSupervision) { f.supervised = s },
+		exit:             func(code int) { f.exitCodes = append(f.exitCodes, code) },
 	}
 	return f
 }
@@ -249,7 +262,7 @@ func TestBootAgentsWith_MintFailureIsWarnOnly(t *testing.T) {
 
 func TestBootAgentsWith_MintSuccessAttachesIssuer(t *testing.T) {
 	f := newBootAgentsFake()
-	f.deps.buildMinter = func(*config.Config, *slog.Logger) (agent.AgentMintIssuer, error) {
+	f.deps.buildMinter = func(*config.Config, *slog.Logger) (crux.AgentMintIssuer, error) {
 		f.minterCalls++
 		return fakeMintIssuer{}, nil
 	}
@@ -274,7 +287,7 @@ func TestDefaultBootAgentsDeps_IsFullyWired(t *testing.T) {
 	d := defaultBootAgentsDeps()
 	if d.startAgentLoops == nil || d.prepareRequestDirs == nil || d.startTokenAccessAudit == nil ||
 		d.startRequestRelays == nil || d.startSelfAuthoredSweep == nil || d.buildMinter == nil ||
-		d.startPermissionsWatcher == nil {
+		d.startPermissionsWatcher == nil || d.superviseRuntime == nil {
 		t.Fatal("defaultBootAgentsDeps left a seam nil; production boot would panic")
 	}
 	// buildMinter's adapter must not smuggle a typed-nil pointer into the
@@ -283,5 +296,32 @@ func TestDefaultBootAgentsDeps_IsFullyWired(t *testing.T) {
 	cfg.Mint.Enabled = true
 	if issuer, err := d.buildMinter(cfg, restoreTestLogger()); err == nil || issuer != nil {
 		t.Fatalf("buildMinter(no key) = (%v, %v), want (nil, error)", issuer, err)
+	}
+}
+
+// A runtime mode that cannot be served is a boot error: the phase exits
+// before installing any wiring rather than silently running in-process
+// (#14138 stage 1; the sidecar client is stage 3).
+func TestBootAgentsWith_UnavailableRuntimeModeExits(t *testing.T) {
+	f := newBootAgentsFake()
+	f.deps.newRuntime = func(cfg cruxconfig.RuntimeConfig, _ ...cruxruntime.Option) (hostedRuntime, error) {
+		return nil, fmt.Errorf("mode %q: %w", cfg.Mode, cruxruntime.ErrModeUnavailable)
+	}
+	cfg := bootAgentsConfig()
+	b := newBootAgentsBoot(t, f, cfg)
+
+	b.bootAgentsWith(f.deps)
+
+	if len(f.exitCodes) != 1 || f.exitCodes[0] != 1 {
+		t.Fatalf("exit codes = %v, want [1]", f.exitCodes)
+	}
+	if b.agentMgr != nil {
+		t.Fatal("agent manager constructed despite unavailable mode")
+	}
+	if f.loopsMgr != nil || f.dirsPrepared || f.permWatcherRuns != 0 {
+		t.Fatal("wiring installed after a failed runtime construction")
+	}
+	if !strings.Contains(f.log.String(), "crux runtime unavailable") {
+		t.Fatalf("log missing the unavailable-mode error:\n%s", f.log.String())
 	}
 }

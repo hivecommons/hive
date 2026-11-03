@@ -42,6 +42,20 @@ Loading fails if a `repos` key is not in `project.repos`, `upstream` is not
 `owner/repo`, a source is unknown, `max_issues_per_run` is negative, or
 `start_from` is not a valid `YYYY-MM-DD` date.
 
+## Reporter-trust acceptance
+
+With the watch enabled for a repo, a cited **merged PR in that repo's resolved
+upstream** counts as accepted for the reporter-trust hold. Hive verifies the
+merge through GitHub; a port marker or an upstream URL alone is not proof. This
+uses the explicit `upstream`, or the fork parent when omitted, and does not add
+the upstream author to global reporter trust. Upstream issues, unmerged PRs,
+and references to unrelated repos do not receive this acceptance.
+
+For cross-repo citations, `author_association` and acceptance labels belong to
+the other repo and do not confer local trust. Explicit `trusted_logins` still
+apply. Existing reporter-trust holds remain human-only to release; this rule
+does not remove previously applied `hold` labels or bypass other merge gates.
+
 ## The loop
 
 The governor's eval tick runs the watch at most once per `interval`. For each

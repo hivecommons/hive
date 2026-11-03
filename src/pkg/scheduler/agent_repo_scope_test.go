@@ -18,7 +18,9 @@ func scopeScheduler(t *testing.T, agents map[string]config.AgentConfig) *Schedul
 			Repos:       []string{"console", "dashboard", "docs"},
 			PrimaryRepo: "console",
 		},
-		Agents: agents,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: agents,
+		},
 	}
 	return New(cfg, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 }

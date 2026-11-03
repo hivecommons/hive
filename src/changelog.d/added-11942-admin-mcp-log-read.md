@@ -1,0 +1,1 @@
+- Admin MCP gains a `log_read` tool and the dashboard a `GET /api/logs/read` endpoint that read the hive's own log first, scrub secrets at read time and resume from a cursor ([#11942](https://github.com/hivecommons/hive/issues/11942)). The scan bound one read may cover is set by `governor.logging.read_scan_max_mb`, now exposed in Settings → Logging → Read scan bound.

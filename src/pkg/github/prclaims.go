@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"log/slog"
 	"os"
 	"regexp"
@@ -82,7 +83,11 @@ const (
 	// does not un-merge, so nothing about that evidence decays at 72h; the
 	// only thing that ends it is the issue closing, and the contribute queue
 	// only ever consults claims for OPEN issues. Retention is the bound on
-	// ledger growth for issues that did close, not on the claim's truth.
+	// ledger growth for issues that did close, not on the claim's truth — so
+	// it counts from the LAST time the issue was listed open (IssueClaim.
+	// IssueOpenAt, hivecommons/hive#11580), not from the merge: a settled
+	// claim on a still-open issue is carried indefinitely, and retires only
+	// once the issue has been absent from the open set for this long.
 	settledClaimRetention = 30 * 24 * time.Hour
 
 	// SettledClaimStaleAfter is how long a settled claim may hold an issue
@@ -97,16 +102,45 @@ const (
 	// the pod restarts that caused the incident this guard exists to prevent.
 	ClaimLedgerPath = "/data/pr-claims.json"
 
-	// CoveredByPRLabel marks an open issue with an API-verified open PR relation.
-	CoveredByPRLabel = "hive/covered-by-pr"
+	// CoveredByPRLabel marks an open issue with an API-verified open PR
+	// relation. It is the `stage/040-covered-by-pr` stage label
+	// (hivecommons/hive#12436; pkg/stagelabels owns the family and a test
+	// pins the spelling). It replaced `🐝 covered by PR` (#11888) and
+	// `hive/covered-by-pr` before it; see legacyCoveredByPRLabels. An issue
+	// whose covering PR has advanced carries the PR's stage instead, so
+	// readers use HasCoveredByPRLabel rather than comparing this string.
+	CoveredByPRLabel = "stage/040-covered-by-pr"
+	// CoveredByPRLabelColor is the shared stage-family colour (hive amber).
+	CoveredByPRLabelColor = stagelabels.StageColor
+	// CoveredByPRLabelDescription is the label description hive creates it with.
+	CoveredByPRLabelDescription = "An open PR covers this issue"
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
+	// LikelyDoneLabelColor is the green label colour used for likely-done.
+	LikelyDoneLabelColor = "0e8a16"
+	// LikelyDoneLabelDescription is the description hive creates LikelyDoneLabel with.
+	LikelyDoneLabelDescription = "Hive verified that a merged PR references or claims this issue; pending confirmation"
+	// PartiallyAddressedLabel marks an open issue whose merged PR covered only
+	// part of it (no closing keyword, a remainder paragraph, or none of the
+	// cited paths changed). It suppresses likely-done and keeps the issue
+	// actionable (#11931). Spelled in stagelabels so the stage engine can
+	// read it without importing this package.
+	PartiallyAddressedLabel = stagelabels.PartiallyAddressedLabel
+	// PartiallyAddressedLabelColor is the amber label colour used for partially-addressed.
+	PartiallyAddressedLabelColor = "fbca04"
+	// PartiallyAddressedLabelDescription is the description hive creates PartiallyAddressedLabel with.
+	PartiallyAddressedLabelDescription = "A merged PR addressed only part of this issue; remainder still actionable"
 	// AlreadyDoneLabel marks an issue that Hive verified is already fixed.
 	AlreadyDoneLabel = "hive/already-done"
 	// VerifiedOpenLabel records that verification found the issue still open/not
 	// done, suppressing renewed likely-done labeling from the same stale claim.
 	VerifiedOpenLabel = "hive/verified-open"
+	// VerifiedOpenLabelColor and VerifiedOpenLabelDescription define the
+	// label wherever hive creates it: SyncIssuePRClaimLabels and the label
+	// relay both ensure it with these values.
+	VerifiedOpenLabelColor       = "6a737d"
+	VerifiedOpenLabelDescription = "Hive verified that a likely/already-done claim did not finish this issue; keep open for more work"
 
 	// claimLedgerFileMode is the permission mode for the ledger file. It holds
 	// no secrets (issue and PR numbers only), so it is world-readable like the
@@ -211,7 +245,66 @@ type IssueClaim struct {
 	// ClaimSourceVerdict claim. Logged on suppression so an operator can see
 	// whose research the hub is trusting.
 	SourceReporter string `json:"source_reporter,omitempty"`
+	// IssueOpenAt is when the enumeration last listed the claimed issue as
+	// still OPEN (hivecommons/hive#11580). It restarts the retention clock of
+	// a settled claim: a merged fix does not un-merge, so the claim must hold
+	// for as long as the issue it covers stays open, and settledClaimRetention
+	// counts only from the last time the issue was seen open — i.e. it bounds
+	// ledger growth after the issue closes, not the claim's truth while it is
+	// open. Zero on pre-#11580 ledgers, which fall back to the merge/verdict
+	// instant exactly as before.
+	IssueOpenAt time.Time `json:"issue_open_at,omitempty"`
+	// CloseOnMergeSettledAt is when the close-on-merge ledger sweep last
+	// reached a final verdict for this claim: the issue closed, was already
+	// closed, carries Hive's marker, awaits confirmation, or can never be
+	// closed for this PR (untrusted author, reopened by a person). While it
+	// is within CloseOnMergeOptions.RecheckAfter of now the sweep skips the
+	// claim without any API call; before this field existed every merged
+	// claim cost a PR read and an issue read on every pass, which starved
+	// the core quota on hives with large merge histories. Carried forward by
+	// Reconcile with the claim's other anchors while the SAME PR keeps
+	// claiming the issue; a different PR starts unsettled. Zero on older
+	// ledgers, which the sweep treats as never checked.
+	CloseOnMergeSettledAt time.Time `json:"close_on_merge_settled_at,omitempty"`
+	// ReopenedAt is when a person reopened the claimed issue AFTER the
+	// claiming PR merged. A merged `Fixes #N` closes N; a person reopening it
+	// is the reporter saying the fix did not take, so from this instant the
+	// claim is VOID as evidence of resolution: Lookup hides it, the issue is
+	// plain actionable again (no hive/likely-done, no verify-once gate), the
+	// contribute queue offers it, and the close-on-merge sweep never re-closes
+	// it for this PR. The record itself is kept — and carried forward by
+	// Reconcile with the claim's other anchors while the SAME PR keeps
+	// claiming the issue — so the settle scan re-listing the merged PR cannot
+	// resurrect the claim. A different PR starts a fresh, un-voided claim.
+	// Set by the issues.reopened webhook or by the enumeration reopen check
+	// (an open issue whose state_reason is "reopened" has its timeline read
+	// once after the merge). Zero on older ledgers.
+	ReopenedAt time.Time `json:"reopened_at,omitempty"`
+	// ReopenCheckedAt is when the enumeration reopen check last read the
+	// issue's timeline and found no reopen after the merge. The check is
+	// repeated only once the issue's UpdatedAt moves past it, so a claim
+	// costs at most one timeline read per issue activity, not one per pass.
+	ReopenCheckedAt time.Time `json:"reopen_checked_at,omitempty"`
 }
+
+// ReopenedAfterMerge reports whether a person reopened the claimed issue
+// after the claiming PR merged, which voids the claim as evidence that the
+// issue is resolved.
+func (c IssueClaim) ReopenedAfterMerge() bool {
+	return c.MergedPR && !c.ReopenedAt.IsZero()
+}
+
+// ClaimDecisionReopenedAfterMerge is the IssueClaimContext.Decision an
+// actionable issue carries when its merged closing PR did not stick: a person
+// reopened the issue after the merge, so the kick must say "implement the
+// remainder", never "verify once".
+const ClaimDecisionReopenedAfterMerge = "reopened_after_merge"
+
+// ClaimDecisionCoveredByOpenPR marks a live claim, including non-closing Refs.
+const ClaimDecisionCoveredByOpenPR = "covered_by_open_pr"
+
+// ClaimDecisionReleasedRedStalePR releases coverage for a red, stale PR.
+const ClaimDecisionReleasedRedStalePR = "released_red_stale_pr"
 
 // ClaimSourceVerdict is the IssueClaim.Source for claims recovered from a
 // verified no_work_needed verdict reason (hivecommons/hive#7871).
@@ -229,6 +322,18 @@ func (c IssueClaim) Settled() bool {
 		return true
 	}
 	return c.MergedPR && !c.Reference && !c.ExternalAuthor
+}
+
+// CoversOpenIssue reports whether the claim is one FilterClaimedIssues
+// suppresses the issue for: an OPEN pull request that either closes the
+// issue or was opened by someone other than this hive. A merged claim is a
+// verification matter, a hive-authored non-closing reference only annotates.
+// The red+stale release valve is not part of this predicate.
+func (c IssueClaim) CoversOpenIssue() bool {
+	if c.PRNumber <= 0 || c.MergedPR {
+		return false
+	}
+	return c.ExternalAuthor || !c.Reference
 }
 
 // SettledAt is the instant the settled evidence was produced: the merge for
@@ -258,8 +363,18 @@ func (c IssueClaim) SettledStale(now time.Time) bool {
 
 // settledRetained reports whether a settled claim is still inside
 // settledClaimRetention as of now. Callers must have checked Settled().
+//
+// The retention clock starts at the settling instant and RESTARTS every time
+// the enumeration lists the claimed issue as still open (IssueOpenAt,
+// hivecommons/hive#11580): a settled claim on an open issue never lapses on
+// the calendar, only once the issue has been gone from the open set for the
+// full retention window.
 func settledRetained(c IssueClaim, now time.Time) bool {
-	return now.Before(c.SettledAt().Add(settledClaimRetention))
+	anchor := c.SettledAt()
+	if c.IssueOpenAt.After(anchor) {
+		anchor = c.IssueOpenAt
+	}
+	return now.Before(anchor.Add(settledClaimRetention))
 }
 
 // claimRank orders claims by evidential strength, highest first. It exists so
@@ -280,6 +395,12 @@ func settledRetained(c IssueClaim, now time.Time) bool {
 // evidence still wins: a merged `Fixes #N` (the work is done) outranks an open
 // `Refs #N` (someone is doing related work), so a settled issue is not
 // re-offered just because a follow-up references it.
+//
+// A merged `Refs #N` is the exception: it never claimed the issue was done,
+// so it ranks below EVERY open claim. Readers release a merged reference
+// claim back to the queue (#7061), and if it outranked a person's open
+// `Refs #N` PR, that release would hand the issue to someone else while the
+// person is still working it.
 func claimRank(c IssueClaim) int {
 	var tier int
 	switch {
@@ -291,6 +412,9 @@ func claimRank(c IssueClaim) int {
 		tier = 1
 	default:
 		tier = 0
+	}
+	if c.Reference && c.MergedPR {
+		return tier - 2
 	}
 	rank := tier * 2
 	if !c.MergedPR {
@@ -306,6 +430,16 @@ func (c IssueClaim) Key() string {
 
 func claimKey(repo string, issue int) string {
 	return fmt.Sprintf("%s#%d", repo, issue)
+}
+
+// referencesIssue reports whether refs names repo#issue.
+func referencesIssue(refs []ClaimedRef, repo string, issue int) bool {
+	for _, ref := range refs {
+		if ref.Issue == issue && strings.EqualFold(ref.Repo, repo) {
+			return true
+		}
+	}
+	return false
 }
 
 // closingKeywords is GitHub's full set of issue-closing keywords. Matching is
@@ -674,8 +808,17 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	// branch as issue-423 / fix-issue-423 / 423-some-slug, so the
 	// head ref recovers the link. Only consulted when the body and
 	// title yielded nothing, so an explicit `Fixes #N` always wins.
+	//
+	// The branch-name claim is itself overruled by an explicit non-closing
+	// reference to the same issue (hivecommons/hive#12144): a PR on
+	// `feat/12005-push` whose body says `Refs #12005 (partial)` is the
+	// author declining to close the issue, and the heuristic must not turn
+	// that into a strong claim — which is what let SyncIssuePRClaimLabels
+	// give #12025 a GitHub closing link onto #12005 and arm auto-close on
+	// merge. The issue falls through to the reference tier below instead.
+	referencedRefs := ParseReferencedIssues(text, repo)
 	if len(refs) == 0 {
-		if n, ok := issueFromBranchName(headRef(pr)); ok {
+		if n, ok := issueFromBranchName(headRef(pr)); ok && !referencesIssue(referencedRefs, repo, n) {
 			refs = []ClaimedRef{{Repo: repo, Issue: n}}
 			refsAreClosing = false
 		}
@@ -704,7 +847,7 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 		strong[claimKey(ref.Repo, ref.Issue)] = true
 	}
 	var referenced []ClaimedRef
-	for _, ref := range ParseReferencedIssues(text, repo) {
+	for _, ref := range referencedRefs {
 		if !strong[claimKey(ref.Repo, ref.Issue)] {
 			referenced = append(referenced, ref)
 		}
@@ -733,6 +876,75 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	}
 	for _, ref := range referenced {
 		add(ref, true, false)
+	}
+	return claims
+}
+
+// ClaimsFromPROpened returns the claims a PR the watcher just opened makes,
+// exactly as the next FetchClaimScan would parse them (hivecommons/hive#14472).
+// The claim ledger the contribute admission gate reads was only refreshed by
+// the eval cycle's scan, so an issue whose PR opened seconds after a scan
+// stayed admissible for a contributor until the next one; recording the
+// claims from the open path closes that window. configRepos lets the claim
+// carry the repo in the form the ledger keys by (bare or owner/repo, as
+// configured) when the request named it the other way.
+func ClaimsFromPROpened(d PROpenedDetail, configRepos []string, identity HiveIdentity, now time.Time) []IssueClaim {
+	if d.Number <= 0 || d.Repo == "" {
+		return nil
+	}
+	repo := canonicalConfigRepo(d.Repo, configRepos)
+	pr := &gh.PullRequest{
+		Number:  gh.Ptr(d.Number),
+		Title:   gh.Ptr(d.Title),
+		Body:    gh.Ptr(d.Body),
+		HTMLURL: gh.Ptr(d.URL),
+		State:   gh.Ptr(PRStateOpen),
+		User:    &gh.User{Login: gh.Ptr(d.Author)},
+		Head:    &gh.PullRequestBranch{Ref: gh.Ptr(d.Head)},
+	}
+	claims := claimsFromPR(pr, repo, identity, now)
+	for i := range claims {
+		claims[i].PRState = PRStateOpen
+	}
+	return claims
+}
+
+// canonicalConfigRepo maps repo onto the configured spelling it names, so a
+// request that says "owner/repo" for a repo configured as "repo" (or the
+// reverse) keys the same ledger entry the scan writes. Unknown repos are
+// returned unchanged.
+func canonicalConfigRepo(repo string, configRepos []string) string {
+	_, bare := splitRepoName(repo)
+	for _, cfg := range configRepos {
+		if strings.EqualFold(cfg, repo) {
+			return cfg
+		}
+		if _, cfgBare := splitRepoName(cfg); strings.EqualFold(cfgBare, bare) {
+			return cfg
+		}
+	}
+	return repo
+}
+
+func splitRepoName(repo string) (owner, name string) {
+	if parts := strings.SplitN(repo, "/", 2); len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", repo
+}
+
+// RecordOpenedPRClaims is ClaimsFromPROpened wired to this client's repo list
+// and written into ledger. It returns the claims recorded.
+func (c *Client) RecordOpenedPRClaims(ledger *ClaimLedger, d PROpenedDetail, identity HiveIdentity, now time.Time) []IssueClaim {
+	if c == nil || ledger == nil {
+		return nil
+	}
+	claims := ClaimsFromPROpened(d, c.getRepos(), identity, now)
+	for _, claim := range claims {
+		if err := ledger.Record(claim); err != nil && c.logger != nil {
+			c.logger.Warn("duplicate-PR guard: could not persist claim from just-opened PR",
+				slog.String("repo", claim.Repo), slog.Int("issue", claim.Issue), slog.Int("pr", claim.PRNumber), slog.String("error", err.Error()))
+		}
 	}
 	return claims
 }
@@ -887,6 +1099,9 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 					ObservedAt:  mergedAt,
 					Actor:       mergedBy,
 					Attribution: prTerminalMergeAttribution(mergedBy, identity, c.appBotLogin),
+					CreatedAt:   pr.GetCreatedAt().Time,
+					URL:         pr.GetHTMLURL(),
+					Issues:      mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
 				})
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
@@ -911,7 +1126,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 		}
 	}
 
-	return ClaimScan{Claims: claims, History: history}, firstErr
+	return ClaimScan{Claims: claims, History: history, StartedAt: now}, firstErr
 }
 
 func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr *gh.PullRequest) string {
@@ -1008,7 +1223,17 @@ func NewClaimLedger(path string, logger *slog.Logger) *ClaimLedger {
 // A missing file is not an error — it yields an empty ledger, which is the
 // correct state on a hive's very first boot.
 func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
+	return loadClaimLedgerAt(path, logger, nil)
+}
+
+// loadClaimLedgerAt is LoadClaimLedger with an injectable clock, so the
+// retention decisions made while reading the file are testable without
+// depending on the wall clock. A nil clock means time.Now.
+func loadClaimLedgerAt(path string, logger *slog.Logger, clock func() time.Time) (*ClaimLedger, error) {
 	l := NewClaimLedger(path, logger)
+	if clock != nil {
+		l.now = clock
+	}
 	data, err := os.ReadFile(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1022,12 +1247,20 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		// an empty one; the next successful fetch repopulates it.
 		return l, fmt.Errorf("parsing claim ledger %s: %w", l.path, err)
 	}
-	cutoff := l.now().Add(-l.ttl)
+	now := l.now()
+	cutoff := now.Add(-l.ttl)
 	for _, c := range file.Claims {
 		if c.Issue <= 0 || c.Repo == "" {
 			continue
 		}
-		if c.ObservedAt.Before(cutoff) {
+		// Mirror pruneLocked (#8003, #11580): a settled claim's evidence does
+		// not decay with the TTL, only its retention bound retires it, so a
+		// restart must not drop a claim the running hub would have kept.
+		if c.Settled() {
+			if !settledRetained(c, now) {
+				continue
+			}
+		} else if c.ObservedAt.Before(cutoff) {
 			continue
 		}
 		// Ledgers written before FirstObservedAt existed carry a zero anchor.
@@ -1039,7 +1272,7 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		}
 		l.insertLocked(c)
 	}
-	churnCutoff := l.now().Add(-l.churnTTL)
+	churnCutoff := now.Add(-l.churnTTL)
 	for _, r := range file.History {
 		if r.ObservedAt.Before(churnCutoff) {
 			continue
@@ -1060,10 +1293,24 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 // observation. Callers must hold l.mu.
 func (l *ClaimLedger) anchorFirstObservedLocked(prev map[string]IssueClaim, c IssueClaim) IssueClaim {
 	if existing, ok := prev[c.Key()]; ok &&
-		existing.PRNumber == c.PRNumber && existing.PRRepo == c.PRRepo &&
-		!existing.FirstObservedAt.IsZero() {
-		c.FirstObservedAt = existing.FirstObservedAt
-		return c
+		existing.PRNumber == c.PRNumber && existing.PRRepo == c.PRRepo {
+		// The close-on-merge verdict belongs to this PR/issue pair, so it
+		// survives the scan re-listing the same merged PR.
+		if c.CloseOnMergeSettledAt.IsZero() {
+			c.CloseOnMergeSettledAt = existing.CloseOnMergeSettledAt
+		}
+		// So does the reopen verdict: a person's reopen after this PR
+		// merged stays true however often the scan re-lists the PR.
+		if c.ReopenedAt.IsZero() {
+			c.ReopenedAt = existing.ReopenedAt
+		}
+		if c.ReopenCheckedAt.IsZero() {
+			c.ReopenCheckedAt = existing.ReopenCheckedAt
+		}
+		if !existing.FirstObservedAt.IsZero() {
+			c.FirstObservedAt = existing.FirstObservedAt
+			return c
+		}
 	}
 	if c.FirstObservedAt.IsZero() {
 		c.FirstObservedAt = c.ObservedAt
@@ -1135,6 +1382,27 @@ func (l *ClaimLedger) Record(c IssueClaim) error {
 	return l.Save()
 }
 
+// MarkCloseOnMergeSettled stamps CloseOnMergeSettledAt = at on the claim for
+// (repo, issue) if it is still the one made by PR pr. It reports whether the
+// ledger changed; callers batch a Save after a sweep rather than per claim.
+// A claim that a different PR has since taken over is left alone: the new
+// PR's verdict has not been reached yet.
+func (l *ClaimLedger) MarkCloseOnMergeSettled(repo string, issue, pr int, at time.Time) bool {
+	if l == nil || issue <= 0 || repo == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := claimKey(repo, issue)
+	c, ok := l.claims[key]
+	if !ok || c.PRNumber != pr {
+		return false
+	}
+	c.CloseOnMergeSettledAt = at
+	l.claims[key] = c
+	return true
+}
+
 // SetTTL overrides the entry lifetime. Intended for tests.
 func (l *ClaimLedger) SetTTL(d time.Duration) {
 	if l == nil || d <= 0 {
@@ -1197,8 +1465,19 @@ func (l *ClaimLedger) Len() int {
 	return len(l.claims)
 }
 
-// Lookup returns the claim covering the given issue, if any.
+// Lookup returns the claim covering the given issue, if any. A merged claim
+// whose issue a person reopened after the merge (ReopenedAfterMerge) is not
+// a claim on the issue any more and reports false; LookupAny returns it.
 func (l *ClaimLedger) Lookup(repo string, issue int) (IssueClaim, bool) {
+	c, ok := l.LookupAny(repo, issue)
+	if !ok || c.ReopenedAfterMerge() {
+		return IssueClaim{}, false
+	}
+	return c, true
+}
+
+// LookupAny returns the ledger record for the given issue, voided or not.
+func (l *ClaimLedger) LookupAny(repo string, issue int) (IssueClaim, bool) {
 	if l == nil {
 		return IssueClaim{}, false
 	}
@@ -1206,6 +1485,130 @@ func (l *ClaimLedger) Lookup(repo string, issue int) (IssueClaim, bool) {
 	defer l.mu.RUnlock()
 	c, ok := l.claims[claimKey(repo, issue)]
 	return c, ok
+}
+
+// MarkIssueReopened voids the merged claim on (repo, issue) because a person
+// reopened the issue at `at`, after the claiming PR merged. It reports whether
+// the ledger changed: false when there is no claim, the claim is not from a
+// merged PR, it is already voided, or the reopen predates the merge (an
+// issue reopened BEFORE the fix landed is exactly what the merged claim is
+// evidence for). Callers persist with Save.
+func (l *ClaimLedger) MarkIssueReopened(repo string, issue int, at time.Time) bool {
+	if l == nil || issue <= 0 || repo == "" || at.IsZero() {
+		return false
+	}
+	c, ok := l.markIssueReopenedLocked(repo, issue, at)
+	if !ok {
+		return false
+	}
+	// The reopen is also a change-failure signal for the closing PR's
+	// evidence record (hivecommons/hive#13241). Called outside the lock: the
+	// recorder reads and writes bundles, never this ledger.
+	if rec := issueReopenRecorder(); rec != nil {
+		rec(c, at)
+	}
+	return true
+}
+
+// markIssueReopenedLocked is MarkIssueReopened's ledger update; it returns
+// the voided claim when the ledger changed.
+func (l *ClaimLedger) markIssueReopenedLocked(repo string, issue int, at time.Time) (IssueClaim, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := claimKey(repo, issue)
+	c, ok := l.claims[key]
+	if !ok || !c.MergedPR || !c.ReopenedAt.IsZero() {
+		return IssueClaim{}, false
+	}
+	if !c.MergedAt.IsZero() && !at.After(c.MergedAt) {
+		return IssueClaim{}, false
+	}
+	c.ReopenedAt = at
+	c.ReopenCheckedAt = at
+	l.claims[key] = c
+	return c, true
+}
+
+// markReopenChecked records that the reopen check read the issue's timeline
+// at `at` and found no reopen after the merge.
+func (l *ClaimLedger) markReopenChecked(repo string, issue int, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := claimKey(repo, issue)
+	if c, ok := l.claims[key]; ok {
+		c.ReopenCheckedAt = at
+		l.claims[key] = c
+	}
+}
+
+// reopenedAfterMergeAt returns the instant of the first reopened event in
+// events (already limited to after the PR merged) by anyone but the hive
+// itself — the /reopen workflow's bot included, since it acts for the person
+// who commented.
+func reopenedAfterMergeAt(events []IssueEvent, identity HiveIdentity) (time.Time, bool) {
+	for _, e := range events {
+		if e.Event == "reopened" && !identity.Matches(e.Actor) {
+			return e.At, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// ReconcileReopenedIssues is the polling half of the reopen rule (the
+// issues.reopened webhook is the other). For every actionable issue GitHub
+// lists with state_reason "reopened" that a merged PR still claims, it reads
+// the issue timeline since the merge once — again only after the issue has
+// new activity — and voids the claim when a person reopened the issue after
+// the merge, logging `reopened issue re-queued`. A timeline read that fails
+// leaves the claim untouched for the next pass: a stale likely-done for one
+// cycle is cheaper than a wrong release on a GitHub outage. It returns how
+// many claims it voided; the caller saves the ledger.
+func (l *ClaimLedger) ReconcileReopenedIssues(ctx context.Context, client *Client, identity HiveIdentity, result *ActionableResult, logger *slog.Logger) int {
+	if l == nil || client == nil || result == nil {
+		return 0
+	}
+	voided := 0
+	for _, issue := range result.Issues.Items {
+		if !issue.Reopened || issue.Number <= 0 {
+			continue
+		}
+		claim, ok := l.LookupAny(issue.Repo, issue.Number)
+		if !ok || !claim.MergedPR || claim.ReopenedAfterMerge() {
+			continue
+		}
+		if !claim.ReopenCheckedAt.IsZero() && !issue.UpdatedAt.After(claim.ReopenCheckedAt) {
+			continue
+		}
+		since := claim.MergedAt
+		if since.IsZero() {
+			since = claim.SettledAt()
+		}
+		events, err := client.IssueTimelineSince(WithRESTCaller(ctx, "hive:reopen_check"), issue.Repo, issue.Number, since)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("reopen check: could not read issue timeline; keeping the merged claim this pass",
+					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber, "error", err)
+			}
+			continue
+		}
+		now := l.now()
+		at, reopened := reopenedAfterMergeAt(events, identity)
+		if !reopened {
+			l.markReopenChecked(issue.Repo, issue.Number, now)
+			continue
+		}
+		if !l.MarkIssueReopened(issue.Repo, issue.Number, at) {
+			continue
+		}
+		voided++
+		if logger != nil {
+			logger.Info("reopened issue re-queued: merged PR claim voided",
+				"repo", issue.Repo, "issue", issue.Number, "issue_title", issue.Title,
+				"claimed_by_pr", claim.PRNumber, "pr_repo", claim.PRRepo, "pr_url", claim.PRURL,
+				"merged_at", claim.MergedAt, "reopened_at", at, "source", "poll")
+		}
+	}
+	return voided
 }
 
 // Reconcile merges a freshly-fetched claim set into the ledger.
@@ -1219,7 +1622,62 @@ func (l *ClaimLedger) Lookup(repo string, issue int) (IssueClaim, bool) {
 // previous claims are retained and only refreshed with whatever did come back.
 // This is the fail-closed path: suppressing one legitimate kick for a cycle is
 // cheap; nine duplicate PRs are not.
+//
+// Reconcile knows nothing about which issues are open; it is ReconcileOpen
+// with no open set, so settled claims retire settledClaimRetention after
+// whichever is later: the settling instant or the last IssueOpenAt a previous
+// ReconcileOpen recorded.
 func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
+	l.ReconcileOpen(live, authoritative, nil)
+}
+
+// OpenIssueSet is the set of issues the enumeration just listed as open,
+// keyed like the ledger (repo#number). Build one with OpenIssuesOf.
+type OpenIssueSet map[string]struct{}
+
+// OpenIssuesOf collects the open issues in an enumeration result into an
+// OpenIssueSet for ReconcileOpen. A nil result yields an empty set, which
+// ReconcileOpen treats as "no issue was seen open this pass" — it never
+// retires anything early, because retention only ever counts forward from a
+// recorded observation.
+func OpenIssuesOf(result *ActionableResult) OpenIssueSet {
+	open := OpenIssueSet{}
+	if result == nil {
+		return open
+	}
+	for _, issue := range result.Issues.Items {
+		if issue.Number <= 0 || issue.Repo == "" {
+			continue
+		}
+		open[claimKey(issue.Repo, issue.Number)] = struct{}{}
+	}
+	return open
+}
+
+// ReconcileOpen is Reconcile plus the set of issues the same enumeration pass
+// listed as still open (hivecommons/hive#11580). Every settled claim whose
+// issue is in that set has its IssueOpenAt refreshed to now BEFORE the
+// retention check, so a merged fix keeps holding its still-open issue for as
+// long as the issue stays open: the issue closing — dropping out of the open
+// set — is what starts the settledClaimRetention countdown, not the merge.
+// Unsettled claims ignore the set; their lifetime is the scan's and the TTL's.
+func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet) {
+	l.reconcileOpen(live, authoritative, open, time.Time{})
+}
+
+// ReconcileScan is ReconcileOpen for a complete scan: it additionally carries
+// forward every unsettled claim recorded at or after scan.StartedAt that the
+// scan did not re-list (hivecommons/hive#15559). The webhook path records a
+// PR's claims the moment it opens; a scan whose listing began before that
+// moment never saw the PR, so an authoritative map replacement that dropped
+// the claim re-offered the issue while its PR was open — the hive then opened
+// a second PR for it. The next scan lists the PR itself and confirms or drops
+// the carried claim, so the carry-forward is bounded by one scan interval.
+func (l *ClaimLedger) ReconcileScan(scan ClaimScan, authoritative bool, open OpenIssueSet) {
+	l.reconcileOpen(scan.Claims, authoritative, open, scan.StartedAt)
+}
+
+func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet, listedAt time.Time) {
 	if l == nil {
 		return
 	}
@@ -1236,6 +1694,17 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 			}
 			l.insertLocked(l.anchorFirstObservedLocked(prev, c))
 		}
+		if !listedAt.IsZero() {
+			// A claim recorded after the listing began is newer evidence than
+			// the listing; insertLocked's rank rule still lets a stronger
+			// live claim for the same issue win.
+			for _, c := range prev {
+				if c.Settled() || c.ObservedAt.Before(listedAt) {
+					continue
+				}
+				l.insertLocked(c)
+			}
+		}
 		// Settled claims are carried forward (#7871, #8003). A verdict-
 		// recovered claim describes a settling PR (or commit) that never
 		// referenced the issue, so the scan that just ran did not and will not
@@ -1247,12 +1716,21 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 		// settledClaimRetention from the merge/verdict, refreshing ObservedAt
 		// so the non-authoritative prune does not retire them either, and let
 		// insertLocked's rank rule decide when the scan DID find something.
+		// An issue the enumeration still lists as open restarts the retention
+		// clock first (#11580), so the carry-forward never lapses while the
+		// issue is open.
 		now := l.now()
 		for key, c := range prev {
 			if c.FirstObservedAt.IsZero() {
 				c.FirstObservedAt = c.ObservedAt
 			}
-			if !c.Settled() || !settledRetained(c, now) {
+			if !c.Settled() {
+				continue
+			}
+			if _, isOpen := open[key]; isOpen {
+				c.IssueOpenAt = now
+			}
+			if !settledRetained(c, now) {
 				continue
 			}
 			c.ObservedAt = now
@@ -1262,6 +1740,7 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 			}
 			l.claims[key] = c
 		}
+		l.markOpenLocked(open, now)
 		return
 	}
 	for _, c := range live {
@@ -1270,7 +1749,28 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 		}
 		l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	}
+	l.markOpenLocked(open, l.now())
 	l.pruneLocked()
+}
+
+// markOpenLocked stamps IssueOpenAt on every settled claim whose issue is in
+// open, including settled claims the scan itself just produced (a merged PR
+// still inside mergedClaimScanWindow), so the retention anchor is recorded
+// from the first pass rather than only once the scan stops listing the PR.
+// Callers must hold l.mu.
+func (l *ClaimLedger) markOpenLocked(open OpenIssueSet, now time.Time) {
+	if len(open) == 0 {
+		return
+	}
+	for key, c := range l.claims {
+		if !c.Settled() {
+			continue
+		}
+		if _, isOpen := open[key]; isOpen {
+			c.IssueOpenAt = now
+			l.claims[key] = c
+		}
+	}
 }
 
 // pruneLocked drops entries older than the TTL. It runs on the
@@ -1282,10 +1782,16 @@ func (l *ClaimLedger) pruneLocked() {
 	for k, c := range l.claims {
 		if c.Settled() {
 			// #8003: a settled claim's evidence does not decay with the API's
-			// reachability; only its retention bound retires it here.
+			// reachability; only its retention bound retires it here. A
+			// retained claim takes a fresh ObservedAt, as the authoritative
+			// carry-forward does, so the on-disk TTL field agrees with the
+			// in-memory retention across Save/Load.
 			if !settledRetained(c, now) {
 				delete(l.claims, k)
+				continue
 			}
+			c.ObservedAt = now
+			l.claims[k] = c
 			continue
 		}
 		if c.ObservedAt.Before(cutoff) {
@@ -1349,7 +1855,7 @@ func linkedPRFromClaim(c IssueClaim) IssueLinkedPR {
 	if c.MergedPR {
 		state = "merged"
 	}
-	return IssueLinkedPR{Number: c.PRNumber, Repo: c.PRRepo, State: state, Merged: c.MergedPR, URL: c.PRURL, Closing: c.Closing}
+	return IssueLinkedPR{Number: c.PRNumber, Repo: c.PRRepo, State: state, Merged: c.MergedPR, URL: c.PRURL, Closing: c.Closing, Reference: c.Reference}
 }
 
 func issueHasLabel(labels []string, label string) bool {
@@ -1396,17 +1902,100 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 		issue.LinkedPRs = append(issue.LinkedPRs, link)
 	}
 	if claim.MergedPR {
-		issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
-		if issueHasLabel(issue.Labels, VerifiedOpenLabel) {
+		issue.Labels = removeCoveredByPRLabel(issue.Labels)
+		switch {
+		case issueHasLabel(issue.Labels, VerifiedOpenLabel):
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
-		} else {
+		case claim.Reference || issueHasLabel(issue.Labels, PartiallyAddressedLabel):
+			// A merged "Refs #N" / "Part of #N" never asserted it finished
+			// the issue (Settled() and close-on-merge both exclude it), so
+			// it is partially-addressed, not likely-done (#11931 rule: no
+			// closing keyword means the remainder is still actionable).
+			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+			issue.Labels = addIssueLabel(issue.Labels, PartiallyAddressedLabel)
+		default:
 			issue.Labels = addIssueLabel(issue.Labels, LikelyDoneLabel)
 		}
 		issue.ClaimContext = claimContext(claim, "merged_pr_needs_verification")
 		return
 	}
+	// The in-memory copy says "covered" for the dashboard and the kick;
+	// the forge label itself is the issue stage sweep's to write, so it is
+	// told when this is a synthesised label rather than one GitHub returned
+	// (hivecommons/hive#13316). The annotation runs twice per cycle
+	// (SyncIssuePRClaimLabels, then FilterClaimedIssues on the same
+	// payload): the second pass finds the label the first one synthesised
+	// and must not re-grade it as GitHub's, or the sweep plans against a
+	// payload that already "has" 040 and never writes it — which left
+	// hivecommons/hive#14372 and #14371 at 010 under an open `Fixes` PR
+	// (hivecommons/hive#14397).
+	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel) ||
+		(issue.ClaimContext != nil && issue.ClaimContext.CoveredLabelSynthesized)
 	issue.Labels = addIssueLabel(issue.Labels, CoveredByPRLabel)
-	issue.ClaimContext = claimContext(claim, "covered_by_open_pr")
+	issue.ClaimContext = claimContext(claim, ClaimDecisionCoveredByOpenPR)
+	issue.ClaimContext.CoveredLabelSynthesized = synthesized
+}
+
+// annotateIssueReopenedAfterMerge records a voided merged claim on the issue:
+// the PR is linked as merged, the automatic likely-done/covered-by labels
+// come off, and the context decision is ClaimDecisionReopenedAfterMerge with
+// MergedPR deliberately false so neither the kick's "verify once" rendering
+// nor the verify-once gate treats the issue as likely done.
+func annotateIssueReopenedAfterMerge(issue *Issue, claim IssueClaim) {
+	if issue == nil || claim.PRNumber <= 0 {
+		return
+	}
+	link := linkedPRFromClaim(claim)
+	seen := false
+	for _, existing := range issue.LinkedPRs {
+		if existing.Number == link.Number && strings.EqualFold(existing.Repo, link.Repo) {
+			seen = true
+			break
+		}
+	}
+	if !seen {
+		issue.LinkedPRs = append(issue.LinkedPRs, link)
+	}
+	issue.Labels = removeCoveredByPRLabel(issue.Labels)
+	issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+	cc := claimContext(claim, ClaimDecisionReopenedAfterMerge)
+	cc.MergedPR = false
+	cc.ReopenedAt = claim.ReopenedAt
+	issue.ClaimContext = cc
+}
+
+// pendingReleaseOwnerSteps returns verified-open merged-claim issues whose
+// newest Hive owner step is an unanswered typed release proposal and which
+// still carry a parking label. Requiring the label keeps manual unpark actions
+// authoritative and avoids fetching comments for unparked issues.
+func pendingReleaseOwnerSteps(ctx context.Context, client *Client, result *ActionableResult, ledger *ClaimLedger, logger *slog.Logger) map[string]struct{} {
+	if client == nil || result == nil || ledger == nil {
+		return nil
+	}
+	var pending map[string]struct{}
+	for _, issue := range result.Issues.Items {
+		claim, ok := ledger.Lookup(issue.Repo, issue.Number)
+		if !ok || !claim.MergedPR || !issueHasLabel(issue.Labels, VerifiedOpenLabel) ||
+			!client.hasParkingLabel(issue.Labels) {
+			continue
+		}
+		open, err := client.pendingReleaseOwnerStep(ctx, issue)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("checking release owner step failed; keeping issue actionable",
+					"repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			continue
+		}
+		if !open {
+			continue
+		}
+		if pending == nil {
+			pending = make(map[string]struct{})
+		}
+		pending[claimKey(issue.Repo, issue.Number)] = struct{}{}
+	}
+	return pending
 }
 
 // FilterClaimedIssues applies the duplicate-PR guard to actionable issues.
@@ -1414,7 +2003,8 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 // A strong open claim from this hive still suppresses duplicate agent work while
 // the PR is live. Pending evidence that is not safe to treat as resolved — a
 // weak reference claim, or any merged PR claim that left the issue open
-// — is kept actionable and annotated with linked PR context/labels (#8876).
+// — is kept actionable and annotated with linked PR context/labels (#8876),
+// unless an unanswered typed release owner step keeps it parked for its owner.
 // That lets repo cards and agents see the verified PR without auto-hiding an
 // issue on text evidence alone.
 //
@@ -1425,6 +2015,10 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 // and returns the number of issues suppressed. A nil result or nil ledger is a
 // no-op, so callers need no extra guards.
 func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale RedStaleFunc, logger *slog.Logger) int {
+	return filterClaimedIssues(result, ledger, redStale, nil, logger)
+}
+
+func filterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale RedStaleFunc, pendingReleases map[string]struct{}, logger *slog.Logger) int {
 	if result == nil || ledger == nil || ledger.Len() == 0 {
 		return 0
 	}
@@ -1434,6 +2028,13 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 	for _, issue := range result.Issues.Items {
 		claim, ok := ledger.Lookup(issue.Repo, issue.Number)
 		if !ok {
+			// A merged claim a person reopened the issue after is no claim
+			// at all, but the agent should still hear that the PR tried and
+			// did not stick, so the kick says "implement the remainder".
+			if voided, found := ledger.LookupAny(issue.Repo, issue.Number); found && voided.ReopenedAfterMerge() {
+				annotateIssueReopenedAfterMerge(&issue, voided)
+				annotated = true
+			}
 			kept = append(kept, issue)
 			continue
 		}
@@ -1446,6 +2047,8 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		// A MERGED strong claim (#6867) never takes the valve: its work is on
 		// main, so there is no dead PR to release the issue from.
 		if !claim.MergedPR && redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
+			issue.ClaimContext.Decision = ClaimDecisionReleasedRedStalePR
+			annotated = true
 			kept = append(kept, issue)
 			if logger != nil {
 				logger.Info("releasing issue: claiming PR red+stale",
@@ -1461,12 +2064,21 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		}
 		// hive/verified-open is the agent's recorded outcome: the merged/reference
 		// PR did NOT finish this issue. Keep it actionable with the claim context
-		// (kickmessage renders "implement the rest" instead of "verify once") and
-		// never suppress it — a merged PR's state cannot change to release it.
+		// (kickmessage renders "implement the rest" instead of "verify once")
+		// unless an unanswered release owner step has parked it for the owner.
 		// hive/likely-done and hive/covered-by-pr are applied automatically by
 		// SyncIssuePRClaimLabels and are therefore NOT verification outcomes (#9691
 		// follow-up: treating them as such froze verified issues indefinitely).
 		if claim.MergedPR {
+			if _, parked := pendingReleases[claimKey(issue.Repo, issue.Number)]; parked {
+				suppressed++
+				appendRepoWorkIssueDetail(result, issue, "pending_release_owner_step", "Unanswered release owner step is parked for the owner")
+				if logger != nil {
+					logger.Info("parking issue: unanswered release owner step",
+						"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber)
+				}
+				continue
+			}
 			annotated = true
 			kept = append(kept, issue)
 			if logger != nil {
@@ -1501,7 +2113,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			annotated = true
 			kept = append(kept, issue)
 			if logger != nil {
-				logger.Info("keeping issue actionable: open PR weakly claims it",
+				logger.Info("keeping weak PR claim visible: issue staged as covered",
 					"repo", issue.Repo,
 					"issue", issue.Number,
 					"issue_title", issue.Title,
@@ -1545,6 +2157,35 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 	return suppressed
 }
 
+// logPRClaimLinkError keeps expected GitHub backoff out of repeated-error
+// self-reports, while retaining warnings for defects and permission failures.
+// It reports whether the caller should defer all remaining link work this sweep.
+func logPRClaimLinkError(logger *slog.Logger, message, repo string, issue, pr int, err error) bool {
+	limited := isRateLimitErr(err)
+	if logger != nil {
+		if limited {
+			logger.Info("PR claim links deferred by GitHub rate limit; will retry next sweep", "repo", repo, "issue", issue, "pr", pr, "error", err)
+		} else {
+			logger.Warn(message, "repo", repo, "issue", issue, "pr", pr, "error", err)
+		}
+	}
+	return limited
+}
+
+// logPRClaimLabelError treats GitHub backoff as expected while preserving
+// warnings for permission failures and other reconciliation errors.
+func logPRClaimLabelError(logger *slog.Logger, message string, err error, args ...any) {
+	if logger == nil {
+		return
+	}
+	args = append(args, "error", err)
+	if isRateLimitErr(err) {
+		logger.Info(message, args...)
+	} else {
+		logger.Warn(message, args...)
+	}
+}
+
 // SyncIssuePRClaimLabels mirrors verified PR-claim state onto GitHub labels and
 // the in-memory issue payload. It is best-effort: label failures must not hide
 // actionable issues or fail the enumeration tick.
@@ -1552,6 +2193,10 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 	if result == nil || ledger == nil {
 		return
 	}
+	// A primary or secondary limit applies to the whole client, not just one
+	// PR. Keep annotating claims and reconciling labels, but defer further link
+	// lookups/writes until the next sweep instead of repeating a known refusal.
+	linksRateLimited := false
 	for i := range result.Issues.Items {
 		issue := &result.Issues.Items[i]
 		originalLabels := append([]string(nil), issue.Labels...)
@@ -1563,36 +2208,125 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			continue
 		}
 		coveredWanted := ok && claim.PRNumber > 0 && !claim.MergedPR
+		if !linksRateLimited && coveredWanted && (claim.PRRepo == "" || strings.EqualFold(claim.PRRepo, issue.Repo)) {
+			// Every claim that earns the covered-by-PR label also gets its
+			// Development-sidebar link (hivecommons/hive#11888), whether the
+			// PR was opened by the hive-open-pr relay or outside it, and
+			// whether its claim came from a closing keyword or the branch
+			// name. The one exception is a Reference claim ("Refs #N",
+			// "Part of #N"): a closing link makes GitHub close the issue
+			// when the PR merges, which is exactly what the author declined
+			// and what close-on-merge's partially_addressed path exists to
+			// prevent, so the label alone is the right signal there. The
+			// client memoises each linked pair and never memoises a
+			// failure, so this costs one GraphQL query per new claim and
+			// retries a failed pair on the next tick.
+			//
+			// A Reference claim also has any closing link the hive itself
+			// made for the pair retracted (hivecommons/hive#12144): the
+			// body may have said `Closes #N` when the link was made, or an
+			// earlier sweep graded the claim as strong, and either way the
+			// link now arms exactly the auto-close the author declined.
+			// Links made by anyone else are left alone and logged.
+			if claim.Reference {
+				if res, err := client.EnsureIssueStagePRLink(ctx, issue.Repo, issue.Number, &IssueClaimContext{
+					PRNumber:       claim.PRNumber,
+					PRRepo:         claim.PRRepo,
+					PRURL:          claim.PRURL,
+					PRAuthor:       claim.PRAuthor,
+					ExternalAuthor: claim.ExternalAuthor,
+					Reference:      true,
+				}); err != nil {
+					linksRateLimited = logPRClaimLinkError(logger, "retrofitting reference-only Hive PR body for issue-list link failed; will retry next sweep", issue.Repo, issue.Number, claim.PRNumber, err)
+				} else if res.EditedBody {
+					if logger != nil {
+						logger.Info("retrofitted reference-only Hive PR body with closing keyword so GitHub shows the issue-list link", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base)
+					}
+					continue
+				}
+				// Do not follow a rate-limited lookup with a retraction lookup.
+				if !linksRateLimited {
+					if res, err := client.RetractHiveClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil {
+						linksRateLimited = logPRClaimLinkError(logger, "retracting hive closing link on reference-only PR failed; will retry next sweep", issue.Repo, issue.Number, claim.PRNumber, err)
+					} else if res.Retracted && logger != nil {
+						logger.Info("retracted hive closing link: PR only references the issue, so merging it must not close the issue", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+					} else if res.Skipped == "not-hive-linked" && logger != nil {
+						logger.Warn("reference-only PR carries a closing link the hive did not make; leaving it in place", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+					} else if logger != nil {
+						logger.Debug("not linking issue to reference-only PR; a closing link would auto-close the issue on merge", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber)
+					}
+				}
+			} else if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil {
+				linksRateLimited = logPRClaimLinkError(logger, "linking issue to covering PR failed; will retry next sweep", issue.Repo, issue.Number, claim.PRNumber, err)
+			} else if res.Linked && logger != nil {
+				logger.Info("linked issue to covering PR so the issue list shows it", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base, "closing_claim", claim.Closing)
+			}
+		}
 		verifiedOpen := issueHasLabel(originalLabels, VerifiedOpenLabel)
 		if verifiedOpen {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, VerifiedOpenLabel, "6a737d", "Hive verified that a likely/already-done claim did not finish this issue; keep open for more work"); err != nil && logger != nil {
-				logger.Warn("ensuring verified-open label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, VerifiedOpenLabel, VerifiedOpenLabelColor, VerifiedOpenLabelDescription); err != nil && logger != nil {
+				logPRClaimLabelError(logger, "ensuring verified-open label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 		}
-		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen
-		if coveredWanted {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, CoveredByPRLabel, "1d76db", "Hive verified that an open PR references or claims this issue; still actionable until confirmed"); err != nil && logger != nil {
-				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
-			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{CoveredByPRLabel}); err != nil && logger != nil {
-				logger.Warn("adding covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+		mergedWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen
+		// A merged reference-only claim ("Refs #N", "Part of #N") is
+		// partially-addressed, not likely-done: it never asserted it closed
+		// the issue, close-on-merge skips it, and the kick still offers the
+		// remainder (#11931 rule; hivecommons/hive#12316 sat in "Confirm &
+		// close" with half its work in an open PR).
+		partialWanted := mergedWanted && claim.Reference
+		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
+		// The covered-by-PR stage label itself is written by the issue stage
+		// reconciler (SyncIssueStageLabels, hivecommons/hive#12436), which
+		// keeps the issue at 040 while the PR is open — planning against the
+		// forge labels, not the in-memory annotation
+		// (hivecommons/hive#13316); here only the
+		// retired spellings are stripped so the migration completes one cycle
+		// after upgrade, and the in-memory copy reflects the claim either way.
+		for _, name := range legacyCoveredByPRLabels {
+			if !issueHasLabel(originalLabels, name) {
+				continue
 			}
-		} else if issueHasLabel(originalLabels, CoveredByPRLabel) {
-			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, CoveredByPRLabel); err != nil && logger != nil {
-				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, name, observedState(issue.UpdatedAt)); err != nil && logger != nil {
+				logPRClaimLabelError(logger, "removing retired covered-by-pr label failed", err, "repo", issue.Repo, "issue", issue.Number, "label", name)
 			}
-			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+			issue.Labels = removeIssueLabel(issue.Labels, name)
+		}
+		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && logger != nil {
+				logPRClaimLabelError(logger, "ensuring partially-addressed label failed", err, "repo", issue.Repo, "issue", issue.Number)
+			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{PartiallyAddressedLabel}); err != nil && logger != nil {
+				logPRClaimLabelError(logger, "adding partially-addressed label failed", err, "repo", issue.Repo, "issue", issue.Number)
+			}
 		}
 		if likelyWanted {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && logger != nil {
-				logger.Warn("ensuring likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, LikelyDoneLabelColor, LikelyDoneLabelDescription); err != nil && logger != nil {
+				logPRClaimLabelError(logger, "ensuring likely-done label failed", err, "repo", issue.Repo, "issue", issue.Number)
+			} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
+				// Already carried; re-adding every tick only spends a write.
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{LikelyDoneLabel}); err != nil && logger != nil {
-				logger.Warn("adding likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "adding likely-done label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 		} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
 			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, LikelyDoneLabel); err != nil && logger != nil {
-				logger.Warn("removing likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+				logPRClaimLabelError(logger, "removing likely-done label failed", err, "repo", issue.Repo, "issue", issue.Number)
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+		}
+		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
+			// The claim lapsed (PR closed or merged) but the stage label is
+			// still on the issue: tell the stage engine now rather than a
+			// cycle later. It re-reads the issue — after the likely-done /
+			// partially-addressed writes above — so a merged PR's issue
+			// leaves the pipeline and a closed-unmerged one goes back to 010.
+			prRepo := claim.PRRepo
+			if prRepo == "" {
+				prRepo = issue.Repo
+			}
+			if err := client.StageFacts().Uncovered(ctx, client.IssueStageRef(issue.Repo, issue.Number), client.PRStageRef(prRepo, claim.PRNumber)); err != nil && logger != nil {
+				logPRClaimLabelError(logger, "removing covered-by-pr label failed", err, "repo", issue.Repo, "issue", issue.Number)
+			}
+			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
 	}
 }
@@ -1625,18 +2359,23 @@ func ApplyDuplicatePRGuard(
 			"cached_claims", ledger.Len(),
 		)
 	}
-	ledger.Reconcile(scan.Claims, authoritative)
+	ledger.ReconcileScan(scan, authoritative, OpenIssuesOf(result))
 	// Churn history accumulates from whatever the scan DID return, partial or
 	// not (#7995): a record is an observation that a pull request existed in a
 	// state, which a later failure cannot falsify.
 	ledger.RecordPRHistory(scan.History)
+	// A person reopening an issue after its closing PR merged voids that
+	// claim before labels are mirrored or the filter runs, so the issue
+	// comes out plain actionable this very pass.
+	ledger.ReconcileReopenedIssues(ctx, client, identity, result, logger)
 
 	if saveErr := ledger.Save(); saveErr != nil && logger != nil {
 		logger.Warn("duplicate-PR guard: failed to persist claim ledger", "error", saveErr)
 	}
 
 	SyncIssuePRClaimLabels(ctx, client, result, ledger, logger)
-	suppressed := FilterClaimedIssues(result, ledger, redStale, logger)
+	pendingReleases := pendingReleaseOwnerSteps(ctx, client, result, ledger, logger)
+	suppressed := filterClaimedIssues(result, ledger, redStale, pendingReleases, logger)
 	if saveErr := ledger.Save(); saveErr != nil && logger != nil {
 		logger.Warn("duplicate-PR guard: failed to persist filtered claim ledger", "error", saveErr)
 	}

@@ -8,8 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
@@ -20,7 +24,9 @@ import (
 	"github.com/hivecommons/hive/pkg/dashchat"
 	"github.com/hivecommons/hive/pkg/defsrc"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -29,18 +35,18 @@ import (
 	"github.com/hivecommons/hive/pkg/mergelane"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/search"
 	"github.com/hivecommons/hive/pkg/snapshot"
+	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/toolapprove"
-	"github.com/hivecommons/hive/pkg/trajectory"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // boot is the state main() used to keep in ~40 local variables, made explicit
@@ -81,11 +87,31 @@ type boot struct {
 	// requestRelays runs the request watchers and the self-authored merge
 	// sweep on the current client. adoptGitHubClient swaps both on every
 	// rebuild (#9621); see github_client_provider.go.
-	ghClientLive  atomic.Pointer[githubClientRef]
-	requestRelays *requestRelaySupervisor
+	ghClientLive atomic.Pointer[githubClientRef]
+	// priorArtSearcher is the prior-art gate's Searcher, shared by the
+	// scheduler's park and the issue relay's filing verdict (#13879).
+	priorArtSearcher atomic.Pointer[priorart.Searcher]
+	// searchIndexer is the portfolio search indexer once started
+	// (search.enabled); the prior-art gate's search source reads its
+	// backend through it (#14639).
+	searchIndexer atomic.Pointer[search.Indexer]
+
+	// forgeState is the per-repo GitHub state cache the governor work
+	// source reads from when `forgestate.enabled` is on (#13375). Built
+	// once by the first configureGitHubClient and attached to every
+	// rebuilt client after that; forgeStateOnce guards the build. Held in
+	// an atomic because the dashboard's count wiring reads it late, from
+	// the metrics collector goroutine (#13376).
+	forgeState     atomic.Pointer[forgestate.Store]
+	forgeStateOnce sync.Once
+	requestRelays  *requestRelaySupervisor
 
 	// bootConfig
-	startTime                     time.Time
+	startTime time.Time
+	// startID ties hive log lines to this start; startRecord is the start
+	// record (#11945), nil when none could be written.
+	startID                       string
+	startRecord                   *startrec.Recorder
 	configPath                    string
 	logger                        *slog.Logger
 	cfg                           *config.Config
@@ -101,12 +127,14 @@ type boot struct {
 	repoTargetIssueMessage        func() string
 	advisoryIssues                map[string]int
 	advisoryStore                 *advisory.Store
-	agentMgr                      *agent.Manager
+	agentMgr                      hostedRuntime
 	approvalDesk                  *toolapprove.Desk
 	approvalInbox                 *toolapprove.Inbox
 	dashChat                      *dashchat.Bot
 	issueClaims                   *claims.Ledger
 	dashSrv                       *dashboard.Server
+	writeback                     *writeback.Gate
+	writebackOnce                 sync.Once
 	beadStores                    map[string]*beads.Store
 	beadStoreLoadFailures         int
 	tokenCollector                *tokens.Collector
@@ -114,7 +142,9 @@ type boot struct {
 	fleetStatsCollector           *collect.FleetStatsCollector
 	activityCollector             *collect.ActivityCollector
 	repoCostCollector             *collect.RepoCostCollector
+	launchCostCollector           *collect.LaunchCostCollector
 	lastActionable                atomic.Pointer[github.ActionableResult]
+	lastMergeVerdicts             atomic.Pointer[map[string]github.MergeVerdict]
 	evalCycles                    uint64
 	knowledgeAPI                  *knowledge.KnowledgeAPI
 	beadSynth                     *knowledge.BeadSynthesizer
@@ -157,6 +187,7 @@ type boot struct {
 	pendingTokenSeed           []dashboard.TokenSparklineEntry
 	pendingFactSeed            []dashboard.FactHistoryEntry
 	pendingCostSeed            []dashboard.CostHistoryEntry
+	pendingCostRollupSeed      []dashboard.CostDailyRollup
 	pendingBudgetWindowSeed    []collect.BudgetWindowEntry
 	pendingConvergenceSoakSeed []dashboard.ConvergenceSoakEntry
 	pendingTrendSeed           []dashboard.TrendHistoryEntry
@@ -167,11 +198,11 @@ type boot struct {
 	githubAppState    github.AppAuthState
 	githubAppRequired bool
 	policyDirPath     string
-	projectCtx        agent.ProjectContext
+	projectCtx        crux.ProjectContext
 	mutationStats     *effects.Recorder
 
 	// bootAgents
-	agentMinter agent.AgentMintIssuer
+	agentMinter crux.AgentMintIssuer
 
 	// bootState
 	saved *snapshot.PersistedState
@@ -194,13 +225,18 @@ type boot struct {
 
 	// bootSupervision
 	quotaReadingPublisher    *rotation.Manager
-	linearCredentialResolver func() agent.LinearCredential
+	linearCredentialResolver func() crux.LinearCredential
 
 	// bootWatchers
 	configWatcher *config.Watcher
 
 	// bootProxy
 	githubProxy *proxy.GitHubProxy
+	// inferenceSink is the one per-agent inference usage ledger; the proxy
+	// records into it in-process and the hive callback's usage capability
+	// records into it for a sidecar runtime (#14138 stage 4).
+	inferenceSink   *tokens.InferenceSink
+	inferenceSinkMu sync.Mutex
 
 	// bootHeartbeat
 	reporterName     string
@@ -213,17 +249,66 @@ type boot struct {
 	retroLane  *retro.Lane
 
 	// runLoop
-	lastAutoMergeSweep    time.Time
-	lastTaskListSweep     time.Time
-	lastDuplicateSweep    time.Time
-	lastSupersessionSweep time.Time
-	lastIssueUnparkSweep  time.Time
-	lastSentinelSweep     time.Time
+	lastAutoMergeSweep     time.Time
+	lastTaskListSweep      time.Time
+	lastDuplicateSweep     time.Time
+	lastSupersessionSweep  time.Time
+	lastDuplicateFixSweep  time.Time
+	lastSharedCIRerunSweep time.Time
+	lastRedMainSweep       time.Time
+	lastBlockedIssuesSweep time.Time
+	lastIssueUnparkSweep   time.Time
+	lastClosedIssueSweep   time.Time
+	// lastClarityResumeSweep gates runClarityGateResumeSweepIfDue
+	// (hivecommons/hive#13588).
+	lastClarityResumeSweep time.Time
+	// lastPriorArtResumeSweep gates runPriorArtGateResumeSweepIfDue
+	// (hivecommons/hive#13575).
+	lastPriorArtResumeSweep time.Time
+	lastSentinelSweep       time.Time
+	lastGFISweep            time.Time
+	// lastLegacyFleetReportSweep gates runLegacyFleetReportSweepIfDue
+	// (hivecommons/hive#13470).
+	lastLegacyFleetReportSweep time.Time
+	// gfi is good-first-issue curation state (good_first_issue.*).
+	gfi *gfiState
+	// firstTimer is first-time contributor welcome state
+	// (governor.first_timer_welcome.*).
+	firstTimer *firstTimerState
+	// rfcCoverage is the triage existing-coverage check state
+	// (issues.rfc_existing_check.*).
+	rfcCoverage *rfcCoverageState
+	// rfcNotify is the RFC lifecycle Discord notice state
+	// (notifications.discord.rfc_channel_id).
+	rfcNotify *rfcNotifyState
 
 	// reviewEvents queues webhook-triggered review dispatch and reviewWake
 	// carries its wakes to the governor loop (hivecommons/hive#11091).
 	reviewEvents *eventdispatch.Dispatcher
 	reviewWake   chan struct{}
+	// verdictWaker turns dispatched review verdicts the relay records into
+	// early eval cycles, at most one per governor.webhook_wake_min_gap_s
+	// (hivecommons/hive#14705).
+	verdictWaker *webhookWaker
+
+	// webhookWaker coalesces cache-invalidating GitHub webhooks into early
+	// eval cycles and evalLoop is the pacing block /api/status reports.
+	webhookWaker *webhookWaker
+	evalLoop     *evalLoopState
+	// snapshotPatch applies webhook re-reads to lastActionable so wake
+	// cycles plan from a patched snapshot instead of re-listing.
+	snapshotPatch *snapshotPatcher
+
+	// sentinelEvents serializes the per-PR sentinel evaluations that
+	// `pull_request` webhooks request (#13379).
+	sentinelEvents *sentinelEventQueue
+	// forgeView is the owner/name view over forgeState the automerge lanes
+	// read and sweepTrigger their webhook trigger over it (#13377).
+	forgeView    *github.ForgeStateView
+	sweepTrigger *automerge.SweepTrigger
+	// cruxSupervision is the sidecar runtime's child supervisor and probe
+	// loop (hivecommons/hive#14138 stage 4); nil in-process.
+	cruxSupervision *cruxRuntimeSupervision
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

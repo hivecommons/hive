@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
+	"github.com/hivecommons/hive/pkg/forgestate"
 )
 
 var ErrReporterConfirmationRequired = errors.New("reporter confirmation required before closing human-filed bug issue")
@@ -18,11 +21,20 @@ type IssueCloseOptions struct {
 	// StateReason, when set, is sent as GitHub's state_reason ("completed" or
 	// "not_planned"). Empty leaves GitHub's default.
 	StateReason string
+	// AllowTrackingIssue lets an explicit human decision close a
+	// tracking/archive issue (hivecommons/hive#14613). Every automated
+	// path (close-on-merge, already-done, stale and advisory sweeps) leaves
+	// it unset and gets ErrTrackingIssue instead.
+	AllowTrackingIssue bool
 }
 
 // IssueStateReasonCompleted is GitHub's state_reason for an issue closed
 // because it was resolved.
 const IssueStateReasonCompleted = "completed"
+
+// issueStateReasonReopened is GitHub's state_reason for an open issue that
+// was closed before and opened again.
+const issueStateReasonReopened = "reopened"
 
 func ReporterConfirmationCloseGateReason(issue *gh.Issue) string {
 	return humanFiledBugReason(issue, false)
@@ -51,12 +63,20 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 	if number <= 0 {
 		return false, fmt.Errorf("CloseIssue: issue number is required")
 	}
+	if err := CheckIrreversible(ctx, owner+"/"+repoName, number, false); err != nil {
+		return false, fmt.Errorf("CloseIssue: %w", err)
+	}
 
 	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, number)
 	if err != nil {
 		return false, fmt.Errorf("reading issue %s/%s#%d before close: %w", owner, repoName, number, err)
 	}
 	isPR := issue.IsPullRequest()
+	if why, ok := isTrackingIssue(issue); ok && !isPR && !opts.AllowTrackingIssue {
+		c.logger.Info("issue close refused: tracking/archive issue",
+			"repo", owner+"/"+repoName, "issue", number, "why", why)
+		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, ErrTrackingIssue)
+	}
 	reason := c.reporterConfirmationCloseGateReason(issue)
 	overrideReason := strings.TrimSpace(opts.OverrideReason)
 	if reason != "" && overrideReason == "" {
@@ -109,6 +129,18 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 	if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, req); err != nil {
 		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
 	}
+	if !isPR {
+		l := itemblocker.Shared()
+		l.Clear(owner+"/"+repoName, number)
+		if repo != owner+"/"+repoName {
+			l.Clear(repo, number)
+		}
+	}
+	closedKind := forgestate.KindIssue
+	if isPR {
+		closedKind = forgestate.KindPR
+	}
+	c.forgeWriteThrough(repo, number, forgestate.Mutation{Op: forgestate.OpClose, Kind: closedKind})
 	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, issueNeedsReporterConfirmationLabel); err != nil && !githubStatusError(err, http.StatusNotFound) {
 		// Best-effort: the issue is already closed, so a stale label must not fail the close.
 		c.logger.Warn("removing reporter-confirmation label after close failed",

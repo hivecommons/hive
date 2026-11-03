@@ -1,0 +1,1 @@
+- Evidence outcome cards support explicit on/off control-window assignments with within-repository metrics and deltas withheld below 20 usable observations per arm; unassigned records remain separate. This is reporting groundwork only: dispatch scheduling and control collection are not yet enabled ([#13532](https://github.com/hivecommons/hive/issues/13532)).

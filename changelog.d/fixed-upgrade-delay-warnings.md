@@ -1,0 +1,1 @@
+- Show temporary upgrade holds as Delayed instead of missed windows, and clear resolved delay warnings after a successful upgrade on both dashboards, including older history entries.

@@ -5,9 +5,27 @@ that shape the system's security model, operating model, and long-lived APIs.
 ADRs are intentionally short: enough context to understand the choice, the
 chosen direction, and consequences for future changes.
 
+**Audience and reading route:** maintainers use these records for rationale
+and implementation contracts, not installation steps. Operators should start
+with [Securing your hive](../securing-your-hive.md) or
+[Troubleshooting](../troubleshooting.md). Read a record's current-state note
+before its historical context or amendments. **Accepted** records document a
+decision, not proof that a control is enabled on your deployment; **Proposed**
+records are not setup instructions. Retroactive/back-filled records explain
+choices already present when recorded.
+
+Suggested first records: [autonomy levels](0003-acmm-autonomy-levels.md) for
+permission boundaries, [network enforcement](0002-mitm-proxy-network-enforcement.md)
+for the proxy, [work ledger](0004-beads-work-ledger.md) for agent coordination,
+and [escalation](0019-escalation-over-stalling.md) for human decisions. The
+numbered list remains the complete chronological index.
+
 ## Process
 
 1. Copy the template below to `NNNN-short-title.md` using the next number.
+   Numbers below `0100` are allocated on `v5` first; on `v6`, ADRs that exist
+   only on `v6` use the reserved `0100`+ block so forward-merges from `v5`
+   never collide with them (hivecommons/hive#12816).
 2. Write in present tense for new decisions. For historical decisions, mark the
    status as `Accepted (retroactive)` or `Accepted (back-filled)` and cite the existing docs or code.
 3. Keep each ADR focused on one decision. If a later change supersedes it, add a
@@ -36,6 +54,10 @@ What becomes easier, harder, safer, or riskier because of this decision?
 
 ## Records
 
+All records below are **Accepted** (including retroactive/back-filled records)
+unless explicitly marked **Proposed**. ADR-0015/0016 preserve historical CSP
+sequencing; ADR-0019/0025 give their current action/mode contract first.
+
 - [ADR-0001: Record architecture decisions](0001-record-architecture-decisions.md)
 - [ADR-0002: MITM proxy network enforcement](0002-mitm-proxy-network-enforcement.md)
 - [ADR-0003: ACMM autonomy levels](0003-acmm-autonomy-levels.md)
@@ -59,4 +81,10 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0021: Named planning-engine boundary for Project Inception runs](0021-planning-engine-boundary.md)
 - [ADR-0022: Opt-in redemption of earned Codex resets](0022-opt-in-earned-codex-reset-redemption.md)
 - [ADR-0023: Hive may merge PRs whose author could merge them](0023-trusted-author-automerge.md)
-- [ADR-0024: Spek continuous convergence](0024-spek-continuous-convergence.md) (v6 addendum: run-rewind semantics for recheck)
+- [ADR-0024: Provider credential lifecycle](0024-provider-credential-lifecycle.md) — **Proposed**, not a credential-pool or refresh-service setup guide.
+- [ADR-0025: One stage engine derives and writes every `stage/*` label](0025-central-stage-engine.md)
+- [ADR-0026: Sandbox runtime selection](0026-sandbox-runtime-selection.md) (Proposed)
+
+### v6-only ADRs (`0100`+)
+
+- [ADR-0100: Spek continuous convergence](0100-spek-continuous-convergence.md) (v6 addendum: run-rewind semantics for recheck)

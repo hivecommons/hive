@@ -425,7 +425,7 @@ func TestReporterTrustWebBase(t *testing.T) {
 	if got := c.reporterTrustWebBase(); got != "https://ghe.example.com" {
 		t.Fatalf("GHE web base = %q", got)
 	}
-	body := reporterTrustWaitCommentAt(c.reporterTrustWebBase(), "o/r", "needs-triage", plainWaitAdmitter{})
+	body := reporterTrustWaitCommentAt(c.reporterTrustWebBase(), "o/r", "o/r", "needs-triage", plainWaitAdmitter{})
 	if !strings.Contains(body, "See https://ghe.example.com/o/r/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation") {
 		t.Fatalf("GHE notice does not link the GHE governance page:\n%s", body)
 	}
@@ -509,5 +509,16 @@ func TestMarkReporterTrustAwaiting_ClankerOnPostsOnce(t *testing.T) {
 	if !strings.Contains(posted[0], clankerRelayDocURL) || !strings.HasSuffix(posted[0], "\n\nExtra.") ||
 		!strings.Contains(posted[0], "added-label=needs-triage") {
 		t.Errorf("posted comment missing relay link, addendum or marker:\n%s", posted[0])
+	}
+}
+
+func TestReporterTrustWaitCommentLinksOwnerRepo(t *testing.T) {
+	c := &Client{org: "hivecommons"}
+	for _, repo := range []string{"hive", "hivecommons/hive"} {
+		body := reporterTrustWaitCommentAt("https://github.com", repo, c.qualifiedRepo(repo), "", enabledReporterTrust())
+		want := "https://github.com/hivecommons/hive/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation"
+		if !strings.Contains(body, want) {
+			t.Fatalf("repo %q: comment missing %q:\n%s", repo, want, body)
+		}
 	}
 }

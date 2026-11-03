@@ -1,0 +1,1 @@
+- Contributor drop cool-off is scoped per contributor: a relay that repeatedly drops an issue is cooled off from that issue for the cool-off period, while other contributors are still offered it. The resume cool-off refusal and the resume claim re-assert paths now have test coverage (#13763, #13767).

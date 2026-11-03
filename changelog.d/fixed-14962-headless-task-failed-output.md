@@ -1,0 +1,1 @@
+- Headless task failures now report the captured CLI output as evidence to the hub, so a failed headless task includes its final output (such as the verdict line) instead of an empty tail ([#14962](https://github.com/hivecommons/hive/issues/14962)).

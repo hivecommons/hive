@@ -110,7 +110,7 @@ func trajectorySectionResponse(g *config.GovernorConfig) map[string]interface{} 
 	} else if endpoint != "" {
 		endpointSource = "litellm"
 	}
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"enabled":           g.Trajectory.IsEnabled(),
 		"intervalS":         g.Trajectory.IntervalS,
 		"model":             g.Trajectory.Model,
@@ -124,4 +124,10 @@ func trajectorySectionResponse(g *config.GovernorConfig) map[string]interface{} 
 		"hasKey":            key != "",
 		"reviewerReady":     endpoint != "" && model != "",
 	}
+	// Lane review/skip counters (hivecommons/hive#12132) so the panel can show
+	// how often the reviewer actually ran versus skipped a proven-idle agent.
+	if stats, ok := trajectoryCounters(); ok {
+		out["stats"] = stats
+	}
+	return out
 }

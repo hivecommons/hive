@@ -88,7 +88,7 @@ func TestEnrichCIStatus_CarriesConversationCountsAndLinkedIssues(t *testing.T) {
 		comments:       3,
 		reviewThreads:  2,
 		closingIssues: []map[string]any{
-			{"number": 12, "state": "OPEN", "url": "https://github.test/org/repo/issues/12", "repository": map[string]any{"nameWithOwner": "org/repo"}},
+			{"number": 12, "title": "Fix login", "state": "OPEN", "url": "https://github.test/org/repo/issues/12", "repository": map[string]any{"nameWithOwner": "org/repo"}},
 			{"number": 7, "state": "CLOSED", "url": "https://github.test/org/other/issues/7", "repository": map[string]any{"nameWithOwner": "org/other"}},
 			{"number": 0},
 		},
@@ -101,7 +101,7 @@ func TestEnrichCIStatus_CarriesConversationCountsAndLinkedIssues(t *testing.T) {
 		t.Errorf("counts = %d comments / %d threads, want 3 / 2", pr.CommentCount, pr.ReviewThreadCount)
 	}
 	wantLinked := []PRLinkedIssue{
-		{Number: 12, Repo: "org/repo", State: "open", URL: "https://github.test/org/repo/issues/12"},
+		{Number: 12, Title: "Fix login", Repo: "org/repo", State: "open", URL: "https://github.test/org/repo/issues/12"},
 		{Number: 7, Repo: "org/other", State: "closed", URL: "https://github.test/org/other/issues/7"},
 	}
 	if !reflect.DeepEqual(pr.LinkedIssues, wantLinked) {
@@ -189,10 +189,10 @@ func TestEnrichCIStatus_SignalsQueryRejectionFallsBackToDecisionOnly(t *testing.
 }
 
 // Stale drafts share the dashboard PR column but never go through
-// EnrichCIStatus. EnrichReviewSignals gives them the same review/link
+// EnrichCIStatus. EnrichReviewSignalsAndWorkPRs gives them the same review/link
 // signals from the one-per-repo query without any per-PR REST fetch — a
 // draft is not a merge candidate, so its mergeability is never asked for.
-func TestEnrichReviewSignals_StaleDraftsGetSignalsWithoutRESTCalls(t *testing.T) {
+func TestEnrichReviewSignalsAndWorkPRs_StaleDraftsGetSignalsWithoutRESTCalls(t *testing.T) {
 	p := &protectionServer{
 		reviewDecision: "APPROVED",
 		reviews:        []map[string]any{{"state": "APPROVED", "author": map[string]any{"login": "one"}}},
@@ -206,7 +206,7 @@ func TestEnrichReviewSignals_StaleDraftsGetSignalsWithoutRESTCalls(t *testing.T)
 		{Repo: "org/repo", Number: 1, Draft: true, HeadSHA: "abc123", BaseRef: "v5"},
 		{Repo: "org/repo", Number: 2, Draft: true, HeadSHA: "def456", BaseRef: "v5"},
 	}
-	c.EnrichReviewSignals(context.Background(), prs)
+	c.EnrichReviewSignalsAndWorkPRs(context.Background(), prs, nil)
 	if prs[0].Protection == nil || prs[0].Protection.ReviewDecision != ReviewDecisionApproved {
 		t.Errorf("draft #1 Protection = %+v, want APPROVED", prs[0].Protection)
 	}

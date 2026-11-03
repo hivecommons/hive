@@ -1,0 +1,1 @@
+- Hive Chat suggestion chips now only send text the chat can answer: the "Search docs for …" and "What changed in …" chips search the knowledge base, a bad `!runs spec`/`!runs design` target replies with the usage line instead of raw HTTP JSON, and the inception relay state reply no longer ends with a double period. (#11837)

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/timeline"
 )
 
@@ -39,7 +39,7 @@ Hive-Spec: spec.md#C-1
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET trace = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var links agent.ArtifactLinks
+	var links agentaudit.Links
 	if err := json.Unmarshal(rec.Body.Bytes(), &links); err != nil {
 		t.Fatalf("decode trace: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestRunTraceEndpointNoLinkageAuditsFinding(t *testing.T) {
 		t.Fatalf("GET trace = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var links agent.ArtifactLinks
+	var links agentaudit.Links
 	if err := json.Unmarshal(rec.Body.Bytes(), &links); err != nil {
 		t.Fatalf("decode trace: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestRunTraceEndpointNoLinkageAuditsFinding(t *testing.T) {
 	}
 	found := false
 	for _, entry := range s.audit.Recent(10) {
-		if entry.Action == agent.AuditArtifactLinkMissing && strings.Contains(entry.Detail, "sha=def456") {
+		if entry.Action == agentaudit.AuditArtifactLinkMissing && strings.Contains(entry.Detail, "sha=def456") {
 			found = true
 		}
 	}

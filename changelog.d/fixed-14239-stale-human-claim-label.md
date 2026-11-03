@@ -1,0 +1,1 @@
+- Agent claims clear a stale `hive/claimed-by-human` label when the latest human claim has a matching release marker, recovering from missed release label writes (#14239).

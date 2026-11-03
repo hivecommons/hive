@@ -462,7 +462,7 @@ func TestCollectorCopilotLiveCapture(t *testing.T) {
 
 	// A live copilot usage record from the proxy sink (per-response).
 	sink := NewInferenceSink(metricsDir, testLogger())
-	sink.Record("scanner", "gpt-5", 300, 100)
+	sink.RecordCopilot("scanner", "gpt-5", 300, 100)
 
 	// A copilot session file whose shutdown metrics would double-count if the
 	// scanner accrued them.

@@ -230,7 +230,7 @@ func TestAnalyzeExhaustsRetries(t *testing.T) {
 		`not json at all`,
 	}}
 	analyzer := newAnalyzerWithClient("m", client)
-	_, err := analyzer.Analyze(context.Background(), RetroRecord{BeadID: "b"}, nil)
+	_, err := analyzer.Analyze(context.Background(), RetroRecord{BeadID: "b"}, []Finding{{Pattern: "p", Severity: "low"}})
 	if err == nil {
 		t.Fatal("expected error after exhausting retries on persistently invalid JSON")
 	}
@@ -244,7 +244,7 @@ func TestAnalyzeExhaustsRetries(t *testing.T) {
 func TestAnalyzePropagatesClientError(t *testing.T) {
 	client := &fakeAnalysisClient{err: &testErr{"connection refused"}}
 	analyzer := newAnalyzerWithClient("m", client)
-	_, err := analyzer.Analyze(context.Background(), RetroRecord{BeadID: "b"}, nil)
+	_, err := analyzer.Analyze(context.Background(), RetroRecord{BeadID: "b"}, []Finding{{Pattern: "p", Severity: "low"}})
 	if err == nil {
 		t.Fatal("expected error to propagate from client")
 	}

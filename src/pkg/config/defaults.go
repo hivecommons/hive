@@ -7,6 +7,33 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/nousstore"
+)
+
+// DefaultGitHubAPIReserve and DefaultGitHubAPICritical are the values a zero
+// github.api_reserve / github.api_critical means, both at Load (applyDefaults)
+// and in Validate; runtime editors substitute the same values so a cleared
+// field restores the default instead of failing the boot-time bound.
+const (
+	DefaultGitHubAPIReserve  = 800
+	DefaultGitHubAPICritical = 250
+)
+
+// DefaultEvalIntervalMaxS, DefaultEvalIntervalWebhookS,
+// DefaultConserveIntervalMultiplier and DefaultOptionalSweepEveryNCycles are
+// what a zero governor eval-loop knob becomes at Load (applyDefaults);
+// runtime editors substitute the same values so a cleared field restores the
+// default.
+const (
+	DefaultEvalIntervalMaxS           = 1800
+	DefaultEvalIntervalWebhookS       = 900
+	DefaultWebhookWakeDebounceS       = 10
+	DefaultWebhookWakeMinGapS         = 30
+	DefaultCIFailureKickCooldownS     = 600
+	DefaultMergeTrainStallWarnS       = 3600
+	DefaultConserveIntervalMultiplier = 2
+	DefaultOptionalSweepEveryNCycles  = 1
 )
 
 const (
@@ -15,17 +42,18 @@ const (
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
-	defaultEvalIntervalMaxS       = 1800
-	defaultEvalIntervalWebhookS   = 900
-	defaultConserveIntervalMult   = 2
-	defaultOptionalSweepEveryN    = 1
-	defaultGitHubAPIReserve       = 800
-	defaultGitHubAPICritical      = 250
+	defaultEvalIntervalMaxS       = DefaultEvalIntervalMaxS
+	defaultEvalIntervalWebhookS   = DefaultEvalIntervalWebhookS
+	defaultConserveIntervalMult   = DefaultConserveIntervalMultiplier
+	defaultOptionalSweepEveryN    = DefaultOptionalSweepEveryNCycles
+	defaultGitHubAPIReserve       = DefaultGitHubAPIReserve
+	defaultGitHubAPICritical      = DefaultGitHubAPICritical
 	defaultPollIntervalMins       = 5
-	defaultKnowledgeMaxFacts      = 25
+	defaultKnowledgeMaxFacts      = DefaultKnowledgePrimerMaxFacts
+	defaultKnowledgeMaxBytes      = DefaultKnowledgePrimerMaxBytes
 	defaultKnowledgeEngine        = "llm-wiki"
-	defaultCuratorSchedule        = "daily"
-	defaultPromoteThreshold       = 0.9
+	defaultCuratorSchedule        = DefaultCuratorSchedule
+	defaultPromoteThreshold       = DefaultCuratorAutoPromoteThreshold
 	defaultSensingTTLSeconds      = 900
 	defaultSensingPullbackSeconds = 900
 	defaultBudgetPeriodDays       = 7
@@ -34,6 +62,10 @@ const (
 	defaultLogMaxAgeDays          = 7
 	defaultLogMaxBackups          = 10
 	defaultLogLevel               = "info"
+
+	// DefaultNousDir is the durable Nous root applied when data.nous_dir is
+	// unset (#11694).
+	DefaultNousDir = nousstore.DefaultRoot
 
 	// defaultAdvisoryMaxFindings is the digest's default top-N cap. Ten fits
 	// in a screenful, which is the point: the digest is a "what should I look
@@ -93,7 +125,7 @@ func (c *Config) applyCoinBudgetDefaults() {
 }
 
 func (c *Config) applyDefaults() {
-	if c.AgentsGitHubAPIHourlyCap == 0 && !c.agentsGitHubAPIHourlyCapSet {
+	if c.AgentsGitHubAPIHourlyCap == 0 && !c.AgentsGitHubAPIHourlyCapSet {
 		c.AgentsGitHubAPIHourlyCap = DefaultAgentsGitHubAPIHourlyCap
 	}
 	if c.GitHub.AgentReserveFloor == 0 {
@@ -109,6 +141,7 @@ func (c *Config) applyDefaults() {
 	// path (boot, reload, dashboard save) and Save() persists the explicit
 	// value, after which this is a no-op for the life of the hive.
 	c.MigrateReviewFixHumanPRs()
+	c.WarnDeprecatedReviewAllAuthors()
 	c.applyUpstreamWatchDefaults()
 	// Repo targets are built as org + "/" + repo, so an entry that already
 	// carries the org resolves to "org/org/repo" and every agent fails. Strip a
@@ -146,6 +179,12 @@ func (c *Config) applyDefaults() {
 	if c.Governor.EvalIntervalWebhookS == 0 {
 		c.Governor.EvalIntervalWebhookS = defaultEvalIntervalWebhookS
 	}
+	if c.Governor.WebhookWakeDebounceS == 0 {
+		c.Governor.WebhookWakeDebounceS = DefaultWebhookWakeDebounceS
+	}
+	if c.Governor.WebhookWakeMinGapS == 0 {
+		c.Governor.WebhookWakeMinGapS = DefaultWebhookWakeMinGapS
+	}
 	if c.Governor.ConserveIntervalMultiplier == 0 {
 		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult
 	}
@@ -178,6 +217,9 @@ func (c *Config) applyDefaults() {
 	if c.Data.LogsDir == "" {
 		c.Data.LogsDir = "/data/logs"
 	}
+	if c.Data.NousDir == "" {
+		c.Data.NousDir = DefaultNousDir
+	}
 	if c.Data.ClaudeSessionsDir == "" {
 		c.Data.ClaudeSessionsDir = "/data/home/.claude/projects"
 	}
@@ -195,7 +237,7 @@ func (c *Config) applyDefaults() {
 		c.Hub.IsPublic = true
 	}
 	for name, agent := range c.Agents {
-		agent.name = name
+		agent.SetLoadState(name, agent.SourceFile())
 		if agent.ID == "" {
 			agent.ID = name
 		}
@@ -206,14 +248,19 @@ func (c *Config) applyDefaults() {
 			agent.BeadsDir = fmt.Sprintf("/data/beads/%s", name)
 		}
 		// Default to enabled unless the user explicitly set enabled: false.
-		if !agent.Enabled && !agent.enabledSet {
+		if !agent.Enabled && !agent.EnabledExplicitlySet() {
 			agent.Enabled = true
 		}
-		if !agent.clearOnKickSet {
+		if !agent.ClearOnKickExplicitlySet() {
 			agent.ClearOnKick = true
 		}
 		if agent.Role == "" {
 			agent.Role = name
+		}
+		// Role-based, not name-based: any agent that opts into the
+		// experimenter role runs the default engine unless it names one.
+		if agent.IsExperimenter() && agent.Engine == "" {
+			agent.Engine = DefaultExperimentEngine
 		}
 		applyKnownAgentDefaults(name, &agent)
 		c.Agents[name] = agent
@@ -262,8 +309,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Hub.ContributeWallRetentionDays < 0 {
 		c.Hub.ContributeWallRetentionDays = 0
-	} else if c.Hub.ContributeWallRetentionDays > 3650 {
-		c.Hub.ContributeWallRetentionDays = 3650
+	} else if c.Hub.ContributeWallRetentionDays > MaxContributeWallRetentionDays {
+		c.Hub.ContributeWallRetentionDays = MaxContributeWallRetentionDays
 	}
 	if c.Hub.ContributeAlreadyDoneLabel != "" {
 		c.Hub.ContributeAlreadyDoneLabel = strings.TrimSpace(c.Hub.ContributeAlreadyDoneLabel)
@@ -380,6 +427,7 @@ func (c *Config) applyDefaults() {
 		c.Governor.Sensing.PullbackSeconds = defaultSensingPullbackSeconds
 	}
 	c.migrateDeprecatedHealthSettings()
+	c.migrateDeprecatedStrategyLab()
 	if c.Governor.Budget.PeriodDays == 0 {
 		c.Governor.Budget.PeriodDays = defaultBudgetPeriodDays
 	}
@@ -430,6 +478,10 @@ func (c *Config) applyDefaults() {
 		on := true
 		c.Governor.Advisory.PRAutoClose = &on
 	}
+	if c.Governor.AutoCloseSuperseded == nil {
+		on := true
+		c.Governor.AutoCloseSuperseded = &on
+	}
 
 	if c.Knowledge.Enabled {
 		if c.Knowledge.Engine == "" {
@@ -438,8 +490,11 @@ func (c *Config) applyDefaults() {
 		if c.Knowledge.Primer.MaxFacts == 0 {
 			c.Knowledge.Primer.MaxFacts = defaultKnowledgeMaxFacts
 		}
+		if c.Knowledge.Primer.MaxBytes == 0 {
+			c.Knowledge.Primer.MaxBytes = defaultKnowledgeMaxBytes
+		}
 		if c.Knowledge.Primer.MergeStrategy == "" {
-			c.Knowledge.Primer.MergeStrategy = "precedence"
+			c.Knowledge.Primer.MergeStrategy = DefaultKnowledgePrimerMergeStrategy
 		}
 		if len(c.Knowledge.Primer.Priority) == 0 {
 			c.Knowledge.Primer.Priority = []string{"regression", "gotcha", "test_scaffold", "pattern", "decision"}
@@ -457,19 +512,23 @@ func (c *Config) applyDefaults() {
 			c.Knowledge.Curator.AutoPromoteThreshold = defaultPromoteThreshold
 		}
 		if c.Knowledge.BeadSynthesizer.Schedule == "" {
-			c.Knowledge.BeadSynthesizer.Schedule = "hourly"
+			c.Knowledge.BeadSynthesizer.Schedule = DefaultBeadSynthSchedule
 		}
 		if c.Knowledge.BeadSynthesizer.MinConfidence == 0 {
-			c.Knowledge.BeadSynthesizer.MinConfidence = 0.5
+			c.Knowledge.BeadSynthesizer.MinConfidence = DefaultBeadSynthMinConfidence
 		}
 		if c.Knowledge.BeadSynthesizer.TargetLayer == "" {
-			c.Knowledge.BeadSynthesizer.TargetLayer = "project"
+			c.Knowledge.BeadSynthesizer.TargetLayer = DefaultBeadSynthTargetLayer
 		}
 		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
-			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
+			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = DefaultBeadSynthMaxFactsPerCycle
 		}
+		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
+			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
+		}
+		c.Knowledge.BeadSynthesizer.Publish = c.Knowledge.BeadSynthesizer.Publish.WithDefaults()
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
-			c.Knowledge.BeadSynthesizer.VaultPath = "/data/vaults/bead-synth-wiki"
+			c.Knowledge.BeadSynthesizer.VaultPath = DefaultBeadSynthVaultPath
 		}
 	}
 }
@@ -545,6 +604,12 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 			Emoji: "🧠", Color: "#f39c12", Aliases: []string{"sg"},
 			DetectKeywords: []string{"strategist", "strategy"},
 			BeadRole:       "worker", SortOrder: 70, IncludeRepos: true,
+		},
+		RoleExperimenter: {
+			Emoji: "⚗️", Color: "#16a085", Aliases: []string{"ex"},
+			LaneKeywords:   []string{"experiment", "campaign", "hypothesis", "benchmark"},
+			DetectKeywords: []string{"experimenter", "experiment", "campaign", "nous"},
+			BeadRole:       "worker", SortOrder: 72, IncludeRepos: true,
 		},
 		"guide": {
 			Emoji: "📖", Color: "#8e44ad", Aliases: []string{"gu"},

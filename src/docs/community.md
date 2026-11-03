@@ -6,8 +6,13 @@ Hive Commons is the open community around Hive, ClankeR contributor relay, and t
 
 For setup help, contributor relay questions, first-run guidance, and community discussion, [Join our Discord](https://hivecommons.dev/discord). The redirect points to the permanent Hive Commons invite and lets us rotate the underlying invite in one place if that ever changes.
 
+## Watch the hive live on Twitch
+
+Hive's own hosted hive streams its Activity Monitor 24/7 at [twitch.tv/hivecommons](https://www.twitch.tv/hivecommons) — every tracked issue and PR walking from open to merged. See [Streaming the Activity Monitor](streaming-the-activity-monitor.md) for how the stream is run.
+
 ## Other community entry points
 
+- [Live stream (Twitch)](https://www.twitch.tv/hivecommons)
 - [Hive Commons website](https://hivecommons.dev)
 - [Hosted Hive Hub](https://hive.hivecommons.dev)
 - [Contributor portal](https://hive.hivecommons.dev/contribute)

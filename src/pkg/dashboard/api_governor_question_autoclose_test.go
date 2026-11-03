@@ -23,8 +23,10 @@ import (
 // semantics, and validate-before-mutate.
 
 type questionAutocloseBody struct {
-	Enabled bool `json:"enabled"`
-	Hours   int  `json:"hours"`
+	Enabled    bool     `json:"enabled"`
+	Hours      int      `json:"hours"`
+	Labels     []string `json:"labels"`
+	HumanLabel string   `json:"human_label"`
 }
 
 func decodeQuestionAutoclose(t *testing.T, rec *httptest.ResponseRecorder) questionAutocloseBody {
@@ -50,6 +52,9 @@ func TestGovernorQuestionAutocloseGet_DefaultsOffWithFourHourWindow(t *testing.T
 	}
 	if body.Hours != 4 {
 		t.Fatalf("expected default 4-hour window, got %+v", body)
+	}
+	if len(body.Labels) != 2 || body.Labels[0] != "question" || body.HumanLabel != "needs-human" {
+		t.Fatalf("expected default labels/human label, got %+v", body)
 	}
 }
 
@@ -81,18 +86,20 @@ func TestGovernorQuestionAutoclosePut_ValidatesAndApplies(t *testing.T) {
 
 	// Valid write applies every provided field and echoes the section back.
 	rec := doPut(s, "/api/config/governor/question-autoclose", map[string]any{
-		"enabled": true,
-		"hours":   8,
+		"enabled":     true,
+		"hours":       8,
+		"labels":      []string{"Question", "kind/question", " "},
+		"human_label": " needs-human-review ",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := decodeQuestionAutoclose(t, rec)
-	if !body.Enabled || body.Hours != 8 {
+	if !body.Enabled || body.Hours != 8 || len(body.Labels) != 2 || body.Labels[0] != "Question" || body.HumanLabel != "needs-human-review" {
 		t.Fatalf("put response did not echo applied values: %+v", body)
 	}
 	qc = s.deps.Config.Governor.QuestionAutoclose
-	if !qc.Enabled || qc.Hours != 8 {
+	if !qc.Enabled || qc.Hours != 8 || len(qc.Labels) != 2 || qc.HumanLabel != "needs-human-review" {
 		t.Fatalf("write not applied: %+v", qc)
 	}
 
@@ -107,6 +114,9 @@ func TestGovernorQuestionAutoclosePut_ValidatesAndApplies(t *testing.T) {
 	}
 	if qc.Hours != 8 {
 		t.Fatalf("partial put clobbered untouched hours: %d", qc.Hours)
+	}
+	if len(qc.Labels) != 2 || qc.HumanLabel != "needs-human-review" {
+		t.Fatalf("partial put clobbered labels: %+v", qc)
 	}
 }
 

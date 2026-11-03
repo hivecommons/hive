@@ -4,16 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,11 +17,21 @@ import (
 	"sync/atomic"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/inference"
+	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/crux/pushbroker"
+	"github.com/hivecommons/hive/crux/taskmcp"
+	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/watchdog"
+	"github.com/hivecommons/hive/crux/watsonx"
 	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/apphealth"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
 	"github.com/hivecommons/hive/pkg/chat"
@@ -40,53 +46,49 @@ import (
 	"github.com/hivecommons/hive/pkg/defsrc"
 	"github.com/hivecommons/hive/pkg/discord"
 	"github.com/hivecommons/hive/pkg/effects"
-	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/fleetreport"
-	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/fleetreport/slogfeed"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
-	"github.com/hivecommons/hive/pkg/inference"
+	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/pkg/loginscan"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/matrix"
-	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/nousdeps"
+	"github.com/hivecommons/hive/pkg/nousengine"
+	"github.com/hivecommons/hive/pkg/nousstore"
 	"github.com/hivecommons/hive/pkg/persona"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/pkg/proxy"
-	"github.com/hivecommons/hive/pkg/pushbroker"
+	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/review/autoscale"
+	"github.com/hivecommons/hive/pkg/rfccoverage"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/sessionprune"
 	"github.com/hivecommons/hive/pkg/slack"
 	"github.com/hivecommons/hive/pkg/snapshot"
-	"github.com/hivecommons/hive/pkg/spokealerts"
-	"github.com/hivecommons/hive/pkg/taskmcp"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/telegram"
-	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/toolapprove"
 	"github.com/hivecommons/hive/pkg/tracing"
-	"github.com/hivecommons/hive/pkg/trajectory"
-	"github.com/hivecommons/hive/pkg/watchdog"
-	"github.com/hivecommons/hive/pkg/watsonx"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
-	"go.opentelemetry.io/otel/attribute"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -141,44 +143,16 @@ func reportedVersion() string {
 	return normalizeVersion(version)
 }
 
+// publishFleetReports is the legacy entry point kept for the one call site's
+// signature; the policy lives in selfreport_publish.go (#11868).
 func publishFleetReports(ctx context.Context, logger *slog.Logger, ghClient *github.Client, dashSrv *dashboard.Server, res *fleetreport.Result, dryRun bool) {
-	if res == nil || dryRun || ghClient == nil || dashSrv == nil {
-		return
-	}
-	for _, report := range res.Reports {
-		write, err := ghClient.EnsureFleetReport(ctx, report)
-		if err != nil {
-			logger.Warn("fleet report: upstream write failed", "fingerprint", report.Fingerprint, "error", err)
-			continue
-		}
-		dashSrv.MarkFleetReportPosted(report.Fingerprint, write.Number, write.URL, write.Created, report.Body)
-		logger.Info("fleet report: upstream report recorded", "fingerprint", report.Fingerprint, "issue", write.Number, "created", write.Created, "commented", write.Commented, "reaction", write.ReactionSent)
-	}
-	for _, report := range res.Recoveries {
-		open, ok := dashSrv.FleetReportOpenIssue(report.Fingerprint)
-		if !ok {
-			continue
-		}
-		if open.Number <= 0 {
-			issue, found, err := ghClient.FleetReportIssue(ctx, report.Fingerprint)
-			if err != nil {
-				logger.Warn("fleet report: recovery lookup failed", "fingerprint", report.Fingerprint, "error", err)
-				continue
-			}
-			if !found {
-				dashSrv.ClearFleetReportOpen(report.Fingerprint)
-				continue
-			}
-			open.Number = issue.Number
-			open.URL = issue.URL
-		}
-		if err := ghClient.PostFleetReportRecovery(ctx, open.Number, report, open.OpenedByHive); err != nil {
-			logger.Warn("fleet report: recovery write failed", "fingerprint", report.Fingerprint, "issue", open.Number, "error", err)
-			continue
-		}
-		dashSrv.MarkFleetReportRecovered(report.Fingerprint)
-		logger.Info("fleet report: recovery recorded", "fingerprint", report.Fingerprint, "issue", open.Number, "closed", open.OpenedByHive)
-	}
+	publishFleetReportsWith(ctx, logger, dashSrv, res, selfReportPublishDeps{
+		dryRun:  dryRun,
+		gh:      ghClient,
+		limits:  fleetreport.DefaultFilingLimits,
+		now:     time.Now,
+		tracker: fleetreport.DefaultTracker(),
+	})
 }
 
 var (
@@ -207,6 +181,7 @@ type persistPaths struct {
 	TokenSparklineHistory string
 	FactHistory           string
 	CostHistory           string
+	CostDailyRollup       string
 	TrendHistory          string
 	BudgetWindowHistory   string
 	ConvergenceSoak       string
@@ -220,13 +195,23 @@ func defaultPersistPaths() persistPaths {
 		TokenSparklineHistory: "/data/token-sparkline-history.json",
 		FactHistory:           "/data/fact-history.json",
 		CostHistory:           "/data/cost-history.json",
+		CostDailyRollup:       "/data/cost-daily-rollup.json",
 		TrendHistory:          "/data/trend-history.json",
 		BudgetWindowHistory:   "/data/budget-window-history.json",
 		ConvergenceSoak:       "/data/convergence-soak-history.json",
 	}
 }
 
-func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) hub.AgentActivity {
+// heartbeatProviders is the ADR-0024 per-provider auth/availability roll-up
+// sent in the hub heartbeat; nil when the provider-status knob is off.
+func heartbeatProviders(cfg *config.Config, agents []spoke.AgentSummary) []crux.ProviderStatus {
+	if cfg == nil || !cfg.Providers.StatusEnabled() {
+		return nil
+	}
+	return spoke.ProviderStatusForHeartbeat(agents)
+}
+
+func agentActivityFor(mgr crux.Runtime, cfg *config.Config, govState governor.State, currentMode, name string, proc *crux.Process, onDemandFromPack map[string]bool) hub.AgentActivity {
 	act := hub.AgentActivity{
 		Paused:         proc.Paused,
 		PausedTrigger:  proc.PausedTrigger,
@@ -238,10 +223,13 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 		LastActivityAt: proc.LastPaneChange,
 		SessionMissing: mgr.SessionMissing(name),
 	}
-	if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+	if status := proc.BackendAuth.Status; status != "" && status != crux.BackendAuthOK {
 		act.BackendAuthStatus = status
 		act.BackendAuthSince = proc.BackendAuth.Since
 		act.BackendAuthLastError = proc.BackendAuth.LastError
+	}
+	if refreshable, known := mgr.AgentCredentialRefreshable(name); known {
+		act.BackendAuthRefreshable = &refreshable
 	}
 	if proc.StartedAt != nil {
 		act.StartedAt = *proc.StartedAt
@@ -289,7 +277,7 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 	return act
 }
 
-func heartbeatKickInterval(govState governor.State, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) time.Duration {
+func heartbeatKickInterval(govState governor.State, name string, proc *crux.Process, onDemandFromPack map[string]bool) time.Duration {
 	if proc == nil || !proc.Config.UsesGovernorKick() || proc.Config.OnDemand || onDemandFromPack[name] {
 		return 0
 	}
@@ -410,392 +398,6 @@ func agentCanProduceJudgedOutput(acmmLevel int, a spoke.AgentSummary) bool {
 	default:
 		return false
 	}
-}
-
-// prospectiveGitHubIdentity returns the GitHub identity the spoke WOULD hold
-// after adopting ghCfg, or nil when the push speaks to no identity field and
-// there is nothing to validate.
-//
-// It mirrors the adoption rules in the GitHubAppConfigCallback exactly — a
-// zero app_id and an empty app_slug both mean "not speaking to this field", and
-// the placeholder sentinel is never adopted over a real App. Mirroring rather
-// than validating ghCfg alone is what makes the check correct: the damaging
-// state is a combination of PUSHED and EXISTING fields (a GHE app_id landing
-// beside the spoke's own empty api_url), and validating the push in isolation
-// cannot see it.
-func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *spoke.HeartbeatGitHubAppConfig) *config.GitHubConfig {
-	if ghCfg == nil {
-		return nil
-	}
-	touched := false
-	next := cur
-	if ghCfg.AppID != 0 && ghCfg.AppID != config.PlaceholderAppID {
-		next.AppID = ghCfg.AppID
-		touched = true
-	}
-	if ghCfg.AppSlug != "" && ghCfg.AppSlug != cur.AppSlug {
-		next.AppSlug = ghCfg.AppSlug
-		touched = true
-	}
-	// The forge URLs are part of the SAME set as the App above, so they are
-	// adopted here and validated with it rather than arriving separately on the
-	// project-config channel. An App ID presented to the wrong forge returns
-	// "404 Integration not found", so applying one half without the other is the
-	// live failure this function exists to prevent.
-	//
-	// Empty means "unchanged", matching AppSlug. It cannot mean "make me
-	// public": empty URLs are also the correct steady state for a public hive
-	// (~41 of 50 spokes), so silence here is indistinguishable from "no opinion"
-	// and must never blank a working GHE URL. A hive moving TO public gets that
-	// from its app_id, which the resolver derives from its forge.
-	if ghCfg.APIURL != "" && ghCfg.APIURL != cur.APIURL {
-		next.APIURL = ghCfg.APIURL
-		touched = true
-	}
-	if ghCfg.BaseURL != "" && ghCfg.BaseURL != cur.BaseURL {
-		next.BaseURL = ghCfg.BaseURL
-		touched = true
-	}
-	if !touched {
-		return nil
-	}
-	return &next
-}
-
-// nextInstallationID decides what a hive's installation_id becomes after a
-// hub delivery, and reports whether the change is an operator RESET.
-//
-// Three cases, and the difference between the last two is load-bearing:
-//
-//	ResetInstallation  -> 0. The operator clicked "Reset App". Clearing makes
-//	                     HasUsableApp() false, which raises githubAppRequired:
-//	                     the owner is prompted to install the App again and the
-//	                     self-heal ticker starts, whose RediscoverAndAdopt
-//	                     adopts the correct installation for whatever they
-//	                     install.
-//	non-zero pushed    -> adopt it.
-//	zero pushed        -> KEEP the current value. Zero means "the hub is not
-//	                     speaking to this field", not "clear it". The
-//	                     cluster-wide key reconcile sends zero on every beat
-//	                     because it repairs KEYS on hives whose installation the
-//	                     hub does not track; reading that as a clear would blank
-//	                     a working installation fleet-wide and turn a key-only
-//	                     fault into a total auth outage.
-//
-// docs_installation_id is DELIBERATELY untouched by all three cases. It is the
-// optional docs-org add-on installation, has no rediscovery flow (zero simply
-// disables the docs token refresh, permanently), and a stale value is
-// non-fatal: the periodic docs mint warns and retries. After an app-changing
-// delivery it can therefore briefly equal the PREVIOUS app's installation id —
-// which looks like the old installation_id was "parked" there, but is just the
-// provisioned docs value (public hives commonly provision both fields with the
-// same installation) surviving a reset that correctly cleared only
-// installation_id. On a flip-back to the original App it becomes valid again
-// on its own.
-func nextInstallationID(current int64, ghCfg *spoke.HeartbeatGitHubAppConfig) (next int64, reset bool) {
-	if ghCfg == nil {
-		return current, false
-	}
-	if ghCfg.ResetInstallation {
-		return 0, current != 0
-	}
-	if ghCfg.InstallationID != 0 {
-		return ghCfg.InstallationID, false
-	}
-	return current, false
-}
-
-var githubAppTokenCachePath = github.TokenCachePath
-
-// resumeKickHeldAlerts tracks crash-restarted agents the resume-kick gate
-// refused, so the eval loop can raise and later clear their dashboard alert.
-var resumeKickHeldAlerts = spokealerts.NewResumeKickHeld()
-
-func githubAppTokenHeartbeatFields(cfg *config.Config, detail string) (status, lastMintAt, lastErr string) {
-	if cfg == nil || !cfg.GitHub.HasApp() {
-		return "", "", ""
-	}
-	info, err := os.Stat(githubAppTokenCachePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return spoke.GitHubAppTokenStatusMissing, "", detail
-		}
-		return spoke.GitHubAppTokenStatusError, "", err.Error()
-	}
-	lastMintAt = info.ModTime().UTC().Format(time.RFC3339)
-	if time.Since(info.ModTime()) > spoke.GitHubAppTokenStaleAfter {
-		return spoke.GitHubAppTokenStatusStale, lastMintAt, detail
-	}
-	return spoke.GitHubAppTokenStatusOK, lastMintAt, ""
-}
-
-var githubHTTPStatusRe = regexp.MustCompile(`\b([1-5][0-9]{2})\b`)
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func githubAppStructuredFailure(state, detail string) (class string, httpStatus int) {
-	switch strings.TrimSpace(state) {
-	case github.AppStateNotInstalled.String():
-		class = "not-installed"
-	case github.AppStateWrongInstallation.String():
-		class = "wrong-installation"
-	case github.AppStateInsufficientPerms.String():
-		class = "insufficient-permissions"
-	case github.AppStateKeyMissing.String():
-		class = "key-missing"
-	case github.AppStateKeyInvalid.String():
-		class = "key-invalid"
-	case github.AppStateNoAppAssigned.String():
-		class = "no-app-assigned"
-	case github.AppStateRepoNotCovered.String():
-		class = "repo-not-covered"
-	case github.AppStateRepoMoved.String():
-		class = "repo-moved"
-	case github.AppStateWriteForbidden.String():
-		class = "write-forbidden"
-	}
-	if class == "" && strings.TrimSpace(detail) != "" {
-		class = "token-error"
-	}
-	for _, m := range githubHTTPStatusRe.FindAllStringSubmatch(detail, -1) {
-		if len(m) == 2 {
-			if n, err := strconv.Atoi(m[1]); err == nil {
-				httpStatus = n
-			}
-		}
-	}
-	if httpStatus != 0 {
-		if (class == "token-error" || class == "not-installed") && httpStatus == http.StatusNotFound {
-			class = "installation-not-found"
-		}
-	}
-	return class, httpStatus
-}
-
-// githubAuth is the outcome of resolving this hive's GitHub credentials at
-// startup. Every field is optional: a hive with no usable credentials is a
-// legitimate, bootable state.
-type githubAuth struct {
-	// Client is nil when no credentials could be resolved. Callers must treat a
-	// nil Client as "GitHub is unavailable", never as a fatal condition.
-	Client *github.Client
-	// AppAuth is non-nil only when App auth was successfully initialized.
-	AppAuth *github.AppAuth
-	// Failure, when non-empty, is the operator-facing reason there is no
-	// working GitHub client. It is shown in the dashboard's GitHub App banner.
-	Failure string
-	// State classifies Failure so the banner and the hub's journey nudges can
-	// tell an operator-side fault (a key that was never delivered) from a
-	// user-actionable one (the App is not installed). Escalating against an
-	// owner for a key WE failed to provision is precisely the mistake
-	// github.AppAuthState exists to prevent.
-	State github.AppAuthState
-	// TokenScopes is the boot-time PAT scope probe (see
-	// github.CheckTokenScopes). Zero value / ScopeStatusSkipped on the App
-	// path. It is advisory: a ScopeStatusMissing result never blocks startup,
-	// it only gives github_auth a specific detail string instead of leaving the
-	// operator to decode a runtime 403.
-	TokenScopes github.ScopeResult
-}
-
-// initGitHubAuth resolves this hive's GitHub credentials.
-//
-// It NEVER exits the process. A hive that cannot authenticate to GitHub must
-// still boot and serve its dashboard, because the dashboard is the only place
-// its owner can see what is wrong and fix it. Exiting here — which is what this
-// code used to do on a key-read failure — happens before the HTTP listener
-// binds, so the pod crashloops with the diagnosis visible only in kubectl logs:
-// the hub shows the hive offline, the heartbeat never starts, and a rollout
-// hangs forever because the new pod never goes Ready.
-//
-// The placeholder app_id is the reason that path was reachable at all. See
-// config.PlaceholderAppID.
-func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger) githubAuth {
-	var out githubAuth
-	appKeyFile := appKeys.Resolve(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
-
-	// HasApp() rejects config.PlaceholderAppID. Build AppAuth as soon as a real
-	// app_id and key are present, even when installation_id is still empty: the
-	// App JWT is exactly what automatic installation-ID discovery needs.
-	if cfg.GitHub.HasApp() {
-		appAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, appKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
-		if err != nil {
-			// A genuinely-configured App whose key is missing or malformed is a
-			// real, actionable fault — but not a reason to refuse to boot.
-			out.Failure = describeAppKeyFailure(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), appKeyFile, err)
-			// Both states are operator-actionable: the hive's owner cannot
-			// deliver a key. Absent vs. unparseable is the distinction the hub
-			// needs to tell "never pushed" from "pushed something broken".
-			out.State = github.AppStateKeyInvalid
-			if errors.Is(err, fs.ErrNotExist) {
-				out.State = github.AppStateKeyMissing
-			}
-			logger.Error("GitHub App auth unavailable — starting in dashboard-only mode",
-				"app_id", cfg.GitHub.AppID,
-				"installation_id", cfg.GitHub.InstallationID,
-				"key_file", appKeyFile,
-				"state", out.State.String(),
-				"detail", out.Failure,
-				"error", err,
-			)
-		} else {
-			out.AppAuth = appAuth
-		}
-	}
-
-	if out.AppAuth != nil {
-		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
-		if cfg.GitHub.InstallationID == 0 {
-			out.Failure = "The GitHub App is configured but has no installation. Install the app on your org; this hive will discover the installation automatically."
-			out.State = github.AppStateNotInstalled
-			logger.Warn("GitHub App configured without installation_id — starting in dashboard-only mode while auto-discovery polls")
-			return out
-		}
-		// Correct a stale/wrong installation_id BEFORE building the client, so
-		// the very first token this process mints is scoped to the right org
-		// rather than 403ing on every write until the self-heal tick runs.
-		healGitHubAppInstallation(ctx, out.AppAuth, cfg, logger)
-		// Hooks (hold labels, #6203 repo pause, #6204 agent scope, and the
-		// rest) are installed by bootGitHub through configureGitHubClient, the
-		// same function every rebuild path uses (#9614).
-		out.Client = github.NewClientFromAppWithBotLogin(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
-		startDocsTokenRefresh(ctx, cfg, appKeyFile, logger)
-		return out
-	}
-
-	ghToken := cfg.GitHub.Token
-	if ghToken == "" {
-		ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
-	}
-	switch {
-	case ghToken != "":
-		out.Client = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL()) // hooks: see the App branch above
-		// PAT path only: introspect the token's granted scopes ONCE, here, so a
-		// too-narrow token is named at boot instead of surfacing hours later as
-		// a generic 403 inside an agent — or, worse, as an empty backlog that
-		// looks like "no work to do". Fail-soft and bounded (see
-		// CheckTokenScopes); it never blocks or fails startup. The App branch
-		// above returns before this point: Apps have permissions, not scopes.
-		// An unset acmm_level is passed through as github.ACMMLevelUnset rather
-		// than inferACMMLevel's L1 default: L1 requires no scopes at all, so
-		// defaulting to it would silently suppress every warning on exactly the
-		// hives whose intent we cannot read. See ACMMLevelUnset.
-		scopeLevel := github.ACMMLevelUnset
-		if cfg.ACMMLevel != nil {
-			scopeLevel = *cfg.ACMMLevel
-		}
-		out.TokenScopes = out.Client.LogTokenScopeCheck(ctx, logger, scopeLevel)
-	case out.Failure != "":
-		// Real App, unusable key. Already logged; leave Client nil so nothing
-		// tries to act on GitHub with credentials that do not work.
-	case cfg.GitHub.IsPlaceholderApp():
-		// OPERATOR-actionable, not user-actionable. This hive was provisioned as
-		// a placeholder and never assigned a real app_id, so the JWT it signs
-		// names no App and fails before any installation is consulted. Nothing
-		// the owner enters in the installation-ID box can fix it — reporting this
-		// as AppStateNotInstalled sent owners to re-install an App that was
-		// already installed and to re-enter an installation_id that was already
-		// correct.
-		out.Failure = "This hive was never assigned a GitHub App ID: it still carries the placeholder github.app_id, " +
-			"which does not name a real GitHub App. Setting an installation ID cannot resolve this — " +
-			"the hub operator must assign the real App ID."
-		out.State = github.AppStateNoAppAssigned
-		logger.Warn("placeholder github.app_id — hive starting in dashboard-only mode",
-			"placeholder_app_id", config.PlaceholderAppID,
-			"installation_id", cfg.GitHub.InstallationID,
-		)
-	case cfg.GitHub.AppID != 0:
-		out.Failure = "The GitHub App is configured but has no installation. Install the app on your org to enable agents."
-		out.State = github.AppStateNotInstalled
-		logger.Warn("GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.")
-	default:
-		// Neither a token nor any app_id at all. config.validate() rejects this
-		// at load, so reaching it means the config was mutated afterwards.
-		// Still a degraded boot rather than an exit: the dashboard is where an
-		// operator fixes it.
-		out.Failure = "No GitHub credentials configured. Set github.token, or github.app_id plus an App installation."
-		logger.Error("no GitHub token configured (set github.token or github.app_id in config) — starting in dashboard-only mode")
-	}
-	return out
-}
-
-// startDocsTokenRefresh mints and periodically refreshes a token for the
-// separate docs-org installation, when one is configured. A failure here is
-// always non-fatal: the docs org is an add-on, not this hive's primary auth.
-func startDocsTokenRefresh(ctx context.Context, cfg *config.Config, appKeyFile string, logger *slog.Logger) {
-	if cfg.GitHub.DocsInstallationID == 0 {
-		return
-	}
-	docsAuth, err := github.NewAppAuthWithCache(
-		cfg.GitHub.AppID, cfg.GitHub.DocsInstallationID,
-		appKeyFile, github.DocsTokenCachePath, logger, cfg.GitHub.ResolvedAPIURL(),
-	)
-	if err != nil {
-		logger.Warn("failed to init docs org token", "error", err)
-		return
-	}
-	go func() {
-		// Mint the initial docs token in the BACKGROUND, not on the startup
-		// path. The docs org is an add-on; blocking here on a docs-installation
-		// mint that hangs (unreachable/uninstalled GHE) would delay the whole
-		// process reaching MarkReady — the #2439 readiness-stall pattern. The
-		// mint is bounded (tokenMintTimeout) and non-fatal regardless.
-		if _, err := docsAuth.Token(ctx); err != nil {
-			logger.Warn("failed to generate initial docs org token", "error", err)
-		} else {
-			logger.Info("docs org token cached", "installation_id", cfg.GitHub.DocsInstallationID)
-		}
-		const docsTokenRefreshInterval = 45 * time.Minute
-		ticker := time.NewTicker(docsTokenRefreshInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if _, err := docsAuth.Token(ctx); err != nil {
-					logger.Warn("docs token refresh failed", "error", err)
-				}
-			}
-		}
-	}()
-}
-
-// buildAgentMinter constructs the opt-in per-agent mint credential issuer from
-// config. It loads (or creates) the signing key at cfg.Mint.KeyPath, builds a
-// Minter with the configured issuer/hive-id/TTL, and wraps it as an AgentMinter.
-// Callers gate on cfg.Mint.Enabled before calling. The signing key path comes
-// from config (never hardcoded); a missing key file is created with 0600 perms
-// by the mint package.
-func buildAgentMinter(cfg *config.Config, logger *slog.Logger) (*mint.AgentMinter, error) {
-	if cfg.Mint.KeyPath == "" {
-		return nil, fmt.Errorf("mint.key_path is required when mint is enabled")
-	}
-	if cfg.Mint.Issuer == "" {
-		return nil, fmt.Errorf("mint.issuer is required when mint is enabled")
-	}
-	key, err := mint.LoadOrCreateKey(cfg.Mint.KeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("loading mint signing key: %w", err)
-	}
-	maxTTL := time.Duration(cfg.Mint.MaxTTLSeconds) * time.Second
-	minter, err := mint.NewMinter(key, cfg.Mint.Issuer,
-		mint.WithHiveID(cfg.HiveID),
-		mint.WithMaxTTL(maxTTL),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("building minter: %w", err)
-	}
-	logger.Debug("mint signing key loaded", "key_path", cfg.Mint.KeyPath)
-	// ttl<=0 lets the minter fall back to its configured max on each Mint.
-	return mint.NewAgentMinter(minter, maxTTL), nil
 }
 
 // reporterName identifies this spoke PROCESS to the hub (HeartbeatPayload
@@ -924,19 +526,28 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	b.processStartedAt = b.startTime
 	b.configPath = deps.parseFlags(resolveDefaultConfigPath(deps.getenv(hiveConfigEnv)))
 	// Canonicalize gitShort to the standard 7-char short SHA the hub stores and
-	// compares against. The Dockerfile builds it with `--short=7`, but git can
-	// still return more chars when 7 isn't unique; trim so what we report to the
+	// compares against. The Dockerfile cuts it to 7 chars from the full hash; trim
+	// defensively in case an older build used `--short=7` (a minimum) so what we report to the
 	// hub is always the same length it stores (no short-vs-full mismatch).
 	gitShort = canonicalGitShort(gitShort)
 	dashboard.SetGitVersion(gitHash, gitShort)
-	agent.SetBuildCommit(gitShort)
 	dashboard.SetFleetReportBuildInfo(reportedVersion(), gitShort)
 	dashboard.SetGitBranch(gitBranch)
 	// Resolve channel and tracking together from the cached Deployment image.
 	// No authoritative image outside a cluster means tracking stays unknown.
 	dashboard.SetDeploymentImageSource(deps.selfImage)
 
-	b.logger = slog.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	early := deps.stdout
+	if deps.earlyOutput != nil {
+		early = deps.earlyOutput(deps.stdout, deps.getenv)
+	}
+	// Every hive log line carries this start's identifier (#11945), so it
+	// can be tied to its line in the starts log source. slogfeed tees WARN+
+	// records into the self-report tracker so a log line that keeps
+	// repeating is noticed even without a hook site (see
+	// fleetreport.ClassUnclassifiedRepeated).
+	b.startID = startrec.NewID()
+	b.logger = withStartID(slog.New(slogfeed.New(logscrub.NewHandler(slog.NewJSONHandler(early, &slog.HandlerOptions{Level: slog.LevelInfo})))), b.startID)
 	slog.SetDefault(b.logger)
 
 	// Process singleton: refuse to become a second hive process in this
@@ -961,6 +572,12 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		// file closes its descriptor, which would silently drop the flock).
 		b.cleanup.push(releaseLock)
 	}
+
+	// Start record (#11945): only the process that holds the singleton lock
+	// records a start, so a refused duplicate changes nothing. Its close is
+	// pushed now so it runs after every later cleanup, the state persistence
+	// in runLoop included.
+	b.beginStartRecord(deps)
 
 	// Auto-update visibility (#7092): before anything reads the upgrade marker,
 	// reconcile it against the commit we actually booted on. A marker whose
@@ -1046,7 +663,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	}
 
 	// Reconfigure logger with rolling file output
-	b.logger = deps.fileLogger(b.cfg)
+	b.logger = withStartID(deps.fileLogger(b.cfg), b.startID)
 	slog.SetDefault(b.logger)
 
 	// Load or generate a unique Hive ID for this instance
@@ -1157,6 +774,9 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	for _, warning := range config.WriteSurfaceWarnings(b.cfg) {
 		b.logger.Warn("write surface allowlist", "issue", warning)
 	}
+	for _, warning := range config.ReviewHeadsWarnings(b.cfg) {
+		b.logger.Warn("review heads config", "issue", warning)
+	}
 	startupRepoTargetIssue := config.ValidateRepoTargets(b.cfg)
 	if startupRepoTargetIssue != nil {
 		b.logger.Warn("repo target misconfigured — owner action required",
@@ -1180,6 +800,11 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	b.ctx, cancel = context.WithCancel(context.Background())
 	b.cleanup.push(func() { cancel() })
 
+	// Runtime observability (#14681): GOMEMLIMIT from the cgroup limit, the
+	// loopback pprof listener and the 60 s `mem:` line. Before tracing so the
+	// first mem line lands even when an exporter stalls.
+	b.startRuntimeObservability()
+
 	// Initialize OpenTelemetry tracing. Off by default: with no otel block
 	// (or otel.enabled=false) this installs a no-op provider with zero export
 	// overhead. Never fatal — a tracing setup error must not stop hive.
@@ -1201,6 +826,9 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		Commit: gitShort,
 		Image:  deps.selfImage(),
 	})
+	// The forgestate cache stretches its reconcile cadence from the same
+	// rate-limit headers the GitHub transport observes (hivecommons/hive#13380).
+	forgestate.SetDefaultBudgetSource(github.RateLimitBudget)
 	if traceErr != nil {
 		b.logger.Warn("tracing init failed; continuing without tracing", "error", traceErr)
 	} else if otelCfg.Enabled {
@@ -1253,6 +881,8 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 // collaborators exist; tests that drive a single phase call this directly.
 func (b *boot) wireBootClosures() {
 	b.installReviewEvents()
+	b.installWebhookWake()
+	b.installSentinelEvents()
 	b.heartbeatFleetStats = func() (*int, *int, *int, string) {
 		var prsMerged, prsRejected, cvesClosed *int
 		collectedAt := ""
@@ -1304,9 +934,14 @@ func (b *boot) wireBootClosures() {
 			if ac, ok := b.cfg.Agents[name]; (ok && ac.OnDemand) || b.onDemandFromPack[name] {
 				mode = "on_demand"
 			}
+			var laneQueued *int
+			if b.sched != nil {
+				laneQueued = b.sched.ReviewerLaneQueuedWork(name)
+			}
 			if includeBlockingChecks {
-				agents = append(agents, spoke.NewAgentSummary(name, string(proc.State), mode,
-					spoke.AgentActivityFor(b.agentMgr, b.cfg, govState, currentMode, name, proc, b.onDemandFromPack)))
+				full := spoke.AgentActivityFor(b.agentMgr, b.cfg, govState, currentMode, name, proc, b.onDemandFromPack)
+				full.LaneQueuedWork = laneQueued
+				agents = append(agents, spoke.NewAgentSummary(name, string(proc.State), mode, full))
 				continue
 			}
 			act := spoke.AgentActivity{
@@ -1319,6 +954,7 @@ func (b *boot) wireBootClosures() {
 				QuotaExhausted: proc.QuotaExhausted,
 				LastActivityAt: proc.LastPaneChange,
 				KickInterval:   spoke.HeartbeatKickInterval(govState, name, proc, b.onDemandFromPack),
+				LaneQueuedWork: laneQueued,
 				Backend:        proc.Config.Backend,
 				Enabled:        proc.Config.Enabled,
 				CanOpenIssue:   proc.LaunchedMode.CanCreateIssues(),
@@ -1339,6 +975,7 @@ func (b *boot) wireBootClosures() {
 			if proc.BackendOverride != "" {
 				act.Backend = proc.BackendOverride
 			}
+			spoke.ApplyBackendAuth(&act, b.agentMgr, name, proc)
 			if proc.StartedAt != nil {
 				act.StartedAt = *proc.StartedAt
 			}
@@ -1427,8 +1064,9 @@ func (b *boot) wireBootClosures() {
 			auditJournal = boundary.Executor.Journal
 		}
 		return &dashboard.Dependencies{
-			Config:   b.cfg,
-			AgentMgr: b.agentMgr,
+			Config:            b.cfg,
+			AgentMgr:          b.agentMgr,
+			CruxRuntimeHealth: cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
 			// linearagent adapters behind the dashboard's consumer-defined
 			// interfaces — this composition root is the only non-test place that
@@ -1439,6 +1077,8 @@ func (b *boot) wireBootClosures() {
 			LinearStoredViewerID: linearStoredViewerID,
 			MentionWebhook:       b.mentionWebhook,
 			MentionStore:         b.mentionStore,
+			DelegateDecider:      newDelegateDeciderRunner(func() *config.Config { return b.cfg }),
+			ChatGrounder:         newChatGroundingRunner(func() *config.Config { return b.cfg }),
 			DashboardChatSubmit: func(user, role, text string) (uint64, error) {
 				if b.dashChat == nil {
 					return 0, fmt.Errorf("dashboard chat is not configured")
@@ -1451,27 +1091,38 @@ func (b *boot) wireBootClosures() {
 				}
 				return dashboardChatPoll(b.dashChat, since)
 			},
-			Governor:          b.gov,
-			GHClient:          b.ghClient,
-			ReviewEvents:      b.reviewEvents,
-			GHAppAuth:         b.appAuth,
-			GHTokenScopes:     b.ghAuth.TokenScopes,
-			Tokens:            b.tokenCollector,
-			Knowledge:         b.knowledgeAPI,
-			Inception:         b.inceptionEngine,
-			Nous:              b.nousState,
-			Scheduler:         b.sched,
-			KnowledgePrimer:   knowledgePrimerControl{b: b},
-			MetricsCollector:  b.metricsCollector,
-			RotationMgr:       b.rotationMgr,
-			HeadroomPublisher: b.quotaReadingPublisher,
-			QuestionAutoclose: questionAutocloseView{b: b},
+			Governor:                b.gov,
+			GHClient:                b.ghClient,
+			StageEngineStatus:       func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
+			ReviewerAutoscaleStatus: func() autoscale.Status { return reviewerAutoscaler.Status() },
+			ReviewEvents:            b.reviewEvents,
+			WebhookWake:             b.webhookWakeFunc(),
+			SweepNudge:              b.sweepNudgeFunc(),
+			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
+			WebhookDelivery:         b.webhookDeliveryFunc(),
+			EvalLoop:                b.evalLoopStatusFunc(),
+			SentinelPREvent:         b.sentinelPREventFunc(),
+			CIFailureKick:           b.ciFailureKickFunc(),
+			ProjectsV2ItemEvent:     b.projectsV2ItemEventFunc(),
+			GHAppAuth:               b.appAuth,
+			GHTokenScopes:           b.ghAuth.TokenScopes,
+			Tokens:                  b.tokenCollector,
+			Knowledge:               b.knowledgeAPI,
+			Inception:               b.inceptionEngine,
+			Nous:                    b.nousState,
+			Scheduler:               b.sched,
+			KnowledgePrimer:         knowledgePrimerControl{b: b},
+			MetricsCollector:        b.metricsCollector,
+			RotationMgr:             b.rotationMgr,
+			HeadroomPublisher:       b.quotaReadingPublisher,
+			QuestionAutoclose:       questionAutocloseView{b: b},
 			// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 			// the heartbeat reads, so its merge-success signal reuses the existing
 			// 30-minute collect loop instead of issuing a second GitHub fetch.
 			FleetStats:            b.fleetStatsCollector,
 			Activity:              b.activityCollector,
 			RepoCost:              b.repoCostCollector,
+			LaunchCost:            b.launchCostCollector,
 			BeadSynthesizer:       b.beadSynth,
 			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
 			KnowledgePublish:      b.knowledgePublishRuntime(),
@@ -1500,6 +1151,18 @@ func (b *boot) wireBootClosures() {
 			// eval-cycle guard.
 			IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
 				return getClaimLedger(b.logger).Lookup(repo, number)
+			},
+			// hivecommons/hive#14799: the ledger above is one eval cycle old;
+			// ask the forge directly whether an open PR already links the
+			// issue before the contribute lane dispatches it again.
+			OpenPRLinkingIssue: func(repo string, number int, labels []string) (github.OpenPRLink, bool) {
+				client := b.currentGitHubClient()
+				if client == nil {
+					return github.OpenPRLink{}, false
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), openPRLinkGuardTimeout)
+				defer cancel()
+				return client.OpenPRLinkGuard(ctx, repo, number, labels)
 			},
 			// #7871: and write access for the one verified fact a no_work_needed
 			// verdict produces — the PR/commit that already settled the issue.
@@ -1632,8 +1295,19 @@ func (b *boot) wireBootClosures() {
 				// applies them without a restart (#10481).
 				installReviewBots(b.ghClient, b.cfg, b.logger)
 			},
+			ChannelsConfigApplied: func() {
+				// Settings → Channels saved github.mentions / github.actions /
+				// escalation sinks: start or stop the mention poller and
+				// rebuild the escalation dispatcher the way a hive.yaml
+				// reload would, so the edit is live without a restart.
+				if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
+					b.ensureMentionStore()
+				}
+				b.syncMentionRuntime()
+				configureEscalationDispatcher(b.ctx, b.cfg, b.notifier, b.dashSrv.AgentAuditSink(), b.logger)
+			},
 			EnumerateFunc: func() {
-				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, b.logger)
+				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, &b.lastMergeVerdicts, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, evalSourceEnumerate, b.logger)
 			},
 			// The REPOSITORIES "Rescan" button. Unlike EnumerateFunc above — which
 			// runs the WHOLE eval cycle, kicks included — this only refreshes what
@@ -1745,6 +1419,7 @@ func (b *boot) wireBootClosures() {
 			// Run once at startup rather than waiting a full interval. A spoke that
 			// restarts more often than the interval would otherwise never prune.
 			runSessionPrune(b.logger, dir, maxAge)
+			runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 			runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 
 			ticker := time.NewTicker(sessionPruneInterval)
@@ -1755,6 +1430,7 @@ func (b *boot) wireBootClosures() {
 					return
 				case <-ticker.C:
 					runSessionPrune(b.logger, dir, maxAge)
+					runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 					runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 				}
 			}
@@ -1893,6 +1569,16 @@ func (b *boot) bootGovernor() {
 		}
 	}
 
+	// Restore the per-day cost rollup (the years-long tail behind the 30-day
+	// snapshot ring). Missing is ordinary on a hive upgrading into the feature:
+	// the live fold starts filling it from the snapshots.
+	const costDailyRollupPath = "/data/cost-daily-rollup.json"
+	if rollupData, err := os.ReadFile(costDailyRollupPath); err == nil {
+		if err := json.Unmarshal(rollupData, &b.pendingCostRollupSeed); err == nil && len(b.pendingCostRollupSeed) > 0 {
+			b.logger.Info("cost daily rollup loaded", "days", len(b.pendingCostRollupSeed))
+		}
+	}
+
 	// #4298: restore per-budget-window history so past resets survive a restart.
 	// A missing or unparseable file is ordinary on a hive upgrading into this
 	// feature — it simply starts with no history rather than failing to boot.
@@ -1938,11 +1624,13 @@ func (b *boot) newKnowledgePrimer() *knowledge.Primer {
 		MaxFacts:      b.cfg.Knowledge.Primer.MaxFacts,
 		Priority:      b.cfg.Knowledge.Primer.Priority,
 		MergeStrategy: b.cfg.Knowledge.Primer.MergeStrategy,
+		MaxBytes:      b.cfg.Knowledge.Primer.MaxBytes,
 	}
 	p := knowledge.NewPrimer(layers, primerCfg, b.logger)
 	b.logger.Info("knowledge primer enabled",
 		"layers", len(b.cfg.Knowledge.Layers),
 		"max_facts", primerCfg.MaxFacts,
+		"max_bytes", p.MaxBytes(),
 	)
 	return p
 }
@@ -1997,7 +1685,8 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 	stats.SetMode(mode)
 	b.mutationStats = stats
 	stateDir := mutationStateDir()
-	ledger, err := mutation.OpenLedger(filepath.Join(stateDir, "claims.json"), mutation.DefaultMaxWritersPerRepo)
+	ledger, err := mutation.OpenLedgerScoped(filepath.Join(stateDir, "claims.json"),
+		b.cfg.MutationMaxWritersPerTarget(), mutation.TargetWriterScope)
 	if err != nil {
 		b.logger.Error("mutation convergence ledger unavailable; external mutation fencing disabled", "mode", mode, "error", err)
 		return false
@@ -2014,6 +1703,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		Stats:    stats,
 		Mode:     b.cfg.ConvergenceMode,
 	}
+	installMutationSelfReportHooks(boundary)
 	b.mutationBoundary = boundary
 	b.applyGitHubClientMutationBoundary(b.ghClient)
 	b.logger.Info("mutation convergence boundary wired", "mode", mode, "state_dir", stateDir)
@@ -2081,7 +1771,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		b.logger.Warn("failed to seed default policies", "path", b.policyDirPath, "error", err)
 	}
 
-	b.projectCtx = agent.ProjectContext{
+	b.projectCtx = crux.ProjectContext{
 		Org: b.cfg.Project.Org,
 		// Repos stays the full watched set; the functions below narrow it at
 		// read time — RepoPaused to the repos open for work (#6203), AgentRepos
@@ -2096,12 +1786,37 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		ACMMLevel:          b.acmmLevel,
 		PRsAllowed:         b.cfg.Project.PRsAllowed(),
 		PolicyDir:          b.policyDirPath,
+		SharedUIDReadToken: b.cfg.GitHub.SharedUIDReadToken,
 		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),
+		AppBotLogin:        b.cfg.GitHub.BotLogin(),
+		AppBotUserID:       b.appBotUserIDResolver(),
 		TaskMCPURL:         b.taskMCPURLForAgents(),
 		TaskMCPLaunchToken: b.taskMCPLaunchTokenForAgents,
 		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
+		ExperimentEnv:      experimentAgentEnv(b.cfg, os.Getenv),
 	}
 	return true
+}
+
+// experimentAgentEnv resolves the hive-wide experimentation settings an
+// experimenter agent is handed at launch (RFC #11585 part 5): the Nous
+// dispatcher (HIVE_NOUS_DISPATCHER > nous.dispatcher > inline) and the
+// durable Nous root (HIVE_NOUS_DATA_DIR > data.nous_dir > /data/nous). Both
+// use the same precedence as the hive's own readers so the agent and the
+// dashboard never disagree about where a campaign's files live. The resolved
+// dependency fetch allowlist (HIVE_NOUS_FETCH_ALLOWLIST > nous.fetch_allowlist
+// > github.com) rides along so `hive nous-setup` in the agent pane enforces
+// the operator's list (RFC #11585 part 7).
+func experimentAgentEnv(cfg *config.Config, getenv func(string) string) map[string]string {
+	if cfg == nil {
+		return nil
+	}
+	layout := nousstore.Resolve(cfg.Data.NousDir, getenv)
+	return nousengine.HiveEnv(nousengine.Settings{
+		Root:           layout.Root,
+		Dispatcher:     cfg.Nous.ResolveDispatcher(getenv),
+		FetchAllowlist: cfg.Nous.ResolveFetchAllowlist(getenv),
+	})
 }
 
 // taskMCPURLForAgents is the bare task MCP endpoint handed to hub-launched
@@ -2146,6 +1861,21 @@ func resolveSpokeDashboardURL(cfg *config.Config, servedHost func() string) stri
 	return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 }
 
+// chatPublicURL is the dashboard origin chat clients can open, or "" when none
+// is configured: the loopback fallback of resolveSpokeDashboardURL is useless
+// outside the container, so notifications omit their details link instead.
+func (b *boot) chatPublicURL() string {
+	loopback := fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port)
+	var servedHost func() string
+	if b.ctx != nil {
+		servedHost = func() string { return spoke.SpokeServedHost(b.ctx) }
+	}
+	if u := resolveSpokeDashboardURL(b.cfg, servedHost); u != loopback {
+		return u
+	}
+	return ""
+}
+
 // taskMCPLaunchTokenForAgents mints the lease-scoped bearer one launch
 // presents to the task MCP endpoint (#8348). It is signed with the same
 // secret the dashboard verifies remote-contributor lease tokens with, bound
@@ -2178,6 +1908,24 @@ func (b *boot) taskMCPLaunchTokenForAgents(scope taskmcp.LaunchScope) string {
 	return token
 }
 
+// appBotUserIDResolver returns the lazy lookup of the App bot's GitHub USER id
+// that push-capable agents' git noreply email is keyed by. GitHub links
+// `<id>+<login>@users.noreply.github.com` by the bot user id, which differs
+// from the App id, so this goes through GET /users/<slug>[bot] (cached on the
+// client after the first success) rather than config. Nil without a client.
+func (b *boot) appBotUserIDResolver() func() int64 {
+	if b.ghClient == nil {
+		return nil
+	}
+	return func() int64 {
+		ctx := b.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return b.ghClient.AppBotUserID(ctx)
+	}
+}
+
 // bootAgents constructs the agent manager and everything that hangs off it
 // before any agent launches: shutdown archive hook, resolvers, token and
 // credential loops, the agent-facing GitHub request relays, and mint.
@@ -2193,7 +1941,64 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	if b.cfg.GitHub.IsGHE() {
 		b.projectCtx.GHHost = b.cfg.GitHub.HostLabel()
 	}
-	b.agentMgr = agent.NewManager(b.cfg.EnabledAgents(), b.logger, b.projectCtx)
+	for _, name := range b.cfg.Governor.ClearInvalidInferenceLaunchCmds(b.cfg.Agents) {
+		b.logger.Warn("cleared invalid inference launch_cmd; inference and gateway backends launch through claude", "agent", name)
+	}
+	rtCfg := cruxconfig.RuntimeConfigFromEnv()
+	runtimeOptions := []cruxruntime.Option{
+		cruxruntime.WithDefinitions(b.cfg.EnabledAgents()),
+		cruxruntime.WithLogger(b.logger),
+		cruxruntime.WithProject(b.projectCtx),
+	}
+	if sharedAgentPoolEnabled() {
+		hubURL := strings.TrimSpace(os.Getenv("HIVE_HUB_URL"))
+		if hubURL == "" {
+			hubURL = b.cfg.Hub.URL
+		}
+		pool, poolErr := cruxruntime.NewSharedSessionPoolClient(hubURL, b.cfg.HiveID, hub.SpokeHeartbeatKey())
+		if poolErr != nil {
+			b.logger.Error("shared agent pool is enabled but cannot be configured", "error", poolErr)
+			deps.exit(1)
+			return
+		}
+		runtimeOptions = append(runtimeOptions, cruxruntime.WithSharedSessionPool(pool))
+	}
+	b.agentMgr, err = deps.newRuntime(rtCfg, runtimeOptions...)
+	if err != nil {
+		b.logger.Error("crux runtime unavailable", "mode", rtCfg.Mode, "error", err)
+		deps.exit(1)
+		return
+	}
+	if sh, ok := b.agentMgr.(*sidecarHost); ok {
+		sh.setLogger(b.logger)
+	}
+	// A sidecar runtime reaches hive's capabilities (token minting, PR
+	// creation, Linear credentials, scanners, conditions) over the callback
+	// endpoint instead of the Set* calls below; serve it before the runtime
+	// starts dialing. Failing to bind is as fatal as no runtime: the runtime
+	// would otherwise run with every capability reporting unavailable.
+	if rtCfg.Mode == cruxconfig.ModeSidecar {
+		if err := deps.startHiveCallback(b.ctx, b.hiveCallbackCapabilities(), b.logger); err != nil {
+			b.logger.Error("hive callback endpoint unavailable", "error", err)
+			deps.exit(1)
+			return
+		}
+		// Stage 4: spawn/supervise `crux serve` (CRUX_SUPERVISE=child) and
+		// keep the crux_runtime_unavailable condition in step with the
+		// socket. The callback endpoint is up first so a child's first
+		// capability call lands.
+		if b.cruxSupervision = newCruxRuntimeSupervision(rtCfg, b.agentMgr, b.logger); b.cruxSupervision != nil {
+			deps.superviseRuntime(b.ctx, b.cruxSupervision)
+		}
+	}
+	// The runtime's spans go through pkg/tracing so they carry the hive
+	// component attribute and count toward reach (#3973); the runtime itself
+	// only knows the OpenTelemetry API (#13536).
+	b.agentMgr.SetSpanStarter(tracing.StartSpan)
+	// The runtime's self-reported error conditions (stalls, restart storms,
+	// token-mint failures…) feed the fleet-report tracker through the
+	// types.ConditionReporter seam; the runtime does not import pkg/fleetreport.
+	b.agentMgr.SetConditionReporter(fleetreport.DefaultReporter{})
 	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
 	// the in-flight kick's scrollback; archive it to /data first (#4296).
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
@@ -2203,7 +2008,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
 	// produced work (and a question earns an early re-kick).
-	b.agentMgr.SetKickOutcomeObserver(func(agentName string, outcome agent.KickOutcome) {
+	b.agentMgr.SetKickOutcomeObserver(func(agentName string, outcome crux.KickOutcome) {
 		b.gov.RecordKickOutcome(agentName, outcome.Kind, outcome.Reason, outcome.KickAt, outcome.At)
 	})
 
@@ -2234,6 +2039,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// asymmetric revert: an agent switched to a gateway backend came back on
 	// its config backend but with the switched model still applied, producing
 	// launch-dead hybrids like `pi --model gpt-5.6-luna`.
+	b.agentMgr.SetBuildInfo(dashboard.BuildInfo)
 	b.agentMgr.SetGatewayBackendChecker(func(backend string) bool {
 		return b.cfg.Governor.ResolveGateway(backend) != nil &&
 			!strings.EqualFold(backend, "") // empty is the default, not a named backend
@@ -2263,11 +2069,26 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	b.agentMgr.SetAdvisorEnabledResolver(func(agentName string) bool {
 		return b.cfg.AdvisorEnabledFor(agentName)
 	})
+	// Repeat-failure check (#14550): read per launch off the live cfg so
+	// turning it on or off reaches each agent at its next launch.
+	b.agentMgr.SetRepeatFailureEnabledResolver(func() bool {
+		return b.cfg.RepeatFailure.IsEnabled()
+	})
+	b.agentMgr.SetRepeatFailureConfigResolver(func() *config.RepeatFailureConfig {
+		return b.cfg.RepeatFailure
+	})
 	b.agentMgr.SetAdvisorRolesResolver(func() map[string]config.ModelRole {
 		return b.cfg.ModelRoles
 	})
 	b.agentMgr.SetRepoAutoMergeEnabledResolver(func(repo string) bool {
 		return b.cfg.RepoAutoMergeEnabled(repo)
+	})
+	// Kick log source (#11762, #9579): governor.logging.kick_log_source from
+	// Settings → Logging, with HIVE_KICK_LOG_SOURCE still winning. A closure
+	// for the same reason as explain mode above — the next archive or live
+	// full-log read must honour a change made from the dashboard.
+	b.agentMgr.SetKickLogSourceResolver(func() string {
+		return b.cfg.Governor.Logging.ResolveKickLogSource()
 	})
 	// The launch path also needs to know WHICH FILE the key came from, so it can
 	// check that file is readable by the agent UID rather than only by the hive
@@ -2285,7 +2106,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	}
 	if b.appAuth != nil {
 		b.agentMgr.SetAppAuth(b.appAuth)
-		b.agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: b.appAuth})
+		b.agentMgr.SetSandboxPushMinter(appMinter(b.appAuth, ""))
 	}
 	// Start the per-agent token refresh loop UNCONDITIONALLY. It no-ops until
 	// App auth is wired, and on hosted spokes that wiring happens AFTER boot
@@ -2368,15 +2189,17 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// privilege. A denied request is quarantined, never opened.
 	// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
 	// PR must carry the "hold" label so the merge gate holds it for human
-	// approval. Outreach content is public speech on the project's behalf, so
-	// it remains human-reviewed at L6 too. This is decided server-side from the
-	// authenticated agent identity and authoritative hive level
+	// approval. Outreach content aimed at a repository the hive does not
+	// manage is public speech into someone else's project, so it remains
+	// human-reviewed at L6 too; outreach PRs into the agent's own repos are
+	// ordinary hive PRs. This is decided server-side from the authenticated
+	// agent identity, the PR's target repo and the authoritative hive level
 	// (GetACMMLevel), NOT from a client flag — the gh-wrapper.sh tail that used
 	// to add the label was dead code after `exec hive-open-pr`. L1/L2 open no
 	// agent PRs (manual); non-outreach L6 PRs retain their existing automerge
 	// behavior.
-	holdLabel := func(agentName string) bool {
-		return shouldHoldAgentPR(agentName, b.agentMgr.GetACMMLevel())
+	holdLabel := func(agentName, repo string) bool {
+		return shouldHoldAgentPR(agentName, repo, b.agentMgr.GetACMMLevel(), b.cfg.AgentOwnsRepo)
 	}
 	selfAuthorizationHoldEnabled := b.selfAuthorizationHoldEnabled
 
@@ -2387,13 +2210,32 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// anything, and a sockpuppet pair defeats the self-merge ban. Resolved
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
+	// ForgeState (hivecommons/hive#13377): with the cache on, the lanes read
+	// its open-PR set and run on webhook events instead of listing /pulls.
+	forgeOpenPRs := b.forgeStateOpenPRs()
 	autoMergeOpts := automerge.Options{
-		Logger:              b.logger,
-		MergerAuthorizer:    trustedMergerFunc(b.cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
-		SentinelLabel:       func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		Logger:                  b.logger,
+		MergerAuthorizer:        trustedMergerFunc(b.cfg),
+		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
+		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
+		ContributorRegistryTier: contributorRegistryTierFunc(),
+		ReviewVerdictHold:       reviewVerdictHoldFunc(b.logger),
+		RecordReviewHoldRelease: reviewHoldReleaseRecorder(b.logger),
+		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
+		StageEngine:             stageEngineOptions(b.cfg, b.logger),
+		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		SweepTrigger:            b.sweepTrigger,
+		MergeQueueBases:         hiveMergeQueueBases,
 	}
+	if forgeOpenPRs != nil {
+		autoMergeOpts.OpenPRs = forgeOpenPRs
+	}
+	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
+	// here (see lateContributorNudgeSink).
+	autoMergeOpts.ContributorNudge = lateContributorNudgeSink{hub: func() *dashboard.ContributeWSHub { return b.dashSrv.ContributeHub() }}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
 	// automerge_sweep.go): install the operator-declared
@@ -2472,25 +2314,94 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
 	autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
 	autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
+	autoMergeOpts.RepoOnGitHub = func(repo string) bool { return b.cfg.RepoOnGitHub(repo) }
 	// Read through b.cfg on every sweep tick so a config reload of
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
+	autoMergeOpts.BotTakeoverEnabled = func() bool { return b.cfg.AutoMerge.BotTakeover.IsEnabled() }
+	// A dependency-bot PR parked on a terminal required-check hold is handed
+	// to a person by the governor's dependency-bot sweep (#12379).
+	autoMergeOpts.OnTerminalHold = noteDependencyBotTerminalHold
 	// Intent tier gate (#6258): the human lane only queues PRs that
 	// survive writeMergeEligible's intent check, but this sweep lists
 	// the App's PRs on its own, so it carries the same policy (same
 	// config, same bead evidence, same BlocksMerge predicate) and asks
 	// intent.EvaluateForAppSelfMerge before every self-merge.
 	autoMergeOpts.IntentGate = selfMergeIntentGate(b.cfg, b.beadStores)
+	// Review gate (#12592): the same review-verdicts.json the human lane
+	// reads, on the re-verified head immediately before every self-merge.
+	// governor.review_gate.mode (default shadow), review.require_approval
+	// and review.shadow are read through b.cfg on every evaluation. The
+	// audit sink resolves b.dashSrv lazily: bootDashboard has not run yet.
+	autoMergeOpts.ReviewGate = selfMergeReviewGate(b.cfg, b.logger, func(e automerge.ReviewGateEvaluation) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
+		}
+	})
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
+	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
+	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+	// Commit messages on a merge-ready head are read for closing keywords
+	// that name another pull request (hivecommons/hive#15025).
+	autoMergeOpts.ScanCommitClosingKeywords = true
+	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
+		return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseStrictFor(repo)
+	}
+	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
+		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
+	}
+	// Merge train (#15117): read live so a reload applies. A member the
+	// train could not update-branch is handed to the fixer's rebase-resolve
+	// episode (#15104): the request admits the PR to the fixer router —
+	// which still requires a head the hive can push to — under the shared
+	// two-attempt guard, and the lane merges the clean head on its next pass.
+	// The adoption lane opens the same episode on the hive's own copy of
+	// a contributor PR whose head would not replay onto the base
+	// (hivecommons/hive#15307), with RequestedBy naming it.
+	autoMergeOpts.RebaseResolver = automerge.RebaseResolverFunc(func(_ context.Context, req automerge.RebaseRequest) error {
+		requester := mergeTrainRebaseRequester
+		if req.RequestedBy != "" {
+			requester = req.RequestedBy
+		}
+		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, requester, time.Now())
+		return nil
+	})
+	autoMergeOpts.RebaseEpisode = func(repo string, number int) (automerge.RebaseEpisode, bool) {
+		a, ok := rebasemerge.SharedAttempts().Get(repo, number)
+		if !ok {
+			return automerge.RebaseEpisode{}, false
+		}
+		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
+	}
+	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
+		if b.cfg == nil {
+			return automerge.DefaultMergeTrainPolicy
+		}
+		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
+	}
+	// Merge-hotspot advisor intake (hotspot_advisor.go): the train's file
+	// lists and sibling conflicts are the advisor's only evidence.
+	autoMergeOpts.HotspotRecorder = hotspotRecorder{store: hotspotStore()}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
+		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
+		setMergeEligibleLaneGate(laneGate)
 		relaysDone := deps.startRequestRelays(ctx, client, requestRelays{
 			prOpen:    b.agentMgr.AuthorizePROpen,
 			holdLabel: holdLabel,
 			issueOpen: b.agentMgr.AuthorizeIssueOpen,
 			review:    b.agentMgr.AuthorizeReviewRequest,
 			merge:     bindMergeAuthz(b.agentMgr.AuthorizeMerge),
+			// Lane policy on relayed merges: a contributor PR an agent asks
+			// the relay to land is held to the same contributor-lane gates
+			// (tier, soak, min_head_age, review verdict) the sweep applies;
+			// hive-authored PRs keep the relay's existing behaviour.
+			mergePolicy: relayLanePolicyGate(autoMergeOpts),
+			// Per-repo forge (#14113): a repo on GitLab/Gitea merges through
+			// its forge.Merger after the same merge-eligible binding; GitHub
+			// repos keep the path above unchanged.
+			forgeMerge: forgeMergeSelector(func() *config.Config { return b.cfg }, b.logger),
 			// Push relay (#9771): the same forge-resistance + CanPush ACMM
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.
@@ -2603,7 +2514,10 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 		if b.saved.ConfigOverrides != nil {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
+			b.observeWritebackRepos()
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
+			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
@@ -2662,6 +2576,8 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
+	b.dashSrv.SetWritebackGate(b.writebackGate())
+	b.dashSrv.SetHotspotSource(hotspotDashSource{store: hotspotStore()})
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
 			return nil
@@ -2694,6 +2610,16 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.add("close-contribute-hub", func() {
 		b.dashSrv.CloseContributeHub()
 	})
+	// Hand /data/audit.jsonl to the replacement pod (#13046): during the
+	// maxSurge overlap only the lease holder may append to it on NFS, so this
+	// pod's remaining entries go to its spill file for the new holder to merge.
+	b.preShutdownHooks.add("release-audit-writer", func() {
+		b.dashSrv.ReleaseAuditWriter()
+	})
+	// Monthly per-repo complexity/static-analysis snapshot (RFC #12062,
+	// #12363). Report-only: it writes evidence files and never touches merge
+	// eligibility.
+	b.startComplexityRunner(newComplexityRunner(b.cfg, b.currentGitHubClient, b.logger))
 
 	// Wire ioscan input enforcement (opt-in via ioscan.enabled) to the dashboard
 	// audit log so a blocked/redacted issue title surfaces in the existing
@@ -2704,49 +2630,23 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	})
 	// Through the client provider, not a captured b.ghClient (#9621).
 	b.sched.SetRunTriageDeps(b.dashSrv, liveTriageCommenter{client: b.currentGitHubClient})
+	// Prior-art gate search (hivecommons/hive#13575): knowledge, the
+	// Settings index and the forge, through the client provider.
+	priorArtSearcher := newPriorArtSearcher(b.cfg, func() *knowledge.KnowledgeAPI { return b.knowledgeAPI }, func() []rfccoverage.Setting { return b.rfcCoverageState().index(b.logger) }, b.currentGitHubClient, b.priorArtSearchBackend, b.logger)
+	b.priorArtSearcher.Store(priorArtSearcher)
+	b.sched.SetPriorArtSearcher(priorArtSearcher)
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {
-		store := b.beadStores[agentName]
-		if store == nil {
-			store = b.beadStores["scanner"]
-		}
-		if store == nil {
-			store = b.beadStores["supervisor"]
-		}
-		if store == nil {
-			for _, candidate := range b.beadStores {
-				store = candidate
-				break
-			}
-		}
-		if store != nil {
+		if store := b.beadStoreFor(agentName); store != nil {
 			if b, err := store.Create(title, beads.TypeAdvisory, beads.PriorityHigh, agentName, ""); err == nil {
 				_ = store.SetMetadata(b.ID, "ioscan_classifier", detail)
 			}
 		}
 	})
-	if b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.Classifier.Enabled {
-		endpoint, apiKey, model := b.cfg.Governor.ResolveReviewer()
-		if b.cfg.Ioscan.Classifier.Model != "" {
-			model = b.cfg.Ioscan.Classifier.Model
-		}
-		if model == "" {
-			model = ioscan.DefaultClassifierModel
-		}
-		classifier, cerr := ioscan.NewLLMClassifier(ioscan.LLMClassifierConfig{
-			Endpoint: endpoint,
-			APIKey:   apiKey,
-			Model:    model,
-		})
-		if cerr != nil {
-			b.logger.Warn("ioscan classifier enabled but not running", "reason", cerr.Error())
-		} else {
-			b.sched.SetClassifier(ioscan.NewCachedClassifier(classifier, ioscan.DefaultClassifierCacheEntries), ioscan.Thresholds{
-				Warn:  b.cfg.Ioscan.Classifier.WarnThreshold,
-				Block: b.cfg.Ioscan.Classifier.BlockThreshold,
-			})
-			b.logger.Info("ioscan semantic classifier enabled", "model", model)
-		}
+	var ioscanAlerts ioscanClassifierAlerter
+	if b.dashSrv != nil {
+		ioscanAlerts = b.dashSrv
 	}
+	installIoscanClassifier(b.sched, ioscanAlerts, b.cfg, b.logger, time.Now)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {
@@ -2771,6 +2671,25 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// the panel's only memory of merged/blocked outcomes, so a pod roll must
 	// not zero the fleet counters. Enabled before any producer records.
 	deps.enableLifecyclePersistence(b.dashSrv, lifecycleTimelinePath)
+	deps.enableSLAHistoryPersistence(b.dashSrv, slaHistoryPath)
+	// Writes are throttled to one a minute; flush the last dirty buckets on
+	// shutdown so a pod roll never drops the current day's SLA samples.
+	b.preShutdownHooks.add("flush-sla-history", func() {
+		if err := b.dashSrv.SLATracker().History.Flush(); err != nil {
+			b.logger.Warn("sla history flush on shutdown failed", "error", err)
+		}
+	})
+
+	// Intent evaluation counters (#12362): one audit-log line per evaluation
+	// and a durable weekly file beside write-counters.json. Record-only;
+	// nothing reads these back into merge eligibility.
+	intent.SetEvaluationAuditSink(func(o intent.Observation) {
+		b.dashSrv.AuditLogRecord("system", intentEvaluatedAuditAction, intentEvaluatedAuditDetail(o), "", o.Repo, o.Number)
+	})
+	if err := intent.MigrateCounters(intent.LegacyCountersPath, intent.CountersPath, time.Now()); err != nil {
+		b.logger.Warn("intent counters: legacy file not migrated", "error", err)
+	}
+	b.preShutdownHooks.add("flush-intent-counters", intent.StartEvaluationCounterPersistence(intent.CountersPath, b.logger))
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.
@@ -2789,6 +2708,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// here, after lifecycle persistence is enabled, so every producer records
 	// into a persisted store (#9614).
 	b.applyGitHubClientDashboardHooks(b.ghClient)
+	// #12007: fold the last week of merged PRs onto their Fixes issues so a
+	// freshly upgraded spoke does not report already-merged work as stale
+	// in-progress, and start→PR / open→merge have samples on day one.
+	if b.ghClient != nil && b.dashSrv != nil {
+		go backfillRecentMergedPRs(b.ctx, b.ghClient, b.dashSrv, b.cfg.Project.Org, time.Now(), b.logger)
+	}
 
 	if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
 		// Parse failures self-heal inside NewStore; reaching here means the
@@ -2813,6 +2738,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	if len(b.pendingCostSeed) > 0 {
 		b.dashSrv.SeedCostHistory(b.pendingCostSeed)
 		b.logger.Info("cost history restored", "entries", len(b.pendingCostSeed))
+	}
+	if len(b.pendingCostRollupSeed) > 0 {
+		b.dashSrv.SeedCostDailyRollups(b.pendingCostRollupSeed)
+		b.logger.Info("cost daily rollup restored", "days", len(b.pendingCostRollupSeed))
 	}
 
 	if len(b.pendingBudgetWindowSeed) > 0 {
@@ -2943,6 +2872,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
+	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
 	b.cleanup.push(func() { close(tokenStop) })
@@ -2967,13 +2897,14 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.metricsCollector.SetProjectScope(b.cfg.Project.Org, primaryRepo, b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
 	b.metricsCollector.SetCoverageTargetProvider(func() int { return b.cfg.Governor.EffectiveCoverageTarget() })
-	b.metricsCollector.SetPRIssueWindowStartProvider(func() time.Time {
-		history := b.dashSrv.CostHistory()
-		if len(history) == 0 || history[0].Timestamp <= 0 {
-			return time.Time{}
-		}
-		return time.UnixMilli(history[0].Timestamp).UTC()
+	b.metricsCollector.SetReviewEvidenceVerifierProvider(func() (github.ReviewEvidenceVerifier, error) {
+		return github.NewReviewEvidenceVerifier(b.cfg.Evidence.SigningKeyPath())
 	})
+	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
+	// Merged / closed counts move on webhook events and the Search API is
+	// asked only hourly; with forgestate.enabled the Overview's open totals
+	// come from the cache the governor already reads (#13376).
+	wireForgeStateCounts(b.metricsCollector, b.forgeState.Load)
 	deps.startCollector(b.ctx, "metrics", b.metricsCollector)
 
 	// Fleet-stats collector: computes this hive's AI-author contribution counts
@@ -3044,6 +2975,16 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	deps.enablePersistence("repo-cost", b.repoCostCollector, repoCostPersistPath)
 	deps.startCollector(b.ctx, "repo-cost", b.repoCostCollector)
 
+	// Launch attribution (#12128): the kick path records which issue / PR /
+	// head SHA each delivered kick was launched for (tokenCollector.RecordLaunch
+	// in runEvalCycle); this collector joins those records against the same
+	// usage timeline repo-cost uses and caches /api/launch-cost. Read-only —
+	// the governor window budget remains the single enforced budget.
+	b.tokenCollector.SetLaunchLog(tokens.NewLaunchLog(tokens.DefaultLaunchLogPath, b.logger))
+	b.launchCostCollector = collect.NewLaunchCostCollector(b.tokenCollector, b.logger)
+	deps.enablePersistence("launch-cost", b.launchCostCollector, launchCostPersistPath)
+	deps.startCollector(b.ctx, "launch-cost", b.launchCostCollector)
+
 	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
 	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
 	// store loads any prior 7-day history from the /data PVC on first use and the
@@ -3067,6 +3008,13 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		actionable := b.lastActionable.Load()
 		govState := b.gov.GetState()
 		agentStatuses := b.agentMgr.AllStatuses()
+		// The last eval cycle's merge verdicts, so the your-turn decision
+		// reaches the same hand-merge answer on a rebuilt snapshot as on
+		// the cycle's own (#12378); nil before the first cycle.
+		var mergeVerdicts map[string]github.MergeVerdict
+		if v := b.lastMergeVerdicts.Load(); v != nil {
+			mergeVerdicts = *v
+		}
 		payload := dashboard.BuildFrontendStatus(
 			govState,
 			actionable,
@@ -3078,6 +3026,10 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 			b.ghClient,
 			b.ctx,
 			b.metricsCollector,
+			dashboard.WithContributeHub(b.dashSrv.ContributeHub()),
+			b.dashSrv.SupersessionStatusOption(),
+			dashboard.WithMergeVerdicts(mergeVerdicts),
+			dashboard.WithMergeLaneTakesAuthor(mergeLaneTakesAuthorFunc(b.cfg, b.ghClient)),
 		)
 		if d := b.dashSrv.GetAdvisoryDigest(); d != nil {
 			payload.AdvisoryDigest = d
@@ -3089,6 +3041,12 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	if data, err := deps.readLastActionable(); err == nil {
 		var cached github.ActionableResult
 		if err := json.Unmarshal(data, &cached); err == nil {
+			// A restored snapshot is a previous process's read: GitHub may
+			// have moved since. Serve it as last-good with the stale badge
+			// so the Overview never shows pre-restart totals as current
+			// (hivecommons/hive#13373); the first enumeration replaces it.
+			cached.MarkAllStale()
+			cached.RestoredAt = time.Now().UTC()
 			b.lastActionable.Store(&cached)
 			if b.sched != nil {
 				b.sched.SetLastActionable(&cached)
@@ -3115,9 +3073,10 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		// the promoter in production. Passing it through is what makes the
 		// threshold gate real for the scheduled sweep (#5430).
 		b.knowledgeAPI = knowledge.NewKnowledgeAPI(layers, knowledge.KnowledgeConfig{
-			Enabled: b.cfg.Knowledge.Enabled,
-			Engine:  b.cfg.Knowledge.Engine,
-			Curator: curatorConfigFromHive(b.cfg.Knowledge.Curator),
+			Enabled:  b.cfg.Knowledge.Enabled,
+			Engine:   b.cfg.Knowledge.Engine,
+			Curator:  curatorConfigFromHive(b.cfg.Knowledge.Curator),
+			Context7: knowledgeContext7FromHive(b.cfg.Knowledge.Context7),
 		}, b.logger)
 	}
 
@@ -3273,7 +3232,11 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			Org:              b.cfg.Project.Org,
 			Repos:            b.cfg.Project.Repos,
 			RetentionPolicy:  kRetention,
+
+			MaxAPICallsPerCycle: b.cfg.Knowledge.BeadSynthesizer.EffectiveMaxAPICallsPerCycle(),
 		}, b.logger, rawGH)
+
+		b.installBeadSynthPublisher()
 
 		if cleaned, err := b.beadSynth.CleanupVault(); err != nil {
 			b.logger.Warn("vault cleanup failed", "error", err)
@@ -3295,6 +3258,9 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	// Generated repository code maps (#11106); opt-in, connects its vault
 	// before stores are registered with the primer below.
 	b.startCodeMaps()
+
+	// Portfolio search indexer (#14635); a no-op unless search.enabled.
+	b.startSearchIndexer()
 
 	// Register everything connected above with the boot-time primer. With
 	// knowledge.enabled false there is none, and the stores are only primed
@@ -3366,9 +3332,18 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 
 	deps.startWorkspaceCleanup(b.ctx, b.logger, b.dashSrv.GetAudit())
 
-	deps.ensureNousDirs(b.logger)
-	b.nousState = deps.loadNousState(b.logger)
-	b.nousState.SnapshotDir = nousSnapshotDir
+	nousLayout := nousstore.Resolve(b.cfg.Data.NousDir, os.Getenv)
+	deps.ensureNousDirs(nousLayout, b.logger)
+	b.nousState = deps.loadNousState(nousLayout, b.logger)
+	b.nousState.SnapshotDir = nousLayout.SnapshotDir()
+	publishNousDependencyStatus(b.nousState, nousLayout, b.cfg.Nous.ResolvedFetchAllowlist())
+	startNousArtifactSync(b.ctx, b.nousState, b.cfg.Nous.ArtifactRepo.Resolve(os.Getenv), nousLayout.Root, b.ghClient, nousArtifactBudgetGate(b.ghClient), b.dashSrv.AuditLogRecord, nil, b.logger)
+	b.nousState.PersistPanel = nousPanelPersister(nousLayout, time.Now)
+	wireNousGate(b.nousState, nousLayout, b.notifier, b.logger)
+	wireNousVerdict(b.nousState, b.cfg, nousLayout, os.Getenv, b.logger)
+	if deps.startNousGateWatch != nil {
+		deps.startNousGateWatch(b.ctx, b.nousState, b.cfg.Nous.GatePollInterval(), b.logger)
+	}
 
 	b.inceptionEngine = deps.newInceptionEngine(b.knowledgeAPI, b.logger)
 	b.sched.SetInception(b.inceptionEngine)
@@ -3428,6 +3403,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 func (b *boot) bootSupervision() {
 	if b.cfg.Governor.Rotation.Enabled {
 		b.rotationMgr = rotation.NewManager(b.cfg.Governor.Rotation)
+		reviewerAutoscaler.SetHeadroomReporter(b.rotationMgr)
 		// Publish normalized readings to where the contributor quota guard reads
 		// them (kubestellar/hive#6967), off the rotation manager's own probe
 		// loop and the operator's configured provider→backends map.
@@ -3460,24 +3436,49 @@ func (b *boot) bootSupervision() {
 	for _, e := range wdCfgErrs {
 		b.logger.Warn("watchdog config problem", "error", e)
 	}
-	if wdSettings.Enabled() {
-		wdFleet := agent.WatchdogFleet{
-			M: b.agentMgr,
-			// Queue depth for the readiness gate: an agent producing nothing
-			// while nothing is queued is correct, not unhealthy. Read live
-			// from the governor so it reflects the current sweep.
-			Queued: func() (int, bool) {
-				st := b.gov.GetState()
-				return st.QueueIssues + st.QueuePRs, true
-			},
-			// The items behind that count, from the same enumeration the
-			// governor counted, so the not-producing alert can link them.
-			QueuedRefs: func() []watchdog.QueuedRef {
-				return watchdogQueuedRefs(b.lastActionable.Load(), b.cfg.Project.Org, watchdog.MaxQueuedRefs)
-			},
-		}
+	// The fleet view reads the manager's agent table, so it exists only for
+	// the in-process runtime; hostedRuntime guarantees that today, and a
+	// sidecar replaces it with an API family (#14138 stage 3).
+	wdFleet, wdErr := cruxruntime.NewWatchdogFleet(b.agentMgr, cruxruntime.WatchdogHooks{
+		// Queue depth for the readiness gate: an agent producing nothing
+		// while nothing is queued is correct, not unhealthy. Read live
+		// from the governor so it reflects the current sweep.
+		Queued: func() (int, bool) {
+			st := b.gov.GetState()
+			return st.QueueIssues + st.QueuePRs, true
+		},
+		// The items behind that count, from the same enumeration the
+		// governor counted, so the not-producing alert can link them.
+		QueuedRefs: func() []watchdog.QueuedRef {
+			return watchdogQueuedRefs(b.lastActionable.Load(), b.cfg.Project.Org, watchdog.MaxQueuedRefs)
+		},
+		// Agents the governor deliberately does not kick are idle by
+		// design, not "alive but not producing" (#11910).
+		KickSuppressed: func(name string) string {
+			mode := strings.ToLower(string(b.gov.GetState().Mode))
+			ac, ok := b.cfg.Agents[name]
+			onDemand := (ok && ac.OnDemand) || b.onDemandFromPack[name]
+			if b.cfg.OffByCadence(name, mode, onDemand) {
+				return fmt.Sprintf("cadence paused in %s mode", mode)
+			}
+			return b.sched.ReviewerLaneIdleReason(name)
+		},
+		// The no-production window is never shorter than the agent's own
+		// cadence: a daily lane is on schedule for a day (#13817).
+		CadencePeriod: func(name string) (time.Duration, bool) {
+			mode := strings.ToLower(string(b.gov.GetState().Mode))
+			return b.cfg.CadenceValueForMode(name, mode).Period(time.Now())
+		},
+	})
+	switch {
+	case !wdSettings.Enabled():
+		b.logger.Info("agent watchdog disabled by config", "mode", string(wdSettings.Mode))
+	case wdErr != nil:
+		b.logger.Error("agent watchdog disabled: fleet view unavailable", "error", wdErr)
+	default:
 		b.wd = watchdog.New(wdSettings, wdFleet, b.dashSrv, b.logger,
-			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)))
+			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)),
+			watchdog.WithConditionReporter(fleetreport.DefaultReporter{}))
 		if b.saved != nil && len(b.saved.Watchdog) > 0 {
 			b.wd.Restore(b.saved.Watchdog)
 		}
@@ -3495,8 +3496,6 @@ func (b *boot) bootSupervision() {
 		if wdSettings.Mode == watchdog.ModeObserve {
 			b.logger.Info("agent watchdog is in OBSERVE mode: it will classify agents, publish conditions and record what it WOULD have done, but will not restart or pause anything. Set governor.watchdog.mode: heal to enable healing.")
 		}
-	} else {
-		b.logger.Info("agent watchdog disabled by config", "mode", string(wdSettings.Mode))
 	}
 
 	// Linear write credential for ISSUES_ONLY+ agents (GitHub-issue parity):
@@ -3516,14 +3515,14 @@ func (b *boot) bootSupervision() {
 	// through the session environment (a process keeps the environment it was
 	// forked with), so the proxy, not the environment, is what keeps agent
 	// Linear writes authenticated across rotations.
-	b.linearCredentialResolver = func() agent.LinearCredential {
+	b.linearCredentialResolver = func() crux.LinearCredential {
 		if tok := b.dashSrv.LinearAgentAccessToken(); tok != "" {
-			return agent.LinearCredential{AccessToken: tok}
+			return crux.LinearCredential{AccessToken: tok}
 		}
 		if b.cfg.Governor.WorkSource.Type == "linear" {
-			return agent.LinearCredential{APIKey: strings.TrimSpace(b.cfg.Governor.WorkSource.Linear.APIKey)}
+			return crux.LinearCredential{APIKey: strings.TrimSpace(b.cfg.Governor.WorkSource.Linear.APIKey)}
 		}
-		return agent.LinearCredential{}
+		return crux.LinearCredential{}
 	}
 	b.agentMgr.SetLinearCredentialResolver(b.linearCredentialResolver)
 
@@ -3537,7 +3536,7 @@ func (b *boot) bootSupervision() {
 	// re-claimed, and a likely-done issue an agent already verified after the
 	// merge is withheld until the reporter or a maintainer acts.
 	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
-		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org),
+		contributorClaimOverrideLookup(contributorClaimGuard.Load, claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)),
 		verifyOnceLookup(b.ctx, b.cfg.Project.Org, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger),
 		claimEscalationLookup(b.ctx, b.cfg, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger)))
 	// #9584: close answered question issues unless the author objects (default off).
@@ -3573,6 +3572,10 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
+	// The hive's own unblock (blocked sweep, review-backlog block lift)
+	// re-reads the issue into the cached snapshot and the Activity Monitor
+	// the way an inbound label webhook does (hivecommons/hive#14952).
+	github.SetItemRefreshHook(b.dashSrv.RefreshSelfEditedItem)
 	spekCloneAuth := lazySpektacularCloneAuth(func() pushbroker.TokenMinter {
 		if b.appAuth == nil {
 			return nil
@@ -3585,7 +3588,13 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		return rewireSpektacular(b.cfg, b.dashSrv, b.logger, spekCloneAuth)
 	})
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
-	b.dashSrv.InstallClaimHooks(githubClaimHooks(b.ctx, b.cfg, func() *github.Client { return b.ghClient }, b.logger))
+	ghClientFn := func() *github.Client { return b.ghClient }
+	b.dashSrv.InstallClaimHooks(gfiClaimHooks(b.ctx, b.cfg, b.gfiState(), ghClientFn, b.dashSrv, b.logger,
+		githubClaimHooks(b.ctx, b.cfg, ghClientFn, b.logger)))
+	b.dashSrv.SetGoodFirstIssueStats(func() any { return b.gfiState().sweeper.Stats() })
+	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
+	releaseClaimsOnAgentRelaunch(b.agentMgr, b.dashSrv.IssueClaims, b.logger)
+	installContributorClaimGuard(b.cfg, b.dashSrv, b.logger)
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
@@ -3607,6 +3616,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	})
 
 	b.dashSrv.SetGitHubAppRequired(b.githubAppRequired)
+	b.dashSrv.SetUpgradeDrainSource(selfUpgradeDrain.Report)
 	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
 	// classified state is applied only after it, and only when a failure was
 	// actually detected.
@@ -3634,6 +3644,14 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 					b.dashSrv.AuditLog("system", "github_app_check", "result=no GitHub client: "+b.appAuthFailure, "")
 					return false
 				}
+				// #11791: heal a wrong-account installation BEFORE asking the
+				// installation about coverage. After an org transfer the
+				// configured org no longer matches the installation's account,
+				// and the coverage check below — asked of the OLD installation
+				// — answers "repo not covered" and returns, so Re-check could
+				// never adopt the new org's installation without a restart.
+				// Rediscovery is TTL-cached, so this costs nothing on repeat.
+				healGitHubAppInstallation(b.ctx, b.ghClient.AppAuth(), b.cfg, b.logger)
 				// #4360: ask about repo COVERAGE before attempting a read.
 				// A repo the installation does not cover answers 404, which is
 				// indistinguishable from "no such repo" and used to be reported
@@ -3661,10 +3679,6 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				// wrong installation). Verify write capability before letting
 				// the handler clear the banner, so Re-check can't produce a
 				// clears-then-returns flip-flop.
-				// Before reporting a wrong-account installation, try to fix it:
-				// this is the exact case rediscovery exists for. Cached by TTL,
-				// so a repeated re-check does not re-hit the API.
-				healGitHubAppInstallation(b.ctx, b.ghClient.AppAuth(), b.cfg, b.logger)
 				// Shared verdict with the boot and advisory-digest paths. Re-check
 				// previously branched on `diag != ""` while boot branched on the
 				// error string, which is how the two came to disagree about the
@@ -3768,7 +3782,13 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	}
 
 	if brainstormBeads, ok := b.beadStores["brainstorm"]; ok {
-		deps.startInceptionWatcher(b.ctx, dashboard.NewInceptionWatcher(brainstormBeads, b.inceptionEngine, b.sched, b.agentMgr, b.gov, b.logger))
+		watcher := dashboard.NewInceptionWatcher(brainstormBeads, b.inceptionEngine, b.sched, b.agentMgr, b.gov, b.logger)
+		watcher.SetPhaseChangeHook(func() {
+			if b.refreshDashboard != nil {
+				b.refreshDashboard()
+			}
+		})
+		deps.startInceptionWatcher(b.ctx, watcher)
 	}
 }
 
@@ -3860,6 +3880,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = b.cfg.HiveID
+		// The reviewer autoscaler's current lane size survives a reload so
+		// an edit elsewhere in hive.yaml does not snap reviewers back to the
+		// declared count (hivecommons/hive#14685).
+		newCfg.ReviewerAutoscaleActive = b.cfg.ReviewerAutoscaleActive
 
 		// Preserve ACMM level from the agent manager — it is the
 		// authoritative source. The file may have a stale value if
@@ -3900,10 +3924,12 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		// Re-sync subsystems that cache config values
 		b.ghClient.SetRepos(b.cfg.Project.Repos)
+		b.observeWritebackRepos()
 		if b.metricsCollector != nil {
 			b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 		}
 		syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
+		syncStageEngineMode(b.cfg, b.ghClient, b.logger)
 		b.gov.UpdateConfig(b.cfg.Governor)
 		if coinCfg, ok := b.cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
 			b.gov.SetCoinBudget(coinCfg.Budget, coinCfg.LabelOrDefault())
@@ -3950,7 +3976,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			// durable operator inbox the desk uses. nil when the desk is off,
 			// which keeps the dispatcher's "no approval queue wired" error
 			// honest rather than failing on every firing.
-			Approvals: newHookApprovalAdapter(b.approvalInbox, toolapprove.ACMMLevelOf(b.cfg)),
+			Approvals: newHookApprovalAdapter(b.approvalInbox, b.cfg.ACMMLevelOrZero()),
 		}, b.logger)
 		configureEscalationDispatcher(b.ctx, b.cfg, b.notifier, b.dashSrv.AgentAuditSink(), b.logger)
 
@@ -4078,7 +4104,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		Timeline: b.dashSrv.LifecycleTimeline(),
 		Audit:    b.dashSrv.AgentAuditSink(),
 		// #4000 ↔ #4001 seam: see the reload site above.
-		Approvals: newHookApprovalAdapter(b.approvalInbox, toolapprove.ACMMLevelOf(b.cfg)),
+		Approvals: newHookApprovalAdapter(b.approvalInbox, b.cfg.ACMMLevelOrZero()),
 	}, b.logger)
 
 	// Emit the governor_mode_change transition post-commit. Installed once:
@@ -4102,6 +4128,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// layout each agent has its own HOME, so the shared credential path is empty
 	// even for authenticated agents (see pkg/agent/authprobe.go).
 	dashboard.SetAgentAuthProvider(b.agentMgr.AgentAuthAvailable)
+	dashboard.SetAgentRefreshableProvider(b.agentMgr.AgentCredentialRefreshable)
 
 	// PR follow-up resume counters on /metrics (#9583).
 	dashboard.SetPRFollowUpCountersProvider(prFollowUpMetricsCounters)
@@ -4144,6 +4171,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		b.logger.Error("failed to create github proxy", "error", err)
 	} else {
 		b.githubProxy.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
+		// REST accounting and the shared core-bucket snapshot the agent
+		// GitHub budget reads live in pkg/github; the proxy takes them through
+		// a seam (#13536).
+		b.githubProxy.SetGitHubRESTAccounting(githubRESTAccounting{})
 		// Per-repo pause (#6203). This is the deterministic refusal the feature
 		// rests on: whatever an agent believes, a write to a paused repo is
 		// answered with a 403 here. The predicate reads live config, so pausing
@@ -4172,6 +4203,12 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// Durable attempted-vs-blocked write counters (#12069); observation only.
+		if err := proxy.MigrateWriteCounters(proxy.LegacyWriteCountersPath, proxy.WriteCountersPath, time.Now()); err != nil {
+			b.logger.Warn("write counters: legacy file not migrated", "error", err)
+		}
+		stopWriteCounters := b.githubProxy.StartWriteCounterPersistence(proxy.WriteCountersPath)
+		b.preShutdownHooks.add("flush-write-counters", stopWriteCounters)
 		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
 		if b.agentMgr != nil {
 			b.githubProxy.SetAgentGitHubBudgetNudgeFunc(b.agentMgr.SendGitHubAPIBudgetNudge)
@@ -4187,6 +4224,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// and the heartbeat builder reports it to the hub (both as an immediate
 		// advisory-staleness cause and as a dedicated inference-auth alert).
 		dashboard.SetInferenceAuthProvider(b.githubProxy.InferenceAuthError)
+		// #11761: the full per-agent inference error the proxy returned, so the
+		// agent card is not limited to Claude Code's clipped retry line.
+		dashboard.SetInferenceLastErrorProvider(b.githubProxy.LastInferenceError)
 		// #4294: the provider spending-limit signal, read by the eval cycle to
 		// raise an advisory and stop kicking agents at a gateway that is
 		// refusing on a money limit.
@@ -4201,6 +4241,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// instance on the same dir would clobber the first's numbers.
 		inferenceSink := tokens.NewInferenceSink(b.cfg.Data.MetricsDir, b.logger)
 		b.githubProxy.SetTokenSink(inferenceSink)
+		b.setInferenceSink(inferenceSink)
 		// Live Linear credential for agent requests — see
 		// spokeWire.linearCredentialResolver and proxy.injectLinearCredential.
 		b.githubProxy.SetLinearCredentialResolver(b.linearCredentialResolver)
@@ -4273,6 +4314,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						Backend:      backend,
 						Endpoint:     endpoint,
 						Model:        model,
+						DefaultModel: gw.DefaultModel,
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
@@ -4297,6 +4339,11 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						return
 					}
 					model = resolvedModel
+					// The backend's own default (resolved from the same source as
+					// the endpoint) rides along so the proxy can fall back to it
+					// when the per-agent model is one the gateway's team is not
+					// entitled to (hivecommons/hive#9945).
+					_, defaultModel, _ := resolveLiteLLMInferenceRoute(b.cfg, backend, "")
 					// Key source must MATCH the entitlement/probe path (gateways.go,
 					// cost.go, openrouter.go), which resolve the key from the gateway
 					// via ResolveGateway(backend).ResolveAPIKey(). When an EXPLICIT
@@ -4322,11 +4369,12 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						}
 					}
 					deps.setInferenceRoute(b.githubProxy, agentName, &proxy.InferenceRoute{
-						Backend:  backend,
-						Endpoint: endpoint,
-						Model:    model,
-						APIKey:   apiKey,
-						CABundle: caBundle,
+						Backend:      backend,
+						Endpoint:     endpoint,
+						Model:        model,
+						DefaultModel: defaultModel,
+						APIKey:       apiKey,
+						CABundle:     caBundle,
 					})
 					return
 				}
@@ -4359,6 +4407,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						Backend:      backend,
 						Endpoint:     endpoint,
 						Model:        model,
+						DefaultModel: gw.DefaultModel,
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
@@ -4545,6 +4594,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	if deps.startDashChat != nil {
 		bot, err := deps.startDashChat(b.ctx, dashchat.Config{
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    dashboardChatAllowedUsers(b.cfg),
 			PersonaStore:    personaStore("dashboard"),
@@ -4570,6 +4620,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			Token:           b.cfg.Notifications.Discord.BotToken,
 			ChannelID:       b.cfg.Notifications.Discord.ChannelID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Discord.AllowedUsers,
 			PersonaStore:    personaStore("discord"),
@@ -4590,6 +4641,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			BotToken:        b.cfg.Notifications.Slack.BotToken,
 			ChannelID:       b.cfg.Notifications.Slack.ChannelID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Slack.AllowedUsers,
 			PersonaStore:    personaStore("slack"),
@@ -4609,6 +4661,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			BotToken:        b.cfg.Notifications.Telegram.BotToken,
 			ChatID:          b.cfg.Notifications.Telegram.ChatID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Telegram.AllowedUsers,
 			PersonaStore:    personaStore("telegram"),
@@ -4629,6 +4682,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			AccessToken:     b.cfg.Notifications.Matrix.AccessToken,
 			RoomID:          b.cfg.Notifications.Matrix.RoomID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Matrix.AllowedUsers,
 			PersonaStore:    personaStore("matrix"),
@@ -4652,6 +4706,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			ChannelID:       b.cfg.Notifications.MSTeams.ChannelID,
 			WebhookURL:      b.cfg.Notifications.MSTeams.WebhookURL,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.MSTeams.AllowedUsers,
 			PersonaStore:    personaStore("msteams"),
@@ -4703,7 +4758,12 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	// shutdown the ctx-aware stagger returns immediately instead of leaking a
 	// goroutine parked in a bare time.Sleep.
 	enabledAgents := b.cfg.EnabledAgents()
-	startupAgents := startupLaunchNames(enabledAgents, b.onDemandFromPack)
+	startupAgents := []string{}
+	if sharedAgentPoolEnabled() {
+		b.logger.Info("shared agent pool enabled; persistent agents will start on demand")
+	} else {
+		startupAgents = startupLaunchNames(enabledAgents, b.onDemandFromPack)
+	}
 	b.agentMgr.MarkStartupLaunchQueued(startupAgents)
 	deps.spawn("agent-launch", func() {
 		agentIndex := 0
@@ -4747,6 +4807,12 @@ func (b *boot) bootHeartbeat() { b.bootHeartbeatWith(defaultBootHeartbeatDeps())
 // bootHeartbeatWith is bootHeartbeat with its long-lived effects injected;
 // see bootHeartbeatDeps.
 func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
+	// The hub re-pushes its project config every beat, so a refused
+	// misconfiguration is logged at ERROR once and at DEBUG while unchanged.
+	var refusedProjectConfig atomic.Value // string key of the last refused push
+	// Hive-self scheduler (#12397): default off; restores durable reverts
+	// before the first heartbeat can apply a self-experiment flag.
+	startNousSelfScheduler(b.ctx, b.cfg, nousstore.Resolve(b.cfg.Data.NousDir, os.Getenv), b.logger)
 	// Start hub heartbeat push if configured (env var or config)
 	hubTgt := resolveHubTarget(b.cfg.Hub, os.Getenv("HIVE_HUB_URL"), os.Getenv("HIVE_CLUSTER_ID"))
 	b.hubURL = hubTgt.url
@@ -4773,9 +4839,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			if !b.cfg.Hub.Enabled {
 				return nil
 			}
-			govState := b.gov.GetState()
+			// Every sub-collector below is a named TimedSection so that when the
+			// collect exceeds its budget the spoke logs WHICH one ate it (see
+			// collectWithTimeout). Keep new collectors wrapped the same way.
+			govState := spoke.TimedSection("governor_state", b.gov.GetState)
 			currentMode := strings.ToLower(string(govState.Mode))
-			agents := b.heartbeatAgents(govState, currentMode, true)
+			agents := spoke.TimedSection("agents", func() []spoke.AgentSummary { return b.heartbeatAgents(govState, currentMode, true) })
 			acmmLvl := b.heartbeatACMMLevel()
 			prsMerged, prsRejected, cvesClosed, fleetStatsCollectedAt := b.heartbeatFleetStats()
 			repoActivity, repoActivityCollectedAt, repoActivityWindowHours, repoActivityCountWindowHours := b.heartbeatRepoActivity()
@@ -4783,7 +4852,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			// user-journey stage detection. Always a non-nil pointer from a
 			// spoke new enough to compute it, so the hub can distinguish
 			// "genuinely zero agents configured" from "old spoke, unknown".
-			agentsWithModel := b.agentMgr.CountAgentsWithModel()
+			agentsWithModel := spoke.TimedSection("agents_with_model", b.agentMgr.CountAgentsWithModel)
 
 			// --- Quadrant signals ------------------------------------------
 			// All read from state this spoke already maintains on an existing
@@ -4817,20 +4886,24 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			// statuses: it feeds only FrontendPlanning.ArchitectPaused, which
 			// this heartbeat does not send, and the resolver is unexported to
 			// pkg/dashboard. Passing false cannot perturb AwaitingReview.
-			var awaitingReview *int
-			if planning := dashboard.BuildPlanning(b.beadStores, false, acmmLvl); planning.Available {
-				n := planning.AwaitingReview
-				awaitingReview = &n
-			}
+			awaitingReview := spoke.TimedSection("planning", func() *int {
+				if planning := dashboard.BuildPlanning(b.beadStores, false, acmmLvl); planning.Available {
+					n := planning.AwaitingReview
+					return &n
+				}
+				return nil
+			})
 
 			// Contributor-relay tasks over the trailing 7d, summed from the
 			// spoke's own 168 hourly buckets. nil until the store exists; a
 			// zero from an existing store is a real "no contributor finished
 			// anything" reading.
-			var tasksCompleted7d *int
-			if n, ok := b.dashSrv.TasksCompleted7d(); ok {
-				tasksCompleted7d = &n
-			}
+			tasksCompleted7d := spoke.TimedSection("tasks_completed_7d", func() *int {
+				if n, ok := b.dashSrv.TasksCompleted7d(); ok {
+					return &n
+				}
+				return nil
+			})
 
 			providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := spoke.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 			lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
@@ -4848,9 +4921,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			// token collector's first bob-recording scan completes ("not
 			// measured", hub carries forward); the other two are always live
 			// measurements and send [] to clear a stale carry-forward.
-			agentErrorStreaks := b.tokenCollector.AgentErrorStreaks()
-			consentWedged := b.agentMgr.ConsentWedgedAgents()
-			noCadenceAgents := b.gov.NoCadenceAgents()
+			agentErrorStreaks := spoke.TimedSection("agent_error_streaks", b.tokenCollector.AgentErrorStreaks)
+			consentWedged := spoke.TimedSection("consent_wedged", b.agentMgr.ConsentWedgedAgents)
+			noCadenceAgents := spoke.TimedSection("no_cadence_agents", b.gov.NoCadenceAgents)
 
 			return &spoke.HeartbeatPayload{
 				AgentsWithModel:      &agentsWithModel,
@@ -4871,7 +4944,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// record only when it sees the gateway named here, so a lost
 				// delivery is re-offered rather than dropped. Names only — the
 				// key never leaves the spoke.
-				GatewayNames: b.dashSrv.ConfiguredGatewayNames(),
+				GatewayNames: spoke.TimedSection("gateway_names", b.dashSrv.ConfiguredGatewayNames),
 				// Hash only, never the raw token: lets the hub verify this
 				// spoke's upgrade-proof credential without reading the
 				// hive-secrets secret from a cluster it may not reach
@@ -4891,7 +4964,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// self-DoSed spokes with nothing surfacing it. Report the count
 				// and its rlimit every beat so the next leak is a climbing
 				// number on the hub, not a manual /proc excavation.
-				OpenFDs:     spoke.OpenFDCount(),
+				OpenFDs:     spoke.TimedSection("open_fds", spoke.OpenFDCount),
 				FDSoftLimit: spoke.FDSoftLimit(),
 				// Reporter names THIS process (the pod) so the hub can tell two
 				// instances reporting as one hive apart — the pod name is the
@@ -4940,22 +5013,26 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				ProviderLimitRebuffs:    providerLimitRebuffs,
 				ProviderLimitHiveWide:   providerLimitHiveWide,
 				ProviderLimitAgents:     providerLimitAgents,
+				Providers:               spoke.TimedSection("providers", func() []crux.ProviderStatus { return heartbeatProviders(b.cfg, agents) }),
 				LastWriteCapableKickAt:  lastWriteKickAt,
 				LastKickDisposition:     kickDisposition,
 				LastKickSkipReason:      kickSkipReason,
 				NotWritableQueued:       notWritableQueued,
-				RepoTargetMisconfigured: b.repoTargetMisconfigured(),
-				RepoTargetIssue:         b.repoTargetIssueMessage(),
+				RepoTargetMisconfigured: spoke.TimedSection("repo_target_misconfigured", b.repoTargetMisconfigured),
+				RepoTargetIssue:         spoke.TimedSection("repo_target_issue", b.repoTargetIssueMessage),
 				Repos:                   b.cfg.Project.Repos,
 				PrimaryRepo:             b.cfg.Project.PrimaryRepo,
 				ACMMLevel:               acmmLvl,
 				Agents:                  agents,
-				Governor: spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, WorkSource: func() string {
-					if t := b.cfg.Governor.WorkSource.Type; t != "" && t != "github" {
-						return t
-					}
-					return ""
-				}()},
+				Governor: func() spoke.GovernorSummary {
+					openIssues, openPRs := b.gov.LatestRepoTotals()
+					return spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs, WorkSource: func() string {
+						if t := b.cfg.Governor.WorkSource.Type; t != "" && t != "github" {
+							return t
+						}
+						return ""
+					}()}
+				}(),
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -4977,27 +5054,27 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					reg, active := b.dashSrv.ContributorSummary()
 					return spoke.ContributorSummary{Registered: reg, Active: active}
 				}(),
-				Runs:        b.dashSrv.HeartbeatRunsSummary(),
-				Leaderboard: b.leaderboardForHeartbeat(),
+				Runs:        spoke.TimedSection("runs", b.dashSrv.HeartbeatRunsSummary),
+				Leaderboard: spoke.TimedSection("leaderboard", b.leaderboardForHeartbeat),
 				// Report who has a live dashboard session so the hub can accumulate
 				// per-user "time in hive". Bare usernames only — never session
 				// ids/tokens (ActiveSessionUsernames guarantees this).
-				ActiveSessionUsers: b.dashSrv.ActiveSessionUsernames(),
+				ActiveSessionUsers: spoke.TimedSection("active_session_users", b.dashSrv.ActiveSessionUsernames),
 				// The honest subset of the above: users whose browser reported
 				// focused, recent-input presence (see dashboard/presence.go).
 				// An idle open tab appears in ActiveSessionUsers but not here.
-				EngagedSessionUsers: b.dashSrv.EngagedSessionUsernames(),
+				EngagedSessionUsers: spoke.TimedSection("engaged_session_users", b.dashSrv.EngagedSessionUsernames),
 				// Per-user last audit-logged real action, so the hub can tell
 				// users who DO things from users who merely stay logged in.
-				UserLastActions: b.dashSrv.UserLastActions(),
-				Owner:           b.ownerForHeartbeat(),
+				UserLastActions: spoke.TimedSection("user_last_actions", b.dashSrv.UserLastActions),
+				Owner:           spoke.TimedSection("owner", b.ownerForHeartbeat),
 				// Report the API URL we are actually running against so the hub
 				// can see whether a GitHub Enterprise API URL it delivered has
 				// landed. Resolved (never empty) so the hub can distinguish
 				// "public github.com" from "spoke too old to report this".
 				GitHubAPIURL: b.cfg.GitHub.ResolvedAPIURL(),
-				Health:       b.dashSrv.HealthSummary(),
-				DashboardURL: b.dashboardURLForHeartbeat(),
+				Health:       spoke.TimedSection("health", b.dashSrv.HealthSummary),
+				DashboardURL: spoke.TimedSection("dashboard_url", b.dashboardURLForHeartbeat),
 				SnapshotURL:  b.cfg.Hub.SnapshotURL,
 				HiveType:     b.cfg.Hub.HiveType,
 				ClusterID:    b.cfg.Hub.ClusterID,
@@ -5010,7 +5087,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// is the only way to distinguish a hive pinned to an immutable
 				// SHA tag (which can never receive a rolling upgrade) from one
 				// riding <branch>-latest. Empty off-cluster — never guessed.
-				ImageRef: spoke.SelfDeploymentImage(),
+				ImageRef: spoke.TimedSection("image_ref", spoke.SelfDeploymentImage),
 				// The GitHub instance this spoke actually runs against. Only
 				// the spoke knows this for certain: a hive's GitHub can differ
 				// from its cluster's default, so the hub cannot infer it.
@@ -5029,12 +5106,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				GitHubAppHTTPStatus:      ghAppHTTPStatus,
 				PendingGitHubAppInstall:  b.dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:              b.cfg.Hub.AutoUpgrade,
-				ClusterHealth: func() *spoke.HeartbeatClusterHealthReport {
-					if os.Getenv("HIVE_CLUSTER_ID") == "" {
+				UpgradeDrainUntil:        upgradeDrainUntilForHeartbeat(selfUpgradeDrainNow()),
+				UpgradeDrain:             selfUpgradeDrain.Report(selfUpgradeDrainNow()),
+				ClusterHealth: spoke.TimedSection("cluster_health", func() *spoke.HeartbeatClusterHealthReport {
+					if !shouldCollectHeartbeatClusterHealth(b.cfg.Hub.ClusterID) {
 						return nil
 					}
 					return spoke.CollectClusterHealth(b.logger)
-				}(),
+				}),
 				PRsMerged90d:                 prsMerged,
 				PRsRejected90d:               prsRejected,
 				CVEsClosed:                   cvesClosed,
@@ -5047,8 +5126,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// this against its per-cluster key and pushes a correction only
 				// on a mismatch, so a spoke already holding the right key costs
 				// nothing and a spoke holding the wrong one self-heals.
-				GitHubAppKeyFingerprint: appKeys.ReportedFingerprint(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID),
-				GitHubAppKeyPerHive:     appKeys.HasPerHiveKey(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID),
+				GitHubAppKeyFingerprint: spoke.TimedSection("app_key_fingerprint", func() string { return appKeys.ReportedFingerprint(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID) }),
+				GitHubAppKeyPerHive:     spoke.TimedSection("app_key_per_hive", func() bool { return appKeys.HasPerHiveKey(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID) }),
 				// Report the App this hive believes it authenticates as. The hub
 				// pairs it with the fingerprint above to tell a per-hive key that
 				// is WRONG for this App from one that is deliberately for another.
@@ -5064,17 +5143,20 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Report the fingerprint of every ADDITIONAL per-app-id key already
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
-				GitHubAppKeysHeld: appKeys.HeldFingerprints(),
+				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", appKeys.HeldFingerprints),
 				// Component reach counters (#3993, phase 2a of #3973): per
 				// (component, running commit) span counts aggregated in-process,
 				// exporter or not (D2) — the heartbeat is the only channel that
 				// reaches every spoke, pull-only ones included (D1). nil until
 				// the first span, which the hub reads as "no data", never as
 				// zero reach. Capped at tracing.MaxReachComponents entries.
-				ComponentReach: tracing.ReachSnapshot(),
+				ComponentReach: spoke.TimedSection("component_reach", tracing.ReachSnapshot),
 				// Compliance profile + latest posture pass/fail (#11083); an
 				// empty block when compliance is not configured.
-				Compliance: b.dashSrv.ComplianceHeartbeat(),
+				Compliance: spoke.TimedSection("compliance", b.dashSrv.ComplianceHeartbeat),
+				// 90-day evidence-pipeline summary + self-authored auto-merge
+				// posture (#12114); nil when bundles are unreadable.
+				Evidence: spoke.TimedSection("evidence", b.dashSrv.EvidenceHeartbeat),
 			}
 
 		}, heartbeatSendInterval, b.logger,
@@ -5199,6 +5281,70 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					return
 				}
 
+				// Drain in-flight kicks before exiting (#11876): on a fast release
+				// channel the restart cadence is shorter than a long-lane turn, so
+				// exiting immediately cut most of those turns. While any kicked
+				// turn is still running, defer (the hub re-sends UpgradeTo every
+				// heartbeat) and withhold new kicks; proceed once the turns end or
+				// hub.upgrade_drain_timeout_s elapses.
+				if b.agentMgr != nil {
+					statuses := b.agentMgr.AllStatuses()
+					inFlight, wedged := agentKicksInFlight(statuses, b.startTime, selfUpgradeDrainNow(), func(name string) time.Duration {
+						if ac, ok := b.cfg.Agents[name]; ok {
+							return ac.EffectiveContinuousTurnCeiling()
+						}
+						return 0
+					})
+					for _, w := range selfUpgradeWedgedKicks.fresh(wedged) {
+						b.logger.Warn("self-upgrade drain: ignoring wedged agent kick that never reported a turn end",
+							"agent", w.Agent,
+							"kick_at", w.KickAt.UTC().Format(time.RFC3339),
+							"age", w.Age.Round(time.Second),
+							"ceiling", w.Ceiling,
+						)
+					}
+					ignoredWedged := wedgedKickAgents(wedged)
+					drainTimeout := b.cfg.Hub.EffectiveUpgradeDrainTimeout()
+					if spoke.UpgradeInterruptRequested() && drainTimeout > 0 && len(inFlight) > 0 {
+						// The owner chose "Upgrade now (interrupt turns)" on the
+						// hub: cut the drain rather than wait for these turns.
+						b.logger.Warn("self-upgrade: interrupting in-flight agent turns on the owner's request",
+							"target", targetSHA, "in_flight", inFlight)
+						drainTimeout = 0
+					}
+					dec := selfUpgradeDrain.decide(targetSHA, inFlight, drainTimeout, selfUpgradeDrainNow())
+					selfUpgradeDrain.setKickTimes(agentKickTimes(statuses, inFlight))
+					switch {
+					case !dec.Proceed:
+						b.logger.Info("self-upgrade deferred: draining in-flight agent kicks",
+							"target", targetSHA,
+							"current", gitShort,
+							"in_flight", dec.InFlight,
+							"waited", dec.Waited.Round(time.Second),
+							"max_wait_remaining", dec.Remaining.Round(time.Second),
+							"drain_timeout", drainTimeout,
+							"ignored_wedged", ignoredWedged,
+						)
+						return
+					case dec.TimedOut:
+						b.logger.Warn("self-upgrade drain timed out: proceeding and cutting in-flight kicks",
+							"target", targetSHA,
+							"current", gitShort,
+							"cut_kicks", dec.InFlight,
+							"waited", dec.Waited.Round(time.Second),
+							"drain_timeout", drainTimeout,
+							"ignored_wedged", ignoredWedged,
+						)
+					case dec.Waited > 0 || len(ignoredWedged) > 0:
+						b.logger.Info("self-upgrade drain complete: no agent kicks in flight",
+							"target", targetSHA,
+							"current", gitShort,
+							"waited", dec.Waited.Round(time.Second),
+							"ignored_wedged", ignoredWedged,
+						)
+					}
+				}
+
 				// Record the attempt BEFORE acting: if the process dies mid-upgrade the
 				// next boot must still see an incremented count, otherwise a crash loop
 				// would retry without ever exhausting the budget.
@@ -5266,6 +5412,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						ProviderLimitRebuffs:    providerLimitRebuffs,
 						ProviderLimitHiveWide:   providerLimitHiveWide,
 						ProviderLimitAgents:     providerLimitAgents,
+						Providers:               heartbeatProviders(b.cfg, agents),
 						LastWriteCapableKickAt:  lastWriteKickAt,
 						LastKickDisposition:     kickDisposition,
 						LastKickSkipReason:      kickSkipReason,
@@ -5289,9 +5436,30 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// UpgradeSelfToSHA patches the image instead when we are pinned.
 				needsRestart, err := spoke.UpgradeSelfToSHA(b.logger, targetSHA)
 				if err != nil {
+					// The patch did not go through. When the Deployment tracks a
+					// floating tag that the kubelet re-pulls on container start,
+					// a plain process exit still lands the upgrade — so skip the
+					// RolloutRestartSelf PATCH (same API, same admission webhook,
+					// same failure, another timeout wait) and exit NOW, reporting
+					// pending-restart rather than failed. On vllm-d a Kyverno
+					// webhook timed out every Deployment patch; the upgrade
+					// landed on each restart yet the hub showed "failed 3
+					// attempts" with a floating-tag hint (#14385).
+					fb := spoke.RestartFallbackForPatchFailure(b.logger, err)
+					recordUpgradeError(upgradeMarkerPath, fmt.Errorf("%s: %w", fb.Hint, err), b.logger)
+					if fb.RestartLands {
+						b.logger.Warn("self-upgrade: Deployment patch failed, exiting so the kubelet re-pulls the floating tag",
+							"target", targetSHA,
+							"current", gitShort,
+							"kind", string(fb.Kind),
+							"hint", fb.Hint,
+							"error", err,
+						)
+						spoke.ReportUpgradePendingRestart(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, fb.Hint, b.logger)
+						os.Exit(selfUpgradePendingRestartExitCode)
+					}
 					b.logger.Warn("pinned-image upgrade failed, falling back to rolling restart",
-						"target", targetSHA, "error", err)
-					recordUpgradeError(upgradeMarkerPath, err, b.logger)
+						"target", targetSHA, "kind", string(fb.Kind), "hint", fb.Hint, "error", err)
 					needsRestart = true
 				}
 				if needsRestart {
@@ -5302,14 +5470,21 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						// the spoke lacks patch on its own Deployment) must be both
 						// persisted for the next attempt and reported to the hub so
 						// the UI stops showing a permanent "Upgrading".
+						hint := spoke.PatchFailureHint(spoke.ClassifyPatchFailure(err))
 						b.logger.Error("self-upgrade FAILED: could not patch own Deployment, restarting onto the same image",
 							"target", targetSHA,
 							"current", gitShort,
 							"error", err,
-							"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)",
+							"hint", hint,
 						)
 						recordUpgradeError(upgradeMarkerPath, err, b.logger)
-						spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, err.Error(), b.logger)
+						spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, hint+": "+err.Error(), b.logger)
+						// os.Exit skips the cleanup stack: record this end
+						// now so the next start reads self-upgrade-failed
+						// (#11945).
+						if err := b.startRecord.Close(startrec.VerdictSelfUpgradeFailed); err != nil {
+							b.logger.Warn("start record not closed before the self-upgrade failure exit", "error", err)
+						}
 						// Exit NON-ZERO. Exiting 0 on a failed upgrade told Kubernetes
 						// the process had completed successfully, so the restart looked
 						// routine and nothing — not the pod's exit code, not an event,
@@ -5390,26 +5565,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					// Fingerprint before and after so the key rotation is auditable
 					// from the spoke's own logs. Fingerprints only — the key itself
 					// is never logged.
-					beforeFP, _ := config.AppKeyFingerprintFromFile(keyPath)
-					if err := os.WriteFile(keyPath, []byte(ghCfg.PrivateKey), appKeys.FileMode); err != nil {
-						b.logger.Error("failed to write github app key from heartbeat", "error", err)
+					changed, err := applyDeliveredPrimaryKey(b.logger, keyPath, ghCfg.PrivateKey)
+					if err != nil {
+						b.logger.Error("failed to write github app key from heartbeat", "path", keyPath, "error", err)
 						return
 					}
-					// os.WriteFile does NOT re-apply the mode to a file that already
-					// exists, so a key written by an older build (or restored from a
-					// looser-moded source) would keep its old permissions forever.
-					// Chmod unconditionally so every path converges on 0600.
-					if err := os.Chmod(keyPath, appKeys.FileMode); err != nil {
-						b.logger.Warn("could not tighten github app key permissions", "path", keyPath, "error", err)
-					}
-					afterFP, _ := config.AppKeyFingerprintFromFile(keyPath)
-					keyChanged = afterFP != "" && afterFP != beforeFP
-					b.logger.Info("github app private key written via heartbeat",
-						"path", keyPath,
-						"from_fingerprint", beforeFP,
-						"to_fingerprint", afterFP,
-						"key_changed", keyChanged,
-					)
+					keyChanged = changed
 					if keyChanged {
 						// Invalidate before the new client is built, so nothing can
 						// read the dead token out of the shared on-disk cache in
@@ -5646,6 +5807,24 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 				b.logger.Info("audit: agent restart counter reset from hub", "agent", name)
 			}),
+			// Whole-hive pause/resume requested from the hub's per-hive menu
+			// (#15092). Same fleet-breaker calls as the dashboard's
+			// /api/breaker/{engage,release}; the run loop's regular persist
+			// makes the result durable.
+			spoke.BreakerCallback(func(action string) {
+				switch action {
+				case spoke.BreakerEngage:
+					paused := b.agentMgr.EngageBreaker()
+					b.dashSrv.AuditLog("hub", "breaker-engage", "count="+strconv.Itoa(len(paused))+", agents="+strings.Join(paused, ","), "")
+					b.logger.Info("audit: fleet breaker engaged from hub", "agents", paused)
+				case spoke.BreakerRelease:
+					resumed := b.agentMgr.ReleaseBreaker(b.ctx)
+					b.dashSrv.AuditLog("hub", "breaker-release", "count="+strconv.Itoa(len(resumed))+", agents="+strings.Join(resumed, ","), "")
+					b.logger.Info("audit: fleet breaker released from hub", "agents", resumed)
+				default:
+					b.logger.Warn("unknown breaker instruction from hub; ignoring", "action", action)
+				}
+			}),
 			spoke.AuthorizedUsersCallback(func(users []string, names map[string]string) {
 				// The hub delivered its authoritative access list. Reconcile our
 				// login allowlist so Manage Access grants take effect on this
@@ -5702,7 +5881,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					return
 				}
 				if issue := config.ValidateProjectRepoTargets(pc.Org, pc.Repos, pc.PrimaryRepo, b.cfg.GitHub.HostLabel()); issue != nil {
-					b.logger.Error("REFUSING hub project config: repo target is misconfigured — project left unchanged",
+					key := fmt.Sprintf("%q|%q|%q|%s", pc.Org, pc.Repos, pc.PrimaryRepo, issue.Message)
+					logRefusal := b.logger.Error
+					if prev, _ := refusedProjectConfig.Swap(key).(string); prev == key {
+						logRefusal = b.logger.Debug
+					}
+					logRefusal("REFUSING hub project config: repo target is misconfigured — project left unchanged",
 						"error", issue.Message,
 						"pushed_org", pc.Org,
 						"pushed_repos", pc.Repos,
@@ -5710,6 +5894,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					)
 					return
 				}
+				refusedProjectConfig.Store("")
 				curACMM := 0
 				if b.cfg.ACMMLevel != nil {
 					curACMM = *b.cfg.ACMMLevel
@@ -5800,10 +5985,13 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// way, so re-install it too — a hub-delivered filter must take
 				// effect on the next enumeration, not the next restart.
 				b.ghClient.SetRepos(b.cfg.Project.Repos)
+				b.observeWritebackRepos()
 				if b.metricsCollector != nil {
 					b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
+				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+				b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
@@ -5833,6 +6021,21 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 
 			}),
+			spoke.ClusterIDCallback(func(clusterID string) {
+				// The hub knows which cluster this hive runs on and sends it while
+				// we report none — spokes provisioned before hub.cluster_id was
+				// rendered (#11432) on pull_only clusters the hub cannot re-render.
+				// Adopting it gates cluster_health on from the next beat; persist
+				// so it survives restarts.
+				if !adoptHubDeliveredClusterID(&b.cfg.Hub, clusterID) {
+					return
+				}
+				b.logger.Info("adopted cluster_id from hub heartbeat; cluster_health will be reported from the next beat",
+					"cluster_id", b.cfg.Hub.ClusterID)
+				if err := b.cfg.Save(); err != nil {
+					b.logger.Error("failed to save hub-delivered cluster_id", "error", err)
+				}
+			}),
 			spoke.FreshStatusCollector(func() *spoke.HeartbeatPayload {
 				if !b.cfg.Hub.Enabled {
 					return nil
@@ -5844,6 +6047,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := spoke.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 				lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 					outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
+				openIssues, openPRs := b.gov.LatestRepoTotals()
 				return &spoke.HeartbeatPayload{
 					HiveID:                  b.cfg.HiveID,
 					Org:                     b.cfg.Project.Org,
@@ -5851,12 +6055,13 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					PrimaryRepo:             b.cfg.Project.PrimaryRepo,
 					ACMMLevel:               acmmLvl,
 					Agents:                  agents,
-					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs},
 					Health:                  freshHeartbeatHealthSummary(agents),
 					ProviderLimitReason:     providerLimitReason,
 					ProviderLimitRebuffs:    providerLimitRebuffs,
 					ProviderLimitHiveWide:   providerLimitHiveWide,
 					ProviderLimitAgents:     providerLimitAgents,
+					Providers:               heartbeatProviders(b.cfg, agents),
 					LastWriteCapableKickAt:  lastWriteKickAt,
 					LastKickDisposition:     kickDisposition,
 					LastKickSkipReason:      kickSkipReason,
@@ -5937,6 +6142,7 @@ func (b *boot) bootLanes() {
 					OnDivergence: b.cfg.Governor.Trajectory.OnDivergence,
 					ExemptAgents: b.cfg.Governor.Trajectory.ExemptAgents,
 				}, b.logger)
+			dashboard.SetTrajectoryCountersProvider(trajectoryMetricsCounters(b.trajLane))
 			b.logger.Info("trajectory-review lane enabled",
 				"model", reviewModel,
 				"interval_s", b.cfg.Governor.Trajectory.IntervalS,
@@ -5983,18 +6189,20 @@ func (b *boot) bootLanes() {
 	if b.cfg.Retro.Enabled {
 		retroStore := b.beadStores[retro.Actor]
 		escalationStoreOnce.Do(func() {
-			escalationStore = escalation.Load(escalationLedgerPath)
+			escalationStore = escalation.Load(escalation.DefaultLedgerPath)
 		})
 		b.retroLane = retro.NewLane(b.beadStores, retroStore, b.dashSrv.LifecycleTimeline(), escalationStore, retro.Config{
-			Enabled:             b.cfg.Retro.Enabled,
-			ScanIntervalS:       b.cfg.Retro.ScanIntervalS,
-			MaxFixAttempts:      b.cfg.Retro.MaxFixAttempts,
-			MaxKicks:            b.cfg.Retro.MaxKicks,
-			LongStallDays:       b.cfg.Retro.LongStallDays,
-			RecentClosedWindowS: b.cfg.Retro.RecentClosedWindowS,
-			AnalysisModel:       b.cfg.Retro.AnalysisModel,
-			AnalysisEndpoint:    b.cfg.Governor.LiteLLM.ResolveEndpoint(),
-			AnalysisAPIKey:      b.cfg.Governor.LiteLLM.ResolveAPIKey(),
+			Enabled:              b.cfg.Retro.Enabled,
+			ScanIntervalS:        b.cfg.Retro.ScanIntervalS,
+			MaxFixAttempts:       b.cfg.Retro.MaxFixAttempts,
+			MaxKicks:             b.cfg.Retro.MaxKicks,
+			LongStallDays:        b.cfg.Retro.LongStallDays,
+			RecentClosedWindowS:  b.cfg.Retro.RecentClosedWindowS,
+			AnalysisModel:        b.cfg.Retro.AnalysisModel,
+			AnalysisEndpoint:     b.cfg.Governor.LiteLLM.ResolveEndpoint(),
+			AnalysisAPIKey:       b.cfg.Governor.LiteLLM.ResolveAPIKey(),
+			LessonConfidenceStep: b.cfg.Retro.LessonConfidenceStep,
+			LessonConfidenceCap:  b.cfg.Retro.LessonConfidenceCap,
 		}, b.logger)
 		if b.knowledgeAPI != nil {
 			b.retroLane.SetKnowledgeSink(b.knowledgeAPI)
@@ -6028,11 +6236,14 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
-	initialEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
-	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()))
+	initialEvalInterval, initialMode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
+	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()), "eval_mode", initialMode)
 	lastEvalInterval := initialEvalInterval
 	ticker := deps.newTicker(initialEvalInterval)
 	defer ticker.Stop()
+	if b.evalLoop != nil {
+		b.evalLoop.setInterval(initialEvalInterval, initialMode)
+	}
 
 	var agentTickCh <-chan time.Time
 	if b.cfg.Dashboard.AgentPollIntervalS > 0 {
@@ -6073,10 +6284,11 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			Logger: b.logger,
 		}); err != nil {
 			// No fail-closed fallback is possible here: the legacy hold label
-			// hive/<id> IS the provenance label on every claimed item, and
-			// github.HasHoldLabelWith never treats provenance labels as holds
-			// (#9371 - treating it as one parked every claimed item). Items
-			// still carrying only the legacy label are therefore NOT held.
+			// hive/<id> was the provenance label on every claimed item (now
+			// retired, #12539), and github.HasHoldLabelWith never treats
+			// provenance labels as holds (#9371 - treating it as one parked
+			// every claimed item). Items still carrying only the legacy
+			// label are therefore NOT held.
 			// Say so loudly, in the log and on the dashboard, instead of
 			// pretending to fail closed (#9614).
 			reportPath := ""
@@ -6091,9 +6303,53 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
+		// Provenance-only migration. Retired reviewer labels map to agent/reviewer;
+		// redundant lane-origin labels are removed. Nothing reads origin/* as a gate,
+		// so a failure here only leaves old names on open items; the marker is not
+		// written and the next boot retries.
+		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
+			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyOriginReviewLabel+" or "+github.LegacyFromReviewLabel, "error", err)
+		}
+		// Issues park at stage/045-needs-decision; stage/085 is PR-only
+		// (owner decision). Open issues still wearing 085 are re-staged
+		// once; the issue reconciler also does it per cycle for the issues
+		// it enumerates, so a failure here only delays the rest.
+		if _, err := b.ghClient.MigrateIssueNeedsDecisionStage(b.ctx, github.IssueNeedsDecisionMigrationOptions{Logger: b.logger}); err != nil {
+			b.logger.Warn("issue needs-decision stage migration incomplete; open issues may still carry "+github.PRNeedsDecisionStageLabel+" instead of "+github.NeedsDecisionStageLabel, "error", err)
+		}
+		// The hive/<hive-id> provenance label is retired (#12539): the origin
+		// marker in every agent-written body carries the same fact. Runs
+		// after the hold migration so that migration still sees the label
+		// on an upgrade straight from a pre-#9371 hive. Provenance only, so
+		// a failure leaves stale labels and retries next boot.
+		if _, err := b.ghClient.RetireHiveIDLabels(b.ctx, github.HiveIDLabelRetireOptions{HiveID: b.cfg.HiveID, Logger: b.logger}); err != nil {
+			b.logger.Warn("hive/<hive-id> label retire sweep incomplete; open items may still carry "+github.HiveProvenanceLabel(b.cfg.HiveID), "error", err)
+		}
+		// The claim "who" modifier for a human principal is the generic
+		// hive/claimed-by-human; the per-login spelling is retired (owner
+		// decision 2026-10-19). Open items still wearing a login are moved
+		// once and the per-login definitions deleted. Display only: every
+		// reader matches the prefix, so a failure leaves stale names and
+		// retries next boot.
+		claimedByOpts := github.ClaimedByHumanMigrationOptions{Logger: b.logger}
+		for name := range b.cfg.Agents {
+			claimedByOpts.AgentNames = append(claimedByOpts.AgentNames, name)
+		}
+		if b.issueClaims != nil {
+			claimedByOpts.LookupClaim = b.issueClaims.Lookup
+		}
+		if _, err := b.ghClient.MigrateClaimedByHumanLabels(b.ctx, claimedByOpts); err != nil {
+			b.logger.Warn("claimed-by-human label migration incomplete; open issues may still carry a per-login hive/claimed-by-<login> label", "error", err)
+		}
+	}
+	// Startup gate (#13375): with the state cache on, the first decision
+	// pass waits for the first successful reconcile of every repo so it
+	// never plans against an empty or partial cache.
+	if err := waitForgeStateReady(b.ctx, b.forgeState.Load(), b.logger, forgeStateReadyLogInterval); err != nil {
+		return
 	}
 	b.evalCycles++
-	deps.runEval(b, nil)
+	deps.runEval(b, nil, evalSourceEnumerate)
 	deps.runRotation(b)
 	if b.wd != nil {
 		b.wd.Tick(b.ctx)
@@ -6101,10 +6357,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	deps.runSweeps(b)
 	deps.persist(b)
 
-	// tick is one governor pass. The cadence ticker runs it, and so does a
-	// review webhook wake (hivecommons/hive#11091) so a pushed PR is planned
-	// now instead of at the next cadence, under exactly the same gates.
-	tick := func() {
+	// tick is one governor pass. The cadence ticker runs it with
+	// evalSourceEnumerate (the reconcile pass that re-lists every repo). The
+	// review webhook wake (hivecommons/hive#11091), the GitHub webhook wake
+	// and the continuous re-kick wake run it with evalSourceCached: the same
+	// gates, planning from the stored snapshot — already patched by the
+	// delivery's targeted re-read — so a wake costs no listing.
+	tick := func(source evalCycleSource) {
 		b.cfgReloadMu.Lock()
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
@@ -6164,7 +6423,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		b.evalCycles++
-		deps.runEval(b, restarted)
+		deps.runEval(b, restarted, source)
 		deps.runRotation(b)
 		deps.runSweeps(b)
 		// Trajectory review runs after the eval cycle (so kicks/intents are
@@ -6188,28 +6447,200 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		deps.persist(b)
-		effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
+		effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 		if effectiveEvalInterval != lastEvalInterval {
 			b.logger.Info("eval interval changed, resetting ticker",
-				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))
+				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()), "eval_mode", mode)
 			ticker.Reset(effectiveEvalInterval)
 			lastEvalInterval = effectiveEvalInterval
+		}
+		if b.evalLoop != nil {
+			b.evalLoop.setInterval(effectiveEvalInterval, mode)
 		}
 		b.cfgReloadMu.Unlock()
 	}
 	b.startReviewEvents()
 
+	// Webhook health re-check: in webhook mode the base tick (900s) is longer
+	// than the health window (2 × eval_interval_s), so without this a lapse
+	// would only be noticed at the next stretched tick. The timer fires just
+	// after the window would close; if health lapsed, the ticker is reset to
+	// the configured interval right away. Nil newHealthTimer disables it.
+	var (
+		healthTimer loopTicker
+		healthCh    <-chan time.Time
+	)
+	healthNow := deps.now
+	if healthNow == nil {
+		healthNow = time.Now
+	}
+	armWebhookHealthRecheck := func() {
+		if deps.newHealthTimer == nil || b.cfg == nil {
+			return
+		}
+		base := b.cfg.Governor.EvalIntervalS
+		if base <= 0 {
+			base = 300
+		}
+		delay := webhookHealthRecheckDelay(github.WebhookHealthSnapshot(), 2*time.Duration(base)*time.Second, healthNow())
+		if delay <= 0 {
+			if healthTimer != nil {
+				healthTimer.Stop()
+			}
+			return
+		}
+		if healthTimer == nil {
+			healthTimer = deps.newHealthTimer(delay)
+			healthCh = healthTimer.Chan()
+		} else {
+			healthTimer.Stop()
+			healthTimer.Reset(delay)
+		}
+	}
+	armWebhookHealthRecheck()
+	defer func() {
+		if healthTimer != nil {
+			healthTimer.Stop()
+		}
+	}()
+
+	// Continuous re-kick wake: a continuous agent's NextKick (set when its
+	// kick turn ends, + cooldown) was only consumed by the cadence eval tick,
+	// so with eval_interval_webhook_s=900 the reviewer sat idle at its prompt
+	// for up to 15 minutes after every "kick turn ended". The wake fires an
+	// early tick when the earliest NextKick elapses, bounded by
+	// continuousWakeMinGap, and otherwise re-checks every continuousWakePoll.
+	// When a wake-driven cycle leaves the due re-kick untouched (the agent was
+	// gated outside the governor: dashboard pause, first-scan deferral,
+	// provider budget, upgrade drain) wakeHold backs the wake off that re-kick
+	// so a gated agent does not turn the cadence into one eval per 30s.
+	wakeNow := deps.now
+	if wakeNow == nil {
+		wakeNow = time.Now
+	}
+	var (
+		wakeTimer    loopTicker
+		wakeCh       <-chan time.Time
+		lastWake     time.Time
+		wakeArmedFor time.Time
+		wakeHold     continuousWakeHold
+	)
+	armContinuousWake := func() {
+		if deps.newWakeTimer == nil || b.gov == nil {
+			return
+		}
+		next, who := b.gov.NextContinuousKickAt()
+		delay, _ := continuousWakeDecision(next, wakeNow(), lastWake, wakeHold.untilFor(next, who))
+		if delay <= 0 {
+			delay = continuousWakeMinDelay
+		}
+		if wakeTimer == nil {
+			wakeTimer = deps.newWakeTimer(delay)
+			wakeCh = wakeTimer.Chan()
+		} else {
+			wakeTimer.Stop()
+			wakeTimer.Reset(delay)
+		}
+		wakeArmedFor = next
+	}
+	armContinuousWake()
+	defer func() {
+		if wakeTimer != nil {
+			wakeTimer.Stop()
+		}
+	}()
+
+	serveContinuousWake := func() {
+		if deps.newWakeTimer == nil || b.gov == nil || b.ctx.Err() != nil {
+			return
+		}
+		now := wakeNow()
+		next, who := b.gov.NextContinuousKickAt()
+		if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
+			idleFor := time.Duration(0)
+			if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
+				idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
+			}
+			b.logger.Info("continuous re-kick wake: running an early eval cycle",
+				"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
+				"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
+			lastWake = now
+			// Keep this cycle lean: planning and delivery without sweeps.
+			b.cfgReloadMu.Lock()
+			b.evalCycles++
+			deps.runEval(b, nil, evalSourceCached)
+			deps.persist(b)
+			b.cfgReloadMu.Unlock()
+			after, afterWho := b.gov.NextContinuousKickAt()
+			if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
+				b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
+					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
+			}
+		}
+	}
+
 	for {
+		// Serve due kicks between cycles even when other channels stay ready.
+		serveContinuousWake()
 		select {
 		case <-b.ctx.Done():
 			b.logger.Info("shutting down, persisting state")
 			deps.persist(b)
 			return
 		case <-ticker.Chan():
-			tick()
+			tick(evalSourceEnumerate)
+			armContinuousWake()
+			armWebhookHealthRecheck()
 		case <-b.reviewWake:
-			b.logger.Info("review webhook wake: running an early eval cycle")
-			tick()
+			b.logger.Info("review webhook wake: running an early eval cycle from the cached snapshot")
+			tick(evalSourceCached)
+			armContinuousWake()
+			armWebhookHealthRecheck()
+		case batch := <-b.verdictWakeChan():
+			b.logger.Info("review verdict wake: running an early eval cycle from the cached snapshot",
+				"pr", batch.Reason, "last_pr", batch.LastRe, "verdicts", batch.Count,
+				"coalesced", batch.Coalesced.Round(time.Millisecond).String())
+			tick(evalSourceCached)
+			armContinuousWake()
+			armWebhookHealthRecheck()
+		case batch := <-b.webhookWakeChan():
+			now := healthNow()
+			// Apply the delivery's targeted re-reads first so this cycle
+			// sees the patched item rather than the row as it was. With the
+			// re-read disabled nothing patches the snapshot, so the wake
+			// has to enumerate as it did before.
+			source := evalSourceCached
+			if b.cfg != nil && !b.cfg.StageTrackerWebhookRefresh() {
+				source = evalSourceEnumerate
+			} else if b.dashSrv != nil {
+				b.dashSrv.FlushWebhookTrackerRefresh()
+			}
+			b.logger.Info("github webhook wake: running an early eval cycle",
+				"reason", batch.Reason, "last_reason", batch.LastRe, "deliveries", batch.Count,
+				"coalesced", batch.Coalesced.Round(time.Millisecond).String(), "source", source.String())
+			if b.evalLoop != nil {
+				b.evalLoop.noteWake(batch, now)
+			}
+			tick(source)
+			armContinuousWake()
+			armWebhookHealthRecheck()
+		case <-healthCh:
+			b.cfgReloadMu.Lock()
+			effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
+			if effectiveEvalInterval != lastEvalInterval {
+				b.logger.Info("eval interval changed, resetting ticker",
+					"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()), "eval_mode", mode)
+				ticker.Reset(effectiveEvalInterval)
+				lastEvalInterval = effectiveEvalInterval
+			}
+			if b.evalLoop != nil {
+				b.evalLoop.setInterval(effectiveEvalInterval, mode)
+			}
+			b.cfgReloadMu.Unlock()
+			armWebhookHealthRecheck()
+		case <-wakeCh:
+			// The loop-top due check services this timer.
+			armContinuousWake()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
@@ -6220,1506 +6651,6 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		}
 	}
 
-}
-
-// buildRepoActivityWire maps the dashboard activity collector's per-repo
-// snapshot into the plain hub wire structs the heartbeat carries. Kept here (in
-// the one package that imports both hub and dashboard) so pkg/hub never has to
-// import pkg/dashboard back — that would be an import cycle, since dashboard
-// already imports hub. A field-by-field copy, mirroring how the fleet-stat
-// scalars are lifted out of their snapshot at the beat's build site.
-func buildRepoActivityWire(repos []collect.RepoActivity) []spoke.RepoActivityWire {
-	if len(repos) == 0 {
-		return nil
-	}
-	stat := func(s collect.ActivityActionStat) spoke.ActivityStatWire {
-		return spoke.ActivityStatWire{Count: s.Count, NewestAt: s.NewestAt}
-	}
-	out := make([]spoke.RepoActivityWire, 0, len(repos))
-	for _, r := range repos {
-		agents := make([]spoke.AgentRepoActivityWire, 0, len(r.Agents))
-		for _, a := range r.Agents {
-			agents = append(agents, spoke.AgentRepoActivityWire{
-				Agent:      a.Agent,
-				Issues:     stat(a.Issues),
-				PRs:        stat(a.PRs),
-				Comments:   stat(a.Comments),
-				Merges:     stat(a.Merges),
-				Claims:     stat(a.Claims),
-				Reviews:    stat(a.Reviews),
-				Advisory:   stat(a.Advisory),
-				Reconciled: stat(a.Reconciled),
-			})
-		}
-		out = append(out, spoke.RepoActivityWire{
-			Repo:       r.Repo,
-			Issues:     stat(r.Issues),
-			PRs:        stat(r.PRs),
-			Comments:   stat(r.Comments),
-			Merges:     stat(r.Merges),
-			Claims:     stat(r.Claims),
-			Reviews:    stat(r.Reviews),
-			Advisory:   stat(r.Advisory),
-			Reconciled: stat(r.Reconciled),
-			Agents:     agents,
-		})
-	}
-	return out
-}
-
-// providerBudgetNotify is the one-shot guard for the provider spend-rebuff
-// notification (#4294). Package-level because runEvalCycle is a function called
-// once per tick with no state of its own; mutex-guarded inside pkg/governor.
-var providerBudgetNotify governor.ProviderBudgetNotifyState
-
-// providerBudgetProbe remembers when the last probe kick was released while a
-// provider spend rebuff is latched. Package-level for the same reason as
-// providerBudgetNotify: runEvalCycle has no state of its own.
-var providerBudgetProbe governor.ProviderBudgetProbeState
-
-var evalAPIBudgetCycle atomic.Uint64
-
-// applyBudgetAlerts is a thin wrapper around spokealerts.ApplyBudget, kept so
-// call sites in this file do not need the package-qualified name (same
-// pattern as applyModeUnscheduledAlert below).
-func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions, dashSrv *dashboard.Server, notifier *notify.Notifier) {
-	spokealerts.ApplyBudget(gov, trans, dashSrv, notifier)
-	if trans.ExhaustedCrossed {
-		budget := gov.GetBudget()
-		windowEnd := budget.ResetAt.Add(governor.BudgetWindowDuration)
-		msg := fmt.Sprintf("token budget exhausted: %d of %d tokens used — agent kicks suspended until %s (exempt agents keep running)",
-			budget.CurrentSpend, budget.WeeklyLimit, windowEnd.Format(time.RFC1123))
-		emitBudgetExhaustedEscalation(msg)
-	}
-}
-
-// applyNoCadenceAlert is a thin wrapper around spokealerts.ApplyNoCadence
-// (see that package for the banner's design: #5577).
-func applyNoCadenceAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
-	spokealerts.ApplyNoCadence(gov, dashSrv)
-}
-
-func applyModeUnscheduledAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
-	spokealerts.ApplyModeUnscheduled(gov, dashSrv)
-}
-
-func activeIssueRefsFromLastActionable(actionable *github.ActionableResult) (map[string]struct{}, map[string]struct{}) {
-	if actionable == nil {
-		return nil, nil
-	}
-	refs := make(map[string]struct{})
-	coveredRepos := make(map[string]struct{})
-	for repo := range actionable.TotalByRepo {
-		coveredRepos[repo] = struct{}{}
-	}
-	for _, issue := range actionable.Issues.Items {
-		if ref := planning.IssueRef(issue); ref != "" {
-			refs[ref] = struct{}{}
-		}
-	}
-	for _, held := range actionable.Hold.Items {
-		if held.Type != "issue" || held.Repo == "" || held.Number <= 0 {
-			continue
-		}
-		ref := planning.IssueRef(github.Issue{Repo: held.Repo, Number: held.Number, Title: held.Title})
-		if ref != "" {
-			refs[ref] = struct{}{}
-		}
-	}
-	return refs, coveredRepos
-}
-
-// agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3
-// stall-replan lane. Kick delegates to SendKick, which takes the manager lock
-// ITSELF and is only ever called here from the governor tick (never from the
-// agent-launch path), so it cannot re-enter a held manager lock. This is the
-// same out-of-band kick path the eval loop already uses for governor kicks.
-type agentKicker struct{ mgr *agent.Manager }
-
-func (k agentKicker) Kick(agent, message string) error {
-	if k.mgr == nil {
-		return fmt.Errorf("agent manager unavailable: cannot kick %s", agent)
-	}
-	return k.mgr.SendKick(agent, message)
-}
-
-// planFromLabeledIssues is Phase 4 Part B: for each actionable issue carrying a
-// `plan`/`epic` label, mint an epic (idempotent) and hand it to the architect,
-// RESPECTING the architect's pause. It is a plain synchronous call on the eval
-// tick — no goroutine — and only ever touches the manager via SendKick/IsPaused,
-// exactly like every governor kick, so it never re-enters the launch-path mutex.
-// Epics are minted into the architect store (falling back to any store) so the
-// dashboard plan-review flow and replan lane find them the same way.
-//
-// A minted epic is decompose_pending (plan_status=draft). While the architect is
-// paused, the request stays queued and visible (the PLANNING tile shows it as
-// pending) — we never force-unpause. Once the architect is available, we kick it
-// each cycle until it decomposes and clears the pending marker.
-func planFromLabeledIssues(
-	actionable *github.ActionableResult,
-	beadStores map[string]*beads.Store,
-	agentMgr *agent.Manager,
-	gov *governor.Governor,
-	dashSrv *dashboard.Server,
-	logger *slog.Logger,
-	cfg *config.Config,
-	acmmLevel int,
-) {
-	if actionable == nil || len(beadStores) == 0 {
-		return
-	}
-	store, ok := beadStores[planning.ArchitectAgentName]
-	if !ok {
-		for name := range beadStores {
-			store = beadStores[name]
-			break
-		}
-	}
-	if store == nil {
-		return
-	}
-
-	designCfg := planning.DesignConfig{
-		PlanLabels:    cfg.Planning.PlanLabelsOrDefault(),
-		DesignLabels:  cfg.Planning.DesignLabelsOrDefault(),
-		ApprovedLabel: cfg.Planning.DesignApprovedLabelOrDefault(),
-		MaxRevisions:  cfg.Planning.MaxDesignRevisionsOrDefault(),
-		MaxConcurrent: cfg.Planning.MaxConcurrentDesignsOrDefault(),
-	}
-	issues := actionable.Issues.Items
-	if cfg == nil || !cfg.Planning.PlanFromLabelEnabled(acmmLevel) {
-		issues = nil
-		for _, issue := range actionable.Issues.Items {
-			if store.FindByExternalRef(planning.IssueRef(issue)) != nil {
-				issues = append(issues, issue)
-			}
-		}
-	}
-	if cfg != nil && cfg.Runs.Spektacular.Enabled && dashSrv != nil {
-		// issues may alias actionable.Issues.Items (when PlanFromLabelEnabled),
-		// which is already published to lastActionable/dashboard readers, so we
-		// must never compact it in place (issues[:0]) — allocate a fresh backing
-		// array instead.
-		filtered := make([]github.Issue, 0, len(issues))
-		for _, issue := range issues {
-			if planning.HasDesignLabel(issue, designCfg) {
-				if epic, runKey, err := dashSrv.StartDesignSpektacularFromIssue(context.Background(), store, issue); err != nil {
-					logger.Warn("design-mode-spektacular: admit failed", "issue", planning.IssueRef(issue), "error", err)
-					filtered = append(filtered, issue)
-				} else if epic != nil {
-					dashSrv.AuditLog("planning", "design_requested_spektacular", "epic="+epic.ID+" ref="+epic.ExternalRef+" run="+runKey, planning.ArchitectAgentName)
-					logger.Info("audit: design requested via Spektacular", "epic", epic.ID, "ref", epic.ExternalRef, "run", runKey)
-				}
-				continue
-			}
-			filtered = append(filtered, issue)
-		}
-		issues = filtered
-	}
-	sink := labelPlanSink{gov: gov, dashSrv: dashSrv, logger: logger}
-	planning.PlanIssuesFromLabelsWithConfig(store, agentMgr, issues, designCfg, sink,
-		func(ref string, err error) {
-			logger.Warn("plan-from-label: minting epic failed", "issue", ref, "error", err)
-		}, acmmLevel)
-	if config.PlanAutoApproveForLevel(acmmLevel) {
-		for _, id := range planning.AutoApproveDraftsExcept(store, func(epic *beads.Bead) bool {
-			runKey := strings.TrimSpace(epic.Meta(planning.MetaRunKey))
-			if runKey == "" {
-				return false
-			}
-			// Spek run checkpoint policy wins over the ACMM pack: absent
-			// runs.checkpoints.plan means "hold for a human". Only an explicit
-			// plan:false lets plan_auto_approve open the run gate, and that path
-			// records dashboard approval provenance below.
-			if dashboard.RunCheckpointBlocksForConfig(cfg, dashboard.StagePlan) {
-				logger.Info("audit: plan auto-approve skipped for held run checkpoint", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel)
-				return true
-			}
-			if dashSrv == nil {
-				logger.Warn("plan auto-approve skipped for run epic without dashboard provenance recorder", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel)
-				return true
-			}
-			if err := dashSrv.AutoApproveRunPlanCheckpointForACMM(store, epic, runKey, acmmLevel); err != nil {
-				logger.Warn("plan auto-approve failed for run checkpoint", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel, "error", err)
-				return true
-			}
-			if dashSrv != nil {
-				dashSrv.AuditLog("planning", "plan_auto_approved", "epic="+epic.ID+" run="+runKey, planning.ArchitectAgentName)
-			}
-			logger.Info("audit: run plan auto-approved by ACMM pack", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel)
-			return true
-		}) {
-			if dashSrv != nil {
-				dashSrv.AuditLog("planning", "plan_auto_approved", "epic="+id, planning.ArchitectAgentName)
-			}
-			logger.Info("audit: plan auto-approved by ACMM pack", "epic", id, "acmm_level", acmmLevel)
-		}
-	}
-}
-
-// labelPlanSink adapts the governor/dashboard/logger to planning.LabelPlanSink so
-// the label-trigger core lives (and is tested) in pkg/planning.
-type labelPlanSink struct {
-	gov     *governor.Governor
-	dashSrv *dashboard.Server
-	logger  *slog.Logger
-}
-
-func (s labelPlanSink) KickedPlan(epic *beads.Bead) {
-	s.gov.RecordKick(planning.ArchitectAgentName)
-	if s.dashSrv != nil {
-		s.dashSrv.AuditLog("planning", "plan_from_label", "epic="+epic.ID+" ref="+epic.ExternalRef, planning.ArchitectAgentName)
-	}
-	s.logger.Info("audit: plan requested from labeled issue", "epic", epic.ID, "ref", epic.ExternalRef)
-}
-
-func (s labelPlanSink) FailedPlan(epic *beads.Bead) {
-	if s.dashSrv != nil {
-		s.dashSrv.AuditLog("planning", "plan_decompose_failed", "epic="+epic.ID+" ref="+epic.ExternalRef+" attempts="+strconv.Itoa(planning.DecomposeMaxAttempts), planning.ArchitectAgentName)
-	}
-	s.logger.Warn("plan-from-label: architect produced no plan after max attempts — epic marked stuck; re-request it from the dashboard",
-		"epic", epic.ID, "ref", epic.ExternalRef, "attempts", planning.DecomposeMaxAttempts)
-}
-
-func (s labelPlanSink) QueuedPlan(epic *beads.Bead, paused bool) {
-	if paused {
-		// Architect deliberately paused — queue, do not unpause, log once.
-		s.logger.Info("plan-from-label: architect paused, plan queued", "epic", epic.ID, "ref", epic.ExternalRef)
-		return
-	}
-	s.logger.Warn("plan-from-label: architect unavailable, plan queued", "epic", epic.ID, "ref", epic.ExternalRef)
-}
-
-func (s labelPlanSink) KickedDesign(epic *beads.Bead, revision int) {
-	s.gov.RecordKick(planning.ArchitectAgentName)
-	if s.dashSrv != nil {
-		s.dashSrv.AuditLog("planning", "design_kicked", "epic="+epic.ID+" ref="+epic.ExternalRef+" revision="+strconv.Itoa(revision), planning.ArchitectAgentName)
-	}
-	s.logger.Info("audit: design requested from labeled issue", "epic", epic.ID, "ref", epic.ExternalRef, "revision", revision)
-}
-
-func (s labelPlanSink) ApprovedDesign(epic *beads.Bead) {
-	if s.dashSrv != nil {
-		s.dashSrv.AuditLog("planning", "design_approved", "epic="+epic.ID+" ref="+epic.ExternalRef, planning.ArchitectAgentName)
-	}
-	s.logger.Info("audit: design approved from labeled issue", "epic", epic.ID, "ref", epic.ExternalRef)
-}
-
-func (s labelPlanSink) DesignNeedsHuman(epic *beads.Bead, revisions int) {
-	if s.dashSrv != nil {
-		s.dashSrv.AuditLog("planning", "design_needs_human", "epic="+epic.ID+" ref="+epic.ExternalRef+" revisions="+strconv.Itoa(revisions), planning.ArchitectAgentName)
-	}
-	s.logger.Warn("plan-from-label: design revision cap reached — epic needs a human", "epic", epic.ID, "ref", epic.ExternalRef, "revisions", revisions)
-}
-
-// healGitHubAppInstallation self-heals a hive whose github.installation_id
-// points at the WRONG account — the failure mode diagnoseGitHubApp
-// already detects and reports ("installation N belongs to 'X', not 'Y'"). It
-// asks pkg/github to rediscover the installation covering cfg.Project.Org via
-// the App JWT and, only on an unambiguous match, adopts it in place and
-// persists it so the fix survives a pod restart.
-//
-// Every failure path is soft and silent-ish: a hive with no App key is not
-// App-authenticated (skip), an API error or an ambiguous/absent discovery
-// result leaves installation_id exactly as configured so the existing
-// "check github.installation_id" banner still stands. It never returns an
-// error to the caller and never blocks startup or a heartbeat.
-//
-// Rediscovery is rate-limited by pkg/github's discovery cache
-// (github.InstallationDiscoveryTTL), so calling this from the self-heal tick
-// is cheap even when the App is genuinely not installed on the org.
-func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg *config.Config, logger *slog.Logger) {
-	if appAuth == nil || !appAuth.HasKey() || cfg == nil {
-		return
-	}
-	org := cfg.Project.Org
-	if org == "" {
-		return
-	}
-	newID, err := appAuth.RediscoverAndAdopt(ctx, org, logger)
-	if err != nil {
-		logger.Debug("github app installation rediscovery did not adopt a new id",
-			"org", org, "error", err)
-		return
-	}
-	if newID == 0 {
-		return // already correct, or nothing safe to adopt
-	}
-	cfg.GitHub.InstallationID = newID
-	if err := cfg.Save(); err != nil {
-		logger.Error("adopted rediscovered installation_id but failed to persist it — "+
-			"it will revert on the next pod restart",
-			"installation_id", newID, "error", err)
-		return
-	}
-	logger.Info("persisted rediscovered github app installation_id",
-		"installation_id", newID, "org", org)
-}
-
-// maxTimelineEnumeratePerCycle bounds how many enumerated-issue events a single
-// eval cycle records into the lifecycle timeline, keeping the recording loop
-// O(1)-bounded so it never slows the eval cycle. Since #5656 the store dedupes
-// by (ref, kind) — re-enumeration refreshes the journey instead of appending —
-// so the cap no longer protects the ring from eviction floods; it matches the
-// endpoint's default journey limit so every renderable journey gets refreshed.
-const maxTimelineEnumeratePerCycle = 200
-
-// lifecycleRecorder narrows *dashboard.Server to just the timeline accessor the
-// recording helpers need, so they stay trivially testable with a fake and never
-// depend on the rest of the Server surface.
-type lifecycleRecorder interface {
-	LifecycleTimeline() *timeline.Store
-}
-
-// recordEnumeratedIssues records a KindEnumerated event for each enumerated
-// actionable issue, bounded by maxTimelineEnumeratePerCycle. The store dedupes
-// by (ref, kind), so each cycle refreshes the journeys' enumerated stage
-// rather than appending a flood (#5656). It is fully guarded: a nil recorder,
-// nil store, or nil actionable set is a no-op, and Record itself is nil-safe.
-// This must never slow or break the eval loop, so it does no blocking I/O
-// (journey persistence is throttled and atomic inside the store).
-//
-// PR-open/merge lifecycle spans are emitted by the same tracing mapper when
-// callers record those timeline events; this helper only has enumerated issues.
-func recordEnumeratedIssues(ctx context.Context, rec lifecycleRecorder, actionable *github.ActionableResult) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if rec == nil || actionable == nil {
-		return
-	}
-	store := rec.LifecycleTimeline()
-	if store == nil {
-		return
-	}
-	limit := maxTimelineEnumeratePerCycle
-	if len(actionable.Issues.Items) < limit {
-		limit = len(actionable.Issues.Items)
-	}
-	for i := 0; i < limit; i++ {
-		issue := actionable.Issues.Items[i]
-		event := timeline.Event{
-			IssueRef: issueRef(issue.Repo, issue.Number),
-			Kind:     timeline.KindEnumerated,
-		}
-		_, span := tracing.StartTimelineSpan(ctx, event)
-		store.Record(event)
-		span.End()
-	}
-}
-
-// recordKick records KindKicked events for the given agent. When issue refs are
-// supplied it records one issue-scoped event per ref so post-completion lanes
-// can reconstruct per-bead kick counts. With no refs, it records one
-// agent-scoped event. Guarded and nil-safe; no I/O.
-func recordKick(ctx context.Context, rec lifecycleRecorder, agent string, issueRefs ...string) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if rec == nil {
-		return
-	}
-	store := rec.LifecycleTimeline()
-	if store == nil {
-		return
-	}
-	if len(issueRefs) > 0 {
-		for _, ref := range issueRefs {
-			if ref == "" {
-				continue
-			}
-			event := timeline.Event{
-				IssueRef: ref,
-				Kind:     timeline.KindKicked,
-				Agent:    agent,
-			}
-			_, span := tracing.StartTimelineSpan(ctx, event)
-			store.Record(event)
-			span.End()
-		}
-		return
-	}
-	event := timeline.Event{
-		Kind:  timeline.KindKicked,
-		Agent: agent,
-	}
-	_, span := tracing.StartTimelineSpan(ctx, event)
-	store.Record(event)
-	span.End()
-}
-
-// issueRef renders the canonical "repo#number" reference the timeline uses to
-// group events by issue. An empty repo yields an empty ref (the store tolerates
-// it).
-func issueRef(repo string, number int) string {
-	if repo == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s#%d", repo, number)
-}
-
-func actionableIssueRef(issue github.Issue) string {
-	ref := worksource.Ref{
-		SourceType: issue.SourceType,
-		Repo:       issue.Repo,
-		ExternalID: issue.ExternalID,
-		Number:     issue.Number,
-		URL:        issue.URL,
-	}
-	if key := ref.Key(); key != "" {
-		return key
-	}
-	if issue.Repo != "" {
-		return issue.Repo
-	}
-	return issue.ExternalID
-}
-
-// githubRateLimitErrText is the substring GitHub's client surfaces on a rate or
-// abuse limit. Matching text is acceptable ONLY here: a rate limit is a reason
-// to skip classification entirely, never a reason to accuse anyone of anything,
-// so a false negative costs one extra (correct) classification round-trip.
-const githubRateLimitErrText = "rate limit"
-
-// isGitHubRateLimitText reports whether an error looks like a GitHub rate limit.
-func isGitHubRateLimitText(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), githubRateLimitErrText)
-}
-
-// The GitHub App credential classifiers moved to pkg/apphealth (#7238). These
-// wrappers exist so call sites keep their current shape and so the App key
-// paths -- vars that tests repoint at a temp dir -- are read HERE, at call
-// time, rather than captured once at init.
-func classifyGitHubAppFailure(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (bool, string, github.AppAuthState) {
-	return apphealth.ClassifyFailure(ctx, appAuth, expectedOwner, appKeyPaths(appAuthID(appAuth)), logger)
-}
-
-func classifyGitHubAppWriteForbidden(ctx context.Context, appAuth *github.AppAuth, expectedOwner, repo string) (string, github.AppAuthState) {
-	return apphealth.ClassifyWriteForbidden(ctx, appAuth, expectedOwner, repo, appKeyPaths(appAuthID(appAuth)))
-}
-
-func appAuthID(appAuth *github.AppAuth) int64 {
-	if appAuth == nil {
-		return 0
-	}
-	return appAuth.AppID()
-}
-
-func classifyGitHubAppRepoCoverage(ctx context.Context, appAuth *github.AppAuth, org string, repos []string, logger *slog.Logger) (bool, string, github.AppAuthState) {
-	return apphealth.ClassifyRepoCoverage(ctx, appAuth, org, repos, logger)
-}
-
-// The advisory digest posting policy moved to pkg/advisory (#7238 stage 2).
-// These wrappers keep the existing call sites unchanged; advisoryPostGate is
-// now an owned instance rather than a package-level struct tests reset.
-var advisoryPostGate = advisory.NewPostGate()
-
-func primaryAdvisoryRepo(cfg *config.Config) string {
-	return advisory.PrimaryRepo(cfg)
-}
-
-func advisoryIssueUnresolved(advisoryIssues map[string]int, repo string) bool {
-	return advisory.IssueUnresolved(advisoryIssues, repo)
-}
-
-func advisoryIssueNumber(advisoryIssues map[string]int, repo string) (int, bool) {
-	return advisory.IssueNumber(advisoryIssues, repo)
-}
-
-func shouldBuildAdvisoryDigest(beadStores map[string]*beads.Store, ghClient *github.Client, hasExistingPinnedIssue bool) bool {
-	return advisory.ShouldBuildDigest(beadStores, ghClient != nil, hasExistingPinnedIssue)
-}
-
-func shouldPostAdvisoryDigest(digest *advisory.Digest, ghClient *github.Client, hasPinnedIssue bool) bool {
-	return advisory.ShouldPostDigest(digest, ghClient != nil, hasPinnedIssue)
-}
-
-func advisoryPostDue(advCfg config.AdvisoryConfig, repo string, now time.Time, logger *slog.Logger) bool {
-	return advisoryPostGate.Due(advCfg, repo, now, logger)
-}
-
-func recordAdvisoryPostSuccess(repo string, now time.Time) {
-	advisoryPostGate.RecordSuccess(repo, now)
-}
-
-// advisoryIssueMissingError is the error recorded (and reported to the hub) when
-// a hive has findings to publish but no advisory issue to publish them to. It is
-// deliberately an ERROR rather than a silent skip: the hub's staleness gate
-// treats a hive reporting neither a post time nor an error as "not an advisory
-// participant" and never alarms, which is how a wedged digest went unnoticed for
-// six days in #4167.
-func advisoryIssueMissingError(repo string, cause error) string {
-	base := fmt.Sprintf("no advisory issue resolved for %s — digest not posted", repo)
-	// Issues-disabled is the one ensure failure with a remedy the OPERATOR of
-	// the target repo owns (#4329): flipping a repo setting, not fixing App
-	// auth. Fold its actionable message into the alert text so the fleet
-	// stale-advisory pill says so instead of reading like an auth failure.
-	var disabled *github.IssuesDisabledError
-	if errors.As(cause, &disabled) {
-		return base + ": " + disabled.Error()
-	}
-	return base
-}
-
-// actionableAfterGitHubEnumerate decides whether an eval cycle survives a
-// failed GitHub enumeration. On the default (GitHub) work source the answer
-// is no: an all-repos failure usually means a rate limit or outage, and a
-// zero-count result would idle the agents, so the cycle keeps prior state.
-//
-// On a non-default work source (e.g. Linear), or a default GitHub source with
-// additive work enabled (run stages / Wavefront), the GitHub issue call is not
-// the only backlog authority. Aborting here meant a Linear-sourced hive whose
-// GitHub App could not list issues (403 "Resource not accessible by
-// integration", an Issues permission a Linear hive should not need) never
-// enumerated its Linear backlog at all and sat at queue 0; the same rule keeps
-// local additive sources reachable during a transient GitHub issue outage. Such
-// a hive continues with whatever partial result GitHub returned (nil becomes
-// an empty result; PRs are kept when obtainable) and lets the overlay populate
-// issues.
-func actionableAfterGitHubEnumerate(cfg *config.Config, actionable *github.ActionableResult, err error, logger *slog.Logger) (*github.ActionableResult, bool) {
-	if err == nil {
-		return actionable, true
-	}
-	if !workSourceOverlayEnabled(cfg.Governor.WorkSource) {
-		logger.Error("failed to enumerate actionable items", "error", err)
-		return nil, false
-	}
-	logger.Warn("GitHub enumeration failed; continuing so the configured work source can still populate issues",
-		"work_source", cfg.Governor.WorkSource.Type, "run_stages", cfg.Governor.WorkSource.RunStages,
-		"wavefront", cfg.Governor.WorkSource.Wavefront.Enabled, "error", err)
-	if actionable == nil {
-		actionable = &github.ActionableResult{GeneratedAt: time.Now()}
-	}
-	return actionable, true
-}
-
-func tokensForBackend(summary *tokens.AggregateSummary, backend string) int64 {
-	if summary == nil {
-		return 0
-	}
-	var total int64
-	for _, sess := range summary.Sessions {
-		if strings.EqualFold(sess.Backend, backend) {
-			total += sess.TotalTokens
-		}
-	}
-	return total
-}
-
-func runEvalCycle(
-	ctx context.Context,
-	cfg *config.Config,
-	ghClient *github.Client,
-	gov *governor.Governor,
-	sched *scheduler.Scheduler,
-	agentMgr *agent.Manager,
-	dashSrv *dashboard.Server,
-	notifier *notify.Notifier,
-	beadStores map[string]*beads.Store,
-	tokenCollector *tokens.Collector,
-	metricsCollector *dashboard.MetricsCollector,
-	nousState *dashboard.NousState,
-	lastActionable *atomic.Pointer[github.ActionableResult],
-	advisoryStore *advisory.Store,
-	advisoryIssues map[string]int,
-	restartedAgents []string,
-	approvalDesk *toolapprove.Desk,
-	logger *slog.Logger,
-) {
-	// Governor eval-cycle span. When tracing is disabled (the default) this is
-	// a no-op span with no allocation of note and no export — see pkg/tracing.
-	ctx, span := tracing.StartSpan(ctx, "governor.eval_cycle",
-		attribute.String("hive.id", cfg.HiveID),
-		attribute.Int(tracing.AttrHiveACMMLevel, inferACMMLevel(cfg)))
-	defer span.End()
-
-	// A hive running without GitHub credentials (placeholder app_id, or a real
-	// App whose key could not be read) has nothing to enumerate. Return before
-	// the first API call rather than logging a misleading enumeration failure
-	// once per eval interval — the dashboard banner already states the cause.
-	if ghClient == nil {
-		logger.Debug("skipping eval cycle: hive is running without GitHub credentials")
-		return
-	}
-
-	budgetMode, _ := ghClient.APIBudgetMode()
-	budgetDecision := decideEvalBudgetWork(budgetMode, cfg.Governor.OptionalSweepEveryNCycles, evalAPIBudgetCycle.Add(1))
-	ghClient.RecordAPIBudgetSkippedSteps(budgetDecision.SkippedSteps)
-
-	// Re-ensure the pinned advisory issue whenever it is still unresolved, not
-	// only while the App banner is up (#4167). The startup ensure can fail for
-	// reasons that deliberately do NOT raise that banner — a rate limit, a 5xx,
-	// a search-API blip — and the old gate meant such a hive kept an empty
-	// advisoryIssues map for the rest of the process lifetime: every later
-	// digest silently found no issue to post to, so the pinned comment froze at
-	// whatever it last said. Retrying here is cheap (one search per eval cycle
-	// only while unresolved, nothing once resolved) and is the difference
-	// between a transient boot error and a permanently wedged digest.
-	//
-	// advisoryEnsureErr keeps this cycle's ensure failure so the post-path
-	// error recorded below can name the CAUSE (e.g. Issues disabled on a fork,
-	// #4329) instead of only the symptom.
-	primaryRepoAtCycleStart := primaryAdvisoryRepo(cfg)
-	_, hadPinnedAdvisoryIssueAtCycleStart := advisoryIssueNumber(advisoryIssues, primaryRepoAtCycleStart)
-	advisoryEnsureDepsForCycle := advisoryEnsureDeps{setenv: os.Setenv}
-	if ghClient != nil {
-		advisoryEnsureDepsForCycle.ensure = ghClient.EnsureAdvisoryIssue
-	}
-	advisoryEnsureErr := error(nil)
-	if !budgetDecision.SkipOptional {
-		advisoryEnsureErr = ensurePinnedAdvisoryIssue(
-			ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
-	}
-
-	enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
-	actionable, err := ghClient.EnumerateActionable(enumCtx)
-	enumSpan.End()
-	actionable, ok := actionableAfterGitHubEnumerate(cfg, actionable, err, logger)
-	if !ok {
-		return
-	}
-
-	// If a non-default or additive work source is configured, overlay its
-	// issues onto the actionable result. PRs always come from GitHub.
-	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
-		var ws worksource.WorkSource
-		actionable.Issues, ws = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
-		reportWorkSourceDisplayStats(dashSrv, ws)
-	}
-	if swarmRepo := dashSrv.ActiveSwarmRepo(); swarmRepo != "" {
-		github.BoostActionableRepoPriority(actionable.Issues.Items, swarmRepo)
-		logger.Info("swarm priority boost applied", "repo", swarmRepo)
-	}
-
-	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
-	// Held PRs need CI status too, or a red held PR can never be repaired:
-	// the hold label kept it out of PRs.Items, so nothing ever learned it was
-	// red and no agent was ever told to fix it (hivecommons/hive#7438). This
-	// enriches the held list ONLY for the repair path — held PRs still never
-	// reach the merge sweep, escalation or the queue counts.
-	if budgetMode != github.APIBudgetCritical {
-		ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
-	}
-	// Stale drafts sit in the same dashboard PR column; they get the
-	// review/link signals only — no mergeability or check-run fetches, a
-	// draft is not a merge candidate (hivecommons/hive#8968).
-	if !budgetDecision.SkipOptional {
-		ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
-	}
-
-	// Publish the human-facing "what should I merge next?" digest. This reads
-	// the PR set enumerated and CI-enriched immediately above, so it must stay
-	// after those two calls: Mergeable and the failing-check names it sorts on
-	// are populated by EnrichCIStatus, not by EnumerateActionable.
-	if !budgetDecision.SkipOptional {
-		postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
-	}
-
-	// Fold this pass's CI state into the fix-loop staleness clock BEFORE any
-	// consumer reads it, so the claim-suppression guard (#3), the merge watcher
-	// (#2), and the stuck-PR reaper (#4) all key off a consistent, current
-	// signal within the same tick. This only records first-seen-red times; the
-	// distinct-SHA attempt counting still happens in runEscalationSweep below.
-	recordRedStaleness(cfg, actionable)
-
-	// Duplicate-PR guard: drop issues an open hive-authored PR already claims,
-	// before the governor counts the queue or the scheduler builds kicks. A
-	// restart storm otherwise re-offers the same issue on every fresh agent
-	// start, and the agent — having no memory of the PR it just filed — files
-	// another. Backed by a PVC ledger so it survives those restarts, and fails
-	// closed (keeps the last known claims) when the GitHub API is unavailable.
-	if !budgetDecision.SkipOptional {
-		applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
-	}
-
-	// PR review queue (#9590): stamp each PR's rank, priority and reasons
-	// onto the snapshot so last-actionable.json carries them next to
-	// review_class. Additive only: Items and Held keep their order, and
-	// nothing that gates work reads the stamp.
-	reviewQueue := stampReviewQueue(cfg, actionable, logger)
-
-	lastActionable.Store(actionable)
-	if data, err := json.Marshal(actionable); err == nil {
-		atomicWrite(lastActionablePath, data)
-	}
-
-	// Record enumerated issues into the lifecycle timeline so the dashboard's
-	// lifecycle view has real data. Cheap and fully guarded: a nil dashboard or
-	// nil store is a no-op (timeline.Store.Record is nil-safe), the loop is
-	// bounded by maxTimelineEnumeratePerCycle, and the store dedupes by
-	// (ref, kind) so this per-cycle sweep refreshes journeys instead of
-	// flooding them (#5656).
-	recordEnumeratedIssues(ctx, dashSrv, actionable)
-
-	escalatedPRs := map[string]bool{}
-	if !budgetDecision.SkipOptional {
-		escalatedPRs = runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
-		runDependencyBotConflictSweep(ctx, cfg, governorForge(cfg, ghClient, logger), ghClient, actionable, logger)
-	}
-	runWaitEscalationSweep(cfg, dashSrv, logger)
-
-	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
-	refreshReviewVerdicts(cfg, logger)
-	recordReviewOutcomes(ctx, cfg, ghClient, actionable, logger)
-	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSetForRepo("")
-
-	// Hold guard (#5589): snapshot hold-gated PR heads, and when a hold lifts
-	// on a branch that moved, block the merge lanes and force a fresh review.
-	// Runs before writeMergeEligible so drifted PRs are excluded from the very
-	// tick their hold lifted — no window for the sweep to race the re-hold.
-	selfAuthorizationHoldEnabled := func(repo string) bool {
-		level := cfg.ACMMLevelOrZero()
-		if agentMgr != nil {
-			level = agentMgr.GetACMMLevel()
-		}
-		return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
-	}
-	holdDriftPRs := enforceHoldGuard(ctx, cfg, ghClient, governorForge(cfg, ghClient, logger), actionable, logger, selfAuthorizationHoldEnabled)
-
-	// The per-PR verdicts come back so the dashboard's PR pills can be
-	// painted from the sweep's own classification rather than a looser
-	// reading of GitHub's mergeable flag (hivecommons/hive#7478).
-	mergeVerdicts := writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, holdDriftPRs, cfg, logger)
-
-	// Review-bot threads (hivecommons/hive#7360): list every unresolved
-	// external-review-bot thread on an open hive-authored PR into
-	// review-threads.json, attributed to the agent that opened the PR the
-	// same way ci-failing.json is, so the scheduler can route each PR back
-	// to its author for a fix + in-thread replies before any new work.
-	if !budgetDecision.SkipOptional {
-		writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
-	}
-
-	// PR follow-up session resume (hivecommons/hive#9583, default off): feed
-	// CI failures, changes-requested reviews and new review-bot threads on a
-	// PR this hive opened back into the CLI session that authored it, while
-	// that session is still live. Anything it cannot resume stays on the
-	// fix-before-new path above, unchanged.
-	routePRFollowUps(ctx, cfg, ghClient, actionable, escalatedPRs, agentMgr, logger)
-
-	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
-	// hive-authored PR that is red on a required check AND stale (its red head
-	// SHA unchanged past RedPRStaleAfter). writeMergeEligible already surfaces
-	// every red PR into ci-failing.json (the CI_FAILING kick block), but relying
-	// on the owner's next cadence kick to carry it meant a red PR could be
-	// escalated as "6 automated fix re-dispatches" having been mentioned to
-	// nobody (hivecommons/hive#9472); the reaper now kicks the owner — or the
-	// fallback fixer when the owner is paused or unreachable — and charges the
-	// re-engagement budget only for kicks that were accepted. Composes with the
-	// merge watcher (#2): both go through the same per-red-SHA cap, so the same
-	// PR is never double-dispatched within a red-SHA's budget.
-	reapStuckRedPRs(cfg, actionable, escalatedPRs, agentKicker{mgr: agentMgr},
-		agentAvailability(cfg, agentMgr), logger)
-
-	// Release sentinel (hivecommons/hive#9585), opt-in and default OFF: when
-	// the current v<version> tag's CI fails, dispatch a bounded repair round
-	// through the same kick path as the reaper above, or escalate to a human
-	// when the failure is a setting no commit can fix. Never pushes a branch;
-	// moves the tag to a merged fix PR only with retag_enabled (also opt-in).
-	runReleaseSentinel(ctx, cfg, ghClient, agentKicker{mgr: agentMgr},
-		agentAvailability(cfg, agentMgr), notifier, logger)
-
-	// Upstream watch (hivecommons/hive#9967), opt-in and default OFF: at most
-	// once per upstream_watch.interval, file a labelled fork issue for each
-	// upstream merged PR or release that still applies to the fork. Opens
-	// issues only, never PRs; the watermark and dedupe index live on the PVC.
-	runUpstreamWatch(ctx, cfg, ghClient, logger)
-
-	if !budgetDecision.SkipOptional {
-		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
-			PrimaryRepo:     cfg.Project.PrimaryRepo,
-			AIAuthor:        cfg.Project.AIAuthor,
-			InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
-		})
-		if shaErr != nil {
-			logger.Warn("SHA hold enforcement failed", "error", shaErr)
-		} else {
-			logger.Info("SHA hold enforcement complete",
-				"held", shaResult.Held,
-				"unheld", shaResult.Unheld,
-				"skipped", shaResult.Skipped,
-			)
-		}
-	}
-
-	// Refresh budget spend from lifetime token totals before Evaluate so
-	// the kick gate sees current-window numbers. The banner itself is
-	// level-triggered every cycle (#9612 follow-up): a collector summary may
-	// not be available yet (right after a restart, before the first session
-	// scan completes), and the one-shot Crossed edge that used to gate the
-	// raise is lost on restart too, so gate ONLY the spend refresh on the
-	// summary and re-derive the banner from whatever budget state the
-	// governor currently holds (persisted spend if the summary is not in
-	// yet, refreshed spend once it is) on every cycle.
-	trans := gov.BudgetLevel()
-	if tokenCollector != nil {
-		if summary := tokenCollector.Summary(); summary != nil {
-			var bobCoins, bobUSD float64
-			if coinCfg, ok := cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
-				bobCoins = coinCfg.TokensToCoins(tokensForBackend(summary, tokens.BackendBob))
-				bobUSD = coinCfg.CoinsToUSD(bobCoins)
-			}
-			trans = gov.UpdateBudgetFromTotalsCoinsAndUSD(summary.TotalTokens, summary.ByAgent, summary.ByModel, bobCoins, bobUSD)
-		}
-	}
-	applyBudgetAlerts(gov, trans, dashSrv, notifier)
-
-	// Cause+fix banner for the never-kicked class (#5577): the dashboard's
-	// not-producing warnings name the SYMPTOM (agent idle, zero tokens); this
-	// names the cause — enabled agent, no cadence in any mode, never kicked —
-	// and the fix. Computed from the spoke's own governor config, no hub
-	// round-trip; self-clears the moment a cadence is set or any kick lands.
-	applyNoCadenceAlert(gov, dashSrv)
-
-	agentsDue := gov.EvaluateWithRepoDepths(
-		actionable.Issues.Count,
-		actionable.PRs.Count,
-		actionable.Hold.Total,
-		actionable.Issues.SLAViolations,
-		governor.RepoDepthsFromActionable(actionable),
-	)
-
-	// The weaker sibling of the banner above (#7474): an agent SOME mode
-	// schedules but the mode the fleet is now in does not — a reviewer with a
-	// cadence only in surge goes silent the moment its own work drives the
-	// backlog below the surge threshold, and every other signal calls it
-	// healthy. Applied after Evaluate so it reads the mode this tick settled
-	// on; self-clears when the mode changes back or the operator fills the
-	// gap.
-	applyModeUnscheduledAlert(gov, dashSrv)
-
-	// Crash-restarted agents may get a "resume" kick ahead of their cadence
-	// slot so work interrupted mid-task resumes promptly — but ONLY through
-	// the governor's gate (#2573). Unconditionally kicking every restarted
-	// agent meant a crash-looping CLI was kicked on every eval cycle,
-	// burning backend tokens far faster than any configured cadence and
-	// bypassing the budget gate; AllowResumeKick bounds resume kicks to one
-	// per cadence interval and respects mode pauses and the budget.
-	// Refused restarts are not silent: an interval-throttled agent sits at
-	// an empty prompt until its slot, so raise a per-agent alert (with an OOM
-	// hint when the cgroup killed the CLI). Every cycle, reconcile clears it
-	// once it no longer describes a problem (#9612): kicked, paused/removed,
-	// no longer expected to run, working again, or past its max age.
-	var resumeHeld []spokealerts.ResumeKickHeldAgent
-	agentsDue, resumeHeld = mergeResumeKicks(agentsDue, restartedAgents, gov.AllowResumeKickReason, logger)
-	resumeKickHeldAlerts.Apply(dashSrv, resumeHeld, agentMgr.CrashOOMSuspected)
-	resumeKickHeldAlerts.Reconcile(dashSrv, resumeKickHeldFacts(agentMgr, gov.ResumeKickVerdict))
-
-	govState := gov.GetState()
-	span.SetAttributes(
-		attribute.String(tracing.AttrHiveGovernorMode, string(govState.Mode)),
-		attribute.Int("hive.queue.issues", govState.QueueIssues),
-		attribute.Int("hive.queue.prs", govState.QueuePRs),
-		attribute.Int("hive.queue.hold", govState.QueueHold),
-	)
-	// cadence.Paused (cadence: "pause" in config) means "don't kick this agent
-	// in this mode" — it does NOT force-pause the agent. Manual pause/resume
-	// via the dashboard is always respected; the governor only controls kicks.
-
-	// Filter out on-demand agents — they are only triggered explicitly
-	// Operator-paused agents must consume NOTHING (#2573); see
-	// filterKickableAgents for the full gate. This runs BEFORE the eval-cycle
-	// log so "agents_due" names the agents that are actually about to be
-	// kicked; anything gated out is reported in "agents_skipped" with its
-	// reason rather than vanishing silently.
-	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused)
-
-	logger.Info("governor eval complete",
-		"mode", govState.Mode,
-		"issues", govState.QueueIssues,
-		"prs", govState.QueuePRs,
-		"agents_due", agentsDue,
-		"agents_skipped", agentsSkipped,
-	)
-
-	// PROVIDER SPEND REBUFF (#4294). When the inference gateway is refusing on a
-	// money limit, every kick launched this cycle is a run that cannot buy a
-	// single token — precisely the failure this addresses: a hive that kept
-	// firing its cadence into a gateway rejecting 100% of requests all day,
-	// silently, until the provider's spend window happened to roll over.
-	//
-	// The alert is raised HERE, before kick assembly, so an operator is told
-	// even on a cycle where nothing happened to be due. The actual suppression
-	// happens after every kick source has contributed — see below.
-	providerBudgetCause, providerBudgetSince, providerBudgetLastRebuff, providerBudgetRebuffs := dashboard.InferenceBudgetExceeded()
-	// Suppress only while the latch is FRESH. Withholding kicks also withholds
-	// the inference calls that clear the latch, so a hive whose only kick source
-	// is the governor cadence would never learn the provider's window reset and
-	// would stay muted forever — the exact topology in the field report. Once
-	// the last rebuff is older than the probe interval, this cycle's kicks go
-	// through as a probe: still clipped re-freshens the stamp and suppression
-	// resumes, served clears the latch outright.
-	providerBudgetProbeInterval := cfg.Governor.ProviderBudget.EffectiveProbeInterval()
-	providerBudgetLatched := providerBudgetCause != ""
-	suppressKicks := governor.ProviderBudgetSuppresses(providerBudgetLatched,
-		providerBudgetProbe.Freshest(providerBudgetLastRebuff), time.Now(), providerBudgetProbeInterval)
-	budgetAlert := decideProviderBudgetAlert(providerBudgetLatched, suppressKicks,
-		providerBudgetCause, providerBudgetSince, providerBudgetRebuffs,
-		func() string {
-			return hub.QuotaExhaustedAgentReason(hub.QuotaExhaustedProcessCount(agentMgr.AllStatuses()))
-		})
-	if budgetAlert.Message != "" {
-		dashSrv.AddSystemAlert(providerBudgetAlertID, "error", budgetAlert.Message)
-	}
-	if budgetAlert.Clear {
-		dashSrv.ClearSystemAlert(providerBudgetAlertID)
-	}
-	if budgetAlert.Cause != "" {
-		providerBudgetCause = budgetAlert.Cause
-	}
-	// Notify ONCE per latch, not once per cycle. The deduped banner above
-	// already carries the ongoing state; a high-priority notification repeated
-	// every eval cycle for as long as the provider stays clipped is a day of
-	// pages saying the same thing. Keyed on the latch time, which recordRebuff
-	// deliberately does not move forward, so a genuinely new clip after a
-	// recovery notifies again. Matches applyBudgetAlerts, which notifies on the
-	// crossing rather than on the condition.
-	notifyProviderBudget := providerBudgetLatched && providerBudgetNotify.ShouldSend(providerBudgetSince)
-	if !providerBudgetLatched {
-		providerBudgetProbe.Reset()
-		// The RECOVERY crossing: the latch a notification went out for has
-		// cleared (a probe's inference call succeeded), so tell the operator
-		// once that the hive resumed — the counterpart of the entering page,
-		// without which the only signal of recovery is a banner quietly
-		// vanishing. Every later healthy cycle is silent.
-		if providerBudgetNotify.Reset() {
-			logger.Info("provider spending limit lifted: agent kicks resumed")
-			notifier.Send("Provider spending limit lifted",
-				"the inference provider is serving again — agent kicks have resumed",
-				notify.PriorityDefault)
-		}
-	}
-
-	// ADDITIVE CEL routing: evaluate operator-defined CEL trigger rules
-	// (cfg.Triggers, pkg/celtrigger) against the items enumerated this cycle and
-	// UNION any matched, gated agents into agentsDue. This runs alongside — never
-	// instead of — the label/governor selection above: unionAgents only ever adds
-	// names, and celMatchedAgents enforces the same pause/budget/on-demand gates,
-	// so a CEL match can neither remove a governor-selected agent nor bypass a
-	// paused agent or exhausted budget. Fully guarded/cheap: with no `triggers:`
-	// configured, celEngineFor returns nil and celMatchedAgents does zero work.
-	if celEngine := celEngineFor(cfg, logger); celEngine != nil {
-		celAgents := celMatchedAgents(celEngine, actionable, cfg, gov, agentMgr.IsPaused, logger)
-		if len(celAgents) > 0 {
-			before := len(agentsDue)
-			agentsDue = unionAgents(agentsDue, celAgents)
-			if len(agentsDue) > before {
-				logger.Info("celtrigger: unioned CEL-matched agents into due set",
-					"added", agentsDue[before:], "cel_matched", celAgents)
-			}
-		}
-	}
-
-	// #4247/#4263 (parent #3845): apply the shared convergence admission at the
-	// internal-kick dispatch boundary — AFTER governor policy evaluated the raw
-	// queue, BEFORE the scheduler caches and renders issues. Gated by the
-	// runtime convergence rollout mode, captured once per pass: with mode "off"
-	// (the DEFAULT) this is entirely inert and kickActionable IS actionable;
-	// "shadow" logs and records what would be withheld but still dispatches the
-	// raw population; only "enforce" gates the scheduled/cached issue payloads
-	// below. The raw actionable population stays authoritative for governor
-	// policy, dashboard status, PR/review dispatch, escalation, and every path
-	// not explicitly enrolled.
-	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
-
-	sched.SetLastActionable(kickActionable)
-	agentsDue = sched.FilterFirstScanDeferredAgents(agentsDue)
-	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
-	emitReviewHumanEscalations(reviewPlan)
-	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
-	applyHumanDecisionLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)
-	if ghClient != nil {
-		applyReviewPriorityLabels(ctx, cfg, ghClient, reviewQueue, logger)
-	}
-	messages := sched.BuildKickMessages(kickActionable, agentsDue)
-	reviewKickByMessage := map[string]review.DispatchKick{}
-	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {
-		if !gov.AgentEligibleForCELKick(k.Agent) || agentMgr.IsPaused(k.Agent) {
-			logger.Info("review swarm kick suppressed by governor gate", "agent", k.Agent, "pr", k.PRRef)
-			continue
-		}
-		messages = append(messages, scheduler.KickMessage{Agent: k.Agent, Message: k.Message, IssueRefs: []string{k.PRRef}})
-		reviewKickByMessage[k.Agent+"\x00"+k.Message] = k
-	}
-	// #4294: drop EVERY assembled kick while the provider is refusing on a
-	// spending limit. Placed after all three sources have contributed —
-	// governor-due agents, the CEL union, and the review swarm — because gating
-	// only `agentsDue` earlier would still let a CEL match or a review kick fire
-	// into the same clipped key.
-	//
-	if len(messages) > 0 {
-		filtered := messages[:0]
-		for _, msg := range messages {
-			if remaining, class, line, ok := agentMgr.ProviderErrorBackoffRemaining(msg.Agent); ok {
-				logger.Warn("provider inference error: withholding agent kick during backoff",
-					"agent", msg.Agent,
-					"class", class,
-					"retry_in", remaining.Round(time.Second),
-					"error", line)
-				gov.RecordKickFailure(msg.Agent, fmt.Errorf("provider inference backoff (%s): %s", class, line), time.Now())
-				continue
-			}
-			filtered = append(filtered, msg)
-		}
-		messages = filtered
-	}
-
-	// Suppression is total rather than per-agent because the limit is on the
-	// KEY: no agent can succeed while it is clipped. It self-heals — the first
-	// inference call that succeeds after the provider's window resets clears the
-	// signal — so there is no timer to tune and no operator action required.
-	//
-	// Deliberately does NOT force-pause agents. Operator pause state is a human
-	// decision (#2573) and must not be forged by an automatic signal that will
-	// clear itself; withholding kicks achieves the saving without leaving paused
-	// agents behind for a human to un-pause by hand.
-	//
-	// Probe cycle: when the last rebuff has gone stale, ONE kick is
-	// deliberately allowed through to find out whether the provider is
-	// serving again. Its inference calls are what clear the latch (on a
-	// 2xx) or re-freshen it (on another rebuff) — nothing else can. Only
-	// one: the question is "is the window still clipped", and every kick
-	// beyond the first spends a run to learn the same answer. Releasing it
-	// re-arms suppression immediately, so the cycles while the probe's run
-	// is still in flight withhold again rather than leaking more kicks.
-	kickGate := gateKickMessagesForProviderBudget(messages, suppressKicks, providerBudgetLatched)
-	releaseProviderBudgetProbe := kickGate.ReleaseProbe
-	if suppressKicks && len(messages) > 0 {
-		logger.Warn("provider spending limit: withholding agent kicks",
-			"withheld", kickGate.Withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
-			"next_probe_in", (providerBudgetProbeInterval - time.Since(providerBudgetProbe.Freshest(providerBudgetLastRebuff))).Truncate(time.Second))
-	} else if releaseProviderBudgetProbe {
-		if len(kickGate.Withheld) > 0 {
-			logger.Warn("provider spending limit: withholding all but the probe kick",
-				"withheld", kickGate.Withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince)
-		}
-		logger.Info("provider spending limit: releasing a single probe kick",
-			"probe_agent", kickGate.Kept[0].Agent, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
-			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
-	}
-	messages = kickGate.Kept
-	govState.PendingKicks = pendingKickAgentsFromMessages(messages)
-	gov.SetPendingKicks(govState.PendingKicks)
-	if notifyProviderBudget {
-		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
-	}
-
-	if actionable.Issues.SLAViolations > 0 {
-		toNotify, capped := selectSLABreachNotifications(actionable.Issues.Items)
-		for _, issue := range toNotify {
-			notifier.Send(
-				"SLA 2x breach",
-				fmt.Sprintf("%s age %dm: %s\n%s", actionableIssueRef(issue), issue.AgeMinutes, issue.Title, issue.URL),
-				notify.PriorityHigh,
-			)
-		}
-		if capped {
-			logger.Info("SLA notification cap reached, skipping remaining", "remaining", actionable.Issues.SLAViolations-len(toNotify))
-		}
-	}
-
-	// Scan agent panes for login-required patterns and pause + notify if detected
-	loginscan.Scan(ctx, cfg, agentMgr, notifier, dashSrv, logger, loginSightings)
-
-	// Epoch captured before reading agent/governor state so a mutation that
-	// lands mid-build (restart-count/budget reset) drops this snapshot instead
-	// of letting it revert the mutation on the dashboard (#4348).
-	buildEpoch := dashSrv.BeginStatusSnapshot()
-	agentStatuses := agentMgr.AllStatuses()
-
-	statusPayload := dashboard.BuildFrontendStatus(
-		govState,
-		actionable,
-		agentStatuses,
-		cfg,
-		tokenCollector,
-		gov,
-		beadStores,
-		ghClient,
-		ctx,
-		metricsCollector,
-	)
-	// Green on a PR pill means "the sweep would merge this now" — the
-	// verdict writeMergeEligible reached for this same actionable set a
-	// few lines up, not a re-derivation from mergeable_state (#7478).
-	dashboard.AttachMergeVerdicts(statusPayload, mergeVerdicts)
-	// A PR pill also carries the hive's OWN review on that PR, so the queue
-	// view shows where the hive has already spoken. Read from the durable
-	// ledger, so this costs no GitHub call per PR; a missing or unreadable
-	// ledger simply means no review pills this cycle.
-	attachReviewLinksForDashboard(statusPayload, logger)
-	statusPublished := false
-	// Ingest any JSONL findings agents wrote and persist them as beads.
-	if advisoryStore != nil {
-		findings, err := advisoryStore.ReadNewFindings()
-		if err != nil {
-			logger.Warn("failed to read advisory findings", "error", err)
-		} else if len(findings) > 0 {
-			// The canary gate's decisions live behind a seam (#7232); only the
-			// effects — audit entry, critical bead — are supplied here.
-			var scanCanary func(agent, reportText, source string) (ioscan.CanaryLeak, bool)
-			if cfg.Ioscan.IsEnabled() && cfg.Ioscan.CanariesEnabled() {
-				scanCanary = ioscan.DefaultCanaries.Scan
-			}
-			safeFindings := gateAdvisoryFindings(findings, advisoryIngestDeps{
-				scanCanary: scanCanary,
-				failClosed: cfg.Ioscan.FailClosed(),
-				auditLog:   dashSrv.AuditLog,
-				recordLeakBead: func(leak ioscan.CanaryLeak) {
-					if store, ok := beadStores[leak.Agent]; ok && store != nil {
-						if b, berr := store.Create("Canary token leaked via "+leak.Source, beads.TypeAdvisory, beads.PriorityCritical, leak.Agent, ""); berr == nil {
-							_ = store.SetMetadata(b.ID, "rule", ioscan.CanaryLeakRule)
-							_ = store.SetMetadata(b.ID, "source", leak.Source)
-						}
-					}
-				},
-			}, logger)
-			if persisted := advisory.PersistAsBeads(safeFindings, beadStores); persisted > 0 {
-				logger.Info("advisory findings persisted as beads", "count", persisted)
-			}
-		}
-	}
-
-	// Reload bead stores from disk before building the digest. Agents write
-	// beads via the bd CLI which persists directly to disk, so the in-memory
-	// stores can become stale between eval cycles. Reload failures are deduped
-	// (WARN once per distinct error, then DEBUG) — see beads_reload.go (#5505).
-	reloadBeadStores(beadStores, logger)
-
-	// Phase 4 Part B: `plan`/`epic` label trigger. An actionable issue carrying a
-	// plan label auto-mints an epic and requests decomposition — the same flow as
-	// the dashboard "Plan this issue" click, but triggered by the label. It runs
-	// AFTER the store reload so FindByExternalRef sees current state (idempotent:
-	// no duplicate epic if one already exists). Cheap, synchronous, adds NO
-	// goroutine, and drives the architect only via SendKick (never the launch
-	// path). Gated by config/ACMM so low-maturity hives stay advisory-only.
-	if acmmLvl := inferACMMLevel(cfg); planning.PlanningAllowedAtLevel(acmmLvl) &&
-		approvalDeskAllowsLegacyOperation(ctx, approvalDesk, cfg, toolapprove.KindPlanFromLabel, "plan-from-label", planning.ArchitectAgentName, logger) {
-		planFromLabeledIssues(actionable, beadStores, agentMgr, gov, dashSrv, logger, cfg, acmmLvl)
-	}
-
-	// Advisory digest: build from beads (the source of truth) before status broadcast.
-	primaryRepo := primaryAdvisoryRepo(cfg)
-	issueNum, hasPinnedAdvisoryIssue := advisoryIssueNumber(advisoryIssues, primaryRepo)
-	hasExistingPinnedIssueForEmptyDigest := hasPinnedAdvisoryIssue &&
-		primaryRepo == primaryRepoAtCycleStart &&
-		hadPinnedAdvisoryIssueAtCycleStart
-	if shouldBuildAdvisoryDigest(beadStores, ghClient, hasExistingPinnedIssueForEmptyDigest) {
-		// Mark findings no agent has re-reported inside the staleness window
-		// BEFORE the digest is built, so stale evidence is captioned. Silence is
-		// not proof a finding healed: an agent run can be partial, truncated, or
-		// non-deterministic, so absence cannot move an item to Recently Resolved.
-		advCfg := cfg.Governor.Advisory
-		if advCfg.StalenessDays > 0 {
-			if marked := advisory.MarkStaleAdvisoryBeads(beadStores, time.Duration(advCfg.StalenessDays)*24*time.Hour); len(marked) > 0 {
-				logger.Info("marked advisory findings not re-reported within the staleness window",
-					"count", len(marked), "staleness_days", advCfg.StalenessDays, "titles", strings.Join(marked, "; "))
-			}
-		}
-		// Repo entries may be org-qualified ("org/repo"); the digest linkifier
-		// needs the bare repo name alongside the org.
-		org, repoName := cfg.Project.Org, primaryRepo
-		if parts := strings.SplitN(primaryRepo, "/", 2); len(parts) == 2 {
-			org, repoName = parts[0], parts[1]
-		}
-
-		// #3704: pin the digest to ONE repo commit. Resolve the target repo's
-		// latest commit ONCE here (invariants 1 & 3), cite it in the rendered
-		// comment (invariant 2, via the footer FormatDigestMarkdown emits when
-		// AnalyzedSnapshot is set), and verify each finding's file path against
-		// that exact commit so a since-removed path (e.g. "docs/install.md") is
-		// flagged as outdated rather than cited as live. Best-effort: if the SHA
-		// cannot be resolved, fall back to the previous unpinned behavior rather
-		// than skip the digest.
-		//
-		// This is resolved BEFORE the digest is built because the top-N cap
-		// consumes it: ranking cannot prefer a live finding over a since-removed
-		// one unless it knows which is which at ranking time (#2364).
-		digestOpts := advisory.DigestOptions{
-			MaxFindings: advCfg.MaxFindings,
-			ShowAll:     advCfg.ShowAll,
-		}
-		if ghClient != nil {
-			pinDigestSnapshot(ctx, &digestOpts, org, repoName, primaryRepo, cfg.Policies.Branch, digestSnapshotDeps{
-				defaultBranch: func(ctx context.Context, owner, repo string) (string, error) {
-					r, _, err := ghClient.GetRepo(ctx, owner, repo)
-					if err != nil {
-						return "", err
-					}
-					return r.GetDefaultBranch(), nil
-				},
-				latestCommit:  ghClient.LatestCommitHash,
-				pathExists:    ghClient.PathExistsAtRef,
-				issueClosedAt: ghClient.IssueClosedAt,
-			}, logger)
-		}
-		digest := advisory.BuildDigestFromBeads(beadStores, string(govState.Mode), digestOpts)
-		enrichAdvisoryLinkedWork(ctx, ghClient, digest, org, repoName, logger)
-		if advisoryStore != nil {
-			advisoryStore.SetLatestDigest(digest)
-		}
-		dashSrv.SetAdvisoryDigest(digest)
-		statusPayload.AdvisoryDigest = digest
-		statusPublished = dashSrv.UpdateStatusIfFresh(statusPayload, buildEpoch)
-		if !statusPublished {
-			return
-		}
-		hiveAdvice := statusPayload.HiveAdvice
-
-		// Post whenever there is something CURRENT to say: open findings,
-		// recently resolved ones, or an empty evaluation for a hive that already
-		// has a pinned advisory issue. The resolved and empty cases matter for
-		// freshness: otherwise the pinned comment and AdvisoryLastPostedAt
-		// freeze after the last finding disappears, and the hub reports a stale
-		// advisory loop even though the agents are running cleanly.
-		//
-		// advisoryPostDue additionally paces the GitHub write to the
-		// operator's governor.advisory.update_interval_s (#4820); 0/unset
-		// keeps this exact per-cycle cadence. cfg is read live each cycle —
-		// the same pattern as the staleness/max-findings knobs above — so a
-		// dashboard edit applies from the next cycle without a restart. The
-		// digest itself and the dashboard state above still refresh every
-		// cycle; only the comment write is throttled. Note the #4821
-		// write-through counts consecutive unchanged post ATTEMPTS, so its
-		// forced full rewrite stretches with this interval (60 attempts ×
-		// interval) — acceptable, since it only heals out-of-band comment
-		// edits, and documented in the settings tooltip.
-		// governor.advisory.target routes the comment write: GitHub (default,
-		// the unchanged path below) or a designated Linear issue. For the
-		// Linear route the configured issue plays the pinned issue's role in
-		// the empty-digest freshness rule, so a clean Linear-sourced hive
-		// keeps refreshing its comment exactly as a GitHub one does.
-		advisoryTarget, advisoryLinearIssue, advisoryRouteErr := resolveAdvisoryDigestRoute(cfg)
-		hasDigestHome := hasExistingPinnedIssueForEmptyDigest ||
-			(advisoryTarget == config.AdvisoryTargetLinear && advisoryRouteErr == nil)
-		if shouldPostAdvisoryDigest(digest, ghClient, hasDigestHome) &&
-			advisoryPostDue(advCfg, primaryRepo, time.Now(), logger) {
-			bySeverity, agentNames := summarizeDigestForLog(digest)
-			logger.Info("advisory digest built",
-				"total_findings", digest.TotalCount,
-				"critical", bySeverity["critical"],
-				"high", bySeverity["high"],
-				"medium", bySeverity["medium"],
-				"low", bySeverity["low"],
-				"agents", agentNames,
-				"resolved_count", len(digest.RecentlyResolved),
-			)
-			if digest.TotalCount == 0 && len(digest.RecentlyResolved) == 0 {
-				logger.Info("advisory digest empty — posting freshness marker",
-					"repo", primaryRepo, "issue", issueNum)
-			}
-
-			md := advisory.FormatDigestMarkdown(digest, advisory.DigestOptions{
-				MaxFindings:  digestOpts.MaxFindings,
-				ShowAll:      digestOpts.ShowAll,
-				Org:          org,
-				ShowEmpty:    digest.TotalCount == 0 && len(digest.RecentlyResolved) == 0,
-				PrimaryRepo:  repoName,
-				Advice:       hiveAdvice,
-				DashboardURL: advisoryDashboardOrigin(cfg),
-			})
-			// The routing/classification decisions live in
-			// publishAdvisoryDigest (#7232); only the effects are wired here.
-			// The App is the sole advisory-digest writer (#1927): a user-token
-			// failure must never drive the App banner, so every banner hook
-			// below is fed exclusively by the App's own error.
-			publishAdvisoryDigest(ctx, md, digest, advisoryPublishRoute{
-				target:         advisoryTarget,
-				linearIssue:    advisoryLinearIssue,
-				routeErr:       advisoryRouteErr,
-				primaryRepo:    primaryRepo,
-				issueNum:       issueNum,
-				hasPinnedIssue: hasPinnedAdvisoryIssue,
-				ensureErr:      advisoryEnsureErr,
-			}, advisoryPublishDeps{
-				postGitHub: ghClient.PostAdvisoryDigest,
-				postLinear: func(ctx context.Context, linearIssue, md string) error {
-					return postAdvisoryDigestToLinear(ctx, cfg, linearIssue, md)
-				},
-				recordError: dashSrv.RecordAdvisoryError,
-				recordPosted: func(findings, overflow int) {
-					dashSrv.RecordAdvisoryPost(findings)
-					recordAdvisoryPostSuccess(primaryRepo, time.Now())
-					dashSrv.RecordAdvisoryOverflow(overflow)
-				},
-				onWriteForbidden: func(ctx context.Context) {
-					// App is installed (we found the issue) but a real WRITE
-					// was forbidden. #2353: attribute this honestly — surface
-					// a DISTINCT write-forbidden state naming the likeliest
-					// cause instead of faking a permission gap the diagnosis
-					// just disproved.
-					msg, state := classifyGitHubAppWriteForbidden(ctx, ghClient.AppAuth(), cfg.Project.Org, primaryRepo)
-					dashSrv.SetGitHubAppRequired(true)
-					dashSrv.SetGitHubAppPermIssue(msg)
-					dashSrv.SetGitHubAppState(state.String())
-					logger.Warn("GitHub App write failed — cannot write issue comments",
-						"repo", primaryRepo, "state", state.String(),
-						"operator_actionable", state.OperatorActionable(), "detail", msg)
-				},
-				onAuthFailure: func(ctx context.Context) {
-					// Same verdict function as boot and Re-check, so a healthy
-					// or unclassifiable probe cannot raise the banner here.
-					raise, msg, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
-					if !raise {
-						return
-					}
-					dashSrv.SetGitHubAppRequired(true)
-					if msg != "" {
-						dashSrv.SetGitHubAppPermIssue(msg)
-					}
-					dashSrv.SetGitHubAppState(state.String())
-					logger.Warn("GitHub App authentication failed posting advisory digest",
-						"repo", primaryRepo, "state", state.String(),
-						"operator_actionable", state.OperatorActionable())
-				},
-				onWriteProven: func(ctx context.Context) {
-					// A successful write proves the app is installed AND has
-					// write access — clear BOTH the perm issue and the
-					// app-required flag, or the "Not Installed" banner sticks
-					// forever despite tokens working.
-					dashSrv.SetGitHubAppPermIssue("")
-					dashSrv.SetGitHubAppRequired(false)
-					dashSrv.ClearPendingGitHubAppInstall()
-					// The same proof retires stale ACCESS findings (#2575).
-					if healed := advisory.CloseHealedAppAuthFindings(beadStores); len(healed) > 0 {
-						logger.Info("closed healed GitHub App access findings after successful App digest post",
-							"count", len(healed), "titles", strings.Join(healed, "; "))
-					}
-					// Repo-ACCESS findings need their own proof: a digest post
-					// only proves issues:WRITE, so verify with a real
-					// advisor-scoped Contents read, memoized per repo.
-					readVerified := map[string]bool{}
-					canRead := func(ownerRepo string) bool {
-						target := ownerRepo
-						if target == "" {
-							target = primaryRepo
-						}
-						owner, name := cfg.Project.Org, target
-						if i := strings.LastIndex(target, "/"); i > 0 {
-							owner, name = target[:i], target[i+1:]
-						}
-						if owner == "" || name == "" {
-							return false
-						}
-						key := owner + "/" + name
-						if v, ok := readVerified[key]; ok {
-							return v
-						}
-						appAuth := ghClient.AppAuth()
-						if appAuth == nil {
-							// Static-token client: no advisor-tier token can be
-							// minted, so leave the finding open.
-							return false
-						}
-						err := appAuth.VerifyRepoRead(ctx, owner, name)
-						if err != nil {
-							logger.Info("repo-access finding left open: advisor read probe failed",
-								"repo", key, "error", err)
-						}
-						readVerified[key] = err == nil
-						return readVerified[key]
-					}
-					if healed := advisory.CloseHealedRepoAccessFindings(beadStores, canRead); len(healed) > 0 {
-						logger.Info("closed healed repo-access findings after verified advisory read path",
-							"count", len(healed), "titles", strings.Join(healed, "; "))
-					}
-				},
-			}, logger)
-		}
-	} else if d := dashSrv.GetAdvisoryDigest(); d != nil {
-		statusPayload.AdvisoryDigest = d
-	}
-
-	if !statusPublished {
-		dashSrv.UpdateStatusIfFresh(statusPayload, buildEpoch)
-	}
-
-	// Kick dispatch lives after the first dashboard publish. SendKick can block on
-	// a degraded or login-walled CLI; /api/status and S8 auto-dispatch must still
-	// observe the completed governor enumeration before that wait starts (#8659).
-	// Kick dispatch lives behind a seam (#7232): the skip rules and the
-	// single-probe rule are the decisions worth testing, and they were
-	// previously unreachable without a tmux session and a live governor.
-	var deliveredReviewKicks []review.DispatchKick
-	if len(messages) > 0 {
-		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
-			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
-			sendKick:         agentMgr.SendKick,
-			startKickSpan: func(agentName string) func(error) {
-				agentCfg := cfg.Agents[agentName]
-				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
-					agentName,
-					agentCfg.Backend,
-					agentCfg.Model,
-					agentCfg.Role,
-					string(govState.Mode),
-					inferACMMLevel(cfg),
-				)...)
-				return func(err error) {
-					if err != nil {
-						kickSpan.RecordError(err)
-					}
-					kickSpan.End()
-				}
-			},
-			onReviewDelivered: func(msg scheduler.KickMessage) {
-				if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
-					deliveredReviewKicks = append(deliveredReviewKicks, k)
-					persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
-				}
-			},
-			onFailed: func(msg scheduler.KickMessage, err error) {
-				gov.RecordKickFailure(msg.Agent, err, time.Now())
-			},
-			onDelivered: func(msg scheduler.KickMessage) {
-				gov.RecordKickForRepo(msg.Agent, msg.Repo)
-				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
-
-				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
-				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
-				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
-				// #8380: the kicked agent now holds these issues; record the
-				// claims so contributors and other hives back off.
-				recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
-
-				// Log token state at time of kick for cost attribution
-				if tokenCollector != nil {
-					if summary := tokenCollector.Summary(); summary != nil {
-						agentTokens := summary.ByAgent[msg.Agent]
-						logger.Info("kick token snapshot",
-							"agent", msg.Agent,
-							"agent_tokens", agentTokens,
-							"total_tokens", summary.TotalTokens,
-							"total_sessions", summary.SessionCount,
-						)
-					}
-				}
-			},
-			markProbeReleased: providerBudgetProbe.MarkReleased,
-			now:               time.Now,
-		}, logger)
-	}
-	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
-
-	publishFleetReports(ctx, logger, ghClient, dashSrv, statusPayload.FleetReport, cfg.Governor.FleetReport.DryRun())
-
-	if agentStats := dashboard.CollectAgentStats(statusPayload); len(agentStats) > 0 {
-		gov.AttachAgentStats(agentStats)
-	}
-
-	if repoSnaps := dashboard.CollectRepoSnapshots(statusPayload); len(repoSnaps) > 0 {
-		gov.AttachRepoSnapshots(repoSnaps)
-	}
-
-	if nousState != nil {
-		var tokenSummary *tokens.AggregateSummary
-		if tokenCollector != nil {
-			tokenSummary = tokenCollector.Summary()
-		}
-		if err := nousState.RecordSnapshot(govState, actionable, agentsDue, agentStatuses, tokenSummary); err != nil {
-			logger.Warn("failed to record nous snapshot", "error", err)
-		}
-	}
 }
 
 func convertKnowledgeLayers(cfgLayers []config.KnowledgeLayer) []knowledge.LayerConfig {
@@ -7823,9 +6754,18 @@ func watchdogAuthProbes(cfg *config.Config) map[string]watchdog.AuthProbe {
 	}
 	out := make(map[string]watchdog.AuthProbe, len(probers))
 	for _, p := range probers {
-		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: p}
+		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: usageProber{p}}
 	}
 	return out
+}
+
+// usageProber adapts a rotation prober to the watchdog's UsageProber slice
+// (provider key + sanitised probe error); the watchdog does not import
+// pkg/rotation.
+type usageProber struct{ rotation.Prober }
+
+func (u usageProber) ProbeError(ctx context.Context) string {
+	return u.Prober.Probe(ctx).ProbeError()
 }
 
 // turnLossToSnapshot converts the manager's in-memory turn-loss accumulation
@@ -7836,7 +6776,7 @@ func watchdogAuthProbes(cfg *config.Config) map[string]watchdog.AuthProbe {
 // The overwhelming majority of agents are in that state, and a measurement that
 // bloated every hive's state file with empty records would be its own argument
 // for removing it.
-func turnLossToSnapshot(loss agent.TurnLoss) *snapshot.AgentTurnLoss {
+func turnLossToSnapshot(loss crux.TurnLoss) *snapshot.AgentTurnLoss {
 	if loss.Interruptions == 0 && len(loss.Recent) == 0 {
 		return nil
 	}
@@ -7863,7 +6803,7 @@ func turnLossToSnapshot(loss agent.TurnLoss) *snapshot.AgentTurnLoss {
 	return out
 }
 
-func restartEventsToSnapshot(events []agent.RestartEvent) []snapshot.AgentRestartEvent {
+func restartEventsToSnapshot(events []crux.RestartEvent) []snapshot.AgentRestartEvent {
 	if len(events) == 0 {
 		return nil
 	}
@@ -7878,17 +6818,17 @@ func restartEventsToSnapshot(events []agent.RestartEvent) []snapshot.AgentRestar
 	return out
 }
 
-func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []agent.RestartEvent {
+func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []crux.RestartEvent {
 	if len(events) == 0 {
 		return nil
 	}
-	out := make([]agent.RestartEvent, 0, len(events))
+	out := make([]crux.RestartEvent, 0, len(events))
 	cutoff := time.Now().Add(-24 * time.Hour)
 	for _, ev := range events {
 		if ev.At.IsZero() || ev.At.Before(cutoff) {
 			continue
 		}
-		out = append(out, agent.RestartEvent{At: ev.At, Reason: ev.Reason})
+		out = append(out, crux.RestartEvent{At: ev.At, Reason: ev.Reason})
 	}
 	return out
 }
@@ -7901,11 +6841,11 @@ func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []agent.Rest
 // this var cannot race a goroutine still reading it.
 var persistPathsForRuntime = defaultPersistPaths
 
-func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
+func persistState(agentMgr crux.Runtime, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
 	persistStateWithPaths(agentMgr, gov, cfg, path, logger, dashSrv, wd, persistPathsForRuntime())
 }
 
-func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler, paths persistPaths) {
+func persistStateWithPaths(agentMgr crux.Runtime, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler, paths persistPaths) {
 	statuses := agentMgr.AllStatuses()
 	agents := make(map[string]snapshot.AgentState, len(statuses))
 	for name, proc := range statuses {
@@ -8083,6 +7023,14 @@ func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg 
 			}
 		}
 
+		costRollup := dashSrv.CostDailyRollups()
+		if len(costRollup) > 0 {
+			rollupData, err := json.Marshal(costRollup)
+			if err == nil {
+				atomicWrite(paths.CostDailyRollup, rollupData)
+			}
+		}
+
 		trendHist := dashSrv.TrendHistory()
 		if len(trendHist) > 0 {
 			trendData, err := json.Marshal(trendHist)
@@ -8111,1887 +7059,6 @@ func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg 
 				atomicWrite(paths.ConvergenceSoak, soakData)
 			}
 		}
-	}
-}
-
-var (
-	escalationStoreOnce sync.Once
-	escalationStore     *escalation.Store
-)
-
-const escalationLedgerPath = "/data/metrics/fix-streaks.json"
-
-// getEscalationStore lazily loads the shared fix-loop ledger (staleness clock +
-// distinct-SHA attempt counts + re-engagement caps). It is the SINGLE
-// loop-safety/dedup authority shared by the re-engagement paths (#2 merge
-// watcher, #3 claim release, #4 reaper) and the human-escalation sweep, so they
-// all agree on which red PRs are stale, how many times each has been
-// re-nudged, and which have crossed the human-escalation threshold.
-func getEscalationStore() *escalation.Store {
-	escalationStoreOnce.Do(func() {
-		escalationStore = escalation.Load(escalationLedgerPath)
-	})
-	return escalationStore
-}
-
-// hivePRObservations projects the enumerated hive-authored PRs into escalation
-// observations (repo fully-qualified, Red == a required check failed). Shared by
-// recordRedStaleness and the reaper so both classify PRs identically. A PR is
-// "red" here strictly per HasFailingRequiredCheck — GENERIC check state, never a
-// specific linter or language.
-//
-// owners maps "org/repo#number" to the agent that opened the PR (see
-// auditPRAgents); pass nil when ownership is not needed. Shared/base CI
-// breakage is classified across the WHOLE pass before the observations are
-// returned, so every consumer agrees on which failures belong to this PR
-// (hivecommons/hive#9473).
-func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult, owners map[string]string) []escalation.Observation {
-	if actionable == nil {
-		return nil
-	}
-	var obs []escalation.Observation
-	for _, pr := range actionable.PRs.Items {
-		if !isHiveAgentAuthor(cfg, pr.Author) {
-			continue
-		}
-		obs = append(obs, escalationObservation(cfg, pr, owners))
-	}
-	escalation.MarkSharedFailures(obs)
-	return obs
-}
-
-// escalationObservation projects one enumerated PR into the fix-loop ledger's
-// view of it. Red means a required check concluded failure. Pending means this
-// pass could not conclude CI at all — checks still running, no check runs, or
-// (per EnrichCIStatus) the check-run fetch errored — which the ledger must
-// treat as "no information", never as "went green". Labeled mirrors the forge's
-// needs-human label so the ledger and the label can never disagree about
-// whether a PR has already been handed to a human. Labels carry the PR's
-// current forge labels so Sweep can reconcile reviewer-lane verdicts
-// (label-only edits: needs-human removed, reviewer-passed added) back into
-// the ledger (#5511, gap G1).
-func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map[string]string) escalation.Observation {
-	repo := pr.Repo
-	if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
-		repo = cfg.Project.Org + "/" + repo
-	}
-	red := pr.HasFailingRequiredCheck()
-	return escalation.Observation{
-		Repo:          repo,
-		Number:        pr.Number,
-		HeadSHA:       pr.HeadSHA,
-		HeadTree:      pr.HeadTree,
-		Red:           red,
-		Pending:       !red && pr.CIStatus != "success",
-		CIRunning:     red && pr.CIChecksRunning,
-		Labeled:       escalation.HasNeedsHumanLabel(pr.Labels),
-		Excerpt:       pr.CIFailureExcerpt,
-		Labels:        pr.Labels,
-		FailingChecks: pr.FailingChecks,
-		Agent:         owners[escalation.Key(repo, pr.Number)],
-	}
-}
-
-// redPRFixOwner resolves who should be asked to repair a red PR: the agent the
-// audit trail attributes it to, or — when that agent is unattributed — the
-// fleet's primary PR creator, exactly the default formatRedPRFixData applies
-// to an unattributed ci-failing.json row. Keeping the two in step is what lets
-// a hook predicate (`t.agent == "scanner"`) and the FIX-BEFORE-NEW block name
-// the same owner (hivecommons/hive#9474).
-func redPRFixOwner(agent string) string {
-	if agent = strings.TrimSpace(agent); agent != "" {
-		return agent
-	}
-	return review.DefaultFixerAgent
-}
-
-// dependencyBots are forge bots whose PRs are dependency bumps, not hive fix
-// attempts. They carry the "[bot]" suffix that otherwise marks a PR as
-// agent-authored, but nothing in the hive opened them and no hive agent is
-// iterating on them, so a red one is not a fix loop to break: escalating it
-// only pages a human with "1 distinct fix attempts" about a crate bump that
-// renovate will rebase on its own. Mirrors the hub's default contribute
-// deny-authors list (config: hub.contribute_deny_authors). A conflicting
-// Renovate PR in a `rebaseWhen: never` repo will NOT rebase on its own; that
-// case is handled by runDependencyBotConflictSweep (dependency_bot_conflicts.go).
-var dependencyBots = map[string]bool{
-	"renovate[bot]":    true,
-	"dependabot[bot]":  true,
-	"mergeraptor[bot]": true,
-}
-
-// isHiveAgentAuthor reports whether a PR author is one of OUR agents — the
-// configured ai_author, the App bot identity agents author as, or another
-// bot account — excluding the dependency bots above. Shared by every fix-loop
-// path (staleness clock, reaper, escalation sweep) so they classify PRs
-// identically.
-func isHiveAgentAuthor(cfg *config.Config, author string) bool {
-	if author == "" {
-		return false
-	}
-	if author == cfg.Project.AIAuthor {
-		return true
-	}
-	if eff := cfg.EffectiveAIAuthor(); eff != "" && author == eff {
-		return true
-	}
-	return strings.HasSuffix(author, "[bot]") && !dependencyBots[author]
-}
-
-// recordRedStaleness updates the shared staleness clock (first-seen-red per red
-// head SHA) for every hive-authored PR in this pass. It must run before the
-// claim guard and the reaper so their StaleRed() reads reflect the current tick.
-// A disabled escalation subsystem skips it (the whole fix-loop machinery is off).
-//
-// It also fires the escalation_red hook for each red PR, WITH the owning agent
-// on the payload: the catalog and hooks.md have always documented `agent` on
-// this transition, but nothing ever set it, so a predicate like
-// `t.agent == "scanner"` could never match (hivecommons/hive#9474).
-func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult) {
-	if cfg.Escalation.Disabled || actionable == nil {
-		return
-	}
-	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-	obs := hivePRObservations(cfg, actionable, owners)
-	getEscalationStore().ObserveRed(obs)
-	for _, ob := range obs {
-		if !ob.Red {
-			continue
-		}
-		hookDispatcher().Fire(context.Background(), hooks.Payload{
-			Transition: hooks.TransitionEscalationRed,
-			Repo:       ob.Repo,
-			Agent:      redPRFixOwner(ob.Agent),
-			Reason:     "required CI check red",
-			Attrs: map[string]string{
-				hooks.AttrPR: strconv.Itoa(ob.Number),
-				"head_sha":   ob.HeadSHA,
-				"excerpt":    ob.Excerpt,
-			},
-		})
-	}
-}
-
-// fixKicker is the out-of-band kick path the re-engagement lanes deliver
-// through. *agent.Manager satisfies it via agentKicker, which is the same
-// adapter the governor tick's replan lane uses.
-type fixKicker interface {
-	Kick(agent, message string) error
-}
-
-// agentAvailability reports, per agent, whether a kick sent right now could
-// reach it: the agent must not be paused by the manager, and at least one
-// governor mode must schedule it with a non-paused cadence. An agent paused in
-// every mode (the v5 L6 pack pauses `strategist` everywhere) can never answer a
-// FIX-BEFORE-NEW kick, so charging its red PRs' re-engagement budget only
-// escalates them to a human having asked nobody (hivecommons/hive#9472).
-func agentAvailability(cfg *config.Config, mgr *agent.Manager) func(string) bool {
-	return func(name string) bool {
-		if name == "" {
-			return false
-		}
-		if mgr != nil && mgr.IsPaused(name) {
-			return false
-		}
-		return cfg == nil || cadenceReachable(cfg, name)
-	}
-}
-
-// cadenceReachable reports whether ANY governor mode gives the agent a cadence
-// that is not paused/off. An agent with no cadence entry at all is treated as
-// reachable: "nothing schedules it" is a fleet-configuration signal of its own
-// (NoCadenceAgents), and refusing to route repairs to it would silently widen
-// this gate into an agent-disablement policy.
-func cadenceReachable(cfg *config.Config, name string) bool {
-	configured := false
-	for mode := range cfg.Governor.Modes {
-		cad := cfg.CadenceValueForMode(name, mode)
-		if cad == "" {
-			continue
-		}
-		configured = true
-		if !cad.IsPaused() {
-			return true
-		}
-	}
-	return !configured
-}
-
-// ownerReEngageCooldown is the minimum spacing between two re-engagements of a
-// PR owned by this agent: its slowest configured cadence, so a budget of six
-// attempts cannot be spent inside a single cadence window where no kick the
-// owner could answer would ever fit. The escalation store floors it at
-// ReEngageCooldown and caps it at MaxReEngageCooldown.
-func ownerReEngageCooldown(cfg *config.Config, name string) time.Duration {
-	if cfg == nil || name == "" {
-		return 0
-	}
-	var slowest time.Duration
-	for mode := range cfg.Governor.Modes {
-		cad := cfg.CadenceValueForMode(name, mode)
-		if cad == "" || cad.IsPaused() {
-			continue
-		}
-		d, err := time.ParseDuration(strings.TrimSpace(cad.Interval()))
-		if err == nil && d > slowest {
-			slowest = d
-		}
-	}
-	return slowest
-}
-
-// resolveRedPRFixer picks the agent a stuck red PR's fix kick should go to: its
-// owner, else the configured review fixer agent, else the fleet's default
-// fixer — the same chain the review-fix kick uses (src/docs/review-swarm.md).
-// It returns "" when no candidate is reachable, which tells the caller to leave
-// the PR alone rather than spend budget nobody can answer.
-func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) bool) string {
-	candidates := []string{redPRFixOwner(owner), strings.TrimSpace(cfg.Review.FixerAgent), review.DefaultFixerAgent}
-	for _, c := range candidates {
-		if c == "" {
-			continue
-		}
-		if available == nil || available(c) {
-			return c
-		}
-	}
-	return ""
-}
-
-// redPRFixKick renders the targeted FIX-BEFORE-NEW kick a re-engagement
-// delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
-// answerable on its own rather than relying on the owner's next cadence kick
-// happening to carry the ci-failing.json block.
-func redPRFixKick(o escalation.Observation, rerouted bool) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "🔴 FIX-BEFORE-NEW — %s#%d is red and has not moved\n\n", o.Repo, o.Number)
-	if rerouted {
-		fmt.Fprintf(&b, "Its owning agent (%s) is not reachable right now, so this repair is routed to you.\n\n", redPRFixOwner(o.Agent))
-	}
-	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
-	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
-	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
-	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
-	b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")
-	b.WriteString("(runner lost, no space left, checks still queued) leave one comment and end the turn.\n")
-	if o.HeadSHA != "" {
-		fmt.Fprintf(&b, "\nhead: %s\n", o.HeadSHA)
-	}
-	if len(o.FailingChecks) > 0 {
-		fmt.Fprintf(&b, "failing: %s\n", strings.Join(o.FailingChecks, ", "))
-	}
-	if excerpt := strings.TrimSpace(o.Excerpt); excerpt != "" {
-		if runes := []rune(excerpt); len(runes) > redPRFixKickExcerptRunes {
-			excerpt = string(runes[:redPRFixKickExcerptRunes]) + "…"
-		}
-		fmt.Fprintf(&b, "\nevidence:\n%s\n", excerpt)
-	}
-	return b.String()
-}
-
-// redPRFixKickExcerptRunes bounds the CI evidence carried in a targeted fix
-// kick, matching the FIX-BEFORE-NEW block's own budget.
-const redPRFixKickExcerptRunes = 400
-
-// mergeReEngageHook builds the Fix #2 re-engagement callback for the merge
-// watcher. It normalizes the repo, resolves the PR's owner, DELIVERS a targeted
-// fix kick to it (or to the fallback fixer when the owner is unreachable), and
-// only then records the attempt under the shared escalation store's per-red-SHA
-// cap. Passing an empty head SHA tells the store to reuse the red head SHA it
-// last observed for this PR (the eval cycle's ObserveRed keeps it current), so
-// the merge watcher does not need to re-fetch the head. Returns false when the
-// cap is exhausted or no kick could be delivered, so the watcher can log that
-// the escalation path now owns the PR. A disabled escalation subsystem yields a
-// nil hook (watcher falls back to quarantine-only).
-//
-// Delivery is the point: before hivecommons/hive#9472 this only incremented a
-// counter, so a PR could be escalated as "6 automated fix re-dispatches" having
-// never been mentioned to any agent.
-func mergeReEngageHook(cfg *config.Config, kicker fixKicker, available func(string) bool, logger *slog.Logger) github.MergeReEngageFunc {
-	if cfg.Escalation.Disabled {
-		return nil
-	}
-	fullRepo := func(repo string) string {
-		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
-			return cfg.Project.Org + "/" + repo
-		}
-		return repo
-	}
-	return func(repo string, number int) bool {
-		full := fullRepo(repo)
-		owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-		o := escalation.Observation{
-			Repo:   full,
-			Number: number,
-			Agent:  owners[escalation.Key(full, number)],
-		}
-		// Empty head SHA: reuse the store's tracked current red SHA for this PR
-		// (do not reset the cap counter). The eval cycle records it via
-		// ObserveRed; if the store has never seen this PR red, the store still
-		// allows the first MaxReEngagements nudges.
-		return deliverReEngagement(cfg, getEscalationStore(), o, "", kicker, available, logger)
-	}
-}
-
-// deliverReEngagement is the one place a fix re-dispatch is both SENT and
-// COUNTED. It resolves a reachable fixer, checks the budget without spending
-// it, delivers the kick, and only records the attempt once the kick was
-// accepted: an undeliverable kick (agent not running, provider backoff,
-// restart) must not consume a PR's budget and strand it in needs-human
-// (hivecommons/hive#9472).
-func deliverReEngagement(
-	cfg *config.Config,
-	store *escalation.Store,
-	o escalation.Observation,
-	headSHA string,
-	kicker fixKicker,
-	available func(string) bool,
-	logger *slog.Logger,
-) bool {
-	fixer := resolveRedPRFixer(cfg, o.Agent, available)
-	if fixer == "" {
-		// Nobody can be asked right now. Charging budget here is what escalated
-		// red strategist PRs on a pack that pauses strategist in every mode.
-		if logger != nil {
-			logger.Info("re-engagement skipped: no reachable fixer agent",
-				"repo", o.Repo, "pr", o.Number, "owner", redPRFixOwner(o.Agent))
-		}
-		return false
-	}
-	if !store.ReEngageEligible(o.Repo, o.Number, headSHA, ownerReEngageCooldown(cfg, fixer)) {
-		return false
-	}
-	if kicker == nil {
-		return false
-	}
-	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent))); err != nil {
-		if logger != nil {
-			logger.Warn("re-engagement kick undeliverable; budget not charged",
-				"repo", o.Repo, "pr", o.Number, "agent", fixer, "error", err)
-		}
-		return false
-	}
-	store.RecordReEngagement(o.Repo, o.Number)
-	return true
-}
-
-// reapStuckRedPRs is Fix #4: the governor's backstop sweep. For each
-// hive-authored PR that is red on a required check AND stale (StaleRed) AND not
-// already escalated to a human, it DELIVERS a targeted FIX-BEFORE-NEW kick to
-// the PR's owner (or the fallback fixer when the owner is unreachable) and
-// records the re-engagement only if that kick was accepted — deduped and capped
-// via the escalation store. Entirely generic: it keys only off check state +
-// staleness, never a linter.
-func reapStuckRedPRs(
-	cfg *config.Config,
-	actionable *github.ActionableResult,
-	escalatedPRs map[string]bool,
-	kicker fixKicker,
-	available func(string) bool,
-	logger *slog.Logger,
-) {
-	if cfg.Escalation.Disabled || actionable == nil {
-		return
-	}
-	store := getEscalationStore()
-	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-	for _, o := range hivePRObservations(cfg, actionable, owners) {
-		if !o.Red {
-			continue
-		}
-		if o.Shared {
-			// Every failing check is red across the fleet: the PR is not
-			// broken, a shared incident is. Nudging its owner to "fix" it
-			// wastes budget on work that cannot succeed (hivecommons/hive#9473).
-			continue
-		}
-		key := escalation.Key(o.Repo, o.Number)
-		if escalatedPRs[key] {
-			// Already handed to a human (needs-human label); kick builders skip
-			// it and we must not re-dispatch automated fixes.
-			continue
-		}
-		if !store.StaleRed(o.Repo, o.Number, o.HeadSHA) {
-			continue // still churning (fresh red SHA) — leave it to the fix agent
-		}
-		if !deliverReEngagement(cfg, store, o, o.HeadSHA, kicker, available, logger) {
-			// Cap reached, cooldown not elapsed, or nothing could be delivered.
-			// The distinct-SHA escalation path owns it from here.
-			continue
-		}
-		logger.Info("reaper: re-dispatched fix for stuck red PR",
-			"repo", o.Repo, "pr", o.Number, "head_sha", o.HeadSHA,
-			"re_engagements", store.ReEngagements(o.Repo, o.Number))
-	}
-}
-
-// runEscalationSweep folds this enumeration pass into the fix-loop breaker
-// ledger and fires the one-time escalation actions (evidence comment +
-// needs-human label + ntfy) for any agent-authored PR that just crossed the
-// threshold of distinct failed fix attempts. Returns the full set of
-// escalated PR keys so the work-list writers can flag them. Deterministic by
-// design: no agent judgment is involved in counting, evidence, or the
-// stop-order. Human-authored PRs are never escalated.
-//
-// The two forge writes go through forge.IssueWriter rather than *github.Client
-// so the evidence lands on whichever forge the hive is actually configured for
-// (see governorForge in forgewire.go). On a GitHub hive the writer IS the
-// *github.Client this used to take, so nothing about that path changed.
-//
-// rec receives a KindBlocked lifecycle event for each newly-escalated PR
-// (#5656); a nil rec is a no-op, matching the other timeline producers.
-func runEscalationSweep(
-	ctx context.Context,
-	cfg *config.Config,
-	writer forge.IssueWriter,
-	actionable *github.ActionableResult,
-	notifier *notify.Notifier,
-	rec lifecycleRecorder,
-	logger *slog.Logger,
-) map[string]bool {
-	escalated := map[string]bool{}
-	if cfg.Escalation.Disabled || writer == nil || actionable == nil {
-		return escalated
-	}
-	getEscalationStore()
-
-	var obs []escalation.Observation
-	type prMeta struct{ checks []string }
-	meta := map[string]prMeta{}
-	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-	prs := append([]github.PullRequest(nil), actionable.PRs.Items...)
-	for _, pr := range actionable.PRs.Held {
-		if pr.ReporterTrustReason != "" {
-			prs = append(prs, pr)
-		}
-	}
-	for _, pr := range prs {
-		if !isHiveAgentAuthor(cfg, pr.Author) && pr.ReporterTrustReason == "" {
-			continue
-		}
-		o := escalationObservation(cfg, pr, owners)
-		if pr.ReporterTrustReason != "" {
-			escalationStore.SetReporterTrustReason(o.Repo, o.Number, pr.ReporterTrustReason)
-		}
-		obs = append(obs, o)
-		meta[escalation.Key(o.Repo, o.Number)] = prMeta{checks: pr.FailingChecks}
-	}
-	// Classify shared/base CI breakage across the whole pass before counting:
-	// a check failing on this PR and on at least SharedFailureSiblings others
-	// is an incident, not a failed fix attempt (hivecommons/hive#9473).
-	escalation.MarkSharedFailures(obs)
-	results := escalationStore.Sweep(obs, cfg.Escalation.EffectiveThreshold())
-
-	for _, o := range obs {
-		key := escalation.Key(o.Repo, o.Number)
-		r, ok := results[key]
-		if !ok {
-			continue
-		}
-		if r.Unparked {
-			// The sweep returned this PR to the automated lane by itself: its
-			// head went green, or the shared incident it escalated over
-			// cleared. Take the label off (retried on later passes until a
-			// pass sees it gone) and say why, once.
-			unparkEscalatedPR(ctx, writer, o, r, logger)
-			continue
-		}
-		if r.Escalated {
-			escalated[key] = true
-		}
-		if r.NeedsLabel && !o.Labeled {
-			// Escalated on an earlier pass but the label never landed (the
-			// AddLabels call failed). Retry the LABEL ONLY — the evidence
-			// comment already reached the human and must not be repeated.
-			if err := writer.AddLabels(ctx, o.Repo, o.Number, []string{escalation.NeedsHumanLabel}); err != nil {
-				logger.Warn("escalation label retry failed", "repo", o.Repo, "pr", o.Number, "error", err)
-			} else {
-				escalationStore.MarkLabelApplied(o.Repo, o.Number)
-			}
-		}
-		if !r.NewlyEscala {
-			continue
-		}
-		escalated[key] = true
-		excerpt := o.Excerpt
-		if excerpt == "" {
-			excerpt = escalationStore.Excerpt(o.Repo, o.Number)
-		}
-		// A PR that re-escalates AFTER a reviewer-lane pass reaches its human
-		// with a structured hand-off note (#5617 item 3): what the reviewer
-		// left on the branch, when, and that no second automated pass is
-		// coming. Before this, the only thing distinguishing that hand-off
-		// from a first escalation was the label set.
-		ev := escalation.Evidence{
-			Attempts:      r.Attempts,
-			FailingChecks: meta[key].checks,
-			SharedChecks:  r.SharedChecks,
-			Excerpt:       excerpt,
-			Exhausted:     r.Exhausted,
-			ReEngagements: r.ReEngagements,
-		}
-		body := escalation.CommentBody(ev)
-		afterReviewerPass := false
-		if sha, at, ok := escalationStore.ReviewerPass(o.Repo, o.Number); ok {
-			body = escalation.HandoffCommentBody(ev, escalation.ReviewerHandoff{SHA: sha, At: at})
-			afterReviewerPass = true
-		}
-		if err := writer.CreateIssueComment(ctx, o.Repo, o.Number, body); err != nil {
-			// Retry next pass rather than marking escalated with no comment:
-			// the whole point is that the evidence reaches a human.
-			logger.Warn("escalation comment failed; will retry next pass",
-				"repo", o.Repo, "pr", o.Number, "error", err)
-			continue
-		}
-		// Mark escalated BEFORE the label call: once the comment is on the
-		// PR, nothing may post it again, whatever happens to the label.
-		escalationStore.MarkEscalated(o.Repo, o.Number)
-		if err := writer.AddLabels(ctx, o.Repo, o.Number, []string{escalation.NeedsHumanLabel}); err != nil {
-			logger.Warn("escalation label failed; will retry next pass", "repo", o.Repo, "pr", o.Number, "error", err)
-		} else {
-			escalationStore.MarkLabelApplied(o.Repo, o.Number)
-		}
-		// The escalation IS the real "blocked" lifecycle signal (#5656): a PR
-		// out of automated fix attempts, handed to a human. Record it on the
-		// item's journey so the panel's Blocked counter reflects reality, not
-		// just hook annotations.
-		recordBlocked(ctx, rec, cfg.Project.Org, o.Repo, o.Number, r.Attempts, meta[key].checks)
-		logger.Info("fix loop escalated to human",
-			"repo", o.Repo, "pr", o.Number, "attempts", r.Attempts,
-			"failing_checks", strings.Join(meta[key].checks, ","))
-		if notifier != nil {
-			title := "Fix loop escalated"
-			detail := fmt.Sprintf("%s#%d red on %d fix attempts — needs a human (see PR comment for the raw error)", o.Repo, o.Number, r.Attempts)
-			if afterReviewerPass {
-				// Materially more urgent than a first escalation: a reviewer
-				// has already had its one pass, so nothing automated remains
-				// behind this page.
-				title = "Fix loop escalated after reviewer pass"
-				detail = fmt.Sprintf("%s#%d red again on %d fix attempts since the reviewer's pass — no further automated pass will run (see PR comment)", o.Repo, o.Number, r.Attempts)
-			}
-			notifier.Send(title, detail, notify.PriorityHigh)
-		}
-	}
-	return escalated
-}
-
-type runWaitObserver interface {
-	RunWaitSnapshot() []dashboard.RunWaitSnapshot
-}
-
-var runWaitEscalationStore = getEscalationStore
-
-func runWaitEscalationSweep(cfg *config.Config, runs runWaitObserver, logger *slog.Logger) {
-	if cfg == nil || runs == nil {
-		return
-	}
-	d := currentEscalationDispatcher()
-	if d == nil {
-		return
-	}
-	sev, ok := escalate.ParseSeverity(cfg.Runs.EffectiveWaitSeverity())
-	if !ok {
-		sev = escalate.SeverityDecision
-	}
-	// With the default floors (push and chat at page) a decision-severity
-	// wait may reach no sink at all; latching the generation anyway would
-	// spend its only escalation on nothing (hivecommons/hive#10088).
-	if !d.Admits(sev) {
-		if logger != nil {
-			logger.Debug("run checkpoint wait escalation skipped: no escalation sink admits severity", "severity", sev)
-		}
-		return
-	}
-	timeout := time.Duration(cfg.Runs.EffectiveWaitTimeoutSeconds()) * time.Second
-	snapshots := runs.RunWaitSnapshot()
-	obs := make([]escalation.RunObservation, 0, len(snapshots))
-	for _, run := range snapshots {
-		obs = append(obs, escalation.RunObservation{
-			Key:          run.Key,
-			Title:        run.Title,
-			Repo:         run.Repo,
-			Stage:        run.Stage,
-			Gen:          run.Gen,
-			WaitingOn:    run.WaitingOn,
-			WaitingSince: run.WaitingSince,
-			Link:         run.Link,
-		})
-	}
-	store := runWaitEscalationStore()
-	for _, ev := range store.SweepRuns(obs, timeout, sev) {
-		d.Dispatch(ev.Event)
-		store.MarkRunWaitEscalated(ev.Key, ev.Gen)
-		if logger != nil {
-			logger.Info("run checkpoint wait escalated", "title", ev.Event.Title, "severity", ev.Event.Severity)
-		}
-	}
-}
-
-// labelRemover is the optional forge capability the auto-un-park path needs.
-// Every real adapter (GitHub, GitLab, Gitea) implements RemoveLabel on
-// forge.Forge; the narrow IssueWriter the sweep takes does not declare it, so
-// a writer that cannot remove labels simply leaves the PR labeled and logs.
-type labelRemover interface {
-	RemoveLabel(ctx context.Context, repo string, number int, label string) error
-}
-
-// unparkEscalatedPR performs the forge side of an automatic un-park: the
-// needs-human label comes off, and — on the pass that decided it — a one-line
-// comment says why. Before hivecommons/hive#9473 nothing did this: a PR
-// escalated over a base-branch or runner outage stayed parked after the
-// incident cleared, and a labeled PR that went green stayed parked forever,
-// because the labeled branch returned before the green branch.
-func unparkEscalatedPR(ctx context.Context, writer forge.IssueWriter, o escalation.Observation, r escalation.Result, logger *slog.Logger) {
-	remover, ok := writer.(labelRemover)
-	if !ok {
-		logger.Warn("cannot un-park escalated PR: forge writer cannot remove labels",
-			"repo", o.Repo, "pr", o.Number)
-		return
-	}
-	if err := remover.RemoveLabel(ctx, o.Repo, o.Number, escalation.NeedsHumanLabel); err != nil {
-		// Retried on the next pass: the ledger keeps asking until a pass
-		// observes the label gone.
-		logger.Warn("un-park label removal failed; will retry next pass",
-			"repo", o.Repo, "pr", o.Number, "error", err)
-		return
-	}
-	if r.UnparkReason == "" {
-		return // label-removal retry: the comment was posted on the deciding pass
-	}
-	if err := writer.CreateIssueComment(ctx, o.Repo, o.Number, escalation.UnparkCommentBody(r.UnparkReason)); err != nil {
-		logger.Warn("un-park comment failed", "repo", o.Repo, "pr", o.Number, "error", err)
-	}
-	logger.Info("escalation un-parked", "repo", o.Repo, "pr", o.Number, "reason", r.UnparkReason)
-}
-
-// autoMergeSweepInterval is the minimum spacing between label-queued
-// auto-merge sweeps. The sweep piggybacks on the governor eval tick, which can
-// fire much more often than once a minute; this floor keeps the sweep from
-// hammering the GitHub API on short eval intervals.
-const autoMergeSweepInterval = time.Minute
-
-// taskListSweepInterval is the minimum spacing between task-list sweeps. The
-// sweep enumerates every open issue in every repo — much heavier than the
-// auto-merge sweep's label-scoped query — and "done" moves at PR-merge cadence,
-// so a 15-minute floor keeps the API cost modest while still closing completed
-// epics on the same day the last box gets ticked.
-const taskListSweepInterval = 15 * time.Minute
-
-// supersessionSweepInterval is the minimum spacing between sweeps that retire
-// open PRs whose claimed issue was already closed by a different merged PR.
-// It walks open PRs and may inspect issue timelines and file lists, so it uses
-// the same conservative cadence as the task-list sweep.
-const supersessionSweepInterval = 15 * time.Minute
-
-// duplicateSweepInterval is the minimum spacing between duplicate sweeps. It
-// is an hour rather than the task-list sweep's fifteen minutes for two
-// reasons. Cost: the sweep fingerprints the changed-file set of every open PR,
-// which on a large queue is the heaviest read the hive performs (the head-SHA
-// cache makes steady-state passes nearly free, but a cold pass is not).
-// Signal: duplicates accumulate at human-PR-opening cadence, so nothing is
-// lost by noticing one an hour later, while a tighter loop only multiplies the
-// chance of editing a suggestion under a reader's cursor.
-const duplicateSweepInterval = time.Hour
-
-// runAutoMergeSweepIfDue drains the label-queued auto-merge queue (the human
-// "Approved ... for Hive auto-merge" path) at most once per
-// autoMergeSweepInterval. All merge-eligibility decisions — queue-approval
-// trust, the trusted-merger tier gate (SetMergerAuthorizer), check
-// verification — live inside SweepQueuedAutoMerges; this function is only the
-// scheduler and the dashboard audit sink.
-// rotationTrigger is the PausedTrigger stamped on strand-pauses so rotation's
-// auto-resume never resumes a pause it did not create.
-const rotationTrigger = "provider-rotation"
-
-// runRotationCheck applies RFC #3958 provider rotation after an eval cycle:
-// for each agent not mid-task whose provider was positively measured as
-// exhausted, move it to a backend with headroom at the same tier; when
-// nothing has headroom, pause it loudly (strand). Stranded agents are
-// auto-resumed when their provider recovers headroom. Never runs mid-task:
-// only idle agents are candidates.
-func runRotationCheck(ctx context.Context, cfg *config.Config, rotMgr *rotation.Manager, gov *governor.Governor, agentMgr *agent.Manager, logger *slog.Logger) {
-	if rotMgr == nil || !cfg.Governor.Rotation.Enabled {
-		return
-	}
-	govState := gov.GetState()
-	for name, proc := range agentMgr.AllStatuses() {
-		backend := proc.Config.Backend
-		if proc.BackendOverride != "" {
-			backend = proc.BackendOverride
-		}
-
-		// Auto-resume: a stranded agent whose provider recovered.
-		if proc.Paused && proc.PausedTrigger == rotationTrigger {
-			if rotMgr.StrandRecovered(backend) {
-				if err := agentMgr.Resume(ctx, name, rotationTrigger, "provider headroom recovered"); err != nil {
-					logger.Warn("rotation: auto-resume failed", "agent", name, "error", err)
-				} else {
-					logger.Info("rotation: auto-resumed stranded agent", "agent", name, "backend", backend)
-				}
-			}
-			continue
-		}
-		if proc.Paused {
-			continue // never touch an operator pause
-		}
-		// Never rotate mid-task: only idle agents are candidates.
-		if proc.State == agent.StateRunning {
-			continue
-		}
-
-		cadenceS := 0
-		if interval := governorShortestActiveInterval(govState, name); interval > 0 {
-			cadenceS = int(interval / time.Second)
-		}
-
-		if !rotMgr.Exhausted(backend) {
-			continue
-		}
-		next := rotMgr.NextBackendForCadence(name, backend, cadenceS)
-		if next == "" {
-			// Strand loudly: pause so the agent burns nothing until a
-			// provider recovers; the loop above auto-resumes it.
-			if err := agentMgr.Pause(name, rotationTrigger, "no provider has headroom (RFC #3958)"); err != nil {
-				logger.Warn("rotation: strand-pause failed", "agent", name, "error", err)
-			} else {
-				logger.Info("rotation: stranding agent, no headroom anywhere", "agent", name, "backend", backend)
-			}
-			continue
-		}
-		if err := agentMgr.SetBackendOverride(name, next); err != nil {
-			logger.Warn("rotation: backend override failed", "agent", name, "to", next, "error", err)
-			continue
-		}
-		logger.Info("rotation: moved agent to new backend", "agent", name, "from", backend, "to", next)
-	}
-}
-
-func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil {
-		return
-	}
-	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < autoMergeSweepInterval {
-		return
-	}
-	if lastRun != nil {
-		*lastRun = now
-	}
-	opts := automerge.Options{
-		Logger:              logger,
-		MergerAuthorizer:    trustedMergerFunc(cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
-	}
-	if cfg != nil {
-		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
-		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
-			opts.RequiredChecks = set
-		}
-		opts.RequiredChecksForRepo = cfg.AutoMerge.RequiredCheckSetForRepo
-		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
-		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
-		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
-	}
-	audit := func(event automerge.AutoMergeSweepEvent) {
-		if dashSrv == nil {
-			return
-		}
-		detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, tier=%s, head_sha=%s, merge_sha=%s",
-			event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.Tier, event.HeadSHA, event.MergeSHA)
-		dashSrv.AuditLogRecord("system", "automerge-sweep-merged", detail, "", event.Repo, event.Number)
-	}
-	result, err := automerge.SweepQueuedAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
-		MaxMerges: automerge.DefaultAutoMergeSweepMaxMerges,
-		Audit:     audit,
-	})
-	if err != nil {
-		logger.Warn("automerge sweep failed", "error", err)
-		return
-	}
-	if len(result.Merged) > 0 || result.Seen > 0 {
-		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
-	}
-	remaining := automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
-	if remaining > 0 && opts.TrustedAuthorPolicy().Enabled {
-		trustedResult, trustedErr := automerge.SweepTrustedAuthorAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
-			MaxMerges: remaining,
-			Audit:     audit,
-		})
-		if trustedErr != nil {
-			logger.Warn("trusted-author automerge sweep failed", "error", trustedErr)
-		} else {
-			result.Seen += trustedResult.Seen
-			result.Skipped += trustedResult.Skipped
-			result.Merged = append(result.Merged, trustedResult.Merged...)
-			if len(trustedResult.Merged) > 0 || trustedResult.Seen > 0 {
-				logger.Info("trusted-author automerge sweep complete", "seen", trustedResult.Seen, "merged", len(trustedResult.Merged), "skipped", trustedResult.Skipped)
-			}
-		}
-	}
-	hookDispatcher().Fire(context.Background(), hooks.Payload{
-		Transition: hooks.TransitionSweepCompleted,
-		Reason:     "queued automerge sweep complete",
-		Attrs: map[string]string{
-			"seen":    strconv.Itoa(result.Seen),
-			"merged":  strconv.Itoa(len(result.Merged)),
-			"skipped": strconv.Itoa(result.Skipped),
-		},
-	})
-}
-
-// runTaskListSweepIfDue closes hive-filed issues whose task-list bodies are
-// fully ticked, at most once per taskListSweepInterval. The finding-granularity
-// policy (guidance now in every issue-filing template) tells agents to encode
-// multi-part deliverables as `- [ ]` boxes; this is the sink that turns those
-// boxes into closures. All safety gates — hive-filed only, at-least-one-box,
-// all-boxes-ticked, hold-label respected, per-tick cap — live inside
-// SweepCompletedTaskListIssues; this function is only the scheduler and the
-// dashboard audit sink, mirroring runAutoMergeSweepIfDue above.
-func runTaskListSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil {
-		return
-	}
-	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < taskListSweepInterval {
-		return
-	}
-	if lastRun != nil {
-		*lastRun = now
-	}
-	result, err := ghClient.SweepCompletedTaskListIssues(ctx, github.TaskListSweepOptions{
-		MaxCloses: github.DefaultTaskListSweepMaxCloses,
-		Audit: func(event github.TaskListSweepEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, issue=%d, author=%s, boxes=%d",
-				event.Repo, event.Number, event.Author, event.TotalBoxes)
-			dashSrv.AuditLogRecord("system", "task-list-sweep-closed", detail, "", event.Repo, event.Number)
-		},
-	})
-	if err != nil {
-		logger.Warn("task-list sweep failed", "error", err)
-		return
-	}
-	if len(result.Closed) > 0 || result.Seen > 0 {
-		logger.Info("task-list sweep complete", "seen", result.Seen, "closed", len(result.Closed), "skipped", result.Skipped)
-	}
-	hookDispatcher().Fire(context.Background(), hooks.Payload{
-		Transition: hooks.TransitionSweepCompleted,
-		Reason:     "task-list sweep complete",
-		Attrs: map[string]string{
-			"seen":    strconv.Itoa(result.Seen),
-			"closed":  strconv.Itoa(len(result.Closed)),
-			"skipped": strconv.Itoa(result.Skipped),
-		},
-	})
-}
-
-func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil {
-		return
-	}
-	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < supersessionSweepInterval {
-		return
-	}
-	if lastRun != nil {
-		*lastRun = now
-	}
-	var supersessionCfg config.SupersessionSweepConfig
-	if cfg != nil {
-		supersessionCfg = cfg.SupersessionSweep
-	}
-	result, err := ghClient.SweepSupersededOpenPRs(ctx, github.SupersessionSweepOptions{
-		MaxActions:          github.DefaultSupersessionSweepMaxActions,
-		CloseContributorPRs: supersessionCfg.CloseContributorPRs,
-		GracePeriod:         supersessionCfg.GracePeriod,
-		ACMMLevelForRepo: func(repo string) int {
-			if cfg == nil {
-				return 0
-			}
-			return cfg.EffectiveACMMLevelForRepo(repo)
-		},
-		Audit: func(event github.SupersessionSweepEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, closer_pr=%d, action=%s",
-				event.Repo, event.Number, event.IssueRepo, event.Issue, event.CloserPR, event.Action)
-			dashSrv.AuditLogRecord("system", "supersession-sweep-"+event.Action, detail, "", event.Repo, event.Number)
-		},
-	})
-	if err != nil {
-		logger.Warn("supersession sweep failed", "error", err)
-		return
-	}
-	if len(result.Closed) > 0 || len(result.Commented) > 0 || result.Seen > 0 {
-		logger.Info("supersession sweep complete", "seen", result.Seen, "closed", len(result.Closed), "commented", len(result.Commented), "skipped", result.Skipped)
-	}
-	hookDispatcher().Fire(context.Background(), hooks.Payload{
-		Transition: hooks.TransitionSweepCompleted,
-		Reason:     "supersession sweep complete",
-		Attrs: map[string]string{
-			"seen":      strconv.Itoa(result.Seen),
-			"closed":    strconv.Itoa(len(result.Closed)),
-			"commented": strconv.Itoa(len(result.Commented)),
-			"skipped":   strconv.Itoa(result.Skipped),
-		},
-	})
-}
-
-// runDuplicateSweepIfDue clusters open PRs by changed-file set and suggests
-// which one to keep, at most once per duplicateSweepInterval
-// (hivecommons/hive#7469 capability B).
-//
-// Fail-closed and opt-in at both levels. `duplicate_sweep.enabled` is off by
-// default, so a hive that has not asked for this performs no extra API calls
-// at all; `duplicate_sweep.post_comments` is a SECOND, separately-off grant
-// for the write, so the natural first configuration is a report-only pass an
-// operator can read in the log before the hive says anything on a
-// contributor's PR.
-//
-// The sweep only ever comments. It does not close, label, approve or merge,
-// and the reviewer gains no permission from its existence: the write is the
-// hive's own App token going through the same canary-gated, scrubbed comment
-// path every other hive-authored comment uses.
-func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil || cfg == nil || !cfg.DuplicateSweep.Enabled {
-		return
-	}
-	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < duplicateSweepInterval {
-		return
-	}
-	if lastRun != nil {
-		*lastRun = now
-	}
-	result, err := ghClient.SweepDuplicatePRs(ctx, github.DuplicateSweepOptions{
-		PostComments:  cfg.DuplicateSweep.PostComments,
-		MaxComments:   cfg.DuplicateSweep.MaxComments,
-		MaxPRsPerRepo: cfg.DuplicateSweep.MaxPRsPerRepo,
-		BotAuthors:    cfg.DuplicateSweep.BotAuthors,
-		Audit: func(event github.DuplicateSweepEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, survivor=%d, superseded=%d, confidence=%s, commented=%d",
-				event.Repo, event.Survivor, len(event.Superseded), event.Confidence, len(event.Commented))
-			dashSrv.AuditLogRecord("system", "duplicate-sweep-suggested", detail, "", event.Repo, event.Survivor)
-		},
-	})
-	if err != nil {
-		logger.Warn("duplicate sweep reported a problem", "error", err)
-	}
-	if result == nil {
-		return
-	}
-	if len(result.Clusters) > 0 || result.Scanned > 0 {
-		logger.Info("duplicate sweep complete",
-			"scanned", result.Scanned,
-			"skipped", result.Skipped,
-			"clusters", len(result.Clusters),
-			"commented", result.Commented,
-			"post_comments", cfg.DuplicateSweep.PostComments)
-	}
-	hookDispatcher().Fire(context.Background(), hooks.Payload{
-		Transition: hooks.TransitionSweepCompleted,
-		Reason:     "duplicate sweep complete",
-		Attrs: map[string]string{
-			"scanned":   strconv.Itoa(result.Scanned),
-			"clusters":  strconv.Itoa(len(result.Clusters)),
-			"commented": strconv.Itoa(result.Commented),
-		},
-	})
-}
-
-// sentinelSweepInterval is the minimum spacing between sentinel passes. The
-// sweep lists open PRs per repo every pass but fetches a PR's files only when
-// its head SHA changed since the last evaluation, so steady state is one list
-// call per repo; fifteen minutes bounds how long a hostile PR sits unlabelled.
-const sentinelSweepInterval = 15 * time.Minute
-
-// runSentinelSweepIfDue flags open PRs that look like security overrides,
-// privilege escalation or codebase damage (pkg/sentinel) at most once per
-// sentinelSweepInterval. Default on; `sentinel.enabled: false` disables it.
-func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil || cfg == nil || !cfg.Sentinel.IsEnabled() {
-		return
-	}
-	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < sentinelSweepInterval {
-		return
-	}
-	if lastRun != nil {
-		*lastRun = now
-	}
-	sc := cfg.Sentinel
-	result, err := ghClient.SweepSentinel(ctx, github.SentinelSweepOptions{
-		Label:               sc.LabelOrDefault(),
-		LabelColor:          config.DefaultSentinelLabelColor,
-		LabelDescription:    config.DefaultSentinelLabelDescription,
-		Evaluator:           sc.EvaluatorConfig(),
-		TrustedAuthor:       sentinelTrustedAuthorFunc(cfg, ghClient),
-		TrustedAuthorsBlock: sc.TrustedAuthorsBlock,
-		RepoAllowed:         sc.RepoAllowed,
-		MaxActions:          sc.MaxActionsOrDefault(),
-		Audit: func(event github.SentinelSweepEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, head=%s, rules=%s",
-				event.Repo, event.Number, event.Author, event.HeadSHA, strings.Join(event.Rules(), ","))
-			dashSrv.AuditLogRecord("system", "sentinel-alert", detail, "", event.Repo, event.Number)
-		},
-	})
-	if err != nil {
-		logger.Warn("sentinel sweep failed", "error", err)
-		return
-	}
-	for _, e := range result.Errors {
-		logger.Warn("sentinel sweep: PR skipped", "detail", e)
-	}
-	for _, ev := range result.Flagged {
-		logger.Warn("sentinel alert", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "rules", strings.Join(ev.Rules(), ","))
-	}
-	for _, ev := range result.Notified {
-		logger.Info("sentinel notice", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "rules", strings.Join(ev.Rules(), ","))
-	}
-	for _, ev := range result.Remediated {
-		logger.Info("sentinel unflagged trusted author PR", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "head", ev.HeadSHA)
-	}
-	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors))
-	}
-	hookDispatcher().Fire(context.Background(), hooks.Payload{
-		Transition: hooks.TransitionSweepCompleted,
-		Reason:     "sentinel sweep complete",
-		Attrs: map[string]string{
-			"seen":       strconv.Itoa(result.Seen),
-			"flagged":    strconv.Itoa(len(result.Flagged)),
-			"notified":   strconv.Itoa(len(result.Notified)),
-			"remediated": strconv.Itoa(len(result.Remediated)),
-			"skipped":    strconv.Itoa(result.Skipped),
-		},
-	})
-}
-
-// issueUnparkSweepInterval is the minimum spacing between un-park sweeps. A
-// maintainer who replies "/hive approve" is waiting for something to happen, so
-// this runs more often than the task-list sweep; it only reads the comments of
-// issues that are actually parked, which keeps the API cost proportional to the
-// backlog a person is waiting on.
-const issueUnparkSweepInterval = 5 * time.Minute
-
-// issueUnparkLabelDriven adapts the repo policy to the sweep option. cfg is nil
-// only in tests; nil leaves every repo on the default path.
-func issueUnparkLabelDriven(cfg *config.Config) func(repo string) bool {
-	return func(repo string) bool { return cfg.RepoLabelDriven(repo) }
-}
-
-// runIssueUnparkSweepIfDue re-queues parked issues a maintainer has answered
-// with a `/hive` command, and keeps the "What to reply" block current on every
-// parked issue (hivecommons/hive#9879). Every gate — human author, live write
-// permission, first-line command, recent unedited comment, per-tick cap — lives
-// inside SweepIssueUnparkCommands; this function is only the scheduler and the
-// dashboard audit sink, mirroring runTaskListSweepIfDue above. Repos with
-// project.repo_policies[].label_driven skip the notice and keep their parking
-// labels (hivecommons/hive#10537).
-func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil {
-		return
-	}
-	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < issueUnparkSweepInterval {
-		return
-	}
-	if lastRun != nil {
-		*lastRun = now
-	}
-	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
-		MaxActions:  github.DefaultIssueUnparkSweepMaxActions,
-		LabelDriven: issueUnparkLabelDriven(cfg),
-		Audit: func(event github.IssueUnparkEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, issue=%d, actor=%s, decision=%s",
-				event.Repo, event.Number, event.Actor, event.Decision)
-			dashSrv.AuditLogRecord("system", "issue-unparked-by-reply", detail, "", event.Repo, event.Number)
-		},
-	})
-	if err != nil {
-		logger.Warn("issue un-park sweep failed", "error", err)
-		return
-	}
-	if result == nil {
-		return
-	}
-	if len(result.Unparked) > 0 || result.Replies > 0 {
-		logger.Info("issue un-park sweep complete",
-			"seen", result.Seen, "unparked", len(result.Unparked), "replies", result.Replies, "skipped", result.Skipped)
-	}
-}
-
-var (
-	ciFailingPath      = "/var/run/hive-metrics/ci-failing.json"
-	intentVerdictsPath = "/var/run/hive-metrics/intent-verdicts.json"
-)
-
-// claimLedger holds the duplicate-PR guard's persisted issue→PR claim mapping
-// across eval cycles. It is loaded lazily on first use (and retried on a load
-// failure) rather than at startup, so a missing or corrupt /data ledger can
-// never block the hive from booting.
-var (
-	claimLedgerOnce   sync.Once
-	claimLedger       *github.ClaimLedger
-	claimLedgerPath   = github.ClaimLedgerPath
-	claimLedgerLoader = github.LoadClaimLedger
-	closeOnMergeMu    sync.Mutex
-	closeOnMergeLast  time.Time
-)
-
-// hiveIdentity determines which PR authors count as "this hive", so only our
-// own PRs suppress work. Two accounts can open PRs on our behalf:
-//   - project.ai_author — the account agents push and open PRs as
-//   - the GitHub App bot login ("<app-slug>[bot]") when the hive authenticates
-//     as an installation, which is what actually authors PRs in that mode
-func hiveIdentity(cfg *config.Config) github.HiveIdentity {
-	id := github.HiveIdentity{AIAuthor: cfg.Project.AIAuthor}
-	if slug := cfg.GitHub.ResolvedAppSlug(); slug != "" {
-		id.AppLogin = slug + "[bot]"
-	}
-	return id
-}
-
-// applyDuplicatePRGuard filters issues already claimed by an open hive-authored
-// PR out of the actionable set. Failures are logged, never fatal: the guard is
-// a safety net, and a broken net must not take the hive down with it.
-func applyDuplicatePRGuard(
-	ctx context.Context,
-	cfg *config.Config,
-	ghClient *github.Client,
-	actionable *github.ActionableResult,
-	logger *slog.Logger,
-) {
-	// #8380: a LIVE issue claim covers an issue the same way an open PR does,
-	// for every kick prompt (the scanner's included). The claim fields are
-	// only ever set while governor.claims.enabled is on, so with the feature
-	// off this touches nothing.
-	if cfg != nil && cfg.Governor.Claims.Enabled {
-		if withheld := github.FilterLiveIssueClaims(actionable, time.Now(), logger); withheld > 0 {
-			logger.Info("issue-claim guard applied", "withheld", withheld)
-		}
-	}
-	ledger := getClaimLedger(logger)
-	if ledger == nil {
-		return
-	}
-	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
-	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
-}
-
-func runCloseOnMergeSweep(ctx context.Context, cfg *config.Config, ghClient *github.Client, ledger *github.ClaimLedger, logger *slog.Logger) {
-	if cfg == nil || ghClient == nil || ledger == nil || !cfg.Issues.CloseOnMergeEnabled() {
-		return
-	}
-	opts := github.CloseOnMergeOptions{
-		Identity: hiveIdentity(cfg),
-		Logger:   logger,
-		TrustedAuthor: func(repo, login string) bool {
-			decision := trustedAuthorFunc(cfg)(login, cfg.AutoMerge.TrustedAuthors.EffectiveRequireRole())
-			return decision.Allowed
-		},
-	}
-	results := ghClient.CloseOnMergeForLedger(ctx, ledger, opts)
-	logCloseOnMergeResults(logger, "close-on-merge ledger sweep", results)
-
-	interval := cfg.Issues.EffectiveCloseOnMergeBackfillInterval()
-	closeOnMergeMu.Lock()
-	due := closeOnMergeLast.IsZero() || time.Since(closeOnMergeLast) >= interval
-	if due {
-		closeOnMergeLast = time.Now()
-	}
-	closeOnMergeMu.Unlock()
-	if !due {
-		return
-	}
-	backfill := ghClient.CloseOnMergeBackfill(ctx, opts)
-	logCloseOnMergeResults(logger, "close-on-merge backfill sweep", backfill)
-}
-
-func logCloseOnMergeResults(logger *slog.Logger, msg string, results []github.CloseOnMergeResult) {
-	if logger == nil || len(results) == 0 {
-		return
-	}
-	var closed, awaiting, skipped, noop int
-	for _, r := range results {
-		switch r.Action {
-		case github.CloseOnMergeClosed:
-			closed++
-		case github.CloseOnMergeAwaiting:
-			awaiting++
-		case github.CloseOnMergeSkipped:
-			skipped++
-		default:
-			noop++
-		}
-	}
-	if closed > 0 || awaiting > 0 || skipped > 0 {
-		logger.Info(msg, "closed", closed, "awaiting_confirmation", awaiting, "skipped", skipped, "noop", noop)
-	}
-}
-
-// getClaimLedger lazily loads the persisted claim ledger on first use (and
-// keeps a usable empty ledger on a load failure), so a missing or corrupt
-// /data ledger can never block the hive from booting. It is shared by the
-// eval-cycle guard above and by the dashboard's IssueClaimed hook (#3768); the
-// sync.Once publication makes the pointer safe to read from either goroutine,
-// and the ledger itself is internally locked.
-func getClaimLedger(logger *slog.Logger) *github.ClaimLedger {
-	claimLedgerOnce.Do(func() {
-		ledger, err := claimLedgerLoader(claimLedgerPath, logger)
-		if err != nil {
-			// LoadClaimLedger always returns a usable (possibly empty) ledger
-			// alongside the error, so we keep it and just report the problem.
-			logger.Warn("duplicate-PR guard: could not load persisted claim ledger, starting empty",
-				"path", claimLedgerPath, "error", err)
-		}
-		claimLedger = ledger
-	})
-	return claimLedger
-}
-
-// claimingPRRedStale builds the Fix #3 release predicate: given a claiming PR
-// (prRepo, prNumber), report whether it is red on a required check AND stale.
-// It looks up the PR's live CI state + head SHA from this pass's enumeration and
-// consults the shared staleness clock. A PR not found in the enumeration, or one
-// that is green/pending, or one whose red head only just appeared, returns false
-// — so a HEALTHY claiming PR still suppresses its issue. Returns a nil func when
-// escalation is disabled, preserving the original unconditional-suppress
-// behavior. GENERIC: keys only off check state + staleness.
-func claimingPRRedStale(cfg *config.Config, actionable *github.ActionableResult) github.RedStaleFunc {
-	if cfg.Escalation.Disabled || actionable == nil {
-		return nil
-	}
-	fullRepo := func(repo string) string {
-		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
-			return cfg.Project.Org + "/" + repo
-		}
-		return repo
-	}
-	// Index this pass's PRs by bare-repo#number so a claim's PRRepo (which may
-	// be bare or "owner/repo") resolves regardless of prefix.
-	type prState struct {
-		red     bool
-		headSHA string
-		repo    string
-	}
-	index := map[string]prState{}
-	for _, pr := range actionable.PRs.Items {
-		index[fmt.Sprintf("%s#%d", bareRepoName(pr.Repo), pr.Number)] = prState{
-			red:     pr.HasFailingRequiredCheck(),
-			headSHA: pr.HeadSHA,
-			repo:    fullRepo(pr.Repo),
-		}
-	}
-	store := getEscalationStore()
-	return func(prRepo string, prNumber int) bool {
-		st, ok := index[fmt.Sprintf("%s#%d", bareRepoName(prRepo), prNumber)]
-		if !ok || !st.red {
-			return false // not enumerated, or healthy → keep suppressing
-		}
-		return store.StaleRed(st.repo, prNumber, st.headSHA)
-	}
-}
-
-func fullRepoName(repo, org string) string {
-	if strings.Contains(repo, "/") || org == "" {
-		return repo
-	}
-	return org + "/" + repo
-}
-
-// reviewAgentCapability describes one configured lane the way the review
-// dispatcher sees it, so the relay judges reviewer-ness by the same rule.
-// An unknown lane has only its name to go on.
-func reviewAgentCapability(cfg *config.Config, agent string) review.AgentCapability {
-	cap := review.AgentCapability{Name: agent}
-	if cfg == nil {
-		return cap
-	}
-	if ac, ok := cfg.Agents[agent]; ok {
-		cap.Role = ac.Role
-		cap.LaneKeywords = ac.LaneKeywords
-		cap.DetectKeywords = ac.DetectKeywords
-		cap.Aliases = ac.Aliases
-	}
-	return cap
-}
-
-// installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
-// review-relay knobs that live in cfg.Review: which repos may be revised in
-// place, which perspectives a verdict may name, and whether comments carry a
-// confidence score (hivecommons/hive#8182). One place, so an app-auth rebuild
-// cannot silently drop a setting the first client had — the perspective set
-// was previously installed only on the boot path.
-func installReviewRelaySettings(client *github.Client, cfg *config.Config, logger *slog.Logger) {
-	if client == nil || cfg == nil {
-		return
-	}
-	client.SetReviseRepos(cfg.Review.ReviseRepos)
-	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
-	client.SetReviewerAgentFunc(func(agent string) bool {
-		return review.ReviewCapable(reviewAgentCapability(cfg, agent), review.ReviewerAgentSet(cfg.Review.ReviewerAgents))
-	})
-	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
-	client.SetReviewBacklog(func() (bool, int) {
-		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues
-	})
-	client.SetReviewBacklogRouting(func() github.ReviewBacklogRouting {
-		return reviewBacklogRouting(client, cfg, logger)
-	})
-	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
-		return reviewEvidenceSettings(cfg, repo)
-	})
-	// #8380: issue claims are read at enumeration time only while
-	// governor.claims.enabled is on; the setting is read live so the Features
-	// toggle applies without a client rebuild.
-	client.SetIssueClaims(func() (bool, time.Duration) {
-		return cfg.Governor.Claims.Enabled, cfg.Governor.Claims.EffectiveTTL()
-	})
-	client.SetReviewCadenceLimits(
-		func() bool { return cfg.Review.CombinedPerspectives },
-		func() int { return cfg.Review.MaxReviewsPerHead },
-	)
-}
-
-// reviewBacklogRouting resolves review.severity / review.backlog and the
-// backlog sink for the active work source (hivecommons/hive#11089). A
-// destination whose work source cannot be built falls back to GitHub issues;
-// the reason is logged so the operator can fix the work-source config.
-func reviewBacklogRouting(client *github.Client, cfg *config.Config, logger *slog.Logger) github.ReviewBacklogRouting {
-	ghToken := cfg.GitHub.Token
-	if ghToken == "" {
-		ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
-	}
-	sink, err := worksource.NewReviewBacklogSink(cfg.Governor.WorkSource, cfg.Review.Backlog, client, ghToken, cfg.Project.Org, logger)
-	if err != nil && logger != nil {
-		logger.Warn("review backlog: destination unavailable, filing GitHub issues", "error", err)
-	}
-	return github.ReviewBacklogRouting{Severity: cfg.Review.Severity, Backlog: cfg.Review.Backlog, Sink: sink}
-}
-
-// installReviewBots installs classification.review_bots on a (possibly
-// rebuilt) GitHub client (hivecommons/hive#7360). hive.yaml's block wins;
-// otherwise the same key is read from hive-project.yaml
-// (config.DefaultProjectYAMLPath, overridable via HIVE_PROJECT_YAML — the
-// path the bash pipeline stages already honour). Nil-safe: a hive without
-// GitHub credentials runs with a nil client for the life of the process.
-// Also installs review.fix_human_prs (hivecommons/hive#9361), so the
-// review-thread reconciler follows PRs the hive did not open whenever the
-// fixer is already allowed to push to them.
-func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.Logger) {
-	if client == nil || cfg == nil {
-		return
-	}
-	rb, err := cfg.EffectiveReviewBots(os.Getenv("HIVE_PROJECT_YAML"))
-	if err != nil && logger != nil {
-		logger.Warn("classification.review_bots: project file unreadable; review-thread reconciler stays off", "error", err)
-	}
-	client.SetReviewBots(rb)
-	client.SetFixHumanPRs(cfg.Review.FixHumanPRsEnabled())
-	if logger != nil && rb.Enabled() {
-		logger.Info("review-thread reconciler enabled",
-			"review_bots", rb.Logins,
-			"max_attempts_per_thread", rb.MaxAttempts(),
-			"resolve_after_fix", rb.ResolveAfterFixEnabled(),
-			"fix_human_prs", cfg.Review.FixHumanPRsEnabled())
-	}
-}
-
-// reviewThreadsRefreshInterval throttles the review-thread monitor: the eval
-// tick runs about once a minute, but every hive-authored open PR costs one
-// GraphQL query per pass, and bot threads move on the scale of minutes, not
-// seconds. A var so tests can drive it.
-var reviewThreadsRefreshInterval = 5 * time.Minute
-
-// reviewThreadsLastRefresh is the wall-clock of the last CollectReviewThreads
-// pass (zero = never). Package-level because the eval tick is a free
-// function; only the eval goroutine touches it.
-var reviewThreadsLastRefresh time.Time
-
-// writeReviewThreads is the eval-tick half of the #7360 reconciler. It runs
-// CollectReviewThreads over the governor's actionable PRs at most once per
-// reviewThreadsRefreshInterval, stamps each PR with the agent whose relay
-// request opened it (auditPRAgents — the same attribution ci-failing.json
-// carries) and with the escalation sweep's needs-human verdict, and writes
-// review-threads.json. The feature-off case still writes the (empty) file
-// each refresh so a reader can tell "off" from "never ran".
-func writeReviewThreads(ctx context.Context, client *github.Client, actionable *github.ActionableResult, org string, escalatedPRs map[string]bool, logger *slog.Logger) {
-	if client == nil || actionable == nil {
-		return
-	}
-	now := time.Now()
-	if !reviewThreadsLastRefresh.IsZero() && now.Sub(reviewThreadsLastRefresh) < reviewThreadsRefreshInterval {
-		return
-	}
-	reviewThreadsLastRefresh = now
-
-	report := client.CollectReviewThreads(ctx, actionable.PRs.Items, now)
-	if len(report.PRs) > 0 {
-		prAgents := auditPRAgents(org, now.Add(-auditPRAttributionWindow), "")
-		for i := range report.PRs {
-			pr := &report.PRs[i]
-			pr.Agent = prAgents[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)]
-			pr.Escalated = escalatedPRs[escalation.Key(pr.Repo, pr.Number)]
-		}
-	}
-	if err := github.WriteReviewThreadsReport("", report); err != nil {
-		logger.Warn("failed to write review-threads.json", "error", err)
-		return
-	}
-	if report.Enabled {
-		logger.Info("review-threads.json refreshed", "prs", len(report.PRs), "threads", report.TotalThreads)
-	}
-}
-
-// auditPRAttributionWindow bounds how far back the audit trail is scanned to
-// map open PRs to the agent that opened them. Red PRs older than this fall
-// back to scanner ownership in the kick builders — acceptable: 14d exceeds any
-// PR the fleet should still be iterating on.
-const auditPRAttributionWindow = 14 * 24 * time.Hour
-
-// auditPRAgents maps "org/repo#number" → agent name from the audit trail's
-// agent_pr_created entries (attribution.go records one per relay-opened PR,
-// reuses included). Reading the on-disk log per eval tick keeps this
-// stateless; OutputActionsSince touches no receiver state, so a zero-value
-// AuditLog is safe here.
-func auditPRAgents(org string, since time.Time, auditPath string) map[string]string {
-	entries := (&dashboard.AuditLog{}).OutputActionsSince(since,
-		map[string]bool{github.AuditActionAgentPRCreated: true}, auditPath)
-	out := make(map[string]string, len(entries))
-	for _, e := range entries {
-		if e.Agent == "" {
-			continue
-		}
-		var repo, number string
-		for _, part := range strings.Split(e.Detail, ",") {
-			if k, v, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
-				switch k {
-				case "repo":
-					repo = v
-				case "number":
-					number = v
-				}
-			}
-		}
-		if repo == "" || number == "" {
-			continue
-		}
-		if !strings.Contains(repo, "/") && org != "" {
-			repo = org + "/" + repo
-		}
-		out[repo+"#"+number] = e.Agent
-	}
-	return out
-}
-
-// applyHumanDecisionLabels mirrors the review swarm's "a human must decide"
-// holds onto the operator's existing triage label, so they can be filtered
-// from the PR list instead of being found by opening threads.
-//
-// This is strictly additive to the marker the reviewer writes into the review
-// body. Every failure path here — no label configured, label absent from the
-// repo, API refusal — is logged and skipped, because a mislabelled hold is a
-// smaller problem than a hold that never got reported.
-func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, plan review.DispatchPlan, logger *slog.Logger) {
-	if cfg == nil || ghClient == nil {
-		return
-	}
-	label := strings.TrimSpace(cfg.Review.HumanDecisionLabel)
-	if label == "" || len(plan.State.Human) == 0 {
-		return
-	}
-	// Holds persist across cycles, so re-deriving them every pass would re-ask
-	// GitHub to apply a label the PR already carries. The enumeration already
-	// fetched each PR's labels, so skipping the settled ones costs nothing.
-	//
-	// Holds carry the owner/repo form (they descend from review reports, which
-	// record GitHub's full name) while PRs.Items carry whatever governor.repos
-	// says — usually the bare repo under project.org. Key both through
-	// fullRepoName or the skip never matches and every cycle re-labels every
-	// hold (observed on a hive whose repos were configured bare).
-	org := cfg.Project.Org
-	labeled := map[string]bool{}
-	if actionable != nil {
-		for _, pr := range actionable.PRs.Items {
-			for _, have := range pr.Labels {
-				if strings.EqualFold(strings.TrimSpace(have), label) {
-					labeled[strings.ToLower(fmt.Sprintf("%s#%d", fullRepoName(pr.Repo, org), pr.Number))] = true
-				}
-			}
-		}
-	}
-	for _, hold := range plan.State.Human {
-		if labeled[strings.ToLower(fmt.Sprintf("%s#%d", fullRepoName(hold.Repo, org), hold.Number))] {
-			continue
-		}
-		if err := ghClient.ApplyHumanDecisionLabel(ctx, hold.Repo, hold.Number, label); err != nil {
-			logger.Warn("human decision label not applied; review marker still stands",
-				"repo", hold.Repo, "pr", hold.Number, "label", label, "error", err)
-			continue
-		}
-		logger.Info("human decision label applied", "repo", hold.Repo, "pr", hold.Number, "label", label, "reason", hold.Reason)
-	}
-}
-
-// parseReviseCutoff reads Review.ReviseVerdictsBefore. A malformed value is
-// logged and ignored rather than defaulting to "now", because a cutoff that
-// silently becomes the current time would re-open every verdict in the
-// artifact at once — the opposite of the narrow, deliberate correction this
-// setting exists for.
-// reviewPerspectiveSet resolves the hive's configured review perspectives.
-//
-// A bad configuration falls back to the built-in set and says so, rather than
-// disabling review. Silently reviewing nothing would look identical to a healthy
-// hive with an empty queue; reviewing with the defaults while logging the error
-// keeps coverage up and makes the mistake findable.
-func reviewPerspectiveSet(cfg *config.Config, logger *slog.Logger) review.PerspectiveSet {
-	if cfg == nil {
-		return review.PerspectiveSet{}
-	}
-	set, err := review.NewPerspectiveSet(cfg.Review.Perspectives, cfg.Review.PerspectivePrompts)
-	if err != nil {
-		if logger != nil {
-			logger.Warn("review.perspectives is invalid; reviewing with the built-in set until it is fixed",
-				"error", err)
-		}
-		set = review.PerspectiveSet{}
-	}
-	// plan_match (#8317) is a separate switch from the selection so turning
-	// it on never requires spelling out the whole set. Applied on the
-	// fallback path too: a typo elsewhere in the selection must not silently
-	// turn plan matching off.
-	if cfg.Review.PlanMatch.Enabled {
-		set = set.WithPlanMatch()
-	}
-	return set
-}
-
-// planWaveFor renders the approved plan a PR's run trailers name, for the
-// plan_match perspective (#8317). The Hive-Plan ref is tried first, then the
-// Hive-Run key, since either may carry the epic ID or the source issue ref.
-// Empty when plan_match is off, the PR has no trailer, or no store holds the
-// plan -- the kick tells the reviewer which of those it is.
-func planWaveFor(cfg *config.Config, stores map[string]*beads.Store, planRef, runKey string) string {
-	if cfg == nil || !cfg.Review.PlanMatch.Enabled {
-		return ""
-	}
-	for _, ref := range []string{planRef, runKey} {
-		if tree, ok := planning.FindPlanTree(stores, ref); ok {
-			return tree.WaveText()
-		}
-	}
-	return ""
-}
-
-func parseReviseCutoff(raw string, logger *slog.Logger) time.Time {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return time.Time{}
-	}
-	cutoff, err := time.Parse(time.RFC3339, trimmed)
-	if err != nil {
-		if logger != nil {
-			logger.Warn("review revise_verdicts_before is not RFC3339; ignoring",
-				"value", trimmed, "error", err)
-		}
-		return time.Time{}
-	}
-	return cutoff
-}
-
-func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr *agent.Manager, beadStores map[string]*beads.Store, logger *slog.Logger) review.DispatchPlan {
-	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
-		return review.DispatchPlan{}
-	}
-	state, err := review.LoadDispatchState("")
-	if err != nil && !os.IsNotExist(err) {
-		logger.Warn("review dispatch state unavailable; starting fresh", "error", err)
-	}
-	// classification.review_bots, read the same way installReviewBots reads
-	// it for the thread reconciler (#7360): hive.yaml wins, hive-project.yaml
-	// is the fallback. Feeds the reviewer's read step (#9360); empty/off
-	// leaves ReviewBotLogins empty and the prompt section is skipped.
-	reviewBots, rbErr := cfg.EffectiveReviewBots(os.Getenv("HIVE_PROJECT_YAML"))
-	if rbErr != nil && logger != nil {
-		logger.Warn("classification.review_bots: project file unreadable; reviewer will not see bot findings this pass", "error", rbErr)
-	}
-	artifact, err := review.LoadArtifact("")
-	if err != nil && !os.IsNotExist(err) {
-		logger.Warn("review verdict artifact unavailable for dispatch planning", "error", err)
-	}
-	prAgents := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-	prs := make([]review.PullRequest, 0, len(actionable.PRs.Items))
-	for _, pr := range actionable.PRs.Items {
-		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
-		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
-		prs = append(prs, review.PullRequest{
-			Repo:    pr.Repo,
-			Number:  pr.Number,
-			Title:   pr.Title,
-			Author:  pr.Author,
-			HeadSHA: pr.HeadSHA,
-			URL:     pr.URL,
-			Lane:    string(lane),
-			// Authorship signal for the fix gate (#8421): a PR an agent opened
-			// on a person's credentials is still the hive's own work.
-			HiveAttributed: pr.HiveAttributed,
-			// Grounding anchor for the review prompt. Repo access is the
-			// measured active ingredient in review quality (17%→67% hit rate,
-			// 61% fewer false positives), so the reviewer is told which commit
-			// to read rather than being left to infer from the diff.
-			MergeBase:   pr.BaseSHA,
-			AuthorAgent: prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
-			// Run trailers (#8310) and the plan they name, for plan_match
-			// (#8317). Identifiers and planner output only: the PR body
-			// itself still never reaches the prompt.
-			RunKey:        pr.HiveRun,
-			PlanRef:       pr.HivePlan,
-			PlanWave:      planWaveFor(cfg, beadStores, pr.HivePlan, pr.HiveRun),
-			ScopeContract: pr.ScopeContract,
-		})
-	}
-	// PRs a review webhook just fired for go first, so the early eval cycle
-	// it triggered spends its review budget on them (hivecommons/hive#11091).
-	prs = prioritizeEventPRs(prs, activeReviewEvents.Load())
-	agents := make([]review.AgentCapability, 0, len(cfg.Agents))
-	for name, ac := range cfg.EnabledAgents() {
-		agents = append(agents, review.AgentCapability{
-			Name:           name,
-			Enabled:        true,
-			Paused:         ac.Paused || (agentMgr != nil && agentMgr.IsPaused(name)),
-			OnDemand:       ac.OnDemand,
-			UsesKick:       ac.UsesGovernorKick(),
-			Role:           ac.Role,
-			LaneKeywords:   ac.LaneKeywords,
-			DetectKeywords: ac.DetectKeywords,
-			Aliases:        ac.Aliases,
-		})
-	}
-	reviewBotLogins := []string{}
-	if reviewBots.Enabled() {
-		reviewBotLogins = reviewBots.Logins
-	}
-	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
-		RequireApproval:       cfg.Review.RequireApproval,
-		FanOut:                cfg.Review.FanOut,
-		MaxParallelReviews:    cfg.Review.EffectiveMaxParallelReviews(),
-		MaxPerspectivesPerPR:  cfg.Review.MaxPerspectivesPerPR,
-		Perspectives:          reviewPerspectiveSet(cfg, logger),
-		CombinedPerspectives:  cfg.Review.CombinedPerspectives,
-		ReviewerAgents:        cfg.Review.ReviewerAgents,
-		FixerAgent:            cfg.Review.FixerAgent,
-		PostComments:          cfg.Review.PostComments,
-		WritingGuideSection:   cfg.Project.WritingGuideSection(),
-		AllAuthors:            cfg.Review.AllAuthors,
-		FixHumanPRs:           cfg.Review.FixHumanPRsEnabled(),
-		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
-		ReviseRepos:           cfg.Review.ReviseRepos,
-		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
-		ProjectOrg:            cfg.Project.Org,
-		AIAuthor:              cfg.EffectiveAIAuthor(),
-		Agents:                agents,
-		ReviewBotLogins:       reviewBotLogins,
-		ReviewBotMinPriority:  reviewBots.MinPriority,
-	})
-	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
-		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
-	}
-	return plan
-}
-
-func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
-	if cfg == nil || !shouldRefreshReviewVerdicts(cfg) {
-		return
-	}
-	artifact, err := review.CollectAndMerge("", "", review.AggregateOptions{
-		// Unanimity is judged against what a PR was eligible to receive. Without
-		// this the cap makes approve unreachable and every PR aggregates to
-		// requires_human.
-		MaxPerspectivesPerPR: cfg.Review.MaxPerspectivesPerPR,
-		Perspectives:         reviewPerspectiveSet(cfg, logger),
-	}, time.Now().UTC())
-	if err != nil {
-		if !os.IsNotExist(err) {
-			logger.Warn("failed to refresh review verdicts", "error", err)
-		}
-		return
-	}
-	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
-}
-
-func shouldRefreshReviewVerdicts(cfg *config.Config) bool {
-	if cfg == nil {
-		return false
-	}
-	if cfg.Review.RequireApproval {
-		return true
-	}
-	entries, err := os.ReadDir(review.ReportDir(""))
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if !entry.IsDir() && strings.HasPrefix(name, review.ReviewReportFilePrefix) && strings.HasSuffix(name, review.ReviewReportFileSuffix) {
-			return true
-		}
-	}
-	return false
-}
-
-// reviewOutcomeResolveCap bounds how many vanished PRs one eval cycle asks
-// GitHub about. A hive pointed at a busy org can see dozens of PRs merge
-// between cycles; the rest are resolved next cycle, and an unresolved PR
-// reads as still open, never as merged.
-const reviewOutcomeResolveCap = 40
-
-// prStateGetter is the slice of the GitHub client the outcome ledger needs.
-type prStateGetter interface {
-	GetPRState(ctx context.Context, repo string, number int) (github.PRState, error)
-}
-
-// recordReviewOutcomes folds this cycle's open-PR enumeration into the
-// review-outcome ledger (pkg/review/outcomes.go): every open PR is upserted,
-// review evidence from the verdict artifact and the posted-review ledger is
-// attached, and PRs that left the list are resolved to merged/closed with one
-// GET each. It is what lets the dashboard say whether reviewed PRs merge
-// faster than unreviewed ones on THIS hive, rather than counting verdicts.
-func recordReviewOutcomes(ctx context.Context, cfg *config.Config, gh prStateGetter, actionable *github.ActionableResult, logger *slog.Logger) {
-	if cfg == nil || actionable == nil {
-		return
-	}
-	recordReviewOutcomesAt(ctx, cfg, gh, actionable, "", time.Now().UTC(), logger)
-}
-
-func recordReviewOutcomesAt(ctx context.Context, cfg *config.Config, gh prStateGetter, actionable *github.ActionableResult, path string, now time.Time, logger *slog.Logger) {
-	ledger, err := review.LoadOutcomeLedger(path)
-	if err != nil {
-		logger.Warn("review outcomes: ledger unreadable, starting fresh", "error", err)
-	}
-	aiAuthor := cfg.EffectiveAIAuthor()
-	open := make([]review.OpenPR, 0, len(actionable.PRs.Items))
-	for _, pr := range actionable.PRs.Items {
-		full := config.QualifyRepo(cfg.Project.Org, pr.Repo)
-		open = append(open, review.OpenPR{
-			Repo:          full,
-			Number:        pr.Number,
-			Author:        pr.Author,
-			AgentAuthored: pr.HiveAttributed || pr.AppAuthored || (aiAuthor != "" && strings.EqualFold(pr.Author, aiAuthor)),
-			CreatedAt:     pr.CreatedAt,
-		})
-	}
-
-	// Review evidence: the verdict artifact knows the verdict; the links
-	// ledger knows a review was posted even when its verdict could not bind
-	// (queue-lane reviews of undispatched PRs). Earliest time wins.
-	signals := map[string]review.ReviewSignal{}
-	if art, err := review.LoadArtifact(""); err == nil {
-		for _, it := range art.Items {
-			key := it.Repo + "#" + strconv.Itoa(it.Number)
-			prev, ok := signals[key]
-			if !ok || (!it.RecordedAt.IsZero() && it.RecordedAt.Before(prev.At)) {
-				signals[key] = review.ReviewSignal{At: it.RecordedAt, Verdict: it.Verdict}
-			} else if ok && prev.Verdict == "" {
-				prev.Verdict = it.Verdict
-				signals[key] = prev
-			}
-		}
-	}
-	if links, err := github.LoadReviewLinks(""); err == nil {
-		for key, link := range links {
-			at := link.At
-			if at.IsZero() {
-				continue
-			}
-			prev, ok := signals[key]
-			if !ok {
-				signals[key] = review.ReviewSignal{At: at}
-			} else if at.Before(prev.At) {
-				prev.At = at
-				signals[key] = prev
-			}
-		}
-	}
-
-	missing := ledger.Observe(now, open, signals)
-	resolved := 0
-	if gh != nil {
-		for i, m := range missing {
-			if i >= reviewOutcomeResolveCap {
-				break
-			}
-			st, err := gh.GetPRState(ctx, m.Repo, m.Number)
-			if err != nil {
-				logger.Debug("review outcomes: could not resolve vanished PR", "repo", m.Repo, "number", m.Number, "error", err)
-				continue
-			}
-			ledger.Resolve(m.Repo, m.Number, st.State, st.MergedAt, st.ClosedAt)
-			resolved++
-		}
-	}
-	ledger.Snapshot(now)
-	if err := ledger.Save(path, now); err != nil {
-		logger.Warn("review outcomes: save failed", "error", err)
-		return
-	}
-	if len(missing) > 0 {
-		logger.Info("review outcomes recorded", "open", len(open), "left_queue", len(missing), "resolved", resolved)
-	}
-}
-
-// reviewFixAuditor is the slice of the dashboard the withheld-fix audit
-// needs, so the function is testable without a live server.
-type reviewFixAuditor interface {
-	AuditLog(user, action, detail, agent string)
-}
-
-// auditWithheldReviewFixes puts every fix the planner refused this cycle on
-// the audit trail (#8421). A refusal is silent by design — the PR just does
-// not get a bot commit — and silence is the one thing an operator cannot
-// investigate, so each one names the PR, who opened it, and the setting
-// that would have allowed the push. The planner reports each head once, so
-// this does not repeat on every eval cycle.
-func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
-	for _, w := range plan.WithheldFixes {
-		logger.Info("review fix withheld: PR not hive-authored and "+w.Setting+" is off; review published, nothing pushed",
-			"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting)
-		if auditor == nil {
-			continue
-		}
-		auditor.AuditLog("governor", "review_fix_withheld",
-			fmt.Sprintf("pr=%s#%d head=%s author=%s setting=%s=false reason=%s", w.Repo, w.Number, w.HeadSHA, w.Author, w.Setting, w.Reason), "")
-	}
-}
-
-func persistReviewDispatchState(plan review.DispatchPlan, delivered []review.DispatchKick, logger *slog.Logger) {
-	planned := append(append([]review.DispatchKick(nil), plan.ReviewKicks...), plan.FixKicks...)
-	if plan.State.GeneratedAt.IsZero() && len(planned) == 0 {
-		return
-	}
-	state := review.ConfirmDelivered(plan.State, planned, delivered)
-	if err := review.WriteDispatchState("", state); err != nil {
-		logger.Warn("failed to persist review dispatch state", "error", err)
-	}
-}
-
-func atomicWrite(path string, data []byte) {
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, data, 0o644) == nil {
-		_ = os.Rename(tmp, path)
 	}
 }
 
@@ -10071,62 +7138,149 @@ func applyConfigOverrides(cfg *config.Config, o *snapshot.ConfigOverrides) {
 	}
 }
 
-const (
-	nousGovernorDir = "/var/run/nous/governor"
-	nousSnapshotDir = "/data/nous/snapshots"
-)
+// legacyNousGovernorDir is the pre-#11694 tmpfs location of the governor
+// ledger and principles, migrated forward into the durable layout at boot
+// and read as a fallback when the durable copy is absent.
+const legacyNousGovernorDir = nousstore.LegacyGovernorDir
 
-func loadNousState(logger *slog.Logger) *dashboard.NousState {
-	return loadNousStateFromPaths(logger, nousGovernorDir, nousSnapshotDir)
+// ensureNousDirs creates the durable Nous tree and carries any legacy
+// governor state forward into it (#11694). Failures are logged, not fatal:
+// Nous is observational and must never block a boot.
+func ensureNousDirs(layout nousstore.Layout, logger *slog.Logger) {
+	ensureNousDirsFrom(layout, legacyNousGovernorDir, logger)
 }
 
-func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {
+func ensureNousDirsFrom(layout nousstore.Layout, legacyDir string, logger *slog.Logger) {
+	if err := layout.EnsureDirs(); err != nil {
+		logger.Warn("failed to create nous dirs", "root", layout.Root, "error", err)
+	}
+	res, err := layout.MigrateLegacy(legacyDir, logger)
+	if err != nil {
+		logger.Warn("nous legacy state migration incomplete", "from", legacyDir, "to", layout.GovernorDir(), "error", err)
+	}
+	if len(res.Copied) > 0 {
+		logger.Info("nous legacy state migrated", "copied", len(res.Copied), "to", layout.GovernorDir())
+	}
+}
+
+// loadNousState builds the panel state from the durable layout: ledger and
+// principles from <root>/governor (or the legacy dir as a read-only
+// fallback), the snapshot count from <root>/snapshots, and the persisted
+// panel configuration from <root>/panel-config.json.
+func loadNousState(layout nousstore.Layout, logger *slog.Logger) *dashboard.NousState {
+	return loadNousStateFrom(layout, legacyNousGovernorDir, logger)
+}
+
+func loadNousStateFrom(layout nousstore.Layout, legacyDir string, logger *slog.Logger) *dashboard.NousState {
+	governorDir, fallback := layout.ResolveGovernorDir(legacyDir)
+	if fallback {
+		logger.Warn("nous: reading governor state from legacy location", "dir", legacyDir, "durable", layout.GovernorDir())
+	}
+	state := newNousState(governorDir, layout.SnapshotDir())
+	// Ledger and principles are served live from here on (#11697): this
+	// first sync is the boot snapshot, every /api/nous read re-syncs.
+	wireNousKnowledge(state, layout, legacyDir, logger)
+	pc, ok, err := layout.LoadPanelConfig()
+	switch {
+	case err != nil:
+		logger.Warn("nous: ignoring unreadable panel config", "path", layout.PanelConfigPath(), "error", err)
+	case ok:
+		state.ApplyPanelConfig(dashboard.NousPanelSnapshot{Mode: pc.Mode, Scope: pc.Scope, Config: pc.Config})
+		logger.Info("nous panel config restored", "path", layout.PanelConfigPath(), "mode", state.Mode, "scope", state.Scope)
+	}
+	return state
+}
+
+// nousPanelPersister adapts nousstore's on-disk panel config to the
+// dashboard's NousState.PersistPanel seam, stamping SavedAt with now.
+func nousPanelPersister(layout nousstore.Layout, now func() time.Time) func(dashboard.NousPanelSnapshot) error {
+	return func(snap dashboard.NousPanelSnapshot) error {
+		return layout.SavePanelConfig(nousstore.PanelConfig{Mode: snap.Mode, Scope: snap.Scope, Config: snap.Config}, now())
+	}
+}
+
+// nousGateStore adapts nousstore's gate files to the dashboard's
+// NousGateStore seam (#11696), stamping clocks from now.
+type nousGateStore struct {
+	layout nousstore.Layout
+	now    func() time.Time
+}
+
+func (g nousGateStore) PendingGate() (dashboard.NousGateRequest, bool, error) {
+	req, ok, err := g.layout.LoadGatePending()
+	if err != nil || !ok {
+		return dashboard.NousGateRequest{}, ok, err
+	}
+	return dashboard.NousGateRequest{
+		ID:          req.ID,
+		Gate:        req.Gate,
+		Question:    req.Question,
+		Scope:       req.Scope,
+		Summary:     req.Summary,
+		Artifact:    req.Artifact,
+		Reviews:     req.Reviews,
+		RequestedAt: req.RequestedAt,
+	}, true, nil
+}
+
+func (g nousGateStore) RecordGateDecision(d dashboard.NousGateDecision) error {
+	return g.layout.RecordGateDecision(nousstore.GateDecision{
+		GateID:    d.GateID,
+		Decision:  d.Decision,
+		Reason:    d.Reason,
+		DecidedBy: d.DecidedBy,
+		DecidedAt: d.DecidedAt,
+	}, g.now())
+}
+
+func (g nousGateStore) LastNotifiedGate() string         { return g.layout.LastNotifiedGate() }
+func (g nousGateStore) MarkGateNotified(id string) error { return g.layout.MarkGateNotified(id) }
+
+// nousGateNotifier is the subset of *notify.Notifier the gate ping needs.
+type nousGateNotifier interface {
+	Send(title, message string, priority notify.Priority)
+}
+
+// wireNousGate attaches the durable gate store, the owner notifier and a
+// logger to state. A nil notifier leaves pings off.
+func wireNousGate(state *dashboard.NousState, layout nousstore.Layout, notifier *notify.Notifier, logger *slog.Logger) {
+	var n nousGateNotifier
+	if notifier != nil {
+		n = notifier
+	}
+	wireNousGateWith(state, layout, n, logger, time.Now)
+}
+
+func wireNousGateWith(state *dashboard.NousState, layout nousstore.Layout, notifier nousGateNotifier, logger *slog.Logger, now func() time.Time) {
+	if state == nil {
+		return
+	}
+	state.GateStore = nousGateStore{layout: layout, now: now}
+	state.GateLogger = logger
+	state.Now = now
+	if notifier != nil {
+		state.GateNotify = func(title, message string) { notifier.Send(title, message, notify.PriorityHigh) }
+	}
+}
+
+// newNousState is the panel state before any knowledge or panel config is
+// applied: observe/governor/collecting, with the snapshot count from
+// snapshotDir and the Status map's legacy and new key spellings in step.
+// governorDir is where the external experiment loop writes ledger.json, so
+// the Experiment Lab can tell whether that loop runs (#12566).
+func newNousState(governorDir, snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
-		Mode:   "observe",
-		Scope:  "governor",
-		Phase:  "collecting",
-		Status: make(map[string]interface{}),
-		Config: make(map[string]interface{}),
-	}
-
-	if ledgerData, err := os.ReadFile(filepath.Join(governorDir, "ledger.json")); err == nil {
-		var ledger struct {
-			Iterations []map[string]interface{} `json:"iterations"`
-		}
-		if err := json.Unmarshal(ledgerData, &ledger); err == nil {
-			state.Ledger = ledger.Iterations
-			logger.Info("nous ledger loaded", "iterations", len(state.Ledger))
-		}
-	}
-
-	if principlesData, err := os.ReadFile(filepath.Join(governorDir, "principles.json")); err == nil {
-		var pFile struct {
-			Principles []json.RawMessage `json:"principles"`
-		}
-		if err := json.Unmarshal(principlesData, &pFile); err == nil {
-			for _, raw := range pFile.Principles {
-				var p map[string]interface{}
-				if json.Unmarshal(raw, &p) == nil {
-					state.Principles = append(state.Principles, dashboard.NousPrinciple{
-						ID:         stringFromMap(p, "id"),
-						Text:       stringFromMap(p, "statement"),
-						Confidence: confidenceToFloat(stringFromMap(p, "confidence")),
-						Source:     stringFromMap(p, "category"),
-					})
-				}
-			}
-			logger.Info("nous principles loaded", "count", len(state.Principles))
-		}
+		Mode:        "observe",
+		Scope:       dashboard.NousScopeRepo,
+		Phase:       "collecting",
+		Status:      make(map[string]interface{}),
+		Config:      make(map[string]interface{}),
+		GovernorDir: governorDir,
 	}
 
 	snapshotCount := 0
 	if entries, err := os.ReadDir(snapshotDir); err == nil {
 		snapshotCount = len(entries)
-	}
-
-	iterationCount := len(state.Ledger)
-	if iterationCount > 0 {
-		state.Phase = "observing"
 	}
 
 	state.Status = map[string]interface{}{
@@ -10136,9 +7290,9 @@ func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string
 		"phase":           state.Phase,
 		"snapshots":       snapshotCount,
 		"snapshotCount":   snapshotCount,
-		"iterations":      iterationCount,
-		"principles":      len(state.Principles),
-		"principleCount":  len(state.Principles),
+		"iterations":      0,
+		"principles":      0,
+		"principleCount":  0,
 		"baseline_target": dashboard.NousBaselineTarget,
 		"snapshotTarget":  dashboard.NousBaselineTarget,
 		"baseline_pct":    dashboard.NousBaselinePct(snapshotCount),
@@ -10156,25 +7310,12 @@ func stringFromMap(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func confidenceToFloat(s string) float64 {
-	switch s {
-	case "high":
-		return 0.9
-	case "medium":
-		return 0.7
-	case "low":
-		return 0.4
-	default:
-		return 0.5
-	}
-}
-
 const logFilename = "hive.log"
 
 func setupLogger(dir string, maxSizeMB, maxAgeDays, maxBackups int, compress bool, level string) *slog.Logger {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Warn("failed to create log directory, falling back to stdout only", "dir", dir, "error", err)
-		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(level)}))
+		return slog.New(slogfeed.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(level)})))
 	}
 
 	lj := &lumberjack.Logger{
@@ -10186,7 +7327,9 @@ func setupLogger(dir string, maxSizeMB, maxAgeDays, maxBackups int, compress boo
 	}
 
 	tee := io.MultiWriter(os.Stdout, lj)
-	return slog.New(slog.NewJSONHandler(tee, &slog.HandlerOptions{Level: parseLogLevel(level)}))
+	// Same self-report tee as the boot logger: the file logger replaces it
+	// as the default, so the feed must be installed here too.
+	return slog.New(slogfeed.New(slog.NewJSONHandler(tee, &slog.HandlerOptions{Level: parseLogLevel(level)})))
 }
 
 func parseLogLevel(s string) slog.Level {
@@ -10210,24 +7353,24 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	discordIdentities := make(map[string]discord.AgentIdentity)
 	discordAliases := make(map[string]string)
 
-	for name, agent := range cfg.Agents {
-		if len(agent.LaneKeywords) > 0 {
+	for name, ac := range cfg.Agents {
+		if len(ac.LaneKeywords) > 0 {
 			lanes = append(lanes, classify.LaneConfig{
 				Name:     name,
-				Keywords: agent.LaneKeywords,
+				Keywords: ac.LaneKeywords,
 			})
 		}
-		if len(agent.DetectKeywords) > 0 {
-			detectKeywords[name] = agent.DetectKeywords
+		if len(ac.DetectKeywords) > 0 {
+			detectKeywords[name] = ac.DetectKeywords
 		}
-		if agent.Emoji != "" || agent.Color != "" {
+		if ac.Emoji != "" || ac.Color != "" {
 			discordIdentities[name] = discord.AgentIdentity{
-				Emoji: agent.Emoji,
-				Color: parseColorInt(agent.Color),
+				Emoji: ac.Emoji,
+				Color: parseColorInt(ac.Color),
 			}
 		}
 		sort.Slice(lanes, func(i, j int) bool { return lanes[i].Name < lanes[j].Name })
-		for _, alias := range agent.Aliases {
+		for _, alias := range ac.Aliases {
 			discordAliases[alias] = name
 		}
 	}
@@ -10313,11 +7456,11 @@ func runHub(logger *slog.Logger, configPath string) {
 }
 
 func resolveLiteLLMInferenceRoute(cfg *config.Config, backend, requestedModel string) (endpoint, model string, ok bool) {
-	return inference.ResolveLiteLLMRoute(cfg, backend, requestedModel)
+	return inference.ResolveLiteLLMRoute(&cfg.Governor.AgentRuntimeGovernorConfig, backend, requestedModel)
 }
 
 func resolveWatsonxGateway(cfg *config.Config) *config.GatewayConfig {
-	return inference.ResolveWatsonxGateway(cfg)
+	return inference.ResolveWatsonxGateway(&cfg.Governor.AgentRuntimeGovernorConfig)
 }
 
 func resolveGatewayAuth(gw *config.GatewayConfig, agentName, backend string, logger *slog.Logger) (string, map[string]string) {
@@ -10372,7 +7515,7 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	case "agy-turn":
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
-		return true, agent.RunAgyTurn(args[1:], stdout, stderr)
+		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.
@@ -10382,6 +7525,11 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Claude Code Stop hook in phase 1; see pkg/advisor/cli.go. Talks
 		// only to the hive's loopback advise endpoint and fails open.
 		return true, advisor.RunHook(args[1:], os.Stdin, stdout, stderr)
+	case nousdeps.Subcommand:
+		// Run from inside an experimenter's pane by bin/nous-runner.sh before
+		// the engine starts; see pkg/nousdeps/cli.go. Fetches the campaign's
+		// pinned dependencies from allowlisted hosts only and records them.
+		return true, nousdeps.Run(args[1:], stdout, stderr)
 	default:
 		return false, 0
 	}
@@ -10400,4 +7548,12 @@ func (b *boot) chatDashboardToken() string {
 		return b.cfg.Dashboard.AuthToken
 	}
 	return os.Getenv("HIVE_DASHBOARD_TOKEN")
+}
+
+func knowledgeContext7FromHive(c config.KnowledgeContext7) knowledge.Context7Config {
+	var out knowledge.Context7Config
+	for _, it := range c.AutoImport {
+		out.AutoImport = append(out.AutoImport, knowledge.Context7AutoImport{ID: it.ID, Query: it.Query})
+	}
+	return out
 }

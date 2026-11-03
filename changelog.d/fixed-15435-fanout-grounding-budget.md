@@ -1,0 +1,1 @@
+- A combined review head's fan-out now splits the shared grounding tool-call budget across its per-perspective sub-agents instead of leaving each to read the whole-review cap as its own.

@@ -1,0 +1,1 @@
+- The image CA-distrust check parses only the probe's stdout, so the arm64 lane built under QEMU no longer fails on docker's platform warning; unexpected docker errors are now printed.

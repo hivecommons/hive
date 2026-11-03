@@ -1,0 +1,110 @@
+  <!-- Light sidebar (hidden by default) -->
+  <div class="oc-sidebar-resize" id="ocSidebarResize"></div>
+  <nav id="oc-sidebar" class="oc-sidebar">
+    <div class="oc-sidebar-logo">
+      <span class="oc-logo-icon">🐝</span>
+      <div>
+        <div class="oc-logo-title">HIVE</div>
+        <div class="oc-logo-sub">GATEWAY DASHBOARD</div>
+      </div>
+    </div>
+    <div class="oc-nav-group" id="dashboard-section-nav-group">
+      <div class="oc-nav-label">Dashboard</div>
+      <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
+      <a class="oc-nav-item" data-section="activity-monitor-section" data-action="ocNavigate" data-arg0="activity-monitor-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Hive activity monitor</span><span id="activity-monitor-waiting-badge" class="badge-count oc-nav-count oc-nav-count--waiting" data-zero title="Nothing is waiting on you" aria-label="0 waiting on you">0</span><span id="activity-monitor-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
+      <a class="oc-nav-item" data-section="runs-section" data-action="ocNavigate" data-arg0="runs-section"><span class="oc-nav-emoji">🏃</span><span class="oc-nav-text">Runs</span><span id="runs-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
+      <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span></a>
+    </div>
+    <div class="oc-nav-group" id="oc-agent-nav-group">
+      <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
+        <span class="oc-tree-arrow">▼</span> <span>Agents</span>
+      </div>
+      <div class="oc-tree-children" id="oc-agent-tree">
+        <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
+      </div>
+      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
+        <div><span id="nous-sb-mode"></span></div>
+        <div id="nous-sb-phase" style="opacity:0.8"></div>
+      </div>
+      <div class="oc-agent-actions" aria-label="Agent actions">
+        <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+        <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+      </div>
+    </div>
+    <div class="oc-nav-group">
+      <div class="oc-nav-label">Resources</div>
+      <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
+    </div>
+    <div class="oc-nav-group">
+      <div class="oc-nav-label">Intelligence</div>
+      <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📣</span><span class="oc-nav-text">Advisory</span></a>
+      <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
+      <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
+      <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="search-section" data-action="ocNavigate" data-arg0="search-section" hidden><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Search</span></a>
+      <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
+    </div>
+    <div class="oc-nav-group">
+      <div class="oc-nav-label">Admin</div>
+      <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
+      <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
+      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review</span></a>
+      <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
+      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📡</span><span class="oc-nav-text">Agent activity</span></a>
+      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit Log</span></a>
+      <a class="oc-nav-item" data-section="lifecycle-section" data-action="ocNavigate" data-arg0="lifecycle-section"><span class="oc-nav-emoji">🔀</span><span class="oc-nav-text">Lifecycle Timeline</span></a>
+      <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🩺</span><span class="oc-nav-text">Diagnostics</span></a>
+    </div>
+    <div class="oc-nav-group">
+      <div class="oc-nav-label">Help</div>
+      <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
+      <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
+      <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
+      <a class="oc-nav-item" href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
+      <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Join our Discord</span></a>
+      <a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener" title="Live stream of the hosted hive's Activity Monitor"><span class="oc-nav-emoji">📺</span><span class="oc-nav-text">Watch live on Twitch</span></a>
+      <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
+    </div>
+    <!-- Pinned label filters (#12172): one entry per pinned saved filter /
+         preset with a live count across every project. Rendered by hfRenderPinned(). -->
+    <div class="oc-nav-group" id="hf-nav-group" hidden>
+      <div class="oc-nav-label">Filters</div>
+      <div id="hf-nav-items"></div>
+    </div>
+    <div class="system-gauges" id="system-gauges">
+      <div class="sys-gauge-row" id="sys-gauge-disk" title="Disk usage">
+        <span class="sys-gauge-label">DISK</span>
+        <span class="sys-gauge-spark" id="sys-spark-disk"></span>
+        <span class="sys-gauge-val" id="sys-val-disk">--</span>
+        <div class="sys-gauge-bar-wrap"><div class="sys-gauge-bar-fill" id="sys-bar-disk" style="width:0%"></div></div>
+      </div>
+      <div class="sys-gauge-row" id="sys-gauge-mem" title="Memory usage">
+        <span class="sys-gauge-label">MEM</span>
+        <span class="sys-gauge-spark" id="sys-spark-mem"></span>
+        <span class="sys-gauge-val" id="sys-val-mem">--</span>
+        <div class="sys-gauge-bar-wrap"><div class="sys-gauge-bar-fill" id="sys-bar-mem" style="width:0%"></div></div>
+      </div>
+      <div class="sys-gauge-row" id="sys-gauge-cpu" title="CPU usage">
+        <span class="sys-gauge-label">CPU</span>
+        <span class="sys-gauge-spark" id="sys-spark-cpu"></span>
+        <span class="sys-gauge-val" id="sys-val-cpu">--</span>
+        <div class="sys-gauge-bar-wrap"><div class="sys-gauge-bar-fill" id="sys-bar-cpu" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div class="oc-sidebar-footer">
+      <div id="oc-git-version" class="git-version oc-version-wrap">
+        <button type="button" id="oc-version-chip" class="oc-version-chip" data-action="toggleVersionMenu" role="button" aria-haspopup="true" aria-expanded="false" aria-controls="oc-version-menu" title="Version & upgrade details" aria-label="Version & upgrade details">
+          <span class="oc-version-sha">version</span><span class="oc-version-chip-chevron" aria-hidden="true">▼</span>
+        </button>
+        <div id="oc-version-menu" class="avatar-menu oc-version-menu" hidden role="menu" aria-label="Version and update details"></div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Dim layer behind the mobile drawer. display:none on desktop; the ≤1024px
+       block turns it on. Its id is registered in OVERLAY_SELECTOR so the
+       existing installModalScrollLock() observer body-locks scroll for free. -->
+  <div id="oc-drawer-backdrop"></div>
+

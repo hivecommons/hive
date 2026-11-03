@@ -1,0 +1,1 @@
+- Updated the scanner threat model and deploy README to cite the Crux module paths (`src/crux/agent/manager_tmux.go`) after the module cut ([#13951](https://github.com/hivecommons/hive/issues/13951)).

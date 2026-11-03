@@ -56,3 +56,22 @@ func TestEngineActiveRepos_FallsBackWithoutCapability(t *testing.T) {
 		t.Fatalf("activeRepos() = %v, want the full list for a pause-blind transport", got)
 	}
 }
+
+// Every sweep lane iterates activeRepos and merges through the GitHub API, so
+// a repo on GitLab or Gitea must drop out there (#14150). A nil predicate (the
+// pre-forge default) keeps every repo.
+func TestEngineActiveRepos_SkipsOtherForgeRepos(t *testing.T) {
+	transport := pauseBlindTransport{repos: []string{"widget", "lab", "gadget"}}
+
+	got := New(transport, Options{RepoOnGitHub: func(repo string) bool { return repo != "lab" }}).activeRepos()
+	if len(got) != 2 || got[0] != "widget" || got[1] != "gadget" {
+		t.Fatalf("activeRepos() = %v, want the GitLab repo omitted", got)
+	}
+
+	client := hgithub.NewClient("token", "acme", []string{"widget", "gadget", "lab"}, slog.New(slog.DiscardHandler), "https://api.github.com/")
+	client.SetRepoPausedFunc(func(repo string) bool { return repo == "gadget" })
+	got = New(client, Options{RepoOnGitHub: func(repo string) bool { return repo != "lab" }}).activeRepos()
+	if len(got) != 1 || got[0] != "widget" {
+		t.Fatalf("activeRepos() = %v, want both the paused and the GitLab repo omitted", got)
+	}
+}

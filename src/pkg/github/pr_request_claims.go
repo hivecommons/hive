@@ -165,7 +165,8 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 			}
 			base = resolved
 		}
-		comparison, _, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, strings.TrimSpace(req.Head), nil)
+		comparison, resp, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, strings.TrimSpace(req.Head),
+			&gh.ListOptions{PerPage: githubCompareFileLimit})
 		if err != nil {
 			// #5343: same diagnosis as the content gate — an unpushed branch
 			// must be reported as a push-auth failure, not as a bad title.
@@ -175,9 +176,24 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 		if comparison == nil {
 			return "", "", fmt.Errorf("validating PR title against %s/%s diff %s...%s: GitHub returned an empty comparison", owner, repo, base, req.Head)
 		}
+		// The compare endpoint pages its files array; scan every page so an
+		// artifact beyond the first 300 files is still seen.
+		files := comparison.Files
+		for resp != nil && resp.NextPage != 0 && len(files) < prRequestMaxScanFiles {
+			next, r, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, strings.TrimSpace(req.Head),
+				&gh.ListOptions{PerPage: githubCompareFileLimit, Page: resp.NextPage})
+			if err != nil {
+				return "", "", fmt.Errorf("validating PR title artifacts: %w", err)
+			}
+			if next == nil || len(next.Files) == 0 {
+				break
+			}
+			files = append(files, next.Files...)
+			resp = r
+		}
 		for _, rule := range claimedArtifacts {
 			matched := false
-			for _, file := range comparison.Files {
+			for _, file := range files {
 				if file != nil && rule.fileMatch(file.GetFilename()) {
 					matched = true
 					break
@@ -229,6 +245,9 @@ func (c *Client) prRequestRepo(repo string) (string, string) {
 func incompleteIssueReason(issue *gh.Issue) string {
 	if issue == nil {
 		return "issue metadata is empty"
+	}
+	if why, ok := isTrackingIssue(issue); ok {
+		return "issue is a tracking/archive issue (" + why + "); merging does not resolve it"
 	}
 	labels := make([]string, 0, len(issue.Labels))
 	for _, label := range issue.Labels {
@@ -454,11 +473,15 @@ func downgradeClosingReferences(text, defaultRepo string, downgrade map[string]s
 	})
 }
 
+// closingKeywordWithheldNote marks a reference the watcher deliberately made
+// non-closing; later link repair must not upgrade it back to a closing keyword.
+const closingKeywordWithheldNote = "closing keyword withheld by the hive watcher"
+
 // downgradeNote renders the inline explanation appended to a rewritten
 // reference. Kept separate so the wording is asserted in one place by the
 // tests rather than spelled out at each call site.
 func downgradeNote(reason string) string {
-	return " — closing keyword withheld by the hive watcher: `" + reason +
+	return " — " + closingKeywordWithheldNote + ": `" + reason +
 		"`. Merging this PR will not close the issue."
 }
 

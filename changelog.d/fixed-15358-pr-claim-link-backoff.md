@@ -1,0 +1,1 @@
+- Defer remaining PR-claim link work after GitHub rate limits and log the expected retry without triggering repeated-error self-reports.

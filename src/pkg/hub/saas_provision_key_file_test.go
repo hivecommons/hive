@@ -346,3 +346,12 @@ func TestManifestSecretKeysScopedToHiveSecrets(t *testing.T) {
 		t.Error("manifestSecretKeys matched a Secret that does not exist")
 	}
 }
+
+// TestProvisionManifestEnablesFleetReport pins the hosted default: spokes
+// provisioned from the template self-report to hivecommons/hive (#11878).
+func TestProvisionManifestEnablesFleetReport(t *testing.T) {
+	manifest := renderProvisionManifestWithToken(t, true, false, "")
+	if !strings.Contains(manifest, "      fleet_report:\n        enabled: true\n") {
+		t.Fatalf("hosted template must set governor.fleet_report.enabled: true; got:\n%s", manifest)
+	}
+}

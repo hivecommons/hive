@@ -1,0 +1,1 @@
+- An issue with both a live agent claim and an open hive PR that fixes it now stays at stage/040-covered-by-pr: the eval sweep runs the duplicate-PR guard before the live-claim filter, so the claim no longer re-buckets the issue "claimed" (020) every cycle after its PR opens and the dashboard stage tracker no longer shows a spurious `regressed` chip on nearly every claimed issue.

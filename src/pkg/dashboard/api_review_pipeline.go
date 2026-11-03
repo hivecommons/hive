@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/pipeline"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // reviewPipelineResponse is one page of review pipeline cards.
@@ -75,15 +77,25 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "review links unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// An unreadable release ledger keeps every verdict hold in place, the
+	// same failure the sweep's gate fails closed to.
+	releases, err := ghpkg.LoadReviewHoldReleases("")
+	if err != nil {
+		slog.Warn("review pipeline: review hold releases unreadable", "error", err)
+	}
 
 	opts := ghpkg.ReviewQueueOptions{
 		Verdicts:     artifact,
+		Dispatch:     dispatch,
 		ChangedPaths: ghpkg.CachedPRChangedPaths,
+		StageStore:   stagelabels.Shared(),
 		Now:          time.Now(),
 	}
 	if s != nil && s.deps != nil && s.deps.Config != nil {
 		opts.Org = s.deps.Config.Project.Org
 		opts.AIAuthor = s.deps.Config.EffectiveAIAuthor()
+		opts.StageDwell = s.deps.Config.Governor.Labels.Stage.DwellOverrides()
+		opts.StageStalledRequireQuiet = s.deps.Config.Governor.Labels.Stage.Stalled.RequireQuiet
 	}
 	actionable := s.lastActionableForPRModels()
 	queue := ghpkg.ReviewQueueFromActionable(actionable, opts)
@@ -100,6 +112,9 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 		}
 		if link, ok := lookupReviewLink(links, entry.Repo, reviewPipelineBareRepo(entry.Repo), entry.Number); ok {
 			in.ReviewLink = &link
+		}
+		if release, ok := ghpkg.ReviewHoldReleaseFor(releases, entry.Repo, entry.Number); ok {
+			in.HoldRelease = &release
 		}
 		card := pipeline.Derive(in)
 		card.Trigger = s.reviewCardTrigger(card)
@@ -206,11 +221,18 @@ func (s *Server) handleReviewPipelineSendToHuman(w http.ResponseWriter, r *http.
 		}
 	}
 	s.auditFromRequest(r, "review-loop-send-to-human", auditDetail("repo", repo, "pr", strconv.Itoa(number), "reason", reason), "")
+	result := RowActionResult{Action: rowActionNeedsHuman, Target: rowActionTarget(repo, rowActionTargetPR, number),
+		Outcome: "`" + config.DefaultNeedsHumanLabel + "` applied; marker comment posted.", Next: "A person reviews it; the hive's review loop stands down until the label comes off."}
+	if posted {
+		result = rowActionNoopResult(result.Target, "`"+config.DefaultNeedsHumanLabel+"` was already on with its marker comment", time.Time{}, "")
+		result.Next = "A person reviews it; the hive's review loop stands down until the label comes off."
+	}
 	jsonResponse(w, map[string]any{
 		"status": "sent_to_human",
 		"repo":   repo,
 		"number": number,
 		"label":  config.DefaultNeedsHumanLabel,
 		"posted": !posted,
+		"result": result,
 	})
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -24,15 +24,17 @@ import (
 
 func modeUnscheduledCfg() *config.Config {
 	return &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude", Enabled: true},
-			"auditor":    {Backend: "claude", Enabled: true},
-			"auditor-2":  {Backend: "claude", Enabled: true, ReplicaOf: "auditor", ReplicaIndex: 2, ReplicaCount: 2},
-			"janitor":    {Backend: "claude", Enabled: true},
-			"parked":     {Backend: "claude", Enabled: true},
-			"orphan":     {Backend: "claude", Enabled: true},
-			"helper":     {Backend: "claude", Enabled: true, OnDemand: true},
-			"mothballed": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude", Enabled: true},
+				"auditor":    {Backend: "claude", Enabled: true},
+				"auditor-2":  {Backend: "claude", Enabled: true, ReplicaOf: "auditor", ReplicaIndex: 2, ReplicaCount: 2},
+				"janitor":    {Backend: "claude", Enabled: true},
+				"parked":     {Backend: "claude", Enabled: true},
+				"orphan":     {Backend: "claude", Enabled: true},
+				"helper":     {Backend: "claude", Enabled: true, OnDemand: true},
+				"mothballed": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "1h", "janitor": "2h"}},
@@ -47,7 +49,7 @@ func modeUnscheduledCfg() *config.Config {
 // surge-only cadence agent of #7474 is named `auditor` here.
 func TestBuildAgents_UnscheduledInMode(t *testing.T) {
 	cfg := modeUnscheduledCfg()
-	statuses := map[string]*agent.AgentProcess{}
+	statuses := map[string]*crux.Process{}
 	for name, ac := range cfg.Agents {
 		statuses[name] = newBlockerProc(name, ac, nil)
 	}

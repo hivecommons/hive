@@ -19,8 +19,8 @@ const (
 	contributeWallFileName             = "contribute_wall.json"
 	contributeWallMaxTextRunes         = 500
 	contributeWallMaxTagRunes          = 100
-	contributeWallDefaultRetentionDays = 90
-	contributeWallMaxRetentionDays     = 3650
+	contributeWallDefaultRetentionDays = config.DefaultContributeWallRetentionDays
+	contributeWallMaxRetentionDays     = config.MaxContributeWallRetentionDays
 	contributeWallDefaultPostsPerHour  = 6
 	contributeWallMaxPosts             = 2000
 )

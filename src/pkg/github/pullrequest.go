@@ -9,19 +9,30 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/effects"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/forgestate"
 )
 
 // forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
 // (and the humans who hand-resolve their conflicts) use for line-to-line
-// forward-merges, e.g. "sync/v5-to-v6" or a scanner-namespaced variant like
-// "scanner/sync-v5-to-v6-9919". Squashing one of these erases the source
-// line's ancestry and makes every later top-up re-conflict on the same
-// hunks (#9957, #9956). Dotted versions ("sync/v1.7.11-to-v1.9.1") match too.
-var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+(?:\.\d+)*-to-v\d+(?:\.\d+)*`)
+// forward-merges, e.g. "sync/v5-to-v6", a scanner-namespaced variant like
+// "scanner/sync-v5-to-v6-9919", or a "topup/v5-into-v6-20261020" head. Squashing
+// one of these erases the source line's ancestry and makes every later top-up
+// re-conflict on the same hunks (#9957, #9956, #13404). Dotted versions
+// ("sync/v1.7.11-to-v1.9.1") match too.
+var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+(?:\.\d+)*-to-v\d+(?:\.\d+)*|^topup/`)
+
+// forwardMergeTitleRe matches top-up / sync PR titles after an optional
+// leading emoji, e.g. "🌱 top-up: merge v5 into v6 (51 commits)" (#13404).
+var forwardMergeTitleRe = regexp.MustCompile(`(?i)^[^\p{L}\p{N}]*(top-up|sync):`)
+
+// releaseLineBranchRe matches release-line branch names ("v5", "v6").
+var releaseLineBranchRe = regexp.MustCompile(`^v\d+$`)
 
 // UpstreamSyncLabel marks a PR that merges a fork's upstream into the fork
 // (upstream_watch). Such a PR must land as a merge commit so the fork keeps
@@ -32,14 +43,140 @@ const UpstreamSyncLabel = "upstream-sync"
 // upstream/port kick asks for.
 var upstreamSyncTitleRe = regexp.MustCompile(`(?i)\bsync\s+upstream\b`)
 
+// IsForwardMergeHead reports whether ref is a head branch the forward-merge
+// workflows use (forwardMergeHeadRe). Unlike IsForwardMergePR it ignores the
+// title, which any contributor controls, so gates that relax on a
+// forward-merge key on it (hivecommons/hive#13635).
+func IsForwardMergeHead(ref string) bool {
+	return forwardMergeHeadRe.MatchString(ref)
+}
+
 // IsForwardMergePR reports whether pr is a forward-merge between release
-// lines, which must land as a merge commit rather than a squash.
+// lines, which must land as a merge commit rather than a squash. It only
+// looks at the PR's metadata; ResolveForwardMergeMethod adds the head-history
+// check for PRs whose branch and title give no hint.
 func IsForwardMergePR(pr *gh.PullRequest) bool {
 	if pr == nil {
 		return false
 	}
+	title := strings.TrimSpace(pr.GetTitle())
 	return forwardMergeHeadRe.MatchString(pr.GetHead().GetRef()) ||
-		strings.Contains(strings.ToLower(pr.GetTitle()), "forward-merge")
+		forwardMergeTitleRe.MatchString(title) ||
+		strings.Contains(strings.ToLower(title), "forward-merge")
+}
+
+const releaseLineMergeCacheMax = 1024
+
+var releaseLineMergeCache = struct {
+	sync.Mutex
+	m map[string]string
+}{m: map[string]string{}}
+
+// HeadMergesReleaseLine returns the release-line branch (other than pr's base)
+// whose history pr's head brings in, or "" when it brings in none. A head
+// "brings in" another line when that line's tip is an ancestor of the head, or
+// when the head's merge-base with that line is not already in the base — i.e.
+// the head carries a merge of the other line (#13404). Only PRs based on a
+// release line are checked; candidate lines are the repository's protected
+// "vN" branches. Results are cached per base and head SHA.
+func HeadMergesReleaseLine(ctx context.Context, client *gh.Client, owner, repo string, pr *gh.PullRequest) (string, error) {
+	if client == nil || pr == nil {
+		return "", nil
+	}
+	base := pr.GetBase().GetRef()
+	headSHA := pr.GetHead().GetSHA()
+	if headSHA == "" || !releaseLineBranchRe.MatchString(base) {
+		return "", nil
+	}
+	key := owner + "/" + repo + "#" + base + "@" + headSHA
+	releaseLineMergeCache.Lock()
+	cached, ok := releaseLineMergeCache.m[key]
+	releaseLineMergeCache.Unlock()
+	if ok {
+		return cached, nil
+	}
+
+	branches, _, err := client.Repositories.ListBranches(ctx, owner, repo, &gh.BranchListOptions{
+		Protected:   gh.Ptr(true),
+		ListOptions: gh.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		return "", fmt.Errorf("list protected branches: %w", err)
+	}
+	found := ""
+	for _, b := range branches {
+		other := b.GetName()
+		if other == base || !releaseLineBranchRe.MatchString(other) {
+			continue
+		}
+		cmp, _, err := client.Repositories.CompareCommits(ctx, owner, repo, other, headSHA, &gh.ListOptions{PerPage: 1})
+		if err != nil {
+			return "", fmt.Errorf("compare %s...%s: %w", other, headSHA, err)
+		}
+		if st := cmp.GetStatus(); st == "ahead" || st == "identical" {
+			found = other
+			break
+		}
+		mergeBase := cmp.GetMergeBaseCommit().GetSHA()
+		if mergeBase == "" {
+			continue
+		}
+		inBase, _, err := client.Repositories.CompareCommits(ctx, owner, repo, base, mergeBase, &gh.ListOptions{PerPage: 1})
+		if err != nil {
+			return "", fmt.Errorf("compare %s...%s: %w", base, mergeBase, err)
+		}
+		if st := inBase.GetStatus(); st != "behind" && st != "identical" {
+			found = other
+			break
+		}
+	}
+	releaseLineMergeCache.Lock()
+	if len(releaseLineMergeCache.m) >= releaseLineMergeCacheMax {
+		releaseLineMergeCache.m = map[string]string{}
+	}
+	releaseLineMergeCache.m[key] = found
+	releaseLineMergeCache.Unlock()
+	return found, nil
+}
+
+// ResolveForwardMergeMethod is the one place every hive merge path (the
+// automerge lanes and the MergePR relay) decides whether a requested squash or
+// rebase must be upgraded to a merge commit: forward-merge / top-up PRs, by
+// metadata (IsForwardMergePR) or by head history (HeadMergesReleaseLine), never
+// squash. A failed history lookup is logged and keeps the requested method.
+func ResolveForwardMergeMethod(ctx context.Context, client *gh.Client, logger *slog.Logger, owner, repo string, pr *gh.PullRequest, method string) string {
+	if method == "merge" || pr == nil {
+		return method
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	reason, line := "", ""
+	if IsForwardMergePR(pr) {
+		reason = "metadata"
+	} else if IsUpstreamSyncPR(pr) {
+		reason = "upstream-sync"
+	} else {
+		var err error
+		line, err = HeadMergesReleaseLine(ctx, client, owner, repo, pr)
+		if err != nil {
+			logger.Warn("forward-merge guard: head-history check failed",
+				slog.String("repo", owner+"/"+repo), slog.Int("number", pr.GetNumber()),
+				slog.String("error", err.Error()))
+			return method
+		}
+		if line != "" {
+			reason = "head-merges-release-line"
+		}
+	}
+	if reason == "" {
+		return method
+	}
+	logger.Warn("forward-merge guard: refusing to squash, forcing merge commit",
+		slog.String("repo", owner+"/"+repo), slog.Int("number", pr.GetNumber()),
+		slog.String("requested", method), slog.String("reason", reason),
+		slog.String("release_line", line), slog.String("head", pr.GetHead().GetRef()))
+	return "merge"
 }
 
 // IsUpstreamSyncPR reports whether pr merges a fork's upstream into the fork:
@@ -65,26 +202,11 @@ func IsMergeCommitPR(pr *gh.PullRequest) bool {
 }
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.
-type CreatePRResult struct {
-	Number int
-	URL    string
-	// Author is the login GitHub recorded on the created (or pre-existing) PR —
-	// the App bot the hive relayed as (e.g. "kubestellar-hive[bot]"). Taken from
-	// the API response, not assumed, so the audit log records the true author.
-	Author string
-	// AlreadyExisted is true when an open PR already covers this request, so we
-	// returned it instead of opening a duplicate. Two different findings set it:
-	// an open PR for the same HEAD BRANCH, and (see DuplicateTree) an open PR
-	// carrying the same CONTENT from a different branch.
-	AlreadyExisted bool
-	// DuplicateTree narrows AlreadyExisted to the content case (#5111): the
-	// reuse was decided because an open PR on the same base has an identical
-	// tree SHA, not because the head branch matched. Callers that report the
-	// outcome keep the two apart because they mean different things to whoever
-	// reads the result — "your retry was absorbed" versus "this change is
-	// already proposed as #N, go comment on it".
-	DuplicateTree bool
-}
+// It is the runtime's PRResult (crux.PRResult) under this package's name,
+// so a *Client satisfies the agent runtime's PRCreator seam without the
+// runtime importing this package (hivecommons/hive#13536). DuplicateReason,
+// when set, is one of the DuplicateReason* constants below.
+type CreatePRResult = crux.PRResult
 
 // CreatePR opens a pull request on behalf of THIS hive's GitHub App — so the PR
 // is authored by the App bot ("<slug>[bot]"), deterministically, regardless of
@@ -189,13 +311,43 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 		}, nil
 	}
 
+	// Issue and file-set identity: agents on one issue never collide on head or
+	// tree, so also refuse when an open PR already closes the same issue, an
+	// open App-bot PR edits an overlapping file set, or a merged PR already
+	// fixed the issue. Retryable lookup failures keep the request queued;
+	// terminal ones degrade to opening the PR.
+	if found, err := c.findDuplicatePR(ctx, owner, repo, head, base, body); err != nil {
+		if isRetryableGitHubError(err) {
+			return CreatePRResult{}, fmt.Errorf("CreatePR: duplicate guard lookup failed with retryable error for %s/%s head %s: %w", owner, repo, head, err)
+		}
+		c.logger.Warn("CreatePR: duplicate guard lookup failed with terminal error, creating without it",
+			slog.String("repo", repo), slog.String("head", head), slog.String("error", err.Error()))
+	} else if found != nil {
+		c.logger.Info("CreatePR: an existing PR already covers this request, redirecting to it instead of opening a duplicate",
+			slog.String("repo", repo), slog.String("head", head), slog.String("reason", found.reason),
+			slog.Int("number", found.pr.GetNumber()))
+		c.redirectToExistingPR(ctx, owner, repo, head, found)
+		return CreatePRResult{
+			Number:          found.pr.GetNumber(),
+			URL:             found.pr.GetHTMLURL(),
+			Author:          found.pr.GetUser().GetLogin(),
+			AlreadyExisted:  true,
+			DuplicateReason: found.reason,
+		}, nil
+	}
+
 	var pr *gh.PullRequest
-	res, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	// ExecuteReconciling, not Execute: an ambiguous POST failure journals the
+	// op Unknown, and without an observation every later create for the same
+	// head was refused forever (hivecommons/hive#14366).
+	res, err := effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestCreate,
 		Target: head,
 		Inputs: map[string]string{"head": head, "base": base, "title": effects.StableDigest(title), "body": effects.StableDigest(body)},
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, func(ctx context.Context) (effects.ExternalState, error) {
+		return c.observePullRequestCreate(ctx, owner, repo, head)
+	}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		pr, _, apiErr = c.client.PullRequests.Create(ctx, owner, repo, &gh.NewPullRequest{
 			Title: gh.Ptr(title),
@@ -204,6 +356,10 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 			Body:  gh.Ptr(body),
 		})
 		if apiErr != nil {
+			if isDefiniteIssueRefusal(apiErr) {
+				// The PR was not opened; recording Unknown would fence retries.
+				return effects.Result{}, effects.NotApplied(apiErr)
+			}
 			return effects.Result{}, apiErr
 		}
 		return effects.Result{Provenance: pr.GetHTMLURL()}, nil
@@ -235,6 +391,13 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	}
 	c.logger.Info("CreatePR: opened PR as the App bot",
 		slog.String("repo", repo), slog.String("head", head), slog.Int("number", pr.GetNumber()))
+	// GitHub only derives Development-sidebar links from `Fixes #N` for
+	// default-branch PRs; release-line PRs get theirs here
+	// (hivecommons/hive#11888). Best-effort: the PR is already open.
+	c.linkClosingIssuesForPR(ctx, owner, repo, pr.GetNumber(), body)
+	// A closing keyword for a tracking/archive issue resolves nothing; say
+	// so on the PR before anyone reviews it (hivecommons/hive#14613).
+	c.NudgeTrackingIssueClosingRefs(ctx, owner+"/"+repo, pr.GetNumber(), body, c.logger)
 	return CreatePRResult{Number: pr.GetNumber(), URL: pr.GetHTMLURL(), Author: pr.GetUser().GetLogin()}, nil
 }
 
@@ -262,7 +425,17 @@ type MergePRResult struct {
 // defaults to "squash" when empty. When expectSHA is non-empty it is passed as
 // the required head SHA, so the merge fails cleanly (409) instead of merging an
 // unexpected commit if the head moved after eligibility was computed.
+//
+// MergePR is the hive-merge relay's entry point and audits the merge as
+// path=relay; other callers name their own path through MergePRVia.
 func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMethod, expectSHA string) (MergePRResult, error) {
+	return c.MergePRVia(ctx, repo, number, mergeMethod, expectSHA, PRAuditPathRelay)
+}
+
+// MergePRVia is MergePR with the pr_merged audit path= named by the caller
+// (one of the PRAuditPath* values), so a merge is attributed to the code path
+// that asked for it rather than always to the relay.
+func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeMethod, expectSHA, auditPath string) (MergePRResult, error) {
 	if c == nil || c.client == nil {
 		return MergePRResult{}, ErrNoGitHubClient
 	}
@@ -273,23 +446,45 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	if number <= 0 {
 		return MergePRResult{}, fmt.Errorf("MergePR: pr number is required")
 	}
+	if err := CheckIrreversible(ctx, owner+"/"+repo, number, true); err != nil {
+		return MergePRResult{}, fmt.Errorf("MergePR: %w", err)
+	}
 	if mergeMethod = strings.TrimSpace(mergeMethod); mergeMethod == "" {
 		mergeMethod = "squash"
 	}
 	// Forward-merges and upstream syncs keep ancestry no matter which caller
-	// (sweep or the hive-merge relay) asked for the merge. A failed lookup
-	// falls through to the requested method.
-	if mergeMethod == "squash" {
-		if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_pr"), owner, repo, number); err == nil && IsMergeCommitPR(pr) {
-			c.logger.Warn("MergePR: forcing merge commit for forward-merge/upstream-sync PR",
-				slog.String("requested", mergeMethod), slog.Int("number", number))
-			mergeMethod = "merge"
+	// (sweep, the hive-merge relay or the forge adapter) asked for the merge.
+	// A failed lookup falls through to the requested method.
+	var (
+		fetched      *gh.PullRequest
+		fetchedTried bool
+	)
+	if mergeMethod != "merge" {
+		restCtx := WithRESTCaller(ctx, "hive:merge_pr")
+		fetchedTried = true
+		if pr, _, err := c.client.PullRequests.Get(restCtx, owner, repo, number); err == nil {
+			fetched = pr
+			mergeMethod = ResolveForwardMergeMethod(restCtx, c.client, c.logger, owner, repo, pr, mergeMethod)
 		}
 	}
 
 	opts := &gh.PullRequestOptions{MergeMethod: mergeMethod}
 	if expectSHA = strings.TrimSpace(expectSHA); expectSHA != "" {
 		opts.SHA = expectSHA
+	}
+	commitMessage := ""
+	// Issue-author credit (hivecommons/hive#14581) rides the PR already
+	// fetched above; a merge-commit request fetches it only when the credit
+	// is on for the repo.
+	if creditor := c.MergeCreditor(); creditor.Enabled(owner + "/" + repo) {
+		if fetched == nil && !fetchedTried {
+			if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, mergeCreditCaller), owner, repo, number); err == nil {
+				fetched = pr
+			}
+		}
+		credit := creditor.Prepare(ctx, owner, repo, fetched, mergeMethod)
+		commitMessage = credit.CommitMessage
+		c.NoteMergeCredit(owner+"/"+repo, number, credit)
 	}
 	var res *gh.PullRequestMergeResult
 	boundary := c.mutationBoundary()
@@ -301,7 +496,7 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	}
 	merge := func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		res, _, apiErr = c.client.PullRequests.Merge(ctx, owner, repo, number, "", opts)
+		res, _, apiErr = c.client.PullRequests.Merge(ctx, owner, repo, number, commitMessage, opts)
 		if apiErr != nil {
 			if isDefiniteMergeRefusal(apiErr) {
 				return effects.Result{}, effects.NotApplied(apiErr)
@@ -310,11 +505,15 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 		}
 		return effects.Result{Provenance: res.GetSHA()}, nil
 	}
+	// The tracker's "Merging" state (hivecommons/hive#15245) spans exactly
+	// the merge call, whichever caller issued it.
+	BeginMergeAttemptOnHead(owner+"/"+repo, number, auditPath, expectSHA)
 	out, err := effects.Execute(ctx, boundary, claim, merge)
 	if errors.Is(err, effects.ErrNeedsReconciliation) {
 		out, err = c.reconcileMerge(ctx, boundary, claim, owner, repo, number, merge, err)
 	}
 	if err != nil {
+		EndMergeAttempt(owner+"/"+repo, number, false, err)
 		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
 	}
 	sha, merged := res.GetSHA(), res.GetMerged()
@@ -324,15 +523,24 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 		// result rather than an empty, unmerged-looking success.
 		sha, merged = out.Provenance, out.Provenance != ""
 	}
+	if merged {
+		EndMergeAttempt(owner+"/"+repo, number, true, nil)
+	} else {
+		EndMergeAttempt(owner+"/"+repo, number, false, fmt.Errorf("GitHub did not merge the pull request: %s", strings.TrimSpace(res.GetMessage())))
+	}
+	if merged {
+		c.forgeWriteThrough(owner+"/"+repo, number, forgestate.Mutation{Op: forgestate.OpMerge, Kind: forgestate.KindPR})
+	}
 	c.logger.Info("MergePR: merged PR as the App bot over REST",
 		slog.String("repo", owner+"/"+repo), slog.Int("number", number),
 		slog.String("method", mergeMethod), slog.String("sha", sha))
 	// Audit the merge UNCONDITIONALLY so the dashboard audit log shows the full
 	// create→merge loop. The merge is performed by the hive itself (not a single
 	// coding agent), so it is attributed to the governor flow, mirroring the
-	// hive-issue-created attribution in advisory.go. MergePR's only caller is
-	// the merge-request watcher (the hive-merge relay), hence path=relay.
-	c.RecordPRMergedAudit(owner+"/"+repo, number, mergeMethod, sha, PRAuditPathRelay)
+	// hive-issue-created attribution in advisory.go. path= is the caller's:
+	// relay for the merge-request watcher (MergePR), forge for the forge
+	// adapter.
+	c.RecordPRMergedAudit(owner+"/"+repo, number, mergeMethod, sha, auditPath)
 	return MergePRResult{SHA: sha, Merged: merged, Message: res.GetMessage()}, nil
 }
 
@@ -373,6 +581,26 @@ func (c *Client) reconcileMerge(ctx context.Context, boundary effects.Boundary, 
 	return effects.Execute(ctx, boundary, claim, merge)
 }
 
+// WorkflowPermissionRefusalPattern matches GitHub's refusal of an App-token
+// write that would create or update a .github/workflows file while the
+// installation lacks the workflows permission (#6804). The same text comes back
+// as a git push rejection, a failed workflow run's log, and a 403 from the
+// update-branch and merges APIs when the base changed workflow files.
+var WorkflowPermissionRefusalPattern = regexp.MustCompile("(?i)refusing to allow a github app to create or update workflow|without [`']?workflows[`']? permission")
+
+// IsWorkflowPermissionRefusal reports whether err is GitHub's 403 refusing an
+// App write that would update a workflow file. It looks through wrapping (the
+// mutation ledger wraps the API error), and matches only a 403 so other
+// permission failures keep their own handling. Retrying with the same token
+// gets the same answer until the head or the App's grant changes.
+func IsWorkflowPermissionRefusal(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusForbidden {
+		return false
+	}
+	return WorkflowPermissionRefusalPattern.MatchString(ghErr.Message)
+}
+
 // UpdateBranch syncs a PR's head branch with its base (PUT
 // /repos/{owner}/{repo}/pulls/{n}/update-branch), resolving the common
 // "behind main" case before a merge. Like MergePR it goes over REST as the App.
@@ -393,6 +621,28 @@ func (c *Client) UpdateBranchExpectedHead(ctx context.Context, repo string, numb
 	return c.updateBranch(ctx, repo, number, expectedHeadSHA, observedBaseSHA)
 }
 
+// IsUpdateBranchStaleHead reports whether err is GitHub refusing an
+// UpdateBranchExpectedHead call because the PR head is no longer the expected
+// SHA: a 422 naming the expected head. Callers treat it as "the head moved
+// since enumeration, re-evaluate on the next snapshot", not as a merge
+// conflict.
+func IsUpdateBranchStaleHead(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	var apiErr *gh.ErrorResponse
+	is422 := errors.As(err, &apiErr) && apiErr.Response != nil && apiErr.Response.StatusCode == http.StatusUnprocessableEntity
+	if !is422 && !strings.Contains(msg, "422") && !strings.Contains(msg, "validation failed") {
+		return false
+	}
+	return strings.Contains(msg, "expected_head_sha") ||
+		strings.Contains(msg, "expected head") ||
+		strings.Contains(msg, "head sha") ||
+		strings.Contains(msg, "head_sha") ||
+		strings.Contains(msg, "does not match")
+}
+
 func (c *Client) updateBranch(ctx context.Context, repo string, number int, expectedHeadSHA string, observedBaseSHA string) error {
 	if c == nil || c.client == nil {
 		return ErrNoGitHubClient
@@ -405,12 +655,19 @@ func (c *Client) updateBranch(ctx context.Context, repo string, number int, expe
 	if expectedHeadSHA != "" || observedBaseSHA != "" {
 		inputs = map[string]string{"expected_head_sha": expectedHeadSHA, "observed_base_sha": observedBaseSHA}
 	}
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	observe := func(ctx context.Context) (effects.ExternalState, error) {
+		pr, _, getErr := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:reconcile_branch_update"), owner, repo, number)
+		if getErr != nil {
+			return effects.ExternalState{}, getErr
+		}
+		return BranchUpdateState(pr, expectedHeadSHA, owner+"/"+repo+"#"+strconv.Itoa(number)), nil
+	}
+	_, err := effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindBranchUpdate,
 		Target: strconv.Itoa(number),
 		Inputs: inputs,
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, observe, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		var opts *gh.PullRequestBranchUpdateOptions
 		if expectedHeadSHA != "" {
 			opts = &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHeadSHA)}
@@ -426,6 +683,39 @@ func (c *Client) updateBranch(ctx context.Context, repo string, number int, expe
 		return fmt.Errorf("updating branch for PR %s/%s#%d: %w", owner, repo, number, err)
 	}
 	return nil
+}
+
+// BranchUpdateState is the authoritative observation of a branch update the
+// mutation journal holds as unresolved. With an expected head, a PR whose head
+// has moved off it is the update having landed (or the branch having moved on,
+// which makes the same guarded update moot either way). With no expected head,
+// or a head still at it, the update is reported not applied: update-branch is
+// safe to repeat — GitHub answers an up-to-date branch with a refusal rather
+// than a second merge commit — so a retry cannot duplicate anything.
+func BranchUpdateState(pr *gh.PullRequest, expectedHeadSHA, provenance string) effects.ExternalState {
+	expected := strings.TrimSpace(expectedHeadSHA)
+	head := strings.TrimSpace(pr.GetHead().GetSHA())
+	if expected != "" && head != "" && !strings.EqualFold(head, expected) {
+		return effects.ExternalState{Applied: true, Provenance: provenance}
+	}
+	return effects.ExternalState{}
+}
+
+// observePullRequestCreate is the authoritative observation of a PR create the
+// mutation journal holds as unresolved: the earlier attempt applied when an
+// open PR already exists for the head branch, and its URL is the provenance.
+func (c *Client) observePullRequestCreate(ctx context.Context, owner, repo, head string) (effects.ExternalState, error) {
+	if c == nil || c.client == nil {
+		return effects.ExternalState{}, ErrNoGitHubClient
+	}
+	pr, err := c.findOpenPRForHead(ctx, owner, repo, head)
+	if err != nil {
+		return effects.ExternalState{}, err
+	}
+	if pr == nil {
+		return effects.ExternalState{}, nil
+	}
+	return effects.ExternalState{Applied: true, Provenance: pr.GetHTMLURL()}, nil
 }
 
 // findOpenPRForHead returns the open PR whose head branch matches, or nil. The

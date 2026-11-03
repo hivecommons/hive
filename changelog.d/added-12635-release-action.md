@@ -1,0 +1,1 @@
+- Scanner release-only owner steps now name the exact release tag and target in opt-in your-turn notices, and the dashboard Your-turn menu can run the same guarded release action.

@@ -25,7 +25,7 @@
 # The failure chain --url-arg sits at the head of:
 #   1. ttyd without -a discards the ?arg=<session> in the URL
 #   2. ttyd-tmux.sh gets no argument and falls back to its default session name
-#   3. real sessions are hive-<agent> (src/pkg/agent/manager.go), so the glob
+#   3. real sessions are hive-<agent> (src/crux/agent/manager.go), so the glob
 #      /tmp/tmux-*/<default> matches nothing
 #   4. "error: no tmux socket found for session 'supervisor'" — a message that
 #      names a session the operator never asked for and never mentions --url-arg

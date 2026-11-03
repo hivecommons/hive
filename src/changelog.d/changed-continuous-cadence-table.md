@@ -1,1 +1,0 @@
-- Surfaced every agent's continuous-mode setting in the cadence table with a dedicated toggle column and clarified the setting is generic.

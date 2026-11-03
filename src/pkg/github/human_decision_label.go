@@ -2,9 +2,18 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+
+	gh "github.com/google/go-github/v72/github"
 )
+
+// ErrHumanDecisionLabelMissing means the optional label lookup returned 404.
+// Callers can report this configuration mismatch without treating it as a
+// runtime failure. The underlying GitHub error remains available via errors.As.
+var ErrHumanDecisionLabelMissing = errors.New("human decision label missing")
 
 // ApplyHumanDecisionLabel marks a pull request with the operator's configured
 // "a human needs to look at this" label.
@@ -27,7 +36,11 @@ func (c *Client) ApplyHumanDecisionLabel(ctx context.Context, repo string, numbe
 		return fmt.Errorf("human decision label: cannot resolve repo %q", repo)
 	}
 	if _, _, err := c.client.Issues.GetLabel(ctx, owner, name, label); err != nil {
-		return fmt.Errorf("human decision label %q not present in %s/%s: %w", label, owner, name, err)
+		var apiErr *gh.ErrorResponse
+		if errors.As(err, &apiErr) && apiErr.Response != nil && apiErr.Response.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("%w: %q not present in %s/%s: %w", ErrHumanDecisionLabelMissing, label, owner, name, err)
+		}
+		return fmt.Errorf("look up human decision label %q in %s/%s: %w", label, owner, name, err)
 	}
 	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, name, number, []string{label}); err != nil {
 		return fmt.Errorf("apply label %q to %s/%s#%d: %w", label, owner, name, number, err)

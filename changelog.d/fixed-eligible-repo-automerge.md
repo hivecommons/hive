@@ -1,0 +1,1 @@
+- The dashboard no longer shows a pull request as "merge-eligible — merges on its own" when its repository's auto-merge is off (an owner setting, or a hive below ACMM L6); it shows as waiting on a person to merge it by hand.

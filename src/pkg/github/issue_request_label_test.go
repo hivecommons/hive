@@ -3,12 +3,16 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 )
 
 // newLabelMockServer records the label adds and removes a label request makes.
@@ -16,6 +20,10 @@ func newLabelMockServer(t *testing.T, added *[]string, removed *[]string) *httpt
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			// Label definitions already exist; creation is covered by newEnsureLabelMockServer.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
 			var body []string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -31,6 +39,17 @@ func newLabelMockServer(t *testing.T, added *[]string, removed *[]string) *httpt
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1,"body":"ok"}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/issues/"):
+			// The re-park gate reads the issue before parking it on a
+			// decision; a bare issue carries no approval.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":1,"labels":[]}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -102,8 +121,8 @@ func TestIssueRequestWatcher_LabelAddsRemovesAndAudits(t *testing.T) {
 func TestIssueRequestWatcher_LabelRefusesHiveControlledLabels(t *testing.T) {
 	for _, label := range []string{
 		AutoMergeQueuedLabel, "LGTM", "hold", "on-hold", HumanAckLabel,
-		"design-approved", "needs-human", "needs-decision", "blocked",
-		"hive/claimed-by-other", "hive/likely-done",
+		"design-approved", "needs-decision", "needs-direction", "blocked",
+		"hive/claimed-by-other", "hive/likely-done", "stage/010-actionable", "stage/stalled",
 	} {
 		t.Run(label, func(t *testing.T) {
 			var added, removed []string
@@ -130,6 +149,10 @@ func TestIssueRequestWatcher_LabelRefusesHiveControlledLabels(t *testing.T) {
 			resp := readIssueResultFile(t, reqPath)
 			if resp.OK || !strings.Contains(resp.Error, label) {
 				t.Errorf("result does not explain the refusal: %+v", resp)
+			}
+			// The refusal names the sanctioned way to park an issue (#12329).
+			if !strings.Contains(resp.Error, "hive-open-issue comment --needs-decision") {
+				t.Errorf("refusal does not name the park command: %q", resp.Error)
 			}
 		})
 	}
@@ -168,10 +191,142 @@ func TestIssueRequestWatcher_LabelAllowsVerifiedOpenVerdict(t *testing.T) {
 	}
 }
 
+// The decision parks are add-only for agents (hivecommons/hive#12683):
+// parking an item on a maintainer decision is the ADR-0019 escalation move
+// that replaced `needs-direction` / `needs-decision`; every other stage label
+// is refused and the un-park stays with a maintainer. Both the issue bay
+// (stage/045) and the PR-only stage/085 pass; the request is a Parked fact
+// for the stage engine, which writes the one canonical spelling for the
+// item's kind (ADR-0025) — never the agent's mixed-case or PR-only label.
+func TestIssueRequestWatcher_LabelAllowsNeedsDecisionPark(t *testing.T) {
+	for _, park := range []string{"Stage/045-Needs-Decision", "Stage/085-Needs-Decision"} {
+		t.Run(park, func(t *testing.T) {
+			var added, removed []string
+			srv := newLabelMockServer(t, &added, &removed)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.SetAgentIssueDecisionPolicy("escalate")
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "label", Repo: "o/r", Number: 12683, Agent: "scanner",
+				Labels: []string{park},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if got := strings.Join(added, ","); got != NeedsDecisionStageLabel {
+				t.Fatalf("labels added = %q, want the engine's %s", got, NeedsDecisionStageLabel)
+			}
+			if len(removed) != 0 {
+				t.Fatalf("unexpected removed labels: %v", removed)
+			}
+			if resp := readIssueResultFile(t, reqPath); !resp.OK {
+				t.Fatalf("result = %+v, want ok", resp)
+			}
+		})
+	}
+}
+
+func TestIssueRequestWatcher_LabelDowngradesNonRiskHiveDecisionPark(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12816, Agent: "scanner",
+		Body:   "Question: which ADR gets renumbered / use a v6-only ADR block",
+		Labels: []string{NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != "stage/010-actionable" {
+		t.Fatalf("labels added = %q, want actionable downgrade", got)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed labels: %v", removed)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
+
+// The resolve-policy downgrade only strips decision-park spellings. `blocked`
+// is an owner hold, not a decision Hive may take, so it must survive the
+// downgrade and still trip the reserved-label check exactly as it does when
+// no decision park is requested alongside it.
+func TestIssueRequestWatcher_LabelDowngradeKeepsBlockedReserved(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12903, Agent: "scanner",
+		Body:   "Question: which ADR gets renumbered / use a v6-only ADR block",
+		Labels: []string{NeedsDecisionStageLabel, issueBlockedLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if len(added) != 0 || len(removed) != 0 {
+		t.Fatalf("reserved label reached GitHub: added=%v removed=%v", added, removed)
+	}
+	if resp := readIssueResultFile(t, reqPath); resp.OK {
+		t.Fatalf("result = %+v, want refusal for reserved label %q", resp, issueBlockedLabel)
+	}
+}
+
+func TestRemoveDecisionParkLabelsKeepsOwnerHolds(t *testing.T) {
+	in := []string{NeedsDecisionStageLabel, legacyIssueNeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel, issueNeedsHumanLabel, issueBlockedLabel, "kind/bug"}
+	got := removeDecisionParkLabels(append([]string(nil), in...), NeedsDecisionStageLabel)
+	if want := strings.Join([]string{issueNeedsHumanLabel, issueBlockedLabel, "kind/bug"}, ","); strings.Join(got, ",") != want {
+		t.Fatalf("removeDecisionParkLabels(%v) = %v, want %q", in, got, want)
+	}
+}
+
+func TestIssueRequestWatcher_LabelResolveStillParksRiskQuestion(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12820, Agent: "scanner",
+		Body:   "Risk: credentials/secrets/owner-only infrastructure\nQuestion: needs owner's GitHub secret",
+		Labels: []string{NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != NeedsDecisionStageLabel {
+		t.Fatalf("labels added = %q, want needs-decision", got)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed labels: %v", removed)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
+
 // A reserved label is refused in the remove direction too: taking `hold` off
 // a PR is exactly the escalation the guard exists for.
 func TestIssueRequestWatcher_LabelRefusesReservedRemoval(t *testing.T) {
-	for _, label := range []string{"hold", VerifiedOpenLabel} {
+	for _, label := range []string{"hold", VerifiedOpenLabel, NeedsDecisionStageLabel, PRNeedsDecisionStageLabel} {
 		t.Run(label, func(t *testing.T) {
 			var added, removed []string
 			srv := newLabelMockServer(t, &added, &removed)
@@ -302,5 +457,414 @@ func TestNormalizeLabelList(t *testing.T) {
 	}
 	if normalizeLabelList(nil) != nil || normalizeLabelList([]string{" ", ","}) != nil {
 		t.Error("an empty list must normalize to nil")
+	}
+}
+
+// newEnsureLabelMockServer is a label relay server that also models label
+// definitions: GET /labels/{name} is 404 until created, and creation is recorded.
+func newEnsureLabelMockServer(t *testing.T, existing bool, ensureCalls *int, created *[]map[string]string, added *[]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			*ensureCalls++
+			if existing {
+				_, _ = io.WriteString(w, `{"name":"hive/verified-open"}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues/9/labels"):
+			var body []string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if len(*created) == 0 && !existing && len(body) > 0 && strings.EqualFold(body[0], VerifiedOpenLabel) {
+				t.Errorf("label added before it was created")
+			}
+			*added = append(*added, body...)
+			_, _ = io.WriteString(w, `[{"name":"x"}]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			*created = append(*created, body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"name":"hive/verified-open"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// The label relay creates hive/verified-open with the shared definition on a
+// repo that lacks it, then adds it.
+func TestIssueRequestWatcher_LabelCreatesMissingVerifiedOpen(t *testing.T) {
+	var ensureCalls int
+	var created []map[string]string
+	var added []string
+	srv := newEnsureLabelMockServer(t, false, &ensureCalls, &created, &added)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 9, Agent: "scanner",
+		Labels: []string{VerifiedOpenLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if len(created) != 1 {
+		t.Fatalf("label creations = %v, want exactly one", created)
+	}
+	if created[0]["name"] != VerifiedOpenLabel || created[0]["color"] != VerifiedOpenLabelColor || created[0]["description"] != VerifiedOpenLabelDescription {
+		t.Errorf("created label = %v, want the shared verified-open definition", created[0])
+	}
+	if strings.Join(added, ",") != VerifiedOpenLabel {
+		t.Errorf("labels added = %v, want %s", added, VerifiedOpenLabel)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Errorf("result = %+v, want ok", resp)
+	}
+}
+
+// A failed label ensure leaves the request on the retry path, with no add.
+func TestIssueRequestWatcher_LabelEnsureFailureRetries(t *testing.T) {
+	var added []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues/9/labels") {
+			var body []string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			added = append(added, body...)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"message":"boom"}`)
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 9, Agent: "scanner",
+		Labels: []string{VerifiedOpenLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if len(added) != 0 {
+		t.Errorf("label added despite failed ensure: %v", added)
+	}
+	if _, err := os.Stat(reqPath); err != nil {
+		t.Errorf("request should stay queued for retry: %v", err)
+	}
+	if _, err := os.Stat(reqPath + ".denied"); err == nil {
+		t.Error("a failed ensure must not deny the request")
+	}
+}
+
+// A request with only plain labels never touches label definitions.
+func TestIssueRequestWatcher_LabelPlainLabelsSkipEnsure(t *testing.T) {
+	var ensureCalls int
+	var created []map[string]string
+	var added []string
+	srv := newEnsureLabelMockServer(t, false, &ensureCalls, &created, &added)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	if _, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 9, Agent: "scanner",
+		Labels: []string{"bug", "area/proxy"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if ensureCalls != 0 || len(created) != 0 {
+		t.Errorf("plain labels triggered ensure: lookups=%d created=%v", ensureCalls, created)
+	}
+	if strings.Join(added, ",") != "bug,area/proxy" {
+		t.Errorf("labels added = %v", added)
+	}
+}
+
+// Adding verified-open while removing likely-done is still refused whole, and
+// the refusal names the add-only request to send instead.
+func TestIssueRequestWatcher_LabelMixedVerifiedOpenRemoveLikelyDoneRefused(t *testing.T) {
+	var ensureCalls int
+	var created []map[string]string
+	var added []string
+	srv := newEnsureLabelMockServer(t, false, &ensureCalls, &created, &added)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 9, Agent: "scanner",
+		Labels: []string{VerifiedOpenLabel}, RemoveLabels: []string{LikelyDoneLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if len(added) != 0 || len(created) != 0 || ensureCalls != 0 {
+		t.Fatalf("refused request reached GitHub: added=%v created=%v lookups=%d", added, created, ensureCalls)
+	}
+	if _, err := os.Stat(reqPath + ".denied"); err != nil {
+		t.Errorf("refused request was not quarantined: %v", err)
+	}
+	resp := readIssueResultFile(t, reqPath)
+	if resp.OK || !strings.Contains(resp.Error, LikelyDoneLabel) ||
+		!strings.Contains(resp.Error, "adds only "+VerifiedOpenLabel) ||
+		!strings.Contains(resp.Error, "do not remove") {
+		t.Errorf("refusal does not tell the agent what to send: %+v", resp)
+	}
+}
+
+// Without an add of verified-open (or with another refused label) the generic
+// refusal is kept: no resend advice.
+func TestReservedLabelRefusal_ResendHintOnlyForVerifiedOpenWithHiveRemovals(t *testing.T) {
+	c := &Client{}
+	cases := []struct {
+		name        string
+		add, remove []string
+		wantHint    bool
+	}{
+		{"add+remove likely-done", []string{VerifiedOpenLabel}, []string{LikelyDoneLabel}, true},
+		{"add+remove covered-by-pr", []string{VerifiedOpenLabel}, []string{CoveredByPRLabel}, true},
+		{"remove only", nil, []string{LikelyDoneLabel}, false},
+		{"also removes hold", []string{VerifiedOpenLabel}, []string{LikelyDoneLabel, "hold"}, false},
+		{"also adds likely-done", []string{VerifiedOpenLabel, LikelyDoneLabel}, []string{LikelyDoneLabel}, false},
+		{"removes verified-open", []string{VerifiedOpenLabel}, []string{VerifiedOpenLabel}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, refused := c.reservedLabelRefusal(tc.add, tc.remove)
+			if !refused {
+				t.Fatal("request must be refused")
+			}
+			if got := strings.Contains(reason, "Resend a label request that adds only"); got != tc.wantHint {
+				t.Errorf("resend hint = %v, want %v; reason: %s", got, tc.wantHint, reason)
+			}
+		})
+	}
+}
+
+// A contributor agent read the owner's `/hive decision … Agents stand down`
+// on hivecommons/hive#12680 and re-parked the issue asking for a decision.
+// With `approved-direction` applied and Hive's own un-park reply recording
+// the decision, the re-park is refused and the agent is told to add
+// `needs-human` and unclaim instead. A newer `/hive decision` with different
+// text means direction is changing, and the park goes through.
+func TestIssueRequestWatcher_LabelRefusesReparkOnRecordedDecision(t *testing.T) {
+	const decision = "Agents stand down; owner/Console owners handle this"
+	reply := unparkWireComment{
+		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReplyKeeping("owner", decision, nil, true, unparkNeedsHumanOutcome{applier: stageengine.NeedsHumanApplierPerson, actor: "owner"})),
+		User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkOld(), UpdatedAt: unparkOld(),
+	}
+	cases := []struct {
+		name      string
+		comments  []unparkWireComment
+		wantAdded bool
+	}{
+		{"decision unchanged", []unparkWireComment{humanComment(31, "owner", "/hive decision "+decision), reply}, false},
+		{"same decision repeated", []unparkWireComment{reply, humanComment(33, "owner", "/hive decision "+decision)}, false},
+		{"new decision pending", []unparkWireComment{reply, humanComment(34, "owner", "/hive decision option B after all")}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issue := parkedIssue(12680, tc.comments...)
+			issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: HumanAckLabel}}
+			server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, nil)
+			c := newTestClient(t, server, "org", []string{"repo"})
+			c.issueAuthz = func(agent string, uid int, kind string) error { return nil }
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "label", Repo: "org/repo", Number: 12680, Agent: "karibhou",
+				Labels: []string{NeedsDecisionStageLabel},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			resp := readIssueResultFile(t, reqPath)
+			if tc.wantAdded {
+				if !resp.OK || len(rec.added[12680]) != 1 {
+					t.Fatalf("expected the park to go through, resp=%+v added=%v", resp, rec.added[12680])
+				}
+				return
+			}
+			if resp.OK || len(rec.added[12680]) != 0 {
+				t.Fatalf("expected the re-park refused, resp=%+v added=%v", resp, rec.added[12680])
+			}
+			for _, want := range []string{"already decided", decision, "`needs-human`", "/unclaim"} {
+				if !strings.Contains(resp.Error, want) {
+					t.Fatalf("refusal %q should mention %q", resp.Error, want)
+				}
+			}
+			if _, err := os.Stat(reqPath + ".denied"); err != nil {
+				t.Fatalf("request should be moved to .denied: %v", err)
+			}
+		})
+	}
+}
+
+func TestReparkDecisionRefusalRecognizesRetiredDecisionLabels(t *testing.T) {
+	const decision = "Agents stand down; owner/Console owners handle this"
+	reply := unparkWireComment{
+		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReplyKeeping("owner", decision, []string{issueNeedsDecisionLabel}, true, unparkNeedsHumanOutcome{applier: stageengine.NeedsHumanApplierPerson, actor: "owner"})),
+		User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkOld(), UpdatedAt: unparkOld(),
+	}
+	for _, label := range []string{NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel} {
+		t.Run(label, func(t *testing.T) {
+			issue := parkedIssue(12680, humanComment(31, "owner", "/hive decision "+decision), reply)
+			issue.Labels = []wireLabel{{Name: issueNeedsHumanLabel}, {Name: HumanAckLabel}}
+			server, _ := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, nil)
+			c := newTestClient(t, server, "org", []string{"repo"})
+
+			reason, refused, err := c.reparkDecisionRefusal(context.Background(), "org/repo", 12680, []string{label})
+			if err != nil {
+				t.Fatalf("reparkDecisionRefusal: %v", err)
+			}
+			if !refused || !strings.Contains(reason, "already decided") || !strings.Contains(reason, issueNeedsHumanLabel) {
+				t.Fatalf("label %q refused=%v reason=%q, want recorded-decision refusal", label, refused, reason)
+			}
+		})
+	}
+}
+
+// Without `approved-direction` the same request parks as before, and an
+// agent may add `needs-human` (never remove it).
+func TestIssueRequestWatcher_LabelAllowsNeedsHumanAdd(t *testing.T) {
+	issue := parkedIssue(12681)
+	issue.Labels = []wireLabel{{Name: "kind/bug"}}
+	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, nil)
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.issueAuthz = func(agent string, uid int, kind string) error { return nil }
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "org/repo", Number: 12681, Agent: "karibhou",
+		Labels: []string{"needs-human", NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+	if got := strings.Join(rec.added[12681], ","); got != "needs-human,"+NeedsDecisionStageLabel {
+		t.Fatalf("added = %q", got)
+	}
+
+	removePath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "org/repo", Number: 12681, Agent: "karibhou",
+		RemoveLabels: []string{"needs-human"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if resp := readIssueResultFile(t, removePath); resp.OK || !strings.Contains(resp.Error, "needs-human") {
+		t.Fatalf("removing needs-human must be refused, got %+v", resp)
+	}
+}
+
+func TestIssueRequestWatcher_LabelResolveParksUnclassifiedQuestion(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12969, Agent: "scanner",
+		Body:   neutralDecisionText,
+		Labels: []string{NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != NeedsDecisionStageLabel {
+		t.Fatalf("labels added = %q, want park %q", got, NeedsDecisionStageLabel)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
+
+// A park the stage engine did not land must not be reported as done
+// (hivecommons/hive#13069): when the issue still wears stage/010-actionable
+// after the Parked fact, the relay answers ok:false with the reason and
+// keeps the request on the retry path; once the park stage is on the
+// issue the same request succeeds.
+func TestIssueRequestWatcher_LabelParkReportsFailureWhenStageDidNotLand(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stage  string
+		wantOK bool
+	}{
+		{"still actionable", "stage/010-actionable", false},
+		{"parked", NeedsDecisionStageLabel, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+					_, _ = io.WriteString(w, `[]`)
+				case r.Method == "GET" && strings.Contains(r.URL.Path, "/issues/"):
+					_, _ = fmt.Fprintf(w, `{"number":219,"state":"open","labels":[{"name":"security"},{"name":%q}]}`, tc.stage)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.SetAgentIssueDecisionPolicy("escalate")
+			sink := &stageenginetest.Recorder{}
+			c.SetStageFactSink(sink)
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "label", Repo: "o/r", Number: 219, Agent: "scanner",
+				Labels: []string{NeedsDecisionStageLabel},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if len(sink.Facts) != 1 || sink.Facts[0].Method != "Parked" {
+				t.Fatalf("facts = %+v, want one Parked", sink.Facts)
+			}
+			resp := readIssueResultFile(t, reqPath)
+			_, statErr := os.Stat(reqPath)
+			if tc.wantOK {
+				if !resp.OK || strings.Join(resp.LabelsAdded, ",") != NeedsDecisionStageLabel {
+					t.Fatalf("result = %+v, want ok with the park", resp)
+				}
+				if !os.IsNotExist(statErr) {
+					t.Fatal("a fulfilled park should be consumed")
+				}
+				return
+			}
+			if resp.OK || len(resp.LabelsAdded) != 0 || !strings.Contains(resp.Error, tc.stage) {
+				t.Fatalf("result = %+v, want ok:false naming %s", resp, tc.stage)
+			}
+			if statErr != nil {
+				t.Fatalf("an unlanded park should stay on the retry path: %v", statErr)
+			}
+		})
 	}
 }

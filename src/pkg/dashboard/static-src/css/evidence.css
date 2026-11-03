@@ -1,0 +1,184 @@
+    .prt-trend-plot { position:relative; height:180px; margin:var(--sp-3) 0 1.5rem 2.2rem; }
+    .prt-trend-plot .prt-trend-svg { display:block; width:100%; height:100%; overflow:visible; }
+    .prt-trend-svg .bar.hive { fill:var(--prt-actor-hive); }
+    .prt-trend-svg .bar.human { fill:var(--prt-actor-human); }
+    .prt-trend-svg .bar.other { fill:var(--prt-actor-other); }
+    .prt-trend-svg .grid { stroke:var(--border); stroke-width:1; }
+    .prt-trend-svg .ref { stroke:var(--muted); stroke-width:1; stroke-dasharray:3 4; }
+    .prt-trend-svg .share-line { fill:none; stroke:var(--prt-actor-hive); stroke-width:2; stroke-linejoin:round; }
+    .prt-trend-svg .hit { fill:transparent; }
+    .prt-trend-svg .hit:hover { fill:color-mix(in srgb, var(--text) 8%, transparent); }
+    .prt-trend-y, .prt-trend-x { position:absolute; font-size:var(--fs-2xs); color:var(--muted); pointer-events:none; }
+    .prt-trend-y { left:-2.2rem; top:0; bottom:0; width:1.9rem; }
+    .prt-trend-y span { position:absolute; right:0; transform:translateY(50%); }
+    .prt-trend-x { left:0; right:0; top:100%; height:1.2rem; }
+    .prt-trend-x span { position:absolute; top:.2rem; white-space:nowrap; }
+    @media (max-width: 600px) { .prt-trend-x span:nth-child(even) { display:none; } }
+    .prt-trend-controls { display:flex; gap:var(--sp-2); flex-wrap:wrap; justify-content:flex-end; }
+    /* Panels tile like .prt-attribution: side by side on wide screens, one
+       column on phones. The card's head row always spans the full width. */
+    .evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap:var(--sp-3); }
+    .evidence-card > .prt-head { grid-column:1 / -1; margin-bottom:0; }
+    .ev-panel { position:relative; border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); min-width:0; }
+    /* One layout for every panel (#13204): header (title · ⓘ · n · grade)
+       → plain-English summary → chart → compact legend. Nothing inside a
+       panel may render larger than the summary row (--fs-xs). */
+    .ev-panel > summary { cursor:pointer; font-size:var(--fs-xs); font-weight:600; color:var(--text); }
+    .ev-n { display:inline-block; margin-left:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); font-weight:400; color:var(--muted); }
+    .ev-letter { float:right; min-width:2.4em; margin-left:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--muted); border-radius:var(--r-pill); font-size:var(--fs-xs); font-weight:700; line-height:1.5; text-align:center; color:var(--muted); background:color-mix(in srgb, var(--muted) 10%, transparent); cursor:help; }
+    .ev-letter.ev-band-a { color:var(--green); border-color:var(--green); background:color-mix(in srgb, var(--green) 12%, transparent); }
+    .ev-letter.ev-band-b { color:var(--amber); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 12%, transparent); }
+    .ev-letter.ev-band-c { color:var(--red); border-color:var(--red); background:color-mix(in srgb, var(--red) 12%, transparent); }
+    .ev-letter.ev-band-none { color:var(--muted); border-style:dashed; }
+    .ev-plain { margin-top:var(--sp-2); font-size:var(--fs-xs); font-weight:400; line-height:1.4; color:var(--text); }
+    /* Pinned to the viewBox width (EV_SVG_W) so one user unit is one CSS px
+       and <text> renders at the token size instead of scaling with the card;
+       it only shrinks below that on phones narrower than the chart. */
+    .ev-svg { display:block; width:320px; max-width:100%; height:auto; margin-top:var(--sp-2); }
+    .ev-svg .ev-axis { stroke:var(--border); stroke-width:1; }
+    .ev-svg text { fill:var(--muted); font-family:var(--font-ui); font-size:var(--fs-2xs); }
+    .ev-svg text.ev-lbl { fill:var(--text); font-size:var(--fs-xs); }
+    .ev-svg text.ev-val { font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
+    .ev-svg .ev-line { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
+    .ev-svg .ev-pt { fill:var(--ev-c); opacity:.85; }
+    .ev-svg .ev-pt-block { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
+    .ev-svg .ev-bar.fa { fill:var(--orange); }
+    .ev-svg .ev-bar.fb { fill:var(--purple); }
+    .ev-svg .ev-unknown .ev-bar, .ev-svg .ev-unknown text { fill:var(--muted); opacity:.5; }
+    .ev-c0 { --ev-c: var(--blue); } .ev-c1 { --ev-c: var(--purple); } .ev-c2 { --ev-c: var(--cyan); }
+    .ev-c3 { --ev-c: var(--orange); } .ev-c4 { --ev-c: var(--yellow); } .ev-c5 { --ev-c: var(--amber); }
+    .ev-legend { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-1); font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-legend i { display:inline-block; width:8px; height:8px; margin-right:var(--sp-1); background:var(--ev-c); }
+    .ev-legend i.dot { border-radius:var(--r-pill); }
+    .ev-legend i.fa { background:var(--orange); }
+    .ev-legend i.fb { background:var(--purple); }
+    .ev-svg .ev-bar.sm { fill:var(--green); }
+    .ev-svg .ev-bar.sr { fill:var(--red); }
+    .ev-svg .ev-bar.so { fill:var(--muted); opacity:.5; }
+    .ev-legend i.sm { background:var(--green); }
+    .ev-legend i.sr { background:var(--red); }
+    .ev-legend i.so { background:var(--muted); opacity:.5; }
+    .ev-svg .ev-bar.su { fill:none; stroke:var(--muted); stroke-width:1; stroke-dasharray:2 2; }
+    .ev-legend i.su { background:none; border:1px dashed var(--muted); }
+    .ev-legend i.unknown { background:var(--muted); opacity:.5; }
+    .ev-svg .ev-bar.om { fill:var(--green); }
+    .ev-svg .ev-bar.oc { fill:var(--muted); opacity:.6; }
+    .ev-svg .ev-bar.or { fill:var(--red); }
+    .ev-svg .ev-bar.ou { fill:none; stroke:var(--muted); stroke-width:1; stroke-dasharray:2 2; }
+    .ev-legend i.om { background:var(--green); }
+    .ev-legend i.oc { background:var(--muted); opacity:.6; }
+    .ev-legend i.or { background:var(--red); }
+    .ev-legend i.ou { background:none; border:1px dashed var(--muted); }
+    .ev-svg .ev-pt.ev-thin { fill:none; stroke:var(--ev-c); stroke-width:1; stroke-dasharray:2 2; opacity:.7; }
+    .ev-svg .ev-pt-block.ev-thin { stroke-dasharray:2 2; opacity:.5; }
+    .ev-svg text.ev-sub { opacity:.7; }
+    .ev-svg .ev-bar.cv-claim { fill:var(--blue); opacity:.6; }
+    .ev-svg .ev-bar.cv-ci { fill:var(--orange); }
+    .ev-svg .ev-bar.cv-swarm { fill:var(--purple); }
+    .ev-svg .ev-bar.cv-both { fill:var(--red); }
+    .ev-legend i.cv-claim { background:var(--blue); opacity:.6; }
+    .ev-legend i.cv-ci { background:var(--orange); }
+    .ev-legend i.cv-swarm { background:var(--purple); }
+    .ev-legend i.cv-both { background:var(--red); }
+    .ev-svg .ev-bar.wb-human { fill:var(--green); }
+    .ev-svg .ev-bar.wb-agent { fill:var(--blue); }
+    .ev-svg .ev-bar.wb-bot { fill:var(--muted); opacity:.6; }
+    .ev-svg .ev-bar.wb-throttle { fill:var(--amber); opacity:.15; }
+    .ev-svg .wb-closed, .ev-legend .wb-closed { --ev-c: var(--orange); }
+    .ev-legend i.wb-human { background:var(--green); }
+    .ev-legend i.wb-agent { background:var(--blue); }
+    .ev-legend i.wb-bot { background:var(--muted); opacity:.6; }
+    .ev-svg .ev-bar.wa { fill:var(--blue); }
+    .ev-svg .ev-bar.wb { fill:var(--red); }
+    .ev-legend i.wa { background:var(--blue); }
+    .ev-legend i.wb { background:var(--red); }
+    .ev-svg .ev-bar.wm { fill:var(--blue); opacity:.45; }
+    .ev-legend i.wm { background:var(--blue); opacity:.45; }
+    .ev-svg .wb-queue, .ev-legend .wb-queue { --ev-c: var(--purple); }
+    .ev-svg .wb-queue .ev-line { stroke-dasharray:3 2; }
+    .ev-svg .ev-tick.wb-unmerged { stroke:var(--red); stroke-width:2; }
+    .ev-svg .ev-bar.cr-rec { fill:var(--green); }
+    .ev-svg .ev-bar.cr-green { fill:var(--green); opacity:.45; }
+    .ev-svg .ev-bar.cr-aband { fill:var(--red); }
+    .ev-svg .ev-bar.cr-pend { fill:var(--amber); opacity:.6; }
+    .ev-svg .ev-bar.cr-unk { fill:none; stroke:var(--muted); stroke-width:1; stroke-dasharray:2 2; }
+    .ev-svg .ev-bar.cp-1 { fill:var(--green); }
+    .ev-svg .ev-bar.cp-2 { fill:var(--green); opacity:.6; }
+    .ev-svg .ev-bar.cp-3 { fill:var(--amber); opacity:.8; }
+    .ev-svg .ev-bar.cp-4 { fill:var(--amber); opacity:.5; }
+    .ev-svg .ev-bar.cp-never { fill:var(--red); }
+    .ev-svg .ev-line.cp-line { fill:none; stroke:var(--blue); stroke-width:1.5; }
+    .ev-svg .ev-dot.cp-line { fill:var(--blue); }
+    .ev-legend i.cp-1 { background:var(--green); }
+    .ev-legend i.cp-2 { background:var(--green); opacity:.6; }
+    .ev-legend i.cp-3 { background:var(--amber); opacity:.8; }
+    .ev-legend i.cp-4 { background:var(--amber); opacity:.5; }
+    .ev-legend i.cp-never { background:var(--red); }
+    .ev-legend i.cp-line { background:var(--blue); height:2px; }
+    .ev-disclosed { margin:var(--sp-2) 0 var(--sp-1); font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-legend i.cr-rec { background:var(--green); }
+    .ev-legend i.cr-green { background:var(--green); opacity:.45; }
+    .ev-legend i.cr-aband { background:var(--red); }
+    .ev-legend i.cr-pend { background:var(--amber); opacity:.6; }
+    .ev-legend i.cr-unk { background:none; border:1px dashed var(--muted); }
+    .ev-headline { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-headline b { font-weight:600; color:var(--text); }
+    .ev-headline .ev-sub { color:var(--muted); font-size:var(--fs-2xs); }
+    .ev-flow { display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3); }
+    .ev-flow h5 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+    .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
+    /* Compact tables inside a panel (issue reopen rate, control arm): the
+       panel's own font scale, nowrap headers, overflow contained in the wrap
+       so a wide table scrolls instead of bleeding into the next panel. */
+    .ev-table-wrap { margin-top:var(--sp-2); max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; }
+    .ev-table { width:100%; border-collapse:collapse; font-size:var(--fs-2xs); font-variant-numeric:tabular-nums; }
+    .ev-table th, .ev-table td { padding:var(--sp-1) var(--sp-2); text-align:right; border-top:1px solid var(--border); white-space:nowrap; }
+    .ev-table th { color:var(--muted); font-size:var(--fs-2xs); font-weight:600; border-top:none; }
+    .ev-table th:first-child, .ev-table td:first-child { text-align:left; padding-left:0; }
+    .ev-table th:last-child, .ev-table td:last-child { padding-right:0; }
+    /* Issue opens : PR merges rows reuse .ev-table; the fleet total row and
+       the per-repo bar cell are the only additions. */
+    .ev-table tr.ev-om-total td { font-weight:600; color:var(--text); }
+    .ev-om-barcell { width:28%; }
+    .ev-om-bar { display:block; width:100%; height:6px; }
+    .ev-om-bar rect { fill:var(--green); }
+    .ev-om-bar rect.ev-om-above { fill:var(--red); }
+    .ev-om-bar rect.ev-om-below { fill:var(--amber); }
+    .ev-om-bar rect.ev-om-no_data { fill:var(--muted); opacity:.4; }
+    .ev-om-headline.ev-om-above b { color:var(--red); }
+    .ev-om-headline.ev-om-below b { color:var(--amber); }
+    .ev-svg .ev-om-band { fill:var(--green); opacity:.12; }
+    .ev-svg .ev-om-parity { stroke:var(--muted); stroke-dasharray:2 2; }
+    .ev-legend i.ev-om-band-key { background:var(--green); opacity:.3; }
+    /* Evidence window pills (24h · 7d · 30d · custom) and the inline custom
+       from/to row that opens under the head when "custom" is active. */
+    .ev-window-controls { margin-left:auto; }
+    .ev-custom-range { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); width:100%; font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-custom-range input[type="date"] { border:1px solid var(--border); border-radius:var(--r-sm); background:var(--bg); color:var(--text); font:inherit; font-size:var(--fs-2xs); padding:var(--sp-1) var(--sp-2); }
+    .ev-custom-range button { border:1px solid var(--amber); border-radius:var(--r-pill); background:color-mix(in srgb, var(--amber) 14%, transparent); color:var(--text); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); cursor:pointer; }
+    .ev-custom-range .ev-range-err { color:var(--red); }
+    .ev-custom-range[hidden] { display:none; }
+    /* Plain-language panel explainer: ⓘ toggle in the summary row opens a
+       popover over the chart (never inline), so the panel itself stays short. */
+    .ev-info { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:var(--sp-2); padding:0; border-radius:var(--r-pill); background:color-mix(in srgb, var(--blue) 18%, var(--panel)); border:1px solid color-mix(in srgb, var(--blue) 60%, transparent); color:var(--blue); font-size:var(--fs-2xs); line-height:1; font-weight:700; cursor:pointer; vertical-align:middle; }
+    .ev-info:hover, .ev-info:focus-visible, .ev-info[aria-expanded="true"] { background:var(--blue); border-color:var(--blue); color:var(--bg); outline:none; }
+    .ev-explainer { position:absolute; left:var(--sp-3); right:var(--sp-3); top:calc(var(--sp-3) + 1.9em); z-index:5; max-height:60vh; overflow:auto; padding:var(--sp-3); border:1px solid var(--border); border-left:3px solid var(--blue); border-radius:var(--r-sm); background:var(--panel); box-shadow:0 8px 24px color-mix(in srgb, var(--bg) 70%, transparent); font-size:var(--fs-2xs); font-weight:400; color:var(--text); line-height:1.45; }
+    .ev-explainer[hidden] { display:none; }
+    .ev-explainer .ev-grade-rubric { margin-top:var(--sp-2); padding-top:var(--sp-2); border-top:1px dashed var(--border); color:var(--muted); }
+    .ev-explainer h4 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+    .ev-explainer h4:first-child { margin-top:0; }
+    .ev-explainer p { margin:2px 0 0; }
+    .ev-grade { display:inline-block; margin-top:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-weight:600; color:var(--muted); }
+    .ev-grade.excellent, .ev-grade.strong { color:var(--green); border-color:var(--green); }
+    .ev-grade.good { color:var(--blue); border-color:var(--blue); }
+    .ev-grade.fair { color:var(--amber); border-color:var(--amber); }
+    .ev-grade.weak { color:var(--red); border-color:var(--red); }
+    .prt-trend-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
+    .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
+    .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
+    .prt-legend i { display:inline-block; width:8px; height:8px; border-radius:var(--r-pill); margin-right:var(--sp-1); vertical-align:middle; }
+    .prt-caption { color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-2); }
+    @media (max-width: 800px) { .prt-attribution { grid-template-columns:1fr; } }
+    @media (max-width: 900px) { .lc-fleet.prt-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } .window-pills-toolbar { justify-self: start; justify-content: flex-start; } }

@@ -1,0 +1,1 @@
+- The local `hivectl hives web` API now accepts its access token only through the `X-Hive-Commons-Token` header, preventing API credentials from leaking through query strings ([#13245](https://github.com/hivecommons/hive/issues/13245)).

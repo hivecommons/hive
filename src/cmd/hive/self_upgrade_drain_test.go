@@ -1,0 +1,340 @@
+package main
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
+)
+
+func TestUpgradeDrain_ProceedsImmediatelyWithNoKicksInFlight(t *testing.T) {
+	var d upgradeDrain
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+
+	dec := d.decide("feedbeef", nil, 45*time.Minute, now)
+	if !dec.Proceed || dec.TimedOut || dec.Waited != 0 {
+		t.Fatalf("decision = %+v, want immediate proceed", dec)
+	}
+	// Once released, the process is about to exit: new kicks stay withheld.
+	if target, active := d.Active(now.Add(time.Hour)); !active || target != "feedbeef" {
+		t.Fatalf("Active after release = (%q, %v), want (feedbeef, true)", target, active)
+	}
+}
+
+func TestUpgradeDrain_DefersWhileKicksInFlightThenProceedsWhenTheyEnd(t *testing.T) {
+	var d upgradeDrain
+	start := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	timeout := 45 * time.Minute
+
+	dec := d.decide("feedbeef", []string{"architect"}, timeout, start)
+	if dec.Proceed {
+		t.Fatalf("decision = %+v, want deferral while architect is mid-turn", dec)
+	}
+	if dec.Remaining != timeout || !reflect.DeepEqual(dec.InFlight, []string{"architect"}) {
+		t.Fatalf("decision = %+v, want full window remaining and architect in flight", dec)
+	}
+	if _, active := d.Active(start); !active {
+		t.Fatal("drain not active: new kicks would still be issued while draining")
+	}
+
+	beat := start.Add(heartbeatSendInterval)
+	dec = d.decide("feedbeef", []string{"architect"}, timeout, beat)
+	if dec.Proceed || dec.Waited != heartbeatSendInterval || dec.Remaining != timeout-heartbeatSendInterval {
+		t.Fatalf("second beat decision = %+v, want deferral keeping the original deadline", dec)
+	}
+
+	done := beat.Add(heartbeatSendInterval)
+	dec = d.decide("feedbeef", nil, timeout, done)
+	if !dec.Proceed || dec.TimedOut || dec.Waited != 2*heartbeatSendInterval {
+		t.Fatalf("drained decision = %+v, want proceed after %v", dec, 2*heartbeatSendInterval)
+	}
+}
+
+func TestUpgradeDrain_TimesOutAndNamesCutKicks(t *testing.T) {
+	var d upgradeDrain
+	start := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	timeout := 10 * time.Minute
+	inFlight := []string{"ci-maintainer", "quality"}
+
+	for at := start; at.Sub(start) < timeout; at = at.Add(heartbeatSendInterval) {
+		if dec := d.decide("feedbeef", inFlight, timeout, at); dec.Proceed {
+			t.Fatalf("proceeded at %v inside the drain window: %+v", at.Sub(start), dec)
+		}
+	}
+	dec := d.decide("feedbeef", inFlight, timeout, start.Add(timeout))
+	if !dec.Proceed || !dec.TimedOut || !reflect.DeepEqual(dec.InFlight, inFlight) {
+		t.Fatalf("decision at deadline = %+v, want timed-out proceed naming the cut kicks", dec)
+	}
+}
+
+func TestUpgradeDrain_NewerTargetKeepsOriginalDeadline(t *testing.T) {
+	var d upgradeDrain
+	start := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	timeout := 45 * time.Minute
+
+	d.decide("aaaa111", []string{"scanner"}, timeout, start)
+	dec := d.decide("bbbb222", []string{"scanner"}, timeout, start.Add(heartbeatSendInterval))
+	if dec.Proceed || dec.Waited != heartbeatSendInterval {
+		t.Fatalf("decision = %+v, want the drain window carried across a newer target", dec)
+	}
+	if target, _ := d.Active(start.Add(heartbeatSendInterval)); target != "bbbb222" {
+		t.Fatalf("drain target = %q, want the newest target", target)
+	}
+}
+
+func TestUpgradeDrain_StaleDrainReleasesKicks(t *testing.T) {
+	var d upgradeDrain
+	start := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+
+	d.decide("feedbeef", []string{"scanner"}, 45*time.Minute, start)
+	// The hub stopped re-sending UpgradeTo (cancelled or superseded): kicks
+	// must not stay withheld forever.
+	if _, active := d.Active(start.Add(selfUpgradeDrainStaleAfter)); active {
+		t.Fatal("drain still active after the hub stopped re-confirming the upgrade")
+	}
+	// A later instruction opens a fresh window rather than inheriting the old one.
+	dec := d.decide("feedbeef", []string{"scanner"}, 45*time.Minute, start.Add(time.Hour))
+	if dec.Proceed || dec.Waited != 0 {
+		t.Fatalf("decision = %+v, want a fresh drain window", dec)
+	}
+}
+
+func TestUpgradeDrain_DisabledByNonPositiveTimeout(t *testing.T) {
+	var d upgradeDrain
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+
+	dec := d.decide("feedbeef", []string{"architect"}, 0, now)
+	if !dec.Proceed || dec.TimedOut {
+		t.Fatalf("decision = %+v, want immediate proceed when draining is disabled", dec)
+	}
+	if _, active := d.Active(now); active {
+		t.Fatal("disabled drain withheld kicks")
+	}
+}
+
+func TestAgentKicksInFlight(t *testing.T) {
+	processStart := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	kick := processStart.Add(10 * time.Minute)
+	seeded := processStart.Add(-time.Hour)
+
+	statuses := map[string]*crux.Process{
+		"architect": {State: crux.StateRunning, LastKick: &kick},
+		"reviewer": {State: crux.StateRunning, LastKick: &kick,
+			KickOutcome: crux.KickOutcome{Kind: crux.KickOutcomeEnded, KickAt: kick}},
+		"quality": {State: crux.StateRunning, LastKick: &kick,
+			KickOutcome: crux.KickOutcome{Kind: crux.KickOutcomeEnded, KickAt: processStart.Add(time.Minute)}},
+		"scanner":    {State: crux.StateRunning, LastKick: &seeded},
+		"operations": {State: crux.StateRunning, Paused: true, LastKick: &kick},
+		"telemetry":  {State: crux.StateIdle, LastKick: &kick},
+		"sec-check":  {State: crux.StateRunning},
+		"nil-proc":   nil,
+	}
+
+	got, wedged := agentKicksInFlight(statuses, processStart, kick.Add(5*time.Minute), nil)
+	want := []string{"architect", "quality"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentKicksInFlight = %v, want %v", got, want)
+	}
+	if len(wedged) != 0 {
+		t.Fatalf("wedged = %+v, want none for fresh kicks", wedged)
+	}
+}
+
+// TestAgentKicksInFlight_IgnoresWedgedKickPastCeiling pins #14323: a kick whose
+// turn-end signal never arrives stops holding the drain once it is older than
+// the agent's continuous turn ceiling (default when unset or disabled).
+func TestAgentKicksInFlight_IgnoresWedgedKickPastCeiling(t *testing.T) {
+	processStart := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	now := processStart.Add(72 * time.Hour)
+	wedgedAt := processStart.Add(time.Minute)
+	recent := now.Add(-10 * time.Minute)
+	shortAt := now.Add(-20 * time.Minute)
+	disabledAt := now.Add(-50 * time.Minute)
+
+	statuses := map[string]*crux.Process{
+		"brainstorm": {State: crux.StateRunning, LastKick: &wedgedAt},
+		"architect":  {State: crux.StateRunning, LastKick: &recent},
+		"short":      {State: crux.StateRunning, LastKick: &shortAt},
+		"disabled":   {State: crux.StateRunning, LastKick: &disabledAt},
+	}
+	ceilings := map[string]time.Duration{"short": 15 * time.Minute, "disabled": 0}
+
+	inFlight, wedged := agentKicksInFlight(statuses, processStart, now, func(name string) time.Duration {
+		return ceilings[name]
+	})
+	if want := []string{"architect"}; !reflect.DeepEqual(inFlight, want) {
+		t.Fatalf("inFlight = %v, want %v", inFlight, want)
+	}
+	want := []wedgedKick{
+		{Agent: "brainstorm", KickAt: wedgedAt, Age: now.Sub(wedgedAt), Ceiling: config.DefaultContinuousTurnCeiling},
+		{Agent: "disabled", KickAt: disabledAt, Age: 50 * time.Minute, Ceiling: config.DefaultContinuousTurnCeiling},
+		{Agent: "short", KickAt: shortAt, Age: 20 * time.Minute, Ceiling: 15 * time.Minute},
+	}
+	if !reflect.DeepEqual(wedged, want) {
+		t.Fatalf("wedged = %+v, want %+v", wedged, want)
+	}
+	if got := wedgedKickAgents(wedged); !reflect.DeepEqual(got, []string{"brainstorm", "disabled", "short"}) {
+		t.Fatalf("wedgedKickAgents = %v", got)
+	}
+
+	// With only the wedged kick left, the drain proceeds immediately instead
+	// of waiting out the full drain window.
+	var d upgradeDrain
+	onlyWedged := map[string]*crux.Process{"brainstorm": statuses["brainstorm"]}
+	inFlight, _ = agentKicksInFlight(onlyWedged, processStart, now, nil)
+	if dec := d.decide("feedbeef", inFlight, 45*time.Minute, now); !dec.Proceed || dec.TimedOut {
+		t.Fatalf("decision = %+v, want immediate proceed past a wedged kick", dec)
+	}
+}
+
+func TestWedgedKickNotices_LogsEachKickOnce(t *testing.T) {
+	var n wedgedKickNotices
+	k1 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	k2 := k1.Add(time.Hour)
+	w := []wedgedKick{{Agent: "brainstorm", KickAt: k1}}
+
+	if got := n.fresh(w); len(got) != 1 {
+		t.Fatalf("first fresh = %+v, want the wedged kick", got)
+	}
+	if got := n.fresh(w); len(got) != 0 {
+		t.Fatalf("repeat fresh = %+v, want nothing", got)
+	}
+	if got := n.fresh([]wedgedKick{{Agent: "brainstorm", KickAt: k2}}); len(got) != 1 {
+		t.Fatalf("new kick fresh = %+v, want it reported again", got)
+	}
+}
+
+func TestHubConfigEffectiveUpgradeDrainTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		in   int
+		want time.Duration
+	}{
+		{0, 45 * time.Minute},
+		{600, 10 * time.Minute},
+		{-1, 0},
+	} {
+		if got := (config.HubConfig{UpgradeDrainTimeoutS: tc.in}).EffectiveUpgradeDrainTimeout(); got != tc.want {
+			t.Errorf("EffectiveUpgradeDrainTimeout(%d) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestUpgradeDrain_DeadlineReportedOnlyWhileWaiting(t *testing.T) {
+	start := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	timeout := 45 * time.Minute
+	kicks := []string{"architect"}
+
+	tests := []struct {
+		name   string
+		act    func(d *upgradeDrain)
+		at     time.Time
+		wantOK bool
+	}{
+		{"no drain opened", func(d *upgradeDrain) {}, start, false},
+		{"draining reports the deadline", func(d *upgradeDrain) { d.decide("feedbeef", kicks, timeout, start) }, start.Add(time.Minute), true},
+		{"released drain reports nothing", func(d *upgradeDrain) {
+			d.decide("feedbeef", kicks, timeout, start)
+			d.decide("feedbeef", nil, timeout, start.Add(time.Minute))
+		}, start.Add(2 * time.Minute), false},
+		{"drain the hub stopped re-confirming reports nothing", func(d *upgradeDrain) { d.decide("feedbeef", kicks, timeout, start) }, start.Add(selfUpgradeDrainStaleAfter), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var d upgradeDrain
+			tc.act(&d)
+			deadline, ok := d.Deadline(tc.at)
+			if ok != tc.wantOK {
+				t.Fatalf("Deadline ok = %v, want %v", ok, tc.wantOK)
+			}
+			if ok && !deadline.Equal(start.Add(timeout)) {
+				t.Fatalf("deadline = %v, want %v", deadline, start.Add(timeout))
+			}
+		})
+	}
+}
+
+// TestUpgradeDrain_ReportReflectsDeferralForHub pins the heartbeat view of the
+// drain: nil until a deferral starts, the in-flight kicks and remaining budget
+// while deferring, nil again once the drain releases or goes stale. The hub's
+// orphan sweep relies on this to tell a deliberate hold from a dead attempt.
+func TestUpgradeDrain_ReportReflectsDeferralForHub(t *testing.T) {
+	d := &upgradeDrain{}
+	start := time.Date(2026, 10, 23, 17, 16, 0, 0, time.UTC)
+	timeout := 45 * time.Minute
+
+	if r := d.Report(start); r != nil {
+		t.Fatalf("no drain yet, Report = %+v, want nil", r)
+	}
+
+	// Re-confirmed every heartbeat, as the hub re-delivers the instruction.
+	at := start
+	for i := 0; i <= 5; i++ {
+		at = start.Add(time.Duration(i) * 2 * time.Minute)
+		d.decide("4f8be0b", []string{"brainstorm"}, timeout, at)
+	}
+	r := d.Report(at)
+	if r == nil {
+		t.Fatal("deferring drain must report")
+	}
+	want := &spoke.UpgradeDrainReport{Target: "4f8be0b", InFlight: []string{"brainstorm"}, WaitedS: 600, RemainingS: 2100,
+		Turns: []spoke.UpgradeTurn{{Agent: "brainstorm"}}}
+	if !reflect.DeepEqual(r, want) {
+		t.Fatalf("Report = %+v, want %+v", r, want)
+	}
+
+	if r := d.Report(at.Add(selfUpgradeDrainStaleAfter)); r != nil {
+		t.Fatalf("stale drain must report nil, got %+v", r)
+	}
+
+	d.decide("4f8be0b", nil, timeout, at.Add(time.Minute))
+	if r := d.Report(at.Add(time.Minute)); r != nil {
+		t.Fatalf("released drain must report nil, got %+v", r)
+	}
+}
+
+// #14856: the drain report names how long each held turn has been running,
+// so the hub card can say "reviewer 38m" instead of just "reviewer".
+func TestUpgradeDrain_ReportCarriesTurnElapsed(t *testing.T) {
+	d := &upgradeDrain{}
+	now := time.Date(2026, 10, 26, 17, 10, 0, 0, time.UTC)
+	reviewerKick := now.Add(-38 * time.Minute)
+	scannerKick := now.Add(-12 * time.Minute)
+	statuses := map[string]*crux.Process{
+		"reviewer": {State: crux.StateRunning, LastKick: &reviewerKick},
+		"scanner":  {State: crux.StateRunning, LastKick: &scannerKick},
+		"idle":     {State: crux.StateRunning},
+	}
+	inFlight := []string{"reviewer", "scanner"}
+
+	// Not open yet: kick times are ignored rather than retained.
+	d.setKickTimes(agentKickTimes(statuses, inFlight))
+	if d.kickAt != nil {
+		t.Fatal("kick times must not stick to a closed drain")
+	}
+
+	d.decide("abc1234", inFlight, 45*time.Minute, now)
+	d.setKickTimes(agentKickTimes(statuses, inFlight))
+	r := d.Report(now.Add(time.Minute))
+	if r == nil {
+		t.Fatal("open drain must report")
+	}
+	want := []spoke.UpgradeTurn{{Agent: "reviewer", ElapsedS: 39 * 60}, {Agent: "scanner", ElapsedS: 13 * 60}}
+	if !reflect.DeepEqual(r.Turns, want) {
+		t.Fatalf("Turns = %+v, want %+v", r.Turns, want)
+	}
+	if got := spoke.FormatTurns(r.Turns, 3); got != "2/3 agents in turn: reviewer 39m, scanner 13m" {
+		t.Fatalf("FormatTurns = %q", got)
+	}
+
+	// Release clears the kick times with the rest of the drain inputs.
+	d.decide("abc1234", nil, 45*time.Minute, now.Add(2*time.Minute))
+	if d.kickAt != nil || d.Report(now.Add(2*time.Minute)) != nil {
+		t.Fatal("released drain must drop kick times and report nil")
+	}
+	if agentKickTimes(statuses, nil) != nil {
+		t.Fatal("no names, no map")
+	}
+}

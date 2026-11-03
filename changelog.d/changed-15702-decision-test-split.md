@@ -1,0 +1,1 @@
+- refactor: split `src/pkg/dashboard/api_repo_item_decision_test.go` into 4 files (`api_repo_item_decision_test.go`, `_approve_test.go`, `_close_test.go`, `_merge_test.go`) to cut rebase churn on a merge hotspot; no behaviour change ([#15702](https://github.com/hivecommons/hive/issues/15702)).

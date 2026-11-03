@@ -1,1 +1,0 @@
-- Fixed the collapsed ACMM Eval summary so it reports the hive's current ACMM level instead of the lowest level with gaps.

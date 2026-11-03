@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 )
 
 func withSpekHubUIDMap(t *testing.T, agents map[string]int) {

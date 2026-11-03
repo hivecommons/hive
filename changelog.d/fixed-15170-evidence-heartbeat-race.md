@@ -1,0 +1,1 @@
+- Dashboard evidence heartbeat refreshes now use the evidence root captured when the heartbeat starts, preventing a background data race when the default root changes ([#15169](https://github.com/hivecommons/hive/issues/15169)).

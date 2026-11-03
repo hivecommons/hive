@@ -268,7 +268,9 @@ func TestEnumerateFields_IncludesPopulatedFields(t *testing.T) {
 		Project:   ProjectConfig{Org: "kubestellar", PrimaryRepo: "hive"},
 		GitHub:    GitHubConfig{AppID: 123, AppSlug: "my-app", APIURL: "https://api.github.com"},
 		Hub:       HubConfig{URL: "https://hub.example.com"},
-		Agents:    map[string]AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}},
+		},
 	}
 
 	fields := enumerateFields(cfg)

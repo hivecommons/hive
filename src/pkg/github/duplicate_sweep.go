@@ -8,10 +8,10 @@ import (
 	"sync"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/dupsweep"
 	"github.com/hivecommons/hive/pkg/findingidentity"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // The duplicate sweep is capability (B) of hivecommons/hive#7469: a periodic,
@@ -132,7 +132,8 @@ func (c *Client) SweepDuplicatePRs(ctx context.Context, opts DuplicateSweepOptio
 	var firstErr error
 	var all []dupsweep.PR
 
-	for _, repo := range c.getRepos() {
+	// activeRepos, not getRepos: a paused repo gets no duplicate-fix comment (#6203).
+	for _, repo := range c.activeRepos() {
 		prs, skipped, err := c.fingerprintOpenPRs(ctx, repo, maxPRs)
 		result.Skipped += skipped
 		if err != nil {

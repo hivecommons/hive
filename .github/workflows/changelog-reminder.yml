@@ -48,6 +48,7 @@ jobs:
       github.actor != 'dependabot[bot]' &&
       github.actor != 'copilot-swe-agent[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check whether this PR touches CHANGELOG.md or changelog.d/
         id: check

@@ -1,0 +1,125 @@
+    /* ══ Welcome / Getting Started dialog ══
+       Panel, overlay, and footer buttons come from the Phase-2 modal and
+       button recipes (.config-overlay/.config-modal/.hive-dialog-btn);
+       only the checklist internals are defined here. Tokens only. */
+    .welcome-modal { max-width: 680px; width: 92%; max-height: 86vh; display: flex; flex-direction: column; }
+    .welcome-body { padding: var(--sp-2) var(--sp-8) var(--sp-6); overflow-y: auto; }
+    .welcome-progress { font-size: 0.72em; font-weight: 400; color: var(--muted); margin-left: var(--sp-4); white-space: nowrap; }
+    .welcome-intro { font-size: var(--fs-base); color: var(--text); margin: var(--sp-5) var(--sp-0) var(--sp-6); line-height: 1.55; }
+    .welcome-step { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: var(--sp-4); background: color-mix(in srgb, var(--panel-strong) 40%, transparent); }
+    .welcome-step-header { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; user-select: none; }
+    .welcome-step-title { flex: 1; font-size: var(--fs-base); font-weight: 600; color: var(--text); }
+    .welcome-step.done .welcome-step-title { color: var(--muted); }
+    .welcome-check { width: 20px; height: 20px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 0.8rem; color: var(--bg); background: transparent; transition: background 0.15s, border-color 0.15s; }
+    .welcome-step.done .welcome-check { background: var(--green); border-color: var(--green); }
+    .welcome-check.manual { cursor: pointer; }
+    .welcome-check.manual:hover { border-color: var(--green); }
+    .welcome-step-chevron { color: var(--muted); font-size: 0.7rem; transition: transform 0.15s; }
+    .welcome-step.open .welcome-step-chevron { transform: rotate(90deg); }
+    .welcome-step-body { display: none; padding: 0 12px 12px 42px; font-size: var(--fs-sm); color: var(--muted); line-height: 1.55; }
+    .welcome-step.open .welcome-step-body { display: block; }
+    .welcome-step-body strong { color: var(--text); }
+    .welcome-step-actions { display: flex; gap: var(--sp-4); margin-top: 10px; flex-wrap: wrap; }
+    .welcome-auto-note { display: block; margin-top: var(--sp-4); font-size: var(--fs-xs); color: var(--muted); font-style: italic; }
+    .welcome-more-title { font-size: var(--fs-sm); font-weight: 600; color: var(--muted); margin: 14px 0 6px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .welcome-more-item { font-size: var(--fs-sm); color: var(--muted); padding: 3px 0 3px 8px; line-height: 1.5; }
+    .welcome-more-link { color: var(--blue); cursor: pointer; font-weight: 600; }
+    .welcome-more-link:hover { text-decoration: underline; }
+    /* Marks a "More to explore" entry as an advanced/optional capability, so a
+       new operator does not read it as part of the required setup path. */
+    .welcome-more-tag { display: inline-block; margin-left: var(--sp-3); padding: 1px 6px; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); }
+    .welcome-footer { justify-content: space-between; }
+    @media (max-width: 480px) {
+      .welcome-step-body { padding-left: var(--sp-5); }
+    }
+    /* ── Genie minimize ──
+       On dismiss the panel scales down and flies toward the top-bar Guide button
+       so the user sees where the checklist went (and how to reopen it). The
+       transform target is computed at runtime; only the timing/easing live
+       here as tokens. GENIE_MS below must match --welcome-genie-ms. */
+    :root { --welcome-genie-ms: 400ms; --welcome-genie-ease: cubic-bezier(0.4, 0.0, 1, 1); }
+    .welcome-modal.welcome-genie {
+      transition: transform var(--welcome-genie-ms) var(--welcome-genie-ease),
+                  opacity var(--welcome-genie-ms) var(--welcome-genie-ease);
+      pointer-events: none;
+    }
+    #welcome-overlay.welcome-genie-overlay {
+      transition: background var(--welcome-genie-ms) var(--welcome-genie-ease);
+      background: transparent;
+    }
+    /* One-shot pulse on the Guide button when the panel lands on it. */
+    @keyframes welcome-target-pulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 55%, transparent); }
+      50% { transform: scale(1.18); box-shadow: 0 0 0 6px color-mix(in srgb, var(--blue) 0%, transparent); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+    }
+    #welcome-topbar-btn.welcome-target-pulse { animation: welcome-target-pulse 0.4s ease-out; }
+    @media (prefers-reduced-motion: reduce) {
+      .welcome-check, .welcome-step-chevron { transition: none; }
+      .welcome-modal.welcome-genie, #welcome-overlay.welcome-genie-overlay { transition: none; }
+      #welcome-topbar-btn.welcome-target-pulse { animation: none; }
+    }
+
+    /* ── Getting-Started header banner: a bee buzzes to an SVG skep hive and
+       back. All selectors are .wb-* scoped so nothing leaks into the dialog.
+       Flight bounds are percentage-based so it adapts to the header width. ── */
+    .wb-stage{ position:relative; width:100%; height:64px; margin:2px 0 10px;
+      border-radius:10px; overflow:hidden;
+      background:linear-gradient(180deg, color-mix(in srgb, var(--amber) 6%, transparent), transparent 70%); }
+    .wb-stage::before{ content:""; position:absolute; inset:0; opacity:.06; pointer-events:none;
+      background-image:radial-gradient(circle at 50% 50%, transparent 0, transparent 8px, var(--amber) 8px, var(--amber) 9px, transparent 9px);
+      background-size:30px 26px; }
+    .wb-hive{ position:absolute; right:18px; top:50%;
+      filter:drop-shadow(0 3px 4px rgba(0,0,0,.4)); animation:wb-sway 6s ease-in-out infinite; transform-origin:50% 3px; }
+    .wb-hive .wb-coils rect{ fill:#e0a52a; stroke:#b9791f; stroke-width:1.1; }
+    .wb-hive .wb-coils rect:nth-child(even){ fill:#f0b429; }
+    @keyframes wb-sway{ 0%,100%{ transform:translateY(-50%) rotate(-3deg); } 50%{ transform:translateY(-50%) rotate(3deg); } }
+    /* full-width so translateX(100%) in wb-fly spans the STAGE, not the bee's
+       own box; the bee sits at this element's left edge and is moved across. */
+    .wb-flyer{ position:absolute; top:50%; left:0; width:100%; will-change:transform; animation:wb-fly 20s ease-in-out infinite; }
+    .wb-facing{ display:inline-block; animation:wb-bank 20s ease-in-out infinite; }
+    .wb-bob{ display:inline-block; animation:wb-bob 3.6s ease-in-out infinite; }
+    .wb-bee{ display:inline-block; font-size:26px; line-height:1; filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));
+      animation:wb-flutter .13s ease-in-out infinite alternate; transform-origin:50% 65%; }
+    /* left edge = a little in; right edge = just short of the hive */
+    @keyframes wb-fly{
+      0%,6%    { transform:translateX(14px); }
+      46%,54%  { transform:translateX(calc(100% - 72px)); }
+      94%,100% { transform:translateX(14px); }
+    }
+    @keyframes wb-bob{ 0%,100%{ transform:translateY(-8px); } 50%{ transform:translateY(8px); } }
+    @keyframes wb-flutter{ 0%{ transform:rotate(-5deg) scaleY(1); } 100%{ transform:rotate(5deg) scaleY(.94); } }
+    /* 🐝 faces left by default; one edge-on pivot per end (seam-safe) */
+    @keyframes wb-bank{
+      0%      { transform:scaleX(0); }
+      6%,46%  { transform:scaleX(-1); }
+      50%     { transform:scaleX(0); }
+      54%,94% { transform:scaleX(1); }
+      100%    { transform:scaleX(0); }
+    }
+    .wb-trail{ position:absolute; top:0; left:0; pointer-events:none;
+      animation:wb-bob 3.6s ease-in-out infinite; animation-delay:-0.22s; }
+    .wb-trail i{ position:absolute; top:10px; width:4px; height:2px; border-radius:2px; background:var(--amber);
+      opacity:0; animation:wb-puff 3.6s ease-out infinite; }
+    /* trail sits behind the bee's tail (positive offset = right = rear when unflipped) */
+    .wb-trail i:nth-child(1){ left:32px; animation-delay:0s; }
+    .wb-trail i:nth-child(2){ left:40px; animation-delay:.18s; }
+    .wb-trail i:nth-child(3){ left:48px; animation-delay:.36s; }
+    @keyframes wb-puff{ 0%{ opacity:.4; transform:translateY(0) scale(1);} 100%{ opacity:0; transform:translateY(5px) scale(.4);} }
+    /* Compact ACMM loading overlay: keep the shared bee/hive visuals, but center
+       the rendezvous over the status label instead of using the banner's
+       right-edge hive target. */
+    .acmm-loading-stage .wb-hive{ right:auto; left:calc(50% - 7px); }
+    .acmm-loading-stage .wb-flyer{ animation-name:acmm-wb-fly; }
+    @keyframes acmm-wb-fly{
+      0%,6%    { transform:translateX(calc(50% - 84px)); }
+      46%,54%  { transform:translateX(calc(50% - 35px)); }
+      94%,100% { transform:translateX(calc(50% - 84px)); }
+    }
+    @media (prefers-reduced-motion: reduce){
+      .wb-flyer,.wb-facing,.wb-bob,.wb-bee,.wb-trail,.wb-trail i,.wb-hive{ animation:none !important; }
+      .wb-flyer{ transform:translateX(calc(50% - 30px)); }
+      .acmm-loading-stage .wb-flyer{ transform:translateX(calc(50% - 35px)); }
+      .wb-hive{ transform:translateY(-50%); }
+    }
+

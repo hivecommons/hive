@@ -1,0 +1,1 @@
+- Inference requests inherit a configured gateway default when the agent model is blank; if both are blank, Hive rejects the request locally and shows an actionable model configuration error instead of repeatedly sending an empty model to the provider ([#15032](https://github.com/hivecommons/hive/issues/15032)).

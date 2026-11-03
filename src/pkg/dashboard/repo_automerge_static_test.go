@@ -70,3 +70,28 @@ func TestTrustedAuthorAutoMergeSettingsStaticWiring(t *testing.T) {
 		t.Fatal("trusted-author auto-merge controls must not use native browser dialogs")
 	}
 }
+
+func TestAutoMergeRepoPolicySettingsStaticWiring(t *testing.T) {
+	html, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	s := string(html)
+	for _, want := range []string{
+		"id=\"am-repo-policy\"",
+		"id=\"am-require-current-base\"",
+		"id=\"am-squash-only\"",
+		"id=\"am-human-merge-paths\"",
+		"data-change-action=\"markDirtyAutoMergeRepoPolicy\"",
+		"function markDirtyAutoMergeRepoPolicy()",
+		"markDirty('auto-merge', 'require_current_base'",
+		"markDirty('auto-merge', 'squash_only'",
+		"markDirty('auto-merge', 'human_merge_paths'",
+		// Options come from the server's owner/repo list, not bare project.repos.
+		"am.project_repos",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("static dashboard missing %q", want)
+		}
+	}
+}

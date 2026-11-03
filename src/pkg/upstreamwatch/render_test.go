@@ -47,7 +47,7 @@ func TestRenderIssue(t *testing.T) {
 			item:  pr,
 			j:     Judgement{Class: ClassBugfix, Difficulty: DifficultyEasy, Applicable: true, Present: []string{"api.go"}},
 			label: "upstream/port",
-			title: "upstream: fix(api): handle nil config",
+			title: "[governor] upstream: fix(api): handle nil config",
 			contains: []string{
 				"up/widgets#42 (https://github.com/up/widgets/pull/42)",
 				"**Class:** bugfix",
@@ -58,24 +58,25 @@ func TestRenderIssue(t *testing.T) {
 				"<!-- upstream-ref: up/widgets#42 -->",
 			},
 			absent: []string{"gone.go"},
-			labels: []string{"upstream/port"},
+			labels: []string{"upstream/port", "origin/governor"},
 		},
 		{
 			name:     "release",
 			item:     Item{Kind: KindRelease, Ref: RefRelease("v2.0.0"), Title: "v2.0.0", HTMLURL: "https://github.com/up/widgets/releases/tag/v2.0.0"},
 			j:        Judgement{Class: ClassChore, Difficulty: DifficultyModerate, Applicable: true},
 			label:    "custom",
-			title:    "upstream: v2.0.0",
+			title:    "[governor] upstream: v2.0.0",
 			contains: []string{"upstream release", "**Port difficulty:** moderate\n", "<!-- upstream-ref: up/widgets@v2.0.0 -->"},
 			absent:   []string{"### Affected files", "### Summary"},
-			labels:   []string{"custom"},
+			labels:   []string{"custom", "origin/governor"},
 		},
 		{
 			name:     "empty title falls back to ref and long file lists are bounded",
 			item:     Item{Kind: KindPR, Ref: RefPR(7), Files: many},
 			j:        Judgement{Class: ClassChore, Difficulty: DifficultyHard, Applicable: true, Present: many},
-			title:    "upstream: upstream#7",
+			title:    "[governor] upstream: upstream#7",
 			contains: []string{"- ... and 5 more"},
+			labels:   []string{"origin/governor"},
 		},
 	}
 	for _, tc := range tests {
@@ -107,8 +108,9 @@ func TestRenderIssue_TruncatesSummary(t *testing.T) {
 	if !strings.Contains(got.Body, "_(truncated)_") || strings.Contains(got.Body, strings.Repeat("a", maxSummaryRunes+1)) {
 		t.Fatal("summary was not truncated")
 	}
-	if got.Labels != nil {
-		t.Fatalf("Labels = %v, want none for an empty label", got.Labels)
+	// An empty operator label leaves only the provenance label.
+	if strings.Join(got.Labels, ",") != "origin/governor" {
+		t.Fatalf("Labels = %v, want only origin/governor for an empty label", got.Labels)
 	}
 }
 
@@ -173,7 +175,7 @@ func TestGitHubFiler_File(t *testing.T) {
 	if err != nil || n != 77 {
 		t.Fatalf("File = %d, %v", n, err)
 	}
-	if !strings.Contains(body, `"labels":["upstream/port"]`) || !strings.Contains(body, `"title":"upstream: x"`) {
+	if !strings.Contains(body, `"labels":["upstream/port"]`) || !strings.Contains(body, `"title":"[governor] upstream: x"`) {
 		t.Fatalf("request body = %s", body)
 	}
 

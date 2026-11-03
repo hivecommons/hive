@@ -51,6 +51,16 @@ func (t *retryTracker) allows(path string, now time.Time) bool {
 	return !now.Before(st.nextTry)
 }
 
+// failures returns how many failed attempts are recorded for path.
+func (t *retryTracker) failures(path string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if st := t.m[path]; st != nil {
+		return st.attempts
+	}
+	return 0
+}
+
 // noteFailure records a failed attempt, schedules the next eligible try with
 // exponential backoff, and returns true when the request has exceeded the
 // give-up horizon and should be quarantined.

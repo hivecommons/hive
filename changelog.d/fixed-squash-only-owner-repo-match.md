@@ -1,0 +1,1 @@
+- `auto_merge.squash_only` and per-repo `governor.labels.stage.dco.required` overrides keyed `owner/repo` now apply in a single-org hive: the stage pass matched them on the bare display name, so a squash-only repo could be labelled `merge-method/merge` and loop on GitHub's method-not-allowed refusal.

@@ -6,7 +6,10 @@ namespace: hive
 resources:
   - namespace.yaml
   - configmap.yaml
-  - secret.yaml
+  # secret.yaml is NOT a resource: it is a commented template for the
+  # operator-created `hive-secrets` Secret. If `apply -k` owned it, every
+  # re-apply would wipe the operator's keys (#11776). The Deployment marks
+  # every hive-secrets reference optional, so the pod starts without it.
   - pvc.yaml
   - dashboard-route-rbac.yaml
   - sandbox-job-rbac.yaml

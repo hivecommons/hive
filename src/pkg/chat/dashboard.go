@@ -162,6 +162,10 @@ func (s *Service) cmdAgentAction(ctx context.Context, action, args string) (stri
 		prompt = parts[1]
 	}
 
+	if agentName == "" {
+		return s.agentActionUsage(action), nil
+	}
+
 	agentName = resolveAlias(agentName)
 
 	if !s.isValidAgent(agentName) {
@@ -179,6 +183,27 @@ func (s *Service) cmdAgentAction(ctx context.Context, action, args string) (stri
 	return "❌ Unknown action", nil
 }
 
+func (s *Service) agentActionUsage(action string) string {
+	var usage string
+	switch action {
+	case "kick":
+		usage = "❌ Usage: `!kick <agent> [prompt]`"
+	case "pause":
+		usage = "❌ Usage: `!pause <agent>`"
+	case "resume":
+		usage = "❌ Usage: `!resume <agent>`"
+	default:
+		return "❌ Unknown action"
+	}
+	s.mu.RLock()
+	agents := s.agentNames
+	s.mu.RUnlock()
+	if len(agents) > 0 {
+		usage += fmt.Sprintf(" — agents: %s", strings.Join(agents, ", "))
+	}
+	return usage
+}
+
 func (s *Service) dashboardKick(ctx context.Context, agent, prompt string) (string, error) {
 	if err := requireCommandOwner(ctx); err != nil {
 		return err.Error(), nil
@@ -191,9 +216,15 @@ func (s *Service) dashboardKick(ctx context.Context, agent, prompt string) (stri
 			return fmt.Sprintf("❌ Failed to marshal kick payload: %s", err), nil
 		}
 	}
-	err := s.dashboardPost(ctx, fmt.Sprintf("/api/kick/%s", agent), body)
+	resp, err := s.dashboardPostBody(ctx, fmt.Sprintf("/api/kick/%s", agent), body)
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to kick %s: %s", agent, err), nil
+	}
+	var result struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(resp, &result) == nil && result.Status == "deferred" {
+		return fmt.Sprintf("⏳ Kick for %s queued until the first governor scan", agent), nil
 	}
 	if prompt != "" {
 		return fmt.Sprintf("✅ Sent to %s: \"%s\"", agent, prompt), nil
@@ -265,31 +296,37 @@ func (s *Service) dashboardGet(ctx context.Context, path string) ([]byte, error)
 }
 
 func (s *Service) dashboardPost(ctx context.Context, path string, body []byte) error {
+	_, err := s.dashboardPostBody(ctx, path, body)
+	return err
+}
+
+func (s *Service) dashboardPostBody(ctx context.Context, path string, body []byte) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.dashboardURL+path, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	s.authorizeDashboardRequest(ctx, req)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyReadBytes))
 		if summary := summarizeErrorBody(respBody); summary != "" {
-			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, summary)
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, summary)
 		}
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return nil
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyReadBytes))
+	return data, nil
 }
 
 const (

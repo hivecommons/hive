@@ -67,6 +67,11 @@ type Config struct {
 	AnalysisModel       string
 	AnalysisEndpoint    string
 	AnalysisAPIKey      string
+	// LessonConfidenceStep and LessonConfidenceCap tune how far a recorded
+	// repeat raises a retro lesson's stored confidence; zero uses the
+	// knowledge package defaults.
+	LessonConfidenceStep float64
+	LessonConfidenceCap  float64
 }
 
 type Thresholds struct {
@@ -137,6 +142,8 @@ type Lane struct {
 	lastRun       time.Time
 	recentWindow  time.Duration
 	autonomy      *AutonomyPolicyEngine
+	lessonStep    float64
+	lessonCap     float64
 }
 
 func NewLane(stores map[string]*beads.Store, advisoryStore *beads.Store, tl *timeline.Store, attempts AttemptReader, cfg Config, logger *slog.Logger) *Lane {
@@ -161,6 +168,8 @@ func NewLane(stores map[string]*beads.Store, advisoryStore *beads.Store, tl *tim
 		interval:      time.Duration(intervalS) * time.Second,
 		thresholds:    thresholdsFromConfig(cfg),
 		recentWindow:  time.Duration(cfg.RecentClosedWindowS) * time.Second,
+		lessonStep:    cfg.LessonConfidenceStep,
+		lessonCap:     cfg.LessonConfidenceCap,
 	}
 }
 
@@ -277,10 +286,12 @@ func (l *Lane) ingestLesson(ctx context.Context, r RetroRecord, analysis *Analys
 		return
 	}
 	slug, created, err := l.knowledge.IngestRetroLesson(ctx, knowledge.RetroLesson{
-		Lesson:     analysis.GeneralizableLesson,
-		SourceBead: r.BeadID,
-		SourcePR:   r.PRRef,
-		SourceDate: r.ClosedAt,
+		Lesson:         analysis.GeneralizableLesson,
+		SourceBead:     r.BeadID,
+		SourcePR:       r.PRRef,
+		SourceDate:     r.ClosedAt,
+		ConfidenceStep: l.lessonStep,
+		ConfidenceCap:  l.lessonCap,
 	})
 	if err != nil {
 		l.logger.Warn("retro: lesson ingestion skipped", "source_bead", r.BeadID, "error", err)

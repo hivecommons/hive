@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1280" viewBox="0 0 880 640" role="img" aria-label="How Hive works, from scan to credit." font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+<title>How Hive works, from scan to credit.</title>
+<rect x="0.5" y="0.5" width="879" height="639" rx="20" fill="#0f0d0a" stroke="#28231c"/>
+<text x="48" y="60" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">HOW IT WORKS · EVERY TASK</text>
+<text x="48" y="108" fill="#fffaf0" font-size="28" font-weight="700">A coding agent does the work. A review agent</text>
+<text x="48" y="146" fill="#fffaf0" font-size="28" font-weight="700">and your CI gate the merge.</text>
+<text x="48" y="222" fill="#f0b429" font-size="22" font-weight="700">01</text>
+<text x="104" y="222" fill="#fffaf0" font-size="16" font-weight="700">Scan</text>
+<text x="208" y="222" fill="#d9d1c4" font-size="16">Reads open issues, pull requests, failing</text>
+<text x="208" y="246" fill="#d9d1c4" font-size="16">checks.</text>
+<text x="832" y="222" fill="#8a8174" font-size="13" text-anchor="end">like a webhook trigger</text>
+<line x1="48" y1="280" x2="832" y2="280" stroke="#211c16"/>
+<text x="48" y="310" fill="#f0b429" font-size="22" font-weight="700">02</text>
+<text x="104" y="310" fill="#fffaf0" font-size="16" font-weight="700">Claim</text>
+<text x="208" y="310" fill="#d9d1c4" font-size="16">One agent takes one task.</text>
+<text x="832" y="310" fill="#8a8174" font-size="13" text-anchor="end">one job per task</text>
+<line x1="48" y1="344" x2="832" y2="344" stroke="#211c16"/>
+<text x="48" y="374" fill="#f0b429" font-size="22" font-weight="700">03</text>
+<text x="104" y="374" fill="#fffaf0" font-size="16" font-weight="700">Work</text>
+<text x="208" y="374" fill="#d9d1c4" font-size="16">A short-lived agent does it, then stops.</text>
+<text x="832" y="374" fill="#8a8174" font-size="13" text-anchor="end">ephemeral runner</text>
+<line x1="48" y1="408" x2="832" y2="408" stroke="#211c16"/>
+<text x="48" y="438" fill="#f0b429" font-size="22" font-weight="700">04</text>
+<text x="104" y="438" fill="#fffaf0" font-size="16" font-weight="700">Verify</text>
+<text x="208" y="438" fill="#d9d1c4" font-size="16">AI review plus your CI must pass.</text>
+<text x="832" y="438" fill="#8a8174" font-size="13" text-anchor="end">both are required checks</text>
+<line x1="48" y1="472" x2="832" y2="472" stroke="#211c16"/>
+<text x="48" y="502" fill="#f0b429" font-size="22" font-weight="700">05</text>
+<text x="104" y="502" fill="#fffaf0" font-size="16" font-weight="700">Merge</text>
+<text x="208" y="502" fill="#d9d1c4" font-size="16">Held for a human, or merged on green.</text>
+<text x="832" y="502" fill="#8a8174" font-size="13" text-anchor="end">PRs only, then on green</text>
+<line x1="48" y1="536" x2="832" y2="536" stroke="#211c16"/>
+<text x="48" y="566" fill="#f0b429" font-size="22" font-weight="700">06</text>
+<text x="104" y="566" fill="#fffaf0" font-size="16" font-weight="700">Credit</text>
+<text x="208" y="566" fill="#d9d1c4" font-size="16">The issue opener is named on the merge.</text>
+<text x="832" y="566" fill="#8a8174" font-size="13" text-anchor="end">co-author trailer</text>
+</svg>

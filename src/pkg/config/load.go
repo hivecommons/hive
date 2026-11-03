@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"github.com/hivecommons/hive/pkg/skillreg"
+	"github.com/hivecommons/hive/crux/skillreg"
 
 	"bufio"
 	"context"
@@ -104,6 +104,11 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 			cfg.ApplyAgentDefaults(name)
 		}
 	}
+
+	// A rejected overlay above "fell back to base config" — which is no help
+	// when the base entry carries the same stale launch_cmd. Drop it here
+	// rather than let validation exit the process.
+	cfg.DegradeContradictingLaunchCmds()
 
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return nil, fmt.Errorf("applying agent spec repo scopes: %w", err)
@@ -417,6 +422,12 @@ func (c *Config) applyBootstrapEnv() {
 		if v := os.Getenv("HIVE_AUTHORIZED_USERS"); v != "" {
 			c.Dashboard.AuthorizedUsers = parseAuthorizedUsers(v)
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv(DiscordRFCChannelIDEnvVar)); v != "" {
+		if c.Notifications.Discord == nil {
+			c.Notifications.Discord = &DiscordConfig{}
+		}
+		c.Notifications.Discord.RFCChannelID = v
 	}
 	if v := os.Getenv("HIVE_SELF_AUTHORIZATION_HOLD"); strings.TrimSpace(v) != "" {
 		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {

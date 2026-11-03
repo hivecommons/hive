@@ -15,7 +15,7 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// pkg/review for the perspective-set config API that lets the hive
 	// choose its review perspectives (hivecommons/hive#7717), plus
 	// pkg/ioscan for the design-gate plan handlers (RFC #7993), plus
-	// pkg/standby for the S4 qualified-standby tile count, plus pkg/taskmcp for
+	// pkg/standby for the S4 qualified-standby tile count, plus crux/taskmcp for
 	// the contributor task-scoped MCP adapter, plus pkg/mention for the shared
 	// GitHub Actions OIDC dispatch guard/dedupe path (hivecommons/hive#8221), plus
 	// pkg/celtrigger for run-stage handoff events (hivecommons/hive#8298), plus
@@ -29,8 +29,42 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// plus pkg/upstreamwatch for the divergence view and /api/upstream-watch route
 	// (hivecommons/hive#10361), plus pkg/mergelane for the serialized lane state view
 	// (hivecommons/hive#10892), plus pkg/releasenotes for the release-notes endpoint,
-	// plus pkg/compliance for the control registry and /api/compliance routes.
-	const maxDashboardInternalImports = 53
+	// plus pkg/compliance for the control registry and /api/compliance routes,
+	// plus pkg/escalation for the read-only escalation ledger the your-turn
+	// ownership rules consult (hivecommons/hive#11565), plus crux/logread for
+	// the /api/logs read path that shares the admin MCP log-read engine
+	// (hivecommons/hive#11942), plus pkg/evidence for the schema-v1 bundle types
+	// behind the read-only GET /api/evidence/summary aggregate
+	// (hivecommons/hive#12063), plus pkg/hivestate for the state-snapshot time
+	// series behind the nous self-report and fleet report (hivecommons/hive#12339),
+	// plus pkg/fixqueue for the per-contributor red-PR fix budget the contribute
+	// hub schedules stage-072 fix-pr interrupts through (hivecommons/hive#12436),
+	// plus pkg/stagelabels so the Operations fleet payload can derive
+	// new-vs-rework from the persisted stage-label store (hivecommons/hive#12502),
+	// plus pkg/nous for the per-campaign experiment store that scopes the
+	// Experiment Lab baseline to the active research question (hivecommons/hive#12501),
+	// plus pkg/stageengine so the contribute hub submits stage facts to the
+	// central engine instead of writing stage/* labels directly (ADR-0025,
+	// hivecommons/hive#13009), plus pkg/decisionpolicy so the contribute hub
+	// shares the one needs-decision classifier with the issue watcher when a
+	// contributor parks on the target repo's own confirmation gate
+	// (hivecommons/hive#13059), plus pkg/feedbackbundle, the single
+	// implementation of diagnostic-bundle storage and prefilled-issue URL
+	// building shared by the spoke and the hub so dashboard login can stay
+	// scope-free (hivecommons/hive#1927), plus pkg/forgestate so the GitHub
+	// webhook handler can stamp the receipt time and record the
+	// webhook.event_to_patch_ms latency sample once the cache patch lands
+	// (hivecommons/hive#13380) and so the Overview totals and the
+	// merged/closed cost counters read the ForgeState cache instead of
+	// issuing /search/issues on every cycle (hivecommons/hive#13376), plus
+	// pkg/agentaudit so the contribute hub writes the relay_* lifecycle rows
+	// into the one /data/audit.jsonl stream instead of a second audit store
+	// (hivecommons/hive#13453), plus pkg/crux, the exported agent-runtime
+	// surface the dashboard holds instead of *agent.Manager; pkg/agent stays
+	// for the audit, trailer, provider-status and agent-mode helpers the
+	// Runtime does not cover, and leaves when those move behind the boundary
+	// (hivecommons/hive#13536).
+	const maxDashboardInternalImports = 66
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

@@ -77,8 +77,10 @@ func configExportFixture(t *testing.T) (*Server, string) {
 		},
 		GitHub: config.GitHubConfig{Token: "ghp_seededsecret"},
 		OTel:   config.OTelConfig{Headers: map[string]string{"authorization": "Bearer collector-secret"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet"},
+			},
 		},
 		Data: config.DataConfig{AgentsDir: agentsDir},
 	}

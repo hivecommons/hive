@@ -49,10 +49,12 @@ func TestAgentMayWrite_ListedLaneIsNarrowed(t *testing.T) {
 // carries its base agent's allowlist, and one of its own wins.
 func TestAgentMayWrite_ReplicaUsesBaseAllowlist(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
-			"scanner-3": {ReplicaOf: "scanner"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+				"scanner-3": {ReplicaOf: "scanner"},
+			},
 		},
 		WriteSurface: WriteSurfaceConfig{Allowlist: map[string][]string{
 			"scanner":   {"comment"},
@@ -103,10 +105,12 @@ func TestWriteSurfaceEnforced_DefaultOff(t *testing.T) {
 
 func TestWriteSurfaceEnforced_ListedLanesOnly(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
-			"reviewer":  {},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+				"reviewer":  {},
+			},
 		},
 		WriteSurface: WriteSurfaceConfig{Enforce: []string{" Scanner "}},
 	}
@@ -156,10 +160,12 @@ func TestWriteSurfaceNeutralizesMentions_DefaultOff(t *testing.T) {
 
 func TestWriteSurfaceNeutralizesMentions_ListedLanesOnly(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
-			"reviewer":  {},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+				"reviewer":  {},
+			},
 		},
 		WriteSurface: WriteSurfaceConfig{NeutralizeMentions: []string{" Scanner "}},
 	}

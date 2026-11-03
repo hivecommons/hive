@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -67,8 +68,10 @@ func (s *Server) handleGovernorQuestionAutocloseSet(w http.ResponseWriter, r *ht
 		return
 	}
 	var body struct {
-		Enabled *bool `json:"enabled"`
-		Hours   *int  `json:"hours"`
+		Enabled    *bool    `json:"enabled"`
+		Hours      *int     `json:"hours"`
+		Labels     []string `json:"labels"`
+		HumanLabel *string  `json:"human_label"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -89,6 +92,12 @@ func (s *Server) handleGovernorQuestionAutocloseSet(w http.ResponseWriter, r *ht
 	if body.Hours != nil {
 		cfg.Governor.QuestionAutoclose.Hours = *body.Hours
 	}
+	if body.Labels != nil {
+		cfg.Governor.QuestionAutoclose.Labels = trimNonEmpty(body.Labels)
+	}
+	if body.HumanLabel != nil {
+		cfg.Governor.QuestionAutoclose.HumanLabel = strings.TrimSpace(*body.HumanLabel)
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after question-autoclose update", "error", err)
@@ -105,8 +114,10 @@ func (s *Server) handleGovernorQuestionAutocloseSet(w http.ResponseWriter, r *ht
 func questionAutocloseSectionResponse(cfg *config.Config) map[string]interface{} {
 	qc := cfg.Governor.QuestionAutoclose
 	return map[string]interface{}{
-		"enabled": qc.IsEnabled(),
-		"hours":   int(qc.EffectiveWindow().Hours()),
+		"enabled":     qc.IsEnabled(),
+		"hours":       int(qc.EffectiveWindow().Hours()),
+		"labels":      qc.EffectiveLabels(),
+		"human_label": qc.EffectiveHumanLabel(),
 	}
 }
 

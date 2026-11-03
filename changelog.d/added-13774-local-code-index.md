@@ -1,0 +1,1 @@
+- Add a reusable offline index for tracked code identifiers, config keys, flags and documentation across registered checkouts, with bounded input, deterministic results and per-repository coverage errors; prior-art gate and issue-filing integration remain follow-up work after #13773 lands.

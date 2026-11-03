@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
@@ -21,6 +23,12 @@ func (b *boot) installReviewEvents() {
 	}
 	if b.reviewWake == nil {
 		b.reviewWake = make(chan struct{}, 1)
+	}
+	if b.verdictWaker == nil {
+		b.verdictWaker = newWebhookWaker(
+			func() time.Duration { return 0 },
+			func() time.Duration { return b.cfg.WebhookWakeMinGap() },
+		)
 	}
 	activeReviewEvents.Store(b.reviewEvents)
 }
@@ -46,6 +54,29 @@ func (b *boot) wakeForReviewEvents(batch []eventdispatch.Entry) {
 	case b.reviewWake <- struct{}{}:
 	default:
 	}
+}
+
+// wakeForReviewVerdict is the github.ReviewVerdictHook: the relay recorded a
+// verdict bound to a review dispatch, so the head that wrote it is free and
+// the PR may be ready for its next head or its decision kick. Without this
+// the next kick waited for an unrelated webhook or the eval cadence
+// (hivecommons/hive#14705). The first verdict wakes the loop at once; later
+// ones inside governor.webhook_wake_min_gap_s fold into one wake at the end
+// of the gap, so a burst of verdicts costs one cycle.
+func (b *boot) wakeForReviewVerdict(repo string, number int) {
+	if b == nil || b.verdictWaker == nil {
+		return
+	}
+	b.verdictWaker.Request(fmt.Sprintf("%s#%d", repo, number))
+}
+
+// verdictWakeChan is the loop's receive side; nil when the waker is not
+// installed so the select case never fires.
+func (b *boot) verdictWakeChan() <-chan webhookWakeBatch {
+	if b.verdictWaker == nil {
+		return nil
+	}
+	return b.verdictWaker.out
 }
 
 // prioritizeEventPRs moves PRs whose current head a review webhook fired for

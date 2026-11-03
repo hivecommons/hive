@@ -4,12 +4,28 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// Labels the hub sets on GitHub issues.
+// Stage labels are rendered from the shared vocabulary.
+var (
+	// LabelClaimed marks an issue with a live claim. Since hivecommons/hive#12436
+	// it is the `stage/020-claimed` stage label (pkg/stagelabels owns the
+	// family). The bare `claimed` label it replaced is LegacyLabelClaimed
+	// and is only ever removed now.
+	LabelClaimed = stagelabels.Claimed.Label()
+	// LabelPRInProgress is the `stage/030-pr-in-progress` stage label: an
+	// agent kick / contributor session is actively working the issue and no
+	// PR exists yet. It replaced `hive/in-progress`.
+	LabelPRInProgress = stagelabels.PRInProgress.Label()
+)
+
 const (
-	// LabelClaimed marks an issue with a live claim.
-	LabelClaimed = "claimed"
+	// LegacyLabelClaimed and LegacyLabelInProgress are the retired labels the
+	// stage family superseded; readers must not treat them as signals.
+	LegacyLabelClaimed    = stagelabels.LegacyClaimed
+	LegacyLabelInProgress = stagelabels.LegacyInProgress
 	// LabelPreemptedPrefix plus the displaced holder's login marks a takeover
 	// so pollers that only read labels notice they were preempted.
 	LabelPreemptedPrefix = "preempted:"
@@ -32,17 +48,8 @@ func PreemptedLabel(holder string) string { return LabelPreemptedPrefix + holder
 // the human-readable line states the time-to-live instead of an end time.
 func ClaimComment(c Claim) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s", markerClaim, c.Holder, c.Kind)
-	if c.HolderID != "" && c.HolderID != c.Holder {
-		fmt.Fprintf(&b, " id=%s", c.HolderID)
-	}
-	if c.Session != "" {
-		fmt.Fprintf(&b, " session=%s", c.Session)
-	}
-	if c.Hive != "" {
-		fmt.Fprintf(&b, " hive=%s", c.Hive)
-	}
-	fmt.Fprintf(&b, " until=%s -->\n", c.ExpiresAt.UTC().Format(time.RFC3339))
+	b.WriteString(ClaimMarker(c))
+	b.WriteString("\n")
 	// The visible text never prints a clock time: the comment is posted once,
 	// while renewals only move the ledger's expiry (#10926), so a fixed time
 	// would go stale and read as a lapsed claim.
@@ -53,6 +60,35 @@ func ClaimComment(c Claim) string {
 		b.WriteString(" The claim renews while the work continues and lapses after a period without activity.")
 	}
 	b.WriteString(" Reply `/unclaim` to release, or `/claim` to take it over if you outrank the holder.")
+	return b.String()
+}
+
+// ClaimMarker renders the machine-readable claim marker alone. at= is the
+// instant the claim was asserted (omitted when unknown) so a reader can tell
+// when work started, not only when the hold lapses; pkg/issueclaim parses
+// both keys.
+func ClaimMarker(c Claim) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s", markerClaim, c.Holder, c.Kind)
+	if c.HolderID != "" && c.HolderID != c.Holder {
+		fmt.Fprintf(&b, " id=%s", c.HolderID)
+	}
+	if c.Session != "" {
+		fmt.Fprintf(&b, " session=%s", c.Session)
+	}
+	if c.Hive != "" {
+		fmt.Fprintf(&b, " hive=%s", c.Hive)
+	}
+	if c.Kind == KindContributor {
+		fmt.Fprintf(&b, " tier=%s verified=%t", markerTier(c.Tier), c.Verified)
+	}
+	if c.PRStarted {
+		b.WriteString(" pr_started=true")
+	}
+	if !c.ClaimedAt.IsZero() {
+		fmt.Fprintf(&b, " at=%s", c.ClaimedAt.UTC().Format(time.RFC3339))
+	}
+	fmt.Fprintf(&b, " until=%s -->", c.ExpiresAt.UTC().Format(time.RFC3339))
 	return b.String()
 }
 
@@ -72,10 +108,16 @@ func TakeoverComment(now, previous Claim) string {
 	return b.String()
 }
 
-// ReleaseComment renders the comment posted when a claim is released.
+// ReleaseComment renders the comment posted when a claim is released. The
+// marker's at= lets a reader (issueclaim.Latest) order the release against
+// the 🔒 marker it ends; the claim comment itself is never edited.
 func ReleaseComment(c Claim, reason string) string {
+	return releaseCommentAt(c, reason, time.Now())
+}
+
+func releaseCommentAt(c Claim, reason string, at time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s reason=%s -->\n", markerRelease, c.Holder, c.Kind, sanitizeReason(reason))
+	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s reason=%s at=%s -->\n", markerRelease, c.Holder, c.Kind, sanitizeReason(reason), at.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "🔓 Claim by %s released (%s).", mention(c), reason)
 	return b.String()
 }
@@ -128,6 +170,25 @@ func hiveSuffix(c Claim) string {
 	}
 	return " on hive " + c.Hive
 }
+
+// markerTier renders a contributor tier as a single marker token. Anything
+// empty or not a plain lowercase word becomes the lowest tier so a malformed
+// value can never read as an elevated one.
+func markerTier(tier string) string {
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	if tier == "" {
+		return contributorTierDefault
+	}
+	for _, r := range tier {
+		if (r < 'a' || r > 'z') && r != '-' && r != '_' {
+			return contributorTierDefault
+		}
+	}
+	return tier
+}
+
+// contributorTierDefault mirrors issueclaim.ContributorTierDefault.
+const contributorTierDefault = "newcomer"
 
 func sanitizeReason(r string) string {
 	r = strings.ReplaceAll(strings.TrimSpace(r), "-->", "")

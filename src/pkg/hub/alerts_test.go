@@ -221,14 +221,138 @@ func TestEvaluateAlerts_CrashLoopIgnoresUnparseableStart(t *testing.T) {
 	}
 }
 
+// evalStart runs one evaluation pass for h1 reporting the given StartedAt.
+func evalStart(state *alertState, startedAt, now time.Time) AlertSummary {
+	h := baseHive("h1")
+	h.StartedAt = rfc3339(startedAt)
+	return evaluateAlerts(state, []alertHive{h}, nil, now)
+}
+
+// TestEvaluateAlerts_CrashLoopIgnoresUpgradeRollouts pins #11824: two
+// hub-triggered upgrade waves, each rolling the pod twice (versioned tag, then
+// the mutable tag), produce four new StartedAt values in the window. They are
+// rollouts, not crashes, and must not raise a Critical crash-loop alert — while
+// the same starts with no upgrade on record still do.
+func TestEvaluateAlerts_CrashLoopIgnoresUpgradeRollouts(t *testing.T) {
+	tests := []struct {
+		name string
+		// mode is how the upgrade reaches the alert state: "none" (no
+		// upgrade on record), "noted" (beginUpgrade's noteUpgrade) or
+		// "snapshot" (an evaluation saw the hive Upgrading before it rolled).
+		mode string
+		want bool
+	}{
+		{name: "unattributed starts still alert", mode: "none", want: true},
+		{name: "hub-triggered rollouts do not alert", mode: "noted", want: false},
+		{name: "rollouts seen as Upgrading in a snapshot do not alert", mode: "snapshot", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			state := newAlertState()
+			prevStart := fixedNow.Add(-48 * time.Hour)
+			evalStart(state, prevStart, fixedNow.Add(-60*time.Minute))
+
+			var got AlertSummary
+			for _, wave := range []time.Time{fixedNow.Add(-40 * time.Minute), fixedNow.Add(-5 * time.Minute)} {
+				switch tc.mode {
+				case "noted":
+					state.noteUpgrade("h1", wave)
+				case "snapshot":
+					h := baseHive("h1")
+					h.StartedAt = rfc3339(prevStart)
+					h.Upgrading = true
+					h.UpgradeStartedAt = wave
+					evaluateAlerts(state, []alertHive{h}, nil, wave)
+				}
+				evalStart(state, wave.Add(30*time.Second), wave.Add(time.Minute))
+				prevStart = wave.Add(55 * time.Second)
+				now := wave.Add(2 * time.Minute)
+				if now.After(fixedNow) {
+					now = fixedNow
+				}
+				got = evalStart(state, prevStart, now)
+			}
+			if hasAlert(got.Alerts, "h1", AlertTypeCrashLoop) != tc.want {
+				t.Fatalf("crash-loop alert = %v, want %v (alerts: %+v)",
+					!tc.want, tc.want, got.Alerts)
+			}
+		})
+	}
+}
+
+// TestEvaluateAlerts_CrashLoopAfterUpgradeStillAlerts pins that an upgrade
+// earlier in the window only excuses ITS rollout start: a pod that then keeps
+// crashing well after the grace period is still a Critical crash loop.
+func TestEvaluateAlerts_CrashLoopAfterUpgradeStillAlerts(t *testing.T) {
+	state := newAlertState()
+	evalStart(state, fixedNow.Add(-48*time.Hour), fixedNow.Add(-60*time.Minute))
+
+	upgrade := fixedNow.Add(-50 * time.Minute)
+	state.noteUpgrade("h1", upgrade)
+	evalStart(state, upgrade.Add(30*time.Second), upgrade.Add(time.Minute))
+
+	crashes := []time.Time{
+		fixedNow.Add(-25 * time.Minute),
+		fixedNow.Add(-12 * time.Minute),
+		fixedNow.Add(-2 * time.Minute),
+	}
+	var got AlertSummary
+	for i, st := range crashes {
+		now := st.Add(time.Minute)
+		if i == len(crashes)-1 {
+			now = fixedNow
+		}
+		got = evalStart(state, st, now)
+	}
+	if !hasAlert(got.Alerts, "h1", AlertTypeCrashLoop) {
+		t.Fatalf("crashes after an earlier upgrade must still alert (alerts: %+v)", got.Alerts)
+	}
+}
+
+// TestBeginUpgradeExcusesRolloutStarts drives the real arm path: beginUpgrade
+// must record the rollout so the new pod's start is not counted as a crash
+// even after the latch has cleared (the usual state by the first new beat).
+func TestBeginUpgradeExcusesRolloutStarts(t *testing.T) {
+	s := newBeginUpgradeServer(RegistryEntry{ID: "h1"})
+	s.alerts = newAlertState()
+	s.mu.Lock()
+	s.beginUpgrade(0, "target-a")
+	s.mu.Unlock()
+	u := s.registry.Hives[0].UpgradeStartedAt
+
+	evalStart(s.alerts, u.Add(-48*time.Hour), u.Add(-time.Minute))
+	evalStart(s.alerts, u.Add(20*time.Second), u.Add(time.Minute))
+	evalStart(s.alerts, u.Add(50*time.Second), u.Add(2*time.Minute))
+	got := evalStart(s.alerts, u.Add(80*time.Second), u.Add(3*time.Minute))
+	if hasAlert(got.Alerts, "h1", AlertTypeCrashLoop) {
+		t.Fatalf("rollout starts after beginUpgrade must not alert (alerts: %+v)", got.Alerts)
+	}
+}
+
 func TestEvaluateAlerts_StuckUpgradeRule(t *testing.T) {
 	tests := []struct {
 		name       string
 		upgrading  bool
 		startedAgo time.Duration
 		zeroStart  bool
+		drainLeft  time.Duration // >0: spoke reported a drain deadline this far ahead
+		drainPast  bool          // spoke reported a drain deadline already elapsed
 		want       bool
 	}{
+		{
+			name:       "draining past the timeout with a live deadline does not alert",
+			upgrading:  true,
+			startedAgo: staleUpgradeTimeout + 17*time.Minute,
+			drainLeft:  10 * time.Minute,
+			want:       false,
+		},
+		{
+			name:       "drain deadline elapsed and still upgrading alerts",
+			upgrading:  true,
+			startedAgo: staleUpgradeTimeout + 17*time.Minute,
+			drainPast:  true,
+			want:       true,
+		},
 		{
 			name:      "not upgrading does not alert",
 			upgrading: false,
@@ -268,6 +392,12 @@ func TestEvaluateAlerts_StuckUpgradeRule(t *testing.T) {
 			h.Upgrading = tc.upgrading
 			if !tc.zeroStart {
 				h.UpgradeStartedAt = fixedNow.Add(-tc.startedAgo)
+			}
+			if tc.drainLeft > 0 {
+				h.UpgradeDrainUntil = fixedNow.Add(tc.drainLeft)
+			}
+			if tc.drainPast {
+				h.UpgradeDrainUntil = fixedNow.Add(-time.Minute)
 			}
 			got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
 			if hasAlert(got.Alerts, "h1", AlertTypeStuckUpgrade) != tc.want {
@@ -1248,7 +1378,7 @@ func TestHandleAlertAck(t *testing.T) {
 	// Establish a live condition to acknowledge.
 	e := MyHiveEntry{ProvStatus: alertProvStatusError}
 	e.ID = "h1"
-	s.fleetAlerts([]MyHiveEntry{e})
+	s.fleetAlerts([]MyHiveEntry{e}, nil)
 
 	post := func(body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -1289,7 +1419,7 @@ func TestHandleAlertAckPersists(t *testing.T) {
 	s := newTestAlertServer()
 	e := MyHiveEntry{ProvStatus: alertProvStatusError}
 	e.ID = "h1"
-	s.fleetAlerts([]MyHiveEntry{e})
+	s.fleetAlerts([]MyHiveEntry{e}, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/saas/admin/alert-ack",
@@ -1310,7 +1440,7 @@ func TestAlertJSONOmitsAckFieldsWhenUnacknowledged(t *testing.T) {
 	s := newTestAlertServer()
 	e := MyHiveEntry{ProvStatus: alertProvStatusError}
 	e.ID = "h1"
-	summary := s.fleetAlerts([]MyHiveEntry{e})
+	summary := s.fleetAlerts([]MyHiveEntry{e}, nil)
 	b, err := json.Marshal(summary)
 	if err != nil {
 		t.Fatal(err)
@@ -1478,7 +1608,7 @@ func TestFleetAlertsOnServer(t *testing.T) {
 	e.ID = "h1"
 	e.Name = "org/h1"
 
-	got := s.fleetAlerts([]MyHiveEntry{e})
+	got := s.fleetAlerts([]MyHiveEntry{e}, nil)
 	if got.Total != 1 {
 		t.Fatalf("Total = %d, want 1 (alerts: %+v)", got.Total, got.Alerts)
 	}
@@ -1488,7 +1618,7 @@ func TestFleetAlertsOnServer(t *testing.T) {
 
 	// A server with no alert state must degrade gracefully rather than panic.
 	var nilState HubServer
-	empty := nilState.fleetAlerts([]MyHiveEntry{e})
+	empty := nilState.fleetAlerts([]MyHiveEntry{e}, nil)
 	if empty.Total != 0 || empty.CountsByType == nil {
 		t.Fatalf("a server without alert state must return an empty usable summary, got %+v", empty)
 	}
@@ -1914,5 +2044,132 @@ func TestCorruptAcksFileIsQuarantinedAndAckingContinues(t *testing.T) {
 	}
 	if !a.Acknowledged {
 		t.Fatal("the post-recovery ack must survive a restart")
+	}
+}
+
+// --- #11818: unclaimed pool slots never raise repo-overlap ---
+
+func TestRepoOverlapAlert_SkipsPlaceholderSlots(t *testing.T) {
+	s := newTestAlertServer()
+	// ProvStatus "available" is the authoritative placeholder signal even when
+	// the slot's seed config looks like a real project.
+	slot := func(id string) MyHiveEntry {
+		e := MyHiveEntry{ProvStatus: statusAvailable}
+		e.ID = id
+		e.Name = id
+		e.Org = "acme"
+		e.PrimaryRepo = "shared"
+		e.Repos = []string{"shared"}
+		return e
+	}
+	got := s.fleetAlerts([]MyHiveEntry{slot("hosted-available-a"), slot("hosted-available-b")}, nil)
+	for _, a := range got.Alerts {
+		if a.Type == AlertTypeRepoOverlap {
+			t.Fatalf("placeholder slots must not raise repo-overlap, got %+v", got.Alerts)
+		}
+	}
+
+	// The rule itself is guarded too, whatever overlaps get stamped.
+	h := baseHive("h1")
+	h.IsPlaceholder = true
+	h.RepoOverlaps = []RepoOverlap{{Repo: "acme/shared", Hives: []OverlapClaim{{ID: "h1"}, {ID: "h2"}}}}
+	other := baseHive("h2")
+	sum := evaluateAlerts(newAlertState(), []alertHive{h, other}, nil, fixedNow)
+	if hasAlert(sum.Alerts, "h1", AlertTypeRepoOverlap) {
+		t.Fatalf("a placeholder must not raise repo-overlap: %+v", sum.Alerts)
+	}
+}
+
+// --- #11819: scoped polls must reach the same verdict as the admin's ---
+
+func scopedTestEntry(id string, tokens int64) MyHiveEntry {
+	e := MyHiveEntry{}
+	e.ID = id
+	e.Name = "org/" + id
+	e.Online = true
+	e.TotalTokens24h = tokens
+	return e
+}
+
+func TestTokenBurnAckSurvivesScopedPollWithSmallerFleet(t *testing.T) {
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	s := newTestAlertServer()
+	fleet := []MyHiveEntry{scopedTestEntry("h1", 100000)}
+	for _, id := range []string{"h2", "h3", "h4", "h5", "h6"} {
+		fleet = append(fleet, scopedTestEntry(id, 5000))
+	}
+
+	adminView := s.fleetAlerts(fleet, nil)
+	before, ok := findAlert(adminView.Alerts, "h1", AlertTypeTokenBurn)
+	if !ok {
+		t.Fatalf("expected a token-burn alert on h1, got %+v", adminView.Alerts)
+	}
+
+	// h1's owner sees only h1. Its median must still be the fleet's, so the
+	// poll agrees h1 is firing instead of evicting the shared condition.
+	ownerView := s.fleetAlerts(fleet[:1], fleet)
+	if !hasAlert(ownerView.Alerts, "h1", AlertTypeTokenBurn) {
+		t.Fatalf("scoped poll must use the fleet median, got %+v", ownerView.Alerts)
+	}
+
+	if rec := ackViaHandler(t, s, adminView, AlertTypeTokenBurn); rec.Code != http.StatusOK {
+		t.Fatalf("ack status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	s.fleetAlerts(fleet[:1], fleet)
+
+	after := s.fleetAlerts(fleet, nil)
+	a, ok := findAlert(after.Alerts, "h1", AlertTypeTokenBurn)
+	if !ok || !a.Acknowledged {
+		t.Fatalf("ack must survive the owner's scoped poll, got %+v", after.Alerts)
+	}
+	if !a.FirstSeen.Equal(before.FirstSeen) {
+		t.Fatalf("FirstSeen churned across a scoped poll: %v -> %v", before.FirstSeen, a.FirstSeen)
+	}
+}
+
+func TestRepoOverlapAckSurvivesScopedPollWithoutLeakingHiddenHive(t *testing.T) {
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	s := newTestAlertServer()
+	mk := func(id, name string) MyHiveEntry {
+		e := scopedTestEntry(id, 5000)
+		e.Name = name
+		e.Org = "acme"
+		e.PrimaryRepo = "shared"
+		e.Repos = []string{"shared"}
+		return e
+	}
+	fleet := []MyHiveEntry{mk("h1", "mine"), mk("h2", "secret-neighbour")}
+
+	adminView := s.fleetAlerts(fleet, nil)
+	if !hasAlert(adminView.Alerts, "h1", AlertTypeRepoOverlap) {
+		t.Fatalf("expected a repo-overlap alert on h1, got %+v", adminView.Alerts)
+	}
+
+	// The owner of h1 cannot see h2: nothing about h2 may be rendered, but the
+	// shared condition must stay alive.
+	ownerView := s.fleetAlerts(fleet[:1], fleet)
+	for _, a := range ownerView.Alerts {
+		if a.Type == AlertTypeRepoOverlap || strings.Contains(a.Reason, "secret-neighbour") {
+			t.Fatalf("scoped poll must not reveal a hidden hive's overlap: %+v", ownerView.Alerts)
+		}
+	}
+
+	if rec := ackViaHandler(t, s, adminView, AlertTypeRepoOverlap); rec.Code != http.StatusOK {
+		t.Fatalf("ack status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	s.fleetAlerts(fleet[:1], fleet)
+
+	after := s.fleetAlerts(fleet, nil)
+	a, ok := findAlert(after.Alerts, "h1", AlertTypeRepoOverlap)
+	if !ok || !a.Acknowledged {
+		t.Fatalf("ack must survive the owner's scoped poll, got %+v", after.Alerts)
 	}
 }

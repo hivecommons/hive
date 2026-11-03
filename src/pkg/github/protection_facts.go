@@ -3,8 +3,11 @@ package github
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // protectionCollector gathers, once per enrichment pass, the per-repository
@@ -24,6 +27,8 @@ type protectionCollector struct {
 	// reviews is keyed "owner/repo"; a nil map value records a repo whose
 	// GraphQL query failed, so it is attempted only once.
 	reviews map[string]map[int]prReviewState
+	// codeOwner is keyed "owner/repo@branch" (hivecommons/hive#12953).
+	codeOwner map[string]codeOwnerRule
 }
 
 type requiredSet struct {
@@ -48,9 +53,10 @@ type prReviewState struct {
 
 func newProtectionCollector(c *Client) *protectionCollector {
 	return &protectionCollector{
-		c:        c,
-		required: make(map[string]requiredSet),
-		reviews:  make(map[string]map[int]prReviewState),
+		c:         c,
+		required:  make(map[string]requiredSet),
+		reviews:   make(map[string]map[int]prReviewState),
+		codeOwner: make(map[string]codeOwnerRule),
 	}
 }
 
@@ -67,7 +73,8 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 	}
 	var f ProtectionFacts
 
-	if rs, ok := pc.reviewState(ctx, pr.Repo, pr.Number); ok {
+	rs, reviewKnown := pc.reviewState(ctx, pr.Repo, pr.Number)
+	if reviewKnown {
 		f.ReviewDecision = rs.decision
 		f.ChangesRequestedBy = rs.changesRequestedBy
 		f.ApprovalsGiven = rs.approvals
@@ -110,9 +117,36 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 				}
 			}
 			f.FailingRequiredChecks = red
-			if observedRequired > 0 {
+			f.RequiredChecksAllReported = len(req.set) > 0 && len(missing) == 0
+			switch {
+			case observedRequired > 0:
 				f.MissingRequiredChecks = missing
+			case len(missing) > 0 && strings.EqualFold(pr.MergeableState, "blocked"):
+				// Nothing proves check-run reporting, but GitHub says the head is
+				// blocked: look at commit statuses before deciding. A context
+				// absent from both listings was never created, and must not be
+				// reported as merge-eligible (#11892).
+				if statuses, ok := pc.c.commitStatusContexts(ctx, pr.Repo, pr.HeadSHA); ok {
+					var never []string
+					for _, name := range missing {
+						if !statuses[name] {
+							never = append(never, name)
+						}
+					}
+					sort.Strings(never)
+					f.MissingRequiredChecks = never
+				}
 			}
+		}
+	}
+
+	// A null review decision on a blocked PR may hide an outstanding
+	// code-owner review (#12953). The rule is looked up only then — and only
+	// when the decision was actually fetched — once per repo+branch.
+	if reviewKnown && f.ReviewDecision == ReviewDecisionNone && strings.EqualFold(pr.MergeableState, "blocked") {
+		if rule := pc.codeOwnerRule(ctx, pr.Repo, pr.BaseRef); rule.required {
+			f.CodeOwnerReviewRequired = true
+			f.CodeOwnerRuleSource = rule.source
 		}
 	}
 
@@ -121,10 +155,34 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 	// dashboard still wants "changes requested by @x" / "2 approvals" on
 	// such a PR (#8968). The decision itself stays ReviewDecisionNone —
 	// unknown, never inferred — exactly as the contract above requires.
-	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown && f.ApprovalsGiven == 0 && len(f.ChangesRequestedBy) == 0 {
+	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown && f.ApprovalsGiven == 0 && len(f.ChangesRequestedBy) == 0 && !f.CodeOwnerReviewRequired {
 		return
 	}
 	pr.Protection = &f
+}
+
+// commitStatusContexts returns the contexts of every commit status on sha, or
+// ok=false when the listing could not be obtained.
+func (c *Client) commitStatusContexts(ctx context.Context, repo, sha string) (map[string]bool, bool) {
+	if sha == "" {
+		return nil, false
+	}
+	owner, name := c.splitRepo(repo)
+	contexts := map[string]bool{}
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, name, sha, opts)
+		if err != nil {
+			return nil, false
+		}
+		for _, st := range status.Statuses {
+			contexts[st.GetContext()] = true
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return contexts, true
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 func (pc *protectionCollector) requiredChecks(ctx context.Context, repo, branch string) requiredSet {
@@ -137,6 +195,17 @@ func (pc *protectionCollector) requiredChecks(ctx context.Context, repo, branch 
 	rs := requiredSet{set: set, known: known}
 	pc.required[key] = rs
 	return rs
+}
+
+func (pc *protectionCollector) codeOwnerRule(ctx context.Context, repo, branch string) codeOwnerRule {
+	key := repo + "@" + branch
+	if rule, ok := pc.codeOwner[key]; ok {
+		return rule
+	}
+	owner, name := pc.c.splitRepo(repo)
+	rule := pc.c.codeOwnerReviewRule(ctx, owner, name, branch)
+	pc.codeOwner[key] = rule
+	return rule
 }
 
 func (pc *protectionCollector) reviewState(ctx context.Context, repo string, number int) (prReviewState, bool) {
@@ -187,7 +256,7 @@ const reviewSignalsQuery = `query($owner:String!,$name:String!,$cursor:String){
         latestOpinionatedReviews(first:50){nodes{state submittedAt authorAssociation author{__typename login}}}
         comments(first:1){totalCount}
         reviewThreads(first:1){totalCount}
-        closingIssuesReferences(first:20){nodes{number state url repository{nameWithOwner}}}
+        closingIssuesReferences(first:20){nodes{number title state stateReason url repository{nameWithOwner}}}
       }
     }
   }
@@ -222,10 +291,12 @@ type reviewDecisionResponse struct {
 				} `json:"reviewThreads"`
 				ClosingIssuesReferences struct {
 					Nodes []struct {
-						Number     int    `json:"number"`
-						State      string `json:"state"`
-						URL        string `json:"url"`
-						Repository struct {
+						Number      int    `json:"number"`
+						Title       string `json:"title"`
+						State       string `json:"state"`
+						StateReason string `json:"stateReason"`
+						URL         string `json:"url"`
+						Repository  struct {
 							NameWithOwner string `json:"nameWithOwner"`
 						} `json:"repository"`
 					} `json:"nodes"`
@@ -268,7 +339,14 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 			err = c.graphQL(ctx, query, vars, &resp)
 		}
 		if err != nil {
-			c.logger.Warn("failed to fetch PR review decisions", "repo", repo, "error", err)
+			// Transient forge outages leave reviews unknown until the next poll.
+			// Keep them out of the WARN-fed fleet defect reporter while retaining
+			// warnings for permission, schema and other persistent failures.
+			if isTransientEnumerationError(err) || errors.Is(err, context.Canceled) {
+				c.logger.Debug("failed to fetch PR review decisions", "repo", repo, "error", err)
+			} else {
+				c.logger.Warn("failed to fetch PR review decisions", "repo", repo, "error", err)
+			}
 			return nil
 		}
 		for _, n := range resp.Repository.PullRequests.Nodes {
@@ -282,10 +360,12 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 					continue
 				}
 				st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
-					Number: li.Number,
-					Repo:   li.Repository.NameWithOwner,
-					State:  strings.ToLower(strings.TrimSpace(li.State)),
-					URL:    li.URL,
+					Number:      li.Number,
+					Title:       li.Title,
+					Repo:        li.Repository.NameWithOwner,
+					State:       strings.ToLower(strings.TrimSpace(li.State)),
+					StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
+					URL:         li.URL,
 				})
 			}
 			for _, r := range n.LatestOpinionatedReviews.Nodes {

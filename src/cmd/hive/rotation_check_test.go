@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/rotation"
@@ -29,15 +31,19 @@ func rotationTestLogger() *slog.Logger {
 func rotationTestConfig() *config.Config {
 	return &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Repos: []string{"r"}},
-		Agents: map[string]config.AgentConfig{
-			"quality": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"quality": {Backend: "claude", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
-			Rotation: config.RotationConfig{
-				Enabled: true,
-				Providers: map[string]config.ProviderRotationConfig{
-					"anthropic": {Class: rotation.ClassSubscription, Backends: []string{"claude"}},
-					"openai":    {Class: rotation.ClassMetered, Backends: []string{"codex"}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Rotation: config.RotationConfig{
+					Enabled: true,
+					Providers: map[string]config.ProviderRotationConfig{
+						"anthropic": {Class: rotation.ClassSubscription, Backends: []string{"claude"}},
+						"openai":    {Class: rotation.ClassMetered, Backends: []string{"codex"}},
+					},
 				},
 			},
 		},
@@ -48,7 +54,7 @@ type rotationHarness struct {
 	cfg      *config.Config
 	rotMgr   *rotation.Manager
 	gov      *governor.Governor
-	agentMgr *agent.Manager
+	agentMgr cruxtest.Runtime
 }
 
 func newRotationHarness(t *testing.T) *rotationHarness {
@@ -58,7 +64,7 @@ func newRotationHarness(t *testing.T) *rotationHarness {
 		cfg:      cfg,
 		rotMgr:   rotation.NewManager(cfg.Governor.Rotation),
 		gov:      governor.New(config.GovernorConfig{}, cfg.Agents, rotationTestLogger()),
-		agentMgr: agent.NewManager(cfg.Agents, rotationTestLogger(), agent.ProjectContext{}),
+		agentMgr: cruxtest.NewRuntime(cfg.Agents, rotationTestLogger(), crux.ProjectContext{}),
 	}
 }
 
@@ -67,7 +73,7 @@ func (h *rotationHarness) run(t *testing.T) {
 	runRotationCheck(context.Background(), h.cfg, h.rotMgr, h.gov, h.agentMgr, rotationTestLogger())
 }
 
-func (h *rotationHarness) status(t *testing.T, name string) *agent.AgentProcess {
+func (h *rotationHarness) status(t *testing.T, name string) *crux.Process {
 	t.Helper()
 	proc, ok := h.agentMgr.AllStatuses()[name]
 	if !ok {
@@ -248,7 +254,7 @@ func TestRunRotationCheck_StrandRecoveredAutoResumes(t *testing.T) {
 		},
 	}
 	h.cfg.Agents = agents
-	h.agentMgr = agent.NewManager(agents, rotationTestLogger(), agent.ProjectContext{})
+	h.agentMgr = cruxtest.NewRuntime(agents, rotationTestLogger(), crux.ProjectContext{})
 	h.agentMgr.SetSandboxConfig(config.AgentSandboxConfig{Enabled: true})
 
 	if err := h.agentMgr.Pause("quality", rotationTrigger, "no provider has headroom (RFC #3958)"); err != nil {
@@ -320,7 +326,7 @@ func TestRunRotationCheck_UnknownBackendUntouched(t *testing.T) {
 		"quality": {Backend: "copilot", Enabled: true},
 	}
 	h.cfg.Agents = agents
-	h.agentMgr = agent.NewManager(agents, rotationTestLogger(), agent.ProjectContext{})
+	h.agentMgr = cruxtest.NewRuntime(agents, rotationTestLogger(), crux.ProjectContext{})
 	h.exhaust("anthropic")
 	h.exhaust("openai")
 

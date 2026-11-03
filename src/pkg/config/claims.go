@@ -47,6 +47,111 @@ type ClaimsConfig struct {
 	// (hivecommons/hive#10527). 0 uses DefaultClaimEscalateAfter; negative
 	// turns the gate off.
 	EscalateAfterClaims int `yaml:"escalate_after_claims,omitempty" json:"escalate_after_claims,omitempty"`
+	// NeverClaimLabels are labels (matched case-insensitively) that mark an
+	// issue as not a unit of agent work — umbrella/tracking issues — so every
+	// automated claim producer refuses it and the stage engine never stages
+	// a claim on it as stage/020 or stage/030. Absent → claims.DefaultNeverClaimLabels
+	// (`epic`); an explicit empty list turns the gate off.
+	NeverClaimLabels []string `yaml:"never_claim_labels,omitempty" json:"never_claim_labels,omitempty"`
+	// ReclaimCooldownS is how long, in seconds, the SAME relay contributor
+	// session must wait before it is handed an issue it just released
+	// without shipping (task failed, abandoned, requeued, lease revoked)
+	// (hivecommons/hive#13093). The per-issue failure cooldown is global
+	// and short (10 min) so that a different contributor may retry at
+	// once; without a per-contributor window the one whose environment
+	// cannot run the task takes the same issue back every ten minutes,
+	// flapping its claim. 0 → DefaultReclaimCooldown (6h); negative turns
+	// the window off.
+	ReclaimCooldownS int `yaml:"reclaim_cooldown_s,omitempty" json:"reclaim_cooldown_s,omitempty"`
+	// ContributorFlapThreshold is how many contributor disconnect-releases
+	// one issue may take inside contributor_flap_window_s before the issue
+	// is withheld from contributor assignment for contributor_flap_cooloff_s
+	// and left to the hive's own agents (hivecommons/hive#13579: a relay
+	// that connected, was handed the issue, and dropped 18 times in 12h
+	// kept the issue claimed and starved the scanner/coder). 0 →
+	// DefaultContributorFlapThreshold (3); negative turns the cool-off off.
+	ContributorFlapThreshold int `yaml:"contributor_flap_threshold,omitempty" json:"contributor_flap_threshold,omitempty"`
+	// ContributorFlapWindowS is the window, in seconds, the drops are
+	// counted over. 0 → DefaultContributorFlapWindow (2h).
+	ContributorFlapWindowS int `yaml:"contributor_flap_window_s,omitempty" json:"contributor_flap_window_s,omitempty"`
+	// ContributorFlapCooloffS is how long, in seconds, the issue stays
+	// withheld from contributors once the threshold trips. 0 →
+	// DefaultContributorFlapCooloff (6h).
+	ContributorFlapCooloffS int `yaml:"contributor_flap_cooloff_s,omitempty" json:"contributor_flap_cooloff_s,omitempty"`
+	// ContributorStarvationS is how long, in seconds, an issue may be
+	// continuously withheld from the hive's own agents by contributor
+	// claims — with no PR opened — before those claims become advisory and
+	// a hive agent may claim it anyway (hivecommons/hive#13579). 0 →
+	// DefaultContributorStarvation (4h); negative turns the guard off.
+	ContributorStarvationS int `yaml:"contributor_starvation_s,omitempty" json:"contributor_starvation_s,omitempty"`
+}
+
+// DefaultReclaimCooldown is the reclaim_cooldown_s default.
+const DefaultReclaimCooldown = 6 * time.Hour
+
+// Contributor flap cool-off and starvation guard defaults
+// (hivecommons/hive#13579).
+const (
+	DefaultContributorFlapThreshold = 3
+	DefaultContributorFlapWindow    = 2 * time.Hour
+	DefaultContributorFlapCooloff   = 6 * time.Hour
+	DefaultContributorStarvation    = 4 * time.Hour
+)
+
+// EffectiveContributorFlap returns the contributor flap cool-off settings
+// with defaults applied. A threshold of 0 means the cool-off is off.
+func (c ClaimsConfig) EffectiveContributorFlap() (threshold int, window, cooloff time.Duration) {
+	switch {
+	case c.ContributorFlapThreshold < 0:
+		threshold = 0
+	case c.ContributorFlapThreshold == 0:
+		threshold = DefaultContributorFlapThreshold
+	default:
+		threshold = c.ContributorFlapThreshold
+	}
+	window = DefaultContributorFlapWindow
+	if c.ContributorFlapWindowS > 0 {
+		window = time.Duration(c.ContributorFlapWindowS) * time.Second
+	}
+	cooloff = DefaultContributorFlapCooloff
+	if c.ContributorFlapCooloffS > 0 {
+		cooloff = time.Duration(c.ContributorFlapCooloffS) * time.Second
+	}
+	return threshold, window, cooloff
+}
+
+// EffectiveContributorStarvation returns contributor_starvation_s with the
+// default applied; 0 means the guard is off.
+func (c ClaimsConfig) EffectiveContributorStarvation() time.Duration {
+	switch {
+	case c.ContributorStarvationS < 0:
+		return 0
+	case c.ContributorStarvationS == 0:
+		return DefaultContributorStarvation
+	}
+	return time.Duration(c.ContributorStarvationS) * time.Second
+}
+
+// EffectiveReclaimCooldown returns reclaim_cooldown_s with the default
+// applied; 0 means the window is off.
+func (c ClaimsConfig) EffectiveReclaimCooldown() time.Duration {
+	switch {
+	case c.ReclaimCooldownS < 0:
+		return 0
+	case c.ReclaimCooldownS == 0:
+		return DefaultReclaimCooldown
+	}
+	return time.Duration(c.ReclaimCooldownS) * time.Second
+}
+
+// EffectiveNeverClaimLabels returns never_claim_labels with the default
+// applied: nil (key absent) → claims.DefaultNeverClaimLabels; an explicit
+// empty list stays empty.
+func (c ClaimsConfig) EffectiveNeverClaimLabels() []string {
+	if c.NeverClaimLabels == nil {
+		return append([]string(nil), claims.DefaultNeverClaimLabels...)
+	}
+	return append([]string{}, c.NeverClaimLabels...)
 }
 
 // DefaultClaimEscalateAfter is the escalate_after_claims default: an agent's

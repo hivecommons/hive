@@ -1,0 +1,1 @@
+- The ACMM L2 pack now includes the `reviewer` agent in COMMENT-only mode (no fixer, no auto-merge) as the review-first entry point; review is part of L2 proper and no L2.5 level was added. L5/L6 reviewer behaviour is unchanged (#13574).

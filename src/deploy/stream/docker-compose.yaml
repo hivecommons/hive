@@ -1,0 +1,31 @@
+# Run the Activity Monitor streamer from a laptop (Docker Desktop / colima):
+#   cp .env.example .env   # fill in DASHBOARD_URL, DASHBOARD_TOKEN, TWITCH_STREAM_KEY
+#   docker compose -f src/deploy/stream/docker-compose.yaml up --build
+# Dry run without Twitch: STREAM_OUTPUT=null STREAM_SECONDS=10 docker compose ... up
+services:
+  hive-stream:
+    build:
+      context: ../../..
+      dockerfile: src/deploy/stream/Dockerfile
+    image: ghcr.io/hivecommons/hive-stream:local
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DASHBOARD_URL: ${DASHBOARD_URL:?set DASHBOARD_URL to the dashboard https origin}
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}
+      TWITCH_STREAM_KEY: ${TWITCH_STREAM_KEY:-}
+      TWITCH_INGEST: ${TWITCH_INGEST:-rtmp://live.twitch.tv/app}
+      STREAM_OUTPUT: ${STREAM_OUTPUT:-}
+      STREAM_SECONDS: ${STREAM_SECONDS:-0}
+      VIDEO_SIZE: ${VIDEO_SIZE:-1920x1080}
+      RELOAD_EVERY: ${RELOAD_EVERY:-30m}
+    shm_size: 512m
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 3g
+    volumes:
+      - ./out:/run/stream/out

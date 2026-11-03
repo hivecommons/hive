@@ -1,6 +1,8 @@
 package github
 
 import (
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
+
 	"context"
 	"strings"
 	"testing"
@@ -138,8 +140,9 @@ func runAutoCloseSweep(t *testing.T, open supersessionPRFixture, opts Supersessi
 	defer server.Close()
 	c := newTestClient(t, server, autoCloseOrg, []string{autoCloseRepo})
 	c.SetAppBotLogin(autoCloseBot)
+	c.SetStageFactSink(&stageenginetest.Recorder{})
 	if opts.ACMMLevelForRepo == nil {
-		opts.ACMMLevelForRepo = func(string) int { return acmmLevelFullyAutonomous }
+		opts.ACMMLevelForRepo = func(string) int { return acmmLevelAutonomous }
 	}
 	res, err := c.SweepSupersededOpenPRs(context.Background(), opts)
 	if err != nil {
@@ -278,10 +281,11 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 		{"operator kept open", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/S", SupersessionKeepOpenLabel}}, autoCloseEnabled},
 		{"size/L", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/L"}}, autoCloseEnabled},
 		{"large unlabeled", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{}, Additions: 400}, autoCloseEnabled},
-		{"extra files", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
+		{"extra files", supersessionPRFixture{Body: "Fixes #3", Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
+		{"extra files, reference only", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
 		{"disabled", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}}, SupersessionSweepOptions{}},
 		{"below L6", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}},
-			SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }}},
+			SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous - 1 }}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,14 +293,47 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 			if len(obs.closed) != 0 || len(res.Closed) != 0 {
 				t.Fatalf("guard %q closed the PR: %v", tc.name, obs.closed)
 			}
+			if tc.name == "extra files" {
+				// A contributor PR with files the merged PR did not touch is
+				// a person's decision: parked at 085 with the files named
+				// (hivecommons/hive#13799), not left in the lane.
+				if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionEscalated {
+					t.Fatalf("guard %q result = %+v, want escalation", tc.name, res)
+				}
+				if got := obs.labels[12]; len(got) != 2 || got[0] != issueNeedsHumanLabel {
+					t.Fatalf("guard %q labels = %v, want needs-human", tc.name, got)
+				}
+				if got := obs.edits[900]; !strings.Contains(got, "Files the merged PR did not touch: `pkg/c.go`") {
+					t.Fatalf("guard %q notice does not name the extra files: %q", tc.name, got)
+				}
+				return
+			}
+			if tc.name == "extra files, reference only" {
+				// `Refs #3` never claimed to deliver #3, so its closer did
+				// not supersede the PR: the files are named, nobody is
+				// parked (hivecommons/hive#14155).
+				if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionCommentedContributor {
+					t.Fatalf("guard %q result = %+v, want comment only", tc.name, res)
+				}
+				if got := obs.edits[900]; !strings.Contains(got, "Files the merged PR did not touch: `pkg/c.go`") {
+					t.Fatalf("guard %q notice does not name the extra files: %q", tc.name, got)
+				}
+			}
 			if len(obs.labels[12]) != 0 {
 				t.Fatalf("guard %q labeled the PR: %v", tc.name, obs.labels[12])
 			}
 			if len(res.Commented) != 1 || res.Commented[0].Action != "commented-contributor" {
 				t.Fatalf("guard %q result = %+v", tc.name, res)
 			}
-			if got := obs.edits[900]; !strings.Contains(got, "Leaving this contributor PR open") {
-				t.Fatalf("guard %q did not rewrite the notice to the keep-open text: %q", tc.name, got)
+			want := "**Decision needed (@"
+			if tc.name == "operator kept open" {
+				want = "An operator chose to keep this PR open"
+			}
+			if got := obs.edits[900]; !strings.Contains(got, want) {
+				t.Fatalf("guard %q did not rewrite the notice to the decision text: %q", tc.name, got)
+			}
+			if got := obs.edits[900]; tc.name == "operator kept open" && strings.Contains(got, "Decision needed") {
+				t.Fatalf("guard %q re-asked a decision the operator already made: %q", tc.name, got)
 			}
 		})
 	}

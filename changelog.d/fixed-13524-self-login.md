@@ -1,0 +1,1 @@
+- Concurrent first-time lookups of the authenticated GitHub login now share one `GET /user` instead of each issuing their own; waiters receive the same result (or failure cooldown) and can cancel their own wait without aborting the lookup ([#13524](https://github.com/hivecommons/hive/issues/13524)).

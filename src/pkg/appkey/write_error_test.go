@@ -285,3 +285,56 @@ func TestReportedFingerprintAndHasPerHiveKeyMissingOrShadowed(t *testing.T) {
 		t.Fatal("shadowed provisioned key reported as per-hive")
 	}
 }
+
+// TestWriteKeyFileAtomicReplacesUnwritableFile: WriteKeyFile is the primary
+// key write used by the heartbeat callback. It must land at the caller's path
+// with 0600, and replace an existing file via rename even when that file is
+// not writable in place (root_squash NFS leftover), rather than opening it.
+func TestWriteKeyFileAtomicReplacesUnwritableFile(t *testing.T) {
+	r := newTestResolver(t)
+	path := filepath.Join(r.DataDir, "gh-app-key-3568013.pem")
+	if err := os.WriteFile(path, []byte("stale"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	fp, err := r.WriteKeyFile(path, testRSAPrivateKeyPEM)
+	if err != nil {
+		t.Fatalf("WriteKeyFile: %v", err)
+	}
+	if fp == "" {
+		t.Fatal("WriteKeyFile returned an empty fingerprint")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != strings.TrimSpace(testRSAPrivateKeyPEM) {
+		t.Fatal("file does not hold the delivered key")
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != DefaultFileMode {
+		t.Fatalf("mode = %v, want %v", st.Mode().Perm(), DefaultFileMode)
+	}
+	if entries, _ := os.ReadDir(r.DataDir); len(entries) != 1 {
+		t.Fatalf("temp file left behind: %v", entries)
+	}
+
+	for _, tc := range []struct {
+		name, path, pem, wantErr string
+	}{
+		{"empty path", "", testRSAPrivateKeyPEM, "empty path"},
+		{"not PEM", path, "nope", "not PEM"},
+		{"unusable PEM", path, "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----", "unusable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := r.WriteKeyFile(tc.path, tc.pem); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+	if again, _ := os.ReadFile(path); string(again) != string(got) {
+		t.Fatal("rejected writes must leave the key untouched")
+	}
+}

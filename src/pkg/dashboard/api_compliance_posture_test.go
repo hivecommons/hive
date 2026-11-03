@@ -35,6 +35,7 @@ func compliancePostureRequest(t *testing.T, s *Server, method, target, role stri
 	}
 	if verified {
 		req.Header.Set(ownerRoleVerifiedHeader, "true")
+		req.Header.Set("X-Hive-User", "alice")
 	}
 	rr := httptest.NewRecorder()
 	if method == http.MethodPost {
@@ -123,8 +124,8 @@ func TestHandleCompliancePostureBodyAndHistory(t *testing.T) {
 	if err := json.Unmarshal(run.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode run: %v", err)
 	}
-	if got.Trigger != compliance.TriggerManual || len(got.Results) != len(compliance.PostureChecks()) {
-		t.Fatalf("run = trigger %q, %d results", got.Trigger, len(got.Results))
+	if got.Trigger != compliance.TriggerManual || got.TriggeredBy != "alice" || len(got.Results) != len(compliance.PostureChecks()) {
+		t.Fatalf("run = trigger %q by %q, %d results", got.Trigger, got.TriggeredBy, len(got.Results))
 	}
 	if got.Summary.Pass+got.Summary.Fail+got.Summary.Skip+got.Summary.Error != len(got.Results) {
 		t.Fatalf("summary %+v does not add up to %d", got.Summary, len(got.Results))

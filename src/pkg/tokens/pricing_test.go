@@ -54,25 +54,28 @@ func TestFallbackTierOrdering(t *testing.T) {
 }
 
 func TestEstimateCostUSD_FractionalTokens(t *testing.T) {
-	// gpt-5-4: $1.25/MTok in. 500,000 input -> $0.625.
+	// Half a million input tokens cost half the per-MTok input rate. Read the
+	// rate from the table so the automated price refresh cannot break this.
+	want := modelPrices["gpt-5-4"].InputPerMTok / 2
 	usd, priced := EstimateCostUSD("gpt-5.4", 500_000, 0, 0, 0)
 	if !priced {
 		t.Fatalf("expected gpt-5.4 to be priced")
 	}
-	if !approxEqual(usd, 0.625) {
-		t.Fatalf("expected $0.625, got $%.6f", usd)
+	if !approxEqual(usd, want) {
+		t.Fatalf("expected $%.6f, got $%.6f", want, usd)
 	}
 }
 
 func TestEstimateCostUSD_UsesPerMillionTokenPrices(t *testing.T) {
-	// claude-sonnet-5 input is $3 per 1,000,000 tokens; treating the table as
-	// per-1K would return $3,000 and treating it as per-token would explode.
+	// 1,000,000 input tokens cost exactly the per-MTok input rate; treating the
+	// table as per-1K would return 1000× that and per-token would explode.
+	want := modelPrices["claude-sonnet-5"].InputPerMTok
 	usd, priced := EstimateCostUSD("claude-sonnet-5", 1_000_000, 0, 0, 0)
 	if !priced {
 		t.Fatalf("expected claude-sonnet-5 to be priced")
 	}
-	if !approxEqual(usd, 3.0) {
-		t.Fatalf("1M input tokens at $3/MTok = $3.00, got $%.6f", usd)
+	if !approxEqual(usd, want) {
+		t.Fatalf("1M input tokens at $%.2f/MTok = $%.2f, got $%.6f", want, want, usd)
 	}
 }
 
@@ -120,8 +123,9 @@ func TestLiteLLMRoutedModelsUseExactPrice(t *testing.T) {
 	if !priced {
 		t.Fatalf("LiteLLM llama alias should resolve to exact price")
 	}
-	if !approxEqual(llamaUSD, 1.38) {
-		t.Fatalf("llama alias cost = $%.6f, want $1.38", llamaUSD)
+	llama := modelPrices["llama-3-3-70b-instruct"]
+	if want := llama.InputPerMTok + llama.OutputPerMTok; !approxEqual(llamaUSD, want) {
+		t.Fatalf("llama alias cost = $%.6f, want $%.2f", llamaUSD, want)
 	}
 }
 
@@ -256,7 +260,7 @@ func TestIssue9804DropdownModelsPriced(t *testing.T) {
 		name   string
 		models []string
 	}{
-		{"claude 5.x", []string{"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}},
+		{"claude 5.x", []string{"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5.1"}},
 		{"codex gpt-6", []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}},
 		{"gemini 3 previews", []string{"gemini-3-pro-preview", "gemini-3-flash-preview"}},
 		{"copilot fallback", []string{"gpt-4.1", "gpt-4o", "o3", "o4-mini", "gemini-2.5-pro"}},
@@ -330,5 +334,19 @@ func TestEstimateFromSummary_DropsRoutingAliases(t *testing.T) {
 		if m == "auto" || m == "default" {
 			t.Errorf("routing alias %q leaked into UnpricedModels", m)
 		}
+	}
+}
+
+func TestFable51PricedAtFable5ListRate(t *testing.T) {
+	p, priced := LookupPrice("claude-fable-5.1")
+	if !priced {
+		t.Fatal("claude-fable-5.1 must have an exact price, not a tier fallback")
+	}
+	// Same input/output tier as Fable 5 (#13488). Cache rates are compared
+	// separately by the price-table refresh against the published source and
+	// may legitimately differ between the two releases.
+	want, _ := LookupPrice("claude-fable-5")
+	if p.InputPerMTok != want.InputPerMTok || p.OutputPerMTok != want.OutputPerMTok {
+		t.Errorf("claude-fable-5.1 = %+v, want fable-5 input/output rates %+v", p, want)
 	}
 }

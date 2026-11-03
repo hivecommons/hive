@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -331,5 +332,275 @@ func TestRunEscalationSweepRecordsBlockedJourney(t *testing.T) {
 	}
 	if st := j.Stages[timeline.KindBlocked]; st == nil || st.Attrs["fix_attempts"] != "2" {
 		t.Fatalf("blocked stage evidence = %+v", j.Stages[timeline.KindBlocked])
+	}
+}
+
+// TestRecordStarted is the agent-start hook's recorder: the hive/in-progress
+// claim becomes the "started" stage so kicked→started→pr_opened spans exist.
+func TestRecordStarted(t *testing.T) {
+	recordStarted(nil, "acme", "scanner", "acme/widgets", 3, "claim")
+	recordStarted(&fakeLifecycleRecorder{store: nil}, "acme", "scanner", "acme/widgets", 3, "claim")
+
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "scanner", "acme/widgets", 3, "claim")
+	j, ok := rec.store.Journey("widgets#3")
+	if !ok || j.Current != timeline.KindStarted || j.Agent != "scanner" {
+		t.Fatalf("journey = %+v ok=%v", j, ok)
+	}
+	recordStarted(rec, "acme", "scanner", "", 3, "claim")
+	if got := len(rec.store.Journeys(0)); got != 1 {
+		t.Fatalf("empty repo recorded; journeys = %d", got)
+	}
+}
+
+// A comment/label on a PR's own number must not record started on the PR journey.
+func TestRecordStarted_SkipsPRJourney(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordPROpened(rec, "acme", "scanner", "acme/widgets", 41, "https://x/41")
+	recordStarted(rec, "acme", "scanner", "acme/widgets", 41, "comment")
+	j, ok := rec.store.Journey("widgets#41")
+	if !ok || j.Stages[timeline.KindStarted] != nil {
+		t.Fatalf("PR journey recorded started: %+v ok=%v", j, ok)
+	}
+}
+
+// Delivery SLA wiring: the issue journeys a PR fixes get pr_opened (with the
+// PR's ref) and later merged, so start→PR and PR→merge spans close per issue.
+func TestRecordPROpenedForIssues_ThenMergeFoldsOntoIssues(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "bee", "acme/widgets", 7, "claim")
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 41, "https://x/41", []int{7, 8, 0, 41})
+
+	for _, ref := range []string{"widgets#7", "widgets#8"} {
+		j, ok := rec.store.Journey(ref)
+		if !ok {
+			t.Fatalf("%s missing", ref)
+		}
+		st := j.Stages[timeline.KindPROpened]
+		if st == nil || st.Attrs[timeline.AttrPRRef] != "widgets#41" || st.Agent != "bee" {
+			t.Fatalf("%s pr_opened = %+v", ref, st)
+		}
+	}
+	if _, ok := rec.store.Journey("widgets#41"); ok {
+		t.Fatal("the PR's own number must be skipped (recordPROpened owns it)")
+	}
+	if _, ok := rec.store.Journey("widgets#0"); ok {
+		t.Fatal("zero issue numbers must be skipped")
+	}
+
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionPRMerged, Repo: "acme/widgets", Target: 41, Agent: "governor",
+		Detail: "repo=acme/widgets, number=41, method=squash, sha=abc123",
+	})
+	for _, ref := range []string{"widgets#41", "widgets#7", "widgets#8"} {
+		j, _ := rec.store.Journey(ref)
+		st := j.Stages[timeline.KindMerged]
+		if st == nil || st.Attrs["sha"] != "abc123" {
+			t.Fatalf("%s merged = %+v", ref, st)
+		}
+	}
+	samples := timeline.DeriveSLASamples(rec.store.Journeys(0))
+	spans := map[string]int{}
+	for _, s := range samples {
+		spans[s.Ref+":"+string(s.Span)]++
+	}
+	for _, want := range []string{"widgets#7:start_to_pr", "widgets#7:pr_to_merge", "widgets#8:pr_to_merge"} {
+		if spans[want] != 1 {
+			t.Errorf("missing sample %s in %v", want, spans)
+		}
+	}
+	if spans["widgets#41:pr_to_merge"] != 0 {
+		t.Error("PR-keyed journey must not produce issue SLA samples")
+	}
+}
+
+func TestRecordObservedMerge_UsesObservedInstant(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 41, "", []int{7})
+	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	recordObservedMerge(rec, "acme", "acme/widgets", 41, at, "alice", "human", 0, false)
+
+	for _, ref := range []string{"widgets#41", "widgets#7"} {
+		j, ok := rec.store.Journey(ref)
+		if !ok {
+			t.Fatalf("%s missing", ref)
+		}
+		st := j.Stages[timeline.KindMerged]
+		if st == nil || st.FirstAt != at.UnixMilli() || st.Attrs["actor"] != "alice" || st.Attrs["source"] != "observed" {
+			t.Fatalf("%s merged = %+v", ref, st)
+		}
+	}
+	recordObservedMerge(nil, "acme", "acme/widgets", 41, at, "", "", 0, false)
+	recordPROpenedForIssues(&fakeLifecycleRecorder{}, "acme", "bee", "acme/widgets", 41, "", []int{7})
+}
+
+func TestRecordObservedMerge_StampsReworkCommits(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 41, "", []int{7})
+	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	recordObservedMerge(rec, "acme", "acme/widgets", 41, at, "alice", "hive", 0, true)
+	recordObservedMerge(rec, "acme", "acme/widgets", 42, at, "alice", "hive", 3, true)
+	recordObservedMerge(rec, "acme", "acme/widgets", 43, at, "alice", "hive", 0, false)
+
+	for ref, want := range map[string]string{"widgets#41": "0", "widgets#7": "0", "widgets#42": "3"} {
+		j, ok := rec.store.Journey(ref)
+		if !ok {
+			t.Fatalf("%s missing", ref)
+		}
+		if got := j.Stages[timeline.KindMerged].Attrs["pr_rework_commits_after_review"]; got != want {
+			t.Errorf("%s rework = %q, want %q", ref, got, want)
+		}
+	}
+	j, _ := rec.store.Journey("widgets#43")
+	if _, has := j.Stages[timeline.KindMerged].Attrs["pr_rework_commits_after_review"]; has {
+		t.Error("unobserved rework must not be stamped")
+	}
+}
+
+func TestRecordEnumeratedIssues_RetainsCreatedAt(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	created := time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)
+	recordEnumeratedIssues(context.Background(), rec, &github.ActionableResult{
+		Issues: github.IssueResult{Items: []github.Issue{{Repo: "widgets", Number: 1, CreatedAt: created}, {Repo: "widgets", Number: 2}}},
+	})
+	j, _ := rec.store.Journey("widgets#1")
+	if got := j.Stages[timeline.KindEnumerated].Attrs[timeline.AttrIssueCreatedAt]; got != "2026-10-01T09:30:00Z" {
+		t.Fatalf("created_at = %q", got)
+	}
+	j2, _ := rec.store.Journey("widgets#2")
+	if j2.Stages[timeline.KindEnumerated].Attrs[timeline.AttrIssueCreatedAt] != "" {
+		t.Fatal("zero CreatedAt must not be recorded")
+	}
+}
+
+// #12007: a merged PR is folded onto the issue journeys it fixes with the
+// PR's real created_at / merged_at, re-running is a no-op, and the issue
+// stops being reported as stale in-progress.
+func TestBackfillMergedPROnIssues_TimestampsIdempotencyAndStale(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	started := now.Add(-20 * time.Hour)
+	created := now.Add(-19 * time.Hour)
+	merged := now.Add(-18 * time.Hour)
+	rec.store.Record(timeline.Event{IssueRef: "widgets#7", Kind: timeline.KindStarted, Agent: "bee", At: started.UnixMilli()})
+
+	ttl := 4 * time.Hour
+	if stale := timeline.DeriveSLAStale(rec.store.Journeys(0), ttl, now); len(stale) != 1 || stale[0].Number != 7 {
+		t.Fatalf("precondition: stale = %+v, want widgets#7", stale)
+	}
+
+	obs := github.PRTerminalObservation{
+		Repo: "acme/widgets", Number: 41, State: github.PRStateMerged,
+		ObservedAt: merged, CreatedAt: created, URL: "https://x/41", Actor: "alice",
+		Issues: []int{7, 9, 41, 0},
+	}
+	if got := backfillMergedPROnIssues(rec, "acme", obs); got != 1 {
+		t.Fatalf("updated = %d, want 1 (only the retained widgets#7)", got)
+	}
+	j, _ := rec.store.Journey("widgets#7")
+	op, mg := j.Stages[timeline.KindPROpened], j.Stages[timeline.KindMerged]
+	if op == nil || op.FirstAt != created.UnixMilli() || op.Attrs[timeline.AttrPRRef] != "widgets#41" {
+		t.Fatalf("pr_opened = %+v, want PR created_at and pr_ref widgets#41", op)
+	}
+	if mg == nil || mg.FirstAt != merged.UnixMilli() || mg.Attrs["source"] != "backfill" || mg.Attrs[timeline.AttrPRRef] != "widgets#41" {
+		t.Fatalf("merged = %+v, want PR merged_at", mg)
+	}
+	if _, ok := rec.store.Journey("widgets#9"); ok {
+		t.Fatal("backfill must not create journeys for issues the store never tracked")
+	}
+	if _, ok := rec.store.Journey("widgets#41"); ok {
+		t.Fatal("the PR's own number must be skipped")
+	}
+
+	if got := backfillMergedPROnIssues(rec, "acme", obs); got != 0 {
+		t.Fatalf("re-run updated = %d, want 0", got)
+	}
+	j2, _ := rec.store.Journey("widgets#7")
+	if j2.Stages[timeline.KindPROpened].Count != 1 || j2.Stages[timeline.KindMerged].Count != 1 {
+		t.Fatalf("re-run touched stages: %+v", j2.Stages)
+	}
+
+	if stale := timeline.DeriveSLAStale(rec.store.Journeys(0), ttl, now); len(stale) != 0 {
+		t.Fatalf("stale after backfill = %+v, want none", stale)
+	}
+	samples := map[string]float64{}
+	for _, s := range timeline.DeriveSLASamples(rec.store.Journeys(0)) {
+		samples[s.Ref+":"+string(s.Span)] = s.Hours
+	}
+	if h, ok := samples["widgets#7:start_to_pr"]; !ok || h != 1 {
+		t.Errorf("start_to_pr = %v (present %v), want 1h from the PR's created_at; samples %v", h, ok, samples)
+	}
+}
+
+// An existing pr_opened (possibly naming another PR) is kept; a PR with no
+// created_at still records merged so the issue leaves stale in-progress.
+func TestBackfillMergedPROnIssues_KeepsExistingPROpenedAndGuards(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "bee", "acme/widgets", 7, "claim")
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 40, "", []int{7})
+	merged := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+
+	obs := github.PRTerminalObservation{Repo: "acme/widgets", Number: 41, State: github.PRStateMerged, ObservedAt: merged, Issues: []int{7}}
+	if got := backfillMergedPROnIssues(rec, "acme", obs); got != 1 {
+		t.Fatalf("updated = %d, want 1", got)
+	}
+	j, _ := rec.store.Journey("widgets#7")
+	if st := j.Stages[timeline.KindPROpened]; st.Attrs[timeline.AttrPRRef] != "widgets#40" || st.Count != 1 {
+		t.Fatalf("existing pr_opened rewritten: %+v", st)
+	}
+	if st := j.Stages[timeline.KindMerged]; st == nil || st.FirstAt != merged.UnixMilli() {
+		t.Fatalf("merged = %+v", st)
+	}
+
+	for _, bad := range []github.PRTerminalObservation{
+		{Repo: "acme/widgets", Number: 42, State: github.PRStateClosed, ObservedAt: merged, Issues: []int{7}},
+		{Repo: "acme/widgets", Number: 42, State: github.PRStateMerged, Issues: []int{7}},
+		{Repo: "acme/widgets", Number: 42, State: github.PRStateMerged, ObservedAt: merged},
+	} {
+		if got := backfillMergedPROnIssues(rec, "acme", bad); got != 0 {
+			t.Errorf("backfill(%+v) = %d, want 0", bad, got)
+		}
+	}
+	if got := backfillMergedPROnIssues(nil, "acme", obs); got != 0 {
+		t.Error("nil recorder must be a no-op")
+	}
+	if got := backfillMergedPROnIssues(&fakeLifecycleRecorder{}, "acme", obs); got != 0 {
+		t.Error("nil store must be a no-op")
+	}
+}
+
+type fakeMergedPRLister struct {
+	since time.Time
+	prs   []github.PRTerminalObservation
+	err   error
+}
+
+func (f *fakeMergedPRLister) MergedPRsSince(_ context.Context, since time.Time) ([]github.PRTerminalObservation, error) {
+	f.since = since
+	return f.prs, f.err
+}
+
+func TestBackfillRecentMergedPRs_LooksBackSevenDaysAndAppliesPartialResults(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "bee", "acme/widgets", 7, "claim")
+	now := time.Now().UTC()
+	lister := &fakeMergedPRLister{
+		prs: []github.PRTerminalObservation{{
+			Repo: "acme/widgets", Number: 41, State: github.PRStateMerged,
+			ObservedAt: now.Add(-time.Hour), CreatedAt: now.Add(-2 * time.Hour), Issues: []int{7},
+		}},
+		err: context.DeadlineExceeded,
+	}
+	if got := backfillRecentMergedPRs(context.Background(), lister, rec, "acme", now, nil); got != 1 {
+		t.Fatalf("updated = %d, want 1", got)
+	}
+	if want := now.Add(-github.MergedPRBackfillWindow); !lister.since.Equal(want) {
+		t.Errorf("since = %v, want %v", lister.since, want)
+	}
+	if got := backfillRecentMergedPRs(context.Background(), lister, rec, "acme", now, nil); got != 0 {
+		t.Fatalf("second run updated = %d, want 0", got)
+	}
+	if got := backfillRecentMergedPRs(context.Background(), nil, rec, "acme", now, nil); got != 0 {
+		t.Error("nil lister must be a no-op")
 	}
 }

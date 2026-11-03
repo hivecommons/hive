@@ -131,7 +131,7 @@ func TestResolveWatsonxGatewayPrefersNameThenKind(t *testing.T) {
 	other := config.GatewayConfig{Name: "openai", Kind: "openai", Endpoint: "https://other.example"}
 
 	cfgWith := func(gws ...config.GatewayConfig) *config.Config {
-		return &config.Config{Governor: config.GovernorConfig{Gateways: gws}}
+		return &config.Config{Governor: config.GovernorConfig{AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{Gateways: gws}}}
 	}
 
 	if gw := resolveWatsonxGateway(cfgWith(other, byKind, named)); gw == nil || gw.Endpoint != "https://named.example" {

@@ -156,6 +156,16 @@ const (
 	// minutes), short enough that yesterday's incident does not still fire.
 	alertCrashLoopWindow = 2 * time.Hour
 
+	// alertUpgradeStartGrace is how long after the hub triggers an upgrade a
+	// new spoke start is still attributed to that rollout rather than to a
+	// crash. It covers the image pull, the ReplicaSet roll and the follow-up
+	// roll a mutable tag can cause a few seconds later (#11824).
+	alertUpgradeStartGrace = 10 * time.Minute
+
+	// alertUpgradeClockSkew tolerates a spoke-reported StartedAt (spoke clock)
+	// that lands slightly BEFORE the hub-recorded upgrade trigger (hub clock).
+	alertUpgradeClockSkew = 2 * time.Minute
+
 	// alertTokenBurnMedianMultiple is how many times the fleet median 24h token
 	// spend a hive must exceed before its burn is called anomalous. A runaway
 	// agent typically lands an order of magnitude out; 5x is well clear of the
@@ -282,11 +292,19 @@ type alertState struct {
 	// startTimes records the distinct StartedAt values observed per hive, with
 	// the observation time. Key: hive ID.
 	startTimes map[string][]alertStartObservation
+	// upgradeStarts records when the hub triggered (or observed) an upgrade
+	// rollout per hive, so the crash-loop rule can tell a rollout's new
+	// StartedAt from a crash's (#11824). Key: hive ID.
+	upgradeStarts map[string][]time.Time
 	// firstSeen records when each (hive, type) condition was first observed
 	// continuously. Key: alertAckKey(hiveID, type).
 	firstSeen map[string]time.Time
 	// acks holds acknowledgements. Key: alertAckKey(hiveID, type).
 	acks map[string]alertAck
+	// hubStartedAt is when this hub process began serving (set by the
+	// production lifecycle via markHubStart, zero in tests). Restart-sensitive
+	// rules are suppressed for alertHubRestartGrace after it (#11826).
+	hubStartedAt time.Time
 }
 
 // alertStartObservation is one observed spoke process start time.
@@ -301,14 +319,65 @@ type alertStartObservation struct {
 
 func newAlertState() *alertState {
 	return &alertState{
-		startTimes: make(map[string][]alertStartObservation),
-		firstSeen:  make(map[string]time.Time),
-		acks:       make(map[string]alertAck),
+		startTimes:    make(map[string][]alertStartObservation),
+		upgradeStarts: make(map[string][]time.Time),
+		firstSeen:     make(map[string]time.Time),
+		acks:          make(map[string]alertAck),
 	}
 }
 
+// noteUpgrade records that an upgrade rollout for hiveID began at `at`. A
+// spoke start that lands within alertUpgradeStartGrace after it is not
+// counted as a crash restart. Safe on a nil receiver (test servers built
+// without alert state).
+func (a *alertState) noteUpgrade(hiveID string, at time.Time) {
+	if a == nil || hiveID == "" || at.IsZero() {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	marks := pruneUpgradeStarts(a.upgradeStarts[hiveID], at)
+	for _, u := range marks {
+		if u.Equal(at) {
+			a.upgradeStarts[hiveID] = marks
+			return
+		}
+	}
+	marks = append(marks, at)
+	if len(marks) > alertStartTimesRetained {
+		marks = marks[len(marks)-alertStartTimesRetained:]
+	}
+	a.upgradeStarts[hiveID] = marks
+}
+
+// pruneUpgradeStarts returns a fresh slice holding only the upgrade marks that
+// can still explain a start observed inside the crash-loop window.
+func pruneUpgradeStarts(marks []time.Time, now time.Time) []time.Time {
+	kept := make([]time.Time, 0, len(marks))
+	for _, u := range marks {
+		if now.Sub(u) > alertCrashLoopWindow+alertUpgradeStartGrace {
+			continue
+		}
+		kept = append(kept, u)
+	}
+	return kept
+}
+
+// upgradeAttributable reports whether a spoke start time is explained by one
+// of the hive's recorded upgrade rollouts.
+func upgradeAttributable(startedAt time.Time, marks []time.Time) bool {
+	for _, u := range marks {
+		if !startedAt.Before(u.Add(-alertUpgradeClockSkew)) && !startedAt.After(u.Add(alertUpgradeStartGrace)) {
+			return true
+		}
+	}
+	return false
+}
+
 // observeStart records a spoke-reported start time and returns how many
-// distinct restarts have been observed inside alertCrashLoopWindow.
+// distinct restarts have been observed inside alertCrashLoopWindow. Starts
+// attributable to an upgrade rollout (see noteUpgrade) are remembered but not
+// counted: a hub-triggered rollout is not a crash (#11824).
 //
 // Returns 0 for an unparseable or zero start time — an unknown uptime is not
 // evidence of a crash loop.
@@ -348,7 +417,20 @@ func (a *alertState) observeStart(hiveID, startedAt string, now time.Time) int {
 	final := make([]alertStartObservation, len(kept))
 	copy(final, kept)
 	a.startTimes[hiveID] = final
-	return len(final)
+
+	marks := pruneUpgradeStarts(a.upgradeStarts[hiveID], now)
+	if len(marks) == 0 {
+		delete(a.upgradeStarts, hiveID)
+	} else {
+		a.upgradeStarts[hiveID] = marks
+	}
+	restarts := 0
+	for _, o := range final {
+		if !upgradeAttributable(o.StartedAt, marks) {
+			restarts++
+		}
+	}
+	return restarts
 }
 
 // markCondition records that a condition is currently true and returns when it
@@ -499,26 +581,46 @@ type alertHive struct {
 	// GitHub App, ACMM 0, zero agents) — an idle pool slot legitimately has
 	// none of those and flagging it would bury the real problems. Mirrors the
 	// dashboard's isPlaceholderHive() exactly.
-	IsPlaceholder    bool
-	Online           bool
-	LastHeartbeat    string
-	StartedAt        string
-	RegisteredAt     string
-	Upgrading        bool
-	UpgradeStartedAt time.Time
-	UpgradeTarget    string
-	UpgradeFailed    bool
-	UpgradeError     string
-	TotalTokens24h   int64
-	Health           map[string]any
-	ProvStatus       string
-	ProvError        string
+	IsPlaceholder     bool
+	Online            bool
+	LastHeartbeat     string
+	OfflineSince      string
+	StartedAt         string
+	RegisteredAt      string
+	Upgrading         bool
+	UpgradeStartedAt  time.Time
+	UpgradeTarget     string
+	UpgradeDrainUntil time.Time
+	UpgradeDrain      *UpgradeDrainReport
+	UpgradeFailed     bool
+	UpgradeError      string
+	// UpgradeRestartFallback mirrors RegistryEntry's field: the spoke's reason
+	// for falling back to a process restart after a refused Deployment patch.
+	UpgradeRestartFallback string
+	TotalTokens24h         int64
+	Health                 map[string]any
+	ProvStatus             string
+	ProvError              string
 	// AdvisoryStale / AdvisoryStaleReason are carried through verbatim from
 	// the entry rather than recomputed. advisoryStale() owns the threshold and
 	// the advisory-mode + app-can-write gating; duplicating either here is
 	// exactly how the panel and the row pill would start disagreeing.
 	AdvisoryStale       bool
 	AdvisoryStaleReason string
+
+	// StatsStale is the entry's own "this beat carried cached or minimal
+	// stats" marker (collect timed out on the spoke). Spoke-reported facts
+	// such as advisoryLastPostedAt are then the LAST-GOOD values, not fresh
+	// ones, so rules that judge their age must not fire on them (#12842).
+	StatsStale bool
+
+	// ZeroTokenSpendExplained is true when a zero 24h token spend is expected
+	// or already explained by a stronger signal on the entry (all agents
+	// paused, no queued work and no expected-active agents, fresh advisory
+	// output, a precondition-red health verdict, ...). Precomputed by
+	// zeroTokenSpendExplained so the evaluator stays constructible without a
+	// whole MyHiveEntry (#12844).
+	ZeroTokenSpendExplained bool
 
 	// InactiveAgents / InactiveAgentsReason are carried through verbatim from
 	// the entry rather than recomputed, exactly as the advisory pair above is:
@@ -561,25 +663,32 @@ type alertHive struct {
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
 func alertHiveFromEntry(h MyHiveEntry) alertHive {
 	return alertHive{
-		ID:               h.ID,
-		Name:             h.Name,
-		IsPlaceholder:    isPlaceholderEntry(h),
-		Online:           h.Online,
-		LastHeartbeat:    h.LastHeartbeat,
-		StartedAt:        h.StartedAt,
-		RegisteredAt:     h.RegisteredAt,
-		Upgrading:        h.Upgrading,
-		UpgradeStartedAt: h.UpgradeStartedAt,
-		UpgradeTarget:    h.UpgradeTarget,
-		UpgradeFailed:    h.UpgradeFailed,
-		UpgradeError:     h.UpgradeError,
-		TotalTokens24h:   h.TotalTokens24h,
-		Health:           h.Health,
-		ProvStatus:       h.ProvStatus,
-		ProvError:        h.ProvError,
+		ID:                     h.ID,
+		Name:                   h.Name,
+		IsPlaceholder:          isPlaceholderEntry(h),
+		Online:                 h.Online,
+		LastHeartbeat:          h.LastHeartbeat,
+		OfflineSince:           h.OfflineSince,
+		StartedAt:              h.StartedAt,
+		RegisteredAt:           h.RegisteredAt,
+		Upgrading:              h.Upgrading,
+		UpgradeStartedAt:       h.UpgradeStartedAt,
+		UpgradeTarget:          h.UpgradeTarget,
+		UpgradeDrainUntil:      h.UpgradeDrainUntil,
+		UpgradeDrain:           h.UpgradeDrain,
+		UpgradeFailed:          h.UpgradeFailed,
+		UpgradeError:           h.UpgradeError,
+		UpgradeRestartFallback: h.UpgradeRestartFallback,
+		TotalTokens24h:         h.TotalTokens24h,
+		Health:                 h.Health,
+		ProvStatus:             h.ProvStatus,
+		ProvError:              h.ProvError,
 
 		AdvisoryStale:       h.AdvisoryStale,
 		AdvisoryStaleReason: h.AdvisoryStaleReason,
+
+		StatsStale:              h.StatsStale,
+		ZeroTokenSpendExplained: zeroTokenSpendExplained(h),
 
 		InactiveAgents:       h.InactiveAgents,
 		InactiveAgentsReason: h.InactiveAgentsReason,
@@ -597,6 +706,56 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 // placeholderOrgPrefix is the org-name prefix a pre-provisioned pool slot
 // carries before it is claimed.
 const placeholderOrgPrefix = "available-"
+
+// zeroTokenSpendExplained reports whether a claimed hive spending no tokens in
+// 24h is expected, or already explained by a stronger signal, so the zero-spend
+// token-burn info alert would only duplicate it (#12844). Every arm is POSITIVE
+// evidence the entry already carries; nothing here guesses.
+//
+//   - the beat carried cached/minimal stats, so the zero is not an observation;
+//   - every agent is deliberately quiet (paused or off-schedule), or every
+//     expected-active agent is paused — the operator's choice;
+//   - no spend is expected: no queued work and no unpaused expected-active
+//     agents;
+//   - advisory/issue output is fresh, so the hive is visibly producing;
+//   - the health verdict is all-paused, or a precondition red (App broken,
+//     budget, login-stuck, agents down, ...) that already names the cause.
+func zeroTokenSpendExplained(h MyHiveEntry) bool {
+	if h.StatsStale || h.AllAgentsQuiet || h.PendingGitHubAppInstall {
+		return true
+	}
+	r := h.FleetRollup
+	if r != nil && r.Expected > 0 && r.Paused >= r.Expected {
+		return true
+	}
+	expectedActive := r != nil && r.Expected > r.Paused
+	if h.ActionableIssues+h.ActionablePRs <= 0 && !expectedActive {
+		return true
+	}
+	if h.AdvisoryIssueActivity.Bucket == advisoryIssueBucketFresh {
+		return true
+	}
+	if v := h.HealthVerdict; v != nil {
+		if v.cause == causeAllPaused {
+			return true
+		}
+		if v.State == HealthStateRed && !v.staleOutput {
+			return true
+		}
+	}
+	return false
+}
+
+// zeroTokensAlreadyExplained reports whether the zero-spend token-burn alert
+// would be noise for this hive: the entry already explains it, or a stronger
+// alert evaluated from the same snapshot (inference auth, GitHub App required,
+// inactive agents) names the real cause.
+func zeroTokensAlreadyExplained(h alertHive) bool {
+	return h.ZeroTokenSpendExplained ||
+		strings.TrimSpace(h.InferenceAuthError) != "" ||
+		h.GitHubAppRequired ||
+		h.InactiveAgents > 0
+}
 
 // failingHealthChecks extracts the names of checks reporting "fail" from the
 // spoke-reported Health map.
@@ -717,6 +876,13 @@ const (
 	// spoke version may report (e.g. a future github_app_key). Every check in
 	// that family verifies credentials a placeholder cannot have yet.
 	healthCheckGitHubAppPrefix = "github_app"
+
+	// healthCheckProjectOrg is the spoke's placeholder-org setup check
+	// (pkg/dashboard/health_placeholder_org.go). It fails while project.org is
+	// still a slot placeholder paired with a bare repo — which is exactly how
+	// an UNCLAIMED available pool slot is seeded, so it is only meaningful once
+	// the slot is claimed (#12843).
+	healthCheckProjectOrg = "project_org"
 )
 
 // isAuthClassHealthCheck reports whether a named health check verifies GitHub
@@ -731,12 +897,15 @@ func isAuthClassHealthCheck(name string) bool {
 
 // withoutAuthClassChecks filters auth-class names out of a failing-checks list.
 // Used only for placeholders; a claimed hive's list passes through untouched.
-func withoutAuthClassChecks(names []string) []string {
+// An AVAILABLE (unclaimed) pool slot also drops project_org: its placeholder
+// org/repo is the pool's seed, not a misconfiguration (#12843).
+func withoutAuthClassChecks(names []string, available bool) []string {
 	kept := names[:0:0]
 	for _, n := range names {
-		if !isAuthClassHealthCheck(n) {
-			kept = append(kept, n)
+		if isAuthClassHealthCheck(n) || (available && n == healthCheckProjectOrg) {
+			continue
 		}
+		kept = append(kept, n)
 	}
 	return kept
 }
@@ -811,6 +980,18 @@ func fleetMedianTokens(hives []alertHive) (int64, int) {
 //
 // now is injected so the rules are testable at boundary conditions.
 func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, now time.Time) AlertSummary {
+	return evaluateAlertsInFleet(state, hives, hives, driftAlerts, now)
+}
+
+// evaluateAlertsInFleet is evaluateAlerts for a caller whose view (hives) may
+// be a SCOPED subset of the whole hub fleet. Fleet-relative facts — the
+// token-burn median here, and the repo overlaps fleetAlerts stamps from the
+// same fleet — are taken over the full fleet, so every caller reaches the same
+// firing verdict for the same hive (#11819). alertState is shared hub-wide:
+// when a scoped poll computed the median over only its own few hives, a hive
+// the admin saw firing was evaluated as NOT firing there, retention evicted its
+// FirstSeen and ack, and the admin's next Acknowledge click answered 409.
+func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAlerts []Alert, now time.Time) AlertSummary {
 	summary := AlertSummary{
 		CountsBySeverity: map[string]int{},
 		CountsByType:     map[string]int{},
@@ -819,7 +1000,14 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		return summary
 	}
 
-	medianTokens, fleetSize := fleetMedianTokens(hives)
+	medianTokens, fleetSize := fleetMedianTokens(fleet)
+	// visible is the caller's view. An overlap claim by a hive outside it is
+	// kept out of the rendered reason so a scoped caller never learns which
+	// hive it cannot see manages the same repo.
+	visible := make(map[string]bool, len(hives))
+	for _, h := range hives {
+		visible[h.ID] = true
+	}
 
 	var alerts []Alert
 	// active tracks every condition firing this pass, so retainConditions can
@@ -870,9 +1058,16 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		// --- Rule: crash-looping. Distinct start times observed inside the
 		// window, with the current uptime still below the ceiling (a hive that
 		// restarted a few times and has now been up for hours has recovered
-		// and should not keep alerting). ---
+		// and should not keep alerting). An upgrade visible in this snapshot
+		// is recorded first so its rollout start is not counted as a crash;
+		// beginUpgrade records hub-triggered ones too, because the latch is
+		// usually cleared by the time the new pod's first beat is evaluated. ---
+		if h.Upgrading && !h.UpgradeStartedAt.IsZero() {
+			state.noteUpgrade(h.ID, h.UpgradeStartedAt)
+		}
 		restarts := state.observeStart(h.ID, h.StartedAt, now)
-		if restarts >= alertCrashLoopMinRestarts && recentlyStarted(h.StartedAt, now) {
+		if restarts >= alertCrashLoopMinRestarts && recentlyStarted(h.StartedAt, now) &&
+			!state.suppressedByHubRestart(h.ID, AlertTypeCrashLoop, now) {
 			add(h.ID, h.Name, AlertTypeCrashLoop, AlertSeverityCritical,
 				"Restarted "+itoa(restarts)+" times in the last "+
 					alertCrashLoopWindow.String()+" and has been up under "+
@@ -881,11 +1076,22 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 
 		// --- Rule: offline beyond the threshold. Checked for placeholders too:
 		// a pool slot that has stopped heartbeating is genuinely broken, not
-		// merely idle. ---
-		if !h.Online {
+		// merely idle.
+		//
+		// A hive whose registry entry was pruned after staleRemoveAge has no
+		// LastHeartbeat left; for an assigned hive the persisted went-offline
+		// time (OfflineSince) stands in, so the alert outlives the prune
+		// instead of vanishing after 24h (#11644). ---
+		if !h.Online && !state.suppressedByHubRestart(h.ID, AlertTypeOffline, now) {
 			if age, ok := heartbeatAge(h.LastHeartbeat, now); ok && age > alertOfflineThreshold {
 				add(h.ID, h.Name, AlertTypeOffline, AlertSeverityCritical,
 					"No heartbeat for "+roundedDuration(age))
+			} else if h.LastHeartbeat == "" {
+				if age, ok := heartbeatAge(h.OfflineSince, now); ok && age > alertOfflineThreshold {
+					add(h.ID, h.Name, AlertTypeOffline, AlertSeverityCritical,
+						"Offline since "+strings.TrimSpace(h.OfflineSince)+" ("+roundedDuration(age)+
+							"); registry entry pruned after "+staleRemoveAge.String()+" without a heartbeat")
+				}
 			}
 		}
 
@@ -906,12 +1112,22 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 			add(h.ID, h.Name, AlertTypeFailedUpgrade, AlertSeverityCritical, reason)
 		}
 
-		if h.Upgrading && !h.UpgradeStartedAt.IsZero() {
+		// A spoke draining agent kicks before a self-upgrade is waiting, not
+		// stuck, until the deadline it reported.
+		if h.Upgrading && !h.UpgradeStartedAt.IsZero() && !upgradeDrainActive(h.UpgradeDrainUntil, now) {
 			if age := now.Sub(h.UpgradeStartedAt); age > staleUpgradeTimeout {
 				reason := "Upgrade in flight for " + roundedDuration(age) +
 					" (limit " + staleUpgradeTimeout.String() + ")"
 				if t := strings.TrimSpace(h.UpgradeTarget); t != "" {
 					reason += ", target " + t
+				}
+				if d := h.UpgradeDrain; d != nil && d.RemainingS > 0 {
+					reason += "; the spoke is draining in-flight agent kicks (" +
+						orDash(joinNames(d.InFlight)) + "), at most " +
+						roundedDuration(time.Duration(d.RemainingS)*time.Second) + " more"
+				}
+				if fb := strings.TrimSpace(h.UpgradeRestartFallback); fb != "" {
+					reason += "; the spoke could not patch its own Deployment: " + fb
 				}
 				add(h.ID, h.Name, AlertTypeStuckUpgrade, AlertSeverityWarning, reason)
 			}
@@ -925,9 +1141,12 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		// claimed-hive concern"): an unassigned slot has no GitHub auth by
 		// design, and every live placeholder alerting github_auth was burying
 		// a real alert under pool noise. A claimed hive's list is untouched.
+		// An available (unclaimed) slot additionally drops project_org: it is
+		// seeded with a placeholder org/repo, which the check flags by design
+		// until the slot is claimed (#12843).
 		failing := failingHealthChecks(h.Health)
 		if h.IsPlaceholder {
-			failing = withoutAuthClassChecks(failing)
+			failing = withoutAuthClassChecks(failing, h.ProvStatus == statusAvailable)
 		}
 		if len(failing) > 0 {
 			shown := failing
@@ -951,7 +1170,13 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		// placeholder guard every claimed-hive rule applies. Severity is
 		// warning, not critical: the hive is still running and doing work, but
 		// the digest path a human relies on has quietly wedged.
-		if !h.IsPlaceholder && h.AdvisoryStale {
+		//
+		// A StatsStale beat is skipped: the spoke's collect timed out and it
+		// resent cached (or identity-only) stats, so advisoryLastPostedAt is
+		// the last-good value, not proof the digest stopped posting — the same
+		// "never claim health for a hive we can't see" rule the health verdict
+		// applies (#12842).
+		if !h.IsPlaceholder && h.AdvisoryStale && !h.StatsStale {
 			reason := h.AdvisoryStaleReason
 			if reason == "" {
 				// Only reached if a spoke reports the flag without a reason.
@@ -1014,9 +1239,34 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		// hives in the pair deliberately: either operator can act, and an alert
 		// on only one of them reads as that hive being at fault rather than the
 		// pair being ambiguous.
-		if len(h.RepoOverlaps) > 0 {
-			add(h.ID, h.Name, AlertTypeRepoOverlap, AlertSeverityWarning,
-				repoOverlapAlertReason(h.ID, h.RepoOverlaps))
+		//
+		// Unclaimed pool slots are skipped: every slot is seeded with the same
+		// "placeholder" project, so they would otherwise all "overlap" each
+		// other (#11818).
+		if !h.IsPlaceholder && len(h.RepoOverlaps) > 0 {
+			var shown []RepoOverlap
+			for _, o := range h.RepoOverlaps {
+				claims := make([]OverlapClaim, 0, len(o.Hives))
+				for _, c := range o.Hives {
+					if visible[c.ID] {
+						claims = append(claims, c)
+					}
+				}
+				if len(claims) > 1 {
+					o.Hives = claims
+					shown = append(shown, o)
+				}
+			}
+			if len(shown) > 0 {
+				add(h.ID, h.Name, AlertTypeRepoOverlap, AlertSeverityWarning,
+					repoOverlapAlertReason(h.ID, shown))
+			} else {
+				// The overlap is only with hives this caller cannot see: keep
+				// the shared condition alive (so this poll does not evict the
+				// FirstSeen/ack an admin's view relies on) without rendering it.
+				state.markCondition(h.ID, AlertTypeRepoOverlap, now)
+				active[alertAckKey(h.ID, AlertTypeRepoOverlap)] = true
+			}
 		}
 
 		// --- Rule: agents are running but not working. ---
@@ -1040,14 +1290,17 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		}
 
 		// --- Rule: token burn anomaly. Claimed hives only — an unassigned
-		// placeholder has no agents and therefore legitimately spends nothing. ---
+		// placeholder has no agents and therefore legitimately spends nothing.
+		// The zero-spend arm fires only when spend is expected and nothing
+		// stronger already explains its absence (#12844). ---
 		if !h.IsPlaceholder {
 			if fleetSize >= alertTokenBurnMinFleetSize && medianTokens >= alertTokenBurnMinMedian &&
 				h.TotalTokens24h > medianTokens*alertTokenBurnMedianMultiple {
 				add(h.ID, h.Name, AlertTypeTokenBurn, AlertSeverityInfo,
 					"Burned "+itoa64(h.TotalTokens24h)+" tokens in 24h, over "+
 						itoa(alertTokenBurnMedianMultiple)+"x the fleet median of "+itoa64(medianTokens))
-			} else if h.Online && h.TotalTokens24h <= 0 && registeredLongerThan(h.RegisteredAt, alertZeroTokenMinAge, now) {
+			} else if h.Online && h.TotalTokens24h <= 0 && registeredLongerThan(h.RegisteredAt, alertZeroTokenMinAge, now) &&
+				!zeroTokensAlreadyExplained(h) {
 				add(h.ID, h.Name, AlertTypeTokenBurn, AlertSeverityInfo,
 					"Online but has spent no tokens in 24h")
 			}
@@ -1176,18 +1429,29 @@ func itoa64(n int64) string {
 	return string(buf[i:])
 }
 
-// fleetAlerts evaluates alerts for the hives the caller can see.
+// fleetAlerts evaluates alerts for the hives the caller can see (entries).
+// fleet is the WHOLE hub fleet, which fleet-relative facts (token-burn median,
+// repo overlaps) are computed over so a scoped caller's poll reaches the same
+// verdict as the admin's and cannot evict shared alert state (#11819). A nil
+// fleet means entries already is the whole fleet.
 //
 // It takes NO HubServer lock: the caller passes an already-copied snapshot, and
 // alertState has its own leaf mutex. This keeps the evaluator off the s.mu
 // critical path entirely.
-func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
+func (s *HubServer) fleetAlerts(entries, fleet []MyHiveEntry) AlertSummary {
 	if s == nil || s.alerts == nil {
 		return AlertSummary{CountsBySeverity: map[string]int{}, CountsByType: map[string]int{}}
+	}
+	if fleet == nil {
+		fleet = entries
 	}
 	hives := make([]alertHive, 0, len(entries))
 	for _, e := range entries {
 		hives = append(hives, alertHiveFromEntry(e))
+	}
+	fleetHives := make([]alertHive, 0, len(fleet))
+	for _, e := range fleet {
+		fleetHives = append(fleetHives, alertHiveFromEntry(e))
 	}
 	// ClusterHasKey is hub-observed fact (the per-cluster PEM store on disk),
 	// so it is stamped here rather than in alertHiveFromEntry, which must stay
@@ -1209,10 +1473,15 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	}
 	// #5691: repo-ownership overlap is a relationship BETWEEN hives, so like
 	// ClusterHasKey above it is computed once over the whole snapshot and
-	// stamped, never derived per hive. Placeholders fall out for free: an
-	// unassigned pool slot has no repos to claim.
-	regsForOverlap := make([]RegistryEntry, 0, len(entries))
-	for _, e := range entries {
+	// stamped, never derived per hive. Computed over the whole fleet (see
+	// above); evaluateAlertsInFleet keeps hidden hives out of the reason.
+	// Unclaimed pool slots are excluded: they are all seeded with the same
+	// "placeholder" project and would otherwise overlap each other (#11818).
+	regsForOverlap := make([]RegistryEntry, 0, len(fleet))
+	for _, e := range fleet {
+		if isPlaceholderEntry(e) {
+			continue
+		}
 		regsForOverlap = append(regsForOverlap, e.RegistryEntry)
 	}
 	if overlaps := computeRepoOverlaps(regsForOverlap); len(overlaps) > 0 {
@@ -1232,7 +1501,7 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	for _, e := range entries {
 		regs = append(regs, e.RegistryEntry)
 	}
-	summary := evaluateAlerts(s.alerts, hives, s.urlUnreachableAlerts(regs, now), now)
+	summary := evaluateAlertsInFleet(s.alerts, hives, fleetHives, s.urlUnreachableAlerts(regs, now), now)
 	// Cosmetic: resolve opaque OIDC ack identities to display names for the
 	// "— ack by …" note. The stored ack keeps the raw identity.
 	label := s.identityLabeler()

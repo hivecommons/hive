@@ -146,7 +146,7 @@ func TestPrefilterTrustedAuthorPRSentinelAlertAllowed(t *testing.T) {
 		pr.User = &gh.User{Login: gh.Ptr("alice")}
 		pr.Labels = []*gh.Label{{Name: gh.Ptr("Sentinel-Alert")}}
 	})
-	if got := c.prefilterTrustedAuthorPR(pr, policy); got != "" {
+	if got := c.prefilterTrustedAuthorPR("acme", "widget", pr, policy); got != "" {
 		t.Fatalf("prefilterTrustedAuthorPR = %q, want trusted sentinel PR to pass", got)
 	}
 }

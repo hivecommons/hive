@@ -1,0 +1,1 @@
+- CI: the sliced `test-hub` / `test-agent` lanes append the `ok <pkg>` / `FAIL <pkg>` summary line the coverage scorer classifies packages by, so a partial selection that includes `pkg/hub` or `crux/agent` no longer fails with "produced no test result" and their floors are scored on full runs again (#14135).

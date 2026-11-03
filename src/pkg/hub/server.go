@@ -25,11 +25,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/openrouter"
 	"github.com/hivecommons/hive/pkg/auth"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
-	"github.com/hivecommons/hive/pkg/openrouter"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -124,6 +125,9 @@ const (
 	registrySaveDelay   = 5 * time.Second
 	maxPayloadBytes     = 1 << 20 // 1MB
 	staleUpgradeTimeout = 10 * time.Minute
+	// maxUpgradeDrainDeadline caps how far ahead a spoke-reported drain
+	// deadline is honoured, so a bogus value cannot mute stuck detection.
+	maxUpgradeDrainDeadline = 6 * time.Hour
 )
 
 type Registry struct {
@@ -224,6 +228,11 @@ type RegistryEntry struct {
 	AuthHealth       string    `json:"authHealth,omitempty"`
 	AuthHealthReason string    `json:"authHealthReason,omitempty"`
 	AuthHealthSince  time.Time `json:"authHealthSince,omitempty"`
+	// Providers is the spoke-reported per-provider roll-up of agent auth and
+	// provider availability (ADR-0024, #12611) — two separate dimensions, so
+	// "not authenticated" never reads as "provider unavailable" or vice
+	// versa. Nil = old spoke or provider status disabled (no signal).
+	Providers []crux.ProviderStatus `json:"providers,omitempty"`
 	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
 	// banner. It is separate from BudgetExhausted, which is hive-local governor
 	// budget; this means the upstream provider is refusing token purchases.
@@ -249,6 +258,11 @@ type RegistryEntry struct {
 	TotalTokens24h   int64                `json:"totalTokens24h"`
 	ActionableIssues int                  `json:"actionableIssues"`
 	ActionablePRs    int                  `json:"actionablePRs"`
+	// OpenIssues/OpenPRs are all open issues and PRs across the hive's repos,
+	// from the heartbeat's governor summary. Zero when an older spoke did not
+	// report them.
+	OpenIssues int `json:"openIssues,omitempty"`
+	OpenPRs    int `json:"openPRs,omitempty"`
 	// Output-freshness telemetry explains L3-L6 "no write" verdicts. Empty
 	// means an older spoke omitted the optional fields and current behavior is
 	// preserved.
@@ -331,12 +345,34 @@ type RegistryEntry struct {
 	Upgrading        bool      `json:"upgrading,omitempty"`
 	UpgradeTarget    string    `json:"upgradeTarget,omitempty"`
 	UpgradeStartedAt time.Time `json:"upgradeStartedAt,omitempty"`
+	// UpgradeDrainUntil is the deadline the spoke reported for deferring its
+	// self-upgrade while agent kicks drain. Until it passes the upgrade is
+	// waiting, not stuck. Zero when the spoke is not draining.
+	UpgradeDrainUntil time.Time `json:"upgradeDrainUntil,omitempty"`
+	// SpokeReportedUpgrading is the spoke's own latest heartbeat
+	// payload.Upgrading, unlike Upgrading above, which is also the hub's
+	// durable latch. In-memory only.
+	SpokeReportedUpgrading bool `json:"-"`
 	// UpgradeFailed records that the spoke reported an upgrade it could not
 	// complete, with the cause. Distinct from Upgrading: "failed" is a terminal
 	// state a human must see, not an in-flight one.
 	UpgradeFailed   bool      `json:"upgradeFailed,omitempty"`
 	UpgradeError    string    `json:"upgradeError,omitempty"`
 	UpgradeFailedAt time.Time `json:"upgradeFailedAt,omitempty"`
+	// UpgradeRestartFallback is the spoke's explanation for why it could not
+	// PATCH its own Deployment during the in-flight upgrade and exited so the
+	// kubelet re-pulls its floating tag instead (typically an admission
+	// webhook rejecting or timing out the patch). Not a failure: the latch
+	// stays, no attempt is spent. Carried across beats while Upgrading and
+	// dropped with the latch, so the orphan sweep and the stuck-upgrade alert
+	// can name the real cause instead of guessing at the image tag.
+	UpgradeRestartFallback string `json:"upgradeRestartFallback,omitempty"`
+	// UpgradeDrain is the spoke's latest heartbeat account of an upgrade it is
+	// deliberately holding until in-flight agent kicks finish. Rebuilt from
+	// every beat (nil when the spoke reports no drain), so a non-nil value
+	// means the MOST RECENT beat was still draining. The orphan sweep reads it
+	// to keep a draining attempt latched instead of abandoning it.
+	UpgradeDrain *UpgradeDrainReport `json:"upgradeDrain,omitempty"`
 	// OrphanedUpgradeSweeps counts how many times the orphan sweep has cleared
 	// and re-armed an upgrade for this hive without it ever landing. A spoke
 	// that cannot advance (it restarts, comes back on a SHA that is neither the
@@ -490,6 +526,10 @@ type RegistryEntry struct {
 	// value with no frameworks = compliance not configured. Carried forward
 	// across beats that omit it.
 	Compliance *HeartbeatCompliance `json:"compliance,omitempty"`
+
+	// Evidence is the spoke's evidence-pipeline summary (#12080), always the
+	// product of sanitizeEvidence. nil = never reported (old spoke).
+	Evidence *HeartbeatEvidence `json:"evidence,omitempty"`
 	// AgentsWithModel is the spoke-reported count of agents that have a method
 	// (backend) or model assigned. nil = the spoke is too old to report it, so
 	// journey stage 2 is treated as unknown rather than unsatisfied.
@@ -962,6 +1002,9 @@ type HeartbeatHealthEntry struct {
 }
 
 type HubServer struct {
+	// webhookNoSecretOnce limits the missing-webhook-secret warning to once per process (#13666).
+	webhookNoSecretOnce  sync.Once
+	selfExperimentFlags  sync.Map // hive ID -> nous.SelfFlagAssignment; restart fails closed
 	mux                  *http.ServeMux
 	registry             Registry
 	mu                   sync.RWMutex
@@ -999,12 +1042,13 @@ type HubServer struct {
 	// goroutine — which outlives test servers, since nothing closes saveCh —
 	// only ever sees its own path and cannot race a test redirecting the
 	// global for the next server (the TestLoadRegistry -race failure).
-	registryPath   string
-	hubGitHash     string
-	hubGitBranch   string
-	hubSecret      string
-	myHivesCacheMu sync.Mutex
-	myHivesCache   map[string]myHivesSnapshot
+	registryPath    string
+	hubGitHash      string
+	hubGitBranch    string
+	sharedAgentPool *sharedAgentPool
+	hubSecret       string
+	myHivesCacheMu  sync.Mutex
+	myHivesCache    map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
@@ -1123,6 +1167,11 @@ type HubServer struct {
 	// Key: hive ID, value: target SHA.  Cleared when the spoke reports the
 	// target SHA, proving the upgrade completed.
 	heartbeatUpgrade map[string]string
+	// heartbeatFallbackDirectPatch records direct Deployment patches attempted
+	// after a hub-managed heartbeat fallback stayed armed too long. It is
+	// in-memory throttle state only: a hub restart may try once more, which is
+	// acceptable for an idempotent set-image repair.
+	heartbeatFallbackDirectPatch map[string]heartbeatFallbackDirectPatchRecord
 
 	// uncollectibleUpgradeNoted de-duplicates the timeline entry written when
 	// the hub declines to arm an upgrade a hive cannot collect. Key: hive ID,
@@ -1326,6 +1375,14 @@ type HubServer struct {
 	// leaf mutex and is never guarded by s.mu. See timeline.go.
 	timeline *timelineStore
 
+	// upgradeHistory is the per-hive record of upgrade attempts and held
+	// windows with their outcomes (#14856). Leaf mutex; see upgrade_history.go.
+	upgradeHistory *upgradeHistoryStore
+
+	// upgradeInterrupts holds "Upgrade now (interrupt turns)" requests until
+	// the spoke collects them on its heartbeat (#14950). Leaf mutex.
+	upgradeInterrupts *upgradeInterrupts
+
 	// journey holds per-hive user-journey nudge state: which banner each owner
 	// was last sent and when, plus admin snoozes. Persisted to the PVC.
 	journey *journeyStore
@@ -1502,39 +1559,43 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		logger.Info("generated hub secret", "path", hubSecretPath)
 	}
 	s := &HubServer{
-		mux:          http.NewServeMux(),
-		logger:       logger,
-		saveCh:       make(chan struct{}, 1),
-		saveLoopStop: make(chan struct{}),
-		saveLoopDone: make(chan struct{}),
-		registryPath: registryPath,
-		hubGitHash:   gitHash,
-		hubGitBranch: gitBranch,
-		hubSecret:    secret,
+		mux:             http.NewServeMux(),
+		logger:          logger,
+		saveCh:          make(chan struct{}, 1),
+		saveLoopStop:    make(chan struct{}),
+		saveLoopDone:    make(chan struct{}),
+		registryPath:    registryPath,
+		hubGitHash:      gitHash,
+		hubGitBranch:    gitBranch,
+		sharedAgentPool: newSharedAgentPool(),
+		hubSecret:       secret,
 		// Provisional single generation holding the existing master. Replaced
 		// immediately below by loadGenerations, which reads any persisted
 		// rotation off the PVC. It is set here too so the field is never nil
 		// between struct construction and that load.
-		keyGenerations:          legacyGenerationSet(secret),
-		clusters:                loadClusters(logger),
-		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
-		poolReplenishHold:       make(map[string]time.Time),
-		heartbeatUpgrade:        make(map[string]string),
-		heartbeatSwitchTag:      make(map[string]string),
-		heartbeatSwitchSent:     make(map[string]switchSend),
-		clusterUnreachableUntil: make(map[string]time.Time),
-		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
-		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
-		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
-		hubBanners:              make(map[string]*HubBannerEntry),
-		spokeProxyAuthCache:     make(map[string]spokeProxyAuthEntry),
-		topRepoRefreshEnabled:   true,
-		authRolloutSeen:         make(map[string]authRolloutEntry),
-		timeline:                newTimelineStore(),
-		journey:                 newJourneyStore(),
-		alerts:                  newAlertState(),
-		revokedSessions:         newRevokedSessions(),
-		urlHealth:               newURLHealthState(),
+		keyGenerations:               legacyGenerationSet(secret),
+		clusters:                     loadClusters(logger),
+		heartbeatHealth:              make(map[string]*HeartbeatHealthEntry),
+		poolReplenishHold:            make(map[string]time.Time),
+		heartbeatUpgrade:             make(map[string]string),
+		heartbeatFallbackDirectPatch: make(map[string]heartbeatFallbackDirectPatchRecord),
+		heartbeatSwitchTag:           make(map[string]string),
+		heartbeatSwitchSent:          make(map[string]switchSend),
+		clusterUnreachableUntil:      make(map[string]time.Time),
+		pendingWebhooks:              make(map[string]*pendingWebhookEntry),
+		pendingGitHubAppConfigs:      make(map[string]*HeartbeatGitHubAppConfig),
+		pendingGateways:              make(map[string]*HeartbeatGatewayConfig),
+		hubBanners:                   make(map[string]*HubBannerEntry),
+		spokeProxyAuthCache:          make(map[string]spokeProxyAuthEntry),
+		topRepoRefreshEnabled:        true,
+		authRolloutSeen:              make(map[string]authRolloutEntry),
+		timeline:                     newTimelineStore(),
+		upgradeHistory:               newUpgradeHistoryStore(),
+		upgradeInterrupts:            newUpgradeInterrupts(),
+		journey:                      newJourneyStore(),
+		alerts:                       newAlertState(),
+		revokedSessions:              newRevokedSessions(),
+		urlHealth:                    newURLHealthState(),
 		// /api/reach dependencies (#3994): the stub reporter answers an
 		// empty fleet until phase 2a's store is wired via SetReachReporter;
 		// the ancestry backend defaults to the compare-API adapter over
@@ -1637,16 +1698,25 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.recoverArmedUpgrades()
 	s.loadHubBanners()
 	s.timeline.load()
+	s.upgradeHistory.load()
 	if err := s.journey.load(time.Now()); err != nil {
 		// Losing journey state is a soft failure: the worst case is that a few
 		// owners get one duplicate nudge. Never block hub startup on it.
 		logger.Error("failed to load journey nudge state", "error", err)
 	}
 	s.loadAlertAcks()
+	// After the acks, so an ack's FirstSeen wins over the bookkeeping file (#11826).
+	s.loadAlertState()
 	// F10: restore the session revocation set BEFORE the mux starts serving, so
 	// a hub that has just rolled never honours a session revoked before it.
 	s.loadRevokedSessions()
 
+	handleSharedPoolLeases := func(w http.ResponseWriter, r *http.Request) {
+		s.sharedAgentPool.handle(w, r, s)
+	}
+	s.mux.HandleFunc("POST /api/shared-agent-pool/leases", handleSharedPoolLeases)
+	s.mux.HandleFunc("PUT /api/shared-agent-pool/leases", handleSharedPoolLeases)
+	s.mux.HandleFunc("DELETE /api/shared-agent-pool/leases", handleSharedPoolLeases)
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)
 	// NPS feedback forwarded by spokes (#9610): per-hive heartbeat bearer, the
@@ -1654,12 +1724,15 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// GET registered in registerSaaSRoutes.
 	s.mux.HandleFunc("POST "+npsIngestPath, s.handleNPSIngest)
 	s.mux.HandleFunc("POST "+feedbackIngestPath, s.handleFeedbackIngest)
+	s.mux.HandleFunc("POST "+selfReportIngestPath, s.handleSelfReportIngest)
 	s.mux.HandleFunc("GET "+feedbackIssuesPath, s.handleFeedbackIssues)
 	s.mux.HandleFunc("GET /api/registry", s.handleRegistry)
 	s.mux.HandleFunc("GET /api/hub/leaderboard", s.handleLeaderboard)
 	s.mux.HandleFunc("GET /api/hub/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
 	s.mux.HandleFunc("GET "+complianceRollupPath, s.requireAdmin(s.handleComplianceRollup))
+	s.mux.HandleFunc("GET "+evidencePath, s.requireAdmin(s.handleEvidence))
+	s.mux.HandleFunc("GET "+evidenceReportPath, s.requireAdmin(s.handleEvidenceReport))
 	s.mux.HandleFunc("GET /api/gh-rate-limits", s.requireAdmin(s.handleGHRateLimits))
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
 	// Delegation-chain verification material (JWKS-equivalent). Registered
@@ -1686,7 +1759,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /components.css", s.serveStatic("static/components.css"))
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
-	s.mux.HandleFunc("GET /robots.txt", s.serveStatic("static/robots.txt"))
+	s.mux.HandleFunc("GET /robots.txt", s.handleRobotsTxt)
 	s.mux.HandleFunc("GET /sitemap.xml", s.serveStatic("static/sitemap.xml"))
 	s.mux.HandleFunc("GET /llms.txt", s.serveStatic("static/llms.txt"))
 	s.mux.HandleFunc("GET "+hubErrorPagePath+"{code}", s.handleHubErrorPage)
@@ -1740,7 +1813,7 @@ func (s *HubServer) Start(port int) error {
 	s.logger.Info("hub server starting", "addr", addr)
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      s.mux,
+		Handler:      s.Handler(),
 		ReadTimeout:  hubReadTimeout,
 		WriteTimeout: hubWriteTimeout,
 		IdleTimeout:  hubIdleTimeout,
@@ -1762,6 +1835,8 @@ func (s *HubServer) Shutdown(timeout time.Duration) error {
 	// Before the listener check: a server shut down before Start still owes
 	// its history a flush, and SaveNow is nil-safe and dirty-gated.
 	s.reachHistory.SaveNow()
+	// Flush fleet-alert bookkeeping so a hub roll does not forget it (#11826).
+	s.saveAlertState()
 	s.httpMu.Lock()
 	srv := s.httpServer
 	s.httpMu.Unlock()
@@ -1931,6 +2006,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ProviderLimitRebuffs:  clampInt(payload.ProviderLimitRebuffs, 0, 1_000_000),
 		ProviderLimitHiveWide: payload.ProviderLimitHiveWide,
 		ProviderLimitAgents:   sanitizeAgentNameList(payload.ProviderLimitAgents),
+		Providers:             sanitizeProviderStatuses(payload.Providers),
 		DashboardURL:          payload.DashboardURL,
 		PublicURLSelfCheck:    sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
 		RouteExists:           sanitizeRouteExistenceCheck(payload.RouteExists),
@@ -1949,6 +2025,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TotalTokens24h:         clampInt64(payload.Tokens24h, 0, 100_000_000_000),
 		ActionableIssues:       clampInt(payload.Governor.Issues, 0, 10_000),
 		ActionablePRs:          clampInt(payload.Governor.PRs, 0, 10_000),
+		OpenIssues:             clampInt(payload.Governor.OpenIssues, 0, 1_000_000),
+		OpenPRs:                clampInt(payload.Governor.OpenPRs, 0, 1_000_000),
 		LastWriteCapableKickAt: parseHeartbeatTime(payload.LastWriteCapableKickAt),
 		LastKickDisposition:    sanitizeHeartbeatField(payload.LastKickDisposition),
 		LastKickSkipReason:     sanitizeProseField(payload.LastKickSkipReason),
@@ -2021,12 +2099,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].StartFailureLastAt = sanitizeHeartbeatTime(payload.Agents[i].StartFailureLastAt)
 				payload.Agents[i].StartFailureSignal = sanitizeHeartbeatField(payload.Agents[i].StartFailureSignal)
 				// BackendAuth (#6558): Status is a closed identifier set
-				// (agent.BackendAuthUnlicensed etc.), Since a timestamp, and
+				// (crux.BackendAuthUnlicensed etc.), Since a timestamp, and
 				// LastError prose from the offending pane line — same
 				// treatment as the other three field kinds beside it.
 				payload.Agents[i].BackendAuthStatus = sanitizeHeartbeatField(payload.Agents[i].BackendAuthStatus)
 				payload.Agents[i].BackendAuthSince = sanitizeHeartbeatTime(payload.Agents[i].BackendAuthSince)
 				payload.Agents[i].BackendAuthLastError = sanitizeProseField(payload.Agents[i].BackendAuthLastError)
+				// BackendAuthRefreshable (ADR-0024) is a *bool: no injectable
+				// surface, passes through unchanged.
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
@@ -2119,6 +2199,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// report — see sanitizeComponentReach for the bounds. Storage only.
 		ComponentReach: sanitizeComponentReach(payload.ComponentReach),
 		Compliance:     sanitizeCompliance(payload.Compliance),
+		Evidence:       sanitizeEvidence(payload.Evidence),
 		// Per-repo output activity (hive-health): sanitized/clamped, never the
 		// raw payload. The collected-at + window travel with it so the verdict
 		// can age the summary.
@@ -2166,9 +2247,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// spoke's self-report — is what entry.IsPublic must reflect. nil means "no
 	// SaaS record" (a bare/BYO spoke), in which case the spoke's own report stands.
 	var saasVisibility *bool
+	// The cluster the hub's own SaaS record places this hive on — never the
+	// spoke's self-report nor the defaultClusterID fallback. Delivered back to
+	// spokes that report no cluster_id (see heartbeatClusterIDToDeliver).
+	saasClusterID := ""
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		hasSaaSRecord = true
 		clusterID = sh.ClusterID
+		saasClusterID = sh.ClusterID
 		entry.ProvStatus = sh.Status
 		isPub := sh.IsPublic
 		saasVisibility = &isPub
@@ -2216,15 +2302,32 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.ClusterName = c.Name
 	}
 
+	entry.SpokeReportedUpgrading = payload.Upgrading
 	if payload.Upgrading {
 		entry.Upgrading = true
 	}
+	// UpgradeDrainUntil is parsed below, once the entry's UpgradeStartedAt is
+	// settled, because its cap is anchored to the start clock.
+	entry.UpgradeDrain = payload.UpgradeDrain
 
 	// A spoke that explicitly reports a FAILED upgrade must not be left showing
 	// the "Upgrading" spinner, and must not be re-instructed on a loop. Record
 	// the cause so operators can see WHY, and drop the pending instruction: the
 	// spoke has already exhausted its own retry budget, so re-sending the same
 	// target every heartbeat only reproduces the failure.
+	if payload.UpgradePendingRestart && !payload.UpgradeFailed {
+		// The spoke could not patch its Deployment but is restarting onto a
+		// floating tag that will re-pull. Still in flight: keep the latch,
+		// keep the cause visible, and spend no failed attempt on it.
+		entry.Upgrading = true
+		entry.UpgradeRestartFallback = sanitizeProseField(payload.UpgradeError)
+		s.logger.Warn("heartbeat: spoke could not patch its Deployment, falling back to a process restart",
+			"hive_id", payload.HiveID,
+			"from", payload.GitHash,
+			"to", payload.UpgradeTargetSHA,
+			"hint", payload.UpgradeError,
+		)
+	}
 	if payload.UpgradeFailed {
 		entry.Upgrading = false
 		entry.UpgradeFailed = true
@@ -2279,7 +2382,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// the SAME org: a reassignment/reset changes the org (a reset slot
 			// reports its synthetic "available-<id>" org), and the old
 			// tenant's repos must never survive it.
-			if payload.Upgrading || payload.StatsStale || payload.UpgradeFailed {
+			if payload.Upgrading || payload.StatsStale || payload.UpgradeFailed || payload.UpgradePendingRestart {
 				if entry.DashboardURL == "" && h.DashboardURL != "" {
 					entry.DashboardURL = h.DashboardURL
 				}
@@ -2313,6 +2416,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				entry.ProviderLimitRebuffs = h.ProviderLimitRebuffs
 				entry.ProviderLimitHiveWide = h.ProviderLimitHiveWide
 				entry.ProviderLimitAgents = h.ProviderLimitAgents
+				entry.Providers = h.Providers
 				entry.AgentErrorStreaks = h.AgentErrorStreaks
 				entry.ConsentWedged = h.ConsentWedged
 				entry.NoCadenceAgents = h.NoCadenceAgents
@@ -2419,6 +2523,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			if entry.Compliance == nil && h.Compliance != nil {
 				entry.Compliance = h.Compliance
+			}
+			if entry.Evidence == nil && h.Evidence != nil {
+				entry.Evidence = h.Evidence
 			}
 			// Carry the last real repo-activity summary forward when this beat
 			// omits it (minimal upgrade-beat, or a spoke whose collector hasn't
@@ -2570,6 +2677,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// live clock would repeat the #2725 reset-every-retry bug — and
 			// stamp now only when no clock has ever existed.
 			stampObservedUpgrade(&entry, h.UpgradeStartedAt)
+			entry.UpgradeDrainUntil = parseUpgradeDrainUntil(payload.UpgradeDrainUntil, entry.UpgradeStartedAt, time.Now())
+			// The restart-fallback note lives exactly as long as the latch: an
+			// ordinary beat never repeats it, so carry it while the upgrade is
+			// still in flight and let it drop with the latch on completion.
+			if entry.Upgrading && entry.UpgradeRestartFallback == "" {
+				entry.UpgradeRestartFallback = h.UpgradeRestartFallback
+			}
+			if !entry.Upgrading {
+				entry.UpgradeRestartFallback = ""
+			}
 			// Sparkline history: sample every 15 min, keep 7 days (672 points)
 			const sparkSampleInterval = 15 * 60 // seconds
 			const sparkMaxPoints = 672
@@ -2622,6 +2739,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// no previous beat to carry a clock from — stamp it now so the badge
 		// never renders without its elapsed counter.
 		stampObservedUpgrade(&entry, time.Time{})
+		entry.UpgradeDrainUntil = parseUpgradeDrainUntil(payload.UpgradeDrainUntil, entry.UpgradeStartedAt, time.Now())
 		s.registry.Hives = append(s.registry.Hives, entry)
 	}
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -2713,6 +2831,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		HubGitHash: s.hubGitHash,
 		LatestSHA:  latestSHA,
 	}
+	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic
@@ -2812,6 +2931,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.PendingGateway = gw
 		s.logger.Info("heartbeat: delivering funded gateway to spoke",
 			"hive_id", payload.HiveID, "gateway", gw.Name, "default_model", gw.DefaultModel)
+	}
+
+	// Deliver the hub-known cluster id to a spoke that reports none. Spokes
+	// provisioned before the template rendered hub.cluster_id / HIVE_CLUSTER_ID
+	// (#11432) never attach cluster_health, and on pull_only clusters the hub
+	// cannot re-render their Deployments — the heartbeat is the only channel.
+	if cid := heartbeatClusterIDToDeliver(saasClusterID, payload.ClusterID); cid != "" {
+		resp.ClusterID = cid
+		s.logger.Info("heartbeat: delivering cluster_id to spoke that reports none",
+			"hive_id", payload.HiveID, "cluster_id", cid)
 	}
 
 	// Check if the hive should self-upgrade via heartbeat response.
@@ -3017,6 +3146,55 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if hbTarget != "" {
+		var cluster *ClusterConfig
+		if saasHive != nil {
+			cluster = s.clusterForHive(saasHive)
+		}
+		kubectlReachable := cluster != nil && cluster.KubectlReachable()
+		s.mu.RLock()
+		lastDirectPatch := s.heartbeatFallbackDirectPatch[payload.HiveID]
+		s.mu.RUnlock()
+		shouldPatch, directPatchReason := shouldPatchHeartbeatFallbackDirectly(heartbeatFallbackDirectPatchInput{
+			HubManaged:       saasHive != nil && !spokeManaged,
+			Paused:           spokeUpgradesPausedNow,
+			DigestPinned:     digestPinnedNow,
+			KubectlReachable: kubectlReachable,
+			Target:           hbTarget,
+			Current:          payload.GitHash,
+			UpgradeStarted:   entry.UpgradeStartedAt,
+			Now:              time.Now(),
+			LastPatch:        lastDirectPatch,
+		})
+		if shouldPatch {
+			attempts := lastDirectPatch.Attempts + 1
+			now := time.Now()
+			s.mu.Lock()
+			if s.heartbeatFallbackDirectPatch == nil {
+				s.heartbeatFallbackDirectPatch = make(map[string]heartbeatFallbackDirectPatchRecord)
+			}
+			s.heartbeatFallbackDirectPatch[payload.HiveID] = heartbeatFallbackDirectPatchRecord{
+				Target:   hbTarget,
+				At:       now,
+				Attempts: attempts,
+			}
+			s.mu.Unlock()
+			s.logger.Info("heartbeat fallback exhausted — patching Deployment image directly",
+				"hive_id", payload.HiveID,
+				"from", payload.GitHash,
+				"to", hbTarget,
+				"attempts", attempts)
+			if err := s.patchHeartbeatFallbackDirectly(saasHive, cluster, hbTarget); err != nil {
+				s.logger.Warn("heartbeat fallback direct Deployment patch failed",
+					"hive_id", payload.HiveID,
+					"from", payload.GitHash,
+					"to", hbTarget,
+					"attempts", attempts,
+					"reason", directPatchReason,
+					"error", err)
+			}
+		}
+	}
 
 	// Chase-latest target for a spoke-managed hive, resolved through the tag
 	// its Deployment actually tracks (#5994). A spoke on :stable can only ever
@@ -3078,6 +3256,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if spokeManagedTarget != "" {
 		resp.UpgradeTo = spokeManagedTarget
+		if req, ok := s.upgradeInterrupts.pending(payload.HiveID, time.Now()); ok && req.appliesTo(spokeManagedTarget) {
+			resp.UpgradeInterrupt = true
+		}
 		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
@@ -3086,6 +3267,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		)
 	} else if hbTarget != "" && !sameCommit(payload.GitHash, hbTarget) {
 		resp.UpgradeTo = hbTarget
+		if req, ok := s.upgradeInterrupts.pending(payload.HiveID, time.Now()); ok && req.appliesTo(hbTarget) {
+			resp.UpgradeInterrupt = true
+		}
 		s.logger.Info("heartbeat: instructing hub-managed hive to upgrade (kubectl fallback)",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
@@ -3174,6 +3358,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if resets := pendingAgentRestartResetsForHeartbeat(payload.HiveID); len(resets) > 0 {
 		resp.ResetAgentRestarts = resets
 	}
+	resp.Breaker = s.pendingBreakerForHeartbeat(payload.HiveID)
 
 	w.Header().Set("Content-Type", "application/json")
 	s.signHeartbeatResponse(w, &resp, payload.HiveID)
@@ -3470,6 +3655,11 @@ func (s *HubServer) handleRegistry(w http.ResponseWriter, r *http.Request) {
 		if h.HiveType != "hosted" && !h.Online && hostedNames[h.Name] {
 			continue
 		}
+		// The compliance profile is admin-only (#11083, #12264): the rollup
+		// view is behind requireAdmin and the per-hive row is gated in my-hives,
+		// so it must not ride the unauthenticated public registry. h is a copy,
+		// so the stored entry (and what saveRegistryNow persists) is untouched.
+		h.Compliance = nil
 		filtered.Hives = append(filtered.Hives, h)
 	}
 	// #5691: repo-ownership overlaps, derived from the repo lists already in the
@@ -4686,6 +4876,7 @@ func (s *HubServer) handleContributeLanding(w http.ResponseWriter, r *http.Reque
         <a class="btn primary" href="/get-started#contribute">Contributor quickstart</a>
         <a class="btn" href="%[1]s">Relay docs</a>
         <a class="btn" href="https://hivecommons.dev/discord">Discord</a>
+        <a class="btn" href="https://www.twitch.tv/hivecommons">Live stream (Twitch)</a>
       </div>
     </section>
     <section aria-labelledby="hive-list-title">
@@ -4943,11 +5134,11 @@ const maxFleetCount = 10_000_000
 const maxRunWaitSeconds int64 = 365 * 24 * 60 * 60
 
 // maxQuadrantSpend bounds a hive's reported per-window token spend for the same
-// reason maxFleetCount bounds counts, but the stakes differ: quadrant scores are
-// fleet-RELATIVE percentiles, so one absurd value does not merely look wrong on
-// its own row — it stretches the distribution and pushes every honest hive
-// toward the same end of the axis. A trillion tokens in one budget window is
-// orders of magnitude beyond any real usage.
+// reason maxFleetCount bounds counts: quadrant criteria map it onto fixed
+// curves and the fleet view takes a median, so one absurd value cannot flatten
+// other hives, but it would still render as a nonsense row and feed the
+// per-hive Delta. A trillion tokens in one budget window is orders of magnitude
+// beyond any real usage.
 const maxQuadrantSpend int64 = 1_000_000_000_000
 
 // clampFleetCount validates a spoke-reported fleet count pointer. nil stays nil
@@ -4998,7 +5189,7 @@ func sanitizeRunsSummary(in *RunsSummary) *RunsSummary {
 //
 // The upper bound is deliberately generous — this is a token count over a
 // budget window, not a small tally — but it exists so a corrupt payload cannot
-// dominate a fleet-relative percentile and flatten every other hive's score.
+// render as an absurd efficiency reading or skew the fleet median.
 func clampQuadrantSpend(v *int64) *int64 {
 	if v == nil || *v < 0 {
 		return nil

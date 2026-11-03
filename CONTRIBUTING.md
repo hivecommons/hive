@@ -1,8 +1,8 @@
 # Contributing to Hive
 
-Thank you for helping improve KubeStellar Hive. This guide is for contributing code and documentation to this repository. If you want to donate compute to a running hive, see [Contribute to a Hive](README.md#contribute-to-a-hive) instead.
+Thank you for helping improve Hive. This guide is for contributing code and documentation to this repository. If you want to donate compute to a running hive, see [Contribute to a Hive](src/docs/what-is-hive.md#contribute-to-a-hive) instead.
 
-**New here?** Start with the [getting-started guide for first-time contributors](docs/getting-started-contributing.md) — it walks the end-to-end journey (finding an issue, local setup, testing without a cluster, key concepts, and what the review/CI process looks like) and links back into this guide for the mechanics. For live community help, [Join our Discord](https://hivecommons.dev/discord).
+**New here?** Start with the [getting-started guide for first-time contributors](docs/getting-started-contributing.md) — it walks the end-to-end journey (finding an issue, local setup, testing without a cluster, key concepts, and what the review/CI process looks like) and links back into this guide for the mechanics. For live community help, [Join our Discord](https://hivecommons.dev/discord). To see a hive at work, [watch the hive live on Twitch](https://www.twitch.tv/hivecommons).
 
 ## Where to work
 
@@ -20,7 +20,8 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 - `src/` — the current Go module (`github.com/hivecommons/hive`) and the main development target for this repository.
   - `src/cmd/hive` — main Hive binary.
   - `src/cmd/hivectl`, `src/cmd/apiproxy`, `src/cmd/hive-backup` — supporting command-line tools.
-  - `src/pkg/` — Go packages for agents, GitHub integration, scheduling, policies, dashboards, hubs, backups, and related runtime behavior.
+  - `src/pkg/` — Go packages for GitHub integration, scheduling, policies, dashboards, hubs, backups, and related runtime behavior.
+  - `src/crux/` — the Crux agent runtime (agent manager, inference, sandbox, egress proxy, tool approval) as a nested Go module; see [`src/docs/design/crux.md`](src/docs/design/crux.md).
   - `src/policies/` — policy prompts and rule files used by the deterministic/agent pipeline. Treat policy changes like code: review the behavior they enable, test where possible, and explain risk in the PR.
   - `src/deploy/` and `src/examples/` — deployment manifests and example configuration.
   - `src/docs/` — architecture and operator/developer reference material.
@@ -42,7 +43,7 @@ authoritative line policy). Pick your base branch by the kind of change:
 | --- | --- |
 | `v5` (default) | Bug fixes, security fixes, dependency updates, docs, operability improvements, and structural or protocol-level changes (the latter gated by public `[v5 RFC]` issues per [ROADMAP.md](ROADMAP.md#v5--current-stable-line)). `v5` is the stable line: it publishes `candidate`/`latest` and is promoted to `stable` after soak. |
 | `v4` | **Feature-frozen maintenance line** (in effect since 2026-09-21, v4 SHA `c354a5008`; policy [#6346](https://github.com/hivecommons/hive/issues/6346), [ROADMAP.md](ROADMAP.md#v4--maintenance-line)): security fixes and critical fixes only. The required `freeze-gate` check (repository variable `V4_FEATURE_FREEZE`) rejects any v4 PR not carrying `security`, `agent/security`, `priority/critical-urgent`, or `v4-freeze-exempt` and escalates it `needs-human` — retarget anything else at `v5`. v4→v5 movement is cherry-pick-only. Runbook: [src/docs/v4-freeze-runbook.md](src/docs/v4-freeze-runbook.md). |
-| `v6` | Dashboard-optional-operation work under the [#7563 epic](https://github.com/hivecommons/hive/issues/7563) only — such PRs are out of scope on `v4` and `v5` (see [ROADMAP.md](ROADMAP.md#v6--dashboard-optional-operation-line-open)). |
+| `v6` | Dashboard-optional-operation work under the [#7563 epic](https://github.com/hivecommons/hive/issues/7563) only — such PRs are out of scope on `v4` and `v5` (see [ROADMAP.md](ROADMAP.md#v6--dashboard-optional-operation-line-open)). GitHub only derives the issue-list PR icon from `Fixes #N` for default-branch PRs; hive links `v6` PRs to their issues itself via `addCloseIssueReferences` when it opens them or sees them as strong claims ([#11888](https://github.com/hivecommons/hive/issues/11888)), so keep the explicit `Fixes #N` in the body. |
 
 The `main` branch is not the active target for changes. When in doubt, or if a
 maintainer asks for a different base, follow the maintainer's guidance.
@@ -60,11 +61,11 @@ See [docs/development.md](docs/development.md) for the full local setup guide. T
 
 ```bash
 cd src
-go build ./...
-go test ./...
+go build ./... ./crux/...
+go test ./... ./crux/...
 ```
 
-The Go version is declared in [`src/go.mod`](src/go.mod). Install that version or newer compatible tooling before building.
+`src/` is a two-module Go workspace (`src/go.work`): the root module plus the Crux agent runtime at [`src/crux/`](src/crux/) (`github.com/hivecommons/hive/crux`). `./...` covers the root module only, so the Crux module is named explicitly as `./crux/...`. The Go version is declared in [`src/go.mod`](src/go.mod) (and mirrored in `src/crux/go.mod`). Install that version or newer compatible tooling before building.
 
 ## Contributor `just` recipes
 
@@ -77,9 +78,10 @@ The root [`Justfile`](Justfile) exposes the public contributor relay workflow. R
 | `just contribute-hive [backend] [mode]` | Starts the contributor relay. The default mode is containerized; pass `local` as the mode to run natively when the local tools are installed. |
 | `just contribute-status` | Queries the configured hub for status and contributor profile information. |
 | `just contribute-tui` | Opens the Hives overlay in `hivectl tui --hives`, so contributors can list, switch, add, rename and remove profiles. If this checkout has no `hivectl`, the recipe stages `./bin/hivectl` from the checkout's release-tag image when available, otherwise from the branch channel, and records the source digest so later runs refresh or refuse instead of using a stale binary. Use `HIVECTL_BOOTSTRAP_IMAGE=...` to pick a different image, or `HIVECTL=...` to use an explicit binary. |
+| `just contribute-watch` | Watches and steers a running contributor with a read-only session mirror, relay log, interactive attach, quota controls and confirmed Stop. No dashboard credentials required; quitting leaves the contributor running. |
 | `just contribute-hives [args]` | Manages the named hive profiles in `${HOME}/.config/hive/profiles.yml` — `list` (the default), `add`, `use`, `rename`, `remove`. A thin alias for `hivectl hives` that uses the same checkout-local bootstrap and skew refusal as `contribute-tui`; see [src/docs/hivectl.md](src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to). |
 | `just contribute-browse` | Discovers available public hive projects. |
-| `just contribute-stop` | Stops a background contributor relay if one is running. |
+| `just contribute-stop` | Stops a background contributor relay if one is running: `hive-contributor-*` containers and the local-mode relay recorded in `~/.config/hive/contributor-relay.pid`. |
 | `just contribute-k8s [namespace] [outfile] [image_tag]` | Emits Kubernetes manifests for a headless contributor workload. It writes to stdout or the requested file; it does not apply the manifest. |
 | `just hive-api <endpoint>` | Calls a hub API endpoint, defaulting to `/status`, using the configured hive URL. |
 | `just hive-api-docs` | Opens the hub API documentation in a browser. |
@@ -257,6 +259,33 @@ rewritten; their failures are resolved by maintainer disposition, not by you.
   blast radius — are documented in
   [`src/docs/v5-sync-policy.md`](src/docs/v5-sync-policy.md#inherited-dco-failures-from-v4).
 
+  **Note on waivers:** Per-SHA waivers in `DCO_WAIVED_COMMITS` cover squash
+  commits whose author/sign-off mismatch the checkers cannot resolve on their
+  own — typically a noreply author paired with a real sign-off address that
+  has no same-person evidence in the protected branch's history yet (see the
+  next paragraph). The "Sign-off survives the squash" pre-merge check
+  (`.github/workflows/dco-squash-attribution.yml`, running
+  `src/scripts/check-squash-signoff-attribution.sh`) catches every other kind
+  of mismatch at PR time. If your PR fails that check, fix your sign-off by
+  re-signing your branch commits (`git commit --amend -s`), not by seeking a
+  waiver; waivers are a maintainer disposition for already-landed commits, not
+  a way around the pre-merge gate.
+
+  One identity shape the post-merge check resolves on its own: GitHub's squash
+  writes the pull-request author's GitHub identity on the landing commit, so a
+  contributor with a private email lands as
+  `<id>+<login>@users.noreply.github.com` while the `Signed-off-by:` carried
+  over from the branch is their real address — the one the pre-merge DCO check
+  already accepted. The checker treats that as the same person **only when the
+  protected branch's own history shows the link**: another commit authored or
+  committed under the sign-off address by the same name, or a commit on which
+  that address and `<login>`'s noreply appear together. It makes no GitHub API
+  call for this, and it reports each acceptance as an informational
+  `same-person-noreply … evidence=<kind>:<sha>` line rather than hiding it. A
+  first-time contributor's squash has no such evidence yet and still needs a
+  per-SHA waiver, which becomes `STALE-WAIVER` once their next commit under
+  that address lands ([#15401](https://github.com/hivecommons/hive/issues/15401)).
+
 All four reuse the same trailer validation (`src/scripts/check-dco-trailers.sh`
 for the range-scanning gates), and the sign-off *identity* rules — noreply
 matching and author-login lookup — live in one shared library,
@@ -304,12 +333,12 @@ When a fix PR merges with `Closes #N`, `Fixes #N`, or `Resolves #N`, the issue c
 ## Pull requests
 
 - Target `v5` for all code and documentation contributions (the active development branch). `v4` is feature-frozen and accepts security and critical fixes only (see the base-branch table above).
-- Start PR titles with the repository's emoji convention, for example `📖 docs: ...`, `🐛 fix: ...`, or `✨ feature: ...`.
+- Start PR titles with the repository's emoji convention: `✨ feature: ...`, `🐛 fix: ...`, `📖 docs: ...`, `📝 proposal: ...`, `⚠️` for a breaking change, `🌱` for chores and everything else. `📝` is for proposals only — a documentation PR is `📖 docs: ...`, and the required `PR Type` check fails the swap.
 - Include `Fixes #<issue>` lines for issues the PR closes.
 - Credit the issue's author with a `Co-authored-by:` trailer on the commit when the PR resolves somebody else's issue — see [Crediting issue authors](#crediting-issue-authors).
 - Describe what changed, why, and how you tested it.
 - Include the relevant command output or a short note such as `Not run (docs only)` when tests are not applicable.
-- Add a changelog fragment under [`changelog.d/`](changelog.d/README.md) for user-visible changes — features, fixes, security changes, migrations, deprecations, and breaking changes (see "Changelog fragments" below). Routine refactors, test-only changes, and dependency churn are explicitly out of scope — add the `no-changelog` label if the advisory `changelog-fragment-guard` check asks anyway. Do **not** append to `CHANGELOG.md`'s `## Unreleased` section directly: every PR editing that one shared heading is what made unrelated PRs merge-conflict with each other ([#5675](https://github.com/hivecommons/hive/issues/5675)); fragments are compiled into [CHANGELOG.md](CHANGELOG.md) automatically at release time.
+- Add a changelog fragment under [`changelog.d/`](changelog.d/README.md) for user-visible changes — features, fixes, security changes, migrations, deprecations, and breaking changes (see "Changelog fragments" below). Routine refactors, test-only changes, and dependency churn are explicitly out of scope — add the `no-changelog` label if the required `changelog-fragment-guard` check asks anyway. Do **not** append to `CHANGELOG.md`'s `## Unreleased` section directly: every PR editing that one shared heading is what made unrelated PRs merge-conflict with each other ([#5675](https://github.com/hivecommons/hive/issues/5675)); fragments are compiled into [CHANGELOG.md](CHANGELOG.md) automatically at release time.
 - Expect maintainers to ask for focused follow-up changes rather than broad drive-by edits.
 
 ## Changelog fragments

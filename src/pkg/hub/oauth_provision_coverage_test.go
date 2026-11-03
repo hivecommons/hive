@@ -89,6 +89,7 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc&state="+url.QueryEscape(nonce+oauthStateSeparator+"/my-hives"), nil)
 	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: nonce})
+	addPKCECookie(t, req)
 	s.handleOAuthCallback(rec, req)
 	if rec.Code != http.StatusTemporaryRedirect {
 		t.Fatalf("success status = %d, want 307 (body=%s)", rec.Code, rec.Body.String())
@@ -344,6 +345,7 @@ func newCallbackRequestWithState(t *testing.T, code string) *http.Request {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code="+code+"&state="+url.QueryEscape(nonce+oauthStateSeparator+"/dashboard"), nil)
 	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: nonce})
+	addPKCECookie(t, req)
 	return req
 }
 
@@ -425,7 +427,7 @@ func TestF11_LoginIssuesStateNonceCookieAndParameter(t *testing.T) {
 	var nonce string
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == oauthStateCookieName {
-			nonce = c.Value
+			nonce, _ = splitOAuthStateCookie(c.Value)
 			if !c.HttpOnly || !c.Secure {
 				t.Error("F11: the state cookie must be HttpOnly and Secure")
 			}
@@ -450,5 +452,64 @@ func TestF11_LoginIssuesStateNonceCookieAndParameter(t *testing.T) {
 	// The redirect target must survive alongside the nonce.
 	if !strings.HasSuffix(state, "/my-hives") {
 		t.Errorf("F11: the redirect target was lost from state: %q", state)
+	}
+}
+
+func TestExchangeGitHubLoginSendsFormPost(t *testing.T) {
+	t.Setenv("HIVE_HUB_OAUTH_CLIENT_ID", "cid-123")
+	t.Setenv("HIVE_HUB_OAUTH_CLIENT_SECRET", "sekret-456")
+
+	var gotMethod, gotQuery, gotRawURL, gotContentType, gotAccept string
+	var gotForm url.Values
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotQuery, gotRawURL = r.Method, r.URL.RawQuery, r.URL.String()
+		gotContentType, gotAccept = r.Header.Get("Content-Type"), r.Header.Get("Accept")
+		_ = r.ParseForm()
+		gotForm = r.PostForm
+		_, _ = w.Write([]byte(`{"access_token":"gho_test"}`))
+	}))
+	defer tok.Close()
+	usr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"login":"octocat","avatar_url":"https://x/a.png"}`))
+	}))
+	defer usr.Close()
+	oldTok, oldUsr := defaultGHTokenURL, defaultGHUserURL
+	defaultGHTokenURL, defaultGHUserURL = tok.URL, usr.URL
+	defer func() { defaultGHTokenURL, defaultGHUserURL = oldTok, oldUsr }()
+
+	s := &HubServer{logger: slog.Default()}
+	rec := httptest.NewRecorder()
+	verifier := strings.Repeat("v", 43)
+	if _, _, _, ok := s.exchangeGitHubLogin(rec, "code-789", verifier); !ok {
+		t.Fatalf("exchange failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotQuery != "" {
+		t.Errorf("token request URL query = %q, want empty", gotQuery)
+	}
+	for _, secret := range []string{"cid-123", "sekret-456", "code-789", verifier} {
+		if strings.Contains(gotRawURL, secret) {
+			t.Errorf("token request URL %q leaks %q", gotRawURL, secret)
+		}
+	}
+	if !strings.HasPrefix(gotContentType, "application/x-www-form-urlencoded") {
+		t.Errorf("Content-Type = %q, want form-encoded", gotContentType)
+	}
+	if gotAccept != "application/json" {
+		t.Errorf("Accept = %q, want application/json", gotAccept)
+	}
+	want := map[string]string{
+		"client_id":     "cid-123",
+		"client_secret": "sekret-456",
+		"code":          "code-789",
+		"redirect_uri":  oauthRedirectURI(),
+		"code_verifier": verifier,
+	}
+	for k, v := range want {
+		if got := gotForm.Get(k); got != v {
+			t.Errorf("form %s = %q, want %q", k, got, v)
+		}
 	}
 }

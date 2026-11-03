@@ -125,9 +125,11 @@ func TestHasAnyCadenceNilConfigMeansCannotTell(t *testing.T) {
 
 func TestHasAnyCadenceResolvesReplicaBase(t *testing.T) {
 	c := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+			},
 		},
 		Governor: GovernorConfig{Modes: map[string]ModeConfig{
 			"busy": {Cadences: map[string]Cadence{"scanner": "15m"}},

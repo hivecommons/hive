@@ -1,0 +1,1 @@
+- Sentinel `ci_gate_weakening` no longer counts removed `#` comment lines in YAML, Makefile and Justfile CI files, and matches its gate keywords as whole words, so a PR that only rewrites workflow comments (or mentions "hardcoded" or "gateway") is not flagged as weakening CI. `sensitive_path` still flags every workflow edit.

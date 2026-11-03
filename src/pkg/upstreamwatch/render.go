@@ -3,6 +3,9 @@ package upstreamwatch
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueshape"
 )
 
 const (
@@ -89,7 +92,10 @@ func RenderIssue(upstream string, item Item, j Judgement, label string) Issue {
 	if l := strings.TrimSpace(label); l != "" {
 		labels = []string{l}
 	}
-	return Issue{Title: titlePrefix + title, Body: b.String(), Labels: labels}
+	// The watch files on the governor's behalf; origin/governor is its
+	// provenance label (the forge auto-creates unknown labels on create).
+	labels = config.WithOriginLabel(labels, config.OriginSourceGovernor)
+	return Issue{Title: issueshape.AgentIssueTitle(config.OriginSourceGovernor, titlePrefix+title), Body: b.String(), Labels: labels}
 }
 
 // summarize trims the upstream body to a bounded summary.

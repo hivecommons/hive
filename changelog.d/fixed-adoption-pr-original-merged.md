@@ -1,0 +1,1 @@
+- When a person merges a contributor PR the hive adopted, the hive now closes its own `hive/adopt-<n>` PR (one note) if the original merged at the same head, instead of leaving a redundant copy open that flips between stages as the base moves.

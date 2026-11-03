@@ -61,8 +61,10 @@ func TestHandleACMMRecommendationWithSignals(t *testing.T) {
 	s.deps = &Dependencies{
 		Config: &config.Config{
 			ACMMLevel: &lvl,
-			Agents: map[string]config.AgentConfig{
-				qualityAgentName: {},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{
+					qualityAgentName: {},
+				},
 			},
 		},
 	}
@@ -204,8 +206,10 @@ func TestHandleACMMRepoPinPersistsPinnedPolicy(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(wd, ".dashboard-test")) })
 	level := 4
 	s.deps = &Dependencies{Config: &config.Config{
-		Project:    config.ProjectConfig{Org: "hivecommons", Repos: []string{"hive"}},
-		Agents:     map[string]config.AgentConfig{"scanner": {}},
+		Project: config.ProjectConfig{Org: "hivecommons", Repos: []string{"hive"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {}},
+		},
 		ACMMLevel:  &level,
 		SourcePath: filepath.Join(dir, "hive.yaml"),
 	}}
@@ -234,7 +238,9 @@ func TestBuildACMMStatusInputs_ReadsLiveSignals(t *testing.T) {
 	s.deps = &Dependencies{
 		Config: &config.Config{
 			ACMMLevel: &lvl,
-			Agents:    map[string]config.AgentConfig{qualityAgentName: {}},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{qualityAgentName: {}},
+			},
 		},
 	}
 	status := minimalPayload()
@@ -358,7 +364,9 @@ func TestStatusPayloadCarriesACMMAdvice(t *testing.T) {
 	s.deps = &Dependencies{
 		Config: &config.Config{
 			ACMMLevel: &lvl,
-			Agents:    map[string]config.AgentConfig{qualityAgentName: {}},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{qualityAgentName: {}},
+			},
 		},
 	}
 	s.UpdateStatus(minimalPayload())

@@ -1,0 +1,1 @@
+- Transient GitHub failures fetching PR review decisions no longer trigger repeated unclassified fleet defect reports; review decisions remain unknown until a successful poll.

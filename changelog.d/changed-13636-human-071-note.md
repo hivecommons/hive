@@ -1,0 +1,1 @@
+- Comment with the reason (conflict / failing checks / requested changes) when a `role/trusted` human PR enters stage 071 ([#13636](https://github.com/hivecommons/hive/issues/13636))

@@ -301,6 +301,31 @@ Use these only for recurring token-only one-liners; component recipes remain pre
   `--vendor-google` aliases.
 - Behavior hooks stay in `data-*`; classes describe appearance.
 
+### Long-content modals: `.modal-scroll` and the mobile sheet
+
+Any modal body that can run longer than the viewport (release notes / *What
+changed*, alerts, the export viewer, decision dialogs such as the L6 auto-merge
+notice, settings bodies) carries the shared `.modal-scroll` class and nothing
+else owns its `overflow`. The class gives the region `overflow-y: auto`,
+momentum scrolling, `overscroll-behavior: contain`, `scrollbar-gutter: stable`
+and a thin always-visible scrollbar where the platform draws one, plus a
+**scroll-end fade**: `hiveModalScrollInit` toggles `.is-scrollable-more`
+while content remains below the fold (scroll + resize + mutation observers,
+no timers) and clears it at the bottom, so iOS — which hides scrollbars until
+the user drags — still shows that there is more to read. `hiveWireDialog` and
+the scroll-lock observer wire it automatically; nothing per dialog.
+
+On phones (`max-width: 640px`, or a coarse pointer under 820px) a
+`.hive-dialog` that contains a `.modal-scroll` becomes a **full-screen sheet**
+(`.hive-dialog.modal-sheet`, added by `hiveModalSheetDecorate`): `100dvh`
+tall with `100vh` fallback, safe-area insets honoured via the
+`--safe-area-*` tokens, fixed title row with a ✕ sized to
+`--modal-sheet-close-size` (44px), the `.modal-scroll` body as the only
+scroller, and a fixed footer holding the primary action. Esc, backdrop tap,
+the focus trap and the body scroll lock behave as on desktop; desktop layout
+is unchanged apart from the affordance. Metrics come from the
+`--modal-scroll-*` / `--modal-sheet-*` tokens in `tokens.css`.
+
 ## Ratchet plan
 
 `pkg/dashboard/webstatic/style_ratchet_test.go`, modeled on
@@ -403,6 +428,33 @@ headers, visit the same route/viewport/theme, and pixel-diff the resulting PNGs.
 Record the viewport, theme, route, and intentional differences in the PR. Do
 not paste secrets or cluster-specific hostnames into docs, logs, or screenshots.
 
+### Mobile screenshots and overflow report
+
+`src/scripts/dashboard-mobile-shots.mjs` automates the recipe above for phones
+and tablets. It loads `src/pkg/dashboard/static/index.html` in headless Chrome
+(`CHROME_BIN` or a system `google-chrome`/`chromium`, like
+`src/scripts/dashboard-tooltip-smoke.mjs`) at 390×844@3, 375×667@2, 430×932@3
+and 768×1024@2, plus the landscape phone viewports 844×390@3, 932×430@3,
+667×375@2 and 740×360@3, in light and dark themes, and screenshots the
+collapsed page, each section expanded, Settings, Knowledge Sources and the
+terminal dialog. Landscape phones are wider than the 768px phone breakpoint, so
+`index.html` carries a separate
+`(max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse)`
+tier for them (full-width topbar with notch insets, one-row topbar, full-screen
+modals and chat with internal scroll); the harness enables touch emulation so
+that tier is exercised.
+
+```sh
+node src/scripts/dashboard-mobile-shots.mjs --out dashboard-mobile-shots-out
+node src/scripts/dashboard-mobile-shots.mjs --viewport 390x844 --theme dark   # quick local run
+```
+
+`overflow-report.json` lists findings (`viewport`, `theme`, `state`, `selector`,
+`bbox`, `kind`): `scroll-overflow`, `past-viewport`, `clipped-text` and
+`ellipsis-free-space`. The tool always exits 0 unless the harness itself fails.
+The non-blocking `Dashboard Mobile Shots` workflow runs it on dashboard PRs and
+uploads the screenshots and report as the `dashboard-mobile-shots` artifact.
+
 ## IA and naming glossary — implemented
 
 Implemented in [PR #8602](https://github.com/hivecommons/hive/pull/8602) for A10 `ui-ia-naming`. The source-of-truth details live in [dashboard glossary and sidebar IA](dashboard-glossary.md).
@@ -414,7 +466,7 @@ Sidebar groups now map the existing destinations without changing IDs, `data-act
 | Overview | Governor |
 | Agents | Dynamic agent tree, `+ agent`, `+ group` |
 | Resources | Repos, Contributors |
-| Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Strategy Lab |
+| Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Experiment Lab |
 | Admin | Tokens, Cost, Audit Log |
 | Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Report an Issue |
 

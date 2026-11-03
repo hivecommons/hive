@@ -1,0 +1,1 @@
+- Concurrent authenticated GitHub login lookups share one request and release pending waiters even if that request panics, allowing subsequent lookups to retry ([#13526](https://github.com/hivecommons/hive/issues/13526)).

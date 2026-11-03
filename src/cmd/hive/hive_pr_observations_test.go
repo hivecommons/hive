@@ -96,6 +96,67 @@ func TestHivePRObservationsRedRequiresFailingCheck(t *testing.T) {
 	}
 }
 
+// A matching failure on an unrelated human PR proves the check is broken
+// repository-wide, so the agent PR must not consume its fix-loop budget.
+func TestHivePRObservationsHoldsFailureWithIndependentControl(t *testing.T) {
+	cfg := observationsTestConfig()
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{
+		{Repo: "hive", Number: 1, Author: "hive-bee", AuthorNonHuman: true,
+			CIStatus: "failure", FailingChecks: []string{"test"}},
+		{Repo: "hive", Number: 2, Author: "human-dev",
+			CIStatus: "failure", FailingChecks: []string{"test"}},
+	}}}
+
+	obs := hivePRObservations(cfg, actionable, nil)
+
+	if len(obs) != 1 || !obs[0].Shared {
+		t.Fatalf("agent observation = %+v, want one shared failure", obs)
+	}
+}
+
+// Held PRs remain open CI evidence even though the hold gate excludes them
+// from escalation candidates.
+func TestHivePRObservationsUsesHeldIndependentControl(t *testing.T) {
+	cfg := observationsTestConfig()
+	actionable := &github.ActionableResult{PRs: github.PRResult{
+		Items: []github.PullRequest{{
+			Repo: "hive", Number: 1, Author: "hive-bee", AuthorNonHuman: true,
+			CIStatus: "failure", FailingChecks: []string{"test"},
+		}},
+		Held: []github.PullRequest{{
+			Repo: "hive", Number: 2, Author: "human-dev",
+			CIStatus: "failure", FailingChecks: []string{"test"},
+		}},
+	}}
+
+	obs := hivePRObservations(cfg, actionable, nil)
+
+	if len(obs) != 1 || !obs[0].Shared {
+		t.Fatalf("agent observation = %+v, want held PR to confirm shared failure", obs)
+	}
+}
+
+// Neither another Hive PR nor a human-authored contributor-relay PR is
+// independent evidence of a repository-wide outage: both can carry the same
+// generated defect.
+func TestHivePRObservationsKeepsFailureWithoutIndependentControl(t *testing.T) {
+	cfg := observationsTestConfig()
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{
+		{Repo: "hive", Number: 1, Author: "hive-bee", AuthorNonHuman: true,
+			CIStatus: "failure", FailingChecks: []string{"test"}},
+		{Repo: "hive", Number: 2, Author: "copilot-swe-agent[bot]", AuthorNonHuman: true,
+			CIStatus: "failure", FailingChecks: []string{"test"}},
+		{Repo: "hive", Number: 3, Author: "relay-user", HiveAttributed: true,
+			CIStatus: "failure", FailingChecks: []string{"test"}},
+	}}}
+
+	obs := hivePRObservations(cfg, actionable, nil)
+
+	if len(obs) != 2 || obs[0].Shared || obs[1].Shared {
+		t.Fatalf("agent observations = %+v, want two PR-local failures", obs)
+	}
+}
+
 // Pending must be threaded through so a CI-in-flight window is a no-op
 // observation for the escalation ledger (#5617, gap G2) — neither red (no
 // attempt counted) nor green (no history/staleness wiped).

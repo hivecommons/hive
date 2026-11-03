@@ -235,7 +235,7 @@ func TestFleetAlerts_StampsClusterHasKey(t *testing.T) {
 		return e
 	}
 
-	summary := s.fleetAlerts([]MyHiveEntry{mk("h1", "with-key"), mk("h2", "no-key")})
+	summary := s.fleetAlerts([]MyHiveEntry{mk("h1", "with-key"), mk("h2", "no-key")}, nil)
 
 	withKey, ok := findAlert(summary.Alerts, "h1", AlertTypeAppCredsUndelivered)
 	if !ok {

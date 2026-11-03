@@ -1,0 +1,1 @@
+- The CI-poll nudge no longer counts polling commands quoted as prohibitions in the kick prompt as the agent polling CI, which filed false `ci_poll_nudge` self-reports "0s after the kick" (#13648).

@@ -304,6 +304,36 @@ time and any error; on the spoke, `posted advisory digest` is logged at INFO on
 every successful update, and `advisory digest not posted` at WARN when there is
 nothing to post to.
 
+## When the write is refused
+
+GitHub answers `403 Resource not accessible by integration` when an
+installation token may not act on the resource. For the digest that happens
+in three shapes, none of them transient: the existing digest comment was
+authored by another identity, the repository was removed from the App
+installation, or — the most confusing — the repository was **transferred to
+another owner**. GitHub follows the rename redirect on every read, so the hive
+still finds the advisory issue and its digest comment under the old
+`owner/repo`, but the installation token is bound to the old owner and every
+write is refused.
+
+What the hive does:
+
+- A refused (403) or vanished (404) **edit** of the existing digest comment
+  falls back to **creating a fresh comment** under the hive App's own identity;
+  later cycles find and edit that one. Transient failures (5xx, rate limit)
+  do not fall back and are retried next cycle as before.
+- If the **create** is refused too, the hive probes the repository's canonical
+  name. When it has moved, the recorded error — shown on the hub health row and
+  the dashboard App banner — names the move and the remedy: install the hive
+  App on the new owner if it is not already, then update the hive's configured
+  repo to the new `owner/repo`. Otherwise the existing write-forbidden
+  diagnosis (repo not in the installation's selected repositories) applies.
+- Post attempts then **pause** for `governor.advisory.post_retry_backoff_s`
+  (default `3600`; `HIVE_ADVISORY_POST_RETRY_BACKOFF_S` overrides the default;
+  negative disables the pause) instead of re-sending the same refused write
+  every eval cycle. The recorded error stays visible for the whole window; a
+  successful post — e.g. after the operator repoints the hive — clears it.
+
 ## How often the digest updates
 
 `governor.advisory.update_interval_s` — default `0`, meaning the digest is
@@ -318,7 +348,9 @@ Details worth knowing:
 - The throttle paces only the GitHub comment write. The digest itself, the
   dashboard view, and the status broadcast still refresh every cycle.
 - The window advances only on a **successful** post, so a failed write is
-  retried on the very next cycle rather than waiting out the interval.
+  retried on the very next cycle rather than waiting out the interval — except
+  a `403 Resource not accessible by integration`, which pauses attempts for
+  `post_retry_backoff_s` (see below).
 - A brand-new finding on a quiet hive posts immediately; only subsequent
   refreshes wait for the interval.
 - Byte-identical digests are skipped regardless of this setting, with a
@@ -395,15 +427,34 @@ Two families of rules feed the block:
 | `reduce-blocked-prs` | Blocked PRs ≥ `blocked_pr_pct` of open PRs | the dominant cause and the first action: *"41 of 70 fail check `go-security-analysis` — fix the check before touching cadence"*, *"N have merge conflicts — rebase or close the oldest"*, or the top blocked-verdict reason |
 | `fix-failing-check` | one check fails on ≥ `check_share_pct` of CI-blocked PRs (at least 2) | the check name and how many PRs it holds |
 | `throttle-lane` | one agent lane produced ≥ `lane_share_pct` of Blocked PRs (at least 2) | the lane to slow down |
-| `clear-human-gate-prs` | Needs-human PRs ≥ `needs_human_pr_pct` of open PRs | how many are held, labelled `needs-human`, or `needs-decision` |
-| `unblock-human-issues` | Needs-human issues ≥ `needs_human_issue_pct` of open issues | the `needs-decision` / `blocked` / `2-discussing` split |
+| `clear-human-gate-prs` | PRs that are your turn (the inbox's N plus M) ≥ `needs_human_pr_pct` of open PRs | how many wait on a person, **why** they wait (grouped by reason, with where they sit) and **how to help** |
+| `unblock-human-issues` | Issues that are your turn (the inbox's N plus M, parked issues included) ≥ `needs_human_issue_pct` of open issues | the same why / how to help breakdown for issues |
 | `review-stale-prs` | Blocked PRs past `dashboard.issue_bands.stale_days` ≥ `stale_blocked_prs` | stale = no activity past the threshold, not proven dead |
 | `confirm-and-close` | any issue in Confirm & close | how much of the backlog confirming them removes |
+
+The two needs-human rules also carry:
+
+- **Why they wait:** the your-turn items grouped by the reason the dashboard
+  recorded for each (its ownership reason code), in plain words, largest
+  group first, each with where it sits, for example *"24 parked until a
+  maintainer decides (20 in utah-packages, 3 in utah, 1 in testsuite)"*. A
+  reviewer's requested changes and a code owner's review are their own
+  groups, apart from approvals branch protection requires. The five largest
+  groups are named; the rest fold into one "N more for other reasons" line.
+- **How to help:** the action for the three largest groups, naming the
+  repositories only when two of them hold most of that group, for example
+  *"answer the parked decisions in utah-packages and utah; approve PRs in
+  common and actions"*.
 
 Every queue-health recommendation carries:
 
 - **First:** the first five issues/PRs it is about (oldest activity first),
   each with why it is listed (the failing check, "merge conflict", "held").
+  A needs-human item's note is its verb and reason, cut to the reason's first
+  clause when it runs past 100 characters (a parked hive review lists every
+  reviewer's summary); a review-decision note drops "Waiting on a person's
+  review:", which the REVIEW verb already says. The inbox and the CSV keep the
+  whole reason.
 - **Full list:** the matching Overview export, e.g.
   `/api/overview/prs.csv?band=blocked` (plus a `repo=` link when one repo
   holds half the blocked PRs). The digest prefixes the link with
@@ -412,6 +463,9 @@ Every queue-health recommendation carries:
 - **Band rules:** the one-line rule for each band the advice names, the same
   text the Overview tooltips print — so *Blocked* is read as "blocked sweep
   verdict, merge conflicts, or failing CI", not the `blocked` label.
+- **Numbers behind this:** the raw signals the rule read (including the
+  per-verb split), last in the digest and folded away on the dashboard
+  card.
 
 ### Which count is quoted
 
@@ -436,6 +490,12 @@ struck through and marked *cleared*, with its stale numbers dropped; a rule
 that starts firing mid-epoch waits for the next epoch. An epoch that froze
 only the "Keep observing" placeholder is not kept once real advice appears.
 
+The dashboard card and the digest say this in plain words rather than in
+these terms: "Hive picked this list on 2026-10-26 and keeps it until
+2026-11-02, so it does not jump around", then that the numbers under each item
+are recomputed, then that a change of mode picks a new list sooner. The card's
+header badge reads *picked weekly*.
+
 ### Tuning the thresholds
 
 The trigger points are starting values to calibrate against real hives, not
@@ -447,8 +507,8 @@ governor:
   advisory:
     queue_health:
       blocked_pr_pct: 50         # Blocked PRs as % of open PRs
-      needs_human_pr_pct: 25     # Needs-human PRs as % of open PRs
-      needs_human_issue_pct: 30  # Needs-human issues as % of open issues
+      needs_human_pr_pct: 25     # your-turn PRs as % of open PRs
+      needs_human_issue_pct: 30  # your-turn issues as % of open issues
       stale_blocked_prs: 10      # count of Blocked PRs past stale_days
       lane_share_pct: 50         # one lane's share of Blocked PRs
       check_share_pct: 50        # one check's share of CI-blocked PRs

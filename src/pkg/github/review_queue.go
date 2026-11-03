@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/redmain"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The PR review queue (hivecommons/hive#9590) is one ranked, maintainer-facing
@@ -178,6 +180,14 @@ type ReviewQueueEntry struct {
 	ConfidenceScore *int   `json:"confidence_score,omitempty"`
 	ConfidenceBand  string `json:"confidence_band"`
 	CIState         string `json:"ci_state"`
+	// PendingSince is when the review swarm first dispatched a still-pending
+	// review for the PR's CURRENT head, so an unreviewed PR reads as "review
+	// dispatched Xm ago, no verdict" rather than merely not reviewed. Zero
+	// when nothing is pending for this head. RedispatchCount is how many
+	// times that head's pending reviews expired (review.pending_ttl) and
+	// were asked again; at review.max_redispatch the PR is held for a human.
+	PendingSince    time.Time `json:"pending_since,omitzero"`
+	RedispatchCount int       `json:"redispatch_count,omitempty"`
 	// Reasons explains the rank, in sort-key order (class, confidence, CI,
 	// age), then any context that did not move it. Like Confidence.Reasons,
 	// it is what a reader needs to reconstruct the order without the code.
@@ -185,22 +195,101 @@ type ReviewQueueEntry struct {
 	// Superseded is set when the supersession sweep has announced it will
 	// close this PR once its grace window ends (hivecommons/hive#11430).
 	Superseded *ReviewQueueSuperseded `json:"superseded,omitempty"`
+	// Stage is the stage-label engine's record for the PR (nil when the
+	// engine is off or has not seen it): the stage, how long it has been
+	// quiet, whether it waits on the hive, and its transition history —
+	// the dashboard's replacement for the retired stage/regressed label
+	// (hivecommons/hive#12534).
+	Stage *ReviewQueueStage `json:"stage,omitempty"`
+	// FixesMain is set when the PR fixes its repo's red default branch
+	// (red-main circuit breaker, hivecommons/hive#13630); such PRs rank
+	// ahead of every other PR. FixesMainVia names the signal (label,
+	// tracking-issue, file-overlap).
+	FixesMain    bool   `json:"fixes_main,omitempty"`
+	FixesMainVia string `json:"fixes_main_via,omitempty"`
 }
 
-// ReviewQueueSupersededReason is ReviewQueueSuperseded.Reason.
+// ReviewQueueStage is ReviewQueueEntry.Stage.
+type ReviewQueueStage struct {
+	Stage          string    `json:"stage"`
+	EnteredAt      time.Time `json:"entered_at,omitzero"`
+	LastActivityAt time.Time `json:"last_activity_at,omitzero"`
+	// QuietFor is how long nobody but the hive has touched the PR (Go
+	// duration string, "" when unknown).
+	QuietFor string `json:"quiet_for,omitempty"`
+	// Stalled mirrors the stage/stalled label as the engine last decided it.
+	Stalled bool `json:"stalled"`
+	// WaitingOnHive says the PR waits on the hive (checks running, verdict
+	// pending) and so cannot stall; when it sits past the stage's dwell the
+	// signal belongs on the hive's own lane, not on the PR.
+	WaitingOnHive bool `json:"waiting_on_hive"`
+	// PastDwell is true when the PR has been quiet longer than the stage's
+	// dwell, whichever side is holding it. With WaitingOnHive it is the
+	// hive-held alert: the reviewer lane, not the author, needs attention.
+	PastDwell bool                  `json:"past_dwell"`
+	History   []ReviewQueueStageHop `json:"history,omitempty"`
+}
+
+// ReviewQueueStageHop is one stage transition.
+type ReviewQueueStageHop struct {
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	At        time.Time `json:"at"`
+	Reason    string    `json:"reason,omitempty"`
+	Regressed bool      `json:"regressed,omitempty"`
+}
+
+// reviewQueueStage projects the stage store's record for a PR, deciding
+// stalled/past_dwell with the same dwell overrides and require_quiet
+// policy the engine labels with (ReviewQueueOptions.StageDwell /
+// StageStalledRequireQuiet) so the pill never disagrees with the label.
+func reviewQueueStage(store *stagelabels.Store, full string, number int, opts ReviewQueueOptions, now time.Time) *ReviewQueueStage {
+	if store == nil {
+		return nil
+	}
+	rec, ok := store.Get(stagelabels.Key(full, number))
+	if !ok || rec.Stage == stagelabels.None {
+		return nil
+	}
+	out := &ReviewQueueStage{
+		Stage:          rec.Stage.String(),
+		EnteredAt:      rec.EnteredAt,
+		LastActivityAt: rec.LastActivityAt,
+		WaitingOnHive:  rec.WaitingOnHive,
+		Stalled:        stagelabels.StalledWith(rec, opts.StageDwell, now, opts.stalledRequireQuiet()),
+	}
+	if q := rec.QuietFor(now); q > 0 {
+		out.QuietFor = q.Truncate(time.Minute).String()
+		if d := stagelabels.Dwell(rec.Stage, opts.StageDwell); d > 0 && q >= d {
+			out.PastDwell = true
+		}
+	}
+	for _, h := range rec.History {
+		out.History = append(out.History, ReviewQueueStageHop{From: h.From.String(), To: h.Stage.String(), At: h.At, Reason: h.Reason, Regressed: h.Regressed})
+	}
+	return out
+}
+
+// ReviewQueueSupersededReason is ReviewQueueSuperseded.Reason when the PR is
+// a subset of the merged PR (or the audit record predates the outcome field).
 const ReviewQueueSupersededReason = "superseded"
 
-// ReviewQueueSuperseded describes a PR in the supersession grace window: a
-// different merged PR closed its claimed issue, and the sweep will close it
-// at GraceEndsAt unless someone replies or an operator keeps it open.
+// ReviewQueueSupersededExtraFilesReason is ReviewQueueSuperseded.Reason when
+// the PR touches files the merged PR did not, so keeping it open is recommended.
+const ReviewQueueSupersededExtraFilesReason = "superseded_extra_files"
+
+// ReviewQueueSuperseded describes a PR whose claimed issue was closed by a
+// different merged PR. Grace timestamps are present only for automatic closure.
 type ReviewQueueSuperseded struct {
+	KeepReason     string    `json:"keep_reason,omitempty"`
 	Reason         string    `json:"reason"`
 	Issue          string    `json:"issue,omitempty"`
 	CloserRepo     string    `json:"closer_repo,omitempty"`
 	CloserPR       int       `json:"closer_pr"`
 	CloserURL      string    `json:"closer_url,omitempty"`
-	GraceStartedAt time.Time `json:"grace_started_at"`
-	GraceEndsAt    time.Time `json:"grace_ends_at"`
+	ExtraFiles     []string  `json:"extra_files,omitempty"`
+	GraceStartedAt time.Time `json:"grace_started_at,omitzero"`
+	GraceEndsAt    time.Time `json:"grace_ends_at,omitzero"`
 }
 
 // ReviewQueueOptions carries the inputs BuildReviewQueue needs besides the PRs.
@@ -217,10 +306,34 @@ type ReviewQueueOptions struct {
 	// It must not call GitHub: ranking runs on every eval cycle and on every
 	// API request.
 	ChangedPaths func(fullRepo string, number int, headSHA string) []string
+	// Dispatch is the review swarm's dispatch state; it supplies
+	// PendingSince and RedispatchCount. The zero value means unknown.
+	Dispatch review.DispatchState
 	// Held marks PRs (by ReviewQueueKey) that sit on a hold label.
 	Held map[string]bool
+	// StageStore, when set, supplies each entry's Stage (stage-label engine
+	// record). nil leaves Stage unset.
+	StageStore *stagelabels.Store
+	// StageDwell is governor.labels.stage.dwell (per-slug overrides) and
+	// StageStalledRequireQuiet is governor.labels.stage.stalled.require_quiet
+	// as configured (nil when unset): the policy the engine labels
+	// stage/stalled with. The zero values are the engine's defaults (table
+	// dwell, quiet required), so a caller without config still agrees with
+	// a default-configured engine.
+	StageDwell               map[string]time.Duration
+	StageStalledRequireQuiet *bool
+	// RedMain is the per-repo red-main facts (ActionableResult.RedMain);
+	// PRs that fix a red default branch rank first. nil means no repo is
+	// red, and ReviewQueueFromActionable fills it from the snapshot.
+	RedMain map[string]*redmain.Fact
 	// Now is the reference time for ages. Zero means time.Now().
 	Now time.Time
+}
+
+// stalledRequireQuiet resolves StageStalledRequireQuiet with the engine's
+// default (config.StageStalledConfig.IsRequireQuiet): unset means required.
+func (o ReviewQueueOptions) stalledRequireQuiet() bool {
+	return o.StageStalledRequireQuiet == nil || *o.StageStalledRequireQuiet
 }
 
 // ReviewQueueKey is the case-insensitive identity of a PR in the queue.
@@ -251,7 +364,8 @@ func reviewQueueHiveAuthored(pr PullRequest, aiAuthor string) bool {
 	return aiAuthor != "" && author == strings.ToLower(strings.TrimSpace(aiAuthor))
 }
 
-// BuildReviewQueue ranks prs into the review queue: by triage class (T0 fix >
+// BuildReviewQueue ranks prs into the review queue: PRs that fix a red
+// default branch first (FixesMain, hivecommons/hive#13630), then by triage class (T0 fix >
 // T1 refactor/docs/unclassified > T2 tests), then confidence band (safe >
 // needs attention, including unreviewed > do not merge), then CI (green >
 // pending > red), then age (oldest first), then repo and number so the order
@@ -278,6 +392,9 @@ func BuildReviewQueue(prs []PullRequest, opts ReviewQueueOptions) []ReviewQueueE
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
+		if a.FixesMain != b.FixesMain {
+			return a.FixesMain
+		}
 		if ra, rb := reviewRank(a.Class), reviewRank(b.Class); ra != rb {
 			return ra < rb
 		}
@@ -314,9 +431,26 @@ func buildReviewQueueEntry(pr PullRequest, full, key string, opts ReviewQueueOpt
 		HiveAuthored: reviewQueueHiveAuthored(pr, opts.AIAuthor),
 		Held:         opts.Held[key],
 		CIState:      reviewCIState(pr),
+		Stage:        reviewQueueStage(opts.StageStore, full, pr.Number, opts, now),
 	}
 	if !pr.CreatedAt.IsZero() && now.After(pr.CreatedAt) {
 		e.AgeHours = int(now.Sub(pr.CreatedAt).Hours())
+	}
+
+	if fact := RedMainFactFor(opts.RedMain, full); fact != nil {
+		var fixPaths []string
+		if opts.ChangedPaths != nil {
+			fixPaths = opts.ChangedPaths(full, pr.Number, pr.HeadSHA)
+		}
+		if fix, ok := RedMainFixPR(fact, pr, fixPaths); ok {
+			e.FixesMain = true
+			e.FixesMainVia = fix.Via
+			reason := fmt.Sprintf("fixes red main (%s red since %s; via %s)", fact.Check, fact.Since.UTC().Format(time.RFC3339), fix.Via)
+			if fix.Confirmed {
+				reason += "; confirmed: its checks pass while main fails"
+			}
+			e.Reasons = append(e.Reasons, reason)
+		}
 	}
 
 	var paths []string
@@ -348,9 +482,20 @@ func buildReviewQueueEntry(pr PullRequest, full, key string, opts ReviewQueueOpt
 			reason += ": " + strings.Join(agg.Confidence.Reasons, "; ")
 		}
 		e.Reasons = append(e.Reasons, reason)
+		// An incomplete aggregate is a review still being collected, not a
+		// settled verdict: say what is missing and whether it is dispatched.
+		if agg.Verdict == review.VerdictIncomplete {
+			e.Reasons = append(e.Reasons, agg.Reasons...)
+			if reason := reviewQueueDispatchReason(&e, pr, full, opts, now); reason != "" {
+				e.Reasons = append(e.Reasons, reason)
+			}
+		}
 	} else {
 		e.ConfidenceBand = ReviewQueueBandNeedsAttention
 		e.Reasons = append(e.Reasons, "not reviewed at this head: confidence unknown, ranked as needs attention")
+		if reason := reviewQueueDispatchReason(&e, pr, full, opts, now); reason != "" {
+			e.Reasons = append(e.Reasons, reason)
+		}
 	}
 
 	switch e.CIState {
@@ -398,6 +543,90 @@ func reviewQueueAge(hours int) string {
 	return fmt.Sprintf("%dd", hours/reviewQueueHoursPerDay)
 }
 
+// reviewQueueDispatchReason fills PendingSince and RedispatchCount from the
+// dispatch state and returns the reason line that explains an unreviewed PR's
+// dispatch status: a review is in flight, it has been re-dispatched after
+// expiring, or the retry budget is spent and the PR waits on a human. Empty
+// when the swarm has nothing recorded for this head.
+func reviewQueueDispatchReason(e *ReviewQueueEntry, pr PullRequest, full string, opts ReviewQueueOptions, now time.Time) string {
+	if strings.TrimSpace(pr.HeadSHA) == "" {
+		return ""
+	}
+	since := opts.Dispatch.PendingSince(full, pr.Number, pr.HeadSHA)
+	count := opts.Dispatch.RedispatchCountFor(full, pr.Number, pr.HeadSHA)
+	if since.IsZero() && full != pr.Repo {
+		since = opts.Dispatch.PendingSince(pr.Repo, pr.Number, pr.HeadSHA)
+		count = opts.Dispatch.RedispatchCountFor(pr.Repo, pr.Number, pr.HeadSHA)
+	}
+	e.PendingSince = since
+	e.RedispatchCount = count
+	var exhausted string
+	for _, h := range opts.Dispatch.Human {
+		if h.Number == pr.Number && review.SameHeadSHA(h.HeadSHA, pr.HeadSHA) &&
+			(strings.EqualFold(strings.TrimSpace(h.Repo), full) || strings.EqualFold(strings.TrimSpace(h.Repo), pr.Repo)) &&
+			strings.HasPrefix(h.Reason, review.HoldReasonDispatchExhausted) {
+			exhausted = h.Reason
+			break
+		}
+	}
+	if exhausted != "" {
+		return "review dispatch exhausted: " + strings.TrimPrefix(exhausted, review.HoldReasonDispatchExhausted+": ") + "; waiting on a human"
+	}
+	wait, waiting := opts.Dispatch.WaitFor(full, pr.Number, pr.HeadSHA)
+	if !waiting && full != pr.Repo {
+		wait, waiting = opts.Dispatch.WaitFor(pr.Repo, pr.Number, pr.HeadSHA)
+	}
+	if since.IsZero() {
+		if waiting {
+			return reviewQueueWaitReason(wait, now)
+		}
+		return ""
+	}
+	reason := fmt.Sprintf("review dispatched %s ago, no verdict yet", reviewQueueDispatchAge(now.Sub(since)))
+	if count > 0 {
+		reason += fmt.Sprintf(" (re-dispatched %dx after expiry)", count)
+	}
+	if waiting {
+		reason += "; " + reviewQueueWaitReason(wait, now)
+	}
+	return reason
+}
+
+// reviewQueueWaitReason explains a head the planner keeps passing over: the
+// perspectives it still owes have had no reviewer for this many consecutive
+// cycles (hivecommons/hive#15229). Past review.ReviewWaitStarvationCycles the
+// planner walks the head ahead of the queue, and the line says so.
+func reviewQueueWaitReason(w review.ReviewWaitRecord, now time.Time) string {
+	cause := "every eligible reviewer busy"
+	if w.Reason == review.ReviewWaitNoParallelSlot {
+		cause = "max_parallel_reviews spent"
+	}
+	reason := fmt.Sprintf("review waiting for a free reviewer: %d consecutive cycle", w.Cycles)
+	if w.Cycles != 1 {
+		reason += "s"
+	}
+	if !w.FirstAt.IsZero() {
+		reason += fmt.Sprintf(" over %s", reviewQueueDispatchAge(now.Sub(w.FirstAt)))
+	}
+	reason += " (" + cause + ")"
+	if w.Cycles >= review.ReviewWaitStarvationCycles {
+		reason += "; promoted ahead of the queue, takes the next free reviewer"
+	}
+	return reason
+}
+
+// reviewQueueDispatchAge renders how long a review has been in flight:
+// whole minutes under an hour, then reviewQueueAge's hours/days.
+func reviewQueueDispatchAge(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return reviewQueueAge(int(d.Hours()))
+}
+
 // ReviewQueueFromActionable ranks every open PR the enumeration saw - the
 // actionable list and the held list, which at ACMM L5 hold-gated IS the
 // human review queue - into one queue.
@@ -416,6 +645,9 @@ func ReviewQueueFromActionable(actionable *ActionableResult, opts ReviewQueueOpt
 		held[ReviewQueueKey(reviewQueueFullRepo(pr.Repo, opts.Org), pr.Number)] = true
 	}
 	opts.Held = held
+	if opts.RedMain == nil {
+		opts.RedMain = actionable.RedMain
+	}
 	return BuildReviewQueue(prs, opts)
 }
 

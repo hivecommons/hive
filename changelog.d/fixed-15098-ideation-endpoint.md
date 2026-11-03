@@ -1,0 +1,1 @@
+- Inception uses its local knowledge wiki without warning about an unconfigured remote project endpoint, while retaining warnings for configured endpoint failures ([#15098](https://github.com/hivecommons/hive/issues/15098)).

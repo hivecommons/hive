@@ -1,0 +1,1 @@
+- `hivectl hives web`: the page embedded its session token double-quoted, so every API call sent `X-Hive-Commons-Token` with literal quote characters and was rejected with 401 — the contribution tree and profile table never loaded, showing only "unauthorized". The token is now embedded as a single JS string literal.

@@ -33,8 +33,6 @@ func TestOverlayScrollContainmentAudit(t *testing.T) {
 		".gh-setup-modal,",
 		".acmm-dialog,",
 		".nous-config-dialog > .nous-config-body,",
-		".nous-config-overlay textarea,",
-		".nous-config-overlay pre,",
 		".nous-config-body [style*=\"overflow-y:auto\"],",
 		".nous-config-body [style*=\"overflow-y: auto\"],",
 		".welcome-body,",
@@ -43,6 +41,23 @@ func TestOverlayScrollContainmentAudit(t *testing.T) {
 	for _, snippet := range modalScrollers {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q from the modal-scroller containment rule (#4805)", snippet)
+		}
+	}
+
+	// Form textareas and <pre> blocks inside the nous overlays must NOT be
+	// contained (#11786): Chrome honours overscroll-behavior:contain on a
+	// scroll container with nothing to scroll, so an empty textarea under the
+	// pointer swallowed every wheel event and the Knowledge Sources modal body
+	// could never be scrolled to its bottom. Their chain lands on
+	// .nous-config-body or the overlay, both of which stay contained above.
+	for _, snippet := range []string{
+		".nous-config-overlay textarea,",
+		".nous-config-overlay pre,",
+		".nous-config-overlay textarea {",
+		".nous-config-overlay pre {",
+	} {
+		if strings.Contains(html, snippet) {
+			t.Errorf("index.html contains %q — nous overlay textareas/pre must not carry overscroll containment (#11786)", snippet)
 		}
 	}
 

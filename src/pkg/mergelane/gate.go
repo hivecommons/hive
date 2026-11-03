@@ -11,6 +11,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // mergeMethodKey carries the calling path's merge method from Merge to the
@@ -20,6 +21,7 @@ type mergeMethodKey struct{}
 type mergeMethod struct {
 	requested string
 	used      string
+	solicited bool
 }
 
 // NativeMergeQueueReason is the refusal for a target branch that has GitHub's
@@ -35,6 +37,9 @@ func NativeMergeQueueReason(branch string) string {
 // the lane runs; otherwise the PR records its eligibility and, only when it
 // is at the front, runs one lane round that may end in the pinned merge.
 func (l *Lane) Merge(ctx context.Context, req ghub.LaneMergeRequest) (ghub.LaneMergeResult, error) {
+	if req.ReleaseGoneFronts {
+		return l.releaseGoneFronts(ctx, req.Repo)
+	}
 	branch := strings.TrimSpace(req.Branch)
 	if branch == "" {
 		p, err := l.opts.GitHub.PullRequest(ctx, req.Repo, req.Number)
@@ -54,17 +59,80 @@ func (l *Lane) Merge(ctx context.Context, req ghub.LaneMergeRequest) (ghub.LaneM
 		l.emit([]Event{{At: l.opts.Now(), Repo: req.Repo, Branch: branch, PR: req.Number, Action: ActionRefusal, Reason: reason}})
 		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeRefused, Reason: reason}, err
 	}
+	method := &mergeMethod{
+		requested: req.Method,
+		solicited: req.Path == ghub.PRAuditPathQueue || req.Path == ghub.PRAuditPathRelay || req.Path == ghub.PRAuditPathDashboard,
+	}
+	if !method.solicited {
+		if reason := l.pathWriteSuppressed(ctx, req.Repo, branch, req.Number, req.Path); reason != "" {
+			return l.refuseSuppressedPath(req.Repo, branch, req.Number, reason)
+		}
+	}
 	dec, err := l.Acquire(req.Repo, branch, req.Number, req.Path)
 	if err != nil || dec.Outcome == OutcomeDeferred {
 		return ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason}, err
 	}
-	method := &mergeMethod{requested: req.Method}
 	ctx = context.WithValue(ctx, mergeMethodKey{}, method)
 	dec, err = l.Advance(ctx, req.Repo, branch, req.Number, Authorizer(req.Authorize))
-	res := ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason, SHA: dec.MergeSHA}
+	res := ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason, SHA: dec.MergeSHA, MergeError: dec.MergeError}
 	if dec.Outcome == OutcomeMerged {
 		res.Method = method.used
 	}
+	return res, err
+}
+
+// PathWriteChecker is an optional GitHub capability: it reports, without
+// writing, whether the merge path in ctx may update and merge PR number. It
+// returns an error wrapping writeback.ErrSuppressed when writeback
+// containment would refuse both (RESTGitHub: the check UpdateBranch and
+// Merge apply); any other error means the answer is not known.
+type PathWriteChecker interface {
+	PathCanWrite(ctx context.Context, repo string, number int) error
+}
+
+// pathWriteSuppressed returns a refusal when an unsolicited merge path (the
+// automerge sweep lanes) cannot write to pr: writeback containment refuses
+// its branch update and merge alike, so as the front it could only hold the
+// lane until the front timeout while queued pull requests waited. Such a PR
+// takes no lane place. An admitted waiter is not re-checked, so waiting
+// costs no extra GitHub call; it is checked again once it is the front.
+func (l *Lane) pathWriteSuppressed(ctx context.Context, repo, branch string, pr int, path string) string {
+	checker, ok := l.opts.GitHub.(PathWriteChecker)
+	if !ok {
+		return ""
+	}
+	rec, _, err := l.Snapshot(repo, branch)
+	if err != nil {
+		return ""
+	}
+	if (rec.Front == nil || rec.Front.PR != pr) && rec.waiterIndex(pr) >= 0 {
+		return ""
+	}
+	err = checker.PathCanWrite(ctx, repo, pr)
+	if !errors.Is(err, writeback.ErrSuppressed) {
+		return ""
+	}
+	if path == "" {
+		path = "calling"
+	}
+	return fmt.Sprintf("the %s merge path cannot update or merge this pull request, so it takes no lane place: %v", path, err)
+}
+
+// refuseSuppressedPath refuses pr with reason. A PR already in the lane
+// leaves it (a front ends and the oldest waiter is promoted) and the refusal
+// is audited once; a PR outside the lane is not recorded, so asking again on
+// every sweep changes nothing.
+func (l *Lane) refuseSuppressedPath(repo, branch string, pr int, reason string) (ghub.LaneMergeResult, error) {
+	res := ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeRefused, Reason: reason}
+	rec, _, err := l.Snapshot(repo, branch)
+	if err != nil {
+		return res, err
+	}
+	if (rec.Front == nil || rec.Front.PR != pr) && rec.waiterIndex(pr) < 0 {
+		return res, nil
+	}
+	err = l.Release(repo, branch, pr, reason)
+	l.emit([]Event{{At: l.opts.Now(), Repo: repo, Branch: branch, PR: pr, Action: ActionRefusal, Reason: reason}})
 	return res, err
 }
 
@@ -86,6 +154,39 @@ func (l *Lane) advanceRejectedFront(ctx context.Context, repo, branch string, pr
 	return ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason}, err
 }
 
+// releaseGoneFronts serves the sweep's once-per-pass front check: every front
+// of repo whose PR can no longer merge into its branch leaves at once. The
+// outcome is left when any front left, with one "#N: reason" per front.
+func (l *Lane) releaseGoneFronts(ctx context.Context, repo string) (ghub.LaneMergeResult, error) {
+	if strings.TrimSpace(repo) == "" {
+		err := errors.New("mergelane: a repo is required to check its fronts")
+		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeRefused, Reason: err.Error()}, err
+	}
+	recs, err := l.opts.Store.Lanes(repo)
+	if err != nil {
+		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeWaiting, Reason: "reading the lane failed: " + err.Error()}, err
+	}
+	res := ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeWaiting}
+	var left []string
+	var errs []error
+	for _, rec := range recs {
+		if rec.Front == nil {
+			continue
+		}
+		reason, err := l.releaseGoneFront(ctx, rec.Repo, rec.Branch, rec.Front.PR)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if reason != "" {
+			left = append(left, fmt.Sprintf("#%d: %s", rec.Front.PR, reason))
+		}
+	}
+	if len(left) > 0 {
+		res.Outcome, res.Reason = ghub.LaneOutcomeLeft, strings.Join(left, "; ")
+	}
+	return res, errors.Join(errs...)
+}
+
 // nativeMergeQueue returns a refusal when branch has GitHub's native merge
 // queue or when that cannot be established (fail closed).
 func (l *Lane) nativeMergeQueue(ctx context.Context, repo, branch string) string {
@@ -102,6 +203,11 @@ func (l *Lane) nativeMergeQueue(ctx context.Context, repo, branch string) string
 	}
 	return ""
 }
+
+// laneWriteKind is the writeback kind the lane's branch update and merge are
+// contained under; PathCanWrite asks the same question before a PR takes a
+// lane place.
+const laneWriteKind = writeback.KindContributorAdopt
 
 // RESTGitHub is the lane's GitHub over the hive's App client. Client is read
 // on every call so a rebuilt client is followed. Reads are live.
@@ -268,6 +374,10 @@ func (g *RESTGitHub) UpdateBranch(ctx context.Context, repo string, number int, 
 	if err != nil {
 		return err
 	}
+	// Mutations have no comment body: never reserve comment dedupe on a retry.
+	if err := g.allowWriteback(ctx, c, repo, number, laneWriteKind, ""); err != nil {
+		return err
+	}
 	var apiErr error
 	_, err = effects.Execute(ctx, c.MutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + name,
@@ -276,7 +386,7 @@ func (g *RESTGitHub) UpdateBranch(ctx context.Context, repo string, number int, 
 		Actor:  "mergelane",
 		Inputs: map[string]string{"expected_head_sha": expectedHead, "lane": "serialized"},
 	}, func(ctx context.Context) (effects.Result, error) {
-		_, _, apiErr = api.PullRequests.UpdateBranch(ctx, owner, name, number, &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHead)})
+		_, _, apiErr = api.PullRequests.UpdateBranch(ctx, owner, name, number, &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHead)}) // writeback:gated
 		var accepted *gh.AcceptedError
 		if errors.As(apiErr, &accepted) {
 			apiErr = nil
@@ -310,7 +420,40 @@ func (g *RESTGitHub) CreateIssueComment(ctx context.Context, repo string, number
 	if err != nil {
 		return err
 	}
-	return c.CreateIssueComment(ctx, repo, number, body)
+	if err := g.allowWriteback(ctx, c, repo, number, writeback.KindNeedsDecisionComment, body); err != nil {
+		return err
+	}
+	return c.CreateIssueComment(ctx, repo, number, body) // writeback:gated
+}
+
+func (g *RESTGitHub) allowWriteback(ctx context.Context, c *ghub.Client, repo string, number int, kind writeback.Kind, preview string) error {
+	if method, _ := ctx.Value(mergeMethodKey{}).(*mergeMethod); method != nil && method.solicited {
+		// Queue and relay paths carry a per-head explicit merge request, not
+		// merely an agent-authored PR. An operator pause still silences them.
+		if _, paused := c.WritebackGate().RepoPaused(repo); paused {
+			d := c.WritebackAllowed(repo, writeback.Item{Number: number, IsPR: true}, kind, preview)
+			return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+		}
+		return nil
+	}
+	item, err := c.WritebackItemForNumber(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	if d := c.WritebackAllowed(repo, item, kind, preview); !d.Allowed {
+		return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+	}
+	return nil
+}
+
+// PathCanWrite applies the containment UpdateBranch and Merge apply, without
+// writing: nil when ctx's merge path may update and merge number.
+func (g *RESTGitHub) PathCanWrite(ctx context.Context, repo string, number int) error {
+	c, _, _, _, err := g.rest(repo)
+	if err != nil {
+		return err
+	}
+	return g.allowWriteback(ctx, c, repo, number, laneWriteKind, "")
 }
 
 // Merge is the REST merge with head pinned. The method is the calling path's;
@@ -319,6 +462,10 @@ func (g *RESTGitHub) CreateIssueComment(ctx context.Context, repo string, number
 func (g *RESTGitHub) Merge(ctx context.Context, repo string, number int, head string) (string, error) {
 	c, api, owner, name, err := g.rest(repo)
 	if err != nil {
+		return "", err
+	}
+	// The mutation journal, not comment-content dedupe, reconciles merge attempts.
+	if err := g.allowWriteback(ctx, c, repo, number, laneWriteKind, ""); err != nil {
 		return "", err
 	}
 	method, _ := ctx.Value(mergeMethodKey{}).(*mergeMethod)
@@ -343,9 +490,9 @@ func (g *RESTGitHub) Merge(ctx context.Context, repo string, number int, head st
 		Actor:  "mergelane",
 		Inputs: map[string]string{"method": used, "expect_sha": head, "lane": "serialized"},
 	}, func(ctx context.Context) (effects.Result, error) {
-		res, _, apiErr = api.PullRequests.Merge(ctx, owner, name, number, "", &gh.PullRequestOptions{SHA: head, MergeMethod: used})
+		res, _, apiErr = api.PullRequests.Merge(ctx, owner, name, number, "", &gh.PullRequestOptions{SHA: head, MergeMethod: used}) // writeback:gated
 		if apiErr != nil {
-			return effects.Result{}, apiErr
+			return effects.Result{}, ghub.MergeAPIErrorNotApplied(apiErr)
 		}
 		return effects.Result{Provenance: res.GetSHA()}, nil
 	})

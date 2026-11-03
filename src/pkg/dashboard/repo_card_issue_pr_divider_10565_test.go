@@ -22,7 +22,7 @@ func TestRepoCardIssuePRDividerStaticWiring10565(t *testing.T) {
 	}
 
 	prDivider := strings.Index(html, "const prCol = prPills ? `<div class=\"repo-pill-run-title\">PULL REQUESTS</div>${prPills}` : '';")
-	prBands := strings.Index(html, "const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {")
+	prBands := strings.Index(html, "const prPills = collapseView.prGroups.map(g => {")
 	pillsHTML := strings.Index(html, "? `<div class=\"repo-pills${pillColClass}\"><div class=\"repo-pill-col repo-pill-col-issues\">${issueCol}</div><div class=\"repo-pill-col repo-pill-col-prs\">${prCol}</div></div>`")
 	if prDivider < 0 || prBands < 0 || pillsHTML < 0 {
 		t.Fatalf("index.html missing PR divider, PR buckets, or repo pill columns")

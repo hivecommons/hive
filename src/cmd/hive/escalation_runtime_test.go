@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalate"
 )
@@ -42,7 +43,7 @@ func installTestEscalationDispatcher(t *testing.T) *recordingEscalationSink {
 
 func TestAgentPauseEmitterPagesThroughRealPausePath(t *testing.T) {
 	sink := installTestEscalationDispatcher(t)
-	mgr := agent.NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, hookTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, hookTestLogger(), crux.ProjectContext{})
 	installAgentPauseEmitter(mgr)
 	if err := mgr.PauseBy("scanner", "dashboard-api", "operator maintenance", "owner"); err != nil {
 		t.Fatal(err)

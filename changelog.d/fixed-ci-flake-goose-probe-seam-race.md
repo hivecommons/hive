@@ -1,0 +1,1 @@
+- The goose ACP probe seam (`runGooseACPProbe`) is now guarded by an RWMutex, mirroring the copilot SDK helper seam, so a background CLI-model refresh started by one test can no longer race with the next test swapping the probe (`TestQueryCLIModels_GooseUsesProvider` data race) ([#13047](https://github.com/hivecommons/hive/issues/13047)).

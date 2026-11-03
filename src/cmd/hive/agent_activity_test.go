@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -14,8 +16,10 @@ import (
 // enabled scanner agent scheduled on a kicking cadence in the "busy" mode.
 func activityTestConfig() *config.Config {
 	return &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -30,10 +34,10 @@ func activityTestConfig() *config.Config {
 // quiesce into a multi-day incident investigation.
 func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	pausedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	lastPane := time.Date(2026, 8, 20, 8, 55, 0, 0, time.UTC)
-	proc := &agent.AgentProcess{
+	proc := &crux.Process{
 		Paused:         true,
 		PausedTrigger:  "dashboard-api",
 		PausedReason:   "manual pause",
@@ -73,8 +77,8 @@ func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 // would make every idle on-demand agent read as divergent fleet-side.
 func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
-	proc := &agent.AgentProcess{}
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	proc := &crux.Process{}
 
 	scheduled := spoke.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
 	if !scheduled.ExpectedActive {
@@ -100,8 +104,8 @@ func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 // panicking or guessing — the hub reads all-false as UNKNOWN, never as a
 // divergence verdict.
 func TestAgentActivityForNilConfig(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
-	act := spoke.AgentActivityFor(mgr, nil, governor.State{}, "busy", "scanner", &agent.AgentProcess{}, nil)
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
+	act := spoke.AgentActivityFor(mgr, nil, governor.State{}, "busy", "scanner", &crux.Process{}, nil)
 	if act.ExpectedActive || act.Enabled {
 		t.Errorf("nil config: ExpectedActive=%v Enabled=%v, want both false", act.ExpectedActive, act.Enabled)
 	}
@@ -112,8 +116,8 @@ func TestAgentActivityForNilConfig(t *testing.T) {
 // capabilities for an unknown agent would fabricate a divergence signal.
 func TestAgentActivityForUnknownAgentCapabilitiesStayFalse(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
-	act := spoke.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "ghost", &agent.AgentProcess{}, nil)
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	act := spoke.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "ghost", &crux.Process{}, nil)
 	if act.CanOpenIssue || act.CanOpenPR || act.CanMerge {
 		t.Errorf("unknown agent capabilities = (%v, %v, %v), want all false (UNKNOWN)",
 			act.CanOpenIssue, act.CanOpenPR, act.CanMerge)

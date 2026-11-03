@@ -6,7 +6,7 @@
 > of the v1 approach and as context for the agent definitions in
 > [`agents/`](agents/), which remain current-style. Do not follow the
 > installation steps below for a new deployment — use the
-> [Quick Start](../../README.md#quick-start) instead, and see
+> [Quick Start](../../src/docs/what-is-hive.md#run-it) instead, and see
 > [`docs/LEGACY-v1-architecture.md`](../../docs/LEGACY-v1-architecture.md)
 > for the retired v1 architecture this example ran on.
 

@@ -206,3 +206,33 @@ func TestDaysSummaryDefaultsAndJoinHumanSmallCases(t *testing.T) {
 		t.Fatalf("joinHuman pair = %q", got)
 	}
 }
+
+// #13817: Period is the gap between timer kicks, used to widen the watchdog's
+// no-production window for lanes kicked less often than the window.
+func TestCadencePeriod(t *testing.T) {
+	after := time.Date(2026, 10, 22, 18, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		cad  Cadence
+		want time.Duration
+		ok   bool
+	}{
+		{"interval", NewIntervalCadence("24h"), 24 * time.Hour, true},
+		{"short interval", NewIntervalCadence("30m"), 30 * time.Minute, true},
+		{"empty", Cadence(""), 0, false},
+		{"paused", NewIntervalCadence("off"), 0, false},
+		{"on demand", NewIntervalCadence("on demand"), 0, false},
+		{"continuous", NewIntervalCadence(CadenceModeContinuous), 0, false},
+		{"invalid", NewIntervalCadence("soon"), 0, false},
+		{"daily time", rawCadence(t, cadenceObject{Times: []string{"02:00"}, TZ: "UTC"}), 24 * time.Hour, true},
+		{"hourly cron", rawCadence(t, cadenceObject{Cron: "0 * * * *", TZ: "UTC"}), time.Hour, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := tc.cad.Period(after)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("Period(%q) = %v, %v; want %v, %v", string(tc.cad), got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}

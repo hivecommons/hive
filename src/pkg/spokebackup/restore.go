@@ -27,6 +27,8 @@ import (
 //
 //	spoke/<name>         -> <dataDir>/<name>
 //	beads/<agent>/<rel>  -> <dataDir>/beads/<agent>/<rel>
+//	nous/<rel>           -> <dataDir>/nous/<rel>        (#11694)
+//	bead-synth-wiki/<slug>.md -> <dataDir>/vaults/bead-synth-wiki/<slug>.md
 //	MANIFEST.json        -> not restored; it is archive metadata, not spoke state
 //
 // Everything else in the archive is ignored and reported, so a hub
@@ -101,6 +103,9 @@ type RestoreResult struct {
 
 	// BeadDirs lists the per-agent bead directories restored, sorted.
 	BeadDirs []string
+
+	// NousFiles counts the files restored under <dataDir>/nous (#11694).
+	NousFiles int
 
 	// Ignored lists archive members outside the spoke layout that were NOT
 	// restored, sorted. MANIFEST.json is expected here; anything else means
@@ -183,6 +188,7 @@ func Restore(key, sealed []byte, opts RestoreOptions, logger *slog.Logger) (*Res
 		DryRun:        opts.DryRun,
 		Files:         plan.relPaths(),
 		BeadDirs:      plan.beadDirs(),
+		NousFiles:     plan.nousFiles,
 	}
 
 	existing, err := readHiveID(filepath.Join(dataDir, hiveIDFile))
@@ -225,6 +231,7 @@ func Restore(key, sealed []byte, opts RestoreOptions, logger *slog.Logger) (*Res
 		"data_dir", dataDir,
 		"files", len(res.Files),
 		"bead_dirs", len(res.BeadDirs),
+		"nous_files", res.NousFiles,
 		"hive_id", res.ArchiveHiveID,
 		"forced", res.Forced)
 	return res, nil
@@ -249,6 +256,7 @@ type restorePlan struct {
 	ignored       []string
 	archiveHiveID string
 	beads         map[string]struct{}
+	nousFiles     int
 }
 
 func (p *restorePlan) relPaths() []string {
@@ -315,10 +323,30 @@ func planRestore(staging, dataDir string) (*restorePlan, error) {
 				dst:    filepath.Join(dataDir, name),
 				secret: true, // config, identity and App keys — all owner-only
 			})
+		case parts[0] == beadSynthPrefix && len(parts) == 2 && strings.HasSuffix(parts[1], ".md"):
+			relDst := filepath.Join(vaultsSubdir, beadSynthPrefix, parts[1])
+			plan.moves = append(plan.moves, restoreMove{
+				rel: relDst,
+				src: path,
+				dst: filepath.Join(dataDir, relDst),
+				// Not secret: the archive mode is the synthesizer's own 0644
+				// (beadSynthFactMode). Nothing re-applies ownership under
+				// vaults/ at boot, so an owner-only restore from a different
+				// uid would hide the facts from the synthesizer and reindex.
+				secret: false,
+			})
 		case parts[0] == beadsPrefix && len(parts) >= 3:
 			agent := parts[1]
 			plan.beads[agent] = struct{}{}
 			relDst := filepath.Join(append([]string{beadsSubdir}, parts[1:]...)...)
+			plan.moves = append(plan.moves, restoreMove{
+				rel: relDst,
+				src: path,
+				dst: filepath.Join(dataDir, relDst),
+			})
+		case parts[0] == nousPrefix && len(parts) >= 2:
+			plan.nousFiles++
+			relDst := filepath.Join(append([]string{nousSubdir}, parts[1:]...)...)
 			plan.moves = append(plan.moves, restoreMove{
 				rel: relDst,
 				src: path,

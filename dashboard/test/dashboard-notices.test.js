@@ -66,4 +66,5 @@ test('dashboard layout migration ignores the pinned notices slot', () => {
   assert.equal(normalized.main[1], 'overview-section');
   assert.equal(normalized.main[2], 'governor');
   assert.equal(normalized.main[3], 'runs-section');
+  assert.equal(normalized.main[6], 'activity-monitor-section');
 });

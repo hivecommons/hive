@@ -1,0 +1,1 @@
+- Fleet selfreports no longer file an unclassified-runtime-error issue when the request pacer refuses a request because its slot would miss the caller's deadline; the WARN stays in local logs (#15109).

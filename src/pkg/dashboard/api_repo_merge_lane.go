@@ -40,6 +40,9 @@ type mergeLaneFrontView struct {
 	EnteredAt  string `json:"entered_at,omitempty"`
 	DeadlineAt string `json:"deadline_at,omitempty"`
 	Reason     string `json:"reason,omitempty"`
+
+	ChecksPending bool `json:"checks_pending,omitempty"`
+	Extensions    int  `json:"extensions,omitempty"`
 }
 
 type mergeLaneWaiterView struct {
@@ -125,6 +128,9 @@ func buildMergeLaneView(rec mergelane.Record, rules github.BranchRulesResult) me
 			EnteredAt:  laneTime(rec.Front.EnteredAt),
 			DeadlineAt: laneTime(rec.Front.DeadlineAt),
 			Reason:     rec.Front.LastReason,
+
+			ChecksPending: rec.Front.ChecksPending,
+			Extensions:    rec.Front.Extensions,
 		}
 		if rec.Front.LastReason != "" {
 			v.Reasons = append(v.Reasons, mergeLaneReasonView{PR: rec.Front.PR, Reason: rec.Front.LastReason})

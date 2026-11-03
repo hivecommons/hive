@@ -107,3 +107,51 @@ func TestMergeFailureAlertsDedupeAndClearOnSuccess(t *testing.T) {
 		t.Fatalf("second clear should be no-op, got %+v", sink.clears)
 	}
 }
+
+// CI-gate read failures (#11924) are transient/unverified verdicts, not a
+// missing merge permission: no operator alert.
+func TestClassifyMergeFailureSkipsCIGateReadFailures(t *testing.T) {
+	for _, msg := range []string{
+		"ci gate: check-runs for o/r@5264ebe480f7: GET https://api.github.com/repos/o/r/commits/5264ebe/check-runs?per_page=100: 403 Resource not accessible by integration []",
+		"ci gate: status for o/r@5264ebe480f7: GET https://api.github.com/repos/o/r/commits/5264ebe/status?per_page=100: 403 Resource not accessible by integration []",
+		"ci gate: check-runs for o/r@5264ebe480f7: GET https://api.github.com/repos/o/r/commits/5264ebe/check-runs?per_page=100: 500 []",
+		"ci gate: listing workflow runs for o/r@5264ebe: GET https://api.github.com/repos/o/r/actions/runs/9/jobs: 502 []",
+		"ci gate: fetching PR o/r#7: GET https://api.github.com/repos/o/r/pulls/7: 403 Forbidden []",
+	} {
+		if alert, ok := classifyMergeFailureForOperator("o/r", msg); ok {
+			t.Fatalf("expected no operator alert for %q, got %+v", msg, alert)
+		}
+	}
+}
+
+func TestClassifyMergeFailureMergePUT403StillAppPermission(t *testing.T) {
+	msg := "merging PR o/r#1 (squash): PUT https://api.github.com/repos/o/r/pulls/1/merge: 403 Resource not accessible by integration []"
+	alert, ok := classifyMergeFailureForOperator("o/r", msg)
+	if !ok || alert.key != "app-permission" {
+		t.Fatalf("merge PUT 403 = %+v ok=%v, want app-permission", alert, ok)
+	}
+	if !strings.Contains(alert.message, "Trigger: "+msg) {
+		t.Fatalf("alert message %q does not quote the triggering error", alert.message)
+	}
+	long := "403 permission denied " + strings.Repeat("x", 500)
+	alert, ok = classifyMergeFailureForOperator("o/r", long)
+	if !ok || !strings.HasSuffix(alert.message, "…") || strings.Contains(alert.message, long) {
+		t.Fatalf("long trigger not truncated: %q", alert.message)
+	}
+}
+
+// Every App merge path records its merge through RecordPRMergedAudit, so the
+// self-authored sweep and the queue retire the repo's alerts too (#11924).
+func TestRecordPRMergedAuditClearsMergeFailureAlerts(t *testing.T) {
+	c := NewClientForTest("http://127.0.0.1:0", "o", []string{"r"}, nil)
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+	c.raiseMergeFailureAlert("o/r", 7, "merging PR o/r#7: PUT https://api.github.test/repos/o/r/pulls/7/merge: 403 Resource not accessible by integration []")
+	if len(sink.adds) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(sink.adds))
+	}
+	c.RecordPRMergedAudit("O/R", 9, "squash", "abc", PRAuditPathSweep)
+	if len(sink.clears) != 1 || sink.clears[0] != sink.adds[0].id {
+		t.Fatalf("sweep merge did not clear alert: %+v", sink.clears)
+	}
+}

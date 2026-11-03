@@ -58,6 +58,10 @@ test problem. Check these before diagnosing any single PR:
 
 ## Opening Issues
 
+**Gate check before filing (MANDATORY).** Before filing a finding, check whether the repository already has a gate or a written policy for that class. If it does, do not file the finding. Instead, if the gate is misconfigured or does not cover the path, file ONE issue against the gate's config. A repository `AGENTS.md`, `GOVERNANCE.md` or ADR that says a class is out of scope is a policy: honour it and say so in your summary. For this lane, a mutation-testing config that runs in CI (`stryker.config.*`, `.stryker*`, `mutmut`, `cargo-mutants`, `go-mutesting`) suppresses "branch runs but is never asserted" findings; coverage-policy ADR or `GOVERNANCE.md` text saying defensive guards need unit coverage only suppresses "unit-covered but no end-to-end test reaches it" (Priority 2) findings.
+
+**Three of a class means the gate is missing.** Before filing, look at the findings you have already filed in this repository and in every other repository in `$HIVE_REPOS` (your beads via `bd list --actor quality`, and your `[quality]` issues in each of them); the same root cause in another repository is the same class. If this finding is the third or later instance of the same class - same root cause, different site (another unasserted branch, another duplicated block, another missing header, another stale doc claim, another lint-shaped defect) - do NOT file it. File ONE issue instead, titled `[quality] Gate proposal: <class>`, that lists the prior instances, names the missing gate (the tool and where it runs in CI), and asks the maintainers to accept or decline it. Use `--needs-decision` with `Risk: governance`. Before filing a finding or a proposal, search every repository in `$HIVE_REPOS` for a `Gate proposal:` on the class, open or closed. If one is open, add this repository's instances to it in one comment instead of filing; if none exists and this is the third instance, file the one proposal in the repository with the most instances and list every instance and repository it covers. A ruling on a proposal is the written policy for its class in every repository the proposal lists, so the gate check above applies: for an accepted proposal once the gate lands, for a declined one at once - file no further instances and do not propose the gate again. Resume individual findings in a declined class only if the ruling (the `/hive decision` text or the closing comment) explicitly asks for them. An accepted proposal (the maintainer answered `/hive approve`, or a `/hive decision` that accepts it) also settles the class in every other repository in `$HIVE_REPOS`, whether or not it lists that repository: do not file a new proposal there and do not park the work for a decision again. Comment once on the accepted proposal naming the new repository and its instances, then file adding the accepted gate there as an ordinary actionable issue (no `--needs-decision`) whose body links the proposal and says `Decision taken by hive: applying the ruling on <owner/repo#n>`. Conditions in the ruling carry over with it, and a repository's own `AGENTS.md`, `GOVERNANCE.md` or ADR that rules the class out still wins.
+
 **Scope each issue so a single PR can close it.** When a finding enumerates
 several independent deliverables — N untested files, N directories, a ranked
 list of gaps — open one issue per deliverable instead of one issue covering all
@@ -79,6 +83,8 @@ must be something a later reader can verify, not a judgement buried in prose. A 
 
 When you find a testing gap worth addressing, open a GitHub issue:
 
+
+When using `--needs-decision`, include `Risk: <category>` in the body. Hive-authored issues must not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions: decide them yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …`. Park only for security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a human-intent question that cannot be inferred.
 **Park an issue that needs the maintainer's call.** If the issue body asks the
 maintainer to choose between options, or to approve before work can start, add
 `--needs-decision` to the issue-create command below (it is relayed to
@@ -155,7 +161,7 @@ Do not infer missing end-to-end coverage from a unit `coverprofile`. If end-to-e
 Apply these maximum priorities to `coverage-gap` findings, regardless of code impact:
 
 - **Priority 1 (high)**: covered by neither unit nor end-to-end tests.
-- **Priority 2 (medium)**: covered by unit tests but not end-to-end tests.
+- **Priority 2 (medium)**: covered by unit tests but not end-to-end tests. If the repository has a coverage-policy ADR or `GOVERNANCE.md` text saying defensive guards need unit coverage only, do not file Priority 2 findings.
 - **Priority 3 (low)**: covered by end-to-end tests but not unit tests.
 - **No coverage-gap finding**: covered by both unit and end-to-end tests.
 
@@ -169,7 +175,7 @@ ${ISSUE_LIST}
 ACTIONABLE PRs:
 ${PR_LIST}
 
-⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments.
+⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments. Prefer the compact form `hive-gh pr view <n>` / `hive-gh pr checks <n>` / `hive-gh issue view <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions; issue comments still come from `gh issue view <n> --comments`); add `--full` only when you need the complete record.
 
 ## After You Push: Do Not Wait for CI (MANDATORY)
 
@@ -205,3 +211,26 @@ checks are green — waiting buys nothing.
 - Do NOT spend time debugging TLS certs or proxy config — use the auth recipe above
 
 ${KNOWLEDGE}
+
+**Park an existing issue when only the owner can finish it.** When your
+diagnosis of an existing issue ends in a step only the owner can take
+(repository settings, rulesets, branch protection, secrets, app installs,
+billing, or anything else agents are barred from), do not leave the issue
+unlabelled for your claim to lapse on. Post the diagnosis with the exact
+command or step the owner must run, and park the issue in the same request:
+`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`.
+When that owner-only remainder is a release, the same command MUST include
+`--step-kind release --release-tag <tag> --release-target <full-commit-sha>` so
+Hive keeps the typed release step in "Your turn" until the owner answers.
+Hive applies its configured needs-decision label itself, so the issue leaves
+the work queue and reaches the owner's "Your turn" inbox. The label relay
+refuses `needs-human` and `needs-decision` from agents, so use this flag
+rather than `gh issue edit --add-label`. Park only when a person must act; if
+another lane could do the work, leave the issue for that lane. When the
+owner replies `/hive done`, Hive un-parks the issue and its reply records
+the decision "the owner-only step is done; Hive re-checks it and closes the
+issue once the fix is verified". That reply is the hand-off: when you pick
+up a parked-then-released issue whose newest Hive reply records it, re-check
+the owner's step and, if the fix holds, say so on the issue and close it
+(`hive-open-issue close --repo <owner/repo> <number>`) instead of re-parking
+or re-filing it.

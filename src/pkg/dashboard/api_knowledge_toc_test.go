@@ -45,10 +45,15 @@ func knowledgeTOCServer(t *testing.T) *Server {
 	return s
 }
 
+// tocGet reads as a verified owner, the only caller whose include_states is
+// honoured (#14546).
 func tocGet(t *testing.T, s *Server, target string) (int, map[string]interface{}) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
+	s.mux.ServeHTTP(rec, req)
 	var out map[string]interface{}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return rec.Code, out

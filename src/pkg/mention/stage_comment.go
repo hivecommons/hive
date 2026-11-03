@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 const stageStatusMarker = "<!-- hive:run-stage-status"
@@ -21,6 +23,11 @@ type issueCommentLister interface {
 
 type issueCommentEditor interface {
 	EditIssueComment(ctx context.Context, repo string, id int64, body string) error
+}
+
+type stageWritebackClient interface {
+	WritebackItemForNumber(context.Context, string, int) (writeback.Item, error)
+	WritebackAllowed(string, writeback.Item, writeback.Kind, string) writeback.Decision
 }
 
 type StageTransition struct {
@@ -74,6 +81,16 @@ func (c *StageCommenter) Post(ctx context.Context, tr StageTransition) error {
 		c.audit(AuditDeclined, "stage-comment:github", tr.Agent)
 		return nil
 	}
+	if gate, ok := gh.(stageWritebackClient); ok {
+		item, err := gate.WritebackItemForNumber(ctx, repo, number)
+		if err != nil {
+			return err
+		}
+		if d := gate.WritebackAllowed(repo, item, writeback.KindGateComment, body); !d.Allowed {
+			c.audit(AuditDeclined, "stage-comment:writeback:"+d.Reason, tr.Agent)
+			return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+		}
+	}
 	var commentID int64
 	if lister, ok := gh.(issueCommentLister); ok {
 		comments, err := lister.ListIssueComments(ctx, repo, number)
@@ -95,7 +112,7 @@ func (c *StageCommenter) Post(ctx context.Context, tr StageTransition) error {
 			return c.Store.Mark(dedupe)
 		}
 	}
-	if err := gh.CreateIssueComment(ctx, repo, number, body); err != nil {
+	if err := gh.CreateIssueComment(ctx, repo, number, body); err != nil { // writeback:gated
 		return err
 	}
 	return c.Store.Mark(dedupe)

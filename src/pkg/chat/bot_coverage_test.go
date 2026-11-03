@@ -60,6 +60,7 @@ func TestResolveAlias_KnownAliases(t *testing.T) {
 		{"ci", "ci-maintainer"},
 		{"se", "sec-check"},
 		{"sg", "strategist"},
+		{"ex", "experimenter"},
 		{"te", "quality"},
 		{"tm", "telemetry"},
 		{"op", "operations"},
@@ -420,6 +421,34 @@ func TestCmdAgentAction_UnknownAgent(t *testing.T) {
 	result, _ := b.cmdAgentAction(ownerCommandContext(), "kick", "nonexistent")
 	if !strings.Contains(result, "Unknown agent") {
 		t.Errorf("expected unknown agent error, got: %q", result)
+	}
+}
+
+func TestCmdAgentAction_EmptyAgentShowsUsage(t *testing.T) {
+	tests := []struct {
+		action string
+		args   string
+		want   string
+	}{
+		{"kick", "", "❌ Usage: `!kick <agent> [prompt]`"},
+		{"pause", "  ", "❌ Usage: `!pause <agent>`"},
+		{"resume", "", "❌ Usage: `!resume <agent>`"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.action, func(t *testing.T) {
+			b := NewService(&recordingBackend{}, Config{}, discardLogger())
+			b.SetAgentNames([]string{"scanner", "reviewer"})
+			result, _ := b.cmdAgentAction(ownerCommandContext(), tc.action, tc.args)
+			if !strings.HasPrefix(result, tc.want) {
+				t.Errorf("expected usage %q, got: %q", tc.want, result)
+			}
+			if strings.Contains(result, "Unknown agent") {
+				t.Errorf("unexpected unknown agent error: %q", result)
+			}
+			if !strings.Contains(result, "scanner, reviewer") {
+				t.Errorf("expected agent names listed, got: %q", result)
+			}
+		})
 	}
 }
 
@@ -787,7 +816,7 @@ func TestDiffAgents_WorkingToIdleWithLongSummary(t *testing.T) {
 }
 
 func TestDiffAgents_WorkingToIdleSuppressesChromeSummary(t *testing.T) {
-	b := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example"}, discardLogger())
+	b := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example"}, discardLogger())
 
 	prev := &statusSnapshot{
 		Agents: []agentSnapshot{{Name: "scanner", Busy: "working"}},
@@ -816,7 +845,7 @@ func TestDiffAgents_WorkingToIdleSuppressesChromeSummary(t *testing.T) {
 }
 
 func TestDiffAgents_WorkingToIdleUsesOutcomeWorkDurationAndDetails(t *testing.T) {
-	b := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example/"}, discardLogger())
+	b := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example/"}, discardLogger())
 
 	started := time.Now().Add(-90 * time.Minute).UTC().Format(time.RFC3339)
 	prev := &statusSnapshot{
@@ -883,9 +912,20 @@ func TestAgentCompletionHelpers(t *testing.T) {
 		}
 	}
 
-	svc := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example/"}, discardLogger())
+	svc := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example/"}, discardLogger())
 	if got := svc.agentDetailsSuffix("agent/name"); got != " — details: https://hive.example/#agent%2Fname" {
 		t.Fatalf("details suffix = %q", got)
+	}
+	local := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002"}, discardLogger())
+	if got := local.agentDetailsSuffix("agent"); got != "" {
+		t.Fatalf("details suffix without public URL = %q, want empty", got)
+	}
+	got := svc.agentCompletionText(agentSnapshot{Name: "a", Busy: "idle", AuthKnown: true}, agentSnapshot{})
+	if !strings.HasPrefix(got, "Failed — agent CLI could not run (no credential for its backend)") || strings.Contains(got, "Completed") {
+		t.Fatalf("no-credential completion = %q", got)
+	}
+	if got := svc.agentCompletionText(agentSnapshot{Busy: "idle", NeedsLogin: true}, agentSnapshot{}); !strings.Contains(got, "Failed") {
+		t.Fatalf("needs-login completion = %q", got)
 	}
 	if got := svc.agentCompletionText(agentSnapshot{Busy: "idle"}, agentSnapshot{}); !strings.Contains(got, "no new work") {
 		t.Fatalf("fallback completion = %q", got)
@@ -1412,5 +1452,21 @@ func TestDrainLoop_StopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("drainLoop did not stop after context cancellation")
+	}
+}
+
+func TestDashboardKick_Deferred(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"ok":true,"status":"deferred","agent":"scanner"}`))
+	}))
+	defer ts.Close()
+
+	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
+	b.client = ts.Client()
+
+	result, _ := b.dashboardKick(ownerCommandContext(), "scanner", "")
+	if !strings.Contains(result, "queued until the first governor scan") || strings.Contains(result, "✅") {
+		t.Errorf("deferred kick must not report success, got %q", result)
 	}
 }

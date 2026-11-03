@@ -57,10 +57,12 @@ func reviewSwarmConfig() *config.Config {
 			ReviewerAgents:  []string{"reviewer"},
 			FixerAgent:      "scanner",
 		},
-		Agents: map[string]config.AgentConfig{
-			"reviewer": {Enabled: true, Role: "review specialist"},
-			"scanner":  {Enabled: true, Role: "scanner"},
-			"disabled": {Enabled: false, Role: "review"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"reviewer": {Enabled: true, Role: "review specialist"},
+				"scanner":  {Enabled: true, Role: "scanner"},
+				"disabled": {Enabled: false, Role: "review"},
+			},
 		},
 	}
 }
@@ -110,11 +112,54 @@ func TestPlanReviewDispatch_KicksReviewerForAgentAuthoredPR(t *testing.T) {
 	}
 }
 
-func TestPlanReviewDispatch_SkipsHumanAuthoredPR(t *testing.T) {
+func TestPlanReviewDispatch_IncludesHeldPRsInReviewRankOrder(t *testing.T) {
 	redirectReviewPaths(t)
-	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("some-human"), nil, nil, restoreTestLogger())
-	if len(plan.ReviewKicks) != 0 || len(plan.FixKicks) != 0 {
-		t.Fatalf("human-authored PR must not be dispatched, got %d review kicks and %d fix kicks",
+	cfg := reviewSwarmConfig()
+	cfg.Review.MaxParallelReviews = 1
+	actionable := &github.ActionableResult{PRs: github.PRResult{
+		Items: []github.PullRequest{{
+			Repo:       "hive",
+			Number:     101,
+			Title:      "fix: active item",
+			Author:     "hive-bot",
+			HeadSHA:    reviewTestSHA,
+			ReviewRank: 2,
+		}},
+		Held: []github.PullRequest{{
+			Repo:       "pluk",
+			Number:     257,
+			Title:      "refactor: held review-pending item",
+			Author:     "hive-bot",
+			HeadSHA:    strings.Repeat("b", 40),
+			ReviewRank: 1,
+		}},
+	}}
+
+	plan := planReviewDispatch(cfg, actionable, nil, nil, restoreTestLogger())
+
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("expected 1 review kick, got %d", len(plan.ReviewKicks))
+	}
+	kick := plan.ReviewKicks[0]
+	if kick.Repo != "kubestellar/pluk" || kick.Number != 257 {
+		t.Fatalf("kick = %s#%d, want held PR kubestellar/pluk#257 first", kick.Repo, kick.Number)
+	}
+}
+
+// TestPlanReviewDispatch_ReviewsHumanAuthoredPR pins hivecommons/hive#12974
+// end to end through the config wiring: with review on and all_authors left
+// unset, a human's PR is dispatched for review like an agent's. Nothing is
+// fix-kicked — a review verdict does not exist yet, and a human PR is never
+// pushed to anyway.
+func TestPlanReviewDispatch_ReviewsHumanAuthoredPR(t *testing.T) {
+	redirectReviewPaths(t)
+	cfg := reviewSwarmConfig()
+	if cfg.Review.AllAuthors {
+		t.Fatal("fixture must leave the deprecated all_authors knob unset")
+	}
+	plan := planReviewDispatch(cfg, actionableWithPR("some-human"), nil, nil, restoreTestLogger())
+	if len(plan.ReviewKicks) != 1 || len(plan.FixKicks) != 0 {
+		t.Fatalf("human-authored PR must be dispatched for review, got %d review kicks and %d fix kicks",
 			len(plan.ReviewKicks), len(plan.FixKicks))
 	}
 }
@@ -147,7 +192,8 @@ func TestPlanReviewDispatch_ChangesRequestedVerdictDispatchesFixer(t *testing.T)
 		t.Fatalf("seed verdict artifact: %v", err)
 	}
 
-	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot"), nil, nil, restoreTestLogger())
+	// Only a bot-shaped login may be pushed to (hivecommons/hive#13129).
+	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot[bot]"), nil, nil, restoreTestLogger())
 	if len(plan.ReviewKicks) != 0 {
 		t.Errorf("PR with an aggregate verdict must not be re-reviewed, got %d review kicks", len(plan.ReviewKicks))
 	}
@@ -312,6 +358,53 @@ func TestPersistReviewDispatchState_KeepsOnlyDeliveredKicks(t *testing.T) {
 	}
 }
 
+// The persist made from onReviewDelivered runs while later kicks of the same
+// pass are still being sent. It must keep their pending rows on disk, or a
+// verdict from one of them finds no dispatch row and binds as advisory
+// (hivecommons/hive#15559).
+func TestPersistReviewDispatchStateInProgress_KeepsKicksStillDelivering(t *testing.T) {
+	redirectReviewPaths(t)
+	now := time.Now().UTC()
+	delivered := review.DispatchKick{
+		Kind: "review", Agent: "reviewer", Repo: "hivecommons/hive",
+		Number: 4321, HeadSHA: reviewTestSHA, Perspective: review.PerspectiveSecurity,
+	}
+	inFlight := review.DispatchKick{
+		Kind: "review", Agent: "decider", Repo: "hivecommons/hive",
+		Number: 4321, HeadSHA: reviewTestSHA, Perspective: review.PerspectiveStyle, Decision: true,
+	}
+	plan := review.DispatchPlan{
+		ReviewKicks: []review.DispatchKick{delivered, inFlight},
+		State: review.DispatchState{
+			GeneratedAt: now,
+			Pending: []review.PendingReview{
+				{Repo: delivered.Repo, Number: delivered.Number, HeadSHA: delivered.HeadSHA, Perspective: delivered.Perspective, Agent: delivered.Agent, Dispatched: now},
+				{Repo: inFlight.Repo, Number: inFlight.Number, HeadSHA: inFlight.HeadSHA, Perspective: inFlight.Perspective, Agent: inFlight.Agent, Decision: true, Dispatched: now},
+			},
+		},
+	}
+
+	persistReviewDispatchStateInProgress(plan, []review.DispatchKick{delivered}, restoreTestLogger())
+
+	state, err := review.LoadDispatchState("")
+	if err != nil {
+		t.Fatalf("load persisted state: %v", err)
+	}
+	if len(state.Pending) != 2 {
+		t.Fatalf("persisted pending = %+v, want both the delivered and the in-flight kick", state.Pending)
+	}
+
+	persistReviewDispatchState(plan, []review.DispatchKick{delivered}, restoreTestLogger())
+
+	state, err = review.LoadDispatchState("")
+	if err != nil {
+		t.Fatalf("load persisted state: %v", err)
+	}
+	if len(state.Pending) != 1 || state.Pending[0].Agent != delivered.Agent {
+		t.Fatalf("end-of-pass pending = %+v, want only the delivered kick", state.Pending)
+	}
+}
+
 func TestPersistReviewDispatchState_WriteFailureIsNonFatal(t *testing.T) {
 	dir := redirectReviewPaths(t)
 	// Point the state file inside a plain file so MkdirAll/rename must fail.
@@ -376,5 +469,38 @@ func TestPlanReviewDispatch_PlanMatchCarriesPlanWave(t *testing.T) {
 	}
 	if planWaveFor(cfg, stores, epic.ID, "") != "" {
 		t.Fatal("planWaveFor rendered a wave with plan_match off")
+	}
+}
+
+// The author's base is resolved over every configured lane: a PR opened by a
+// replica that is now disabled, or one a reduced replicas: count no longer
+// materialises, still maps to its base so the family stays excluded
+// (hivecommons/hive#13552).
+func TestReviewAuthorBaseUsesFullConfiguredAgentSet(t *testing.T) {
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"alpha":   {Enabled: true},
+			"alpha-2": {Enabled: true, ReplicaOf: "alpha"},
+			"alpha-3": {Enabled: false, ReplicaOf: "alpha"},
+			"beta":    {Enabled: true},
+		},
+	}}
+	if _, ok := cfg.EnabledAgents()["alpha-3"]; ok {
+		t.Fatal("fixture: alpha-3 should be disabled")
+	}
+	tests := map[string]string{
+		"alpha-3": "alpha",   // disabled replica
+		"alpha-4": "alpha",   // replica retired by a reduced replicas: count
+		"alpha-2": "alpha",   // enabled replica
+		"alpha":   "alpha",   // base
+		"beta":    "beta",    // ordinary lane
+		"gamma-2": "gamma-2", // unknown lane, no configured base
+		"alpha-x": "alpha-x", // not a replica suffix
+		"":        "",
+	}
+	for author, want := range tests {
+		if got := reviewAuthorBase(cfg, author); got != want {
+			t.Errorf("reviewAuthorBase(%q) = %q, want %q", author, got, want)
+		}
 	}
 }

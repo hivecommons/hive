@@ -24,6 +24,16 @@ ADJUDICATION CONTRACT — for EACH PR above, deliver EXACTLY ONE verdict:
      verdict delivered so it is never repeated:
         gh pr edit <number> --add-label ${REVIEWER_RECOMMEND_CLOSE_LABEL}
 ${REVIEWER_CLOSE_AUTHORITY}
+  4. HAND-OFF — the change is fine, but only a maintainer can unblock it (a
+     workflow dispatch with maintainer-only inputs, a secret, a stale shared cache
+     rebuild, a repository setting): complete the mandatory audit below using its
+     hand-off review body, leave needs-human in place, then mark the verdict
+     delivered so the maintainer is told now rather than after a timeout
+     (the label is created first because a missing label fails the whole edit):
+        gh label create ${REVIEWER_HANDOFF_LABEL} --repo <owner/repo> --description "Adjudicator handed this PR to a maintainer" --color d93f0b || true
+        gh pr edit <number> --add-label ${REVIEWER_HANDOFF_LABEL}
+  ⛔ There is NO other verdict (no HOLD, no WAIT): a verdict without its label is
+     invisible to Hive and leaves the PR waiting on nobody.
 
 MANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or closing:
   1. Submit a comment review through Hive's relay so the adjudication is attributed
@@ -32,6 +42,14 @@ MANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or
           hive-review <number> --repo <owner/repo> --comment --body "Reviewer adjudication: <REPAIR|DE-ESCALATE> — evidence: <why>; changes: <what>; tests: <commands/results>; remaining risk: <risk or none>"
         RECOMMEND-CLOSE (this is the one close-recommend record; do not post a second comment):
           hive-review <number> --repo <owner/repo> --comment --body "[reviewer] recommend close: <duplicate/superseded/lossy rationale>; evidence: <why>; tests: <checks>; remaining risk: <risk or none>"
+        HAND-OFF (this is the one hand-off record; do not post a second comment). The body's
+        FIRST line is a single `${REVIEWER_HANDOFF_PREFIX} <one concrete action>` line, e.g.
+        "Run Build And Promote Main Image with rebuild_akmods=true, then rerun checks":
+          hive-review <number> --repo <owner/repo> --comment --body "${REVIEWER_HANDOFF_PREFIX} <one concrete action>
+
+          Reviewer adjudication: HAND-OFF — evidence: <why only a maintainer can act>; remaining risk: <risk or none>
+
+          When the step is done, a trusted merger replies /hive approve: Hive lifts its own needs-human, removes ${REVIEWER_HANDOFF_LABEL} and adds ${REVIEWER_PASSED_LABEL}; a needs-human a person added is removed by hand."
      `hive-review` is asynchronous: poll the `.result.json` path it prints and do
      not proceed until that file reports `"ok": true`. A queued request is not yet
      an audit record; an error result must leave the PR in `needs-human`.
@@ -39,6 +57,17 @@ MANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or
         bd create --title "Reviewer adjudication: <owner/repo>#<number> — <outcome>" --type advisory --priority 2 --actor ${AGENT_NAME} --external-ref "gh-<owner/repo>#<number>"
      If either record fails, leave `needs-human` in place, do not add a reviewer verdict
      label, and do not close; report the audit failure for a later retry.
+
+## After You Push: Do Not Wait for CI (MANDATORY)
+
+Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on
+CI** — no `gh run watch`, no `gh run view` loops, no repeated `gh pr checks`,
+`gh pr view --json statusCheckRollup`, or `gh pr status`. If you repaired or
+pushed to a PR, that ends your work on it for this kick; the automerge sweep
+merges it the moment its checks are green. The budget is per KICK, not per PR:
+at most **two** CI-status commands in total across every PR on the list, and
+none once the kick is ten minutes old — the harness nudges you past either
+line. Move to the next PR instead.
 
 INVARIANTS:
   ⛔ Adjudicate AT MOST ${REVIEWER_MAX_PRS} PRs this kick, oldest first — the list above is

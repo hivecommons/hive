@@ -48,6 +48,7 @@ never re-derives it.
 | Hive offline | Row pill hidden (offline state dominates) | Unchanged in the UI | counted as `hidden_stale` in diagnostics so fleet-level staleness is still visible |
 | Pure PR/merge hive | Suppressed | Suppressed | unchanged (expected suppression) |
 | Every agent paused or off-schedule, digest ageing | Flagged stale — the pause itself lit the pill | Suppressed — no agents, no findings, no digest | Gate 3 (`allAgentsQuietByDesign`, #4528); counted as `hidden_stale` in diagnostics |
+| Spoke heartbeat collect timed out, beat carries cached/minimal stats (`statsStale`) | `advisory-stale` alert raised from the last-good `advisoryLastPostedAt` while fresh digests were posting | No fleet alert — the post time is not a fresh observation | The hub alert rule skips `StatsStale` beats (#12842); health verdict already reads "heartbeat stats stale" |
 
 ## Diagnostics
 

@@ -16,14 +16,8 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// Environment the agent manager exports alongside HIVE_CAVEMAN_MODE.
-const (
-	// ModeEnvVar carries the agent's jev_mode ("assist" when the tool is on).
-	ModeEnvVar = "HIVE_JEV_MODE"
-	// EndpointEnvVar carries the decision endpoint base URL.
-	EndpointEnvVar = "HIVE_JEV_ENDPOINT"
-	Subcommand     = "jev"
-)
+// Subcommand is the `hive jev` CLI verb.
+const Subcommand = "jev"
 
 const cliUsage = `usage: hive jev decide --type <choice|score|probability> --question <text>
                        [--option <name[=description]>]... [--level <description>]...

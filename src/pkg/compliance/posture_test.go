@@ -92,8 +92,8 @@ func TestPostureCatalogueMapsToSOC2Controls(t *testing.T) {
 	}
 	ids := map[string]bool{}
 	cat := PostureCatalogue()
-	if len(cat) != 8 || len(PostureChecks()) != len(cat) {
-		t.Fatalf("catalogue has %d checks, want 8", len(cat))
+	if len(cat) != 9 || len(PostureChecks()) != len(cat) {
+		t.Fatalf("catalogue has %d checks, want 9", len(cat))
 	}
 	for _, c := range cat {
 		if ids[c.ID] || c.Title == "" || len(c.ControlIDs) == 0 {
@@ -223,17 +223,43 @@ func TestCheckAuditRetention(t *testing.T) {
 	}
 }
 
+func TestCheckRelayAuditCoverage(t *testing.T) {
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, postureTestDeps(nil, nil)), PostureSkip, "relay audit evidence unavailable")
+
+	var gotSince time.Time
+	deps := func(rows int, rowsErr error, connected bool) PostureDeps {
+		d := postureTestDeps(nil, nil)
+		d.RelayAuditRowsSince = func(since time.Time) (int, error) { gotSince = since; return rows, rowsErr }
+		d.RelayConnectedSince = func(time.Time) bool { return connected }
+		return d
+	}
+
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, deps(3, nil, true)), PosturePass, "3 relay_* audit row(s)")
+	if want := postureNow.Add(-24 * time.Hour); !gotSince.Equal(want) {
+		t.Fatalf("since = %v, want %v", gotSince, want)
+	}
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, deps(0, nil, false)), PosturePass, "no relay connected")
+	r := runCheck(t, CheckRelayAuditCoverage, deps(0, nil, true))
+	wantStatus(t, r, PostureFail, "no relay_* audit row was written")
+	if len(r.EvidenceRefs) != 1 {
+		t.Fatalf("refs = %v", r.EvidenceRefs)
+	}
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, deps(0, errors.New("boom"), true)), PostureError, "boom")
+}
+
 func TestCheckAgentConfinement(t *testing.T) {
 	wantStatus(t, runCheck(t, CheckAgentConfinement, postureTestDeps(nil, nil)), PostureSkip, "no enabled agents")
 
 	on := true
 	cfg := &config.Config{
-		AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-		Agents: map[string]config.AgentConfig{
-			"boxed":    {Enabled: true, Backend: "claude", Sandbox: &config.AgentSandboxOverride{Enabled: &on}},
-			"host":     {Enabled: true, Backend: "copilot"},
-			"nobknd":   {Enabled: true},
-			"disabled": {Enabled: false},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+			Agents: map[string]config.AgentConfig{
+				"boxed":    {Enabled: true, Backend: "claude", Sandbox: &config.AgentSandboxOverride{Enabled: &on}},
+				"host":     {Enabled: true, Backend: "copilot"},
+				"nobknd":   {Enabled: true},
+				"disabled": {Enabled: false},
+			},
 		},
 	}
 	r := runCheck(t, CheckAgentConfinement, postureTestDeps(cfg, nil))
@@ -509,8 +535,8 @@ func TestPostureRunnerTransitions(t *testing.T) {
 		transitions = append(transitions, prev.CheckID+":"+string(prev.Status)+"->"+string(cur.Status))
 	}
 
-	run, err := r.Run(context.Background(), TriggerManual)
-	if err != nil || run.Trigger != TriggerManual || run.Summary != (PostureSummary{Pass: 1, Fail: 1}) || !run.At.Equal(postureNow) {
+	run, err := r.RunAs(context.Background(), TriggerManual, "alice")
+	if err != nil || run.Trigger != TriggerManual || run.TriggeredBy != "alice" || run.Summary != (PostureSummary{Pass: 1, Fail: 1}) || !run.At.Equal(postureNow) {
 		t.Fatalf("run = %+v err=%v", run, err)
 	}
 	if len(transitions) != 0 {

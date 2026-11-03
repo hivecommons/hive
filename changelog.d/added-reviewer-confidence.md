@@ -1,0 +1,1 @@
+- Reviewer calibration now compares five-bin self-reported confidence with an evidence-derived score, preserves raw reports and legacy fallback, and shows series coverage and monotonic merge-share comparisons without changing review gating ([#13239](https://github.com/hivecommons/hive/issues/13239)).

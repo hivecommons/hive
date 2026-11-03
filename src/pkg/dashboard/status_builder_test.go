@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -50,10 +51,12 @@ func TestOperabilityAgentsHiddenFromDashboardBelowL5(t *testing.T) {
 	level := 3
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "copilot", Enabled: true},
-			"telemetry":  {Backend: "copilot", Enabled: true},
-			"operations": {Backend: "copilot", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "copilot", Enabled: true},
+				"telemetry":  {Backend: "copilot", Enabled: true},
+				"operations": {Backend: "copilot", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle": {
@@ -65,7 +68,7 @@ func TestOperabilityAgentsHiddenFromDashboardBelowL5(t *testing.T) {
 			},
 		}},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner":    {Name: "scanner", Config: cfg.Agents["scanner"]},
 		"telemetry":  {Name: "telemetry", Config: cfg.Agents["telemetry"]},
 		"operations": {Name: "operations", Config: cfg.Agents["operations"]},
@@ -187,6 +190,35 @@ func TestBuildGovernorNextRunAnchorsToLastEval(t *testing.T) {
 	}
 }
 
+func TestBuildGovernorNextRunUsesEffectiveEvalInterval(t *testing.T) {
+	lastEval := time.Date(2026, 9, 25, 16, 10, 0, 0, time.UTC)
+	cfg := &config.Config{
+		Governor: config.GovernorConfig{
+			EvalIntervalS:              120,
+			EvalIntervalMaxS:           1800,
+			ConserveIntervalMultiplier: 3,
+			Modes:                      map[string]config.ModeConfig{},
+		},
+	}
+	state := governor.State{Mode: governor.ModeIdle, LastEval: lastEval}
+
+	conserve := buildGovernor(state, cfg, map[string]any{"mode": "conserve"})
+	if want := "2026-09-25T16:16:00Z"; conserve.NextKickAt != want {
+		t.Fatalf("conserve nextKickAt = %q, want %q", conserve.NextKickAt, want)
+	}
+
+	critical := buildGovernor(state, cfg, map[string]any{"mode": "critical"})
+	if want := "2026-09-25T16:18:00Z"; critical.NextKickAt != want {
+		t.Fatalf("critical nextKickAt = %q, want %q", critical.NextKickAt, want)
+	}
+
+	cfg.Governor.EvalIntervalMaxS = 300
+	capped := buildGovernor(state, cfg, map[string]any{"mode": "critical"})
+	if want := "2026-09-25T16:15:00Z"; capped.NextKickAt != want {
+		t.Fatalf("capped critical nextKickAt = %q, want %q", capped.NextKickAt, want)
+	}
+}
+
 func TestBuildTokens_NilCollector(t *testing.T) {
 	ft := buildTokens(nil)
 	if ft.LookbackHours != defaultLookbackHours {
@@ -296,9 +328,11 @@ func TestBuildBudget(t *testing.T) {
 
 func TestBuildCadenceMatrix(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude"},
-			"supervisor": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude"},
+				"supervisor": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -309,7 +343,7 @@ func TestBuildCadenceMatrix(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner":    {Paused: false},
 		"supervisor": {Paused: true},
 	}
@@ -380,32 +414,34 @@ func TestBuildGHRateLimits_AppAuth(t *testing.T) {
 
 func TestBuildAgents(t *testing.T) {
 	now := time.Now()
-	buf := agent.NewRingBuffer(10)
+	buf := cruxtest.NewRingBuffer(10)
 	buf.Write("test output line")
 
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			LastKick:     &now,
 			OutputBuffer: buf,
 		},
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       config.AgentConfig{Backend: "claude", Model: "opus"},
-			State:        agent.StatePaused,
+			State:        crux.StatePaused,
 			Paused:       true,
 			PinnedCLI:    "claude",
 			PinnedModel:  "opus",
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude", Model: "sonnet", SortOrder: 20},
-			"supervisor": {Backend: "claude", Model: "opus", BeadRole: "supervisor", SortOrder: 10},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude", Model: "sonnet", SortOrder: 20},
+				"supervisor": {Backend: "claude", Model: "opus", BeadRole: "supervisor", SortOrder: 10},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -434,27 +470,31 @@ func TestBuildAgents(t *testing.T) {
 
 func TestBuildAgents_ShowsGatewayNamedConfiguredAgentWithoutRuntimeStatus(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"supervisor": {
-				ID:          "supervisor",
-				Backend:     "unsloth-local",
-				Model:       "unsloth/gemma-4-E4B-it-qat-GGUF",
-				Enabled:     true,
-				DisplayName: "Supervisor",
-				SortOrder:   10,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": {
+					ID:          "supervisor",
+					Backend:     "unsloth-local",
+					Model:       "unsloth/gemma-4-E4B-it-qat-GGUF",
+					Enabled:     true,
+					DisplayName: "Supervisor",
+					SortOrder:   10,
+				},
 			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:         "unsloth-local",
-				Kind:         config.GatewayKindCustom,
-				Endpoint:     "http://host.docker.internal:8888",
-				DefaultModel: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:         "unsloth-local",
+					Kind:         config.GatewayKindCustom,
+					Endpoint:     "http://host.docker.internal:8888",
+					DefaultModel: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+				}},
+			},
 		},
 	}
 
-	agents := buildAgents(map[string]*agent.AgentProcess{}, cfg, governor.State{Mode: governor.ModeIdle})
+	agents := buildAgents(map[string]*crux.Process{}, cfg, governor.State{Mode: governor.ModeIdle})
 	if len(agents) != 1 {
 		t.Fatalf("agents len = %d, want 1 for enabled agent using configured gateway backend", len(agents))
 	}
@@ -475,31 +515,33 @@ func TestBuildAgents_ShowsGatewayNamedConfiguredAgentWithoutRuntimeStatus(t *tes
 // dashboard uses to paint a hollow-green (alive-but-governor-off) dot for hives
 // stuck in a mode where every cadence is paused (e.g. SURGE).
 func TestBuildAgents_OffByCadence(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"quality": {
 			Name:         "quality",
 			Config:       config.AgentConfig{Backend: "claude"},
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"brainstorm": {
 			Name:         "brainstorm",
 			Config:       config.AgentConfig{Backend: "claude", OnDemand: true},
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude", SortOrder: 10},
-			"quality":    {Backend: "claude", SortOrder: 20},
-			"brainstorm": {Backend: "claude", OnDemand: true, SortOrder: 30},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude", SortOrder: 10},
+				"quality":    {Backend: "claude", SortOrder: 20},
+				"brainstorm": {Backend: "claude", OnDemand: true, SortOrder: 30},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -534,8 +576,10 @@ func TestBuildAgents_OffByCadence(t *testing.T) {
 func TestBuildFrontendStatus(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -548,12 +592,12 @@ func TestBuildFrontendStatus(t *testing.T) {
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
 	govState := gov.GetState()
 
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -567,14 +611,26 @@ func TestBuildFrontendStatus(t *testing.T) {
 	if len(payload.Agents) != 1 {
 		t.Errorf("agents len = %d", len(payload.Agents))
 	}
-	if payload.Features.StrategyLab {
-		t.Error("features.strategy_lab = true by default, want false")
+	if payload.Features.ExperimentLab || payload.Features.StrategyLab {
+		t.Error("features.experiment_lab/strategy_lab = true by default, want false")
 	}
 
+	cfg.Dashboard.ExperimentLab = true
+	payload = BuildFrontendStatus(govState, nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
+	if !payload.Features.ExperimentLab {
+		t.Error("features.experiment_lab = false with dashboard.experiment_lab enabled, want true")
+	}
+	if !payload.Features.StrategyLab {
+		t.Error("features.strategy_lab alias = false with dashboard.experiment_lab enabled, want true for the one-release alias window (#11695)")
+	}
+
+	// The deprecated dashboard.strategy_lab key still lights the feature when
+	// it reaches the builder without passing through applyDefaults.
+	cfg.Dashboard.ExperimentLab = false
 	cfg.Dashboard.StrategyLab = true
 	payload = BuildFrontendStatus(govState, nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
-	if !payload.Features.StrategyLab {
-		t.Error("features.strategy_lab = false with dashboard.strategy_lab enabled, want true")
+	if !payload.Features.ExperimentLab {
+		t.Error("features.experiment_lab = false with deprecated dashboard.strategy_lab enabled, want true")
 	}
 }
 
@@ -582,8 +638,10 @@ func TestBuildFrontendStatusPublishesStandbyPauseFacts(t *testing.T) {
 	cfg := &config.Config{
 		Project:  config.ProjectConfig{Org: "org", Repos: []string{"repo"}},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{}},
-		Agents: map[string]config.AgentConfig{
-			"quality": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"quality": {},
+			},
 		},
 	}
 	state := governor.State{
@@ -608,19 +666,21 @@ func TestBuildFrontendStatusPublishesStandbyPauseFacts(t *testing.T) {
 func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
-			"quality": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+				"quality": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+			},
 		},
 		GitHub: config.GitHubConfig{Token: "tok"},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
-			State:                     agent.StateRunning,
-			OutputBuffer:              agent.NewRingBuffer(10),
+			State:                     crux.StateRunning,
+			OutputBuffer:              cruxtest.NewRingBuffer(10),
 			ProviderErrorClass:        "auth",
 			ProviderErrorLine:         "✗ You are not licensed to use Copilot.",
 			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
@@ -628,8 +688,8 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 		"quality": {
 			Name:         "quality",
 			Config:       cfg.Agents["quality"],
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -641,22 +701,24 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 
 func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "claude-sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "claude-sonnet", Enabled: true},
+			},
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
-			State:                     agent.StateRunning,
-			OutputBuffer:              agent.NewRingBuffer(10),
+			State:                     crux.StateRunning,
+			OutputBuffer:              cruxtest.NewRingBuffer(10),
 			ProviderErrorClass:        "backend_auth_error",
 			ProviderErrorLine:         "Inference backend outage (401): Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute",
 			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
-			BackendAuth: agent.BackendAuthState{
-				Status:    agent.BackendAuthUnreachable,
+			BackendAuth: crux.BackendAuthState{
+				Status:    crux.BackendAuthUnreachable,
 				Since:     time.Now(),
 				LastError: "Inference backend outage (401): Error querying the database",
 			},
@@ -674,25 +736,27 @@ func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 	if !strings.Contains(a.StatusEvidence, "backend_auth_error") || !strings.Contains(a.StatusEvidence, "Inference backend outage") {
 		t.Fatalf("StatusEvidence = %q, want backend auth outage detail", a.StatusEvidence)
 	}
-	if a.BackendAuthStatus != agent.BackendAuthUnreachable || a.BackendAuthLastError == "" {
+	if a.BackendAuthStatus != crux.BackendAuthUnreachable || a.BackendAuthLastError == "" {
 		t.Fatalf("backend auth fields = %q/%q, want unreachable with detail", a.BackendAuthStatus, a.BackendAuthLastError)
 	}
 }
 
 func TestBuildFrontendStatus_AgentAuthHealthRecoversWhenProviderBackoffExpires(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+			},
 		},
 		GitHub: config.GitHubConfig{Token: "tok"},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
-			State:                     agent.StateRunning,
-			OutputBuffer:              agent.NewRingBuffer(10),
+			State:                     crux.StateRunning,
+			OutputBuffer:              cruxtest.NewRingBuffer(10),
 			ProviderErrorClass:        "auth",
 			ProviderErrorLine:         "old auth error",
 			ProviderErrorBackoffUntil: time.Now().Add(-time.Minute),
@@ -788,19 +852,21 @@ func TestBuildHealth_IgnoresCachedWorkflowHealth(t *testing.T) {
 }
 
 func TestBuildAgents_WithOverrides(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:            "scanner",
 			Config:          config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:           agent.StateRunning,
+			State:           crux.StateRunning,
 			BackendOverride: "aider",
 			ModelOverride:   "opus",
-			OutputBuffer:    agent.NewRingBuffer(10),
+			OutputBuffer:    cruxtest.NewRingBuffer(10),
 		},
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{},
@@ -820,8 +886,10 @@ func TestBuildAgents_WithOverrides(t *testing.T) {
 
 func TestBuildCadenceMatrix_PausedWithCadence(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -832,7 +900,7 @@ func TestBuildCadenceMatrix_PausedWithCadence(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {Paused: true},
 	}
 	matrix := buildCadenceMatrix(cfg, statuses, "surge")
@@ -867,11 +935,15 @@ func TestBuildRepos_WithActionable(t *testing.T) {
 	if len(repos) != 1 {
 		t.Fatalf("len = %d", len(repos))
 	}
-	if repos[0].Issues != 5 {
-		t.Errorf("issues = %d, want 5", repos[0].Issues)
+	// The card counts the items it can list (the canonical open-items set
+	// the tile, pill and activity monitor share); what TotalByRepo reported
+	// beyond them is kept apart as unlisted, never folded into the total
+	// (hivecommons/hive#13373).
+	if repos[0].Issues != 1 || repos[0].UnlistedIssues != 4 {
+		t.Errorf("issues = %d unlisted %d, want 1 listed + 4 unlisted", repos[0].Issues, repos[0].UnlistedIssues)
 	}
-	if repos[0].PRs != 3 {
-		t.Errorf("prs = %d, want 3", repos[0].PRs)
+	if repos[0].PRs != 1 || repos[0].UnlistedPRs != 2 {
+		t.Errorf("prs = %d unlisted %d, want 1 listed + 2 unlisted", repos[0].PRs, repos[0].UnlistedPRs)
 	}
 }
 
@@ -900,7 +972,9 @@ func TestBuildReposGroupsFullRepoWorksourceItemsUnderBareConfigRepo(t *testing.T
 func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
-		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
 				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
@@ -910,12 +984,12 @@ func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
 	govState := gov.GetState()
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
-			State:        agent.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 	// Test with non-nil metrics collector (just to hit the non-nil branch)
@@ -1018,8 +1092,10 @@ func TestLoadStatsConfig_MissingFile(t *testing.T) {
 
 func TestBuildCadenceMatrix_PauseCadence(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -1030,7 +1106,7 @@ func TestBuildCadenceMatrix_PauseCadence(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{}
+	statuses := map[string]*crux.Process{}
 	matrix := buildCadenceMatrix(cfg, statuses, "surge")
 	if len(matrix) != 1 {
 		t.Fatalf("len = %d", len(matrix))
@@ -1150,8 +1226,10 @@ func TestBuildHealth_NilClient_NoCached(t *testing.T) {
 
 func TestBuildCadenceMatrix_PausedAgent(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -1162,7 +1240,7 @@ func TestBuildCadenceMatrix_PausedAgent(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {Paused: true},
 	}
 	matrix := buildCadenceMatrix(cfg, statuses, "surge")
@@ -1326,15 +1404,17 @@ func TestBuildSecurity(t *testing.T) {
 		},
 		{
 			name: "empty agents map",
-			cfg:  &config.Config{Agents: map[string]config.AgentConfig{}},
+			cfg:  &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}},
 		},
 		{
 			name: "all sandboxed",
 			cfg: &config.Config{
-				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-				Agents: map[string]config.AgentConfig{
-					"scanner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
-					"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+				AgentRuntimeConfig: config.AgentRuntimeConfig{
+					AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+					Agents: map[string]config.AgentConfig{
+						"scanner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+						"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+					},
 				},
 			},
 			wantTotal:     2,
@@ -1343,10 +1423,12 @@ func TestBuildSecurity(t *testing.T) {
 		{
 			name: "none sandboxed",
 			cfg: &config.Config{
-				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-				Agents: map[string]config.AgentConfig{
-					"scanner": {Enabled: true},
-					"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(false)}},
+				AgentRuntimeConfig: config.AgentRuntimeConfig{
+					AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+					Agents: map[string]config.AgentConfig{
+						"scanner": {Enabled: true},
+						"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(false)}},
+					},
 				},
 			},
 			wantTotal: 2,
@@ -1354,14 +1436,16 @@ func TestBuildSecurity(t *testing.T) {
 		{
 			name: "mixed sandbox and review capabilities",
 			cfg: &config.Config{
-				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-				Review:       config.ReviewConfig{ReviewerAgents: []string{"explicit-reviewer"}},
-				Agents: map[string]config.AgentConfig{
-					"sandboxed-reviewer": {Enabled: true, Role: "code reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
-					"explicit-reviewer":  {Enabled: true},
-					"sandboxed-planner":  {Enabled: true, Role: "planner", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
-					"disabled-reviewer":  {Enabled: false, Role: "reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+				AgentRuntimeConfig: config.AgentRuntimeConfig{
+					AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+					Agents: map[string]config.AgentConfig{
+						"sandboxed-reviewer": {Enabled: true, Role: "code reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+						"explicit-reviewer":  {Enabled: true},
+						"sandboxed-planner":  {Enabled: true, Role: "planner", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+						"disabled-reviewer":  {Enabled: false, Role: "reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+					},
 				},
+				Review: config.ReviewConfig{ReviewerAgents: []string{"explicit-reviewer"}},
 			},
 			wantTotal:         4,
 			wantSandboxed:     3,
@@ -1434,6 +1518,19 @@ func TestDashboardAgentReviewCapable(t *testing.T) {
 			want:  true,
 		},
 		{
+			name:    "replica of allowed reviewer is review capable",
+			agent:   "security-reviewer-2",
+			cfg:     config.AgentConfig{Enabled: true, ReplicaOf: "security-reviewer"},
+			allowed: []string{"security-reviewer"},
+			want:    true,
+		},
+		{
+			name:    "replica of unlisted base is not review capable",
+			agent:   "worker-2",
+			cfg:     config.AgentConfig{Enabled: true, ReplicaOf: "worker"},
+			allowed: []string{"security-reviewer"},
+		},
+		{
 			name:  "paused agent is never review capable",
 			agent: "security-reviewer",
 			cfg:   config.AgentConfig{Enabled: true, Paused: true, Role: "reviewer"},
@@ -1456,5 +1553,125 @@ func TestDashboardAgentReviewCapable(t *testing.T) {
 				t.Errorf("dashboardAgentReviewCapable() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildAgents_RedactsLastErrorAndPausedReason(t *testing.T) {
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {ID: "scanner", Backend: "claude", Enabled: true},
+		},
+	}}
+	statuses := map[string]*crux.Process{
+		"scanner": {
+			Name:         "scanner",
+			Config:       config.AgentConfig{Backend: "claude"},
+			State:        crux.StateRunning,
+			OutputBuffer: cruxtest.NewRingBuffer(10),
+			LastError:    "copilot hung: your one-time code: ABCD-1234 | key sk-ant-abcdef123456",
+			PausedReason: "restart storm: ghp_abcdefghijklmnop1234 sk-ant-abcdef123456",
+		},
+	}
+	agents := buildAgents(statuses, cfg, governor.State{Mode: governor.ModeIdle})
+	if len(agents) != 1 {
+		t.Fatalf("agents len = %d, want 1", len(agents))
+	}
+	got := agents[0].LastError + "\n" + agents[0].PausedReason
+	for _, secret := range []string{"ABCD-1234", "sk-ant-abcdef123456", "ghp_abcdefghijklmnop1234"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("status payload leaked %q: %q", secret, got)
+		}
+	}
+	if agents[0].LastError == "" || agents[0].PausedReason == "" {
+		t.Fatalf("lastError/pausedReason should remain populated: %q / %q", agents[0].LastError, agents[0].PausedReason)
+	}
+}
+
+// A repo served from its last-good enumeration after a transient GitHub
+// refusal keeps its counts on the card, is flagged stale, and keeps the
+// Overview KPI snapshot out of history (hosted hive, 2026-10-21).
+func TestBuildRepos_StaleRepoKeepsCountsAndMarksKPIIncomplete(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1", "repo2"}},
+	}
+	// The last-good substitution keeps the repo's whole enumeration — its
+	// work-detail rows included — so the items are there to count.
+	details := func(repo string, issues, prs int) github.RepoWorkDetails {
+		var d github.RepoWorkDetails
+		for n := 1; n <= issues; n++ {
+			d.Issues = append(d.Issues, github.RepoWorkIssue{Repo: repo, Number: n, Bucket: "filtered"})
+		}
+		for n := 1; n <= prs; n++ {
+			d.PRs = append(d.PRs, github.RepoWorkPR{Repo: repo, Number: 100 + n, Bucket: "draft", Draft: true})
+		}
+		return d
+	}
+	actionable := &github.ActionableResult{
+		TotalByRepo: map[string]github.RepoCounts{
+			"repo1": {Issues: 19, PRs: 2},
+			"repo2": {Issues: 1, PRs: 0},
+		},
+		WorkDetailsByRepo: map[string]github.RepoWorkDetails{
+			"repo1": details("repo1", 19, 2),
+			"repo2": details("repo2", 1, 0),
+		},
+		StaleRepos: []string{"repo1"},
+		StaleSince: time.Date(2026, 10, 21, 14, 7, 0, 0, time.UTC),
+	}
+	repos := buildRepos(cfg, actionable, governor.State{})
+	if len(repos) != 2 {
+		t.Fatalf("repos len = %d, want 2", len(repos))
+	}
+	if repos[0].CountsStaleSince != "2026-10-21T14:07:00Z" || repos[1].CountsStaleSince != "" {
+		t.Fatalf("stale-since markers = %q / %q", repos[0].CountsStaleSince, repos[1].CountsStaleSince)
+	}
+	if got := staleSinceRFC3339(actionable); got != "2026-10-21T14:07:00Z" {
+		t.Fatalf("staleSinceRFC3339 = %q", got)
+	}
+	if repos[0].Issues != 19 || repos[0].PRs != 2 {
+		t.Fatalf("stale repo counts = %d/%d, want last-good 19/2", repos[0].Issues, repos[0].PRs)
+	}
+	if !repos[0].CountsStale || repos[0].CountsIncomplete {
+		t.Fatalf("repo1 stale=%v incomplete=%v, want stale only", repos[0].CountsStale, repos[0].CountsIncomplete)
+	}
+	if repos[1].CountsStale {
+		t.Fatal("fresh repo2 must not be marked stale")
+	}
+	if !overviewKPIIncomplete(cfg, actionable) {
+		t.Fatal("a snapshot with a stale repo must be KPI-incomplete so history skips it")
+	}
+	actionable.StaleRepos = nil
+	if overviewKPIIncomplete(cfg, actionable) {
+		t.Fatal("a fully fresh snapshot must be KPI-complete")
+	}
+	if staleSinceRFC3339(actionable) != "" {
+		t.Fatal("fresh snapshot must carry no stale-since marker")
+	}
+}
+
+// A whole-pass failure republishes the current status as stale-as-of
+// instead of leaving figures that look fresh (or dropping to zero).
+func TestMarkStatusStaleRepublishesLastGoodWithMarker(t *testing.T) {
+	s := &Server{}
+	s.MarkStatusStale(time.Now()) // no status yet: no-op
+	s.status = &StatusPayload{Repos: []FrontendRepo{
+		{Name: "repo1", Issues: 19, PRs: 2},
+		{Name: "repo2", Issues: 1, CountsStale: true, CountsStaleSince: "2026-10-21T13:00:00Z"},
+	}}
+	since := time.Date(2026, 10, 21, 14, 7, 0, 0, time.UTC)
+	s.MarkStatusStale(since)
+	got := s.status
+	if got.StaleSince != "2026-10-21T14:07:00Z" || !got.OverviewKPIIncomplete {
+		t.Fatalf("status = since:%q incomplete:%v", got.StaleSince, got.OverviewKPIIncomplete)
+	}
+	if got.Repos[0].Issues != 19 || !got.Repos[0].CountsStale || got.Repos[0].CountsStaleSince != got.StaleSince {
+		t.Fatalf("repo1 = %+v, want last-good counts marked stale", got.Repos[0])
+	}
+	if got.Repos[1].CountsStaleSince != "2026-10-21T13:00:00Z" {
+		t.Fatal("an already-stale repo keeps its own, earlier marker")
+	}
+	s.MarkStatusStale(since)
+	if s.status != got {
+		t.Fatal("same marker must not republish")
 	}
 }

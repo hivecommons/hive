@@ -1,0 +1,1 @@
+- Semantic classifier daily-quota exhaustion now writes an `ioscan_classifier_daily_quota_exhausted` audit event once per UTC day (text still passes on unclassified, as before).

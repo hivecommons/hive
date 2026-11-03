@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Tests for hivecommons/hive#8380: an issue someone has CLAIMED on the issue
@@ -73,13 +78,30 @@ func issueClaimConn(tier string) *ContributorConnection {
 }
 
 // claimRecorder is the forge seam stand-in: it records every claim comment
-// the hub posts, or fails them on demand.
+// the hub posts, or fails them on demand. Its stage seam is a FactSink over
+// the real reconciler and a fake writer, so allLabels reports the stage the
+// hub's claim fact actually derived to.
 type claimRecorder struct {
 	mu      sync.Mutex
 	posts   []claimPost
-	labels  []claimLabelPost
 	removed []claimLabelRemove
 	fail    error
+
+	sinkOnce sync.Once
+	sink     stageengine.FactSink
+	writer   *stageenginetest.Writer
+}
+
+func (r *claimRecorder) StageFacts() stageengine.FactSink {
+	r.sinkOnce.Do(func() {
+		r.sink, r.writer = stageenginetest.NewSink(stageenginetest.Options{Issue: ghpkg.IssueDeriver()})
+	})
+	return r.sink
+}
+
+func (r *claimRecorder) IssueStageRef(repo string, number int) stageengine.Ref {
+	owner, name, _ := strings.Cut(repo, "/")
+	return stageengine.Ref{Owner: owner, Repo: name, Number: number, Kind: stagelabels.IssueItem}
 }
 
 type claimPost struct {
@@ -110,13 +132,6 @@ func (r *claimRecorder) CreateIssueComment(_ context.Context, repo string, numbe
 	return nil
 }
 
-func (r *claimRecorder) AddLabels(_ context.Context, repo string, number int, labels []string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.labels = append(r.labels, claimLabelPost{repo: repo, number: number, labels: append([]string(nil), labels...)})
-	return nil
-}
-
 func (r *claimRecorder) RemoveLabel(_ context.Context, repo string, number int, label string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -130,10 +145,18 @@ func (r *claimRecorder) all() []claimPost {
 	return append([]claimPost(nil), r.posts...)
 }
 
+// allLabels is one entry per stage write the claim facts produced: the
+// labels the fake writer added for that item.
 func (r *claimRecorder) allLabels() []claimLabelPost {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]claimLabelPost(nil), r.labels...)
+	r.StageFacts()
+	var out []claimLabelPost
+	for _, a := range r.writer.Applies() {
+		if len(a.Out.Added) == 0 {
+			continue
+		}
+		out = append(out, claimLabelPost{repo: a.Ref.FullRepo(), number: a.Ref.Number, labels: a.Out.Added})
+	}
+	return out
 }
 
 func (r *claimRecorder) allRemovedLabels() []claimLabelRemove {
@@ -316,7 +339,7 @@ func TestIssueClaim_AgentClaimPostedOnlyAtCommentCapableTier(t *testing.T) {
 					t.Fatalf("expected one claim comment on %s#%d, got %+v", issueClaimRepoFull, claimedNumber, posts)
 				}
 				labels := recorder.allLabels()
-				if len(labels) != 1 || labels[0].repo != issueClaimRepoFull || labels[0].number != claimedNumber || strings.Join(labels[0].labels, ",") != "claimed" {
+				if len(labels) != 1 || labels[0].repo != issueClaimRepoFull || labels[0].number != claimedNumber || strings.Join(labels[0].labels, ",") != claims.LabelClaimed {
 					t.Fatalf("expected claimed label mirror on %s#%d, got %+v", issueClaimRepoFull, claimedNumber, labels)
 				}
 				parsed, ok := issueclaim.ParseMarker(posts[0].body)
@@ -381,6 +404,43 @@ func TestIssueClaim_RankedLedgerSuppressesLegacyClaimComment(t *testing.T) {
 	}
 }
 
+// The ranked ledger claim records the contributor's trust tier and whether
+// the GitHub login was ever proven, so the contributor-lane auto-merge tier
+// can refuse self-registered, unverified holders (#12041).
+func TestIssueClaim_ContributorClaimCarriesTierAndVerified(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		verifiedAt   string
+		wantVerified bool
+	}{
+		{name: "self-registered", wantVerified: false},
+		{name: "proven via reissue-token", verifiedAt: "2026-10-01T00:00:00Z", wantVerified: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s := covK2Hub(t)
+			l, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.deps.IssueClaims = l
+			c := issueClaimConn("trusted")
+			c.profile.GitHubVerifiedAt = tc.verifiedAt
+			hub.claimIssueForContributor(c, issueClaimRepoFull, claimedNumber)
+			got, ok := l.LookupKey(claims.Key(issueClaimRepoFull, claimedNumber))
+			if !ok {
+				t.Fatal("contributor claim not recorded")
+			}
+			if got.Tier != "trusted" || got.Verified != tc.wantVerified {
+				t.Fatalf("claim tier=%q verified=%v, want trusted/%v", got.Tier, got.Verified, tc.wantVerified)
+			}
+			marker, _ := issueclaim.ParseMarker(claims.ClaimMarker(got))
+			if marker.Tier != "trusted" || marker.Verified != tc.wantVerified {
+				t.Fatalf("marker tier=%q verified=%v, want trusted/%v", marker.Tier, marker.Verified, tc.wantVerified)
+			}
+		})
+	}
+}
+
 func TestIssueClaim_LegacyClaimLabelRemovedWithLease(t *testing.T) {
 	hub, s := covK2Hub(t)
 	enableIssueClaims(s)
@@ -395,10 +455,17 @@ func TestIssueClaim_LegacyClaimLabelRemovedWithLease(t *testing.T) {
 		t.Fatal("legacy claim writer did not post")
 	}
 
+	ref := recorder.IssueStageRef(issueClaimRepoFull, claimedNumber)
+	if got := recorder.writer.LabelsOf(ref); !slices.Contains(got, claims.LabelClaimed) {
+		t.Fatalf("labels after claim = %v, want %s", got, claims.LabelClaimed)
+	}
+
 	hub.releaseClaimForLease(identityOf(c), issueClaimRepoFull+"#353", "done")
-	removed := recorder.allRemovedLabels()
-	if len(removed) != 1 || removed[0].repo != issueClaimRepoFull || removed[0].number != claimedNumber || removed[0].label != "claimed" {
-		t.Fatalf("legacy claimed label removals = %+v", removed)
+	if removed := recorder.allRemovedLabels(); len(removed) != 0 {
+		t.Fatalf("the hub must not remove stage labels itself, got %+v", removed)
+	}
+	if got := recorder.writer.LabelsOf(ref); slices.Contains(got, claims.LabelClaimed) || stagelabels.Current(got) != stagelabels.Actionable {
+		t.Fatalf("labels after lease release = %v, want 020 gone and 010 back", got)
 	}
 }
 
@@ -445,7 +512,7 @@ func TestIssueClaim_SelectTaskPostsClaimForAssignedIssue(t *testing.T) {
 	if len(posts) != 1 || posts[0].repo != issueClaimRepoFull || posts[0].number != claimedNumber {
 		t.Fatalf("expected one claim comment on the assigned issue, got %+v", posts)
 	}
-	if labels := recorder.allLabels(); len(labels) != 1 || strings.Join(labels[0].labels, ",") != "claimed" {
+	if labels := recorder.allLabels(); len(labels) != 1 || strings.Join(labels[0].labels, ",") != claims.LabelClaimed {
 		t.Fatalf("expected claimed label mirror on the assigned issue, got %+v", labels)
 	}
 	parsed, ok := issueclaim.ParseMarker(posts[0].body)

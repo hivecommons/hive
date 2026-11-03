@@ -1,0 +1,1 @@
+- fix(fleetreport): forward-port the ioscan fail-closed classifier keywords and the copilot model-substitution skip to the v6 self-report feed so they no longer surface as `unclassified_error_repeated` (#14355, #14356)

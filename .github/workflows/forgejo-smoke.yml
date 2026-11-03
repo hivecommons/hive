@@ -1,0 +1,153 @@
+# Forgejo smoke — the minimal governor loop against a real Forgejo instance.
+#
+# Every Gitea/Forgejo adapter test in src/pkg/forge runs against httptest fakes
+# that encode our reading of the API. This workflow starts a throwaway Forgejo
+# container, seeds a repo, an issue and a pull request through its REST API,
+# and runs src/pkg/forge/forgejo_smoke_test.go (build tag forgejo_smoke): read
+# the issue → kick it (comment + label) → merge the PR through forge.Merger,
+# including the hold gate (#14116, part of #14096).
+#
+# Cadence (maintainer ruling on #14116): nightly, plus push/PR runs
+# path-filtered to the forge adapter, the API proxy write-gate and this file.
+# NOT a required check yet — promote it once it has run green for two weeks.
+# One job, one runner, 30-minute cap; the image is pinned by digest. Bump the
+# tag and digest together.
+name: Forgejo smoke
+
+on:
+  schedule:
+    # Nightly at :50 — the :00 (coverage-hourly), :30 (v2-tests) and :45
+    # (backend-smoke) slots are taken.
+    - cron: '50 4 * * *'
+  push:
+    branches:
+      - v5
+    paths:
+      - 'src/pkg/forge/**'
+      - 'src/pkg/apiproxy/**'
+      - '.github/workflows/forgejo-smoke.yml'
+  pull_request:
+    branches:
+      - v5
+    paths:
+      - 'src/pkg/forge/**'
+      - 'src/pkg/apiproxy/**'
+      - '.github/workflows/forgejo-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Build-cache isolation for the self-hosted pool (see
+# .github/scripts/go-cache-guard.sh).
+env:
+  GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
+  FORGEJO_IMAGE: codeberg.org/forgejo/forgejo:16.0.6@sha256:e2c34a699543ca8a00217ee9ab2bea5feedc98bd6d0ea95ec287d3b7ae1355c6
+  FORGEJO_URL: http://127.0.0.1:3000
+  FORGEJO_ADMIN: hive-smoke
+
+jobs:
+  smoke:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - name: Record start time
+        run: echo "SMOKE_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+
+      - name: Start Forgejo
+        run: |
+          set -euo pipefail
+          name="forgejo-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "FORGEJO_CONTAINER=$name" >> "$GITHUB_ENV"
+          docker run -d --name "$name" -p 127.0.0.1:3000:3000 \
+            -e USER_UID=1000 -e USER_GID=1000 \
+            -e FORGEJO__database__DB_TYPE=sqlite3 \
+            -e FORGEJO__security__INSTALL_LOCK=true \
+            -e FORGEJO__server__ROOT_URL="$FORGEJO_URL/" \
+            -e FORGEJO__server__DISABLE_SSH=true \
+            -e FORGEJO__service__DISABLE_REGISTRATION=true \
+            -e FORGEJO__repository__DEFAULT_BRANCH=main \
+            "$FORGEJO_IMAGE"
+          for _ in $(seq 1 90); do
+            if curl -fsS "$FORGEJO_URL/api/healthz" >/dev/null 2>&1; then
+              curl -fsS "$FORGEJO_URL/api/v1/version"; echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo '::error::Forgejo did not become healthy within 3 minutes'
+          docker logs "$name" | tail -100
+          exit 1
+
+      - name: Seed admin, token, repo, issue and pull request
+        run: |
+          set -euo pipefail
+          pass="Sm0ke-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          docker exec -u git "$FORGEJO_CONTAINER" forgejo admin user create \
+            --admin --username "$FORGEJO_ADMIN" --password "$pass" \
+            --email "$FORGEJO_ADMIN@example.invalid" --must-change-password=false
+          api() { curl -fsS -H 'Content-Type: application/json' "$@"; }
+          token="$(api -u "$FORGEJO_ADMIN:$pass" -X POST "$FORGEJO_URL/api/v1/users/$FORGEJO_ADMIN/tokens" \
+            -d '{"name":"smoke","scopes":["write:repository","write:issue","write:user"]}' | jq -r .sha1)"
+          echo "::add-mask::$token"
+          echo "FORGEJO_TOKEN=$token" >> "$GITHUB_ENV"
+          auth=(-H "Authorization: token $token")
+          repo="$FORGEJO_ADMIN/smoke"
+          api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/user/repos" \
+            -d '{"name":"smoke","auto_init":true,"default_branch":"main","readme":"Default"}' >/dev/null
+          for l in 'hold:#e11d21' 'hive/kicked:#0e8a16'; do
+            api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/repos/$repo/labels" \
+              -d "$(jq -nc --arg n "${l%%:*}" --arg c "${l#*:}" '{name:$n,color:$c}')" >/dev/null
+          done
+          # One commit on a new branch, via the contents API.
+          api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/repos/$repo/contents/SMOKE.md" \
+            -d "$(jq -nc --arg c "$(printf 'forgejo smoke %s\n' "$GITHUB_RUN_ID" | base64 -w0)" \
+              '{content:$c,message:"smoke: add SMOKE.md",branch:"main",new_branch:"smoke-change"}')" >/dev/null
+          issue="$(api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/repos/$repo/issues" \
+            -d '{"title":"Smoke issue","body":"Seeded by the Forgejo smoke workflow."}' | jq -r .number)"
+          pr="$(api "${auth[@]}" -X POST "$FORGEJO_URL/api/v1/repos/$repo/pulls" \
+            -d '{"title":"Smoke change","head":"smoke-change","base":"main","body":"Seeded by the Forgejo smoke workflow."}' | jq -r .number)"
+          {
+            echo "FORGEJO_REPO=$repo"
+            echo "FORGEJO_ISSUE=$issue"
+            echo "FORGEJO_PR=$pr"
+          } >> "$GITHUB_ENV"
+          echo "Seeded $repo issue #$issue, PR #$pr"
+
+      - name: Minimal governor loop (read issue → kick → merge via forge.Merger)
+        working-directory: src
+        run: go test -tags forgejo_smoke -run '^TestForgejoSmoke$' -count=1 -v ./pkg/forge/
+
+      - name: Forgejo logs
+        if: failure()
+        run: docker logs "$FORGEJO_CONTAINER" 2>&1 | tail -200
+
+      - name: Stop Forgejo
+        if: always()
+        run: |
+          if [ -n "${FORGEJO_CONTAINER:-}" ]; then
+            docker rm -f -v "$FORGEJO_CONTAINER" >/dev/null 2>&1 || true
+          fi
+
+      - name: Record job runtime
+        if: always()
+        run: |
+          secs=$(( $(date +%s) - ${SMOKE_STARTED:-$(date +%s)} ))
+          echo "Forgejo smoke runtime: ${secs}s"
+          echo "Forgejo smoke runtime: **${secs}s** on one runner (\`${{ runner.name }}\`)" >> "$GITHUB_STEP_SUMMARY"

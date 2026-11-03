@@ -2,6 +2,16 @@
 
 Status: Accepted
 
+**Takeaway for operators:** use Quadlet `.container`/`.pod` units for persistent
+Podman deployments, not `podman compose` or `.kube` replay. Follow the
+[Quadlet operator guide](../podman-standalone-quadlet.md); this record preserves
+the investigated alternatives, version requirements and limits of the evidence.
+
+**Terms:** a **spike** is a bounded technical investigation. **Quadlet**
+generates systemd service units from Podman container/pod declarations.
+**systemd** manages their lifecycle; **rootless** runs under an ordinary
+user's service manager, while **rootful** runs under the system manager.
+
 ## Context
 
 Standalone Hive under Podman (#4188) needs one persistent lifecycle mechanism
@@ -124,7 +134,7 @@ readiness gate is not expressible below 5.0.0.
 
 The 5.6.0 fix is worth stating precisely rather than treating as a general
 "upgrade" argument. Podman
-[#26105](https://github.com/containers/podman/issues/26105) generated
+[#26105](https://github.com/podman-container-tools/podman/issues/26105) generated
 `--pod systemd-<container>` instead of `systemd-<pod>-pod`, so the container
 could not start — and by the reporter's description it bites only when the
 `.pod` unit does **not** set a custom `PodName=`. #4202's probe units set
@@ -207,4 +217,4 @@ silently assume any of them.
 - [Podman Quadlet `.kube` compatibility spike](../podman-quadlet-kube-spike.md) — #4203.
 - [Podman support matrix](../podman-support-matrix.md) — which rootful/rootless × enforcing/advisory combinations this lifecycle may be installed into.
 - [`podman-systemd.unit(5)`](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
-- [Podman release notes](https://github.com/containers/podman/blob/main/RELEASE_NOTES.md) — the source for every version in the table above.
+- [Podman release notes](https://github.com/podman-container-tools/podman/blob/main/RELEASE_NOTES.md) — the source for every version in the table above.

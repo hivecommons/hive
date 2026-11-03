@@ -1,0 +1,1 @@
+- Spoke self-upgrades now raise stale startup probe thresholds to the hosted 10-minute budget in the same rollout, preventing older deployments from retaining the 160-second limit after upgrades (#14389).

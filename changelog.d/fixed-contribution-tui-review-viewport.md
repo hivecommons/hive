@@ -1,0 +1,1 @@
+- Keep TUI contribution reviews within terminal height, with wrapped target identities, keyboard scrolling, persistent Apply/Back hints, and Apply paused when the terminal is too small to review.

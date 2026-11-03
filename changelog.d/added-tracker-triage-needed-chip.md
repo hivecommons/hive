@@ -1,0 +1,1 @@
+- Hive activity monitor: an Open issue still labelled `needs-triage` now shows a "triage needed" action chip (and "Open · triage needed" in its tooltip), alongside the existing hold chip.

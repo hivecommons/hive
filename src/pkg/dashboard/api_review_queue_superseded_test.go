@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,9 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 )
 
 // useRingSupersessionAudit points the queue's on-disk audit scan at an empty
@@ -80,6 +85,7 @@ func TestSupersededReason(t *testing.T) {
 func TestHandleReviewQueue_Superseded(t *testing.T) {
 	useRingSupersessionAudit(t)
 	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "review-verdicts.json"))
+	s.deps.Config.SupersessionSweep.CloseContributorPRs = true
 	start := time.Now().Add(-2 * time.Hour).UTC()
 	s.audit.LogRecordAt(start.Format(time.RFC3339), "system", supersessionGraceAuditAction, supersessionGraceDetail("repo1", 2, "myorg/repo1#3", 9), "", "repo1", 2)
 
@@ -182,7 +188,7 @@ func supersededActionRequest(owner, repo, number, action string, verified bool) 
 
 func TestReviewQueueSupersededClose(t *testing.T) {
 	s, fake := newSupersededActionServer(t)
-	s.audit.LogRecord("system", supersessionGraceAuditAction, supersessionGraceDetail("widget", 7, "acme/widget#3", 9), "", "widget", 7)
+	s.audit.LogRecord("system", supersessionDetectedAuditAction, supersessionGraceDetail("widget", 7, "acme/widget#3", 9), "", "widget", 7)
 
 	merger := supersededActionRequest("acme", "widget", "7", "close", false)
 	merger.Header.Set("X-Hive-Role", config.RoleMerger)
@@ -214,14 +220,26 @@ func TestReviewQueueSupersededClose(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	s.handleReviewQueueSupersededClose(w, supersededActionRequest("acme", "widget", "7", "close", true))
-	if w.Code != http.StatusOK || len(fake.comments) != 1 || fake.closed != 2 {
+	if w.Code != http.StatusNotFound || len(fake.comments) != 1 || fake.closed != 1 {
 		t.Fatalf("repeat close: status %d comments %d closed %d", w.Code, len(fake.comments), fake.closed)
+	}
+}
+
+func TestReviewQueueSupersededCloseRequiresState(t *testing.T) {
+	s, fake := newSupersededActionServer(t)
+	w := httptest.NewRecorder()
+	s.handleReviewQueueSupersededClose(w, supersededActionRequest("acme", "widget", "7", "close", true))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("no state: status %d body %s", w.Code, w.Body.String())
+	}
+	if fake.closed != 0 || len(fake.comments) != 0 || len(fake.labels) != 0 {
+		t.Fatalf("no state: closed %d comments %v labels %v", fake.closed, fake.comments, fake.labels)
 	}
 }
 
 func TestReviewQueueSupersededKeepOpen(t *testing.T) {
 	s, fake := newSupersededActionServer(t)
-	s.audit.LogRecord("system", supersessionGraceAuditAction, supersessionGraceDetail("widget", 7, "acme/widget#3", 9), "", "widget", 7)
+	s.audit.LogRecord("system", supersessionDetectedAuditAction, supersessionGraceDetail("widget", 7, "acme/widget#3", 9), "", "widget", 7)
 
 	w := httptest.NewRecorder()
 	s.handleReviewQueueSupersededKeepOpen(w, supersededActionRequest("acme", "widget", "7", "keep-open", true))
@@ -281,6 +299,7 @@ func TestReviewQueueSupersededActionGitHubErrors(t *testing.T) {
 		GHClient: ghpkg.NewClient("app-token", "acme", []string{"widget"}, slog.Default(), api.URL),
 		Logger:   slog.Default(),
 	}
+	s.audit.LogRecord("system", supersessionDetectedAuditAction, supersessionGraceDetail("widget", 7, "acme/widget#3", 9), "", "widget", 7)
 	w := httptest.NewRecorder()
 	s.handleReviewQueueSupersededClose(w, supersededActionRequest("acme", "widget", "7", "close", true))
 	if w.Code != http.StatusBadGateway {
@@ -290,5 +309,239 @@ func TestReviewQueueSupersededActionGitHubErrors(t *testing.T) {
 	s.handleReviewQueueSupersededKeepOpen(w, supersededActionRequest("acme", "widget", "7", "keep-open", true))
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("keep-open: status %d", w.Code)
+	}
+}
+
+func TestSupersededDetectionReplay(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	entry := func(action string, at time.Time) AuditEntry {
+		return AuditEntry{Timestamp: at.Format(time.RFC3339), Action: action, Repo: "repo1", Target: 2, Detail: supersessionGraceDetail("repo1", 2, "myorg/repo1#3", 9)}
+	}
+	detection := entry(supersessionDetectedAuditAction, now)
+	grace := entry(supersessionGraceAuditAction, now.Add(time.Hour))
+	notice := entry("supersession-sweep-commented-contributor", now.Add(2*time.Hour))
+	repeat := entry(supersessionDetectedAuditAction, now.Add(3*time.Hour))
+	for _, tc := range []struct {
+		name    string
+		entries []AuditEntry
+		want    bool
+		start   time.Time
+	}{
+		{"detection only", []AuditEntry{detection}, true, time.Time{}},
+		{"escalation retains decision", []AuditEntry{detection, entry("supersession-sweep-commented-needs-human", now)}, true, time.Time{}},
+		{"escalation cancels grace", []AuditEntry{detection, grace, entry("supersession-sweep-commented-needs-human", now)}, true, time.Time{}},
+		{"plain notice", []AuditEntry{detection, notice, repeat}, true, time.Time{}},
+		{"grace starts at notice", []AuditEntry{detection, grace}, true, now.Add(time.Hour)},
+		{"repeated detection preserves grace", []AuditEntry{detection, grace, repeat, entry(supersessionGraceAuditAction, now.Add(4*time.Hour))}, true, now.Add(time.Hour)},
+		{"guard stops countdown", []AuditEntry{detection, grace, notice}, true, time.Time{}},
+		{"operator keeps", []AuditEntry{detection, entry(supersessionKeepOpenAction, now)}, false, time.Time{}},
+		{"label keeps on next sweep", []AuditEntry{detection, repeat, entry("supersession-sweep-kept-open", now), notice}, false, time.Time{}},
+		{"operator closes", []AuditEntry{detection, entry(supersessionConfirmCloseAction, now)}, false, time.Time{}},
+		{"sweep closes", []AuditEntry{detection, grace, entry("supersession-sweep-closed-contributor", now)}, false, time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			states := supersededGraceStates(tc.entries, "myorg", 24*time.Hour)
+			got, ok := states[ghpkg.ReviewQueueKey("myorg/repo1", 2)]
+			if ok != tc.want || !got.GraceStartedAt.Equal(tc.start) {
+				t.Fatalf("state=%+v present=%t, want present=%t start=%s", got, ok, tc.want, tc.start)
+			}
+		})
+	}
+}
+
+func TestSupersededInboxAndDisabledGrace(t *testing.T) {
+	useRingSupersessionAudit(t)
+	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "missing.json"))
+	for _, action := range []string{supersessionDetectedAuditAction, supersessionGraceAuditAction} {
+		s.audit.LogRecord("system", action, supersessionGraceDetail("repo1", 2, "myorg/repo1#3", 9), "", "repo1", 2)
+		states := s.supersededReviewStates("myorg", time.Now())
+		info := states[ghpkg.ReviewQueueKey("myorg/repo1", 2)]
+		if !info.GraceEndsAt.IsZero() || !info.GraceStartedAt.IsZero() {
+			t.Fatalf("auto-close is off, but countdown remains: %+v", info)
+		}
+		if reason := supersededReason(info, time.Now()); strings.Contains(reason, "sweep closes") || !strings.Contains(reason, "keep open") {
+			t.Fatalf("disabled auto-close reason: %s", reason)
+		}
+		var opts statusOptions
+		s.SupersessionStatusOption()(&opts)
+		env := ownershipEnv{}
+		opts.ownershipEnvAdjust(&env)
+		pr := ghpkg.PullRequest{Repo: "myorg/repo1", Number: 2, HeadSHA: "head-1"}
+		env.reviewVerdicts = []review.Aggregate{{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: review.VerdictRequiresHuman, RequiresHuman: true}}
+		got := decidePROwnership(pr, false, env)
+		if !got.YourTurn || got.Verb != OwnershipVerbClose || got.ReasonCode != OwnershipReasonSupersededRecommendedClose || !strings.Contains(got.Reason, "myorg/repo1#9") {
+			t.Fatalf("inbox ownership = %+v", got)
+		}
+		pr.HoldSources = []string{ghpkg.HoldSourcePerson}
+		if got := decidePROwnership(pr, true, env); got.YourTurn {
+			t.Fatalf("explicit human hold lost precedence: %+v", got)
+		}
+		pr.Labels = append(pr.Labels, ghpkg.SupersessionKeepOpenLabel)
+		if got := decidePROwnership(pr, false, env); got.ReasonCode == OwnershipReasonSupersededRecommendedClose {
+			t.Fatalf("keep-open label ignored: %+v", got)
+		}
+	}
+}
+
+// Exercise the actual sweep with the zero-value auto-close setting, including a
+// second pass whose identical notice does not cause another GitHub write.
+func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
+	useRingSupersessionAudit(t)
+	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "missing.json"))
+	var notice string
+	var labels []string
+	var labelWrites int
+	var writes int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /repos/myorg/repo1/pulls":
+			wireLabels := make([]map[string]string, 0, len(labels))
+			for _, label := range labels {
+				wireLabels = append(wireLabels, map[string]string{"name": label})
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{"number": 2, "body": "Fixes #3", "user": map[string]string{"login": "alice"}, "labels": wireLabels}})
+		case "GET /repos/myorg/repo1/issues/3":
+			fmt.Fprint(w, `{"number":3,"state":"closed"}`)
+		case "POST /graphql":
+			fmt.Fprint(w, `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":9,"url":"https://github.com/myorg/repo1/pull/9","merged":true}]}}}}}`)
+		case "GET /repos/myorg/repo1/pulls/2/files", "GET /repos/myorg/repo1/pulls/9/files":
+			fmt.Fprint(w, `[{"filename":"main.go"}]`)
+		case "GET /repos/myorg/repo1/issues/2/comments":
+			if notice == "" {
+				fmt.Fprint(w, `[]`)
+			} else {
+				json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "body": notice}})
+			}
+		case "POST /repos/myorg/repo1/issues/2/labels":
+			if err := json.NewDecoder(r.Body).Decode(&labels); err != nil {
+				t.Error(err)
+			}
+			labelWrites++
+			fmt.Fprint(w, `[]`)
+		case "POST /repos/myorg/repo1/issues/2/comments":
+			var in struct {
+				Body string `json:"body"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				t.Error(err)
+			}
+			notice = in.Body
+			writes++
+			fmt.Fprint(w, `{"id":1}`)
+		default:
+			t.Errorf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+	client := ghpkg.NewClient("token", "myorg", []string{"repo1"}, slog.Default(), api.URL)
+	client.SetAppBotLogin("hive-app[bot]")
+	// The park goes through the stage engine; record it instead of letting the
+	// default sink re-read the PR and reconcile against the shared label store.
+	facts := &stageenginetest.Recorder{}
+	client.SetStageFactSink(facts)
+	for pass := 0; pass < 2; pass++ {
+		res, err := client.SweepSupersededOpenPRs(context.Background(), ghpkg.SupersessionSweepOptions{
+			ACMMLevelForRepo: func(string) int { return 6 },
+			Audit: func(e ghpkg.SupersessionSweepEvent) {
+				detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, closer_pr=%d, action=%s", e.Repo, e.Number, e.IssueRepo, e.Issue, e.CloserPR, e.Action)
+				s.audit.LogRecord("system", "supersession-sweep-"+e.Action, detail, "", e.Repo, e.Number)
+			},
+		})
+		if err != nil || len(res.Closed) != 0 {
+			t.Fatalf("sweep: result=%+v err=%v", res, err)
+		}
+		rec := httptest.NewRecorder()
+		s.handleReviewQueue(rec, httptest.NewRequest(http.MethodGet, "/api/review/queue", nil))
+		resp := decodeReviewQueue(t, rec)
+		var found bool
+		for _, item := range resp.Items {
+			if item.Number != 2 {
+				continue
+			}
+			found = true
+			if item.Superseded == nil || item.Superseded.CloserPR != 9 || item.Superseded.CloserRepo != "myorg/repo1" || !item.Superseded.GraceEndsAt.IsZero() {
+				t.Fatalf("superseded queue row: %+v", item)
+			}
+			if !strings.Contains(strings.Join(item.Reasons, " "), "superseded: by myorg/repo1#9; close as superseded or keep open") {
+				t.Fatalf("queue reasons: %v", item.Reasons)
+			}
+		}
+		if !found {
+			t.Fatal("superseded PR absent from queue")
+		}
+		if strings.Contains(rec.Body.String(), "grace_ends_at") {
+			t.Fatal("disabled auto-close advertised a deadline")
+		}
+	}
+	if writes != 1 {
+		t.Fatalf("notice writes = %d, want 1", writes)
+	}
+	if labelWrites != 1 || strings.Join(labels, ",") != "needs-human,"+prstage.SupersessionPendingLabel {
+		t.Fatalf("park labels = %v, writes = %d; want one supersession park", labels, labelWrites)
+	}
+	var parked int
+	for _, f := range facts.All() {
+		if f.Method == "Parked" && f.Ref.Number == 2 && f.Label == "needs-human" {
+			parked++
+		}
+	}
+	if parked != 1 {
+		t.Fatalf("Parked facts for PR 2 = %d, want 1: %+v", parked, facts.All())
+	}
+}
+
+// The sweep's subset/extra-files outcome reaches the queue and the inbox: an
+// extra-files detection is a REVIEW with keep-open recommended, a subset (or
+// a record written before the outcome field) stays a CLOSE
+// (hivecommons/hive#14176).
+func TestSupersededExtraFilesOutcome14176(t *testing.T) {
+	at := time.Date(2026, 10, 25, 9, 9, 46, 0, time.UTC).Format(time.RFC3339)
+	detail := func(pr int, extra string) string {
+		return "repo=repo1, pr=" + strconv.Itoa(pr) + ", issue=myorg/repo1#437, closer_pr=438, action=detected-contributor" + extra
+	}
+	entries := []AuditEntry{
+		{Timestamp: at, Action: supersessionDetectedAuditAction, Repo: "repo1", Target: 439, Detail: detail(439, ", reason=extra-files, extra_files=CONTRIBUTING.md;docs/a.md")},
+		{Timestamp: at, Action: supersessionDetectedAuditAction, Repo: "repo1", Target: 440, Detail: detail(440, ", reason=subset")},
+		{Timestamp: at, Action: supersessionDetectedAuditAction, Repo: "repo1", Target: 441, Detail: detail(441, "")},
+	}
+	states := supersededGraceStates(entries, "myorg", 24*time.Hour)
+	cases := []struct {
+		pr         int
+		reason     string
+		extraFiles string
+		verb       string
+		code       string
+		text       string
+	}{
+		{439, ghpkg.ReviewQueueSupersededExtraFilesReason, "CONTRIBUTING.md,docs/a.md", OwnershipVerbReview, OwnershipReasonSupersededExtraFilesReview, "adds files it did not (CONTRIBUTING.md, docs/a.md) — review the extra change (keep open recommended)"},
+		{440, ghpkg.ReviewQueueSupersededReason, "", OwnershipVerbClose, OwnershipReasonSupersededRecommendedClose, "close as superseded or keep open"},
+		{441, ghpkg.ReviewQueueSupersededReason, "", OwnershipVerbClose, OwnershipReasonSupersededRecommendedClose, "close as superseded or keep open"},
+	}
+	for _, tc := range cases {
+		info, ok := states[ghpkg.ReviewQueueKey("myorg/repo1", tc.pr)]
+		if !ok || info.Reason != tc.reason || strings.Join(info.ExtraFiles, ",") != tc.extraFiles || info.CloserPR != 438 {
+			t.Fatalf("#%d state = %+v present=%t, want reason %q files %q", tc.pr, info, ok, tc.reason, tc.extraFiles)
+		}
+		env := ownershipEnv{supersededPR: func(repo string, number int) (ghpkg.ReviewQueueSuperseded, bool) {
+			got, ok := states[ghpkg.ReviewQueueKey(repo, number)]
+			return got, ok
+		}}
+		pr := ghpkg.PullRequest{Repo: "myorg/repo1", Number: tc.pr}
+		got := decidePROwnership(pr, false, env)
+		if !got.YourTurn || got.Verb != tc.verb || got.ReasonCode != tc.code || !strings.Contains(got.Reason, "myorg/repo1#438") || !strings.Contains(got.Reason, tc.text) {
+			t.Fatalf("#%d ownership = %+v, want %s/%s with %q", tc.pr, got, tc.verb, tc.code, tc.text)
+		}
+		pr.Labels = []string{ghpkg.SupersessionKeepOpenLabel}
+		if got := decidePROwnership(pr, false, env); got.ReasonCode == tc.code {
+			t.Fatalf("#%d keep-open label ignored: %+v", tc.pr, got)
+		}
+	}
+	extra := states[ghpkg.ReviewQueueKey("myorg/repo1", 439)]
+	if got := supersededReason(extra, time.Now()); !strings.Contains(got, "keep open recommended") || !strings.Contains(got, "CONTRIBUTING.md") || strings.Contains(got, "close as superseded") {
+		t.Fatalf("queue reason = %q", got)
+	}
+	if got := supersededExtraFilesSummary([]string{"a", "b", "c", "d", "e"}); got != "a, b, c and 2 more" {
+		t.Fatalf("summary = %q", got)
 	}
 }

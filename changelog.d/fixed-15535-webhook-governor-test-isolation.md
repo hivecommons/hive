@@ -1,0 +1,1 @@
+- Isolate TestFetchWebhookItemSnapshot_ClassifiesForGovernor from rate-limit caution left by earlier tests ([#15535](https://github.com/hivecommons/hive/issues/15535)).

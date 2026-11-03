@@ -1,0 +1,79 @@
+  <div class="mt-6 mb-8" id="acmm-eval-section" data-dashboard-section="acmm-eval-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="acmm-eval-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move ACMM Eval section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🎯 ACMM Eval <button class="hv-btn btn-secondary btn" data-action="openACMMDialog" data-stop="1" title="Click to change maturity level">Change level ▾</button> <button class="hv-btn btn-secondary btn" id="acmm-refresh-btn" data-action="acmmForceRefresh" data-stop="1" title="Re-run the criteria evaluation now instead of waiting out the hourly cache (server-debounced)">🔄 Re-evaluate</button></h2>
+    <div class="section-body">
+      <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
+        <div class="kb-stat-grid" id="acmm-eval-stats">
+          <div class="kb-stat" data-action="acmmShowCodebaseDialog" style="cursor:pointer"><div class="val" id="acmm-codebase-level">--</div><div class="lbl" id="acmm-lbl-codebase">Codebase Readiness</div></div>
+          <div class="kb-stat" data-action="acmmShowOpsDialog" style="cursor:pointer"><div class="val" id="acmm-ops-level">--</div><div class="lbl" id="acmm-lbl-ops">Operational Autonomy</div></div>
+          <div class="kb-stat" data-action="acmmShowOverallDialog" style="cursor:pointer"><div class="val" id="acmm-overall-level">--</div><div class="lbl" id="acmm-lbl-overall">Overall ACMM</div></div>
+          <div class="kb-stat" data-action="acmmShowAllCriteriaDialog" style="cursor:pointer"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl" id="acmm-lbl-criteria">Criteria Passed</div></div>
+        </div>
+        <!-- #5822: the selector carried BOTH display:none and display:flex in one
+             style attribute. The later declaration wins, so it rendered visible —
+             holding only the "All (aggregate)" chip — until the first evaluation
+             response let acmmRenderCard hide it. Only display:none belongs here;
+             the flex layout arrives with the display:flex the renderer sets when
+             there is actually something to select. -->
+        <div id="acmm-repo-selector" style="display:none;margin-top:var(--sp-4);font-size:var(--fs-sm);align-items:center;gap:var(--sp-3);flex-wrap:wrap">
+          <span class="muted">Repo:</span>
+          <button data-action="gh2" id="acmm-repo-btn-all" class="hv-btn repo-chip-btn btn-secondary">All (aggregate)</button>
+        </div>
+        <!-- #5822: the aggregate is a UNION across repos, and the panel used to
+             say so nowhere — only the Codebase Readiness dialog mentioned it, in
+             passing. An operator reading L3 reasonably assumes every watched repo
+             is at L3. -->
+        <div id="acmm-scope-note" style="display:none;margin-top:var(--sp-4);font-size:0.7rem;color:var(--muted)"></div>
+        <div id="acmm-repo-table" style="display:none;margin-top:10px"></div>
+        <div class="mt-5" id="acmm-level-bars"></div>
+        <div id="acmm-eval-meta" style="margin-top:10px;font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between">
+          <span id="acmm-eval-source"></span>
+          <span id="acmm-eval-timestamp"></span>
+        </div>
+        <div id="acmm-eval-warning" style="display:none;margin-top:var(--sp-4);padding:6px 10px;border-radius:var(--r);background:color-mix(in srgb, var(--yellow) 15%, transparent);border:1px solid color-mix(in srgb, var(--yellow) 40%, transparent);color:var(--text);font-size:var(--fs-sm)"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approvals desk (RFC #4000). Hidden until /api/approvals reports the desk
+       enabled, so a hive that has not opted in sees no new chrome. -->
+  <div id="approvals-section" data-dashboard-section="approvals-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="approvals-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Approvals section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> ✋ Approvals <span id="approvals-badge" title="Pending operator approvals" style="display:none;font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);margin-left:var(--sp-3);background:color-mix(in srgb, var(--yellow) 25%, transparent);color:var(--text)">0</span></h2>
+    <div class="section-body">
+      <div id="approvals-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
+        <!-- Policy-bug banner: an inbox accumulating on an L6 (Autonomous) hive is
+             a misconfiguration signal, not a normal wait (#4000 requirement 4). -->
+        <div id="approvals-policy-bug" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--r);background:color-mix(in srgb, var(--red) 12%, transparent);border:1px solid color-mix(in srgb, var(--red) 40%, transparent);font-size:var(--fs-sm)"></div>
+        <div id="approvals-chips" style="display:flex;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:10px;font-size:0.72rem"></div>
+        <div id="approvals-actions" style="display:none;gap:var(--sp-4);align-items:center;margin-bottom:10px;font-size:var(--fs-sm)">
+          <button class="hv-btn btn-secondary btn" data-action="approvalsResolveSelected" data-arg0="true" data-arg-types="j">Approve selected</button>
+          <button class="hv-btn btn-secondary btn" data-action="approvalsResolveSelected" data-arg0="false" data-arg-types="j">Reject selected</button>
+          <span class="muted" id="approvals-selected-count"></span>
+        </div>
+        <div id="approvals-list"></div>
+        <div id="approvals-empty" class="muted" style="font-size:0.78rem">No pending approvals.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="mt-6 mb-8" id="audit-section" data-dashboard-section="audit-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="audit-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Audit Log section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📜 Audit Log</h2>
+    <div class="section-body">
+      <div class="audit-controls-row" style="margin-bottom:5px;padding:3px;display:flex;align-items:center;gap:var(--sp-4)">
+        <div class="audit-search-field">
+          <input id="audit-search" list="audit-saved-searches" type="text" placeholder="Search audit log... (terms are OR'd, supports /regex/)" data-input-action="filterAuditLog" data-keydown-action="saveAuditSearch" data-keys="Enter" style="width:100%;padding:var(--sp-3) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base);outline:none">
+          <datalist id="audit-saved-searches"></datalist>
+        </div>
+        <button id="audit-sensitive-filter" class="hv-btn btn-secondary btn-sm audit-filter-chip" data-action="toggleAuditSensitiveFilter" data-keydown-action="toggleAuditSensitiveFilter" data-keys="Enter, " data-stop="1" data-prevent="1" aria-pressed="false" title="Show only sensitive audit entries from the last 24h">Sensitive only</button>
+        <button id="audit-relay-filter" class="hv-btn btn-secondary btn-sm audit-filter-chip" data-action="toggleAuditRelayFilter" data-keydown-action="toggleAuditRelayFilter" data-keys="Enter, " data-stop="1" data-prevent="1" aria-pressed="false" title="Show only contributor relay (relay_*) audit entries">relay_</button>
+        <button class="hv-btn btn-primary btn-sm" data-action="saveAuditSearch" title="Save this search">💾 Save</button>
+        <button class="hv-btn btn-danger btn-sm" data-action="clearAuditSearches" title="Clear saved searches">✕</button>
+        <span id="audit-match-count" style="font-size:0.7rem;color:var(--muted);white-space:nowrap"></span>
+      </div>
+      <p class="mobile-table-hint">Scroll horizontally for more columns.</p>
+      <div id="audit-panel" class="audit-resizable" tabindex="0" role="region" aria-label="Audit log table" style="padding:var(--sp-5)">
+        <div class="loading">Loading audit log...</div>
+      </div>
+    </div>
+  </div>
+

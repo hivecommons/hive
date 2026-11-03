@@ -30,10 +30,12 @@ func danglingScheduler(t *testing.T) (*Scheduler, *bytes.Buffer, string) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "projectbluefin", Repos: []string{"projectbluefin/testsuite"}},
-		Agents: map[string]config.AgentConfig{
-			"review":  {Backend: "claude", Mode: "ISSUES_AND_PRS", KickTemplate: "review.md"},
-			"scanner": {Backend: "claude", Mode: "ISSUES_AND_PRS", KickTemplate: "scanner-holdgated.md"},
-			"quality": {Backend: "claude", Mode: "ISSUES_AND_PRS"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"review":  {Backend: "claude", Mode: "ISSUES_AND_PRS", KickTemplate: "review.md"},
+				"scanner": {Backend: "claude", Mode: "ISSUES_AND_PRS", KickTemplate: "scanner-holdgated.md"},
+				"quality": {Backend: "claude", Mode: "ISSUES_AND_PRS"},
+			},
 		},
 	}
 	return New(cfg, logger), &buf, userSaved

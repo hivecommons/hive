@@ -228,6 +228,7 @@ func TestGovernorHubReposUseCanonicalDisabledRepoMatching(t *testing.T) {
 	for _, want := range []string{
 		"function contribRepoDisabledEntryMatches(repoFull, entry)",
 		"text = String(text || '').toLowerCase();",
+		"return full.toLowerCase() === entry || short.toLowerCase() === entry;",
 		"const enabled = contribRepoMatchingDisabledEntries(r, disabledRepos).length === 0;",
 		`data-action="toggleContribRepo" data-arg1="' + esc(r.full) + '"`,
 		"Raw disabled_repos:",

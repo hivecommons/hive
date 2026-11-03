@@ -1,0 +1,1 @@
+- Refuse dashboard auto-merge queues whose recorded actor is not an owner or merger in `dashboard.authorized_users`, and explain merge-time authorization refusals with one PR comment per head.

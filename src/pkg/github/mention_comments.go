@@ -9,7 +9,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/mention"
 )
 
@@ -244,7 +244,7 @@ func (c *Client) EditIssueComment(ctx context.Context, repo string, id int64, bo
 	}
 	owner, repoName := c.splitRepo(repo)
 	body = logscrub.ScrubString(body)
-	_, _, err := c.client.Issues.EditComment(ctx, owner, repoName, id, &gh.IssueComment{Body: gh.Ptr(body)})
+	_, _, err := c.client.Issues.EditComment(ctx, owner, repoName, id, &gh.IssueComment{Body: gh.Ptr(body)}) // writeback:gated: StageCommenter.Post checks target policy before its only edit call.
 	return err
 }
 

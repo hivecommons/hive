@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // timelineMaxEvents caps the number of events retained per hive. Oldest are
@@ -207,6 +209,25 @@ func (t *timelineStore) recent(hiveID string, n int) []TimelineEvent {
 	return out
 }
 
+// offlineSince returns the timestamp of the hive's newest went_offline event,
+// or "" when it has none or came back online after it. The timeline is
+// persisted to disk, so this outlives the registry entry that staleRemoveAge
+// prunes — it is what keeps a long-dead hive visible as offline (#11644).
+func (t *timelineStore) offlineSince(hiveID string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	events := t.byID[hiveID]
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].Kind {
+		case TimelineWentOffline:
+			return events[i].TS
+		case TimelineCameOnline:
+			return ""
+		}
+	}
+	return ""
+}
+
 // persist writes a hive's timeline atomically (tmp+rename), matching the
 // other /data/saas state files. Failures are logged by the caller's absence
 // of a return value only — a timeline write must never fail a heartbeat.
@@ -383,9 +404,20 @@ func detectTransitions(old, new *RegistryEntry, now time.Time) []TimelineEvent {
 				if target == "" {
 					target = "latest"
 				}
-				add(TimelineUpgradeStale, fmt.Sprintf(
-					"upgrade to %s has been in flight for %s with no version change — the hive may be unreachable or pinned to an immutable tag",
-					target, shortDur(elapsed)))
+				if d := new.UpgradeDrain; d != nil && d.RemainingS > 0 {
+					// Not stuck: the spoke is holding the restart on purpose
+					// until its kicked agent turns end. Say so, or the entry
+					// reads as a wedge and sends an operator chasing the
+					// image tag.
+					add(TimelineUpgradeStale, fmt.Sprintf(
+						"upgrade to %s has been held for %s — the spoke is draining in-flight agent kicks (%s) and will restart within %s",
+						target, shortDur(elapsed), orDash(joinNames(d.InFlight)),
+						shortDur(time.Duration(d.RemainingS)*time.Second)))
+				} else {
+					add(TimelineUpgradeStale, fmt.Sprintf(
+						"upgrade to %s has been in flight for %s with no version change — the hive may be unreachable, pinned to an immutable tag, or an older build draining in-flight agent kicks without reporting it",
+						target, shortDur(elapsed)))
+				}
 			}
 		}
 	}
@@ -494,10 +526,41 @@ func (s *HubServer) recordHeartbeatTransitions(old, new *RegistryEntry) {
 		return
 	}
 	evs := detectTransitions(old, new, time.Now())
+	s.recordUpgradeHistoryTransition(old, new)
 	if len(evs) == 0 {
 		return
 	}
 	s.timeline.appendAll(new.ID, evs)
+}
+
+// recordUpgradeHistoryTransition mirrors the upgrade lifecycle branch of
+// detectTransitions into the upgrade history store (#14856). The hub-armed
+// paths open their row themselves; a rollout the hub merely observed opens
+// one here. Closing is decided from the same evidence the completion chain
+// used: a new hash is a landed upgrade, a spoke-reported failure is a miss,
+// and a latch cleared with no movement is the hive already being at target.
+func (s *HubServer) recordUpgradeHistoryTransition(old, new *RegistryEntry) {
+	if s == nil || old == nil || new == nil {
+		return
+	}
+	switch {
+	case !old.Upgrading && new.Upgrading:
+		s.noteUpgradeStarted(new.ID, old.GitHash, new.UpgradeTarget, spoke.UpgradeTriggerObserved)
+	case old.Upgrading && !new.Upgrading:
+		s.upgradeInterrupts.clear(new.ID)
+		switch {
+		case new.UpgradeFailed && !old.UpgradeFailed:
+			reason := new.UpgradeError
+			if reason == "" {
+				reason = "spoke reported the upgrade failed"
+			}
+			s.noteUpgradeEnded(new.ID, spoke.UpgradeOutcomeMissed, reason, old.GitHash, old.UpgradeTarget)
+		case new.GitHash != "" && !sameCommit(old.GitHash, new.GitHash):
+			s.noteUpgradeEnded(new.ID, spoke.UpgradeOutcomeDone, "", old.GitHash, new.GitHash)
+		default:
+			s.noteUpgradeEnded(new.ID, spoke.UpgradeOutcomeDone, "latch cleared — hive already at target", old.GitHash, new.GitHash)
+		}
+	}
 }
 
 // recordOfflineTransitions is the sweep hook. markStaleHives flips Online to

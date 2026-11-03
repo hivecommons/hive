@@ -1,0 +1,1 @@
+- crux/pushbroker: successful pushes now record `finished_at` in the audit result (previously only failures did) ([#14529](https://github.com/hivecommons/hive/issues/14529)).

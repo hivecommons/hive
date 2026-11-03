@@ -3,19 +3,33 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/hivecommons/hive/crux/taskmcp"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/resolve"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
+
+func (s *Server) defaultLaunchCmdForBackend(backend, model string) string {
+	switch {
+	case backend == "copilot":
+		return fmt.Sprintf("/usr/bin/copilot --allow-all --model %s", model)
+	case backend == "claude" || config.IsInferenceBackend(backend) || s.deps.Config.Governor.ResolveGateway(backend) != nil:
+		return fmt.Sprintf("claude --model %s --dangerously-skip-permissions", model)
+	default:
+		return fmt.Sprintf("%s --model %s", backend, model)
+	}
+}
 
 func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -39,13 +53,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	// Use configured launch command if available; otherwise construct one
 	launchCmd := agentCfg.LaunchCmd
 	if launchCmd == "" {
-		launchCmd = fmt.Sprintf("%s --model %s", cli, model)
-		switch cli {
-		case "claude":
-			launchCmd = fmt.Sprintf("claude --model %s --dangerously-skip-permissions", model)
-		case "copilot":
-			launchCmd = fmt.Sprintf("/usr/bin/copilot --allow-all --model %s", model)
-		}
+		launchCmd = s.defaultLaunchCmdForBackend(cli, model)
 	}
 
 	// Use configured display name if available
@@ -126,6 +134,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"cliPinned":           pinnedCLI,
 			"cliPinValue":         cli,
 			"modelOwner":          agentCfg.ModelOwner,
+			"modeOwner":           agentCfg.ModeOwner,
 			"backendOwner":        agentCfg.BackendOwner,
 			"staleTimeout":        staleTimeout,
 			"restartStrategy":     restartStrategy,
@@ -142,6 +151,8 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"sortOrder":           agentCfg.SortOrder,
 			"beadRole":            agentCfg.BeadRole,
 			"role":                agentCfg.Role,
+			"engine":              agentCfg.Engine,
+			"engineValues":        experimentEngineValues(),
 			"kickTemplate":        agentCfg.KickTemplate,
 			"promptSource":        agentCfg.PromptSource,
 			"definitionSource":    agentCfg.DefinitionSource,
@@ -296,6 +307,9 @@ func (s *Server) loadPromptTemplate(name string) string {
 			)
 		}
 	}
+	// A writable override saved for a read-only shipped template wins, as it
+	// does at kick time (#13005).
+	paths = append([]string{filepath.Join(promptTemplateOverrideDir, templateName)}, paths...)
 	for _, p := range paths {
 		if data, err := os.ReadFile(p); err == nil {
 			return s.substituteTemplateVars(string(data), name)
@@ -532,6 +546,23 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.Role = sanitizeString(s)
 		}
 	}
+	if v, ok := body["engine"]; ok {
+		// agents.<name>.engine (RFC #11585 part 5) is only meaningful on an
+		// experimenter; validate against the role as it will be after this
+		// save so "set role and engine together" works in one PUT.
+		if str, ok := v.(string); ok {
+			engine := strings.ToLower(strings.TrimSpace(sanitizeString(str)))
+			role := agentCfg.Role
+			if role == "" {
+				role = name
+			}
+			if err := config.ValidateExperimentEngine(role, engine); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			agentCfg.Engine = engine
+		}
+	}
 	if v, ok := body["kickTemplate"]; ok {
 		if str, ok := v.(string); ok {
 			tpl := sanitizeString(str)
@@ -563,6 +594,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 				}
 			}
 			agentCfg.Mode = s
+			agentCfg.ModeOwner = config.FieldOwnerOperator
 		}
 	}
 	if v, ok := body["includeRepos"]; ok {
@@ -735,6 +767,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	// and diagnosed as another, relaunched as "hung" forever. Checked here —
 	// after every field edit above — so a save changing either half (or both)
 	// is judged on the final combination.
+	if strings.TrimSpace(agentCfg.LaunchCmd) == s.defaultLaunchCmdForBackend(agentCfg.Backend, agentCfg.Model) {
+		agentCfg.LaunchCmd = ""
+	}
 	if err := s.deps.Config.Governor.ValidateLaunchCmdBackend(agentCfg.Backend, agentCfg.LaunchCmd); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -979,6 +1014,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
+		s.reconcileLaunchCmdForBackend(name, &agentCfg)
 		effectiveBackend = agentCfg.Backend
 		backendChanged = backend != prevBackend
 	}
@@ -1010,13 +1046,23 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
 
+	// The reconcile above guarantees no backend/launch_cmd contradiction
+	// reaches the save guard; a failure here is an I/O problem, and the
+	// in-memory change already applied, so surface it rather than abort.
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after model update", "agent", name, "error", err)
-	}
-	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+		s.AddSystemAlert("agent-field-save-failed", "error",
+			"Could not save the model/method choice for "+name+" — it will revert on the next restart: "+err.Error())
+	} else if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
 		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after model update", "agent", name, "error", err)
+			s.AddSystemAlert("agent-field-save-failed", "error",
+				"Could not save the model/method choice for "+name+" to its agent overlay — it will revert on the next config load: "+err.Error())
+		} else {
+			s.ClearSystemAlert("agent-field-save-failed")
 		}
+	} else {
+		s.ClearSystemAlert("agent-field-save-failed")
 	}
 	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
 
@@ -1364,6 +1410,9 @@ func (s *Server) handleAgentPrompt(w http.ResponseWriter, r *http.Request) {
 		"agent":       name,
 		"prompt":      template,
 		"sourceFiles": sourceFiles,
+		// templateFile: whether the editor shows a user override or the
+		// shipped default, and where a Save writes (#13005).
+		"templateFile": promptTemplateFileStatus(templateName),
 	}
 	// template: how the configured kick_template actually resolves, from the
 	// scheduler's own chain, so the editor can say "template not found:
@@ -1400,10 +1449,15 @@ func (s *Server) loadPromptTemplateRaw(name string) string {
 			)
 		}
 	}
-	// Check the user-saved templates first.
-	userPath := filepath.Join(promptTemplateSaveDir, templateName)
-	if data, err := os.ReadFile(userPath); err == nil {
-		return string(data)
+	// Check the user-saved templates first: the writable override (written
+	// when the shipped copy is read-only, #13005), then the save dir.
+	for _, userPath := range []string{
+		filepath.Join(promptTemplateOverrideDir, templateName),
+		filepath.Join(promptTemplateSaveDir, templateName),
+	} {
+		if data, err := os.ReadFile(userPath); err == nil {
+			return string(data)
+		}
 	}
 	for _, p := range paths {
 		if data, err := os.ReadFile(p); err == nil {
@@ -1422,6 +1476,96 @@ const defaultPromptTemplateSaveDir = "/data/policies"
 // prompt templates. Tests redirect it before any server is constructed so a
 // prompt-save exercise cannot overwrite a live template on a hive host.
 var promptTemplateSaveDir = defaultPromptTemplateSaveDir
+
+// promptTemplateOverrideDir receives a saved template when the copy in
+// promptTemplateSaveDir cannot be written in place — on a hosted hive the
+// shipped/seeded /data/policies files can be read-only or owned by another uid
+// (hivecommons/hive#13005). The scheduler probes the same directory first at
+// kick time (policies.UserOverrideDir). Tests redirect it like
+// promptTemplateSaveDir.
+var promptTemplateOverrideDir = policies.UserOverrideDir
+
+// promptTemplateFile tells the editor which file it is showing and where a
+// Save will land, so a read-only shipped template is identified up front.
+type promptTemplateFile struct {
+	// Path is the on-disk file the editor content came from ("" when it is
+	// served from the embedded defaults).
+	Path string `json:"path,omitempty"`
+	// Override is true when Path is a user override in the override dir.
+	Override bool `json:"override"`
+	// ReadOnly is true when the shipped/default copy cannot be written in
+	// place, so saves go to the override dir instead.
+	ReadOnly bool `json:"readOnly"`
+	// DefaultPath is the shipped/default location in the policies dir.
+	DefaultPath string `json:"defaultPath"`
+	// SavePath is where the next Save will write.
+	SavePath string `json:"savePath"`
+}
+
+// isUnwritableErr reports whether err means the path cannot be written by
+// this process (permission denied or a read-only filesystem), as opposed to a
+// transient or unrelated failure.
+func isUnwritableErr(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)
+}
+
+// promptTemplateFileStatus describes templateName's on-disk state. It opens
+// the default copy for writing (without truncating) to detect a read-only file
+// rather than guessing from mode bits, which ignore ownership and mounts.
+func promptTemplateFileStatus(templateName string) promptTemplateFile {
+	overridePath := filepath.Join(promptTemplateOverrideDir, templateName)
+	defaultPath := filepath.Join(promptTemplateSaveDir, templateName)
+	st := promptTemplateFile{DefaultPath: defaultPath, SavePath: defaultPath}
+	if f, err := os.OpenFile(defaultPath, os.O_WRONLY, 0); err == nil {
+		_ = f.Close()
+	} else if isUnwritableErr(err) {
+		st.ReadOnly = true
+		st.SavePath = overridePath
+	}
+	switch {
+	case fileExists(overridePath):
+		st.Path, st.Override, st.SavePath = overridePath, true, overridePath
+	case fileExists(defaultPath):
+		st.Path = defaultPath
+	}
+	return st
+}
+
+// writePromptTemplate saves content for templateName. An existing override is
+// updated in place (it shadows the default, so writing the default would be
+// invisible). Otherwise the default copy is written, falling back to the
+// override dir when that copy or its directory is not writable (#13005).
+func writePromptTemplate(templateName string, content []byte) (savePath string, override bool, err error) {
+	overridePath := filepath.Join(promptTemplateOverrideDir, templateName)
+	writeOverride := func() error {
+		if err := os.MkdirAll(promptTemplateOverrideDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(overridePath, content, 0o644)
+	}
+	if fileExists(overridePath) {
+		if err := writeOverride(); err != nil {
+			return overridePath, true, err
+		}
+		return overridePath, true, nil
+	}
+
+	defaultPath := filepath.Join(promptTemplateSaveDir, templateName)
+	defaultErr := os.MkdirAll(promptTemplateSaveDir, 0o755)
+	if defaultErr == nil {
+		defaultErr = os.WriteFile(defaultPath, content, 0o644)
+	}
+	if defaultErr == nil {
+		return defaultPath, false, nil
+	}
+	if !isUnwritableErr(defaultErr) {
+		return defaultPath, false, defaultErr
+	}
+	if err := writeOverride(); err != nil {
+		return overridePath, true, fmt.Errorf("%s is read-only (%v) and the writable override %s could not be written either: %w", defaultPath, defaultErr, overridePath, err)
+	}
+	return overridePath, true, nil
+}
 
 func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
@@ -1503,12 +1647,8 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 		templateFileName = agentCfg.KickTemplate
 	}
 
-	if err := os.MkdirAll(promptTemplateSaveDir, 0o755); err != nil {
-		jsonError(w, "failed to create policies directory: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	savePath := filepath.Join(promptTemplateSaveDir, templateFileName)
-	if err := os.WriteFile(savePath, []byte(body.Template), 0o644); err != nil {
+	savePath, override, err := writePromptTemplate(templateFileName, []byte(body.Template))
+	if err != nil {
 		jsonError(w, "failed to save template: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1523,8 +1663,8 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	s.refreshAndPersist()
 
 	s.auditFromRequest(r, "config_agent_prompt", auditDetail("section", "prompt"), name)
-	s.logger.Info("prompt template saved", "agent", name, "path", savePath)
-	okResponse(w, map[string]string{"status": "saved", "path": savePath})
+	s.logger.Info("prompt template saved", "agent", name, "path", savePath, "override", override)
+	jsonResponse(w, map[string]any{"ok": true, "status": "saved", "path": savePath, "override": override})
 }
 
 const exportAPIVersion = "hive.kubestellar.io/v1"

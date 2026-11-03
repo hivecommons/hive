@@ -38,13 +38,13 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | Operation (`op`) | Entry point | Agent script | Audit action on success | Audited? | Typed `repo` / `target`? |
 | --- | --- | --- | --- | :---: | :---: |
 | `open_pr` | `pr_request_watcher.go` (`/var/run/hive-metrics/pr-requests`) | `hive-open-pr` | `agent_pr_created` | yes | yes / PR number |
-| `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate`) | yes | yes / issue number |
+| `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate` / `agent_issue_prior_art_refused`) | yes | yes / issue number |
 | `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created` | yes | yes / issue or PR number |
-| `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` | yes | yes / issue number |
+| `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` (adds `hive/claimed-by-<agent>` + `hive/in-progress` and one timestamped `hive:claim` marker comment; the pr-request watcher and enumeration sweep remove `hive/in-progress`) | yes | yes / issue number |
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
 | `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` (also reached by `gh issue edit --add-label`/`--remove-label` and `gh pr edit --add-label`/`--remove-label`, which the `gh` wrapper translates into this relay) | `agent_label_applied` | yes | yes / issue or PR number |
 | `request_review` | `issue_request_watcher.go` kind `request_review` (`.../issue-requests`) | `hive-open-issue request-review` (also reached by `gh pr edit --add-reviewer`, which the `gh` wrapper translates into this relay) | `agent_review_requested` | yes | yes / PR number |
-| `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
+| `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`, plus sandbox review spools via `review_request_sandbox_spool.go`, #14986) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
 | `resolve_thread` | `review_request_watcher.go` event `resolve_thread` | `hive-review` | `agent_pr_reviewed` (`state=thread_resolved`) | yes | yes / PR number |
 | `merge_pr` | `merge_request_watcher.go` (`.../merge-requests`) | `hive-merge` | `pr_merged` (`path=relay`, via `MergePR`) | yes | yes / PR number |
 | `push_branch` | `push_branch_request_watcher.go` (`.../push-requests`) | `hive-push-branch` | `agent_branch_pushed` (branch and commit in the detail) | yes | yes / none (a branch push has no number) |
@@ -65,8 +65,9 @@ GitHub, and says so in the request's `.result.json` `note`
 approval counts and gates merge queues — and belongs to the humans who own the
 repository. A PR whose author cannot be read is treated as a contributor's: the
 relay never resolves "we could not tell" into approving someone else's work.
-There is no setting to turn this off; `review.all_authors` widens what is
-reviewed, never what may be approved.
+There is no setting to turn this off. Every PR is reviewed regardless of
+author ([#12974](https://github.com/hivecommons/hive/issues/12974)); being
+reviewed never widens what may be approved.
 
 ### `label` refuses hive-controlled labels
 
@@ -79,14 +80,30 @@ as fact (`issue_request_label.go`):
   queues a merge;
 - the hold labels (`hold`, `on-hold`, `hold/review`) — they block one;
 - everything in the `hive/` namespace, including `hive/claimed-by-<agent>`
-  (use `claim`), `hive/covered-by-pr`, `hive/likely-done` and
-  `hive/verified-open`;
+  (use `claim`), `hive/in-progress`, `🐝 covered by PR`, `hive/likely-done`
+  and `hive/verified-open`;
 - the labels that record a person's decision or an escalation:
-  `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
-  `blocked`.
+  `approved-direction`, `design-approved`, `needs-human`, `blocked`, the
+  retired `needs-decision` / `needs-direction`, and `stage/*` (an agent may
+  only *add* the park-for-a-ruling signals: `stage/045-needs-decision` on an
+  issue, `stage/085-needs-decision` on a PR).
+
+An agent parks an issue for the owner with the `--needs-decision` flag
+instead: on a create, or on `comment` for an existing issue whose remaining
+step only the owner can take, the relay applies the configured needs-decision
+label itself ([#12329](https://github.com/hivecommons/hive/issues/12329)).
+On `comment` the park is gated by the `label` op as well as `comment` — a
+lane allowed to comment but not to label is refused before any write — and
+it refuses a pull-request target, so the hard-suppress label only ever lands
+on an issue ([#12334](https://github.com/hivecommons/hive/pull/12334)).
 
 One reserved label refuses the whole request — nothing in it is applied — so a
-batch can never partially land. The refusal is a policy denial like any other:
+batch can never partially land. When the only refused part is removing
+`hive/likely-done` or `hive/covered-by-pr` alongside an add of
+`hive/verified-open`, the refusal tells the agent to resend the add on its own,
+because the hive removes those labels itself. `hive/verified-open`, the one
+`hive/` label an agent may add, is created on the repository first when it does
+not exist. The refusal is a policy denial like any other:
 `.denied`, a result file naming the labels, and an audit entry. A lane
 allowlist can narrow `label` further but can never widen it to these.
 
@@ -113,7 +130,16 @@ A rework push uses `--force-with-lease`; there is deliberately no plain
 ## Hive-internal writes (not agent requests)
 
 The hive also writes to GitHub on its own schedule, with no agent request
-behind the write. These writes are not subject to the lane allowlist. Every
+behind the write. These writes are not subject to the lane allowlist, but
+every one that lands on an item hive did not open passes the write-back
+containment gate (`pkg/writeback`: repo pause first, then per-kind ACMM
+floor + review opt-in label + backfill guard + per-repo mode; see
+[operator-reference.md](operator-reference.md#what-hive-writes-to-github-and-when)).
+An operator [repo pause](repo-pause.md) refuses every kind on that repo,
+own items included, and also stops the advisory digest comment, which is
+written outside the gate.
+A ratchet test (`pkg/writeback/ratchet_test.go`) fails on any new direct
+GitHub write call outside that package. Every
 one of them is audited with typed `repo` and `target` fields and redacted
 detail, the same as the relay writes. The entries for the rows below the
 sweeps are recorded under the `governor` agent, and only when the write
@@ -127,24 +153,44 @@ writes no entry.
 | Auto-merge sweep merges | `pkg/github/automerge/automerge_sweep.go` | yes (`pr_merged`, `automerge-sweep-merged`) | yes |
 | Attribution trailer reconcile | `attribution.go` (`ReconcilePRAttribution`) | yes (`pr_attribution_reconciled`) | yes |
 | Task-list sweep closes | `task_list_sweep.go` | yes (`task-list-sweep-closed`) | yes |
-| Supersession sweep (notice, `hive/superseded` close) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go` | yes (`supersession-sweep-*`) | yes |
+| Supersession sweep (notice, `hive/superseded` close, own-PR update-branch + body `Closes`→`Refs` rewrite, `needs-human` + `Parked` fact on escalation) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go`, `pr_supersession_resolve.go` | yes (`supersession-sweep-*`) | yes |
+| Shared-CI rerun (`rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
+| Open-PR dispatch guard (`has-open-pr` label on a refused issue) and duplicate-fix sweep (one `hive:duplicate-fix` comment; `hive/superseded` close of the later hive PR, or `needs-human` + `Parked` fact on escalation) | `open_pr_links.go`, `pr_duplicate_fix_sweep.go` | yes (`duplicate-fix-*`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
+| Origin-label migration (one-time; maps `from-review` / `origin/review` / `origin/reviewer` to `agent/reviewer`, deletes retired reviewer-origin label definitions after open items are swapped, removes redundant `origin/<lane>` and bare `<lane>` labels from agent-filed issues, and backfills `origin/selfreport` on open `hive/selfreport` issues when no provenance label is present) | `origin_labels.go` | yes (`origin_label_migrated`, one per item swapped or backfilled, with `from`, `to`; report file `/data/origin-label-migration-v4.json`) | yes |
+| `hive/<hive-id>` label retire sweep (every boot until clean, #12539) | `hive_id_label_retire.go` | yes (`hive_id_label_retired`, one per open item stripped, with `label`, `origin_source`; report file `/data/hive-id-label-retire-<hive-id>.json`) | yes |
 | Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |
 | Signed-commit reconcile: "cannot sign" comment | `pr_signed_reconcile.go` | yes (`signed_commit_skip_noted`, with `reason`) | yes / PR number |
 | Review backlog issues | `review_backlog.go` | yes (`review_backlog_issue_filed`, one per GitHub issue, with `pr`, `perspective`, `reused`, `destination`) | yes / backlog issue number |
 | Review backlog summary comment | `review_backlog.go` | yes (`review_backlog_summary_posted`) | yes / PR number |
 | Review backlog routing batch | `review_backlog.go` | yes (`review_backlog_batch_routed`, one per filing pass, with `destination`, `filed`, `updated`, `capped`) | yes / PR number |
+| Review backlog self-check close | `review_backlog_selfcheck.go` | yes (`review_backlog_issue_closed`, with `pr`, `why`) | yes / backlog issue number |
 | Human-decision and review-priority labels | `human_decision_label.go` | yes (`hive_label_applied`, with `label`) | yes / PR number |
 | Recommendations issue | `recommendations.go` | yes (`recommendations_posted`, `outcome=created` or `updated`) | yes / issue number |
 | Fleet report issue | `fleet_report.go` | yes (`fleet_report_posted`, `outcome=created` or `commented`) | yes / issue number |
 | Fleet report recovery | `fleet_report.go` | yes (`fleet_report_recovered`, with `closed`) | yes / issue number |
+| Legacy standalone `Fleet report:` close (hourly sweep in the hive watching the report repo, #13470) | `fleet_report_legacy_sweep.go` | yes (`fleet_report_recovered`, `reason=legacy_standalone`) | yes / issue number |
 | Reporter-trust wait notice/comment and owned label cleanup | `client.go` / `reporter_trust_wait.go` (`fetchIssues` reporter-trust reject/admit paths) | yes (`reporter_trust_wait_noticed`, `reporter_trust_wait_cleared`; label adds also record `hive_label_applied` with `reason=reporter_trust_wait`) | yes / issue number |
 
 The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`
 and is covered by that operation's `agent_pr_created` entry. Creating a
-missing label on a repository (the hold label, `from-review`) is a side
-effect of the labeled write and is not audited on its own.
+missing label on a repository (the hold label, any non-lane `origin/*` label,
+or an `agent/<lane>` provenance label) is a side effect of the labeled write
+and is not audited on its own.
+
+Every issue the hive creates carries exactly one provenance source. Agent
+filings use `agent/<lane>` as the single routing/ownership/provenance lane
+label. Non-lane filers use `origin/selfreport`, `origin/governor`,
+`origin/dashboard`, `origin/forge`, or `origin/convergence`. `Client.CreateIssue`
+requires an `Origin` on its request and normalises labels through
+`config.WithIssueOriginLabel`; the GitHub proxy does the same for an agent's own
+`POST /repos/{o}/{r}/issues` body, stripping redundant `origin/<lane>` and bare
+`<lane>` aliases. Raw filers that bypass both (hub selfreport relay,
+upstream-watch, convergence channel) add their non-lane origin label themselves.
+Provenance is never a gate: if a non-lane origin label cannot be ensured on the
+repo the issue is still filed without it (logged as a warning), whereas a
+retryable failure on a routing label keeps the request queued as before. See [labels-and-control-signals.md](labels-and-control-signals/reference.md#origin-sources).
 
 ## Lane allowlist
 
@@ -231,7 +277,7 @@ write_surface:
 ```
 
 - **Default off.** With no `enforce` list nothing changes: every lane keeps
-  its direct access, and an ACMM L6 hive stays fully autonomous. Enforcement
+  its direct access, and an ACMM L6 hive stays autonomous. Enforcement
   starts only when an operator lists a lane, at any ACMM level.
 - **Per lane.** Listing one lane does not affect the others. A replica
   (`scanner-2`) follows its base agent; `"*"` enforces every lane. Names are
@@ -370,7 +416,7 @@ them survives.
 ## Not yet done
 
 These are deliberately out of scope so far. They change what an agent can do,
-so they need operator sign-off first. ACMM L6 is full autonomy by design: none
+so they need operator sign-off first. ACMM L6 is autonomous by design: none
 of them may reduce what an L6 hive can do by default.
 
 - **Removing direct write access by default.** The per-lane opt-in has landed

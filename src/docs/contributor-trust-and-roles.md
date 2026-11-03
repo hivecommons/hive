@@ -19,6 +19,25 @@ Contributor profiles carry a `trust_tier` field. The current tier order is:
 | `merger` | maintainer/owner grant; it is not auto-promoted | May queue **other people's** PRs for Hive's auto-merge-on-green flow. |
 | `advisor` | maintainer/owner grant | Advisory/invite tier; it is not ordered above `merger` for role-claim checks. |
 
+### Who changed a tier, when and why
+
+Every tier change — operator dropdown or `PUT /api/contributors/{id}/trust`
+(optional `reason`), `POST /api/contributors/{id}/revoke`, the
+newcomer→contributor auto-promotion, and the initial `newcomer` at
+registration — appends `{tier, prev, at, by, reason, source}` to the
+contributor record's `tier_history` (`by` is the operator login,
+`hive:auto-promotion` or `hive:registration`; capped at the latest 50) and
+writes an `audit.jsonl` event with `action: "contributor-tier-changed"`
+carrying the same fields. Setting the tier a contributor already holds is a
+no-op: no history entry, no audit line. `GET /api/contributors` returns
+`tier_history`, and the Contributors view shows the current tier's provenance
+("trusted since … · by … · reason") under and on hover of the tier chip.
+
+The stage lane re-reads the author's registry tier on every sweep, including
+for PRs parked on `needs-rebase`/hold/excluded labels, so a promotion or
+demotion reaches every open PR on the next pass instead of sticking to the
+`role/*` label a previous pass wrote.
+
 The merger tier is deliberately **never allowed to own its own merge**. Queueing a PR as `merger` or `owner` is rejected when the authenticated dashboard user matches the PR author, and the auto-merge sweep re-checks the queued-by user before merging.
 
 Task leases are also the unit for staged runs. A staged run stays on the same
@@ -28,6 +47,22 @@ fenced the same way as a reassigned task. Plain tasks have no stage. Staged work
 is offered only to relays that declare the `run-stage` relay capability, so an
 old relay can continue normal work but is not silently handed a staged run it
 does not understand.
+
+### Audit attestation is voluntary
+
+A hive can *ask* contributors to share their relay's local audit record
+(`hub.contribute_audit_share_request`, shown on `/contribute` before setup and
+advertised on `auth_ok`). Sharing is opt-in, per hive, with
+`hivectl hives set <name> --share-audit <lifecycle|commands|reasoning>` (the
+relay-side flag lands with the v6 follow-up to
+[#13458](https://github.com/hivecommons/hive/issues/13458); until then no relay
+sends `audit_share` and the hub is simply ready for it), and
+never above the relay's capture level. Trust tier, role grants and admission do
+**not** depend on it: a contributor who shares nothing is admitted exactly as
+before. Making a minimum share level an admission condition is an open
+governance question ([#13441](https://github.com/hivecommons/hive/issues/13441))
+and is not implemented. See
+[contributor-relay.md](contributor-relay.md#sharing-your-audit-record-with-a-hive---share-audit).
 
 ## Merger capability and setup
 

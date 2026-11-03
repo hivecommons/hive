@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/planengine"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
 func TestWireSpektacularRunner_DefaultOffAndOptIn(t *testing.T) {
@@ -33,10 +33,12 @@ func TestWireSpektacularRunner_DefaultOffAndOptIn(t *testing.T) {
 }
 
 func TestDefaultAgentBackendDeterministic(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"zeta":  {Enabled: true, Backend: "claude"},
-		"alpha": {Enabled: true, Backend: "copilot"},
-		"off":   {Enabled: false, Backend: "bob"},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"zeta":  {Enabled: true, Backend: "claude"},
+			"alpha": {Enabled: true, Backend: "copilot"},
+			"off":   {Enabled: false, Backend: "bob"},
+		},
 	}}
 	if got := defaultAgentBackend(cfg); got != "copilot" {
 		t.Fatalf("defaultAgentBackend = %q, want alphabetically first enabled backend", got)

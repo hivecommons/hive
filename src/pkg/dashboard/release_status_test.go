@@ -302,3 +302,62 @@ func TestBuildSpokeReleaseStatusStaleness(t *testing.T) {
 		t.Errorf("no heartbeat: JSON %s must omit hubReachable so the stale warning is not shown", raw)
 	}
 }
+
+// TestSupersededAttemptAgesTheRunningBuild pins when the last spoke-side
+// upgrade has been superseded by an external roll, the payload must carry the
+// running build's start time (RunningSince) and flag the external roll, so the
+// Channel card ages what is running — not the day-old upgrade it superseded.
+func TestSupersededAttemptAgesTheRunningBuild(t *testing.T) {
+	landed := time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC)
+	booted := time.Date(2026, 10, 21, 14, 50, 0, 0, time.UTC)
+	outcome := &upgradeOutcome{TargetSHA: "54e5c90abcdef", RequestedAt: landed.Add(-3 * time.Minute), CompletedAt: landed}
+
+	at := buildUpgradeAttemptStatus(outcome, nil, "2a9e3f583deadbeef")
+	if !at.Superseded || !at.RolledExternally {
+		t.Fatalf("superseded = %v rolledExternally = %v, want both true: %+v", at.Superseded, at.RolledExternally, at)
+	}
+	if at.RunningCommit != "2a9e3f5" {
+		t.Errorf("RunningCommit = %q, want 2a9e3f5", at.RunningCommit)
+	}
+	if !strings.Contains(at.Detail, "rolled externally") {
+		t.Errorf("Detail = %q, want it to say the hive was rolled externally", at.Detail)
+	}
+	if at.CompletedAt != landed.Format(time.RFC3339) {
+		t.Errorf("CompletedAt = %q must still describe the superseded attempt", at.CompletedAt)
+	}
+
+	at = stampRunningSince(at, booted)
+	if at.RunningSince != booted.Format(time.RFC3339) {
+		t.Errorf("RunningSince = %q, want %s", at.RunningSince, booted.Format(time.RFC3339))
+	}
+	raw, err := json.Marshal(at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"runningSince":"2026-10-21T14:50:00Z"`, `"rolledExternally":true`, `"completedAt":"2026-10-20T11:00:00Z"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("JSON %s must contain %s", raw, want)
+		}
+	}
+
+	// A landed, non-superseded success keeps its own age: no running-build
+	// stamp, so the card keeps showing when the upgrade landed.
+	current := stampRunningSince(buildUpgradeAttemptStatus(outcome, nil, "54e5c90abcdef"), booted)
+	if current.Superseded || current.RolledExternally || current.RunningSince != "" {
+		t.Errorf("non-superseded success must not be stamped: %+v", current)
+	}
+	// No process start time known: leave the field out rather than lie.
+	if got := stampRunningSince(at, time.Time{}).RunningSince; got != at.RunningSince {
+		t.Errorf("zero startedAt must not change RunningSince: %q", got)
+	}
+	none := UpgradeAttemptStatus{State: upgradeAttemptSucceeded, Superseded: true}
+	if got := stampRunningSince(none, time.Time{}).RunningSince; got != "" {
+		t.Errorf("zero startedAt must leave RunningSince empty, got %q", got)
+	}
+
+	// The final invariant guard marks the external roll too (#11194 path).
+	guarded := enforceRunningCommitInvariant(UpgradeAttemptStatus{State: upgradeAttemptSucceeded, Target: "54e5c90"}, "2a9e3f5")
+	if !guarded.Superseded || !guarded.RolledExternally || guarded.RunningCommit != "2a9e3f5" {
+		t.Errorf("enforceRunningCommitInvariant = %+v, want superseded + rolledExternally", guarded)
+	}
+}

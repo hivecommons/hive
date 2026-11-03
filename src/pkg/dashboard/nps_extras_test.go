@@ -29,10 +29,10 @@ type npsFiledIssue struct {
 	labels            []string
 }
 
-func (f *npsFakeFiler) CreateIssue(_ context.Context, repo, title, body string, labels []string) (ghpkg.CreateIssueResult, error) {
+func (f *npsFakeFiler) CreateIssue(_ context.Context, req ghpkg.CreateIssueRequest) (ghpkg.CreateIssueResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, npsFiledIssue{repo: repo, title: title, body: body, labels: labels})
+	f.calls = append(f.calls, npsFiledIssue{repo: req.Repo, title: req.Title, body: req.Body, labels: req.Labels})
 	if f.err != nil {
 		return ghpkg.CreateIssueResult{}, f.err
 	}

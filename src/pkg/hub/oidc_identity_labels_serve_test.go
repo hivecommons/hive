@@ -127,7 +127,7 @@ func TestFleetAlertsDecoratesAckByName(t *testing.T) {
 	entries := []MyHiveEntry{{
 		RegistryEntry: RegistryEntry{ID: "h1", Name: "org/repo", Org: "org", LastHeartbeat: stale},
 	}}
-	pre := s.fleetAlerts(entries)
+	pre := s.fleetAlerts(entries, nil)
 	if len(pre.Alerts) == 0 {
 		t.Fatal("expected at least one alert for a stale hive")
 	}
@@ -135,7 +135,7 @@ func TestFleetAlertsDecoratesAckByName(t *testing.T) {
 		t.Fatal("setAck refused — condition firstSeen not recorded?")
 	}
 
-	summary := s.fleetAlerts(entries)
+	summary := s.fleetAlerts(entries, nil)
 	found := false
 	for _, a := range summary.Alerts {
 		if !a.Acknowledged {

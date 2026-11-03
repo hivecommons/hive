@@ -1,0 +1,39 @@
+# Egress only: DNS, the dashboard (in-cluster Service of the hive's namespace,
+# patched by the overlay, or 443 for the public route) and RTMP/RTMPS to
+# Twitch ingest. Twitch publishes no stable ingest CIDRs, so RTMP egress is
+# allowed to any PUBLIC address on 1935/443 and denied to RFC1918 space.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hive-stream
+  namespace: hive-stream
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hive-stream
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: CHANGE-ME-hive-namespace
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hive
+      ports:
+        - { protocol: TCP, port: 3002 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+      ports:
+        - { protocol: TCP, port: 1935 }
+        - { protocol: TCP, port: 443 }

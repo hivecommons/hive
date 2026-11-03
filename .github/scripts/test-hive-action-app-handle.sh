@@ -37,19 +37,20 @@ assert_fails() {
 }
 
 echo 'hive_resolve_app_handle: resolution order'
-assert_eq "$(hive_resolve_app_handle 'from-input' 'from-var')" 'from-input' 'explicit input wins over the variable'
-assert_eq "$(hive_resolve_app_handle '' 'hivecommons-hive')" 'hivecommons-hive' 'variable is used when the input is empty'
-assert_eq "$(hive_resolve_app_handle '   ' 'hivecommons-hive')" 'hivecommons-hive' 'whitespace-only input falls through to the variable'
-assert_eq "$(hive_resolve_app_handle '' '')" 'hive' 'default is hive when nothing is configured'
-assert_eq "$(hive_resolve_app_handle '')" 'hive' 'default is hive when the fallback is omitted'
-assert_eq "$HIVE_DEFAULT_APP_HANDLE" 'hive' 'documented default constant is hive'
+assert_eq "$(hive_resolve_app_handle 'from-login' 'from-alias' 'from-var')" 'from-login' 'mention_login wins over app_handle and the variable'
+assert_eq "$(hive_resolve_app_handle '' 'from-alias' 'from-var')" 'from-alias' 'app_handle alias is used when mention_login is empty'
+assert_eq "$(hive_resolve_app_handle '' '' 'hivecommons-hive')" 'hivecommons-hive' 'variable is used when both inputs are empty'
+assert_eq "$(hive_resolve_app_handle '   ' '' 'other-hive')" 'other-hive' 'whitespace-only input falls through to the variable'
+assert_eq "$(hive_resolve_app_handle '' '' '')" 'hivecommons-hive' 'default is hivecommons-hive when nothing is configured'
+assert_eq "$(hive_resolve_app_handle '')" 'hivecommons-hive' 'default is hivecommons-hive when the fallbacks are omitted'
+assert_eq "$HIVE_DEFAULT_APP_HANDLE" 'hivecommons-hive' 'documented default constant is hivecommons-hive'
 
 echo 'hive_normalize_app_handle: accepted spellings'
 for spelling in 'x' '@x' 'x[bot]' '@x[bot]' ' @x[bot] '; do
   assert_eq "$(hive_normalize_app_handle "$spelling")" 'x' "'$spelling' normalizes to x"
 done
-assert_eq "$(hive_resolve_app_handle '@hivecommons-hive[bot]' '')" 'hivecommons-hive' 'input @hivecommons-hive[bot] resolves to hivecommons-hive'
-assert_eq "$(hive_resolve_app_handle '' 'hivecommons-hive[bot]')" 'hivecommons-hive' 'variable hivecommons-hive[bot] resolves to hivecommons-hive'
+assert_eq "$(hive_resolve_app_handle '@hivecommons-hive[bot]' '' '')" 'hivecommons-hive' 'input @hivecommons-hive[bot] resolves to hivecommons-hive'
+assert_eq "$(hive_resolve_app_handle '' '' 'hivecommons-hive[bot]')" 'hivecommons-hive' 'variable hivecommons-hive[bot] resolves to hivecommons-hive'
 assert_eq "$(hive_normalize_app_handle '')" '' 'blank normalizes to empty'
 
 echo 'hive_normalize_app_handle: rejected values'
@@ -57,7 +58,7 @@ assert_fails 'handle with a space is rejected' hive_normalize_app_handle 'hive s
 assert_fails 'handle with a newline is rejected' hive_normalize_app_handle $'hive\nevil'
 assert_fails 'handle starting with - is rejected' hive_normalize_app_handle '-hive'
 assert_fails '[bot] prefix is rejected' hive_normalize_app_handle '@[bot]x'
-assert_fails 'invalid input fails resolution instead of falling through' hive_resolve_app_handle 'bad handle' 'hivecommons-hive'
+assert_fails 'invalid input fails resolution instead of falling through' hive_resolve_app_handle 'bad handle' '' 'hivecommons-hive'
 
 echo 'hive_relay_comment_body'
 marker='<!-- hive:source=action run_id=1 run_attempt=1 workflow=w actor=a transport=comment -->'
@@ -89,7 +90,7 @@ GH
 chmod +x "${TMP}/bin/gh"
 
 run_action() {
-  local input="$1" env_handle="$2"
+  local input="$1" env_handle="$2" alias_input="${3:-}"
   local out="${TMP}/body.txt"
   rm -f "$out"
   (
@@ -99,7 +100,7 @@ run_action() {
       GH_BODY_FILE="$out" \
       HIVE_COMMAND=status HIVE_ISSUE_INPUT=7 HIVE_PROMPT='manual smoke' \
       HIVE_TRANSPORT=comment HIVE_DISPATCH_URL='' HIVE_AUDIENCE=hive \
-      HIVE_APP_HANDLE_INPUT="$input" HIVE_ACTION_PATH="$ACTION_DIR" \
+      HIVE_MENTION_LOGIN_INPUT="$input" HIVE_APP_HANDLE_INPUT="$alias_input" HIVE_ACTION_PATH="$ACTION_DIR" \
       GITHUB_REPOSITORY_NAME=example/hive GITHUB_EVENT_ISSUE_NUMBER='' GITHUB_EVENT_PR_NUMBER='' \
       GITHUB_RUN_ID_VALUE=42 GITHUB_RUN_ATTEMPT_VALUE=1 GITHUB_WORKFLOW_NAME=smoke GITHUB_ACTOR_LOGIN=alice \
       bash "$RUN_SCRIPT" >/dev/null 2>&1
@@ -109,7 +110,9 @@ run_action() {
 
 assert_eq "$(run_action '@hivecommons-hive[bot]' '')" '@hivecommons-hive status manual smoke' 'action posts the explicit input handle'
 assert_eq "$(run_action '' 'hivecommons-hive')" '@hivecommons-hive status manual smoke' 'action falls back to HIVE_APP_HANDLE'
-assert_eq "$(run_action '' '')" '@hive status manual smoke' 'action defaults to @hive'
+assert_eq "$(run_action '' '')" '@hivecommons-hive status manual smoke' 'action defaults to @hivecommons-hive'
+assert_eq "$(run_action '' '' 'legacy-app')" '@legacy-app status manual smoke' 'action still honours the app_handle alias'
+assert_eq "$(run_action 'new-login' '' 'legacy-app')" '@new-login status manual smoke' 'mention_login wins over the app_handle alias'
 assert_fails 'action fails on an invalid handle' run_action 'not a handle' ''
 
 echo 'no hard-coded App login'
@@ -117,7 +120,9 @@ for f in "$ACTION_YML" "${ACTION_DIR}/app-handle.sh" "$SMOKE_YML"; do
   if grep -qE '(^|[^A-Za-z0-9-])@?hive\[bot\]' "$f"; then bad "$(basename "$f") hard-codes hive[bot]"; else pass "$(basename "$f") does not hard-code hive[bot]"; fi
 done
 if grep -qF 'body="@hive' "$ACTION_YML"; then bad 'action.yml hard-codes an @hive body'; else pass 'action.yml builds the body from the resolved handle'; fi
-if grep -qF 'vars.HIVE_APP_HANDLE' "$SMOKE_YML"; then pass 'smoke workflow passes vars.HIVE_APP_HANDLE'; else bad 'smoke workflow does not pass vars.HIVE_APP_HANDLE'; fi
+if grep -qF 'mention_login: ${{ inputs.mention_login || vars.HIVE_APP_HANDLE }}' "$SMOKE_YML"; then pass 'smoke workflow wires mention_login with the vars.HIVE_APP_HANDLE fallback'; else bad 'smoke workflow does not wire mention_login'; fi
+if grep -qE '^      mention_login:' "$SMOKE_YML"; then pass 'smoke workflow exposes a mention_login input'; else bad 'smoke workflow has no mention_login input'; fi
+if grep -qE '^  mention_login:' "$ACTION_YML"; then pass 'action declares mention_login'; else bad 'action does not declare mention_login'; fi
 
 if [[ $failures -gt 0 ]]; then
   printf '%d failure(s)\n' "$failures"

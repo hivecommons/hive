@@ -36,15 +36,6 @@ type PRItem struct {
 	// Band is the Overview band key: waiting, eligible, blocked, in-review,
 	// open, or draft.
 	Band string
-	// Held is true for a PR parked behind a hold (dashboard hold list or a
-	// hold label). Held PRs sit in the waiting band.
-	Held bool
-	// NeedsHuman and NeedsDecision mirror the needs-human and
-	// needs-decision/2-discussing labels — the two human-gate causes the
-	// waiting band groups together.
-	NeedsHumanReason string
-	NeedsHuman       bool
-	NeedsDecision    bool
 	// CIFailing, Conflict and VerdictBlocked are the three blocked-band
 	// causes. They are not exclusive: a PR can fail CI and have conflicts.
 	CIFailing      bool
@@ -57,6 +48,9 @@ type PRItem struct {
 	Lane   string
 	Author string
 	Stale  bool
+	// Ownership is the server's stored your-turn decision for the PR; the
+	// advisor reads it and never derives "needs a human" itself.
+	Ownership Ownership
 	// AgeDays counts days since the PR was opened; IdleDays days since its
 	// last activity. The caller computes both against its own clock.
 	AgeDays  int
@@ -70,14 +64,29 @@ type IssueItem struct {
 	URL    string
 	// Band is the Overview band key: ready, in-progress, agent-filed,
 	// waiting, or done.
-	Band string
-	// Blocked, NeedsDecision and Discussing split the waiting band by label.
-	Blocked       bool
-	NeedsDecision bool
-	Discussing    bool
-	AgeDays       int
-	IdleDays      int
+	Band     string
+	AgeDays  int
+	IdleDays int
+	// Ownership is the server's stored your-turn decision for the issue.
+	Ownership Ownership
 }
+
+// Ownership is the dashboard's stored your-turn decision for one item (hive
+// #11507): whether Hive is waiting on a person, the verb, the reason code and
+// the one-line reason. The owner advice counts the items that need a human
+// from it alone.
+type Ownership struct {
+	YourTurn   bool
+	Verb       string
+	ReasonCode string
+	Reason     string
+}
+
+// verbClose is the verb whose items the inbox counts as "to close" (M) rather
+// than "your turn" (N); verbOrder is the inbox's group order.
+const verbClose = "CLOSE"
+
+var verbOrder = []string{"INSPECT", "DECIDE", "STEER", "SPEC", "REVIEW", "TRIAGE", "ADMIT", verbClose}
 
 // BandRule is the one-line rule text the Overview tooltips and pill legend
 // print for a band. Kind is "pr" or "issue".
@@ -109,9 +118,9 @@ type Queue struct {
 type Thresholds struct {
 	// BlockedPRPct: blocked PRs ≥ this % of open PRs → reduce-blocked-prs.
 	BlockedPRPct int
-	// NeedsHumanPRPct: waiting PRs ≥ this % of open PRs → clear-human-gate-prs.
+	// NeedsHumanPRPct: your-turn PRs ≥ this % of open PRs → clear-human-gate-prs.
 	NeedsHumanPRPct int
-	// NeedsHumanIssuePct: waiting issues ≥ this % of open issues → unblock-human-issues.
+	// NeedsHumanIssuePct: your-turn issues ≥ this % of open issues → unblock-human-issues.
 	NeedsHumanIssuePct int
 	// StaleBlockedPRs: blocked PRs past the stale threshold ≥ this count → review-stale-prs.
 	StaleBlockedPRs int
@@ -170,6 +179,70 @@ type Counts struct {
 	GovernorPRs    int `json:"governorPRs"`
 	OverviewIssues int `json:"overviewIssues"`
 	OverviewPRs    int `json:"overviewPRs"`
+	// YourTurn and ToClose are the inbox header's N (every verb but CLOSE)
+	// and M, over the same snapshot; the needs-human rules count exactly
+	// these items.
+	YourTurn int `json:"yourTurn"`
+	ToClose  int `json:"toClose"`
+}
+
+// YourTurnCounts returns the inbox header's N and M for the queue: its
+// your-turn items except CLOSE, and its CLOSE items.
+func YourTurnCounts(q Queue) (n, m int) {
+	for _, item := range NeedsHumanItems(q) {
+		if item.Verb == verbClose {
+			m++
+		} else {
+			n++
+		}
+	}
+	return n, m
+}
+
+// NeedsHumanItems lists every PR and issue the stored decision says is the
+// owner's turn (the inbox's N plus M), uncapped. The recommendations name the
+// first few; this is the whole set the advice counts. Each item's Verb and
+// Note come from the decision.
+func NeedsHumanItems(q Queue) []NeedsHumanItem {
+	var out []NeedsHumanItem
+	for _, pr := range q.PRs {
+		if pr.Ownership.YourTurn {
+			out = append(out, NeedsHumanItem{Item: Item{Repo: pr.Repo, Number: pr.Number, URL: pr.URL, Note: ownershipNote(pr.Ownership)}, Kind: "pr", Verb: pr.Ownership.Verb, ReasonCode: pr.Ownership.ReasonCode})
+		}
+	}
+	for _, issue := range q.Issues {
+		if issue.Ownership.YourTurn {
+			out = append(out, NeedsHumanItem{Item: Item{Repo: issue.Repo, Number: issue.Number, URL: issue.URL, Note: ownershipNote(issue.Ownership)}, Kind: "issue", Verb: issue.Ownership.Verb, ReasonCode: issue.Ownership.ReasonCode})
+		}
+	}
+	return out
+}
+
+// NeedsHumanItem is one item the advice counts as needing a human.
+type NeedsHumanItem struct {
+	Item
+	Kind       string
+	Verb       string
+	ReasonCode string
+}
+
+func ownershipNote(o Ownership) string {
+	if o.Reason == "" {
+		return o.Verb
+	}
+	return o.Verb + " — " + o.Reason
+}
+
+// verbSummary renders per-verb counts in the inbox's group order, for example
+// "2 REVIEW, 1 CLOSE".
+func verbSummary(verbs map[string]int) string {
+	parts := make([]string, 0, len(verbs))
+	for _, verb := range verbOrder {
+		if n := verbs[verb]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, verb))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 type bucket struct {
@@ -211,22 +284,28 @@ func addBucket(m map[string]*bucket, key string, item Item) {
 type prBreakdown struct {
 	open                                         int
 	blocked, blockedCI, blockedConflict, verdict int
-	waiting, held, needsHuman, needsDecision     int
+	yourTurn, toClose                            int
+	yourTurnVerbs                                map[string]int
+	yourTurnOwn                                  []Ownership
+	yourTurnRepos                                []string
 	staleBlocked                                 int
 	oldestBlockedDays                            int
 	checks, verdicts, lanes, authors, repos      []bucket
-	blockedItems, waitingItems, staleItems       []Item
+	blockedItems, yourTurnItems, staleItems      []Item
 }
 
 type issueBreakdown struct {
-	open                                     int
-	waiting, blocked, needsDecision, discuss int
-	done, agentFiled                         int
-	waitingItems, doneItems                  []Item
+	open                     int
+	yourTurn, toClose        int
+	yourTurnVerbs            map[string]int
+	yourTurnOwn              []Ownership
+	yourTurnRepos            []string
+	done, agentFiled         int
+	yourTurnItems, doneItems []Item
 }
 
 func summarizePRs(prs []PRItem) prBreakdown {
-	var b prBreakdown
+	b := prBreakdown{yourTurnVerbs: map[string]int{}}
 	checks, verdicts, lanes, authors, repos := map[string]*bucket{}, map[string]*bucket{}, map[string]*bucket{}, map[string]*bucket{}, map[string]*bucket{}
 	sorted := append([]PRItem(nil), prs...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -240,6 +319,16 @@ func summarizePRs(prs []PRItem) prBreakdown {
 	})
 	for _, pr := range sorted {
 		b.open++
+		if own := pr.Ownership; own.YourTurn {
+			if own.Verb == verbClose {
+				b.toClose++
+			} else {
+				b.yourTurn++
+			}
+			b.yourTurnVerbs[own.Verb]++
+			b.yourTurnOwn, b.yourTurnRepos = append(b.yourTurnOwn, own), append(b.yourTurnRepos, pr.Repo)
+			b.yourTurnItems = append(b.yourTurnItems, Item{Repo: pr.Repo, Number: pr.Number, URL: pr.URL, Note: shortOwnershipNote(own)})
+		}
 		switch pr.Band {
 		case PRBandBlocked:
 			b.blocked++
@@ -268,18 +357,6 @@ func summarizePRs(prs []PRItem) prBreakdown {
 			if pr.AgeDays > b.oldestBlockedDays {
 				b.oldestBlockedDays = pr.AgeDays
 			}
-		case PRBandWaiting:
-			b.waiting++
-			b.waitingItems = append(b.waitingItems, Item{Repo: pr.Repo, Number: pr.Number, URL: pr.URL, Note: prWaitingNote(pr)})
-			if pr.Held {
-				b.held++
-			}
-			if pr.NeedsHuman {
-				b.needsHuman++
-			}
-			if pr.NeedsDecision {
-				b.needsDecision++
-			}
 		}
 	}
 	b.checks, b.verdicts, b.lanes, b.authors, b.repos = topBuckets(checks), topBuckets(verdicts), topBuckets(lanes), topBuckets(authors), topBuckets(repos)
@@ -287,7 +364,7 @@ func summarizePRs(prs []PRItem) prBreakdown {
 }
 
 func summarizeIssues(issues []IssueItem) issueBreakdown {
-	var b issueBreakdown
+	b := issueBreakdown{yourTurnVerbs: map[string]int{}}
 	sorted := append([]IssueItem(nil), issues...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].IdleDays != sorted[j].IdleDays {
@@ -300,22 +377,17 @@ func summarizeIssues(issues []IssueItem) issueBreakdown {
 	})
 	for _, issue := range sorted {
 		b.open++
-		switch issue.Band {
-		case IssueBandWait:
-			b.waiting++
-			note := ""
-			switch {
-			case issue.NeedsDecision:
-				b.needsDecision++
-				note = "needs-decision"
-			case issue.Blocked:
-				b.blocked++
-				note = "blocked"
-			case issue.Discussing:
-				b.discuss++
-				note = "2-discussing"
+		if own := issue.Ownership; own.YourTurn {
+			if own.Verb == verbClose {
+				b.toClose++
+			} else {
+				b.yourTurn++
 			}
-			b.waitingItems = append(b.waitingItems, Item{Repo: issue.Repo, Number: issue.Number, URL: issue.URL, Note: note})
+			b.yourTurnVerbs[own.Verb]++
+			b.yourTurnOwn, b.yourTurnRepos = append(b.yourTurnOwn, own), append(b.yourTurnRepos, issue.Repo)
+			b.yourTurnItems = append(b.yourTurnItems, Item{Repo: issue.Repo, Number: issue.Number, URL: issue.URL, Note: shortOwnershipNote(own)})
+		}
+		switch issue.Band {
 		case IssueBandDone:
 			b.done++
 			b.doneItems = append(b.doneItems, Item{Repo: issue.Repo, Number: issue.Number, URL: issue.URL, Note: "agent-marked done"})
@@ -346,24 +418,6 @@ func prBlockedNote(pr PRItem) string {
 		}
 	}
 	return strings.Join(parts, "; ")
-}
-
-func prWaitingNote(pr PRItem) string {
-	parts := make([]string, 0, 3)
-	if pr.Held {
-		parts = append(parts, "held")
-	}
-	if pr.NeedsHuman {
-		note := "needs-human"
-		if pr.NeedsHumanReason != "" {
-			note += ": " + pr.NeedsHumanReason
-		}
-		parts = append(parts, note)
-	}
-	if pr.NeedsDecision {
-		parts = append(parts, "needs-decision")
-	}
-	return strings.Join(parts, ", ")
 }
 
 func pct(part, total int) int {
@@ -440,25 +494,27 @@ func queueCandidates(q Queue, th Thresholds) []Recommendation {
 		out = append(out, r)
 	}
 
-	if meetsPct(prs.waiting, prs.open, th.NeedsHumanPRPct) {
+	if meetsPct(prs.yourTurn+prs.toClose, prs.open, th.NeedsHumanPRPct) {
+		n := prs.yourTurn + prs.toClose
 		r := rec("clear-human-gate-prs", 84, "Clear the human gate on PRs",
-			fmt.Sprintf("%d of %d open PRs (%d%%) wait on a human: %d held, %d labelled needs-human, %d needs-decision — release, review, or close them.",
-				prs.waiting, prs.open, pct(prs.waiting, prs.open), prs.held, prs.needsHuman, prs.needsDecision),
-			sig("overview_open_prs", prs.open), sig("needs_human", prs.waiting), sig("held", prs.held), sig("needs_human_label", prs.needsHuman), sig("needs_decision", prs.needsDecision))
-		r.Bands = []string{"pr/" + PRBandWaiting}
-		r.Links = []Link{exportLink("Needs-human PRs (CSV)", prExportPath, "band", PRBandWaiting)}
-		r.Items = capItems(prs.waitingItems)
+			fmt.Sprintf("%d of %d open PRs (%d%%) are waiting on a person; the hive cannot move them on its own.",
+				n, prs.open, pct(n, prs.open)),
+			sig("overview_open_prs", prs.open), sig("needs_human", n), sig("your_turn", prs.yourTurn), sig("to_close", prs.toClose), sig("verbs", verbSummary(prs.yourTurnVerbs)))
+		r.Links = []Link{exportLink("Your-turn PRs (CSV)", prExportPath, "slice", "your-turn,to-close")}
+		r.Why, r.Help = humanGateWhy(prs.yourTurnOwn, prs.yourTurnRepos)
+		r.Items = capItems(prs.yourTurnItems)
 		out = append(out, r)
 	}
 
-	if meetsPct(issues.waiting, issues.open, th.NeedsHumanIssuePct) {
+	if meetsPct(issues.yourTurn+issues.toClose, issues.open, th.NeedsHumanIssuePct) {
+		n := issues.yourTurn + issues.toClose
 		r := rec("unblock-human-issues", 82, "Unblock the human queue",
-			fmt.Sprintf("%d of %d open issues (%d%%) need a human: %d needs-decision, %d blocked, %d discussing — decide the oldest first.",
-				issues.waiting, issues.open, pct(issues.waiting, issues.open), issues.needsDecision, issues.blocked, issues.discuss),
-			sig("overview_open_issues", issues.open), sig("needs_human", issues.waiting), sig("needs_decision", issues.needsDecision), sig("blocked", issues.blocked), sig("discussing", issues.discuss), sig("needs_triage", issues.agentFiled))
-		r.Bands = []string{"issue/" + IssueBandWait}
-		r.Links = []Link{exportLink("Needs-human issues (CSV)", issueExportPath, "band", IssueBandWait)}
-		r.Items = capItems(issues.waitingItems)
+			fmt.Sprintf("%d of %d open issues (%d%%) are waiting on a person; the oldest are listed first.",
+				n, issues.open, pct(n, issues.open)),
+			sig("overview_open_issues", issues.open), sig("needs_human", n), sig("your_turn", issues.yourTurn), sig("to_close", issues.toClose), sig("verbs", verbSummary(issues.yourTurnVerbs)))
+		r.Links = []Link{exportLink("Your-turn issues (CSV)", issueExportPath, "slice", "your-turn,to-close")}
+		r.Why, r.Help = humanGateWhy(issues.yourTurnOwn, issues.yourTurnRepos)
+		r.Items = capItems(issues.yourTurnItems)
 		out = append(out, r)
 	}
 

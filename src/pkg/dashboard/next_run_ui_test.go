@@ -16,7 +16,7 @@ func TestGovernorNextRunDoesNotRenderPastTimestamp(t *testing.T) {
 		"function formatGovernorNextRun(",
 		"formatGovernorNextRun(gov)",
 		"due now",
-		"overdue ${formatStatusPayloadAge(overdueMs)}",
+		"'delayed' : 'overdue'",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("index.html is missing %q", snippet)
@@ -35,7 +35,13 @@ let _navbarClockTimeZone = 'America/New_York';
 const now = Date.parse('2026-09-25T16:15:00Z');
 assert.equal(formatGovernorNextRun({
   nextKick: '9/25 12:11 PM EDT',
-  nextKickAt: '2026-09-25T16:11:00Z'
+  nextKickAt: '2026-09-25T16:11:00Z',
+  active: true
+}, now), 'delayed 4m');
+assert.equal(formatGovernorNextRun({
+  nextKick: '9/25 12:11 PM EDT',
+  nextKickAt: '2026-09-25T16:11:00Z',
+  active: false
 }, now), 'overdue 4m');
 assert.equal(formatGovernorNextRun({
   nextKick: '9/25 12:14 PM EDT',

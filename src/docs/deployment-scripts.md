@@ -2,7 +2,7 @@
 
 Hive has **two supported standalone runtimes** — Docker Compose, which is the
 default, and Podman under systemd via Quadlet, which is a parallel supported
-choice — plus Kubernetes. See the [README's Quick Start](../../README.md#quick-start)
+choice — plus Kubernetes. See the [README's Quick Start](quickstart-docker-compose.md)
 for the pair, and [ADR-0017](adr/0017-podman-quadlet-lifecycle.md) / [the Quadlet operator guide](podman-standalone-quadlet.md)
 for the Podman path.
 
@@ -19,7 +19,7 @@ these scripts were written for they remain the supported path.
 
 | Script | Runtime | If you are on Podman |
 | --- | --- | --- |
-| [`bin/hive-setup.sh`](#all-in-one-lxc-setup) | Docker only | [README Quick Start (Podman)](../../README.md#quick-start-podman) |
+| [`bin/hive-setup.sh`](#all-in-one-lxc-setup) | Docker only | [README Quick Start (Podman)](quickstart-podman.md) |
 | [`deploy/create-lxc.sh`](#proxmox-lxc-helpers) | Docker only | no LXC equivalent; see below |
 | [`deploy/bootstrap-lxc.sh`](#proxmox-lxc-helpers) | Docker only | no LXC equivalent; see below |
 | [`deploy/blue-green-deploy.sh`](#blue-green-compose-deploy) | Docker only | [digest pin and rollback](podman-quadlet-update-rollback.md) |
@@ -37,7 +37,7 @@ so setting that variable does not redirect it — the `--compose FILE` flag and
 its own header ("a Hive instance (Docker-based)") are the honest description
 of what it builds.
 
-**On Podman**, install from the [README's Quick Start (Podman)](../../README.md#quick-start-podman),
+**On Podman**, install from the [README's Quick Start (Podman)](quickstart-podman.md),
 which walks the preflights and the Quadlet units, and read
 [the Quadlet operator guide](podman-standalone-quadlet.md) for what those units
 do. To remove such an install again, use
@@ -69,7 +69,7 @@ unconditionally; neither consults `HIVE_DEPLOY_RUNTIME`.
 container host for the Quadlet stack, and running rootless Podman inside an LXC
 carries its own subordinate-ID and storage requirements that these scripts do not
 set up. Install on the host directly, following the
-[README's Quick Start (Podman)](../../README.md#quick-start-podman) and
+[README's Quick Start (Podman)](quickstart-podman.md) and
 [the Quadlet operator guide](podman-standalone-quadlet.md); the
 [subordinate-ID, graphroot, and networking preflight](podman-preflight-ids.md)
 is the check that reports whether a given host — LXC or not — can actually run it.

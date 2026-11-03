@@ -126,6 +126,28 @@ func TestSaaSAuthCheckAuthReturnIsExactPublicPath(t *testing.T) {
 	}
 }
 
+// The phone widget's read-only summary must bypass the hub's auth_request gate
+// (the widget has no browser session; the spoke authenticates the widget
+// token itself), but only that exact path: token mint/revoke and the rest of
+// /api/widget stay hub-private.
+func TestSaaSAuthCheckWidgetSummaryIsExactPublicPath(t *testing.T) {
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"/api/widget/summary", true},
+		{"/api/widget/summary?ts=1", true},
+		{"/api/widget/token", false},
+		{"/api/widget", false},
+		{"/api/widget/summary/extra", false},
+		{"/api/widget/summaryx", false},
+	} {
+		if got := isSaaSPublicPath(tc.uri); got != tc.want {
+			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
+		}
+	}
+}
+
 func TestSaaSAuthCheckGHUserStatusIsOnlyPublicAuthStatus(t *testing.T) {
 	for _, tc := range []struct {
 		uri  string
@@ -162,8 +184,10 @@ func TestContributorLandingFetchesAreExplicitlyClassifiedForSaaSPublicAuth(t *te
 	}
 	privatePrefixes := []string{"/api/config/governor", "/api/contributors/"}
 	privateExact := map[string]bool{
-		"/api/role":    true,
-		"/api/version": true,
+		"/api/audit":        true,
+		"/api/contributors": true,
+		"/api/role":         true,
+		"/api/version":      true,
 	}
 	seen := map[string]bool{}
 	for _, match := range matches {
@@ -250,6 +274,23 @@ func TestContributeIngressAsksWhoIsCallingButNeverRedirects(t *testing.T) {
 		if ann["nginx.ingress.kubernetes.io/proxy-read-timeout"] != "3600" {
 			t.Errorf("useWildcard=%v: the relay's long-poll timeout was lost", useWildcard)
 		}
+		// #12111: without an explicit list the Ingress inherits the controller's
+		// global custom-http-errors, which includes 403 — and nginx then swaps
+		// the spoke's JSON 403 for the error backend's HTML, served as 200, so
+		// the "Your contribution" card reported a bug instead of an empty state.
+		codes, has := ann["nginx.ingress.kubernetes.io/custom-http-errors"]
+		if !has {
+			t.Errorf("useWildcard=%v: hive-contribute has no custom-http-errors; it inherits the controller's global list and a JSON 403 on /api/contribute comes back as an HTML 200 (#12111)", useWildcard)
+		}
+		for _, code := range strings.Split(codes, ",") {
+			switch strings.TrimSpace(code) {
+			case "401", "403", "404":
+				t.Errorf("useWildcard=%v: hive-contribute intercepts %s, a status its handlers answer with JSON on purpose", useWildcard, code)
+			}
+		}
+		if ann["nginx.ingress.kubernetes.io/default-backend"] != "hive-error-pages" {
+			t.Errorf("useWildcard=%v: hive-contribute routes intercepted statuses to %q, want hive-error-pages like the page and XHR Ingresses", useWildcard, ann["nginx.ingress.kubernetes.io/default-backend"])
+		}
 	}
 }
 
@@ -292,5 +333,62 @@ func TestSaaSAuthCheckKnowledgeExportPassesToTheSpoke(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s anonymous: status = %d, want 401 - only the export is a public path", uri, rec.Code)
 		}
+	}
+}
+
+// The hub relays GitHub App webhooks to the spoke at /api/webhook/github with
+// no hub session (#13231). The auth-check must wave exactly that path through
+// - with or without a query string - or nginx turns every delivery into an
+// auth-signin 302 and the spoke never sees an event. Only that exact path:
+// its siblings stay hub-private.
+func TestSaaSAuthCheckWebhookRelayIsExactPublicPath(t *testing.T) {
+	if spokeWebhookPath != spokeWebhookRelayPath {
+		t.Fatalf("relay target %q != auth-check public path %q - the hub would POST to a login redirect", spokeWebhookPath, spokeWebhookRelayPath)
+	}
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{spokeWebhookRelayPath, true},
+		{spokeWebhookRelayPath + "?delivery=abc", true},
+		{"/api/webhook", false},
+		{"/api/webhook/githubx", false},
+		{"/api/webhook/github/extra", false},
+		{"/api/webhook/linear", false},
+	} {
+		if got := isSaaSPublicPath(tc.uri); got != tc.want {
+			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
+		}
+	}
+}
+
+// Through the real handler: an anonymous POST to the relay path gets a bare
+// 200 (no identity, no proxy-auth proof) so the spoke runs its own HMAC
+// check; a signed-in hub user is still identified on the way through; and a
+// sibling path is still gated.
+func TestSaaSAuthCheckWebhookRelayPassesToTheSpoke(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHandlerHub()
+	demotedOwnerFixture(t, s, "spoke-owner", "owned-hive")
+
+	rec := publicPathAuthCheck(t, s, "owned-hive", spokeWebhookRelayPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s anonymous: status = %d, want 200 - a 401 here becomes an auth-signin redirect and the relayed webhook never reaches the spoke (#13231)", spokeWebhookRelayPath, rec.Code)
+	}
+	for _, h := range []string{"X-Hive-User", "X-Hive-Role", proxyAuthHeader} {
+		if got := rec.Header().Get(h); got != "" {
+			t.Errorf("%s anonymous: %s = %q, want unset", spokeWebhookRelayPath, h, got)
+		}
+	}
+
+	rec = publicPathAuthCheck(t, s, "owned-hive", spokeWebhookRelayPath, "spoke-owner")
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Hive-User") != "spoke-owner" || rec.Header().Get("X-Hive-Role") != "owner" {
+		t.Errorf("owner on %s: status=%d user=%q role=%q, want 200/spoke-owner/owner", spokeWebhookRelayPath, rec.Code, rec.Header().Get("X-Hive-User"), rec.Header().Get("X-Hive-Role"))
+	}
+
+	rec = publicPathAuthCheck(t, s, "owned-hive", "/api/webhook/linear", "")
+	if rec.Code == http.StatusOK {
+		t.Errorf("/api/webhook/linear anonymous: status = 200, want gated")
 	}
 }

@@ -1,0 +1,1 @@
+- `src/docs/landscape.md` is refreshed against the compared projects' current public docs (dated 2026-10-23), gains **New since August 2026**, **Agent isolation** and **Work sources** sections, and joins the fixed file list of `src/scripts/check-security-docs-readability.sh`, so the positioning page must also stay at Flesch-Kincaid grade 11 or below.

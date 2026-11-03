@@ -98,7 +98,7 @@ func sameSubject(prior []PerspectiveReport, report PerspectiveReport, i int) err
 	// aggregate keeps only the first -- so the rest would be recorded against
 	// code they did not read.
 	a, b := strings.TrimSpace(first.HeadSHA), strings.TrimSpace(report.HeadSHA)
-	if a != "" && b != "" && !strings.EqualFold(a, b) {
+	if a != "" && b != "" && !SameHeadSHA(a, b) {
 		return fmt.Errorf("report %d: every report must judge the same head SHA (%s), got %s", i, a, b)
 	}
 	return nil

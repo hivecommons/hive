@@ -34,22 +34,28 @@ type eligibleEntry struct {
 }
 
 type failingEntry struct {
-	Number           int      `json:"number"`
-	Repo             string   `json:"repo"`
-	Agent            string   `json:"agent"`
-	HeadSHA          string   `json:"head_sha"`
-	FailingChecks    []string `json:"failing_checks"`
-	Excerpt          string   `json:"excerpt"`
-	Escalated        bool     `json:"escalated"`
-	HeadRef          string   `json:"head_ref"`
-	HeadRepo         string   `json:"head_repo"`
-	FromFork         bool     `json:"from_fork"`
-	ReachableAction  string   `json:"reachable_action"`
-	Held             bool     `json:"held"`
-	MergeableState   string   `json:"mergeable_state"`
-	Conflict         bool     `json:"conflict"`
-	ReroutedFrom     string   `json:"rerouted_from"`
-	DeferredIncident int      `json:"deferred_incident"`
+	Number            int      `json:"number"`
+	Repo              string   `json:"repo"`
+	Agent             string   `json:"agent"`
+	HeadSHA           string   `json:"head_sha"`
+	FailingChecks     []string `json:"failing_checks"`
+	Excerpt           string   `json:"excerpt"`
+	Escalated         bool     `json:"escalated"`
+	HeadRef           string   `json:"head_ref"`
+	HeadRepo          string   `json:"head_repo"`
+	FromFork          bool     `json:"from_fork"`
+	ReachableAction   string   `json:"reachable_action"`
+	Held              bool     `json:"held"`
+	Adopted           bool     `json:"adopted"`
+	SentinelAlert     bool     `json:"sentinel_alert"`
+	MergeableState    string   `json:"mergeable_state"`
+	Conflict          bool     `json:"conflict"`
+	ReroutedFrom      string   `json:"rerouted_from"`
+	DeferredIncident  int      `json:"deferred_incident"`
+	RebaseAttempt     int      `json:"rebase_attempt"`
+	RebaseAttemptsMax int      `json:"rebase_attempts_max"`
+	BaseRef           string   `json:"base_ref"`
+	TrustedAuthor     bool     `json:"trusted_author"`
 }
 
 type mergeEligibleInputs struct {
@@ -382,9 +388,11 @@ func TestWriteMergeEligible_ConflictedHivePRRoutesToOwnerOrFallback(t *testing.T
 	}
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Enabled: true},
-			"strategist": {Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Enabled: true},
+				"strategist": {Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle":  {Cadences: map[string]config.Cadence{"strategist": config.NewIntervalCadence("paused")}},
@@ -400,22 +408,42 @@ func TestWriteMergeEligible_ConflictedHivePRRoutesToOwnerOrFallback(t *testing.T
 	}
 }
 
+// A conflicting PR prow has labelled needs-rebase must still reach the
+// conflict bucket; the label is the conflict marker, not a hold.
+func TestWriteMergeEligible_NeedsRebaseLabelRoutesToConflictLane(t *testing.T) {
+	dirty := github.PullRequest{
+		Repo: "hive", Number: 12471, Title: "labelled dirty hive PR", CIStatus: "success",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", AppAuthored: true,
+		Labels: []string{"needs-rebase", "agent/scanner"},
+	}
+	eligible, failing := runWriteMergeEligible(t, []github.PullRequest{dirty}, mergeEligibleInputs{org: "hivecommons"})
+	if len(eligible) != 0 || len(failing) != 1 {
+		t.Fatalf("eligible=%+v failing=%+v, want one conflict row", eligible, failing)
+	}
+	if f := failing[0]; !f.Conflict || f.Agent != "scanner" {
+		t.Fatalf("conflict row = %+v, want scanner-owned conflict row", f)
+	}
+}
+
 // Eligible entries carry the fields the merge step and relay compare against:
 // the org-qualified repo, the head SHA (CWE-367 guard), the tri-state
 // mergeability as a string (a bool defaulted every PR to false, #M4), and the
-// DCO verdict decoded from the dco-signoff labels.
+// DCO verdict decoded from the `dco` / `no-dco` labels (legacy dco-signoff accepted).
 func TestWriteMergeEligible_EligibleEntryFields(t *testing.T) {
 	prs := []github.PullRequest{
 		{Repo: "hive", Number: 1, CIStatus: "success", Mergeable: github.MergeableYes, HeadSHA: "abc123", Labels: []string{"dco-signoff: yes", "kind/bug"}},
 		{Repo: "kubestellar/console", Number: 2, CIStatus: "success", Mergeable: github.MergeableYes, Labels: []string{"dco-signoff: no"}},
 		{Repo: "hive", Number: 3, CIStatus: "success", Mergeable: github.MergeableUnknown},
+		// hivecommons/hive#12542: hive's own `no-dco` outranks a stale Prow `dco-signoff: yes`.
+		{Repo: "hive", Number: 4, CIStatus: "success", Mergeable: github.MergeableYes, Labels: []string{"dco-signoff: yes", "no-dco"}},
+		{Repo: "hive", Number: 5, CIStatus: "success", Mergeable: github.MergeableYes, Labels: []string{"dco"}},
 	}
 	eligible, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "hivecommons"})
 	if len(failing) != 0 {
 		t.Fatalf("unexpected ci_failing entries: %+v", failing)
 	}
-	if len(eligible) != 3 {
-		t.Fatalf("eligible = %+v, want 3 entries", eligible)
+	if len(eligible) != 5 {
+		t.Fatalf("eligible = %+v, want 5 entries", eligible)
 	}
 	byNumber := map[int]eligibleEntry{}
 	for _, e := range eligible {
@@ -429,6 +457,12 @@ func TestWriteMergeEligible_EligibleEntryFields(t *testing.T) {
 	}
 	if e := byNumber[3]; e.Mergeable != mergeableJSONUnknown || e.DCO != "unknown" {
 		t.Errorf("PR #3 entry = %+v (unknown mergeability must be spelled out, not the empty string)", e)
+	}
+	if e := byNumber[4]; e.DCO != "no" {
+		t.Errorf("PR #4 entry = %+v (hive's no-dco must outrank the legacy prow label)", e)
+	}
+	if e := byNumber[5]; e.DCO != "yes" {
+		t.Errorf("PR #5 entry = %+v (hive's dco label)", e)
 	}
 }
 
@@ -517,10 +551,12 @@ func TestWriteMergeEligible_FailingEntryCarriesForkOrigin(t *testing.T) {
 			FailingChecks: []string{"build"}, HeadRef: "sec-check-dashboard", HeadRepo: "alice/testsuite", FromFork: true},
 		{Repo: "testsuite", Number: 840, CIStatus: "failure", Mergeable: github.MergeableYes, HeadSHA: "f2",
 			FailingChecks: []string{"build"}, HeadRef: "hive/fix-840", HeadRepo: "projectbluefin/testsuite"},
+		{Repo: "testsuite", Number: 841, CIStatus: "failure", Mergeable: github.MergeableYes, HeadSHA: "f3",
+			FailingChecks: []string{"signoff"}, HeadRef: "arteeh/fix", HeadRepo: "arteeh/testsuite", FromFork: true, MaintainerCanModify: true},
 	}
 	_, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "projectbluefin"})
-	if len(failing) != 2 {
-		t.Fatalf("failing = %+v, want both PRs", failing)
+	if len(failing) != 3 {
+		t.Fatalf("failing = %+v, want all PRs", failing)
 	}
 	byNum := map[int]failingEntry{}
 	for _, f := range failing {
@@ -531,6 +567,9 @@ func TestWriteMergeEligible_FailingEntryCarriesForkOrigin(t *testing.T) {
 	}
 	if f := byNum[840]; f.FromFork || f.HeadRepo != "projectbluefin/testsuite" || f.ReachableAction != github.ReachableActionPush {
 		t.Errorf("same-repo PR entry = %+v, want reachable_action=push", f)
+	}
+	if f := byNum[841]; !f.FromFork || f.HeadRepo != "arteeh/testsuite" || f.ReachableAction != github.ReachableActionPush {
+		t.Errorf("maintainer-editable fork PR entry = %+v, want reachable_action=push", f)
 	}
 }
 

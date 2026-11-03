@@ -1,0 +1,1 @@
+- Review evidence no longer repeats the "could not write bundle" warning for every new head when a PR's evidence directory denies writes; it is logged once per PR directory ([#14008](https://github.com/hivecommons/hive/issues/14008), [#14009](https://github.com/hivecommons/hive/issues/14009)).

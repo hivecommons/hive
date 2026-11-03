@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -52,7 +54,7 @@ const (
 	// dev:hive-<agent> mode 0640 so the hive process (dev) can rewrite it in
 	// place and ONLY the owning agent's private group can read it — no chown
 	// at runtime, which an unprivileged process cannot perform.
-	defaultAgentTokenCacheDir = "/var/run/hive-metrics/agent-tokens"
+	defaultAgentTokenCacheDir = crux.DefaultAgentTokenCacheDir
 	// Applied only when the file was NOT pre-created (degraded path): keep it
 	// owner-only rather than leaking a token to the shared "node" group.
 	agentTokenCachePerms = 0o600
@@ -90,6 +92,9 @@ type AppAuth struct {
 	cachePath      string
 	apiURL         string // custom GitHub API URL for GHE; empty means default (github.com)
 
+	// mu guards installationID as well as the token cache: AdoptInstallationID
+	// rewrites the installation in place, so every read of installationID must
+	// hold mu or go through InstallationID().
 	mu          sync.RWMutex
 	cachedToken string
 	tokenExpiry time.Time
@@ -229,7 +234,7 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 // Token(), so isolating it lets Token() distinguish "mint blipped" (fall back
 // to a still-valid cached token) from a genuine expiry.
 func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expiry time.Time, err error) {
-	return a.mintInstallationTokenWithOptions(ctx, nil)
+	return a.mintInstallationTokenWithOptions(ctx, a.installationID, nil)
 }
 
 // MintInstallationToken returns a short-lived installation token constrained by
@@ -240,10 +245,13 @@ func (a *AppAuth) MintInstallationToken(ctx context.Context, opts *gh.Installati
 	if a == nil {
 		return "", time.Time{}, ErrNoGitHubClient
 	}
-	return a.mintInstallationTokenWithOptions(ctx, opts)
+	return a.mintInstallationTokenWithOptions(ctx, a.InstallationID(), opts)
 }
 
-func (a *AppAuth) mintInstallationTokenWithOptions(ctx context.Context, opts *gh.InstallationTokenOptions) (token string, expiry time.Time, err error) {
+// mintInstallationTokenWithOptions takes the installation ID from its caller
+// rather than reading a.installationID itself: Token() reaches it with a.mu
+// already held, so it cannot take the lock here.
+func (a *AppAuth) mintInstallationTokenWithOptions(ctx context.Context, installationID int64, opts *gh.InstallationTokenOptions) (token string, expiry time.Time, err error) {
 	jwtToken, err := a.generateJWT()
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generating JWT: %w", err)
@@ -255,7 +263,7 @@ func (a *AppAuth) mintInstallationTokenWithOptions(ctx context.Context, opts *gh
 	mintCtx, cancel := mintContext(ctx)
 	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
-	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, a.installationID, opts)
+	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, installationID, opts)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("creating installation token: %w", err)
 	}
@@ -280,6 +288,16 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 // behavior for callers that do not scope by repo). Like ScopedToken, the token is
 // NOT cached — each call mints fresh.
 func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error) {
+	// installation_id 0 means the App is not installed on the hive's org (or
+	// auto-discovery never found it). GitHub answers
+	// POST /app/installations/0/access_tokens with a 404, which the repo-scope
+	// classifier reads as "that repository is unmintable" and the hub then
+	// tells contributors to fix the repo list (hivecommons/hive#14002). Say
+	// what is actually missing before any request leaves.
+	installationID := a.InstallationID()
+	if installationID <= 0 {
+		return "", fmt.Errorf("%w: creating scoped token for tier %s: installation_id is 0", ErrAppNotInstalled, tier)
+	}
 	jwtToken, err := a.generateJWT()
 	if err != nil {
 		return "", fmt.Errorf("generating JWT: %w", err)
@@ -287,6 +305,17 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 
 	var perms *gh.InstallationPermissions
 	switch tier {
+	case crux.SharedUIDReadTokenTier:
+		// Shared-UID agents cannot isolate credentials from one another.
+		// Never deliver a write-capable token, regardless of the agent's role.
+		perms = &gh.InstallationPermissions{
+			Metadata:     gh.Ptr("read"),
+			Contents:     gh.Ptr("read"),
+			Actions:      gh.Ptr("read"),
+			Checks:       gh.Ptr("read"),
+			PullRequests: gh.Ptr("read"),
+			Issues:       gh.Ptr("read"),
+		}
 	case "newcomer":
 		// Newcomers (ISSUES_ONLY agents) can comment on and file issues, and
 		// READ code — filing a meaningful issue requires reading the repo it
@@ -402,7 +431,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	mintCtx, cancel := mintContext(ctx)
 	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
-	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, a.installationID, opts)
+	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, installationID, opts)
 	if err != nil && perms.Workflows != nil {
 		// The installation has likely not accepted the Workflows permission
 		// on the App yet — GitHub refuses to mint a token requesting a
@@ -416,7 +445,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 		perms.Workflows = nil
 		retryCtx, retryCancel := mintContext(ctx)
 		defer retryCancel()
-		installToken, _, err = jwtClient.Apps.CreateInstallationToken(retryCtx, a.installationID, opts)
+		installToken, _, err = jwtClient.Apps.CreateInstallationToken(retryCtx, installationID, opts)
 	}
 	if err != nil {
 		return "", fmt.Errorf("creating scoped token for tier %s: %w", tier, err)
@@ -446,7 +475,7 @@ func IsRepoScopeMintError(err error) bool {
 
 // AgentTokenCachePath returns the per-agent token cache file path.
 func AgentTokenCachePath(agentName string) string {
-	return agentTokenCacheDir + "/gh-token-" + agentName + ".cache"
+	return crux.AgentTokenCachePath(agentTokenCacheDir, agentName)
 }
 
 // BotLoginFilePath returns the trusted bot-identity file path read by
@@ -577,6 +606,14 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	if err != nil {
 		return fmt.Errorf("opening agent token cache %s: %w", cachePath, err)
 	}
+	// Shared-UID mode has no private agent group; keep this owner-only even
+	// if a previous deployment pre-created a group-readable cache.
+	if agentUID == 0 && tier == crux.SharedUIDReadTokenTier {
+		if err := f.Chmod(agentTokenCachePerms); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("securing shared-UID token cache %s: %w", cachePath, err)
+		}
+	}
 	if _, err := f.WriteString(fileToken); err != nil {
 		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		return fmt.Errorf("writing agent token cache %s: %w", cachePath, err)
@@ -609,6 +646,28 @@ type InstallationInfo struct {
 	InstallationID int64
 	Account        string // login of the org/user the installation belongs to
 	IssuesPerm     string // granted issues permission: "read", "write", or "" (none)
+	// Permissions is the full granted permission map (name → "read" /
+	// "write" / "admin"), for the capability probe that asks whether a
+	// blocker's missing permission has been granted (hivecommons/hive#15099).
+	Permissions map[string]string
+}
+
+// Granted reports whether the installation holds permission name at least
+// at level ("read" or "write"; "admin" satisfies "write").
+func (i *InstallationInfo) Granted(name, level string) bool {
+	if i == nil {
+		return false
+	}
+	got := strings.ToLower(strings.TrimSpace(i.Permissions[strings.ToLower(strings.TrimSpace(name))]))
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "read":
+		return got == "read" || got == "write" || got == "admin"
+	case "write":
+		return got == "write" || got == "admin"
+	case "admin":
+		return got == "admin"
+	}
+	return got != ""
 }
 
 // VerifyInstallation resolves the configured installation and returns the
@@ -618,6 +677,7 @@ type InstallationInfo struct {
 // with "Resource not accessible by integration"), and an installation can be
 // granted less than the app requests until the org owner approves.
 func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, error) {
+	installationID := a.InstallationID()
 	jwtToken, err := a.generateJWT()
 	if err != nil {
 		return nil, fmt.Errorf("generating JWT: %w", err)
@@ -626,15 +686,16 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 	mintCtx, cancel := mintContext(ctx)
 	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
-	inst, _, err := jwtClient.Apps.GetInstallation(mintCtx, a.installationID)
+	inst, _, err := jwtClient.Apps.GetInstallation(mintCtx, installationID)
 	if err != nil {
-		return nil, fmt.Errorf("resolving installation %d: %w", a.installationID, err)
+		return nil, fmt.Errorf("resolving installation %d: %w", installationID, err)
 	}
 
 	return &InstallationInfo{
-		InstallationID: a.installationID,
+		InstallationID: installationID,
 		Account:        inst.GetAccount().GetLogin(),
 		IssuesPerm:     inst.GetPermissions().GetIssues(),
+		Permissions:    installationPermissionMap(inst.GetPermissions()),
 	}, nil
 }
 
@@ -720,4 +781,28 @@ func NewClientFromAppWithBotLogin(auth *AppAuth, org string, repos []string, log
 		appBotLogin: appBotLogin,
 		prDetailTTL: func() time.Duration { return (config.GitHubConfig{}).PRDetailTTL() },
 	}
+}
+
+// installationPermissionMap flattens the granted permissions go-github
+// returns into name → level, dropping ungranted ones.
+func installationPermissionMap(p *gh.InstallationPermissions) map[string]string {
+	out := map[string]string{}
+	if p == nil {
+		return out
+	}
+	put := func(name, level string) {
+		if level = strings.TrimSpace(level); level != "" {
+			out[name] = level
+		}
+	}
+	put("actions", p.GetActions())
+	put("administration", p.GetAdministration())
+	put("checks", p.GetChecks())
+	put("contents", p.GetContents())
+	put("issues", p.GetIssues())
+	put("metadata", p.GetMetadata())
+	put("pull_requests", p.GetPullRequests())
+	put("secrets", p.GetSecrets())
+	put("workflows", p.GetWorkflows())
+	return out
 }

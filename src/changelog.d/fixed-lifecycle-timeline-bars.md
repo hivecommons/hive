@@ -1,1 +1,0 @@
-- Fix the dashboard lifecycle timeline so rows render visible timeline bars, labels, axis ticks, and relayout correctly after expansion or refresh.

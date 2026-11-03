@@ -1,0 +1,1 @@
+- Restart an agent on a non-inference backend whose live CLI pane stays on a consent or blocking-prompt menu after repeated undeliverable kicks, instead of leaving it wedged with every kick failing as "CLI did not reach input prompt" and never reported (#12921).

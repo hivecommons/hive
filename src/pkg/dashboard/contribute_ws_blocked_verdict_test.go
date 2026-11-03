@@ -202,6 +202,16 @@ func TestBlockedVerdict_WireShape(t *testing.T) {
 		return ghpkg.SettleVerification{Settled: true, Claim: ghpkg.IssueClaim{PRNumber: ref.Number, MergedPR: true}}, nil
 	}
 
+	// #15023: the blocker the reason names is recorded on the task issue.
+	recorded := make(chan string, 4)
+	hub.verdictBlockerRecorder = func(_ context.Context, repo string, number int, b ghpkg.VerdictBlocker) (ghpkg.VerdictBlockerOutcome, error) {
+		if number != 105 {
+			t.Errorf("blocker recorded on #%d, want #105", number)
+		}
+		recorded <- repo + "->" + b.String()
+		return ghpkg.VerdictBlockerLinked, nil
+	}
+
 	conn.WriteJSON(WSMessage{Type: "ready", Seq: 2})
 	assign := readMsg(t, conn)
 	if assign.Type != "task_assign" {
@@ -253,6 +263,15 @@ func TestBlockedVerdict_WireShape(t *testing.T) {
 	hub.completedMu.Unlock()
 	if !ok || !rec.Blocked || rec.Reporter != "blocked-user" {
 		t.Fatalf("ledger row must be the blocked marker for the reporting contributor, got ok=%v rec=%+v", ok, rec)
+	}
+
+	select {
+	case got := <-recorded:
+		if got != "myorg/repo1->projectbluefin/utah-packages#41" {
+			t.Fatalf("the named blocker must be recorded on the task issue, got %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a blocked verdict naming its blocker must record it through the seam")
 	}
 }
 

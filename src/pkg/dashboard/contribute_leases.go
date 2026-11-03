@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -466,7 +467,7 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 	switch mode {
 	case leaseStageRetry:
 		to = l.stage
-		auditAction = agent.AuditLeaseStageRetried
+		auditAction = agentaudit.AuditLeaseStageRetried
 	case leaseStageAdvance:
 		if !validStage(to) {
 			h.leaseMu.Unlock()
@@ -476,7 +477,7 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 			h.leaseMu.Unlock()
 			return taskLease{}, fmt.Errorf("%w: advance from %q to %q", errLeaseStageInvalid, l.stage, to)
 		}
-		auditAction = agent.AuditLeaseStageAdvanced
+		auditAction = agentaudit.AuditLeaseStageAdvanced
 	case leaseStageReset:
 		if !validStage(to) {
 			h.leaseMu.Unlock()
@@ -486,7 +487,7 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 			h.leaseMu.Unlock()
 			return taskLease{}, fmt.Errorf("%w: reset from %q to %q is not a move to an earlier stage", errLeaseStageInvalid, l.stage, to)
 		}
-		auditAction = agent.AuditLeaseStageReset
+		auditAction = agentaudit.AuditLeaseStageReset
 	default:
 		h.leaseMu.Unlock()
 		return taskLease{}, fmt.Errorf("unknown lease stage mutation %d", mode)
@@ -523,7 +524,7 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 }
 
 // recordLeaseStageAudit books a stage move on the agent audit sink. reason is
-// only set for a reset; agent.Fields drops empty strings, so advance and retry
+// only set for a reset; agentaudit.Fields drops empty strings, so advance and retry
 // entries omit reason while still carrying the canonical run key.
 func (h *ContributeWSHub) recordLeaseStageAudit(action, taskID, from, to, reason string, lease taskLease) {
 	if h == nil || h.server == nil {
@@ -532,7 +533,7 @@ func (h *ContributeWSHub) recordLeaseStageAudit(action, taskID, from, to, reason
 	leaseKey := leaseWorkKey(&lease)
 	runKey := h.server.canonicalRunKey(lease.repo, lease.number, runKeyOfLease(leaseKey, lease.repo), leaseKey)
 	h.server.AgentAuditSink().Record("system", action, taskID,
-		agent.Fields("run", runKey, "lease_key", leaseKey, "stage_from", from, "stage_to", to, "reason", reason, "gen", lease.gen))
+		agentaudit.Fields("run", runKey, "lease_key", leaseKey, "stage_from", from, "stage_to", to, "reason", reason, "gen", lease.gen))
 }
 
 // emitLeaseStageTransition records a persisted stage move on the lifecycle
@@ -706,7 +707,7 @@ func (h *ContributeWSHub) completeImplementStage(identity, taskID string, now ti
 	}
 	h.leaseMu.Unlock()
 
-	h.recordLeaseStageAudit(agent.AuditLeaseStageAdvanced, taskID, StageImplement, "completed", "", completed)
+	h.recordLeaseStageAudit(agentaudit.AuditLeaseStageAdvanced, taskID, StageImplement, "completed", "", completed)
 	h.emitLeaseStageTransitionAt(StageImplement, "completed", "", false, completed, now)
 	if err := removeRunStageWorktree(completed.identity, leaseWorkKey(&completed), completed.stage, completed.gen); err != nil {
 		h.logger.Warn("[contribute-ws] completed run-stage worktree cleanup failed",
@@ -758,6 +759,9 @@ func (h *ContributeWSHub) postCompletionPRComment(ctx context.Context, task *WST
 		return
 	}
 	body := "Hive completed the Spektacular implement stage.\n\nPull request: " + prURL
+	if _, epic := h.server.findRunEpic(runKey); epic != nil {
+		ctx = designWritebackContext(ctx, epic)
+	}
 	if err := commenter.AddComment(ctx, ref, body); err != nil {
 		h.logger.Warn("[contribute-ws] work item completion comment failed", "run", runKey, "error", err)
 	}
@@ -1081,6 +1085,28 @@ func (h *ContributeWSHub) setLeaseClaim(identity, taskID string, claim ghpkg.Iss
 	l.claimPosted = posted
 	if err := h.saveLeasesLocked(); err != nil {
 		h.logger.Warn("[contribute-ws] lease claim not persisted", "task", taskID, "error", err)
+	}
+}
+
+// clearLeaseClaim drops the lease's mirror of an issue claim the hub has
+// released while the lease itself stays resumable (a disconnect release,
+// hivecommons/hive#13579), so the runs API stops showing a claim the ledger
+// no longer holds. A lease that is not there is left alone.
+func (h *ContributeWSHub) clearLeaseClaim(identity, taskID string) {
+	if h == nil || identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	l := h.leases[leaseKey(identity, taskID)]
+	if l == nil || (l.claimedBy == "" && l.claimExpiresAt.IsZero()) {
+		return
+	}
+	l.claimedBy = ""
+	l.claimExpiresAt = time.Time{}
+	l.claimPosted = false
+	if err := h.saveLeasesLocked(); err != nil {
+		h.logger.Warn("[contribute-ws] lease claim clear not persisted", "task", taskID, "error", err)
 	}
 }
 
@@ -1443,7 +1469,7 @@ func (h *ContributeWSHub) keepPendingStageLeasesAlive(now time.Time) int {
 // alongside the other stale-state reaping. Returns how many were dropped.
 func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 	dropped := 0
-	var unknown []taskLease
+	var unknown, expired []taskLease
 	var orphaned []taskLease
 	h.leaseMu.Lock()
 	for k, l := range h.leases {
@@ -1453,6 +1479,9 @@ func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 			}
 			if l != nil && l.stage != "" && !h.isPendingStageIdentity(l.identity) {
 				orphaned = append(orphaned, *l)
+			}
+			if l != nil {
+				expired = append(expired, *l)
 			}
 			delete(h.leases, k)
 			dropped++
@@ -1472,6 +1501,14 @@ func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 	h.leaseMu.Unlock()
 	for _, l := range unknown {
 		h.recordWavefrontUnknown(l, now)
+	}
+	// A lease nobody resumed takes its issue claim with it
+	// (hivecommons/hive#13579): the relay is not coming back inside the
+	// re-adoption window, so nothing should keep hive agents off the issue.
+	for _, l := range expired {
+		if l.identity != "" && l.key != "" {
+			h.releaseClaimForLease(l.identity, l.key, claims.ReasonLeaseExpired)
+		}
 	}
 	return dropped
 }
@@ -1594,6 +1631,35 @@ func (h *ContributeWSHub) leasedIssueKeys(exceptIdentity string, now time.Time) 
 	return keys
 }
 
+// leaseItemKey is the canonical repo#number key: lower-cased, with a bare
+// repository name qualified by the project org so leases (recorded under
+// org/repo) match rows enumerated from bare names in the config.
+func leaseItemKey(org, repo string, number int) string {
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	if org = strings.ToLower(strings.TrimSpace(org)); org != "" && !strings.Contains(repo, "/") {
+		repo = org + "/" + repo
+	}
+	return repo + "#" + strconv.Itoa(number)
+}
+
+// leasedWorkItems is the set of repo#number items with an unexpired task
+// lease, for the your-turn safety net. It reads the in-memory registry only.
+func (h *ContributeWSHub) leasedWorkItems(now time.Time, org string) map[string]bool {
+	items := make(map[string]bool)
+	if h == nil {
+		return items
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	for _, l := range h.leases {
+		if l == nil || l.number <= 0 || l.expiresAt.IsZero() || now.After(l.expiresAt) || l.identity == runAdmissionIdentity {
+			continue
+		}
+		items[leaseItemKey(org, l.repo, l.number)] = true
+	}
+	return items
+}
+
 // taskLeasesFile is the durable home of the server-issued task-lease registry
 // (#5681). It sits beside the other contributor ledgers, but is written 0600: it is
 // the C4 authorization record a resume is matched against, not a report.
@@ -1613,8 +1679,9 @@ var taskLeasesFile = "/data/contributors/task-leases.json"
 // tests can drive expiry deterministically.
 func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 	type expiredTarget struct {
-		conn *ContributorConnection
-		task WSTaskAssign
+		conn         *ContributorConnection
+		task         WSTaskAssign
+		lastProgress time.Time
 	}
 	var targets []expiredTarget
 	h.mu.RLock()
@@ -1626,6 +1693,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 			now.Sub(c.lastLeaseRenew) > wsTaskTimeout
 		if expired {
 			released := *c.currentTask
+			lastProgress := c.lastLeaseRenew
 			c.currentTask = nil
 			c.currentPrompt = ""
 			c.currentLabels = nil
@@ -1636,7 +1704,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 			c.credentialDelivered = false
 			c.currentTaskGen = h.nextTaskGen()
 			c.lastLeaseRenew = time.Time{}
-			targets = append(targets, expiredTarget{conn: c, task: released})
+			targets = append(targets, expiredTarget{conn: c, task: released, lastProgress: lastProgress})
 		}
 		c.mu.Unlock()
 	}
@@ -1648,6 +1716,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 		h.revokeLease(identityOf(tgt.conn), tgt.task.TaskID)
 		if tgt.task.Number > 0 {
 			h.recordTaskFailureForTask(&tgt.task, false)
+			h.bookReclaimCooldown(identityOf(tgt.conn), tgt.task.identityKey())
 		}
 		username := ""
 		if tgt.conn.profile != nil {
@@ -1663,6 +1732,8 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 		h.recordTaskDecision(username, decisionLeaseExpired, &tgt.task,
 			"lease went unrenewed for "+wsTaskTimeout.String()+"; task auto-released and revoked")
 		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, tgt.task.TaskID)
+		h.auditRelay(tgt.conn, agentaudit.AuditRelayTaskAbandoned, &tgt.task,
+			"last_progress_at", tgt.lastProgress.UTC().Format(time.RFC3339))
 		if tgt.conn.ws != nil {
 			_ = tgt.conn.send(WSMessage{
 				Type:   "task_revoke",

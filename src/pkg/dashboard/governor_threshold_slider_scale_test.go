@@ -104,6 +104,7 @@ let window = {_lastStatus:{governor:{issues:30, prs:10}}};
 		jsFunc(t, html, "governorThresholdHintText"),
 		jsFunc(t, html, "renderGovThresholds"),
 		"let settingHelpSeq = 0;",
+		jsFunc(t, html, "yamlHint"),
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "dashboardDocsHref"),
 		jsFunc(t, html, "settingHelpMark"),

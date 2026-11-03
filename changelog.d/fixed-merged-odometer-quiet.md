@@ -1,0 +1,1 @@
+- Dashboard: the Merged pill's odometer is drawn at the chip's own type size on one quiet inset track — no 18 px bevelled drum cells, no glow — so it sits level with the other topbar chips, and the pill's icon is the dashboard's bee glyph rather than a filled hexagon; the roll animation is unchanged (#15543).

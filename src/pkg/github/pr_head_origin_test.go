@@ -51,6 +51,9 @@ func TestReachableAction(t *testing.T) {
 	if got := ReachableAction(PullRequest{FromFork: true, HeadRepo: "alice/app"}); got != ReachableActionCommentOnly {
 		t.Errorf("fork PR = %q, want comment-only", got)
 	}
+	if got := ReachableAction(PullRequest{FromFork: true, HeadRepo: "alice/app", MaintainerCanModify: true}); got != ReachableActionPush {
+		t.Errorf("maintainer-editable fork PR = %q, want push", got)
+	}
 }
 
 // End to end through fetchPRs: a fork PR and a same-repo PR come back with

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -77,6 +78,8 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			l := swapSharedLedger(t)
+			l.Observe("o/r", 7, workflowsReport, time.Now())
 			var closed bool
 			var comments []string
 			var labels []string
@@ -136,6 +139,9 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 			}
 			if closed != tt.wantClosed {
 				t.Fatalf("closed = %v, want %v", closed, tt.wantClosed)
+			}
+			if _, blocked := l.Blocking("o/r", 7); blocked == tt.wantClosed {
+				t.Fatalf("blocked = %v after close, want %v", blocked, !tt.wantClosed)
 			}
 			if tt.wantComment == "" {
 				if len(comments) != 0 {
@@ -218,6 +224,29 @@ func TestReporterConfirmationPredicateSharedByPRAndCloseGates(t *testing.T) {
 				t.Fatalf("ReporterConfirmationCloseGateReason active = %v, want %v", closeGate, tt.wantGate)
 			}
 		})
+	}
+}
+
+func TestWorkIssueRecordsReporterConfirmationGate(t *testing.T) {
+	c := &Client{}
+	gated := closeGateIssue("human", "User", "Bug", "plain body\n\nhive: needs-confirmation", []string{"bug"})
+	plain := closeGateIssue("human", "User", "Bug", "plain body", []string{"bug"})
+	if !c.workIssue("o/r", gated, []string{"bug"}, "filtered", "x").ReporterConfirmationGate {
+		t.Fatal("a needs-confirmation body marker should set the gate flag")
+	}
+	if c.workIssue("o/r", plain, []string{"bug"}, "filtered", "x").ReporterConfirmationGate {
+		t.Fatal("an ungated human bug must not set the gate flag")
+	}
+	if c.reporterConfirmationGateApplies(nil) {
+		t.Fatal("a nil issue is never gated")
+	}
+	c.SetReporterConfirmationEnabledFunc(func() bool { return true })
+	if !c.reporterConfirmationGateApplies(plain) {
+		t.Fatal("the operator switch should gate a human-filed bug")
+	}
+	row := repoWorkIssueFromIssue(Issue{ReporterConfirmationGate: true}, "claimed", "x")
+	if !row.ReporterConfirmationGate {
+		t.Fatal("repoWorkIssueFromIssue should carry the gate flag")
 	}
 }
 

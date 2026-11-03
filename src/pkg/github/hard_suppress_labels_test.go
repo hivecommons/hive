@@ -54,8 +54,9 @@ func TestHardSuppressBreakdownNamesLabel(t *testing.T) {
 		want  RepoIssueBreakdown
 	}{
 		{"needs-human", RepoIssueBreakdown{NeedsHuman: 1}},
-		{"needs-direction", RepoIssueBreakdown{NeedsDirection: 1}},
+		{"needs-direction", RepoIssueBreakdown{NeedsDecision: 1}},
 		{"needs-decision", RepoIssueBreakdown{NeedsDecision: 1}},
+		{NeedsDecisionStageLabel, RepoIssueBreakdown{NeedsDecision: 1}},
 		{"needs-spec", RepoIssueBreakdown{NeedsSpec: 1}},
 	} {
 		var got RepoIssueBreakdown

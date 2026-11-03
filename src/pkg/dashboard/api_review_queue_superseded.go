@@ -10,15 +10,13 @@ import (
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
-// Superseded PRs in the review queue (hivecommons/hive#11430). With
-// supersession_sweep.close_contributor_prs on, the sweep posts a grace-window
-// notice on a superseded human-authored PR and audits it as
-// supersession-sweep-commented-grace on every pass until it closes the PR or
-// a guard keeps it open. The queue derives "in the grace window" from those
-// audit entries alone; no new state is stored.
+// Superseded PR recommendations are independent of automatic closure. Legacy
+// grace entries still start a countdown; detection entries only offer a decision.
 const (
 	supersessionAuditPrefix          = "supersession-"
-	supersessionGraceAuditAction     = "supersession-sweep-commented-grace"
+	supersessionDetectedAuditAction  = ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionDetectedContributor
+	supersessionGraceAuditAction     = ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionCommentedGrace
+	supersessionCommentedAuditAction = ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionCommentedContributor
 	supersessionConfirmCloseAction   = "supersession-review-confirm-close"
 	supersessionKeepOpenAction       = "supersession-review-keep-open"
 	supersessionAuditLookback        = 14 * 24 * time.Hour
@@ -68,24 +66,31 @@ func parseSupersessionAuditDetail(detail string) map[string]string {
 	return out
 }
 
-// supersededGraceStates replays supersession audit entries (oldest first)
-// and returns the PRs whose latest entry is the grace notice, keyed by
-// ghpkg.ReviewQueueKey. The window starts at the first grace entry of the
-// current run of them; any other supersession entry for the PR (a keep, a
-// close, or an operator action from the dashboard) ends it.
+// supersededGraceStates replays audit entries oldest first. Detection records
+// survive a plain contributor notice, while legacy grace-only records retain
+// their original reset semantics. Close and keep-open actions end both states.
 func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration) map[string]ghpkg.ReviewQueueSuperseded {
 	out := map[string]ghpkg.ReviewQueueSuperseded{}
+	detected := map[string]bool{}
 	for _, e := range entries {
 		repo := supersessionQualifyRepo(e.Repo, org)
 		if repo == "" || e.Target <= 0 {
 			continue
 		}
 		key := ghpkg.ReviewQueueKey(repo, e.Target)
-		if e.Action != supersessionGraceAuditAction {
+		switch e.Action {
+		case supersessionDetectedAuditAction, supersessionGraceAuditAction, ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionEscalated:
+		case supersessionCommentedAuditAction:
+			if detected[key] {
+				info := out[key]
+				info.GraceStartedAt, info.GraceEndsAt = time.Time{}, time.Time{}
+				out[key] = info
+				continue
+			}
+			fallthrough
+		default:
 			delete(out, key)
-			continue
-		}
-		if _, ok := out[key]; ok {
+			delete(detected, key)
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, e.Timestamp)
@@ -98,12 +103,21 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 			continue
 		}
 		info := ghpkg.ReviewQueueSuperseded{
-			Reason:         ghpkg.ReviewQueueSupersededReason,
-			Issue:          fields["issue"],
-			CloserRepo:     repo,
-			CloserPR:       closerPR,
-			GraceStartedAt: at.UTC(),
-			GraceEndsAt:    at.Add(grace).UTC(),
+			Reason:     ghpkg.ReviewQueueSupersededReason,
+			KeepReason: fields["reason"],
+			Issue:      fields["issue"],
+			CloserRepo: repo,
+			CloserPR:   closerPR,
+		}
+		// Records written before the sweep recorded its outcome carry no
+		// reason and keep the close recommendation (hivecommons/hive#14176).
+		if fields["reason"] == ghpkg.SupersessionOutcomeExtraFiles {
+			info.Reason = ghpkg.ReviewQueueSupersededExtraFilesReason
+			for _, f := range strings.Split(fields["extra_files"], ";") {
+				if f = strings.TrimSpace(f); f != "" {
+					info.ExtraFiles = append(info.ExtraFiles, f)
+				}
+			}
 		}
 		if issueRepo, _, ok := strings.Cut(fields["issue"], "#"); ok && issueRepo != "" {
 			info.CloserRepo = supersessionQualifyRepo(issueRepo, org)
@@ -111,24 +125,67 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 		if strings.Contains(info.CloserRepo, "/") {
 			info.CloserURL = fmt.Sprintf("%s%s/pull/%d", supersessionDefaultGitHubBaseURL, info.CloserRepo, closerPR)
 		}
+		if previous, ok := out[key]; ok && previous.CloserRepo == info.CloserRepo && previous.CloserPR == info.CloserPR && previous.Issue == info.Issue {
+			info.GraceStartedAt, info.GraceEndsAt = previous.GraceStartedAt, previous.GraceEndsAt
+		}
+		if e.Action != supersessionGraceAuditAction {
+			if e.Action == ghpkg.SupersessionSweepAuditPrefix+ghpkg.SupersessionActionEscalated {
+				info.GraceStartedAt, info.GraceEndsAt = time.Time{}, time.Time{}
+			}
+			detected[key] = true
+		} else if info.GraceStartedAt.IsZero() {
+			info.GraceStartedAt, info.GraceEndsAt = at.UTC(), at.Add(grace).UTC()
+		}
 		out[key] = info
 	}
 	return out
 }
 
-// annotateSupersededReviewQueue marks queue entries that sit in the
-// supersession grace window and adds a "superseded" reason to each.
+// supersededReviewStates also accounts for an operator disabling auto-close
+// after a grace notice was recorded, so the UI never advertises a disabled close.
+func (s *Server) supersededReviewStates(org string, now time.Time) map[string]ghpkg.ReviewQueueSuperseded {
+	if s == nil {
+		return map[string]ghpkg.ReviewQueueSuperseded{}
+	}
+	states := supersededGraceStates(s.supersessionAuditEntries(now), org, s.supersessionGracePeriod())
+	autoClose := s.deps != nil && s.deps.Config != nil && s.deps.Config.SupersessionSweep.CloseContributorPRs
+	if !autoClose {
+		for key, info := range states {
+			info.GraceStartedAt, info.GraceEndsAt = time.Time{}, time.Time{}
+			states[key] = info
+		}
+	}
+	return states
+}
+
+// SupersessionStatusOption gives the inbox the same recommendations as the queue.
+func (s *Server) SupersessionStatusOption() StatusOption {
+	org := ""
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		org = s.deps.Config.Project.Org
+	}
+	states := s.supersededReviewStates(org, time.Now())
+	return func(o *statusOptions) {
+		o.supersededPR = func(repo string, number int) (ghpkg.ReviewQueueSuperseded, bool) {
+			info, ok := states[ghpkg.ReviewQueueKey(supersessionQualifyRepo(repo, org), number)]
+			return info, ok
+		}
+	}
+}
+
+// annotateSupersededReviewQueue adds supersession recommendations and any
+// active grace window to the queue.
 func (s *Server) annotateSupersededReviewQueue(queue []ghpkg.ReviewQueueEntry, org string, now time.Time) {
 	if len(queue) == 0 {
 		return
 	}
-	states := supersededGraceStates(s.supersessionAuditEntries(now), org, s.supersessionGracePeriod())
+	states := s.supersededReviewStates(org, now)
 	if len(states) == 0 {
 		return
 	}
 	for i := range queue {
 		info, ok := states[ghpkg.ReviewQueueKey(queue[i].Repo, queue[i].Number)]
-		if !ok {
+		if !ok || labelSet(queue[i].Labels)[ghpkg.SupersessionKeepOpenLabel] {
 			continue
 		}
 		queue[i].Superseded = &info
@@ -138,10 +195,31 @@ func (s *Server) annotateSupersededReviewQueue(queue []ghpkg.ReviewQueueEntry, o
 
 func supersededReason(info ghpkg.ReviewQueueSuperseded, now time.Time) string {
 	closer := fmt.Sprintf("%s#%d", info.CloserRepo, info.CloserPR)
+	if info.Reason == ghpkg.ReviewQueueSupersededExtraFilesReason {
+		return fmt.Sprintf("%s: by %s; this PR adds files it did not touch (%s); review the extra change, keep open recommended", info.Reason, closer, supersededExtraFilesSummary(info.ExtraFiles))
+	}
+	if info.GraceEndsAt.IsZero() {
+		return fmt.Sprintf("%s: by %s; close as superseded or keep open", info.Reason, closer)
+	}
 	if !now.Before(info.GraceEndsAt) {
 		return fmt.Sprintf("%s: by %s; grace window ended %s, the sweep closes it on its next pass", info.Reason, closer, info.GraceEndsAt.Format(time.RFC3339))
 	}
 	return fmt.Sprintf("%s: by %s; the sweep closes it at %s unless someone replies", info.Reason, closer, info.GraceEndsAt.Format(time.RFC3339))
+}
+
+// supersededExtraFilesShown caps the extra files named in one line of text.
+const supersededExtraFilesShown = 3
+
+// supersededExtraFilesSummary names the files a superseded PR adds beyond the
+// merged PR, e.g. "CONTRIBUTING.md" or "a.go, b.go, c.go and 2 more".
+func supersededExtraFilesSummary(files []string) string {
+	if len(files) == 0 {
+		return "files not recorded"
+	}
+	if len(files) <= supersededExtraFilesShown {
+		return strings.Join(files, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(files[:supersededExtraFilesShown], ", "), len(files)-supersededExtraFilesShown)
 }
 
 // supersededActionTarget validates a superseded-PR action request and
@@ -176,9 +254,8 @@ func (s *Server) supersededActionTarget(w http.ResponseWriter, r *http.Request) 
 
 // handleReviewQueueSupersededClose serves
 // POST /api/review/queue/{owner}/{repo}/{number}/superseded/close: an
-// operator confirms the close of a PR in the supersession grace window
-// before it ends. It posts the close comment, applies hive/superseded and
-// closes the PR through the sweep's own close path.
+// operator confirms the close of a superseded PR. It posts the close comment,
+// applies hive/superseded and closes the PR through the sweep's own close path.
 func (s *Server) handleReviewQueueSupersededClose(w http.ResponseWriter, r *http.Request) {
 	repo, number, ok := s.supersededActionTarget(w, r)
 	if !ok {
@@ -186,14 +263,16 @@ func (s *Server) handleReviewQueueSupersededClose(w http.ResponseWriter, r *http
 	}
 	user := requestUser(r)
 	commentUser := strings.TrimSpace(r.Header.Get("X-Hive-User"))
-	closerRef := "a different merged PR"
 	org := ""
 	if s.deps.Config != nil {
 		org = s.deps.Config.Project.Org
 	}
-	if info, found := supersededGraceStates(s.supersessionAuditEntries(time.Now()), org, s.supersessionGracePeriod())[ghpkg.ReviewQueueKey(repo, number)]; found {
-		closerRef = fmt.Sprintf("%s#%d", info.CloserRepo, info.CloserPR)
+	info, found := supersededGraceStates(s.supersessionAuditEntries(time.Now()), org, s.supersessionGracePeriod())[ghpkg.ReviewQueueKey(repo, number)]
+	if !found {
+		jsonError(w, "no supersession state recorded for this pull request", http.StatusNotFound)
+		return
 	}
+	closerRef := fmt.Sprintf("%s#%d", info.CloserRepo, info.CloserPR)
 	gh := s.deps.GHClient
 	posted, err := gh.IssueCommentsContain(r.Context(), repo, number, ghpkg.SupersessionAutoCloseMarker)
 	if err != nil {

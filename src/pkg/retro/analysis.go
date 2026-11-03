@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -43,6 +44,8 @@ type analysisClient interface {
 type Analyzer struct {
 	client analysisClient
 	model  string
+	cache  *analysisCache
+	logger *slog.Logger
 }
 
 func NewAnalyzer(endpoint, apiKey, model string) (*Analyzer, error) {
@@ -54,17 +57,65 @@ func NewAnalyzer(endpoint, apiKey, model string) (*Analyzer, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("retro analysis: no model endpoint resolved")
 	}
-	return &Analyzer{client: &openAIChatClient{endpoint: endpoint, apiKey: apiKey, model: model, http: &http.Client{Timeout: analysisTimeout}}, model: model}, nil
+	return &Analyzer{client: &openAIChatClient{endpoint: endpoint, apiKey: apiKey, model: model, http: &http.Client{Timeout: analysisTimeout}}, model: model, cache: newAnalysisCache(DefaultAnalysisCacheSize), logger: slog.Default()}, nil
 }
 
 func newAnalyzerWithClient(model string, client analysisClient) *Analyzer {
-	return &Analyzer{model: strings.TrimSpace(model), client: client}
+	return &Analyzer{model: strings.TrimSpace(model), client: client, cache: newAnalysisCache(DefaultAnalysisCacheSize), logger: slog.Default()}
 }
 
+// SetLogger routes cache hit/miss/skip lines to logger (nil keeps the default).
+func (a *Analyzer) SetLogger(logger *slog.Logger) {
+	if a != nil && logger != nil {
+		a.logger = logger
+	}
+}
+
+// CacheStats reports the analysis cache counters; zero for a nil analyzer.
+func (a *Analyzer) CacheStats() AnalysisCacheStats {
+	if a == nil || a.cache == nil {
+		return AnalysisCacheStats{}
+	}
+	return a.cache.snapshot()
+}
+
+// Analyze returns the model's retrospective for a deterministic finding set.
+//
+// The model is skipped in exactly one case: an EMPTY finding set, where there
+// is nothing to analyze. A non-empty set is never short-circuited on the
+// grounds that the deterministic findings "looked fine" — it is either served
+// from the LRU keyed by FindingSetHash (identical inputs, identical reply) or
+// sent to the model (hivecommons/hive#12131).
 func (a *Analyzer) Analyze(ctx context.Context, record RetroRecord, findings []Finding) (Analysis, error) {
 	if a == nil || a.client == nil || strings.TrimSpace(a.model) == "" {
 		return Analysis{}, nil
 	}
+	if a.cache == nil {
+		a.cache = newAnalysisCache(DefaultAnalysisCacheSize)
+	}
+	if a.logger == nil {
+		a.logger = slog.Default()
+	}
+	if len(findings) == 0 {
+		a.cache.markSkippedEmpty()
+		a.logger.Debug("retro: analysis skipped", "reason", "empty-finding-set", "source_bead", record.BeadID)
+		return Analysis{}, nil
+	}
+	key := FindingSetHash(a.model, findings)
+	if cached, ok := a.cache.get(key); ok {
+		a.logger.Info("retro: analysis skipped", "reason", "cached", "source_bead", record.BeadID, "finding_set", key[:12])
+		return cached, nil
+	}
+	a.logger.Debug("retro: analysis cache miss", "source_bead", record.BeadID, "finding_set", key[:12])
+	analysis, err := a.analyzeUncached(ctx, record, findings)
+	if err != nil {
+		return Analysis{}, err
+	}
+	a.cache.put(key, analysis)
+	return analysis, nil
+}
+
+func (a *Analyzer) analyzeUncached(ctx context.Context, record RetroRecord, findings []Finding) (Analysis, error) {
 	messages := buildAnalysisPrompt(record, findings)
 	var lastErr error
 	for attempt := 0; attempt <= outputschema.MaxValidationRetries; attempt++ {

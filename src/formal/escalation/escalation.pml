@@ -33,6 +33,9 @@
  *   G3 — Store.TryReEngage refuses escalated entries (post-amnesty guard).
  *   G4 — a RECOMMEND-CLOSE verdict below ACMM 6 marks the PR
  *        (reviewer-recommend-close label) and the work list excludes it.
+ *   HAND-OFF (#13183) is the fourth verdict class: comment + reviewer-handoff
+ *        label, needs-human stays, the work list excludes it — the same shape
+ *        as the below-ACMM-6 RECOMMEND-CLOSE branch.
  */
 
 #define NSHA        4   /* distinct head SHAs a PR may ever have (bounded pushes) */
@@ -64,6 +67,9 @@ bool reviewerPassed   = false;  /* escalation.ReviewerPassedLabel on the PR */
 bool recommendedClose = false;  /* scheduler.ReviewerRecommendCloseLabel: the
                                  * recommend-close verdict was delivered (#5511
                                  * G4); the work list excludes marked rows */
+bool handedOff        = false;  /* scheduler.ReviewerHandoffLabel: the HAND-OFF
+                                 * verdict was delivered (#13183); needs-human
+                                 * stays and the work list excludes marked rows */
 
 /* ---------------- escalation ledger (escalation.Entry) ---------------- */
 bool entryExists = false;
@@ -364,17 +370,19 @@ active proctype Reaper() {
 }
 
 /* Reviewer lane (reviewer_lane.go, ACMM >= 5): adjudicates escalated rows from
- * ci-failing.json, excluding rows already labeled reviewer-passed or
- * reviewer-recommend-close (#5511 G4 fix: every verdict class marks the row,
- * so "one reviewer pass per PR, ever" holds unconditionally). REPAIR and
- * DE-ESCALATE are indistinguishable at this abstraction (label swap + push);
- * the ledger sync for those verdicts happens SWEEP-side (G1 fix), not here —
- * the reviewer edits labels only, exactly like the real agent. RECOMMEND-CLOSE
- * closes at ACMM >= 6 (-DACMM6), else comments, adds the recommend-close
- * label, and leaves needs-human in place. */
+ * ci-failing.json, excluding rows already labeled reviewer-passed,
+ * reviewer-recommend-close or reviewer-handoff (#5511 G4 fix: every verdict
+ * class marks the row, so "one reviewer pass per PR, ever" holds
+ * unconditionally). REPAIR and DE-ESCALATE are indistinguishable at this
+ * abstraction (label swap + push); the ledger sync for those verdicts happens
+ * SWEEP-side (G1 fix), not here — the reviewer edits labels only, exactly like
+ * the real agent. RECOMMEND-CLOSE closes at ACMM >= 6 (-DACMM6), else
+ * comments, adds the recommend-close label, and leaves needs-human in place.
+ * HAND-OFF (#13183) comments, adds the reviewer-handoff label, and leaves
+ * needs-human in place at every level: only a maintainer can act. */
 active proctype Reviewer() {
 	do
-	:: atomic { prState == PR_OPEN && ci == CI_RED && escalatedView && !reviewerPassed && !recommendedClose ->
+	:: atomic { prState == PR_OPEN && ci == CI_RED && escalatedView && !reviewerPassed && !recommendedClose && !handedOff ->
 		/* P4a: a PR carrying reviewer-passed is never adjudicated again. */
 		assert(!reviewerPassed);
 #ifdef MON_ADJ
@@ -397,6 +405,11 @@ active proctype Reviewer() {
 			 * work list never re-serves the row (#5511 G4). */
 			recommendedClose = true
 #endif
+		:: true ->           /* HAND-OFF (#13183) */
+			/* Comment posted with the maintainer's next step; needs-human
+			 * stays; the verdict is marked (reviewer-handoff label) so the
+			 * work list never re-serves the row. */
+			handedOff = true
 		fi }
 	:: TERMINAL -> break
 	od
@@ -491,7 +504,8 @@ ltl p5_term   { [] (escalated -> <> TERMINAL) }
 /* "One reviewer pass per PR, ever" — for EVERY verdict class. HOLDS since the
  * #5511 G4 fix: a RECOMMEND-CLOSE verdict below ACMM 6 marks the row
  * (reviewer-recommend-close) and the work list excludes it, exactly like
- * reviewer-passed. Failed at ACMM 5 on the pre-fix machinery — gap G4. */
+ * reviewer-passed; HAND-OFF (#13183) marks the row with reviewer-handoff the
+ * same way. Failed at ACMM 5 on the pre-fix machinery — gap G4. */
 ltl w_onepass { [] (adjudications <= 1) }
 #endif
 

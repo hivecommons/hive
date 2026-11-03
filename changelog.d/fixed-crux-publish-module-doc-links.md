@@ -1,0 +1,1 @@
+- `crux-publish.sh` now rewrites relative `../docs/` links in the published `docs/MODULE.md` to absolute hive URLs pinned to the synced hive commit, fixing dead links in hivecommons/crux.

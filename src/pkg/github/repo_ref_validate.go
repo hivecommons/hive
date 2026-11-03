@@ -56,13 +56,22 @@ func validRepoNameComponent(s string) bool {
 // The returned error is deliberately explicit about the placeholder case,
 // because that is the failure operators will actually see and the fix is in an
 // agent's output rather than in hive's configuration.
+//
+// The error is an *invalidRepoRefError so relay watchers can tell this
+// structural, never-retryable refusal apart from a transport failure.
 func validateRepoRef(owner, name string) error {
 	if !validRepoNameComponent(owner) || !validRepoNameComponent(name) {
 		ref := owner + "/" + name
 		if strings.ContainsAny(ref, "<>") {
-			return fmt.Errorf("refusing to call GitHub with repo %q: this looks like an unsubstituted prompt placeholder, not a repository — the agent copied a template literally instead of naming a repo from $HIVE_REPOS", ref)
+			return &invalidRepoRefError{msg: fmt.Sprintf("refusing to call GitHub with repo %q: this looks like an unsubstituted prompt placeholder, not a repository — the agent copied a template literally instead of naming a repo from $HIVE_REPOS", ref)}
 		}
-		return fmt.Errorf("refusing to call GitHub with repo %q: not a valid owner/name (allowed: letters, digits, '-', '_', '.')", ref)
+		return &invalidRepoRefError{msg: fmt.Sprintf("refusing to call GitHub with repo %q: not a valid owner/name (allowed: letters, digits, '-', '_', '.')", ref)}
 	}
 	return nil
 }
+
+// invalidRepoRefError is validateRepoRef's refusal: the repo reference can
+// never be accepted by GitHub, so no caller should retry on it.
+type invalidRepoRefError struct{ msg string }
+
+func (e *invalidRepoRefError) Error() string { return e.msg }

@@ -1,0 +1,1 @@
+- A merged pull request from another repository listed under `closedByPullRequestsReferences` is no longer reported as a same-repo closer, so tracker chips cannot link an issue to an unrelated PR ([#15494](https://github.com/hivecommons/hive/issues/15494)).

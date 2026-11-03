@@ -68,21 +68,22 @@ done
 
 # ── 3. The entrypoint's hint renders the runtime it is given ────────────────
 HINT_LINE="$(grep -F 'echo "  Tmux:' "$AGENT" | head -1)"
+HINT_SETUP="$(awk '/^CONTAINER_NAME=/{inblock=1} /^echo "Contributor agent is running\."/{exit} inblock{print}' "$AGENT")"
 
 # render_hint <container-name> <runtime-or-empty> — evaluates the shipped echo
-# with the same defaulting the entrypoint applies around it. env -i so a
+# and its runtime selection/defaults from the entrypoint. env -i so a
 # HIVE_CONTAINER_RUNTIME exported by whoever runs this suite cannot leak in.
 render_hint() {
-  env -i CONTAINER="$1" RT="${2-}" HINT="$HINT_LINE" bash -c '
-    CONTAINER_NAME="${CONTAINER}"
-    CONTAINER_RUNTIME="${RT:-docker}"
+  env -i HIVE_CONTAINER_NAME="$1" HIVE_CONTAINER_RUNTIME="${2-}" \
+    SETUP="$HINT_SETUP" HINT="$HINT_LINE" bash -c '
     TMUX_SESSION="contributor"
+    eval "$SETUP"
     eval "$HINT"
   '
 }
 
-if [ -z "$HINT_LINE" ]; then
-  fail "extract the Tmux hint from bin/contributor-agent.sh" \
+if [ -z "$HINT_LINE" ] || [ -z "$HINT_SETUP" ]; then
+  fail "extract the Tmux hint and setup from bin/contributor-agent.sh" \
        "the anchor moved — this test cannot verify the real hint"
 else
   pass "Tmux hint extracted from bin/contributor-agent.sh (not restated here)"
@@ -95,6 +96,17 @@ else
     fail "a podman launch is told to run podman" "got:  $GOT
         want: $WANT"
   fi
+
+  for runtime in apptainer singularity; do
+    GOT="$(render_hint hive-contributor-agy-5b4f "$runtime")"
+    WANT="  Tmux:    $runtime exec instance://hive-contributor-agy-5b4f tmux attach -t contributor"
+    if [ "$GOT" = "$WANT" ]; then
+      pass "a $runtime launch attaches to its named instance without -it"
+    else
+      fail "a $runtime launch attaches to its named instance without -it" "got:  $GOT
+        want: $WANT"
+    fi
+  done
 
   # An older image, or a launch by anything that does not pass the variable,
   # must print exactly what it printed before the fix.

@@ -6,10 +6,16 @@ package scheduler
 // pkg/dashboard's tests exercise Scheduler.ResolveTemplate, which reads those
 // roots. See hivecommons/hive#7477.
 
-import "sync"
+import (
+	"path/filepath"
+	"sync"
+)
 
 // SetPolicyDirsForTest points userSavedPolicyDir and clonedPoliciesDir at the
 // given directories and returns a function that restores the previous values.
+// When userSaved is set, userOverridePolicyDir is pinned to a (normally
+// absent) subdirectory of it so the override probe is hermetic too; use
+// SetPolicyOverrideDirForTest to point it somewhere specific.
 //
 // It is intended for tests ONLY. Production code must never call it: the real
 // roots are the fixed /data/policies paths that the dashboard prompt editor
@@ -32,12 +38,13 @@ func SetPolicyDirsForTest(userSaved, cloned string) (restore func()) {
 
 func setPolicyDirsForTest(agentHome, userSaved, cloned string) (restore func()) {
 	policyDirMu.Lock()
-	prevAgentHome, prevUserSaved, prevCloned := agentHomeDir, userSavedPolicyDir, clonedPoliciesDir
+	prevAgentHome, prevUserSaved, prevCloned, prevOverride := agentHomeDir, userSavedPolicyDir, clonedPoliciesDir, userOverridePolicyDir
 	if agentHome != "" {
 		agentHomeDir = agentHome
 	}
 	if userSaved != "" {
 		userSavedPolicyDir = userSaved
+		userOverridePolicyDir = filepath.Join(userSaved, ".user-overrides")
 	}
 	if cloned != "" {
 		clonedPoliciesDir = cloned
@@ -48,7 +55,25 @@ func setPolicyDirsForTest(agentHome, userSaved, cloned string) (restore func()) 
 		once.Do(func() {
 			policyDirMu.Lock()
 			defer policyDirMu.Unlock()
-			agentHomeDir, userSavedPolicyDir, clonedPoliciesDir = prevAgentHome, prevUserSaved, prevCloned
+			agentHomeDir, userSavedPolicyDir, clonedPoliciesDir, userOverridePolicyDir = prevAgentHome, prevUserSaved, prevCloned, prevOverride
+		})
+	}
+}
+
+// SetPolicyOverrideDirForTest points userOverridePolicyDir (the writable
+// override root the dashboard saves to when the shipped template is read-only,
+// hivecommons/hive#13005) at dir and returns a restore func. Tests ONLY.
+func SetPolicyOverrideDirForTest(dir string) (restore func()) {
+	policyDirMu.Lock()
+	prev := userOverridePolicyDir
+	userOverridePolicyDir = dir
+	policyDirMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			policyDirMu.Lock()
+			defer policyDirMu.Unlock()
+			userOverridePolicyDir = prev
 		})
 	}
 }

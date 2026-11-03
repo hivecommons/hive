@@ -1,6 +1,6 @@
 # Hive
 
-AI agent orchestrator for connected work sources and source repositories. A single Go binary that enumerates issues and pull/merge requests, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Gemini, Goose) on adaptive cadences.
+AI agent orchestrator for connected work sources and source repositories. A single Go binary that enumerates issues and pull/merge requests, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Codex, Antigravity, Goose) on adaptive cadences.
 
 ## Quick Start (Docker)
 
@@ -11,7 +11,12 @@ git clone https://github.com/hivecommons/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml
-# Edit src/hive.yaml — set your org, repos, and agent config
+# REQUIRED: set project.org and project.repos (optionally primary_repo and
+# ai_author) in src/hive.yaml — the placeholders do not work as shipped. See
+# docs/operator-reference.md#minimum-required-configuration
+# REQUIRED: the example ships dashboard.port 3001 for local source runs; the
+# container healthcheck probes 3002, so keeping 3001 never becomes healthy.
+sed -i 's/^  port: 3001$/  port: 3002/' src/hive.yaml
 
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is where Compose reads `.env`. A root `.env` is ignored
@@ -215,7 +220,8 @@ contributors to act as selected spoke roles with `HIVE_AGENT_ROLE` /
 
 See [docs/contributor-relay.md](docs/contributor-relay.md),
 [docs/contributor-trust-and-roles.md](docs/contributor-trust-and-roles.md), and
-[Join our Discord](https://hivecommons.dev/discord) for newcomer questions.
+[Join our Discord](https://hivecommons.dev/discord) for newcomer questions, or
+[watch the hive live on Twitch](https://www.twitch.tv/hivecommons).
 
 ## Governor
 
@@ -292,11 +298,11 @@ knowledge:
     merge_strategy: precedence
 ```
 
-## Strategy Lab (Nous)
+## Experiment Lab (Nous)
 
-An experiment framework that lets you test configuration changes (models, cadences, thresholds) against live data before committing them. Experiments run in a sandbox with rollback on failure.
+A repo-only experiment framework that lets Hive propose and measure changes to your repositories' code (tests, CI config, automation scripts) against live data before they land. Every experiment is a pull request that needs your approval; failed experiments are withdrawn.
 
-Configure via the dashboard (Strategy Lab panel, ACMM level 4+) or the `/api/nous/*` endpoints directly — there is no `nous:` block in `hive.yaml.example`; Nous has no YAML config surface. See [docs/strategy-lab.md](docs/strategy-lab.md) for the experiment lifecycle, configuration options, and gate-decision flow. The dashboard REST API is described by [../dashboard/openapi.json](../dashboard/openapi.json).
+Formerly called the Strategy Lab. Configure via the dashboard (Experiment Lab panel, ACMM level 4+, enabled with `dashboard.experiment_lab: true`) or the `/api/nous/*` endpoints directly — there is no `nous:` block in `hive.yaml.example`; Nous has no YAML config surface. See [docs/experiment-lab.md](docs/experiment-lab.md) for the experiment lifecycle, configuration options, and gate-decision flow. The dashboard REST API is described by [../dashboard/openapi.json](../dashboard/openapi.json).
 
 ## Further reading
 
@@ -361,7 +367,7 @@ The `deploy/` directory contains pre-built configurations for common deployment 
 - [Operator reference](docs/operator-reference.md) — config blocks, server flags/env, GitHub token scopes.
 - [Troubleshooting](docs/troubleshooting.md) — container logs, config validation, agent sessions, dashboard auth, and GitHub credential checks.
 - [Config layering](docs/config-layering.md) — effective config provenance and precedence.
-- [Dashboard API reference](docs/api-reference.md) — generated route index.
+- [Dashboard API reference](docs/api-reference.md) — route index, one page per area under `docs/api-reference/`.
 - [apiproxy](docs/apiproxy.md) — model API proxy purpose and deployment notes.
 - [CNCF Code of Conduct](../CODE_OF_CONDUCT.md) — Hive adopts the [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md) for project participation.
 

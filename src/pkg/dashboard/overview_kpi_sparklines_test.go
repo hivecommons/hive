@@ -23,8 +23,12 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 			Issues: 3, PRs: 1,
 			ActionableIssues: []any{github.Issue{CreatedAt: start.Add(-2 * time.Hour), UpdatedAt: start.Add(-1 * time.Hour)}},
 			HeldIssues:       []any{github.HoldItem{Number: 2, Type: "issue", Labels: []string{"hold"}}},
-			OpenPrs:          []any{github.PullRequest{CreatedAt: start.Add(-3 * time.Hour), UpdatedAt: start.Add(-30 * time.Minute), Labels: []string{"needs-human"}}},
-			HeldPrs:          []any{github.PullRequest{Labels: []string{"needs-human"}}},
+			OpenPrs:          []any{github.PullRequest{Number: 3, CreatedAt: start.Add(-3 * time.Hour), UpdatedAt: start.Add(-30 * time.Minute), Labels: []string{"needs-human"}}},
+			HeldPrs:          []any{github.PullRequest{Number: 4, Labels: []string{"needs-human"}}},
+			Ownership: map[string]Ownership{
+				ownershipKey(ownershipKindPR, 3): yourTurn(OwnershipReasonPersonPRNeedsHuman, "Needs human review"),
+				ownershipKey(ownershipKindPR, 4): yourTurn(OwnershipReasonLevelGateHold, "Held by the level gate"),
+			},
 		}},
 	}
 	for i := 0; i < trendHistoryMaxEntries+5; i++ {
@@ -35,7 +39,7 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 		t.Fatalf("history len = %d, want cap %d", len(got), trendHistoryMaxEntries)
 	}
 	last := got[len(got)-1]
-	if last.OverviewOpenIssues != 3 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 2 || last.OverviewBlockedHuman != 1 || last.OverviewOutside != 0 || !last.OverviewCoverageOK || last.OverviewCoverage != 87 {
+	if last.OverviewOpenIssues != 3 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 1 || last.OverviewYourTurn != 2 || last.OverviewWaiting != 0 || last.OverviewBlocked != 0 || last.OverviewOutside != 0 || !last.OverviewCoverageOK || last.OverviewCoverage != 87 {
 		t.Fatalf("overview KPI sample = %+v", last)
 	}
 	dir := t.TempDir()
@@ -84,7 +88,9 @@ func TestOverviewKPIHistoryJSONIncludesZeroOverviewFields(t *testing.T) {
 		"overviewOpenPrs",
 		"overviewActionable",
 		"overviewHeld",
-		"overviewBlockedHuman",
+		"overviewYourTurn",
+		"overviewWaiting",
+		"overviewBlocked",
 		"overviewOutside",
 	} {
 		if !strings.Contains(string(data), `"`+field+`":0`) {
@@ -151,8 +157,10 @@ let _overviewKPILocalScope = 'all';
 let _overviewLastRepos = [{name: 'hive', full: 'hivecommons/hive'}];
 global.window = {_lastStatus: {hiveId: 'test'}};
 global.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
+global.document = { getElementById(){ return null; } };
+function relativeTimeShort(){ return ''; }
 let _overviewKPIHistory = [
-  {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewBlockedHuman: 3, overviewOutside: 25}
+  {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewYourTurn: 3, overviewWaiting: 2, overviewBlocked: 1, overviewOutside: 22}
 ];
 const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
 const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
@@ -163,12 +171,14 @@ function overviewItemAgeMinutes(){ return NaN; }
 const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
 const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
 const OVERVIEW_PROJECT_FILTERS = {
-  'open-issues': { label: 'Total open issues', kinds: ['issue'], issueBands: OVERVIEW_ISSUE_BAND_ORDER, bucketKind: 'issues' },
-  'open-prs': { label: 'Total open PRs', kinds: ['pr'], prBands: PR_BAND_ORDER, bucketKind: 'prs' },
-  'actionable-now': { label: 'Actionable now', kinds: ['issue', 'pr'], issueBands: OVERVIEW_ISSUE_BAND_ORDER.filter(b => !['waiting', 'done'].includes(b)), prBands: PR_BAND_ORDER.filter(b => !['waiting', 'draft', 'blocked'].includes(b)) },
-  'held': { label: 'Held', kinds: ['issue', 'pr'], held: true },
-  'blocked-needs-human': { label: 'Blocked / needs-human', kinds: ['issue', 'pr'], issueBands: ['waiting', 'done'], prBands: ['waiting', 'blocked'], issueBuckets: ['needs_human'] },
-  'outside': { label: 'Outside', kinds: ['issue', 'pr'], outside: true }
+  'open-issues': { label: 'Total open issues', kinds: ['issue'], bucketKind: 'issues' },
+  'open-prs': { label: 'Total open PRs', kinds: ['pr'], bucketKind: 'prs' },
+  'actionable-now': { label: 'Actionable now', kinds: ['issue', 'pr'], term: 'actionable' },
+  'your-turn': { label: 'Your turn', kinds: ['issue', 'pr'], term: 'your_turn' },
+  'waiting-elsewhere': { label: 'Waiting on someone else', kinds: ['issue', 'pr'], term: 'waiting_elsewhere' },
+  'held': { label: 'Held', kinds: ['issue', 'pr'], term: 'held' },
+  'blocked': { label: 'Blocked', kinds: ['pr'], term: 'blocked' },
+  'outside': { label: 'Outside', kinds: ['issue', 'pr'], term: 'outside', outside: true }
 };
 let _overviewProjectFilterKey = null;
 let _overviewProjectFilterCount = null;
@@ -181,12 +191,12 @@ function repoItemNeedsHuman(item){ return ((item && item.labels) || []).some(l =
 		"overviewRepoNumber", "overviewRepoOpenIssueCount", "overviewRepoOpenPRCount",
 		"overviewBreakdownTotal", "overviewRepoForgeTotals", "overviewKPIForgeTotals", "overviewKPIBreakdownSubline",
 		"overviewKPITerm", "dashboardDocsHref", "dashboardDocsHrefFromPath", "overviewPartitionDocsLink", "overviewPartitionSettingsButton", "overviewPartitionSummaryLine", "overviewPartitionGloss", "overviewPartitionPreferredDocs", "overviewPartitionPreferredSettings", "overviewPartitionRowHTML", "overviewPartitionTooltip", "overviewPartitionInfo", "overviewActionableTermHTML", "renderActionableEquationSubline",
-		"overviewEquationTermCount", "overviewOutsideBreakdownText", "renderOverviewTotalPartitionSubline", "renderOverviewSplitSubline",
-		"overviewKPIEquation", "overviewKPIKindEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample",
+		"overviewEquationTermCount", "overviewOutsideBreakdownText", "overviewStaleSince", "fmtOverviewStaleSince", "renderOverviewTotalPartitionSubline", "renderOverviewSplitSubline",
+		"overviewEquationTermDefs", "overviewKPICombinedEquation", "overviewKPILocalEquations", "overviewKPIKindEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample",
 		"overviewCoverageInfo", "overviewCoverageState", "overviewCoverageColor", "overviewCoverageInfoHTML", "overviewCoverageBar", "overviewCoverageCard", "renderOverviewCoverageKPI",
-		"overviewProjectFilterSpec", "overviewRepoTrackedIssueEntries", "overviewRepoTrackedPREntries", "overviewProjectBucketCount",
-		"overviewProjectOutsideIssueCount", "overviewProjectOutsidePRCount", "overviewProjectFilterMatchesEntry", "overviewProjectFilterRepoMatches",
-		"overviewProjectFilterSummary", "renderOverviewKPIs",
+		"overviewProjectFilterSpec", "repoCardParkedIssues", "overviewRepoTrackedIssueEntries", "overviewRepoTrackedPREntries", "overviewProjectBucketCount",
+		"overviewNonActionableMoved", "overviewProjectOutsideIssueCount", "overviewProjectOutsidePRCount", "overviewProjectFilterMatchesEntry", "overviewProjectFilterRepoMatches",
+		"overviewProjectFilterSummary", "overviewSidebarPill", "overviewSidebarPillLead", "overviewUnlistedCounts", "overviewUnlistedNote", "overviewSyncingNote", "sidebarPairBadgeText", "setSidebarPairBadge", "renderOverviewKPIs",
 	} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
@@ -200,12 +210,12 @@ const prSlices = [{key: 'ready', count: 12, items: []}, {key: 'blocked', count: 
 const liveRepos = [{name: 'hive', full: 'hivecommons/hive', issues: 39, prs: 31, actionableIssues: [1,2,3,4,5,6,7], heldIssues: [8,9], openPrs: [10,11], heldPrs: [12,13]}];
 _overviewLastRepos = liveRepos;
 const markup = renderOverviewKPIs(overviewFilterRepos(liveRepos), issueSlices, prSlices, {showKPIs: true});
-assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 6);
-assert.equal((markup.match(/<svg/g) || []).length, 6);
+assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 8);
+assert.equal((markup.match(/<svg/g) || []).length, 8);
 assert.match(markup, />39<\/span><span class="overview-kpi-label">Total open issues<\/span>/);
 assert.match(markup, />31<\/span><span class="overview-kpi-label">Total open PRs<\/span>/);
 assert.match(markup, /aria-label="39 total open issues \+ 31 total open PRs = /);
-for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human','outside']) {
+for (const key of ['open-issues','open-prs','actionable-now','your-turn','waiting-elsewhere','held','blocked','outside']) {
   assert.match(markup, new RegExp('overview-kpi:' + key));
 }
 `)
@@ -214,7 +224,7 @@ for (const key of ['open-issues','open-prs','actionable-now','held','blocked-nee
 	}
 }
 
-func TestOverviewKPISampleCountsBlockedLikeTile(t *testing.T) {
+func TestOverviewKPISampleMatchesTileTerms(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	status := &StatusPayload{Repos: []FrontendRepo{{
 		Name: "hive", Full: "hivecommons/hive",
@@ -222,20 +232,35 @@ func TestOverviewKPISampleCountsBlockedLikeTile(t *testing.T) {
 		ActionableIssues: []any{
 			github.Issue{Repo: "hivecommons/hive", Number: 1, Title: "confirm", Labels: []string{"hive/likely-done"}},
 		},
+		NonActionableIssues: []any{
+			github.RepoWorkIssue{Repo: "hivecommons/hive", Number: 2, Labels: []string{"needs-decision"}, Bucket: repoWorkBucketFiltered, Reason: "needs-decision"},
+			github.RepoWorkIssue{Repo: "hivecommons/hive", Number: 3, Labels: []string{"needs-reporter-confirmation"}, Bucket: repoWorkBucketFiltered, Reason: "needs-reporter-confirmation"},
+		},
+		Ownership: map[string]Ownership{
+			ownershipKey(ownershipKindIssue, 2): yourTurn(OwnershipReasonParkedNeedsDecision, "Parked until a maintainer decides"),
+			ownershipKey(ownershipKindIssue, 3): waitingElsewhere(),
+		},
 		WorkBreakdown: &github.RepoWorkBreakdown{
-			Issues: github.RepoIssueBreakdown{Actionable: 1, Filtered: 2, NeedsHuman: 1, ReporterConfirmation: 1},
+			Issues: github.RepoIssueBreakdown{Actionable: 1, Filtered: 2, NeedsDecision: 1, ReporterConfirmation: 1},
 		},
 	}}}
 	s := &Server{}
 	tile := s.statusWithOverviewBands(status, now).ActionableNow
-	blocked := overviewTerm(tile.Equation, "blocked_needs_human")
-	outside := overviewTerm(tile.Equation, "outside")
-	if blocked == nil || outside == nil {
-		t.Fatalf("missing tile terms: %+v", tile.Equation)
-	}
 	var e TrendHistoryEntry
 	s.attachOverviewKPI(&e, status, now)
-	if e.OverviewBlockedHuman != blocked.Count || e.OverviewOutside != outside.Count {
-		t.Fatalf("sample blocked/outside = %d/%d, tile = %d/%d", e.OverviewBlockedHuman, e.OverviewOutside, blocked.Count, outside.Count)
+	for name, pair := range map[string][2]int{
+		"your turn":  {e.OverviewYourTurn, overviewTermCount(tile.Equation, "your_turn")},
+		"waiting":    {e.OverviewWaiting, overviewTermCount(tile.Equation, "waiting_elsewhere")},
+		"held":       {e.OverviewHeld, overviewTermCount(tile.Equation, "held")},
+		"blocked":    {e.OverviewBlocked, overviewTermCount(tile.Equation, "blocked")},
+		"outside":    {e.OverviewOutside, overviewTermCount(tile.Equation, "outside")},
+		"actionable": {e.OverviewActionable, tile.Total},
+	} {
+		if pair[0] != pair[1] {
+			t.Fatalf("%s: sample = %d, tile = %d (%+v)", name, pair[0], pair[1], tile.Equation)
+		}
+	}
+	if e.OverviewYourTurn != 1 || e.OverviewWaiting != 1 || e.OverviewActionable != 1 {
+		t.Fatalf("sample = %+v, want 1 your turn, 1 waiting, 1 actionable", e)
 	}
 }

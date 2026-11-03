@@ -67,8 +67,10 @@ func TestSelfUpgradeWithAutoUpgradeEnabledRelaysToHubUpgradePath(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
 		Config: &config.Config{
-			Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-			Agents:     map[string]config.AgentConfig{},
+			Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{},
+			},
 			Hub:        config.HubConfig{URL: hub.URL, AutoUpgrade: true},
 			HiveID:     hiveID,
 			Dashboard:  config.DashboardConfig{AuthToken: "spoke-token"},

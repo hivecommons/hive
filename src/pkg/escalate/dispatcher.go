@@ -246,6 +246,7 @@ func (d *Dispatcher) deliver(w *worker, ev Event) {
 	last := false
 	for attempt := 0; ; attempt++ {
 		if err = w.sink.Deliver(d.ctx, ev); err == nil {
+			d.delivered(w, ev, attempt)
 			return
 		}
 		if last || attempt >= len(d.backoff) || !retryable(err) || d.ctx.Err() != nil {
@@ -303,6 +304,23 @@ func retryWait(step time.Duration, err error) time.Duration {
 		return min(se.retryAfter, maxRetryAfter)
 	}
 	return step
+}
+
+// delivered records a successful delivery as escalation_delivered so the
+// audit trail names the provider, severity and title of every escalation
+// that reached a human, not only the ones that failed. attempt is the
+// zero-based index of the attempt that succeeded; retried deliveries say so.
+func (d *Dispatcher) delivered(w *worker, ev Event, attempt int) {
+	detail := fmt.Sprintf("severity=%s title=%q", ev.Severity, ev.Title)
+	if attempt > 0 {
+		detail += fmt.Sprintf(" attempts=%d", attempt+1)
+	}
+	if d.audit != nil {
+		d.audit("escalation_delivered", detail, w.sink.Name())
+	}
+	if d.logger != nil {
+		d.logger.Info("escalation delivered", "sink", w.sink.Name(), "severity", ev.Severity, "detail", detail)
+	}
 }
 
 func (d *Dispatcher) record(action, detail, sink string) {

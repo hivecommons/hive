@@ -13,6 +13,13 @@ for firewalled spokes.
 
 ## Decision
 
+A **heartbeat** is a periodic status request initiated by a spoke. Its response
+can carry **callbacks**: instructions for the spoke to apply, rather than a
+new inbound connection from the hub.
+This works through **NAT** (network address translation) because the spoke
+opens the connection. “Eventually delivered” means a callback waits for a
+successful heartbeat, not that an operator command takes effect immediately.
+
 Use spoke-initiated heartbeats as the control channel. A spoke posts identity,
 repos, ACMM level, agents, governor state, contributors, leaderboard, health,
 version, image, and related status to `/api/heartbeat`; the hub persists a

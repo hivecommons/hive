@@ -1,0 +1,1 @@
+- Close issues fixed by contributor PRs merged by the hive, including merges into non-default release branches, so covered-by-PR stage labels and activity rows do not remain stale ([#15148](https://github.com/hivecommons/hive/issues/15148)).

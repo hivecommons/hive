@@ -1,0 +1,1 @@
+- Classify timed-out Codex headroom probes as timeouts instead of unclassified closed-pipe or missing-response failures.

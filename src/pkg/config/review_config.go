@@ -2,11 +2,15 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"log"
 	"sync"
+
+	"github.com/hivecommons/hive/pkg/modelfamily"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 func repoListSet(repos []string) map[string]bool {
@@ -26,40 +30,53 @@ func repoListSet(repos []string) map[string]bool {
 	return set
 }
 
-const (
-	ReviewModelsFallbackPinned        = "pinned"
-	ReviewModelsFallbackSkip          = "skip"
-	ReviewModelsFallbackRequiresHuman = "requires_human"
-)
-
-type ReviewModelPoolEntry struct {
-	Backend string `yaml:"backend" json:"backend,omitempty"`
-	Model   string `yaml:"model" json:"model,omitempty"`
+// ReviewModelSelection is the outcome of ReviewModelsConfig.Select: the
+// backend/model a review should run with, and whether that came from the
+// configured fallback rather than the pool. Skip is the "skip" fallback with
+// no eligible pool entry: no model, and the review is not dispatched.
+// RequiresHuman is the "requires_human" fallback in the same situation: the
+// pinned model is returned so the caller can still name it, but the review
+// should be marked for a person instead of dispatched as independent.
+type ReviewModelSelection struct {
+	Backend       string
+	Model         string
+	Fallback      bool
+	Skip          bool
+	RequiresHuman bool
 }
 
-type ReviewModelsConfig struct {
-	Pool                []ReviewModelPoolEntry `yaml:"pool,omitempty" json:"pool,omitempty"`
-	ExcludeAuthorModel  *bool                  `yaml:"exclude_author_model,omitempty" json:"exclude_author_model,omitempty"`
-	ExcludeAuthorFamily bool                   `yaml:"exclude_author_family,omitempty" json:"exclude_author_family,omitempty"`
-	Fallback            string                 `yaml:"fallback,omitempty" json:"fallback,omitempty"`
-}
-
-func (r ReviewModelsConfig) Configured() bool {
-	return len(r.Pool) > 0 || r.ExcludeAuthorModel != nil || r.ExcludeAuthorFamily || strings.TrimSpace(r.Fallback) != ""
-}
-
-func (r ReviewModelsConfig) ExcludeAuthorModelEnabled() bool {
-	return r.ExcludeAuthorModel == nil || *r.ExcludeAuthorModel
-}
-
-func (r ReviewModelsConfig) EffectiveFallback() string {
-	switch strings.TrimSpace(r.Fallback) {
-	case "":
-		return ReviewModelsFallbackPinned
-	case ReviewModelsFallbackSkip, ReviewModelsFallbackRequiresHuman:
-		return strings.TrimSpace(r.Fallback)
+// SelectReviewModel picks the first pool entry of r that is not excluded
+// against the PR's author model, exactly as the cadence kick's `review_with=`
+// annotation does. pinnedBackend/pinnedModel are the reviewer agent's own
+// launch backend and model, returned under the "pinned" (default) fallback.
+// Author and candidate models are compared normalized (modelfamily.Normalize),
+// and family on the vendor prefix (modelfamily.Family). An empty pool with no
+// exclusions configured still returns the pinned model as a fallback, so a
+// caller that wants "no instruction" must check Configured() first.
+//
+// A package function rather than a method because ReviewModelsConfig is
+// defined in the stdlib-only pkg/crux/config leaf and the model-family
+// normalizer lives on the Hive side (hivecommons/hive#13536).
+func SelectReviewModel(r ReviewModelsConfig, authorModel, pinnedBackend, pinnedModel string) ReviewModelSelection {
+	author := modelfamily.Normalize(authorModel)
+	authorFamily := modelfamily.Family(author)
+	for _, entry := range r.Pool {
+		candidate := modelfamily.Normalize(entry.Model)
+		if r.ExcludeAuthorModelEnabled() && candidate == author {
+			continue
+		}
+		if r.ExcludeAuthorFamily && modelfamily.Family(candidate) == authorFamily {
+			continue
+		}
+		return ReviewModelSelection{Backend: strings.TrimSpace(entry.Backend), Model: strings.TrimSpace(entry.Model)}
+	}
+	switch r.EffectiveFallback() {
+	case ReviewModelsFallbackSkip:
+		return ReviewModelSelection{Fallback: true, Skip: true}
+	case ReviewModelsFallbackRequiresHuman:
+		return ReviewModelSelection{Backend: strings.TrimSpace(pinnedBackend), Model: strings.TrimSpace(pinnedModel), Fallback: true, RequiresHuman: true}
 	default:
-		return strings.TrimSpace(r.Fallback)
+		return ReviewModelSelection{Backend: strings.TrimSpace(pinnedBackend), Model: strings.TrimSpace(pinnedModel), Fallback: true}
 	}
 }
 
@@ -77,7 +94,11 @@ func ValidateReviewModelsFallback(v string) bool {
 // review-verdicts.json aggregate approval unless an operator opts in.
 type ReviewConfig struct {
 	RequireApproval bool `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
-	FanOut          bool `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	// Shadow evaluates the approval gate without enforcing it, recording
+	// shadow.review_gate.would_have_held on the evidence bundle. It never
+	// blocks a merge and never weakens an enabled require_approval.
+	Shadow bool `yaml:"shadow,omitempty" json:"shadow,omitempty"`
+	FanOut bool `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
 	// EventDriven lets pull_request webhooks trigger review dispatches when
 	// the review swarm is otherwise enabled. Nil keeps the safe derived default.
 	EventDriven *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
@@ -140,6 +161,14 @@ type ReviewConfig struct {
 	// rather than left to infer them from the tree; a hive can only get that
 	// by writing it down. An entry that is blank means "use the built-in".
 	PerspectivePrompts map[string]string `yaml:"perspective_prompts,omitempty" json:"perspective_prompts,omitempty"`
+	// PerspectiveModels pins the backend/model one perspective's swarm review
+	// runs with, keyed by perspective name. An entry replaces the reviewer
+	// agent's review_models pool for that perspective only; the agent's
+	// exclude_author_model / exclude_author_family / fallback settings still
+	// apply to it, so a pinned model that matches the author's family is
+	// still refused when exclude_author_family is on. Perspectives not named
+	// here use the agent's pool as usual. Empty by default.
+	PerspectiveModels map[string]ReviewModelPoolEntry `yaml:"perspective_models,omitempty" json:"perspective_models,omitempty"`
 	// CombinedPerspectives reviews every perspective in ONE agent session that
 	// leaves ONE comment, instead of one session and one comment per
 	// perspective.
@@ -151,28 +180,42 @@ type ReviewConfig struct {
 	// expensive part of a review (reading the diff and the surrounding tree)
 	// is done once instead of five times. The verdicts stay separate, so any
 	// single perspective can still withhold approval.
+	//
+	// Recommended on, but deliberately NOT default-on (hivecommons/hive#12126,
+	// decision recorded here and in docs/review-swarm.md): a plain bool's
+	// zero value is the dashboard toggle's "off", the relay derives its
+	// per-head review quota from this flag, combined dispatch sends one
+	// reviewer (not the fan-out set), and a single schema slip in a combined
+	// verdict discards every perspective at once. Flipping the zero value
+	// would change all of that under running hives mid-cycle. Operators opt
+	// in explicitly; the example config and docs promote it.
 	CombinedPerspectives bool `yaml:"combined_perspectives,omitempty" json:"combined_perspectives,omitempty"`
 	// MaxReviewsPerHead caps how many top-level hive reviews one PR head may
 	// receive before the relay refuses further ones (revisions and thread
 	// replies excepted). 0 derives the cap: 1 with combined_perspectives, one
 	// per perspective otherwise. Negative disables the backstop.
 	MaxReviewsPerHead int `yaml:"max_reviews_per_head,omitempty" json:"max_reviews_per_head,omitempty"`
-	// AllAuthors makes every open PR eligible for review regardless of who
-	// opened it. By default the review swarm looks only at agent-authored
-	// PRs — the work the hive is answerable for. On a repo whose queue is the
-	// problem that restriction is backwards: a contributor's PR waiting on a
-	// reviewer is no less stuck than an agent's, and it is the one with a
-	// person waiting on the other end.
+	// AllAuthors is accepted for backwards compatibility and does nothing.
+	// Every open PR is reviewed regardless of who opened it — hive agent,
+	// human, clanker, dependabot or any other bot — whenever review is on
+	// (require_approval and fan_out); there is no author-class opt-out below
+	// that switch (hivecommons/hive#12974). A set value is logged once as
+	// deprecated by WarnDeprecatedReviewAllAuthors. The field stays so that
+	// MigrateReviewFixHumanPRs can still read the legacy pairing.
+	//
+	// Deprecated: review dispatch no longer filters by author.
 	AllAuthors bool `yaml:"all_authors,omitempty" json:"all_authors,omitempty"`
-	// FixHumanPRs lets the review-fix kick push commits onto PRs that this
-	// hive's agents did NOT open: a contributor's fork branch (through "allow
-	// edits by maintainers"), a maintainer's branch in the upstream repo, or
-	// another bot's PR. AllAuthors alone never implies it. AllAuthors promises
-	// that every PR is REVIEWED; a changes_requested verdict on a PR the hive
-	// did not author then stops at the published review, and the author
-	// decides what to change. Only with this on does the fixer agent
-	// (FixerAgent, then the PR lane, then scanner) check out someone else's
-	// branch and push to it (hivecommons/hive#8421).
+	// FixHumanPRs once let the review-fix kick push commits onto PRs that
+	// this hive's agents did NOT open: a contributor's fork branch (through
+	// "allow edits by maintainers"), a maintainer's branch in the upstream
+	// repo, or another bot's PR (hivecommons/hive#8421). It no longer does:
+	// the pushed commit is signed off by the hive, not the PR author, and the
+	// squash sign-off gate rejects it as bot-signoff, a red only the author
+	// can clear (hivecommons/hive#12897). A changes_requested verdict on such
+	// a PR stops at the published review, with the fix proposed there as a
+	// suggestion or patch block, whichever way this is set. On still makes
+	// the review-thread reconciler answer review-bot threads on those PRs,
+	// again with suggestions rather than pushes. AllAuthors never implies it.
 	//
 	// Pointer so "never set" is distinguishable from an explicit false: a hive
 	// that already ran with all_authors on was pushing fixes to every PR, and
@@ -213,6 +256,67 @@ type ReviewConfig struct {
 	// Only repos in ReviseRepos are eligible, so this cannot re-post anywhere
 	// the hive has not been granted the quieter in-place path.
 	ReviseVerdictsBefore string `yaml:"revise_verdicts_before,omitempty" json:"revise_verdicts_before,omitempty"`
+	// PendingTTL is how long a dispatched review may go without a verdict
+	// before its dispatch record expires and the perspectives are asked
+	// again (Go duration string, default DefaultPendingReviewTTL). A reviewer
+	// kick turn that dies — model timeout, proxy read timeout, pod restart —
+	// posts no verdict, and before this the pending record made every
+	// perspective look covered until someone pushed a new commit
+	// (hivecommons/hive#12045). "0" or unset means the default; a negative
+	// value disables expiry.
+	PendingTTL string `yaml:"pending_ttl,omitempty" json:"pending_ttl,omitempty"`
+	// PendingFixTTL is how long a dispatched review fix may go without a new
+	// head before its pending row expires and the next bounded attempt is
+	// dispatched (Go duration string, default DefaultPendingFixTTL;
+	// hivecommons/hive#14604). "0" or unset means the default; a negative
+	// value disables expiry.
+	PendingFixTTL string `yaml:"pending_fix_ttl,omitempty" json:"pending_fix_ttl,omitempty"`
+	// MaxRedispatch caps how many times one PR head's pending reviews may
+	// expire before the planner stops re-kicking and records a requires_human
+	// hold (reason prefix review-dispatch-exhausted). 0 means
+	// DefaultMaxRedispatch.
+	MaxRedispatch int `yaml:"max_redispatch,omitempty" json:"max_redispatch,omitempty"`
+	// HeadMaxRetries caps how many times one head's review of a perspective
+	// may be re-sent when it posts no verdict (agents.<name>.review_heads,
+	// hivecommons/hive#13542). 0 means max_redispatch applies.
+	HeadMaxRetries int `yaml:"head_max_retries,omitempty" json:"head_max_retries,omitempty"`
+	// BotAuthors lists PR author logins whose PRs are reviewed with
+	// BotAuthorModel instead of the reviewer's usual model. Entries match
+	// case-insensitively; a leading `*` matches any login with that suffix
+	// (`*[bot]`). The hive's own GitHub App login never matches. Unset means
+	// DefaultReviewBotAuthors.
+	BotAuthors []string `yaml:"bot_authors,omitempty" json:"bot_authors,omitempty"`
+	// BotAuthorModel is the model (or backend/model) a review of a
+	// BotAuthors PR runs with. Empty (the default) leaves the route off. The
+	// reviewer agent's engine must be able to run the model.
+	BotAuthorModel string `yaml:"bot_author_model,omitempty" json:"bot_author_model,omitempty"`
+	// BotAuthorFullReviewPaths are path globs (`**` spans directories) that
+	// keep a bot-authored PR on the full-strength model when it touches any of
+	// them. Unset means DefaultReviewBotAuthorFullReviewPaths.
+	BotAuthorFullReviewPaths []string `yaml:"bot_author_full_review_paths,omitempty" json:"bot_author_full_review_paths,omitempty"`
+	// DeltaRereview scopes a re-review to what changed since the head the
+	// hive last judged. When a PR already carries a verdict for an earlier
+	// head SHA, the new head's kick carries that verdict and its findings
+	// and tells the reviewer to read `git diff <prev_head>..<new_head>` plus
+	// re-check the flagged items, not the whole PR again. Re-reviews were
+	// 53% of one hosted hive's reviewer spend over two weeks (Oct 13-27
+	// 2026). nil means on; `delta_rereview: false` turns it off. First
+	// reviews, a prior `reject`, and a prior `changes_requested` whose
+	// findings are older than delta_max_age stay full reviews.
+	DeltaRereview *bool `yaml:"delta_rereview,omitempty" json:"delta_rereview,omitempty"`
+	// DeltaTrivialLines is the delta size (added plus deleted lines) under
+	// which a re-review skips the model call: when the diff between the
+	// reviewed head and the new head is empty, or touches only files the
+	// previous verdict had no finding in and is smaller than this, the
+	// previous verdict is re-stamped onto the new head with a note. 0 means
+	// DefaultReviewDeltaTrivialLines; negative disables the skip.
+	DeltaTrivialLines int `yaml:"delta_trivial_lines,omitempty" json:"delta_trivial_lines,omitempty"`
+	// DeltaMaxAge is how old a `changes_requested` verdict with findings may
+	// be and still anchor a delta re-review (Go duration string). Older than
+	// this the new head gets a full review, since the flagged code and the
+	// reviewer's memory of it have both moved on. Empty means
+	// DefaultReviewDeltaMaxAge.
+	DeltaMaxAge string `yaml:"delta_max_age,omitempty" json:"delta_max_age,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the
@@ -231,6 +335,14 @@ type ReviewConfig struct {
 	// resolves nowhere for most hives while looking configured. Each hive
 	// names a label its own governed repos already maintain.
 	HumanDecisionLabel string `yaml:"human_decision_label,omitempty" json:"human_decision_label,omitempty"`
+	// SelfAuthoredDecisionPolicy controls maintainer-call review markers on
+	// Hive-authored PRs. "resolve" (default) treats every decision question
+	// as advisory and approves unless it matches a review.DecisionRiskClass
+	// (permissions/credentials, security, sensitive paths, data loss,
+	// merge/trust policy, external side effects, licensing, unverifiable) or
+	// carries `<!-- hive-decision-risk: high -->`; "escalate" preserves the
+	// old behavior where every decision question parks the PR.
+	SelfAuthoredDecisionPolicy string `yaml:"self_authored_decision_policy,omitempty" json:"self_authored_decision_policy,omitempty"`
 	// ConfidenceScore appends a one-line 0–5 mergeability score to each review
 	// comment the hive posts (hivecommons/hive#8182): "**Confidence: 4/5**
 	// (safe) — 1 medium finding". The score is derived from the verdicts and
@@ -248,7 +360,16 @@ type ReviewConfig struct {
 	// author, writes it. Like HumanDecisionLabel the labels are never created:
 	// a repo that does not already have them is skipped. Off by default: a
 	// label on every PR is churn a repo must ask for.
-	PriorityLabels bool `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
+	PriorityLabels bool     `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
+	RequireLabels  []string `yaml:"require_labels,omitempty" json:"require_labels,omitempty"`
+	// VerdictLabels mirrors the review swarm's state for each PR's current
+	// head onto exactly one label (hivecommons/hive#13833): reviewing while
+	// the head's review is pending, then the settled verdict. Independent of
+	// the automerge engine's stage labels, so a hive with repo auto-merge
+	// off still shows the outcome on the PR. Like HumanDecisionLabel the
+	// labels are never created; a repo without them is skipped. Labels are
+	// informational and never block.
+	VerdictLabels ReviewVerdictLabelsConfig `yaml:"verdict_labels,omitempty" json:"verdict_labels,omitzero"`
 	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
 	// findings as follow-up issues. Default is enabled: the review can stay
 	// narrow without losing real adjacent defects.
@@ -264,6 +385,9 @@ type ReviewConfig struct {
 	// (hivecommons/hive#8317), which scores a PR against the approved plan
 	// wave its Hive-Run / Hive-Plan trailers name.
 	PlanMatch PlanMatchConfig `yaml:"plan_match,omitempty" json:"plan_match,omitempty"`
+	// Reviewers configures the reviewer agents themselves; see
+	// ReviewersConfig and review.reviewers.autoscale (hivecommons/hive#14685).
+	Reviewers ReviewersConfig `yaml:"reviewers,omitempty" json:"reviewers,omitzero"`
 }
 
 // ContributorPRsConfig is the owner-only gate for contributor PR maintenance.
@@ -378,6 +502,13 @@ type AutoMergeConfig struct {
 	// "zero statuses + zero check runs + zero workflow runs" verdict from
 	// unverified to green. Red or pending evidence still refuses/waits.
 	NoCIOK []string `yaml:"no_ci_ok,omitempty" json:"no_ci_ok,omitempty"`
+	// QueueOnApproveAndUnhold is the per-repo opt-in for RFC #13617 Proposal 2
+	// (hivecommons/hive#13629): at ACMM L5, when one trusted merger both
+	// submits an APPROVED review on an agent PR's current head and removes its
+	// level `hold`, the queued sweep queues the PR through the same path as the
+	// dashboard's queue-auto-merge button. Nothing else counts as consent.
+	// Empty (the default) changes nothing. Entries are owner/repo or bare names.
+	QueueOnApproveAndUnhold []string `yaml:"queue_on_approve_and_unhold,omitempty" json:"queue_on_approve_and_unhold,omitempty"`
 	// TrustedBotAuthors lists bot logins whose open PRs the self-authored
 	// automerge sweep treats like the App's own: merged once mergeable and
 	// CI-green through the identical gates (required checks, hold/exempt
@@ -390,17 +521,224 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
+	// whose required `pull_request` checks can never run because the bot
+	// opened it with a workflow GITHUB_TOKEN (#12003). The App pushes the
+	// same change as one signed-off commit to `hive/takeover-<n>`, opens a PR
+	// that supersedes the bot PR, and closes the bot PR. It applies only when
+	// github-actions[bot] is in TrustedBotAuthors.
+	BotTakeover BotTakeoverAutoMergeConfig `yaml:"bot_takeover,omitempty" json:"bot_takeover,omitempty"`
 	// TrustedAuthors enables a separate, default-off sweep for human-authored
 	// PRs whose AUTHOR already holds merge authority. Unlike the App
 	// self-authored lane, this never bypasses to create new authority: the
 	// author must be in authorized_users at the configured role, and by default
 	// GitHub must also report push/maintain/admin permission on the repository.
 	TrustedAuthors TrustedAuthorAutoMergeConfig `yaml:"trusted_authors,omitempty" json:"trusted_authors,omitempty"`
+	// ContributorLane merges PRs that THIS hive's contributor lane produced
+	// for a contributor it dispatched (the linked issue carries the hive's
+	// own `hive:claim kind=contributor` marker naming the PR author and this
+	// hive) once CI is green, the reviewer verdict approves and the head has
+	// soaked. Default ON: the maintainer already trusted the hive to hand the
+	// work out, so a green hive-produced PR waiting for a manual `/lgtm` is
+	// the stall the lane exists to remove (#11756, #11840 sat green for hours
+	// as `untrusted-author-role` / `not-app-authored`). The claim alone only
+	// proves a lease, so the tier also requires the marker's contributor to
+	// hold an operator-granted tier (require_tiers) and a GitHub login proven
+	// against GitHub (#12041); everyone else's PRs wait for a human.
+	ContributorLane ContributorLaneAutoMergeConfig `yaml:"contributor_lane,omitempty" json:"contributor_lane,omitempty"`
+	// ContributorTier controls automatic contributor trust ratchets used by
+	// the contributor lane.
+	ContributorTier ContributorTierAutoMergeConfig `yaml:"contributor_tier,omitempty" json:"contributor_tier,omitempty"`
 	// HumanMergePaths maps owner/repo to glob patterns (same syntax as
 	// intent.guardrail_path_patterns) for paths a person must merge. Unset
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// Unset uses the default owner-merge rule; explicit empty lists disable
+	// their half of the title/label rule.
+	HumanMergeTitlePrefixes []string `yaml:"human_merge_title_prefixes,omitempty" json:"human_merge_title_prefixes,omitempty"`
+	HumanMergeLabels        []string `yaml:"human_merge_labels,omitempty" json:"human_merge_labels,omitempty"`
+	// RequireCurrentBase lists owner/repo names whose automerge sweeps only
+	// merge heads containing the current base tip. Explicit entries are
+	// strict: inability to update the branch never bypasses the gate.
+	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
+	// RequireCurrentBaseDefault applies to repos in neither override list.
+	// Unset is off. Default-only gating may fall back to the tested head
+	// when branch updates are unavailable.
+	RequireCurrentBaseDefault *bool `yaml:"require_current_base_default,omitempty" json:"require_current_base_default,omitempty"`
+	// SkipCurrentBase opts repos out of the default; explicit on wins.
+	SkipCurrentBase []string `yaml:"skip_current_base,omitempty" json:"skip_current_base,omitempty"`
+	// MergeForwardTrustedHuman lists owner/repo names where a role/trusted
+	// author/human PR that GitHub reports as conflicting ("dirty") gets the
+	// base merged into its same-repo head branch as a new App-authored,
+	// signed-off merge commit; no human commit is rewritten. A real conflict
+	// leaves the branch untouched and posts one note naming the files both
+	// sides changed. Fork heads are never written. Empty (the default) keeps
+	// the PR parked for its author.
+	MergeForwardTrustedHuman []string `yaml:"merge_forward_trusted_human,omitempty" json:"merge_forward_trusted_human,omitempty"`
+	// SquashOnly lists owner/repo names whose policy forbids merge commits.
+	// Elsewhere a role/trusted PR whose head mixes the contributor's commits
+	// with hive commits, each signed off by its own author, is merged with a
+	// merge commit (`merge-method/merge`) instead of being parked for a
+	// person, because a squash would misattribute the hive's sign-off. In a
+	// squash-only repo the lane keeps the squash convention and the PR goes
+	// back to its author (or, adopted, to stage/085 naming this policy).
+	SquashOnly []string `yaml:"squash_only,omitempty" json:"squash_only,omitempty"`
+	// CreditIssueAuthors puts `Co-authored-by: <issue author>` on the commit
+	// the hive's merge lands for every human who opened an issue the PR
+	// closes (`Fixes|Closes|Resolves #N`), minus the PR author, skipping
+	// bots, and never duplicating a trailer the branch already carries
+	// (hivecommons/hive#14581). The credit is additive — the PR author
+	// still authors the squash, every Signed-off-by is kept — and reaches
+	// the PRs external clankers open, which bypass the hive's own
+	// open-time attribution. nil/unset means ON; `credit_issue_authors:
+	// false` sends the merge with GitHub's default message as before.
+	CreditIssueAuthors *bool `yaml:"credit_issue_authors,omitempty" json:"credit_issue_authors,omitempty"`
+	// MergeTrain orders approved PRs on the same base whose changed files
+	// overlap: one front merges at a time, the siblings wait as
+	// "queued-behind" (stage 080, never a human stage) and are updated or
+	// rebased right after the front lands instead of each going
+	// `conflicting` with nothing owning the repair
+	// (hivecommons/hive#15117). Default ON.
+	MergeTrain MergeTrainAutoMergeConfig `yaml:"merge_train,omitempty" json:"merge_train,omitempty"`
+	// NativeMergeQueue lets the sweep lanes enqueue an eligible PR into
+	// GitHub's native merge queue instead of merging it directly when the
+	// base branch requires one (hivecommons/hive#15198). Default OFF and
+	// opt-in per repo: a hive that never sets it keeps the pre-queue
+	// behaviour, including the `merge-queue-required` park.
+	NativeMergeQueue NativeMergeQueueAutoMergeConfig `yaml:"native_merge_queue,omitempty" json:"native_merge_queue,omitempty"`
+}
+
+type MergeTrainAutoMergeConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// MaxRebaseAttempts bounds rebase-resolve tasks before human escalation.
+	MaxRebaseAttempts int `yaml:"max_rebase_attempts,omitempty" json:"max_rebase_attempts,omitempty"`
+}
+
+const DefaultMergeTrainMaxRebaseAttempts = 2
+
+func (m MergeTrainAutoMergeConfig) IsEnabled() bool {
+	return m.Enabled == nil || *m.Enabled
+}
+
+// EffectiveMaxRebaseAttempts applies the default rebase loop guard.
+func (m MergeTrainAutoMergeConfig) EffectiveMaxRebaseAttempts() int {
+	if m.MaxRebaseAttempts <= 0 {
+		return DefaultMergeTrainMaxRebaseAttempts
+	}
+	return m.MaxRebaseAttempts
+}
+
+// CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors
+// switch; unset is on.
+func (a AutoMergeConfig) CreditIssueAuthorsEnabled() bool {
+	return a.CreditIssueAuthors == nil || *a.CreditIssueAuthors
+}
+
+// RequireCurrentBaseFor resolves explicit on, explicit off, then the default.
+func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return false
+	}
+	if v := a.CurrentBaseOverrideFor(key); v != nil {
+		return *v
+	}
+	return a.CurrentBaseDefaultEnabled()
+}
+
+// CurrentBaseDefaultEnabled resolves the hive-wide default (unset is off).
+func (a AutoMergeConfig) CurrentBaseDefaultEnabled() bool {
+	return a.RequireCurrentBaseDefault != nil && *a.RequireCurrentBaseDefault
+}
+
+// CurrentBaseOverrideFor returns explicit on/off, or nil to inherit.
+func (a AutoMergeConfig) CurrentBaseOverrideFor(repo string) *bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return nil
+	}
+	if repoListSet(a.RequireCurrentBase)[key] {
+		v := true
+		return &v
+	}
+	if repoListSet(a.SkipCurrentBase)[key] {
+		v := false
+		return &v
+	}
+	return nil
+}
+
+// SetCurrentBaseOverride records the dashboard's per-repo tri-state,
+// removing the repo from the other list (or both when inheriting).
+func (a *AutoMergeConfig) SetCurrentBaseOverride(repo string, value *bool) {
+	if a == nil {
+		return
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return
+	}
+	drop := func(list []string) []string {
+		out := list[:0:0]
+		for _, r := range list {
+			if !strings.EqualFold(strings.TrimSpace(r), repo) {
+				out = append(out, r)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	a.RequireCurrentBase = drop(a.RequireCurrentBase)
+	a.SkipCurrentBase = drop(a.SkipCurrentBase)
+	switch {
+	case value == nil:
+	case *value:
+		a.RequireCurrentBase = append(a.RequireCurrentBase, repo)
+	default:
+		a.SkipCurrentBase = append(a.SkipCurrentBase, repo)
+	}
+}
+
+// RequireCurrentBaseStrictFor reports explicit on, which must not fall back
+// to an un-updated head when update-branch is unavailable.
+func (a AutoMergeConfig) RequireCurrentBaseStrictFor(repo string) bool {
+	return repoListSet(a.RequireCurrentBase)[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// HumanMergeTitlePrefixesEffective preserves explicit empty lists.
+func (a AutoMergeConfig) HumanMergeTitlePrefixesEffective() []string {
+	if a.HumanMergeTitlePrefixes == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeTitlePrefixes...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeTitlePrefixes)), a.HumanMergeTitlePrefixes...)
+}
+
+// HumanMergeLabelsEffective preserves explicit empty lists.
+func (a AutoMergeConfig) HumanMergeLabelsEffective() []string {
+	if a.HumanMergeLabels == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeLabels...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeLabels)), a.HumanMergeLabels...)
+}
+
+// HumanMergeRule is the shared rule for the automerge lanes and dashboard.
+func (a AutoMergeConfig) HumanMergeRule() prstage.HumanMergeRule {
+	return prstage.HumanMergeRule{TitlePrefixes: a.HumanMergeTitlePrefixesEffective(), Labels: a.HumanMergeLabelsEffective()}
+}
+
+// MergeForwardTrustedHumanFor reports whether repo (owner/repo, matched
+// case-insensitively) is listed in auto_merge.merge_forward_trusted_human.
+func (a AutoMergeConfig) MergeForwardTrustedHumanFor(repo string) bool {
+	return repoListSet(a.MergeForwardTrustedHuman)[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// SquashOnlyFor reports whether repo (owner/repo, matched case-insensitively)
+// is listed in auto_merge.squash_only.
+func (a AutoMergeConfig) SquashOnlyFor(repo string) bool {
+	return repoListSet(a.SquashOnly)[strings.ToLower(strings.TrimSpace(repo))]
 }
 
 // SupersessionSweepConfig tunes the supersession sweep
@@ -415,6 +753,21 @@ type SupersessionSweepConfig struct {
 	GracePeriod time.Duration `yaml:"grace_period,omitempty" json:"grace_period,omitempty"`
 }
 
+// SharedCIRerunConfig gates the shared-CI rerun sweep
+// (github.SweepSharedCIReruns): when a `[shared-ci]` incident issue closes,
+// Hive re-runs the failed jobs of every open PR stamped with that incident's
+// `<!-- hive-shared-ci-<n> -->` marker, once per PR per incident.
+type SharedCIRerunConfig struct {
+	// Enabled is *bool so unset means on; set `shared_ci_rerun.enabled: false`
+	// to disable.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the sweep runs; unset means on.
+func (c SharedCIRerunConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
 // AutoMergeRepoConfig carries per-repository auto-merge overrides.
 type AutoMergeRepoConfig struct {
 	// RequiredChecks overrides auto_merge.required_checks for this repository.
@@ -423,12 +776,271 @@ type AutoMergeRepoConfig struct {
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
 }
 
+// BotTakeoverAutoMergeConfig is auto_merge.bot_takeover.*.
+type BotTakeoverAutoMergeConfig struct {
+	// Enabled turns the takeover on. nil/unset means ON; an explicit
+	// `enabled: false` disables it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+func (b BotTakeoverAutoMergeConfig) IsEnabled() bool {
+	return b.Enabled == nil || *b.Enabled
+}
+
 type TrustedAuthorAutoMergeConfig struct {
 	Enabled                 bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Repos                   []string `yaml:"repos,omitempty" json:"repos,omitempty"`
 	RequireRole             string   `yaml:"require_role,omitempty" json:"require_role,omitempty"`
 	RequireGitHubPermission *bool    `yaml:"require_github_permission,omitempty" json:"require_github_permission,omitempty"`
 	ExcludeLabels           []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
+}
+
+// ContributorLaneAutoMergeConfig is the policy for the contributor-lane
+// auto-merge tier (auto_merge.contributor_lane.*). Every field is optional;
+// the zero value is the default-on policy described on each field.
+type ContributorLaneAutoMergeConfig struct {
+	// Enabled turns the tier on. nil/unset means ON (see
+	// AutoMergeConfig.ContributorLane for why the default is on); an explicit
+	// `enabled: false` disables it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// SoakMinutes is how long the head SHA must stay unchanged and green
+	// before the tier merges. 0/unset means DefaultContributorLaneSoakMinutes.
+	SoakMinutes int `yaml:"soak_minutes,omitempty" json:"soak_minutes,omitempty"`
+	// RequireReviewerVerdict requires an approving aggregate reviewer verdict
+	// for the current head whenever a reviewer agent is enabled. nil/unset
+	// means ON. A hive with no reviewer agent satisfies the gate vacuously.
+	RequireReviewerVerdict *bool `yaml:"require_reviewer_verdict,omitempty" json:"require_reviewer_verdict,omitempty"`
+	// Repos restricts the tier to these repositories (bare name or
+	// owner/repo). Empty means every watched repository.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// ExcludeLabels keeps a PR out of the tier. nil means
+	// DefaultContributorLaneExcludeLabels.
+	ExcludeLabels []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
+	// RequireTiers lists the contributor trust tiers whose claimed PRs the
+	// tier may merge; the tier= stamped on the hive:claim marker must be one
+	// of them. nil/empty means DefaultContributorLaneRequireTiers. Only
+	// operator-granted tiers are accepted (ContributorLaneGrantableTiers):
+	// newcomer and contributor are reached by self-registration and
+	// automatic promotion, so they never confer unattended merge.
+	RequireTiers []string `yaml:"require_tiers,omitempty" json:"require_tiers,omitempty"`
+	// RegistryTiersSufficient admits a PR whose author holds a RequireTiers
+	// tier in this hive's contributor registry (the operator-set trust tier
+	// on the contributor profile) without a linked issue or hive:claim
+	// marker. nil/unset means ON. With it off, only the claim-marker path
+	// admits a PR, so a trusted contributor's PR that references rather
+	// than closes its issue, or was claimed outside the relay, waits for a
+	// human (`contributor-lane:no-linked-issue` / `no-claim`).
+	RegistryTiersSufficient *bool `yaml:"registry_tiers_sufficient,omitempty" json:"registry_tiers_sufficient,omitempty"`
+	// AutoPromotionScope is where the clean-merged-PR ratchet
+	// (auto_merge.contributor_tier.auto_promote_after_merged) counts an
+	// author's merges. `hive` (default) counts clean merged PRs across every
+	// repository this hive manages: trust in a contributor is a property of
+	// the person, and the small satellite repos of a multi-repo hive never
+	// reach a per-repo threshold on their own. `repo` counts only the PR's
+	// own repository (the pre-#14517 behaviour). Revert and sentinel-alert
+	// evidence is applied per PR in either scope.
+	AutoPromotionScope string `yaml:"auto_promotion_scope,omitempty" json:"auto_promotion_scope,omitempty"`
+	// ApproveHeldRunsForRegistryTrusted lets the contributor lane approve
+	// `pull_request` workflow runs GitHub holds for approval
+	// (`action_required`) on a PR whose author the registry path admitted at
+	// a RequireTiers tier, once per head, when the only thing between the PR
+	// and merge is a required check those held runs would produce. Authors
+	// admitted by claim marker, auto-promotion or association are never
+	// approved for. nil/unset means ON. Needs the App's Actions: Read and
+	// write permission; without it the approve call fails and the lane keeps
+	// waiting for a person.
+	ApproveHeldRunsForRegistryTrusted *bool `yaml:"approve_held_runs_for_registry_trusted,omitempty" json:"approve_held_runs_for_registry_trusted,omitempty"`
+	// OwnerApprovalReleasesWorkflowFence lets a hive owner / trusted
+	// merger's explicit approval on the current head — a GitHub APPROVED
+	// review, or a dashboard / `/hive decision approve` — release the
+	// contributor lane's workflow-path fence, so the lane merges a PR that
+	// edits `.github/workflows/**` or `.github/actions/**` itself once the
+	// other gates are clear (hivecommons/hive#14664). Approval on an earlier
+	// head does not count. nil/unset means ON. Merging such a PR needs the
+	// App's Workflows: Read and write permission; without it the lane marks
+	// the PR hive:unauthorized and parks it for a person's merge click.
+	// false keeps every workflow-path PR a person's merge.
+	OwnerApprovalReleasesWorkflowFence *bool `yaml:"owner_approval_releases_workflow_fence,omitempty" json:"owner_approval_releases_workflow_fence,omitempty"`
+}
+
+// Contributor-lane auto-promotion scopes
+// (auto_merge.contributor_lane.auto_promotion_scope).
+const (
+	ContributorLaneAutoPromotionScopeHive = "hive"
+	ContributorLaneAutoPromotionScopeRepo = "repo"
+)
+
+// ContributorLaneAutoPromotionScopes lists the accepted
+// auto_promotion_scope values.
+var ContributorLaneAutoPromotionScopes = []string{ContributorLaneAutoPromotionScopeHive, ContributorLaneAutoPromotionScopeRepo}
+
+// EffectiveAutoPromotionScope returns the normalized auto_promotion_scope,
+// defaulting to ContributorLaneAutoPromotionScopeHive.
+func (c ContributorLaneAutoMergeConfig) EffectiveAutoPromotionScope() string {
+	scope := strings.ToLower(strings.TrimSpace(c.AutoPromotionScope))
+	if scope == "" {
+		return ContributorLaneAutoPromotionScopeHive
+	}
+	return scope
+}
+
+// ContributorTierAutoMergeConfig is auto_merge.contributor_tier.*.
+type ContributorTierAutoMergeConfig struct {
+	// AutoPromoteAfterMerged lets the contributor lane conservatively treat a
+	// contributor as trusted after this many recently merged PRs by the same
+	// author in the repository, provided that window has no reverts or sentinel
+	// alerts — including reverts of those PRs merged by someone else — and
+	// the author is not `revoked` in the contributor registry. 0/unset means
+	// DefaultContributorTierAutoPromoteAfterMerged;
+	// negative disables the ratchet.
+	AutoPromoteAfterMerged int `yaml:"auto_promote_after_merged,omitempty" json:"auto_promote_after_merged,omitempty"`
+}
+
+// DefaultContributorTierAutoPromoteAfterMerged is the clean merged-PR count
+// needed before the contributor lane trusts a contributor automatically.
+const DefaultContributorTierAutoPromoteAfterMerged = 5
+
+func (c ContributorTierAutoMergeConfig) EffectiveAutoPromoteAfterMerged() int {
+	if c.AutoPromoteAfterMerged < 0 {
+		return 0
+	}
+	if c.AutoPromoteAfterMerged == 0 {
+		return DefaultContributorTierAutoPromoteAfterMerged
+	}
+	return c.AutoPromoteAfterMerged
+}
+
+// DefaultContributorLaneRequireTiers is the contributor-lane tier allow-list
+// when auto_merge.contributor_lane.require_tiers is unset.
+var DefaultContributorLaneRequireTiers = []string{"trusted", "merger"}
+
+// ContributorLaneGrantableTiers are the contributor trust tiers only an
+// operator can grant, and so the only values require_tiers accepts.
+var ContributorLaneGrantableTiers = []string{"trusted", "merger", "advisor"}
+
+// DefaultContributorLaneSoakMinutes is the contributor-lane soak when
+// auto_merge.contributor_lane.soak_minutes is unset: thirty minutes of
+// unchanged, green head gives a maintainer who does want to look a window
+// without parking reviewed work for hours.
+const DefaultContributorLaneSoakMinutes = 30
+
+// DefaultContributorLaneExcludeLabels is the contributor-lane exclude set when
+// auto_merge.contributor_lane.exclude_labels is unset.
+var DefaultContributorLaneExcludeLabels = []string{"hold", "do-not-merge", "needs-human", "blocked", "needs-rebase"}
+
+func (c ContributorLaneAutoMergeConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+func (c ContributorLaneAutoMergeConfig) EffectiveSoakMinutes() int {
+	if c.SoakMinutes <= 0 {
+		return DefaultContributorLaneSoakMinutes
+	}
+	return c.SoakMinutes
+}
+
+func (c ContributorLaneAutoMergeConfig) EffectiveRequireReviewerVerdict() bool {
+	return c.RequireReviewerVerdict == nil || *c.RequireReviewerVerdict
+}
+
+// EffectiveRegistryTiersSufficient reports whether a RequireTiers tier in
+// the contributor registry admits a PR without a claim marker (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveRegistryTiersSufficient() bool {
+	return c.RegistryTiersSufficient == nil || *c.RegistryTiersSufficient
+}
+
+// EffectiveApproveHeldRunsForRegistryTrusted reports whether the contributor
+// lane may approve held workflow runs for registry-admitted authors (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveApproveHeldRunsForRegistryTrusted() bool {
+	return c.ApproveHeldRunsForRegistryTrusted == nil || *c.ApproveHeldRunsForRegistryTrusted
+}
+
+// EffectiveOwnerApprovalReleasesWorkflowFence reports whether a trusted
+// merger's explicit approval on the current head lets the contributor lane
+// merge a workflow-path PR (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveOwnerApprovalReleasesWorkflowFence() bool {
+	return c.OwnerApprovalReleasesWorkflowFence == nil || *c.OwnerApprovalReleasesWorkflowFence
+}
+
+func (c ContributorLaneAutoMergeConfig) RepoSet() map[string]bool {
+	return repoListSet(c.Repos)
+}
+
+func (c ContributorLaneAutoMergeConfig) ExcludeLabelSet() map[string]bool {
+	labels := c.ExcludeLabels
+	if labels == nil {
+		labels = DefaultContributorLaneExcludeLabels
+	}
+	set := make(map[string]bool, len(labels))
+	for _, label := range labels {
+		label = strings.ToLower(strings.TrimSpace(label))
+		if label == "" {
+			continue
+		}
+		set[label] = true
+	}
+	return set
+}
+
+// RequireTierSet returns the normalized require_tiers set, falling back to
+// DefaultContributorLaneRequireTiers when none is configured.
+func (c ContributorLaneAutoMergeConfig) RequireTierSet() map[string]bool {
+	tiers := c.RequireTiers
+	set := make(map[string]bool, len(tiers))
+	for _, tier := range tiers {
+		tier = strings.ToLower(strings.TrimSpace(tier))
+		if tier != "" {
+			set[tier] = true
+		}
+	}
+	if len(set) == 0 {
+		for _, tier := range DefaultContributorLaneRequireTiers {
+			set[tier] = true
+		}
+	}
+	return set
+}
+
+// EffectiveRequireTiers returns RequireTierSet as a sorted list for display.
+func (c ContributorLaneAutoMergeConfig) EffectiveRequireTiers() []string {
+	set := c.RequireTierSet()
+	out := make([]string, 0, len(set))
+	for tier := range set {
+		out = append(out, tier)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsContributorLaneGrantableTier reports whether tier is one an operator
+// must grant (see ContributorLaneGrantableTiers).
+func IsContributorLaneGrantableTier(tier string) bool {
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	for _, t := range ContributorLaneGrantableTiers {
+		if tier == t {
+			return true
+		}
+	}
+	return false
+}
+
+func (c ContributorLaneAutoMergeConfig) Validate() error {
+	if c.SoakMinutes < 0 {
+		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default 30) or greater, got %d", c.SoakMinutes)
+	}
+	for _, tier := range c.RequireTiers {
+		if !IsContributorLaneGrantableTier(tier) {
+			return fmt.Errorf("auto_merge.contributor_lane.require_tiers: %q is not an operator-granted tier (allowed: %s)", tier, strings.Join(ContributorLaneGrantableTiers, ", "))
+		}
+	}
+	if scope := c.EffectiveAutoPromotionScope(); scope != ContributorLaneAutoPromotionScopeHive && scope != ContributorLaneAutoPromotionScopeRepo {
+		return fmt.Errorf("auto_merge.contributor_lane.auto_promotion_scope: %q is not valid (allowed: %s)", c.AutoPromotionScope, strings.Join(ContributorLaneAutoPromotionScopes, ", "))
+	}
+	return nil
+}
+
+func (c ContributorTierAutoMergeConfig) Validate() error {
+	return nil
 }
 
 // DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used
@@ -524,6 +1136,35 @@ func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
 	return repoListSet(a.NoCIOK)
 }
 
+// QueueOnApproveAndUnholdACMMLevel is the only ACMM level at which
+// auto_merge.queue_on_approve_and_unhold applies (hivecommons/hive#13629).
+const QueueOnApproveAndUnholdACMMLevel = 5
+
+// QueueOnApproveAndUnholdAllowed reports whether repo (owner/repo or bare
+// name, matched case-insensitively) opted into queueing on a trusted merger's
+// approval plus level-hold removal, and the hive runs at
+// QueueOnApproveAndUnholdACMMLevel. An unset level fails closed.
+func (a AutoMergeConfig) QueueOnApproveAndUnholdAllowed(repo string, acmmLevel *int) bool {
+	if acmmLevel == nil || *acmmLevel != QueueOnApproveAndUnholdACMMLevel {
+		return false
+	}
+	set := repoListSet(a.QueueOnApproveAndUnhold)
+	if len(set) == 0 {
+		return false
+	}
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	if repo == "" {
+		return false
+	}
+	if set[repo] {
+		return true
+	}
+	if i := strings.LastIndex(repo, "/"); i >= 0 {
+		return set[repo[i+1:]]
+	}
+	return false
+}
+
 // HumanMergePathsFor returns the human-merge path patterns configured for repo
 // (owner/repo, matched case-insensitively), or nil when none are set.
 func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
@@ -615,18 +1256,6 @@ func (c *Config) ACMMLevelOrZero() int {
 	return *c.ACMMLevel
 }
 
-// SelfMergeMinACMMLevel is the lowest ACMM level at which the App is allowed
-// to self-merge its own PRs. examples/acmm/l5.md is explicit that L5 does NOT
-// grant merge authority ("Merge pull requests — no; L5 PRs remain hold-gated
-// for human review"), and examples/acmm/l4.md is even more explicit ("DO NOT
-// merge pull requests — L4 is not an auto-merge level"). examples/acmm/l6.md
-// is the first level whose Responsibilities include "Merge PRs when CI
-// passes". So the gate sits at L6, not L5: an L4 (or L5) hive must never run
-// the self-authored auto-merge sweep, regardless of the auto_merge.self_authored
-// flag below. This was the root cause of ks/hive (acmm_level: 4) wrongly
-// self-merging its own PR — the sweep previously had no ACMM check at all.
-const SelfMergeMinACMMLevel = 6
-
 // SelfAuthoredAutoMergeAllowed reports whether the App-self-merge sweep may
 // run at all for this hive, given its ACMM level. Both conditions must hold:
 // the auto_merge.self_authored flag must be ON (SelfAuthoredEnabled) AND the
@@ -660,8 +1289,9 @@ func (r ReviewConfig) EffectiveMaxParallelReviews() int {
 	return DefaultMaxParallelReviews
 }
 
-// FixHumanPRsEnabled reports whether the review-fix kick may push to PRs the
-// hive's own agents did not open. Nil (never set) and an explicit false both
+// FixHumanPRsEnabled reports whether review.fix_human_prs is on for PRs the
+// hive's own agents did not open (see FixHumanPRs: it no longer permits a
+// push). Nil (never set) and an explicit false both
 // mean no: pushing to someone else's branch is a power to grant deliberately.
 func (r ReviewConfig) FixHumanPRsEnabled() bool {
 	return r.FixHumanPRs != nil && *r.FixHumanPRs
@@ -675,12 +1305,12 @@ var reviewFixHumanPRsMigrationLogOnce sync.Once
 // MigrateReviewFixHumanPRs is the upgrade step for review.fix_human_prs
 // (hivecommons/hive#8421). Before that setting existed, review.all_authors
 // alone made the fixer agent push commits onto every changes_requested PR,
-// whoever opened it. A hive that ran that way must keep running that way
-// across the upgrade, so:
+// whoever opened it. The stored value is kept for audit/UI continuity even
+// though fix dispatch now still requires hive authorship, so:
 //
 //   - all_authors true and fix_human_prs never set: fix_human_prs becomes an
-//     explicit true, logged once, so the dashboard shows it ON and the operator
-//     can turn it off deliberately.
+//     explicit true, logged once, so the dashboard shows the legacy state and
+//     the operator can turn it off deliberately.
 //   - anything else (new hives, all_authors off): left nil, which reads as
 //     false. An explicit false is never touched.
 //
@@ -693,7 +1323,26 @@ func (c *Config) MigrateReviewFixHumanPRs() bool {
 	enabled := true
 	c.Review.FixHumanPRs = &enabled
 	reviewFixHumanPRsMigrationLogOnce.Do(func() {
-		log.Printf("[config] migrating review.fix_human_prs: all_authors is on and fix_human_prs was never set, so it is now stored as true to keep this hive pushing review fixes to PRs its agents did not open (as it did before #8421). Turn it off under Features > Review Gate > Reviewers if that is not wanted.")
+		log.Printf("[config] migrating review.fix_human_prs: all_authors is on and fix_human_prs was never set, so it is now stored as true for audit/UI continuity. Review-fix pushes still require hive authorship; turn the legacy setting off under Features > Review Gate > Reviewers if it is not wanted.")
+	})
+	return true
+}
+
+// reviewAllAuthorsDeprecationLogOnce keeps the deprecation notice to one
+// line per process across boot and every reload.
+var reviewAllAuthorsDeprecationLogOnce sync.Once
+
+// WarnDeprecatedReviewAllAuthors logs once when review.all_authors is set.
+// The knob is a no-op: every open PR is reviewed whenever review is on
+// (hivecommons/hive#12974). The value is left in place for audit/UI
+// continuity and for MigrateReviewFixHumanPRs. Returns true when the knob
+// is set.
+func (c *Config) WarnDeprecatedReviewAllAuthors() bool {
+	if c == nil || !c.Review.AllAuthors {
+		return false
+	}
+	reviewAllAuthorsDeprecationLogOnce.Do(func() {
+		log.Printf("[config] review.all_authors is deprecated and has no effect: the review swarm reviews every open PR regardless of author whenever review is on (require_approval and fan_out). Remove it from hive.yaml.")
 	})
 	return true
 }
@@ -740,4 +1389,55 @@ func (a AutoMergeConfig) EffectiveMinHeadAge() time.Duration {
 		return a.MinHeadAge
 	}
 	return DefaultAutoMergeMinHeadAge
+}
+
+// NativeMergeQueueAutoMergeConfig is auto_merge.native_merge_queue.*.
+type NativeMergeQueueAutoMergeConfig struct {
+	// Enabled turns the native-queue hand-off on. Default off.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Repos restricts the hand-off to these repositories (owner/repo,
+	// case-insensitive). Empty means every watched repository once Enabled.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// SkipCurrentBaseGate lets a queue-enabled base bypass the
+	// auto_merge.require_current_base gate and the behind update-branch,
+	// because the merge group re-tests the merged result and a new head
+	// would drop the PR from the queue. Default off: the gate stays in
+	// force on queue bases exactly as on any other base.
+	SkipCurrentBaseGate bool `yaml:"skip_current_base_gate,omitempty" json:"skip_current_base_gate,omitempty"`
+	// ProbeTTL bounds how long a base branch's "has a merge queue" answer
+	// is reused before it is re-read from GraphQL. 0/unset means
+	// DefaultNativeMergeQueueProbeTTL.
+	ProbeTTL time.Duration `yaml:"probe_ttl,omitempty" json:"probe_ttl,omitempty"`
+}
+
+// DefaultNativeMergeQueueProbeTTL is how long a base branch's merge-queue
+// probe is cached when auto_merge.native_merge_queue.probe_ttl is unset.
+const DefaultNativeMergeQueueProbeTTL = 30 * time.Minute
+
+// RepoSet is auto_merge.native_merge_queue.repos as a lower-cased membership
+// map; nil means the allow-list is empty (every repo once Enabled).
+func (n NativeMergeQueueAutoMergeConfig) RepoSet() map[string]bool {
+	return repoListSet(n.Repos)
+}
+
+// EnabledFor reports whether repo (owner/repo, matched case-insensitively)
+// may hand PRs to a native merge queue: Enabled and either no allow-list or
+// listed in it.
+func (n NativeMergeQueueAutoMergeConfig) EnabledFor(repo string) bool {
+	if !n.Enabled {
+		return false
+	}
+	set := n.RepoSet()
+	if len(set) == 0 {
+		return true
+	}
+	return set[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// EffectiveProbeTTL is probe_ttl with the default applied.
+func (n NativeMergeQueueAutoMergeConfig) EffectiveProbeTTL() time.Duration {
+	if n.ProbeTTL <= 0 {
+		return DefaultNativeMergeQueueProbeTTL
+	}
+	return n.ProbeTTL
 }

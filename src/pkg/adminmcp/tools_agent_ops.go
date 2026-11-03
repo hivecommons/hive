@@ -61,13 +61,69 @@ func (agentResumeOp) Description() string {
 	return "Resume one agent through POST /api/resume/{agent}."
 }
 func (agentResumeOp) InputSchema() map[string]any { return agentOpSchema() }
-func (agentResumeOp) Preview(_ context.Context, args map[string]any) (WritePreview, error) {
+func (op agentResumeOp) Preview(ctx context.Context, args map[string]any) (WritePreview, error) {
+	return op.PreviewWithProvider(ctx, args, nil)
+}
+
+// PreviewWithProvider discloses the pause-ownership claim handleResume stamps
+// (#5706) unless the agent is already operator-owned. When ownership cannot be
+// read the line is shown, since resume would claim it unless proven otherwise;
+// when the capped agent list hides the agent the line is hedged.
+func (agentResumeOp) PreviewWithProvider(ctx context.Context, args map[string]any, provider Provider) (WritePreview, error) {
 	agent, err := requiredString(args, "agent")
 	if err != nil {
 		return WritePreview{}, err
 	}
 	path := "/api/resume/" + url.PathEscape(agent)
-	return WritePreview{Operation: WriteOpAgentResume, Summary: "Resume agent " + agent, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: []string{"The named agent may accept work again."}, WideningDisclosure: "No widening: this operation targets exactly one named agent.", ConfirmationMessage: "Confirm resuming agent " + agent + ".", Details: map[string]any{"agent": agent}}, nil
+	effects := []string{"The named agent may accept work again."}
+	switch agentPauseOwnership(ctx, provider, agent) {
+	case pauseOwnershipUnowned:
+		effects = append(effects, "If the agent is paused, resume claims operator ownership of this agent's pause state (`pause_owner: operator`), so the ACMM pack visibility sweep will no longer pause it.")
+	case pauseOwnershipUnknown:
+		effects = append(effects, "If the agent is paused, resume may claim operator ownership of this agent's pause state (`pause_owner: operator`) unless it is already operator-owned, so the ACMM pack visibility sweep would no longer pause it; current ownership could not be determined because the agents list was truncated.")
+	}
+	return WritePreview{Operation: WriteOpAgentResume, Summary: "Resume agent " + agent, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: effects, WideningDisclosure: "No widening: this operation targets exactly one named agent.", ConfirmationMessage: "Confirm resuming agent " + agent + ".", Details: map[string]any{"agent": agent}}, nil
+}
+
+type pauseOwnership int
+
+const (
+	pauseOwnershipUnowned pauseOwnership = iota
+	pauseOwnershipOperator
+	pauseOwnershipUnknown
+)
+
+func agentPauseOwnership(ctx context.Context, provider Provider, agent string) pauseOwnership {
+	if provider == nil {
+		return pauseOwnershipUnowned
+	}
+	data, err := provider.Read(ctx, ToolAgentsList, map[string]any{"limit": MaxResultLimit})
+	if err != nil {
+		return pauseOwnershipUnowned
+	}
+	truncated := false
+	if m, ok := data.(map[string]any); ok {
+		truncated, _ = m["truncated"].(bool)
+		if items, ok := m["items"]; ok {
+			data = items
+		} else {
+			data = m["agents"]
+		}
+	}
+	list, _ := data.([]any)
+	for _, item := range list {
+		entry, _ := item.(map[string]any)
+		if entry["name"] == agent {
+			if entry["pauseOwner"] == "operator" {
+				return pauseOwnershipOperator
+			}
+			return pauseOwnershipUnowned
+		}
+	}
+	if truncated {
+		return pauseOwnershipUnknown
+	}
+	return pauseOwnershipUnowned
 }
 
 func (agentNudgeOp) Name() string { return WriteOpAgentNudge }

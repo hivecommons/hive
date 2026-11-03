@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // verdictSettleTimeout bounds the detached GitHub work settleIssueFromVerdict
@@ -205,18 +206,53 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
 		return ghpkg.ErrNoGitHubClient
 	}
-	label := ghpkg.CoveredByPRLabel
-	color := "1d76db"
-	desc := "Hive verified that an open PR references or claims this issue; still actionable until confirmed"
-	if claim.MergedPR {
-		label = ghpkg.LikelyDoneLabel
-		color = "0e8a16"
-		desc = "Hive verified that a merged PR references or claims this issue; pending confirmation"
+	if !claim.MergedPR {
+		// The open PR covering the issue is a fact for the stage engine
+		// (ADR-0025): it derives stage/040-covered-by-pr (hivecommons/hive#12436)
+		// and the issue stage reconciler keeps it in step from the next
+		// enumeration on (the PR's own stage is never mirrored onto the
+		// issue, hivecommons/hive#12451).
+		gh := h.server.deps.GHClient
+		if err := gh.EnsureCoveredByPRLabel(ctx, repo); err != nil {
+			return err
+		}
+		prRepo := claim.PRRepo
+		if prRepo == "" {
+			prRepo = repo
+		}
+		return gh.StageFacts().CoveredBy(ctx, gh.IssueStageRef(repo, number), gh.PRStageRef(prRepo, claim.PRNumber))
 	}
-	if err := h.server.deps.GHClient.EnsureIssueLabel(ctx, repo, label, color, desc); err != nil {
+	label := ghpkg.LikelyDoneLabel
+	if err := h.server.deps.GHClient.EnsureIssueLabel(ctx, repo, label, ghpkg.LikelyDoneLabelColor, ghpkg.LikelyDoneLabelDescription); err != nil {
 		return err
 	}
 	return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{label})
+}
+
+// noteAlreadyDoneUnverified posts the claim-worded comment for an already-done
+// verdict with no verifiable evidence. It applies no label: the already-done
+// label means verified, and hive/likely-done means an API-verified merged PR
+// (the claim-label sync removes it from any issue without one).
+func (h *ContributeWSHub) noteAlreadyDoneUnverified(ctx context.Context, repo string, number int, reporter string, hold time.Duration) error {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return ghpkg.ErrNoGitHubClient
+	}
+	label := config.HubConfig{}.ContributeAlreadyDoneLabelOrDefault()
+	if h.server.deps.Config != nil {
+		label = h.server.deps.Config.Hub.ContributeAlreadyDoneLabelOrDefault()
+	}
+	who := "a contributor"
+	if r := strings.TrimSpace(reporter); r != "" {
+		who = "contributor " + r
+	}
+	body := fmt.Sprintf("Hive: %s reports this issue may already be resolved, but cited no PR or commit the hive could verify, so it is not labelled `%s`. "+
+		"It is withheld from contributor offers for up to %d days (new activity on the issue lifts that hold sooner); a maintainer should confirm whether work remains.",
+		who, label, int(hold.Hours()/24))
+	ok, err := h.server.deps.GHClient.IssueCommentsContain(ctx, repo, number, body)
+	if err != nil || ok {
+		return err
+	}
+	return h.server.deps.GHClient.CreateIssueComment(ctx, repo, number, body)
 }
 
 func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string, number int, claim ghpkg.IssueClaim, reporter string, closeIssue bool) error {
@@ -225,6 +261,16 @@ func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string,
 	}
 	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
 		return ghpkg.ErrNoGitHubClient
+	}
+	if closeIssue {
+		client := h.server.deps.GHClient
+		item, err := client.WritebackItemForNumber(ctx, repo, number)
+		if err != nil {
+			return err
+		}
+		if d := client.WritebackAllowed(repo, item, writeback.KindIssueClose, "close issue already resolved by a merged PR"); !d.Allowed {
+			return fmt.Errorf("%w: %s", writeback.ErrSuppressed, d.Detail)
+		}
 	}
 	label := config.HubConfig{}.ContributeAlreadyDoneLabelOrDefault()
 	if h.server.deps.Config != nil {
@@ -255,7 +301,7 @@ func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string,
 	if !closeIssue {
 		return nil
 	}
-	return h.server.deps.GHClient.CloseIssue(ctx, repo, number, ghpkg.IssueCloseOptions{
+	return h.server.deps.GHClient.CloseIssue(ctx, repo, number, ghpkg.IssueCloseOptions{ // writeback:gated
 		StateReason: ghpkg.IssueStateReasonCompleted,
 	})
 }

@@ -60,6 +60,9 @@ on:
     # found. A push-only trigger cannot catch that: the vulnerability appears
     # in the database, not in a diff.
     - cron: '0 6 * * 1'
+    # Nightly full run: harmless today, and preserves a safety net if the
+    # project later decides to skip duplicate post-merge push runs.
+    - cron: '17 6 * * *'
     # Also weekly for notice-drift: an upstream dependency's LICENSE file can
     # change (a relicense, a typo fix) with go.mod/go.sum untouched, which a
     # push-only trigger would never catch either.
@@ -85,6 +88,7 @@ jobs:
   required-context-scope:
     name: required context scope
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       run-go-security: ${{ steps.scope.outputs.run-go-security }}
     steps:
@@ -140,7 +144,10 @@ jobs:
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: govulncheck (known vulnerabilities)
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -156,6 +163,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # Installed by version rather than via a marketplace action so the tool
       # itself is pinned and the supply chain is one hop shorter.
@@ -164,14 +176,17 @@ jobs:
 
       - name: Scan
         working-directory: src
-        run: govulncheck ./...
+        run: govulncheck ./... ./crux/...
 
   gosec:
     needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: gosec (insecure patterns)
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -190,6 +205,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # Version floor is load-bearing: gosec v2.21.4 pins golang.org/x/tools
       # v0.25.0, which does not COMPILE under Go 1.25 ("invalid array length").
@@ -218,14 +238,17 @@ jobs:
       - name: Scan
         working-directory: src
         continue-on-error: true
-        run: gosec -exclude-generated ./...
+        run: gosec -exclude-generated ./... ./crux/...
 
   golangci-lint:
     needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: golangci-lint
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -241,6 +264,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # skip-cache: the action's own cache save/restore is the same multi-GB
       # tar problem as setup-go's; the runners already keep GOCACHE warm.
@@ -248,6 +276,9 @@ jobs:
         with:
           version: v2.13.1
           working-directory: src
+          # src/go.work: ./... covers the root module only; the nested Crux
+          # module (#13536) is addressed as ./crux/... from src/.
+          args: ./... ./crux/...
           skip-cache: true
 
   action-pins:
@@ -255,6 +286,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -262,6 +294,8 @@ jobs:
       # caught when the workflow RUNS. tagged-release.yml shipped one (#4908), so every
       # tagged release failed at "Prepare all required actions" — discovered
       # only when someone tried to cut a release.
+      - name: Action-pins gate self-test
+        run: bash src/scripts/test-check-action-pins.sh
       - name: Check every pinned action SHA exists
         env:
           GH_TOKEN: ${{ github.token }}
@@ -272,6 +306,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
     # WHY THIS JOB EXISTS: a CNCF General Technical Review asks how the
     # project ensures third-party attribution stays correct and complete. A
     # generated NOTICE that can silently go stale is worse than no NOTICE at
@@ -323,6 +358,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       - name: Regenerate NOTICE from the current module graph
         run: src/scripts/generate-notice.sh /tmp/NOTICE.generated

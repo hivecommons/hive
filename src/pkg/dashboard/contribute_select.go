@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,12 @@ const (
 	// token_mint_failed so an operator reading the reason knows to fix the repo
 	// list rather than the App credential.
 	taskUnavailableRepoUnmintable = "repo_unmintable"
+	// taskUnavailableAppNotInstalled: the hive's GitHub App has no installation
+	// for its org (installation_id 0), so no token can be minted for any repo
+	// (#14002). Not a repo-list problem and not a credential problem: the App
+	// has to be installed on the org. The negative-ack carries a Message naming
+	// the org and the install link so the contributor can tell the operator.
+	taskUnavailableAppNotInstalled = "app_not_installed"
 	// taskUnavailableLeasePersistFailed: the assignment's server-issued lease
 	// could not be written to the lease registry on disk (#8287). The grant is
 	// refused rather than handed out, because a lease that exists only in memory
@@ -106,6 +113,16 @@ const (
 	// completion or genuinely-attempted (slow) failure.
 	taskUnavailableFailureStreak          = "contributor_failure_streak"
 	taskUnavailableExternalDispatchFailed = "external_dispatch_failed"
+	// taskUnavailableNoSelectedWork (hivecommons/hive#12805): the connection
+	// acknowledged a selected repository scope and nothing admissible remains
+	// inside it — out-of-scope work may exist but is left for other
+	// contributors. Also sent while a ready's scope_version differs from the
+	// acknowledged one (the relay is mid-reload; it waits).
+	taskUnavailableNoSelectedWork = "no_selected_work"
+	// taskUnavailableRepoScopeInvalid (#12805): the connection's latest
+	// repo_scope was malformed; it is served nothing until a valid scope is
+	// acknowledged (fail closed).
+	taskUnavailableRepoScopeInvalid = "repo_scope_invalid"
 )
 
 // rateWindowCounts returns how many task assignments the given identity has been
@@ -365,20 +382,37 @@ func (h *ContributeWSHub) markRepoUnmintable(repo string, now time.Time) {
 // repoUnmintable reports whether repo is inside its post-mint-failure cooldown,
 // dropping the record once it has lapsed so a fixed repo is re-offered.
 func (h *ContributeWSHub) repoUnmintable(repo string, now time.Time) bool {
+	return !h.repoUnmintableUntil(repo, now).IsZero()
+}
+
+// repoUnmintableUntil shares the recorded exclusion and its expiry with the
+// read-only queue projection. It never attempts a token mint.
+func (h *ContributeWSHub) repoUnmintableUntil(repo string, now time.Time) time.Time {
 	h.unmintableMu.Lock()
 	defer h.unmintableMu.Unlock()
 	until, ok := h.unmintableRepos[repo]
 	if !ok {
-		return false
+		return time.Time{}
 	}
 	if !now.Before(until) {
 		delete(h.unmintableRepos, repo)
-		return false
+		return time.Time{}
 	}
-	return true
+	return until
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
+	// hivecommons/hive#12805: an invalid or not-yet-acknowledged contributor
+	// repository scope fails closed — nothing is leased or minted at all.
+	if reason := repoScopeGateReason(c); reason != "" {
+		return h.taskUnavailable(reason)
+	}
+	// hivecommons/hive#12436: "contributors should clean up their mess before
+	// taking on new stuff" — a contributor's queued red-PR fixes are served
+	// before any new issue at every task boundary.
+	if msg := h.selectFixTask(c); msg != nil {
+		return msg
+	}
 	// #7869: one selection may drop a candidate whose repository the App cannot
 	// mint a token for and scan again; skippedUnmintable counts those drops so the
 	// re-scan is bounded and an empty re-scan can name the real cause.
@@ -684,13 +718,15 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// (kubestellar/hive#4245). Every exclusion below keys on ref.Key(), so
 		// two zero-numbered external items are distinct work rather than one
 		// shared "repo#0".
-		ref    worksource.Ref
-		title  string
-		url    string
-		stage  string
-		labels []string
-		lane   string
-		isOwn  bool
+		ref          worksource.Ref
+		title        string
+		body         string
+		targetBranch string
+		url          string
+		stage        string
+		labels       []string
+		lane         string
+		isOwn        bool
 		// interestMatch is true when the issue carries a label the contributor has
 		// opted into (#2637). It is a SOFT priority tier below own-work: matching
 		// work is offered first, but a contributor with no match still gets other
@@ -711,6 +747,16 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	}
 	var candidates []candidate
 	capabilityMismatchSeen := false
+	unmintableRepoSeen := false
+	// #12805: the connection's acknowledged repository scope. Nil / mode "all"
+	// leaves selection exactly as before; "selected" skips every repo outside
+	// it here, before any lease or mint, so out-of-scope work stays available
+	// to other contributors.
+	repoScope := acknowledgedRepoScope(c)
+	scopeHost := repoScopeDefaultHost
+	if repoScope.restricts() && h.server.deps != nil && h.server.deps.Config != nil {
+		scopeHost = h.server.deps.Config.GitHub.Forge()
+	}
 
 	// One ledger snapshot for this whole selection pass (#3845), shared with the
 	// contributor-neutral admission gate below so ReadyQueue and selectTask judge
@@ -722,10 +768,14 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		if len(repo.ActionableIssues) == 0 {
 			continue
 		}
-		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
+		if config.RepoMatchesAny(repo.Full, repo.Name, disabledRepos) {
+			continue
+		}
+		if !repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full)) {
 			continue
 		}
 		if h.repoUnmintable(repo.Full, time.Now()) {
+			unmintableRepoSeen = true
 			// #7869: the App could not mint a token scoped to this repo moments ago
 			// (renamed / deleted / dropped from the installation). Offering its items
 			// would fail the same way; skip the whole repo until the cooldown lapses.
@@ -758,6 +808,17 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// its longer quarantine. This is the primary livelock fix — a failing
 			// issue at the head of the scan is no longer instantly re-admissible.
 			if h.isTaskInFailureCooldownKey(itemKey) {
+				return
+			}
+			// hivecommons/hive#13093: this contributor released the item
+			// without shipping recently; others may take it, not them.
+			if h.inReclaimCooldown(identityOf(c), itemKey) {
+				return
+			}
+			// hivecommons/hive#13579: an item contributors keep dropping is
+			// withheld from the contributor that dropped it for the cool-off
+			// (#13763); other contributors and the hive's agents still take it.
+			if _, ok := h.inContributorCoolOff(contributorFlapKey(contributorFlapIdentity(c), itemKey)); ok {
 				return
 			}
 			if activeIssues[itemKey] {
@@ -827,6 +888,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				issueClaim: issueClaim,
 				claimed:    claimed,
 			})
+			// An unchanged refusal was already logged on an earlier pass.
+			if !decision.admitted && !h.admissionSkipChanged(itemKey, decision) {
+				return
+			}
 			if !decision.admitted {
 				switch decision.reason {
 				case contributorAdmissionReasonOpenPRClaim:
@@ -835,6 +900,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
 						"merged", decision.claim.MergedPR,
 						"source", decision.claim.Source, "source_reporter", decision.claim.SourceReporter)
+				case contributorAdmissionReasonOpenPRLinked:
+					// #14799: the forge, not the ledger, says the fix is open.
+					h.logger.Info("[contribute-ws] claim skipped: open PR already linked",
+						"repo", repo.Full, "number", number,
+						"pr", decision.openPR.PRNumber, "pr_url", decision.openPR.PRURL, "pr_author", decision.openPR.PRAuthor)
 				case contributorAdmissionReasonIssueClaim:
 					// #8380: someone claimed the issue on the issue itself; the
 					// claim expires on its own, so the log names when.
@@ -882,6 +952,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				}
 				return
 			}
+			h.admissionSkipCleared(itemKey)
 			// Yank self-exclusion: an issue this SAME clanker was just yanked off is
 			// briefly skipped for it (yankSelfExcludeSeconds), so the immediate post-yank
 			// reassignment moves the clanker to genuinely different work instead of re-
@@ -897,6 +968,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			}
 
 			title, _ := issue["title"].(string)
+			body, _ := issue["body"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
 			lane, _ := issue["lane"].(string)
@@ -955,8 +1027,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				number:   number,
 				ref:      ref,
 				title:    title,
-				url:      url,
-				stage:    stage,
+				body:     body,
+				targetBranch: h.wrongBaseTargetBranchKey(
+					itemKey, issueUpdatedAtFromMap(issue)),
+				url:   url,
+				stage: stage,
 				// The issue's own labels travel with the candidate so the chosen
 				// task_assign can populate the Labels envelope field (kubestellar/
 				// hive#2393 item 8). They're already computed for filtering above.
@@ -987,6 +1062,14 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// "hub not ready". Send an explicit no_matching_work negative-ack.
 		if capabilityMismatchSeen {
 			return h.taskUnavailable(taskUnavailableCapabilityMismatch)
+		}
+		if unmintableRepoSeen {
+			// #14003: retain the recorded failure on later ready requests,
+			// not only in the selection call that discovered it.
+			return h.taskUnavailable(taskUnavailableRepoUnmintable)
+		}
+		if repoScope.restricts() {
+			return h.taskUnavailable(taskUnavailableNoSelectedWork)
 		}
 		return h.taskUnavailable(taskUnavailableNoMatchingWork)
 	}
@@ -1157,7 +1240,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	unlock()
 
 	if chosen.extEngine != "" {
-		prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, false, h.writingGuideSection())
+		prompt := buildTaskPromptForContributorWithIssue(chosen.ref, chosen.title, chosen.body,
+			chosen.targetBranch, false, h.writingGuideSection(), h.taskPromptRepoHints(chosen.repoFull))
 		if chosen.stage != "" {
 			prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)
 		}
@@ -1229,6 +1313,21 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// records a task that never shipped.
 		h.rollbackAssignment(c, taskID)
 
+		// #14002: installation_id 0 means the App is not installed on this
+		// hive's org at all. Without this check GitHub's 404 for installation 0
+		// is read below as a repo-scope failure and the contributor is told to
+		// fix the repo list. Nothing in this pass can be minted, so do not
+		// exclude the repo or scan again; name the real cause instead.
+		if errors.Is(err, ghpkg.ErrAppNotInstalled) {
+			org, installURL := h.appOrgAndInstallURL()
+			h.logger.Warn("[contribute-ws] GitHub App is not installed on this hive's org — "+
+				"no scoped token can be minted; install the App on the org or set github.installation_id",
+				"org", org, "install_url", installURL, "error", err)
+			msg := h.taskUnavailable(taskUnavailableAppNotInstalled)
+			msg.Message = appNotInstalledMessage(org, installURL)
+			return msg
+		}
+
 		// #7869: since C4 the token is scoped to the CANDIDATE'S repository, so a
 		// 422/404 from GitHub means that repo — renamed, deleted, or removed from
 		// the installation — cannot be minted for, and nothing else in the pass
@@ -1273,9 +1372,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// PRs in its repos read. A relay subscribed to two hives therefore gets each
 	// hive's guide on that hive's tasks. Unset renders nothing.
 	guide := h.writingGuideSection()
-	prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, canPush, guide)
+	hints := h.taskPromptRepoHints(chosen.repoFull)
+	prompt := buildTaskPromptForContributorWithIssue(chosen.ref, chosen.title, chosen.body,
+		chosen.targetBranch, canPush, guide, hints)
 	if requestedRole != "" {
-		prompt = buildRoleTaskPromptForContributor(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush, guide)
+		prompt = wrapRoleTaskPrompt(prompt, requestedRole, h.roleKickPrompt(requestedRole))
 	}
 	if chosen.stage != "" {
 		prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)
@@ -1334,6 +1435,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		Number:  chosen.number,
 		Title:   chosen.title,
 		URL:     chosen.url,
+		Forge:   repoScopeDefaultForge,
+		Host:    h.assignmentHost(),
 		// Source-aware identity (kubestellar/hive#4245). Additive: a GitHub
 		// assignment carries exactly the fields it always did, and these tell a
 		// relay working a Linear or Jira item what the item actually IS instead
@@ -1456,4 +1559,13 @@ func runStageFromIssueMap(issue map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// assignmentHost is the host segment stamped on task_assign, from the same
+// source the advertised repository-scope ids use.
+func (h *ContributeWSHub) assignmentHost() string {
+	if h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		return h.server.deps.Config.GitHub.Forge()
+	}
+	return repoScopeDefaultHost
 }

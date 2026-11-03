@@ -41,7 +41,7 @@ Process items in this priority order:
 
 ---
 
-### 2. For Each Item — Full Autonomous Workflow
+### 2. For Each Item — Autonomous Workflow
 
 #### 2a. Close Stalled Copilot PR (if one exists for this issue)
 

@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -22,6 +24,7 @@ func TestDefaultPersistPathsPinsCanonicalDataFiles(t *testing.T) {
 		TokenSparklineHistory: "/data/token-sparkline-history.json",
 		FactHistory:           "/data/fact-history.json",
 		CostHistory:           "/data/cost-history.json",
+		CostDailyRollup:       "/data/cost-daily-rollup.json",
 		TrendHistory:          "/data/trend-history.json",
 		BudgetWindowHistory:   "/data/budget-window-history.json",
 		ConvergenceSoak:       "/data/convergence-soak-history.json",
@@ -72,24 +75,24 @@ func TestIsHiveAgentAuthorRecognizesEffectiveAppBotAuthor(t *testing.T) {
 // leave all three empty so the hub reads no-signal exactly like a legacy spoke.
 func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	since := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 
-	failing := &agent.AgentProcess{BackendAuth: agent.BackendAuthState{
-		Status:    agent.BackendAuthTokenExpired,
+	failing := &crux.Process{BackendAuth: crux.BackendAuthState{
+		Status:    crux.BackendAuthTokenExpired,
 		Since:     since,
 		LastError: "401 token expired",
 	}}
 	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", failing, nil)
-	if act.BackendAuthStatus != agent.BackendAuthTokenExpired ||
+	if act.BackendAuthStatus != crux.BackendAuthTokenExpired ||
 		!act.BackendAuthSince.Equal(since) ||
 		act.BackendAuthLastError != "401 token expired" {
 		t.Errorf("failing backend auth did not ride through: status=%q since=%v lastError=%q",
 			act.BackendAuthStatus, act.BackendAuthSince, act.BackendAuthLastError)
 	}
 
-	for name, proc := range map[string]*agent.AgentProcess{
-		"explicit ok":      {BackendAuth: agent.BackendAuthState{Status: agent.BackendAuthOK, Since: since, LastError: "stale"}},
+	for name, proc := range map[string]*crux.Process{
+		"explicit ok":      {BackendAuth: crux.BackendAuthState{Status: crux.BackendAuthOK, Since: since, LastError: "stale"}},
 		"never classified": {},
 	} {
 		act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
@@ -104,9 +107,9 @@ func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 // never-started process is asserted in TestAgentActivityForRidesPauseProvenance).
 func TestAgentActivityForCarriesStartedAt(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	started := time.Date(2026, 9, 10, 6, 30, 0, 0, time.UTC)
-	proc := &agent.AgentProcess{StartedAt: &started}
+	proc := &crux.Process{StartedAt: &started}
 	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
 	if !act.StartedAt.Equal(started) {
 		t.Errorf("StartedAt = %v, want %v", act.StartedAt, started)
@@ -118,12 +121,12 @@ func TestAgentActivityForCarriesStartedAt(t *testing.T) {
 // crash-loop detection sees the same numbers the spoke recorded.
 func TestAgentActivityForCarriesRestartTelemetry(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	lastAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	mgr.SeedRestartTelemetry("scanner", 5,
-		[]agent.RestartEvent{{At: lastAt, Reason: "pane stall"}}, "seed fallback")
+		[]crux.RestartEvent{{At: lastAt, Reason: "pane stall"}}, "seed fallback")
 
-	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", &agent.AgentProcess{}, nil)
+	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", &crux.Process{}, nil)
 	if act.Restarts.Total != 5 {
 		t.Errorf("Restarts.Total = %d, want 5", act.Restarts.Total)
 	}

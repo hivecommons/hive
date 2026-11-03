@@ -1,0 +1,1 @@
+- Opt-in portfolio search indexer (`search.enabled`, default off): every 30 minutes it incrementally indexes review evidence bundles, verdict findings, sentinel hits, complexity snapshots, beads and knowledge facts into `/data/search`, scrubbing secrets first, with `search.max_index_bytes_per_repo`, `search.max_memory_bytes` and `search.retention` (months, default 24).

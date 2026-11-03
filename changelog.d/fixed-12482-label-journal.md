@@ -1,0 +1,1 @@
+- Recheck GitHub label state before accepting a cached mutation-journal success, so repeated label toggles and claim expirations remove stale `claimed` labels while retries still deduplicate ([#12482](https://github.com/hivecommons/hive/issues/12482)).

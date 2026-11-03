@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -42,8 +42,10 @@ func TestCadenceTooltipAndCardAgreeOnNextKick(t *testing.T) {
 	lastKick := time.Now().Add(-40 * time.Minute)
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -54,11 +56,11 @@ func TestCadenceTooltipAndCardAgreeOnNextKick(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:     "scanner",
 			Config:   config.AgentConfig{Backend: "claude"},
-			State:    agent.StateRunning,
+			State:    crux.StateRunning,
 			LastKick: &lastKick,
 		},
 	}
@@ -133,8 +135,10 @@ func TestCadenceTooltipNonActiveModesOmitNext(t *testing.T) {
 	lastKick := time.Now().Add(-40 * time.Minute)
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -145,11 +149,11 @@ func TestCadenceTooltipNonActiveModesOmitNext(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:     "scanner",
 			Config:   config.AgentConfig{Backend: "claude"},
-			State:    agent.StateRunning,
+			State:    crux.StateRunning,
 			LastKick: &lastKick,
 		},
 	}

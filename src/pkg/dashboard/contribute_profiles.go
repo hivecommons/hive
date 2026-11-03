@@ -135,17 +135,27 @@ type ContributorOperatorMessage struct {
 }
 
 type ContributorProfile struct {
-	GitHubUsername    string `json:"github_username"`
-	ContributorID     string `json:"contributor_id"`
-	RegistrationToken string `json:"registration_token"`
-	TokenPlain        string `json:"registration_token_plain,omitempty"`
-	TrustTier         string `json:"trust_tier"`
-	PreferredRole     string `json:"preferred_role,omitempty"`
-	CLIBackend        string `json:"cli_backend,omitempty"`
-	Model             string `json:"model,omitempty"`
-	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
-	KnowledgeLoaded   *bool  `json:"knowledge_loaded,omitempty"`
-	KnowledgeError    string `json:"knowledge_error,omitempty"`
+	GitHubUsername    string    `json:"github_username"`
+	ContributorID     string    `json:"contributor_id"`
+	RegistrationToken string    `json:"registration_token"`
+	TokenIssuedAt     time.Time `json:"token_issued_at"`
+	TokenExpiresAt    time.Time `json:"token_expires_at"`
+	TokenLastUsedAt   time.Time `json:"token_last_used_at"`
+	TokenRotationDue  bool      `json:"token_rotation_due,omitempty"`
+	TokenPlain        string    `json:"registration_token_plain,omitempty"`
+	TrustTier         string    `json:"trust_tier"`
+	// TierHistory is the append-only provenance of TrustTier: one entry per
+	// real change (registration, operator set/revoke, auto-promotion) naming
+	// who moved the tier, when, from what and why. It is what answers "who
+	// changed this contributor to trusted?" — every writer goes through
+	// applyContributorTierChange, which also refuses to record a no-op.
+	TierHistory     []ContributorTierChange `json:"tier_history,omitempty"`
+	PreferredRole   string                  `json:"preferred_role,omitempty"`
+	CLIBackend      string                  `json:"cli_backend,omitempty"`
+	Model           string                  `json:"model,omitempty"`
+	ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
+	KnowledgeLoaded *bool                   `json:"knowledge_loaded,omitempty"`
+	KnowledgeError  string                  `json:"knowledge_error,omitempty"`
 	// AdvisorModel / AdvisorEffort: the last-reported second model that
 	// reviewed this contributor's work (hivecommons/hive#7760). Display only.
 	AdvisorModel  string `json:"advisor_model,omitempty"`
@@ -160,9 +170,16 @@ type ContributorProfile struct {
 	// who invited this person via a trusted invite link (issue #2598). It is
 	// pure attribution: it never affects TrustTier (an invitee always joins as
 	// "newcomer"). Empty for self-registered contributors.
-	InvitedBy      string `json:"invited_by,omitempty"`
-	RegisteredAt   string `json:"registered_at"`
-	TasksCompleted int    `json:"total_tasks_completed"`
+	InvitedBy string `json:"invited_by,omitempty"`
+	// GitHubVerifiedAt is when the contributor last proved they own
+	// GitHubUsername by presenting a GitHub token for that login
+	// (POST /api/contribute/reissue-token). Registration alone is
+	// self-asserted and leaves it empty. Contributor claims carry
+	// verified=true only when this is set, and the contributor-lane
+	// auto-merge tier requires it (#12041).
+	GitHubVerifiedAt string `json:"github_verified_at,omitempty"`
+	RegisteredAt     string `json:"registered_at"`
+	TasksCompleted   int    `json:"total_tasks_completed"`
 	// TasksWithPR counts only completions that reported a pull request.
 	// Auto-promotion reads this rather than TasksCompleted, so write access is
 	// never granted for completions where nothing was shown to have shipped.
@@ -213,9 +230,13 @@ type ContributorProfile struct {
 	Collaborators    []CollaboratorRecord         `json:"collaborators,omitempty"`
 	OperatorMessages []ContributorOperatorMessage `json:"operator_messages,omitempty"`
 	Active           bool                         `json:"active,omitempty"`
-	CurrentTask      *WSTaskAssign                `json:"current_task,omitempty"`
-	ActiveTasks      []WSTaskAssign               `json:"active_tasks,omitempty"`
-	Sessions         int                          `json:"sessions,omitempty"`
+	// Online is the tracker's presence verdict (heartbeat within
+	// governor.labels.stage.presence_window); filled on the list response
+	// only, never persisted.
+	Online      bool           `json:"online,omitempty"`
+	CurrentTask *WSTaskAssign  `json:"current_task,omitempty"`
+	ActiveTasks []WSTaskAssign `json:"active_tasks,omitempty"`
+	Sessions    int            `json:"sessions,omitempty"`
 	// Version is the profile's optimistic-concurrency token (hivecommons/hive H2,
 	// CWE-613/639). It is bumped on every persisted change. A caller that loaded the
 	// profile at version N may only persist its edit if the on-disk version is still
@@ -306,6 +327,10 @@ func saveContributorProfile(p *ContributorProfile) error {
 // A first-ever write (no disk file) or a legacy unversioned profile (Version 0)
 // proceeds and is upgraded to version 1+.
 func saveContributorProfileCAS(p *ContributorProfile, adminOverride bool) error {
+	return saveContributorProfileTokenCAS(p, adminOverride, false)
+}
+
+func saveContributorProfileTokenCAS(p *ContributorProfile, adminOverride, tokenUpdate bool) error {
 	if strings.Contains(p.GitHubUsername, "..") || strings.Contains(p.GitHubUsername, "/") || strings.Contains(p.GitHubUsername, "\\") {
 		return fmt.Errorf("invalid username for save")
 	}
@@ -323,8 +348,14 @@ func saveContributorProfileCAS(p *ContributorProfile, adminOverride bool) error 
 		// the disk. A zero base version (legacy/unversioned caller) is exempt so
 		// existing call sites keep working; those saves still get the terminal-tier
 		// fence above.
-		if p.Version != 0 && p.Version < cur.Version {
+		if (p.Version != 0 && p.Version < cur.Version) || (tokenUpdate && p.Version != cur.Version) {
 			return errProfileConflict
+		}
+		if !tokenUpdate {
+			p.RegistrationToken = cur.RegistrationToken
+			p.TokenIssuedAt = cur.TokenIssuedAt
+			p.TokenExpiresAt = cur.TokenExpiresAt
+			p.TokenLastUsedAt = cur.TokenLastUsedAt
 		}
 		p.Version = cur.Version
 	}
@@ -377,22 +408,24 @@ func listContributorProfiles() []ContributorProfile {
 	return profiles
 }
 
-func createContributorProfile(username string) (*ContributorProfile, string) {
+func createContributorProfile(username string, policies ...contributorTokenPolicy) (*ContributorProfile, string) {
 	cid := "c-" + randomHex(6)
 	token := randomHex(32)
+	now := time.Now().UTC()
 	p := &ContributorProfile{
 		GitHubUsername:    username,
 		ContributorID:     cid,
 		RegistrationToken: sha256Hex(token),
 		TokenPlain:        token,
-		TrustTier:         "newcomer",
-		RegisteredAt:      time.Now().UTC().Format(time.RFC3339),
+		RegisteredAt:      now.Format(time.RFC3339),
 		RateLimits: ContributorRateLimits{
 			MaxConcurrent: 1,
 			MaxPerHour:    3,
 			MaxPerDay:     10,
 		},
 	}
+	applyContributorTierChange(p, contributorTierNewcomer, tierChangeByRegistration, "self-registered", tierChangeSourceRegistration, now)
+	policyOrDefault(policies).issue(p, now)
 	_ = saveContributorProfile(p)
 	return p, token
 }
@@ -426,6 +459,24 @@ func findContributor(id string) *ContributorProfile {
 	return nil
 }
 
+// ContributorTrustTierByLogin returns the operator-set trust tier recorded in
+// this hive's contributor registry for a GitHub login (case-insensitive), or
+// ok=false when the login has no profile. It is the registry read behind the
+// contributor-lane auto-merge registry admission path (automerge.Options.
+// ContributorRegistryTier): the tier on the profile, not a claim marker, is
+// the operator's statement of trust for the login.
+func ContributorTrustTierByLogin(login string) (tier string, ok bool) {
+	login = strings.TrimSpace(strings.TrimPrefix(login, "@"))
+	if login == "" {
+		return "", false
+	}
+	p := findContributor(login)
+	if p == nil || !strings.EqualFold(p.GitHubUsername, login) {
+		return "", false
+	}
+	return p.TrustTier, true
+}
+
 func registrationTokenFromAuthorization(r *http.Request) string {
 	authz := r.Header.Get("Authorization")
 	if strings.HasPrefix(authz, "Bearer ") {
@@ -439,31 +490,121 @@ func registrationTokenFromAuthorization(r *http.Request) string {
 	return ""
 }
 
-func contributorProfileFromRegistrationToken(token string) *ContributorProfile {
-	if token == "" {
-		return nil
-	}
-	tokenHash := sha256Hex(token)
-	profiles := listContributorProfiles()
-	for i := range profiles {
-		if secureCompare(profiles[i].RegistrationToken, tokenHash) {
-			return &profiles[i]
-		}
-	}
-	return nil
-}
-
 func (s *Server) contributorProfileFromAuthorization(r *http.Request) *ContributorProfile {
-	return contributorProfileFromRegistrationToken(registrationTokenFromAuthorization(r))
+	p, _ := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
+	return p
 }
 
 // reissueContributorToken generates a new registration token for an existing
 // contributor, invalidating the previous one. Returns the new plaintext token.
-func reissueContributorToken(p *ContributorProfile) string {
+// Its only caller (handleContributeReissueToken) has just validated a GitHub
+// token for p.GitHubUsername, so the login is recorded as verified (#12041).
+func reissueContributorToken(p *ContributorProfile, policies ...contributorTokenPolicy) string {
 	const tokenBytes = 32 // 256-bit token
 	newToken := randomHex(tokenBytes)
 	p.RegistrationToken = sha256Hex(newToken)
 	p.TokenPlain = ""
-	_ = saveContributorProfile(p)
+	p.GitHubVerifiedAt = time.Now().UTC().Format(time.RFC3339)
+	policyOrDefault(policies).issue(p, time.Now().UTC())
+	if err := saveContributorProfileTokenCAS(p, false, true); err != nil {
+		return ""
+	}
 	return newToken
+}
+
+// Trust tier names the registry stores. The admin handler validates against
+// this set; the lane and relay read the raw string.
+const (
+	contributorTierNewcomer    = "newcomer"
+	contributorTierContributor = "contributor"
+	contributorTierTrusted     = "trusted"
+	contributorTierMerger      = "merger"
+	contributorTierAdvisor     = "advisor"
+	contributorTierRevoked     = "revoked"
+)
+
+// Actors and sources recorded on a ContributorTierChange. By is an operator
+// login for operator changes; these constants cover the machine writers.
+const (
+	tierChangeByAutoPromotion = "hive:auto-promotion"
+	tierChangeByRegistration  = "hive:registration"
+
+	tierChangeSourceOperator      = "operator"
+	tierChangeSourceAutoPromotion = "auto-promotion"
+	tierChangeSourceRegistration  = "registration"
+
+	// contributorTierHistoryMax bounds the per-profile history; a tier is
+	// changed by hand a handful of times over a contributor's life, so the
+	// oldest entries are dropped only under pathological churn.
+	contributorTierHistoryMax = 50
+	// contributorTierReasonMax bounds the operator-supplied reason text.
+	contributorTierReasonMax = 240
+)
+
+// auditActionContributorTierChanged is the audit.jsonl action every tier
+// change writes, alongside the TierHistory entry on the profile.
+const auditActionContributorTierChanged = "contributor-tier-changed"
+
+// ContributorTierChange is one entry of ContributorProfile.TierHistory.
+type ContributorTierChange struct {
+	Tier   string `json:"tier"`
+	Prev   string `json:"prev,omitempty"`
+	At     string `json:"at"`
+	By     string `json:"by"`
+	Reason string `json:"reason,omitempty"`
+	Source string `json:"source"`
+}
+
+// applyContributorTierChange moves p to tier and records the change on
+// TierHistory. It returns the entry and true when the tier actually changed;
+// a write of the tier the profile already holds is a no-op that touches
+// neither TrustTier nor the history, so repeated saves never spam it.
+func applyContributorTierChange(p *ContributorProfile, tier, by, reason, source string, now time.Time) (ContributorTierChange, bool) {
+	if p == nil {
+		return ContributorTierChange{}, false
+	}
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	if tier == "" || tier == p.TrustTier {
+		return ContributorTierChange{}, false
+	}
+	reason = strings.TrimSpace(sanitizeString(reason))
+	if len(reason) > contributorTierReasonMax {
+		reason = reason[:contributorTierReasonMax]
+	}
+	ch := ContributorTierChange{
+		Tier:   tier,
+		Prev:   p.TrustTier,
+		At:     now.UTC().Format(time.RFC3339),
+		By:     strings.TrimSpace(by),
+		Reason: reason,
+		Source: source,
+	}
+	p.TrustTier = tier
+	p.TierHistory = append(p.TierHistory, ch)
+	if n := len(p.TierHistory); n > contributorTierHistoryMax {
+		p.TierHistory = append([]ContributorTierChange(nil), p.TierHistory[n-contributorTierHistoryMax:]...)
+	}
+	return ch, true
+}
+
+// currentTierChange is the history entry that set the tier the profile holds
+// now, or false when the tier predates history (legacy profile) or the
+// history was rewritten past it.
+func currentTierChange(p *ContributorProfile) (ContributorTierChange, bool) {
+	if p == nil {
+		return ContributorTierChange{}, false
+	}
+	for i := len(p.TierHistory) - 1; i >= 0; i-- {
+		if p.TierHistory[i].Tier == p.TrustTier {
+			return p.TierHistory[i], true
+		}
+	}
+	return ContributorTierChange{}, false
+}
+
+// tierChangeAuditDetail is the audit.jsonl detail for a tier change: the
+// same fields as the TierHistory entry, in the key=value form the rest of
+// the log uses.
+func tierChangeAuditDetail(username string, ch ContributorTierChange) string {
+	return auditDetail("username", username, "tier", ch.Tier, "prev", ch.Prev, "by", ch.By, "reason", ch.Reason, "source", ch.Source)
 }

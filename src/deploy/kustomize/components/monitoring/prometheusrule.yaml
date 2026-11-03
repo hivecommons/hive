@@ -1,0 +1,48 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hive
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+spec:
+  groups:
+    - name: hive
+      rules:
+        - alert: HiveMetricsDown
+          expr: up{job="hive"} == 0 or absent(up{job="hive"})
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Hive metrics endpoint is down
+            description: >-
+              Prometheus has not been able to scrape the Hive /metrics endpoint
+              (instance {{ $labels.instance }}) for 10 minutes. The pod may be
+              down, or HIVE_METRICS_TOKEN may not match the scrape credentials.
+            runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivemetricsdown
+        - alert: HiveCostBurnHigh
+          # The threshold (USD of estimated cost per hour) is the literal at the
+          # end of expr. Override it with a Kustomize patch; see README.md. Keep
+          # this rule at index 1: the README's patch path hard-codes it.
+          expr: increase(hive_estimated_cost_usd_total[1h]) > 50
+          labels:
+            severity: warning
+          annotations:
+            summary: Hive estimated LLM spend is above the hourly threshold
+            description: >-
+              Hive {{ $labels.hive_id }} accrued ${{ $value | humanize }} of
+              estimated LLM cost in the last hour, above the configured
+              threshold. The figure is an estimate (token counts x list price).
+            runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivecostburnhigh
+        - alert: HiveStageTransitionAnomalies
+          expr: increase(hive_stage_transition_anomaly_total[30m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: Hive rejected stage transitions
+            description: >-
+              Hive {{ $labels.hive_id }} rejected {{ $value | humanize }}
+              {{ $labels.kind }} stage transition(s) from {{ $labels.from }} to
+              {{ $labels.to }} in the last 30 minutes.
+            runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivestagetransitionanomalies

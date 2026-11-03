@@ -1,0 +1,1 @@
+- Agent status snapshots now preserve CI waiting state, CI polling nudge counts, bootstrap overrides, kick refusals, and diagnostic errors.

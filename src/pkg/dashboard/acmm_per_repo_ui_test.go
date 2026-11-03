@@ -37,8 +37,25 @@ func jsFunc(t *testing.T, html, name string) string {
 	if start >= len("async ") && html[start-len("async "):start] == "async " {
 		declStart -= len("async ")
 	}
+	// Default object parameters contain braces before the function body.
+	paramsEnd := strings.Index(html[start:], "(") + start
+	paramDepth := 0
+	for ; paramsEnd < len(html); paramsEnd++ {
+		switch html[paramsEnd] {
+		case '(':
+			paramDepth++
+		case ')':
+			paramDepth--
+		}
+		if paramDepth == 0 {
+			break
+		}
+	}
+	if paramsEnd == len(html) {
+		t.Fatalf("unbalanced parameters extracting %s() from index.html", name)
+	}
 	depth := 0
-	for i := strings.Index(html[start:], "{") + start; i < len(html); i++ {
+	for i := strings.Index(html[paramsEnd:], "{") + paramsEnd; i < len(html); i++ {
 		switch html[i] {
 		case '{':
 			depth++
@@ -61,6 +78,13 @@ function formatNumber(value, locale, options) { try { return new Intl.NumberForm
 	}
 	t.Fatalf("unbalanced braces extracting %s() from index.html", name)
 	return ""
+}
+
+func TestJSFuncExtractsDefaultObjectParameters(t *testing.T) {
+	const source = "function costSortTh(table, key, label, opts = {}) { return opts; }"
+	if got := jsFunc(t, source, "costSortTh"); got != source {
+		t.Fatalf("extracted %q, want %q", got, source)
+	}
 }
 
 // TestACMMRepoRankingOrdersWeakestFirst runs the panel's own ranking helpers

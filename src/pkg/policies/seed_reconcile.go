@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // seedManifestFileName records, per seeded template, the sha256 pkg/policies
@@ -15,6 +16,12 @@ import (
 // directory so it travels with the templates rather than needing a separate
 // volume or config knob.
 const seedManifestFileName = ".embedded-seed-manifest.json"
+
+// warnedUnrecordedDivergence remembers, per policy path, the content hash for
+// which the "differs with no seed record" warning was already logged, so the
+// stable condition warns once per process (and again only if the file changes)
+// instead of on every reconcile tick.
+var warnedUnrecordedDivergence sync.Map
 
 // sha256Hex is the content fingerprint used throughout this file: cheap,
 // collision-safe enough for "did this change since we wrote it", and already
@@ -136,8 +143,13 @@ func ReconcileSeededDefaults(dir string, logger *slog.Logger) error {
 
 		recordedHash, known := manifest[name]
 		if !known {
-			logger.Warn("policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default",
-				"name", name, "path", target)
+			msg := "policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default"
+			if prev, ok := warnedUnrecordedDivergence.Load(target); ok && prev == existingHash {
+				logger.Debug(msg, "name", name, "path", target)
+			} else {
+				warnedUnrecordedDivergence.Store(target, existingHash)
+				logger.Warn(msg, "name", name, "path", target)
+			}
 			continue
 		}
 		if recordedHash != existingHash {

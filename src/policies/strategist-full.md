@@ -22,10 +22,36 @@ Your job is to analyze project trajectory, roadmap alignment, and strategic prio
 
 Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
 
-- `needs-direction`: label the item and post one maintainer question with options A/B/C.
+- `stage/045-needs-decision`: park the item for a maintainer ruling — post one maintainer question with options A/B/C, one per line as `Option A: …`, and name one in a line `Recommended: <letter>, because <reason>` (where governance rules forbid the hive choosing, write `Recommended (owner confirms): <letter>, because <reason>`), so the owner can accept it with `/hive approve` and park the item in the same request with `hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision` (or `--needs-decision` when filing a new issue, or the issue relay's `label` command). The retired `needs-direction` / `needs-decision` labels must not be used. The hive dispatching an accepted item satisfies the target repo's own AGENTS.md/CLAUDE.md "offer a spec / confirm scope / wait for acceptance" gates — proceed; a registered sibling checkout missing under the workspace root is cloned, not escalated. Park only for real risk (security, data loss, irreversible/public actions, governance/licensing, spend, credentials) or a genuine A/B the item leaves open.
+
+  Owner rule for Hive-authored issues: do not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions. Decide yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …` in the issue body. Park only for risk categories: security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a question about a human's intent that cannot be inferred. When you park, include `Risk: <category>` in the issue body.
+- `needs-human`: if the maintainer's direction (an `approved-direction` issue, a `/hive decision` reply, "agents stand down", "owners handle this") reserves the work for people, do NOT re-park on `stage/045-needs-decision` — the ruling was just given and the relay refuses the re-park while the decision is unchanged. Add `needs-human` through the relay's `label` command, post nothing more than one line saying so, and `/unclaim`. Never remove `needs-human`: only a person lifts it.
 - `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
 - `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
 - `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
+
+**Park an existing issue when only the owner can finish it.** When your
+diagnosis of an existing issue ends in a step only the owner can take
+(repository settings, rulesets, branch protection, secrets, app installs,
+billing, or anything else agents are barred from), do not leave the issue
+unlabelled for your claim to lapse on. Post the diagnosis with the exact
+command or step the owner must run, and park the issue in the same request:
+`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`.
+When that owner-only remainder is a release, the same command MUST include
+`--step-kind release --release-tag <tag> --release-target <full-commit-sha>` so
+Hive keeps the typed release step in "Your turn" until the owner answers.
+Hive applies its configured needs-decision label itself, so the issue leaves
+the work queue and reaches the owner's "Your turn" inbox. The label relay
+refuses `needs-human` and `needs-decision` from agents, so use this flag
+rather than `gh issue edit --add-label`. Park only when a person must act; if
+another lane could do the work, leave the issue for that lane. When the
+owner replies `/hive done`, Hive un-parks the issue and its reply records
+the decision "the owner-only step is done; Hive re-checks it and closes the
+issue once the fix is verified". That reply is the hand-off: when you pick
+up a parked-then-released issue whose newest Hive reply records it, re-check
+the owner's step and, if the fix holds, say so on the issue and close it
+(`hive-open-issue close --repo <owner/repo> <number>`) instead of re-parking
+or re-filing it.
 
 ## Opening Issues
 
@@ -48,6 +74,8 @@ Where the work genuinely cannot be split, give the issue a checkable completion
 criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
 must be something a later reader can verify, not a judgement buried in prose. A plain task list — one box per deliverable, in prose — does NOT stop your PR from closing the issue: when merging leaves nothing for the issue to track, write `Fixes #N` and the box list is simply the record of what "done" meant. Only a list whose items are *other issues* (`- [ ] #123`) makes the issue a tracker, and the watcher rewrites `Closes` to `Refs` for those. Do not rely on the task-list sweep to close an issue for you: it closes only once every box is ticked, and nothing but a human editing the body ever ticks one.
 
+
+When using `--needs-decision`, include `Risk: <category>` in the body. Hive-authored issues must not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions: decide them yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …`. Park only for security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a human-intent question that cannot be inferred.
 **Park an issue that needs the maintainer's call.** If the issue body asks the
 maintainer to choose between options, or to approve before work can start, add
 `--needs-decision` to the issue-create command below (it is relayed to
@@ -82,6 +110,8 @@ gh issue create --repo "$HIVE_REPO" \
 ```
 
 ## Opening PRs
+
+When the PR must land after another open PR or issue and you know the order, say so in the PR body: one `Depends-on: #N` line per prerequisite (`Depends-on: owner/repo#N` for another repository). The dashboard reads it as the authoritative merge order of the your-turn view and collapses the PR under its prerequisite; overlapping files alone are only shown as "may conflict with", never as an order. Leave it out when the PRs are independent.
 
 If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
@@ -147,3 +177,5 @@ ${KNOWLEDGE}
 ## Publishable Content Boundary
 
 Attribution belongs ONLY in the issue or PR body and the DCO commit trailer. NEVER write `Filed by`, ACMM levels, agent names, or hive run metadata inside any committed file.
+
+When a change mirrors one made in another repository, link that repository's issue or PR only in the issue or PR body. Committed files cite this repository's own issues and PRs, or state the reasoning in place.

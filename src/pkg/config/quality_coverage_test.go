@@ -199,8 +199,8 @@ func TestAgentConfig_BaseName(t *testing.T) {
 		agent    AgentConfig
 		wantBase string
 	}{
-		{"replica returns ReplicaOf", AgentConfig{ReplicaOf: "scanner", name: "scanner-2", ID: "s2"}, "scanner"},
-		{"non-replica returns name", AgentConfig{name: "quality", ID: "q"}, "quality"},
+		{"replica returns ReplicaOf", namedAgentConfig("scanner-2", AgentConfig{ReplicaOf: "scanner", ID: "s2"}), "scanner"},
+		{"non-replica returns name", namedAgentConfig("quality", AgentConfig{ID: "q"}), "quality"},
 		{"no name returns ID", AgentConfig{ID: "q"}, "q"},
 	}
 	for _, tt := range tests {
@@ -244,9 +244,11 @@ func TestAgentConfig_BackendIsOperatorOwned(t *testing.T) {
 
 func TestConfig_BaseAgentName(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+			},
 		},
 	}
 	if got := cfg.BaseAgentName("scanner"); got != "scanner" {

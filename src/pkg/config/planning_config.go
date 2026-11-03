@@ -142,6 +142,11 @@ type RetroConfig struct {
 	LongStallDays       int    `yaml:"long_stall_days,omitempty" json:"long_stall_days,omitempty"`
 	RecentClosedWindowS int    `yaml:"recent_closed_window_s,omitempty" json:"recent_closed_window_s,omitempty"`
 	AnalysisModel       string `yaml:"analysis_model,omitempty" json:"analysis_model,omitempty"`
+	// LessonConfidenceStep is how much each recorded repeat raises a retro
+	// lesson's stored confidence; LessonConfidenceCap bounds it. Zero selects
+	// the knowledge package defaults (0.05 and 0.9).
+	LessonConfidenceStep float64 `yaml:"lesson_confidence_step,omitempty" json:"lesson_confidence_step,omitempty"`
+	LessonConfidenceCap  float64 `yaml:"lesson_confidence_cap,omitempty" json:"lesson_confidence_cap,omitempty"`
 }
 
 const (
@@ -159,6 +164,28 @@ type AutonomyConfig struct {
 	DemoteOn     string `yaml:"demote_on,omitempty" json:"demote_on,omitempty"`
 	MaxLevel     int    `yaml:"max_level,omitempty" json:"max_level,omitempty"`
 	CooldownDays int    `yaml:"cooldown_days,omitempty" json:"cooldown_days,omitempty"`
+}
+
+// AutonomyDemoteOnValues lists the canonical (lower-case) values accepted for
+// autonomy.demote_on, in the order the Settings dialog presents them.
+func AutonomyDemoteOnValues() []string {
+	return []string{"rollback", "rework", "either"}
+}
+
+// CanonicalAutonomyDemoteOn trims and lower-cases v and reports whether the
+// result is a recognised autonomy.demote_on value. The empty string is
+// accepted and means "use the default".
+func CanonicalAutonomyDemoteOn(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return "", true
+	}
+	for _, known := range AutonomyDemoteOnValues() {
+		if v == known {
+			return v, true
+		}
+	}
+	return v, false
 }
 
 func (a AutonomyConfig) EffectivePromoteAfter() int {

@@ -502,3 +502,18 @@ func TestTierToModel(t *testing.T) {
 		}
 	}
 }
+
+func TestKeywordLane_MatchesClassifyAllKeywordLane(t *testing.T) {
+	for _, issue := range []github.Issue{
+		makeIssue("RFC: redesign storage layer"),
+		makeIssue("Nightly build failed on main"),
+		makeIssue("Fix typo in help text"),
+		makeIssue("Investigate race condition in cache layer", "bug"),
+		makeIssue("[scanner] stale finding"),
+	} {
+		want := ClassifyAll(context.Background(), []github.Issue{issue})[0].Lane
+		if got := KeywordLane(issue); got != want {
+			t.Errorf("KeywordLane(%q) = %q, ClassifyAll lane = %q", issue.Title, got, want)
+		}
+	}
+}

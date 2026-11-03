@@ -23,7 +23,7 @@ func TestReentrantTurnEnabledRequiresGlobalAndAgentOptIn(t *testing.T) {
 	t.Setenv(ReentrantTurnBackgroundFleetEnvVar, "")
 	yes := true
 	no := false
-	cfg := &Config{Turn: TurnConfig{Reentrant: ReentrantTurnConfig{Enabled: true}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{Reentrant: ReentrantTurnConfig{Enabled: true}}}}
 	if !cfg.ReentrantTurnEnabled(AgentConfig{ReentrantTurn: &yes}) {
 		t.Fatal("global gate plus per-agent opt-in should enable")
 	}
@@ -38,20 +38,24 @@ func TestReentrantTurnEnabledRequiresGlobalAndAgentOptIn(t *testing.T) {
 func TestReentrantTurnBackgroundFleetGate(t *testing.T) {
 	t.Setenv(ReentrantTurnEnvVar, "")
 	t.Setenv(ReentrantTurnBackgroundFleetEnvVar, "")
-	cfg := &Config{Turn: TurnConfig{Reentrant: ReentrantTurnConfig{
-		Enabled:                true,
-		BackgroundFleetEnabled: true,
-	}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Turn: TurnConfig{Reentrant: ReentrantTurnConfig{
+			Enabled:                true,
+			BackgroundFleetEnabled: true,
+		}},
+	}}
 	if !cfg.ReentrantTurnEnabled(AgentConfig{}) {
 		t.Fatal("background fleet gate should enroll unspecified agents")
 	}
 }
 
 func TestReentrantTurnEnvOverrides(t *testing.T) {
-	cfg := &Config{Turn: TurnConfig{Reentrant: ReentrantTurnConfig{
-		Enabled:                false,
-		BackgroundFleetEnabled: false,
-	}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Turn: TurnConfig{Reentrant: ReentrantTurnConfig{
+			Enabled:                false,
+			BackgroundFleetEnabled: false,
+		}},
+	}}
 	t.Setenv(ReentrantTurnEnvVar, "true")
 	t.Setenv(ReentrantTurnBackgroundFleetEnvVar, "true")
 	if !cfg.ReentrantTurnEnabled(AgentConfig{}) {
@@ -72,7 +76,7 @@ func TestPRFollowUpResumeEnabledDefaultOff(t *testing.T) {
 	if (&Config{}).PRFollowUpResumeEnabled() {
 		t.Fatal("zero config must not enable PR follow-up resume")
 	}
-	cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Enabled: true}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Enabled: true}}}}
 	if !cfg.PRFollowUpResumeEnabled() {
 		t.Fatal("turn.pr_follow_up.enabled should enable")
 	}
@@ -93,12 +97,12 @@ func TestPRFollowUpMaxAge(t *testing.T) {
 		t.Fatalf("nil config max age = %v, want default", got)
 	}
 	for _, raw := range []string{"", "garbage", "-1h", "0s"} {
-		cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{MaxAge: raw}}}
+		cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{MaxAge: raw}}}}
 		if got := cfg.PRFollowUpMaxAge(); got != DefaultPRFollowUpMaxAge {
 			t.Fatalf("max_age %q = %v, want default %v", raw, got, DefaultPRFollowUpMaxAge)
 		}
 	}
-	cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{MaxAge: "6h"}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{MaxAge: "6h"}}}}
 	if got := cfg.PRFollowUpMaxAge(); got != 6*time.Hour {
 		t.Fatalf("configured max age = %v, want 6h", got)
 	}
@@ -115,12 +119,12 @@ func TestPRFollowUpRetention(t *testing.T) {
 		t.Fatalf("nil config retention = %v, want default %v", got, DefaultPRFollowUpRetention)
 	}
 	for _, raw := range []string{"", "soon", "-1h", "0s"} {
-		cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Retention: raw}}}
+		cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Retention: raw}}}}
 		if got := cfg.PRFollowUpRetention(); got != DefaultPRFollowUpRetention {
 			t.Fatalf("retention %q = %v, want default %v", raw, got, DefaultPRFollowUpRetention)
 		}
 	}
-	cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Retention: "72h"}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Retention: "72h"}}}}
 	if got := cfg.PRFollowUpRetention(); got != 72*time.Hour {
 		t.Fatalf("configured retention = %v, want 72h", got)
 	}
@@ -137,12 +141,12 @@ func TestPRFollowUpResumeIDMaxAge(t *testing.T) {
 		t.Fatalf("nil config resume id max age = %v, want default %v", got, DefaultPRFollowUpResumeIDMaxAge)
 	}
 	for _, raw := range []string{"", "whenever", "-1h", "0s"} {
-		cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{ResumeIDMaxAge: raw}}}
+		cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{ResumeIDMaxAge: raw}}}}
 		if got := cfg.PRFollowUpResumeIDMaxAge(); got != DefaultPRFollowUpResumeIDMaxAge {
 			t.Fatalf("resume_id_max_age %q = %v, want default %v", raw, got, DefaultPRFollowUpResumeIDMaxAge)
 		}
 	}
-	cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{ResumeIDMaxAge: "12h"}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{ResumeIDMaxAge: "12h"}}}}
 	if got := cfg.PRFollowUpResumeIDMaxAge(); got != 12*time.Hour {
 		t.Fatalf("configured resume id max age = %v, want 12h", got)
 	}

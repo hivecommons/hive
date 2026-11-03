@@ -1,6 +1,6 @@
 # A contributor with its own accounts
 
-This companion Compose example runs the published v5 contributor image as an
+This companion Compose example runs the published v6 contributor image as an
 unattended service. Only a container runtime with Compose and `curl` are needed
 on the host. GitHub, Codex, git and Hive run in the image. The named
 `contributor-home` volume contains the bot's entire home: provider logins,
@@ -11,13 +11,17 @@ The walkthrough uses Codex with a separate ChatGPT subscription. Other backends
 can be selected with `AGENT_BACKEND`, but need their own in-container login and
 must support Hive's headless mode; see the [relay guide](../../docs/contributor-relay.md).
 
+The published image defaults to `:edge` (the v6 release channel) in `compose.yaml` and
+`.env.example`. For repeatable deployments, pin `HIVE_CONTRIBUTOR_IMAGE` to a specific
+version or digest instead of the moving `:edge` or `:latest` tags.
+
 ## Download and configure
 
 ```bash
 mkdir hive-bot
 cd hive-bot
-curl -fLO https://raw.githubusercontent.com/hivecommons/hive/v5/src/examples/contributor-isolated/compose.yaml
-curl -fL https://raw.githubusercontent.com/hivecommons/hive/v5/src/examples/contributor-isolated/.env.example -o .env
+curl -fLO https://raw.githubusercontent.com/hivecommons/hive/v6/src/examples/contributor-isolated/compose.yaml
+curl -fL https://raw.githubusercontent.com/hivecommons/hive/v6/src/examples/contributor-isolated/.env.example -o .env
 chmod 600 .env
 # Edit .env: choose the hive, backend, model and resource limits.
 podman compose pull

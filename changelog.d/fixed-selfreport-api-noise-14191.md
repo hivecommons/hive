@@ -1,0 +1,1 @@
+- The hub no longer re-requests a channel commit date from GitHub on every render after a failed lookup (e.g. HTTP 403 rate limit); it backs off for 10 minutes per commit, so rate-limited hubs stop repeating the "channel commit date: fetch failed" warning.

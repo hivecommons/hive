@@ -39,28 +39,44 @@ already shipped.
 The path, end to end:
 
 - The proxy MITMs the Copilot completion hosts. `IsCopilotAPIHost`
-  (`src/pkg/proxy/rules.go:112`) matches `githubcopilot.com` and any
+  (`src/crux/proxy/rules.go:112`) matches `githubcopilot.com` and any
   `.githubcopilot.com` subdomain, covering the enterprise per-account hosts. Two
   call seams dispatch into the sniff path — the explicit-CONNECT seam
-  (`src/pkg/proxy/github_proxy.go:877`) and the iptables-transparent seam
-  (`:461`), both guarded identically by `p.tokenSink != nil && agentName != ""`.
-- `proxyCopilotHTTP` (`src/pkg/proxy/github_proxy.go:2559`) runs a keep-alive
+  (`src/crux/proxy/github_proxy_connect.go:469`) and the iptables-transparent seam
+  (`:160`), both guarded identically by `p.tokenSink != nil && agentName != ""`.
+- `proxyCopilotHTTP` (`src/crux/proxy/github_proxy_copilot.go:129`) runs a keep-alive
   HTTP request/response loop over the terminated TLS connection. It identifies
   completion requests via `isCopilotCompletionsPath`
-  (`src/pkg/proxy/copilot_usage.go:40`, suffix `/chat/completions`), buffers the
+  (`src/crux/proxy/copilot_usage.go:40`, suffix `/chat/completions`), buffers the
   request body, and reads the model id out of it (`:2260`).
 - For streaming requests it rewrites the body to carry
   `stream_options.include_usage=true` (`ensureStreamUsageRequested`,
-  `src/pkg/proxy/copilot_usage.go:63`; call site `github_proxy.go:2589`).
+  `src/crux/proxy/copilot_usage.go:63`; call site `github_proxy.go:2589`).
   Without that hint the OpenAI-compatible endpoint omits the terminal usage
   chunk and streamed completions are uncountable. Note this is the one place the
   proxy alters an agent's request payload.
 - `forwardCopilotResponseWithUsage` (`github_proxy.go:2642`) buffers the response,
   extracts usage via `extractCopilotUsage`
-  (`src/pkg/proxy/copilot_usage.go:136` — SSE terminal-chunk path at `:104`,
+  (`src/crux/proxy/copilot_usage.go:136` — SSE terminal-chunk path at `:104`,
   non-streaming JSON path via `extractOpenAIUsage`), resolves the concrete model
   when the request pinned the `auto` sentinel
   (`extractCopilotResponseModel`, `:147`), and records it at `github_proxy.go:2662`.
+
+- Claude models: Copilot CLI 1.0.88 and later sends Claude completions to the
+  Anthropic Messages endpoint (`POST …/v1/messages`) instead of
+  `/chat/completions`. `isCopilotCompletionsPath` matches that suffix too
+  (`isCopilotAnthropicMessagesPath`, `src/pkg/proxy/copilot_anthropic_usage.go`),
+  and `forwardCopilotAnthropicResponseWithUsage` tees the response body
+  through a usage parser rather than buffering it, so streams are relayed as
+  they arrive. Usage comes from `usage` on the JSON response, or from
+  `message_start.message.usage` overlaid by `message_delta.usage` on the SSE
+  stream, with the model from `message_start.message.model`. The request is
+  forwarded unmodified (no `stream_options` injection), and the prompt-cache
+  counts (`cache_read_input_tokens`, `cache_creation_input_tokens`) are
+  recorded alongside input/output via `InferenceSink.RecordCopilotWithCache`.
+  Each recorded call keeps its own model in the usage timeline. The agent's
+  pinned model is the one with the most tokens, so the CLI's occasional
+  `gpt-4o-mini` helper calls no longer relabel a Claude agent.
 
 So at `github_proxy.go:2662` the proxy holds, per completion response:
 `(agentName, resolvedModel, inputTokens, outputTokens)`, at a known wall-clock
@@ -107,14 +123,14 @@ recoverable from adjacent traffic. This is the finding that decides the page.
 ### 2a. Not in the Copilot request
 
 The structs the proxy parses out of a completion request are `model`, `stream`,
-and `stream_options` (`copilotUsageRequest`, `src/pkg/proxy/copilot_usage.go:32`).
+and `stream_options` (`copilotUsageRequest`, `src/crux/proxy/copilot_usage.go:32`).
 No repo, workspace, or path field is read, and no request header is inspected
 for one — `proxyCopilotHTTP` forwards headers verbatim and branches solely on
 `req.URL.Path` (`github_proxy.go:2245`). A grep for repo-bearing Copilot
 editor headers (`Editor-Version`, `Copilot-Integration-Id`, `X-GitHub-*`) across
 `src/pkg/proxy/` returns nothing, and the sniff-test fixtures send only `Host`,
 `Content-Type`, `Content-Length`, and `Connection`
-(`src/pkg/proxy/copilot_sniff_test.go:155`, `:253`, `:450`, `:604`, `:682`,
+(`src/crux/proxy/copilot_sniff_test.go:155`, `:253`, `:450`, `:604`, `:682`,
 `:750`).
 
 Whether the live Copilot CLI sends a repo hint in a header or in the `messages`
@@ -124,7 +140,7 @@ repository** — the proxy neither parses nor logs it. See
 
 ### 2b. Not in per-agent proxy state
 
-`GitHubProxy` (`src/pkg/proxy/github_proxy.go:152-207`) holds exactly one
+`GitHubProxy` (`src/crux/proxy/github_proxy.go:152-207`) holds exactly one
 repo-shaped field: `allowedRepos map[string]bool` (`:158`), built once at
 construction from the hive's configured repo list (`NewGitHubProxy`, `:247`,
 loop at `:270-272`). It is a hive-wide allow-set, identical for every agent —
@@ -134,14 +150,14 @@ per-agent "current repo" or "last repo seen" map anywhere in the struct.
 `agentName` itself comes from a UID lookup per connection:
 `LookupUIDByLocalPort` then `p.uidMap.LookupByUID(uid)`
 (`github_proxy.go:461` region; `UIDMap.LookupByUID` at
-`src/pkg/agent/uidmap.go:80`). `UIDMap` maps UID ↔ agent name and nothing else
+`src/crux/agent/uidmap.go:80`). `UIDMap` maps UID ↔ agent name and nothing else
 (`uidmap.go:24`, methods at `:43`, `:60`, `:80`, `:113`, `:129`). It carries no
 repo dimension, and the lookup is per-connection with no cross-connection state.
 
 ### 2c. Not recoverable from adjacent traffic
 
 The proxy *can* extract a repo from a URL path — `ExtractRepo`
-(`src/pkg/proxy/rules.go:290`) matches `^/repos/([^/]+/[^/]+)` (`:279`) and
+(`src/crux/proxy/rules.go:290`) matches `^/repos/([^/]+/[^/]+)` (`:279`) and
 `^/([^/]+/[^/]+)\.git/` (`:281`). Two facts kill this as a phase-4 source:
 
 1. **It has exactly one non-test caller**, `RepoFilterAllowed`
@@ -163,7 +179,7 @@ The proxy *can* extract a repo from a URL path — `ExtractRepo`
    `github_proxy.go:882-885` repeats it at the CONNECT seam. Such a connection
    falls to `tunnelDirect` (`github_proxy.go:887`) or the raw relay
    (`:484`), so the proxy sees only SNI `github.com` (`extractSNI`, `:660`) and
-   never a `/owner/repo.git/info/refs` path. The `gitPathPrefix` branch of
+   never a `/owner/repo.git/info/refs` path. The `gitPathRepo` branch of
    `ExtractRepo` therefore cannot fire on real clone traffic, and the proxy
    cannot learn the repo the agent cloned.
 

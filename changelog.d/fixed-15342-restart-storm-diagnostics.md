@@ -1,0 +1,1 @@
+- Restart-storm self-reports now carry the restart count in the window, the recent restart reasons and the agent's last error instead of repeating the title, so a paused crash loop can be triaged from the issue (hivecommons/hive#15342).

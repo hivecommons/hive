@@ -158,6 +158,8 @@ function check(name, cond) {
 check('in-pack agent keeps its cadence row', out.indexOf('data-agent="supervisor"') !== -1);
 check('out-of-pack running agent keeps its cadence row', out.indexOf('data-agent="review"') !== -1);
 check('pack-inactive ghost agent row stays suppressed', out.indexOf('data-agent="linter"') === -1);
+check('cadence templates bar is rendered', out.indexOf('class="gov-matrix-templates-bar"') !== -1);
+check('cadence template button is present', out.indexOf('data-action="applyCadenceTemplate"') !== -1);
 
 process.exit(fails ? 1 : 0);
 `

@@ -28,6 +28,13 @@ type selfAuthIssue struct {
 	Comments  []selfAuthComment
 	Status    int // non-zero to fail the GET
 	FailList  bool
+	// PullRequest marks the number as a pull request (GitHub serves PRs
+	// from /issues/N too, with a pull_request block); Body is its body.
+	PullRequest bool
+	Body        string
+	// Timeline is the issue's label events for the #11313 label-approval
+	// signal; nil serves an empty timeline.
+	Timeline []unparkWireTimelineEvent
 }
 
 type selfAuthComment struct {
@@ -40,11 +47,20 @@ type selfAuthComment struct {
 type selfAuthServer struct {
 	issues map[int]*selfAuthIssue
 
+	// roles maps login to the role_name the collaborator permission
+	// endpoint reports (#11313); unknown logins report "read"/"none".
+	roles map[string]string
+
+	// prAuthor is the login the fake records as the opener of a created
+	// PR; "" omits the user, as an abbreviated payload would.
+	prAuthor string
+
 	mu            sync.Mutex
 	labelsApplied []string
 	comments      []string
 	prBodies      []string
 	listCalls     int
+	timelineReads int
 }
 
 // postedPRBodies returns the body of every PR created through the fake.
@@ -62,6 +78,30 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 		case r.Method == "GET" && strings.HasSuffix(p, "/repos/o/r"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"name":"r","default_branch":"main"}`)
+
+		case r.Method == "GET" && strings.Contains(p, "/issues/") && strings.HasSuffix(p, "/timeline"):
+			num := issueNumFromPath(p, "/timeline")
+			s.mu.Lock()
+			s.timelineReads++
+			s.mu.Unlock()
+			events := []unparkWireTimelineEvent{}
+			if issue := s.issues[num]; issue != nil && issue.Timeline != nil {
+				events = issue.Timeline
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(events)
+
+		case r.Method == "GET" && strings.Contains(p, "/collaborators/") && strings.HasSuffix(p, "/permission"):
+			login := strings.TrimSuffix(p[strings.LastIndex(strings.TrimSuffix(p, "/permission"), "/")+1:], "/permission")
+			out := map[string]any{"permission": "read", "role_name": "read"}
+			if role, ok := s.roles[login]; ok {
+				out["role_name"] = role
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+
+		case r.Method == "GET" && strings.HasPrefix(p, "/orgs/") && strings.Contains(p, "/members/"):
+			w.WriteHeader(http.StatusNotFound)
 
 		case r.Method == "GET" && strings.Contains(p, "/issues/") && strings.HasSuffix(p, "/comments"):
 			num := issueNumFromPath(p, "/comments")
@@ -121,6 +161,12 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 			if issue.State != "" {
 				payload["state"] = issue.State
 			}
+			if issue.PullRequest {
+				payload["pull_request"] = map[string]any{"url": fmt.Sprintf("https://api.github.com/repos/o/r/pulls/%d", num)}
+			}
+			if issue.Body != "" {
+				payload["body"] = issue.Body
+			}
 			if issue.Association != "" {
 				payload["author_association"] = issue.Association
 			}
@@ -165,7 +211,11 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 			s.prBodies = append(s.prBodies, pr.Body)
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"number":583,"html_url":"https://github.com/o/r/pull/583"}`)
+			created := map[string]any{"number": 583, "html_url": "https://github.com/o/r/pull/583"}
+			if s.prAuthor != "" {
+				created["user"] = userJSON(s.prAuthor, "")
+			}
+			_ = json.NewEncoder(w).Encode(created)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -362,7 +412,7 @@ func TestPRRequestWatcher_HoldsSelfAuthorizedPR(t *testing.T) {
 	c.SetAppBotLogin(botLogin)
 	// No hold-gated level: at L6 this gate is the only thing standing between a
 	// self-proposed direction and a merged one.
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -416,7 +466,7 @@ func TestPRRequestWatcher_DefaultConfigStillHoldsSelfAuthorizedPR(t *testing.T) 
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: botLogin, AuthorType: "Bot"}}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -444,7 +494,7 @@ func TestPRRequestWatcher_ConfigDisabledSkipsSelfAuthorizationHold(t *testing.T)
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
 	c.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return false })
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -472,7 +522,7 @@ func TestPRRequestWatcher_ConfigCallbackReceivesRepo(t *testing.T) {
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
 	c.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return repo != "o/r" })
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -499,7 +549,7 @@ func TestPRRequestWatcher_DoesNotHoldHumanBackedPR(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "hanthor"}}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -529,7 +579,7 @@ func TestPRRequestWatcher_HoldGatedLevelSkipsTheLookup(t *testing.T) {
 		Comments: []selfAuthComment{{Author: "someone"}}}}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
-	c.prHoldLabel = func(agent string) bool { return true }
+	c.prHoldLabel = func(agent, repo string) bool { return true }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -557,7 +607,7 @@ func TestPRRequestWatcher_HoldGatedLevelPostsAttributableNotice(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin("kubestellar-hive[bot]")
-	c.prHoldLabel = func(agent string) bool { return true }
+	c.prHoldLabel = func(agent, repo string) bool { return true }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir

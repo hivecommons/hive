@@ -1,0 +1,1 @@
+- The dashboard's 🙋 Needs human facet now matches by pattern (`needs-human*`, `*needs-decision`, `*needs-author`) as well as by name, so new stages and labels no longer silently fall out of it; the *All labels* dialog shows a "Needs human covers N labels" group listing exactly which labels the facet selects. ([#13780](https://github.com/hivecommons/hive/issues/13780))

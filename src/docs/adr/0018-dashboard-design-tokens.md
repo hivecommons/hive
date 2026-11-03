@@ -2,6 +2,13 @@
 
 Status: Accepted — initial tokens layer landed; migration ratchets remain.
 
+A **design token** is a named value for a shared visual role, such as text color
+or spacing. A **ratchet** is a test that prevents migrated code from adding back
+the old patterns. This is a frontend-maintainer migration contract, not an
+operator theming procedure.
+**SPA** means single-page application; **CSP** means Content Security Policy,
+the browser's resource/script restrictions.
+
 ## Context
 
 The spoke dashboard now has three independently styled UI surfaces:

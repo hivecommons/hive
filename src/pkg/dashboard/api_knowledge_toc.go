@@ -11,11 +11,11 @@ import (
 
 // knowledgeTOCScope parses the scope query shared by the TOC and full-read
 // endpoints: layers, repos, types and tags (comma-separated allow-lists) plus
-// include_states for operators who need draft/deprecated/superseded entries.
+// include_states for owners who need draft/deprecated/superseded entries.
 // The default is approved knowledge only (#11102).
 func knowledgeTOCScope(r *http.Request) (knowledge.TOCScope, error) {
 	q := r.URL.Query()
-	include, err := knowledge.ParseLifecycleStates(q.Get("include_states"))
+	include, err := knowledgeIncludeStates(r)
 	if err != nil {
 		return knowledge.TOCScope{}, err
 	}
@@ -29,6 +29,23 @@ func knowledgeTOCScope(r *http.Request) (knowledge.TOCScope, error) {
 		scope.Layers = append(scope.Layers, knowledge.LayerType(strings.ToLower(l)))
 	}
 	return scope, nil
+}
+
+// knowledgeIncludeStates parses the include_states query of an agent-reachable
+// knowledge read. Non-approved states are an owner-only view (#14546): any
+// other caller — an agent, a read-role user, a contributor token — is clamped
+// to approved knowledge, so asking for draft, deprecated or superseded facts
+// yields the same result as not asking. A malformed list is still an error so
+// typos surface for every caller.
+func knowledgeIncludeStates(r *http.Request) ([]knowledge.LifecycleState, error) {
+	include, err := knowledge.ParseLifecycleStates(r.URL.Query().Get("include_states"))
+	if err != nil {
+		return nil, err
+	}
+	if !isOwnerRole(r.Header.Get("X-Hive-Role")) || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
+		return nil, nil
+	}
+	return include, nil
 }
 
 func splitCSV(s string) []string {

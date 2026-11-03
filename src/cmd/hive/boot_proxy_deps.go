@@ -4,10 +4,11 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/advisor"
-	"github.com/hivecommons/hive/pkg/agent"
+
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/jev"
-	"github.com/hivecommons/hive/pkg/proxy"
 )
 
 // bootProxyDeps are the effects bootProxy performs that a test cannot let run
@@ -19,7 +20,7 @@ import (
 // setInferenceRoute / clearInferenceRoute recording what it decided.
 type bootProxyDeps struct {
 	newGitHubProxy            func(logger *slog.Logger, org string, repos []string) (*proxy.GitHubProxy, error)
-	installInferenceCallbacks func(mgr *agent.Manager, setRoute func(agentName, backend, model string), clearRoute func(agentName string))
+	installInferenceCallbacks func(mgr crux.Host, setRoute func(agentName, backend, model string), clearRoute func(agentName string))
 	setInferenceRoute         func(p *proxy.GitHubProxy, agentName string, route *proxy.InferenceRoute)
 	clearInferenceRoute       func(p *proxy.GitHubProxy, agentName string)
 	// startProxy binds the GitHub MITM listener and the inference translator.
@@ -36,7 +37,7 @@ type bootProxyDeps struct {
 func defaultBootProxyDeps() bootProxyDeps {
 	return bootProxyDeps{
 		newGitHubProxy: proxy.NewGitHubProxy,
-		installInferenceCallbacks: func(mgr *agent.Manager, setRoute func(agentName, backend, model string), clearRoute func(agentName string)) {
+		installInferenceCallbacks: func(mgr crux.Host, setRoute func(agentName, backend, model string), clearRoute func(agentName string)) {
 			mgr.SetInferenceCallbacks(setRoute, clearRoute)
 		},
 		setInferenceRoute: func(p *proxy.GitHubProxy, agentName string, route *proxy.InferenceRoute) {

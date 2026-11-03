@@ -1,0 +1,1 @@
+- Settings now expose the prior-art gate's kinds, max_findings, max_parks_per_cycle and bot_close_ttl with validation.

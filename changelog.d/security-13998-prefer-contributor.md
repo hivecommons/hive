@@ -1,0 +1,1 @@
+- Keep the hive PR open and parked when a clean competing contributor PR references the same issue; delegated decisions now recommend a human adequacy comparison instead of automatically closing the hive's work ([#13998](https://github.com/hivecommons/hive/issues/13998)).

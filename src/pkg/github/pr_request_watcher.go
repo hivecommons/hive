@@ -102,6 +102,10 @@ type PRResponse struct {
 	// is the one an agent must act on, by commenting on that PR rather than
 	// filing again, so it is reported rather than folded into AlreadyExisted.
 	DuplicateTree bool `json:"duplicate_tree,omitempty"`
+	// DuplicateReason names why the PR-side guard redirected to an existing PR
+	// (closes-issue, overlapping-files, merged-fix); the agent should comment on
+	// or rebase onto that PR instead of filing again.
+	DuplicateReason string `json:"duplicate_reason,omitempty"`
 	// SelfAuthorized reports that the PR was held because its only tracked
 	// rationale is an issue the hive filed and no human has acknowledged
 	// (#5117). The PR was still opened; it just cannot merge until someone
@@ -186,8 +190,18 @@ type PROpenedDetail struct {
 	Repo    string
 	Number  int
 	URL     string
+	Title   string
 	Body    string
 	Handoff *PRHandoff
+	// Author is the login GitHub recorded as the PR's opener and Head is the
+	// branch it was opened from, so the duplicate-PR claim ledger can record
+	// the PR's claims the moment it exists (hivecommons/hive#14472) instead
+	// of waiting for the next scan.
+	Author string
+	Head   string
+	// Issues are the issue numbers the request named (Fixes/Closes), so the
+	// lifecycle timeline can mark pr_opened on each issue's journey.
+	Issues []int
 }
 
 // PROpenedDetailHook is notified, like PROpenedHook, when the watcher opens a
@@ -247,7 +261,7 @@ func (c *Client) CheckPRRepoPolicy(agent, repo string) error {
 	return nil
 }
 
-func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func(agent string) bool, nowFn func() time.Time) <-chan struct{} {
+func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func(agent, repo string) bool, nowFn func() time.Time) <-chan struct{} {
 	done := make(chan struct{})
 	if c == nil {
 		close(done)
@@ -408,6 +422,24 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// Red-main circuit breaker (#13630): while a required check has been red
+	// on the repo's default branch past its threshold, a new PR would be red
+	// too, so only a PR that fixes main opens. Existing PRs never come
+	// through here and issue filing is a separate relay; both keep going.
+	if reason := c.redMainPRRequestRefusal(ctx, req, nowFn()); reason != "" {
+		c.rejectPRRequest(path, req, "red-main", reason, nowFn)
+		return
+	}
+
+	// Open-held-PR cap (#13645): once the repo holds max_open_held_prs open
+	// hive PRs that still wait on a human, a new one only lengthens the
+	// queue. Existing PRs never come through here and issue filing is a
+	// separate relay; both keep going.
+	if reason := c.openHeldPRCapRefusal(req.Repo); reason != "" {
+		c.rejectPRRequest(path, req, "capacity", reason, nowFn)
+		return
+	}
+
 	// Cheap local body checks first — before anything that spends API quota.
 	// An empty body, or a body missing the reference to its declared
 	// originating issue, is lost content (the observed failure: hive-open-pr
@@ -476,7 +508,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// Moving a Conventional Commits-safe lane prefix here keeps issue-title
 	// routing untouched while making every hive-open-pr request pass through the
 	// same deterministic server-side choke point before GitHub sees it.
-	title = NormalizePRTitle(title)
+	title = NormalizePRTitleEmoji(NormalizePRTitle(title))
 
 	// Invocation-attribution trail (attribution.go): resolve what the hive
 	// invoked for this agent, append the visible trailer to the PR body when
@@ -528,6 +560,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	resp.URL = res.URL
 	resp.AlreadyExisted = res.AlreadyExisted
 	resp.DuplicateTree = res.DuplicateTree
+	resp.DuplicateReason = res.DuplicateReason
 
 	// F6: apply the ACMM "hold" label server-side, from authoritative config, on
 	// the path that actually runs. At hold-gated levels (L3/L4/L5) every
@@ -556,9 +589,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// path; and where it is a human's PR, hive has no standing to gate it at
 	// all. Evaluating the gate here would additionally spend GitHub calls to
 	// compute a hold that must not be applied.
-	holdByLevel := c.prHoldLabel != nil && c.prHoldLabel(req.Agent)
+	holdByLevel := c.prHoldLabel != nil && c.prHoldLabel(req.Agent, req.Repo)
 	var selfAuth SelfAuthorization
-	if !res.DuplicateTree && !holdByLevel {
+	if !res.IsDuplicate() && !holdByLevel {
 		if !c.selfAuthorizationHoldActive(req.Repo) {
 			c.logSelfAuthorizationDisabledOnce(req.Repo, res.Number)
 		} else {
@@ -572,12 +605,21 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// what stops the level-hold release from lifting the label on promotion
 	// to L6 — the whole point is that a stranger's request waits for a human
 	// at every level. Same duplicate-tree precedence as the other two.
+	//
+	// The PR the watcher opened is the hive's own, so with the App login
+	// known the gate skips it outright (hivecommons/hive#15020); the author
+	// GitHub recorded is passed so a PAT-backed hive whose login is not in
+	// the hive identity is still judged by what the gate can see.
 	var reporter ReporterTrust
-	if !res.DuplicateTree && c.reporterTrustHoldActive(req.Repo) {
-		reporter = c.EvaluateReporterTrust(ctx, req.Repo, title, body, req.IssueN)
+	if !res.IsDuplicate() && c.reporterTrustHoldActive(req.Repo) {
+		prAuthor := strings.TrimSpace(res.Author)
+		if prAuthor == "" {
+			prAuthor = strings.TrimSpace(c.appBotLogin)
+		}
+		reporter = c.EvaluateReporterTrust(ctx, req.Repo, title, body, req.IssueN, prAuthor)
 		resp.ReporterTrustHeld = reporter.Held
 	}
-	if !res.DuplicateTree && (holdByLevel || selfAuth.Held || reporter.Held) {
+	if !res.IsDuplicate() && (holdByLevel || selfAuth.Held || reporter.Held) {
 		holdLabels := []string{"hold"}
 		if reporter.Held {
 			// A reporter-trust hold is a human-only decision at every level, so
@@ -618,7 +660,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// Self-authorization notices remain best-effort courtesy: the label is the
 	// enforcement, and a failed courtesy must not fail the request and send it
 	// round the retry loop.
-	if holdByLevel && !res.DuplicateTree {
+	if holdByLevel && !res.IsDuplicate() {
 		if cerr := c.ensureLevelHoldNotice(ctx, req.Repo, res.Number, req.Agent); cerr != nil {
 			c.logger.Warn("pr-request watcher: level-held PR but could not post the release marker",
 				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("agent", req.Agent), slog.String("error", cerr.Error()))
@@ -637,10 +679,10 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// also carried a reporter-trust reason must not shed the label on
 	// promotion. Best-effort like the #5117 notice — the label is the
 	// enforcement, and the release path re-evaluates and re-posts if needed.
-	if reporter.Held && !res.DuplicateTree {
+	if reporter.Held && !res.IsDuplicate() {
 		c.recordReporterTrustEscalation(req.Repo, res.Number, reporter.escalationReason())
 	}
-	if reporter.Held && !res.DuplicateTree && !res.AlreadyExisted {
+	if reporter.Held && !res.IsDuplicate() && !res.AlreadyExisted {
 		if cerr := c.CreateIssueComment(ctx, req.Repo, res.Number, reporterTrustNotice(reporter)); cerr != nil {
 			c.logger.Warn("pr-request watcher: reporter-trust-held PR but could not post the explanation",
 				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("error", cerr.Error()))
@@ -659,8 +701,16 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		go (*hook)(req.Agent, req.Repo, res.Number, res.URL)
 	}
 	if hook := c.prOpenedDetailHook.Load(); hook != nil && *hook != nil && !res.AlreadyExisted {
-		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Body: body, Handoff: req.Handoff})
+		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Title: title, Body: body, Handoff: req.Handoff, Author: res.Author, Head: req.Head, Issues: append([]int(nil), req.IssueN...)})
 	}
+	// The PR supersedes the pr-in-progress start mark on the issues it
+	// names — the request's declared issues and every same-repo issue the
+	// body closes: they move to stage/040-covered-by-pr, where the stage
+	// reconciler keeps them while the PR is open (the PR's own stage is
+	// narrated in the issue's stage reason, never written as its label).
+	covered, partial := c.prCoveredIssues(req.Repo, body, req.IssueN)
+	c.clearInProgressForPR(ctx, req.Repo, res.Number, covered)
+	c.addressInProgressForPR(ctx, req.Repo, res.Number, partial)
 	c.recordWriteAudit(AuditActionAgentPRCreated, meta,
 		WriteTarget{Repo: req.Repo, Number: res.Number},
 		"author", res.Author,
@@ -671,13 +721,17 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		"reporter_login", reporter.Reporter,
 		"reporter_association", reporter.Association,
 		"needs_human_reason", reporter.NeedsHumanReason(),
-		"duplicate_tree", strconv.FormatBool(res.DuplicateTree))
+		"duplicate_tree", strconv.FormatBool(res.DuplicateTree),
+		"duplicate_reason", res.DuplicateReason)
+	if !res.IsDuplicate() && !res.AlreadyExisted && (holdByLevel || selfAuth.Held || reporter.Held) {
+		c.noteOpenHeldPROpened(req.Repo)
+	}
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't
 	// reprocessed.
 	_ = os.Remove(path)
 	c.prRetries.clear(path)
-	if res.DuplicateTree {
+	if res.IsDuplicate() {
 		// Logged on its own line, not folded into the line below: this is the
 		// outcome the issue asked to be able to count ("a queue that looks like
 		// five problems when it is one"), and it should be findable without
@@ -704,8 +758,12 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 	// points away from its cause. Log it at ERROR on its own line — this is
 	// work an agent already completed and cannot publish, and it is invisible
 	// in the fleet view because the agent's session ended healthy.
-	if reason, ok := missingHeadReason(err); ok {
-		c.logger.Error("pr-request watcher: head branch is not on the remote — the agent's push did not authenticate",
+	reason, missingHead := missingHeadReason(err)
+	// Only the first failure of a request is reported at ERROR: the retries of
+	// one request are not new incidents. The watcher cannot tell an
+	// authentication failure from a branch that was never pushed.
+	if missingHead && c.prRetries.failures(path) == 0 {
+		c.logger.Error("pr-request watcher: head branch is not on the remote — the agent's push did not land (never pushed, or push authentication failed)",
 			slog.String("repo", req.Repo), slog.String("head", req.Head),
 			slog.String("agent", req.Agent), slog.String("diagnosis", reason))
 	}
@@ -715,6 +773,11 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 		c.logger.Error("pr-request watcher: request exceeded retry horizon, quarantined",
 			slog.String("path", path), slog.String("repo", req.Repo),
 			slog.String("head", req.Head), slog.String("error", err.Error()))
+		return
+	}
+	// The specific error above already reports this failure to the fleet.
+	// Avoid a second, unclassified report for the same retry.
+	if missingHead {
 		return
 	}
 	c.logger.Warn("pr-request watcher: request failed, will retry with backoff",

@@ -1,0 +1,1 @@
+- The automerge sweep reads a branch's ruleset required checks when classic branch protection says nothing is required, so rulesets-only repositories no longer read as "no required checks" and stall at `ci-unverified`; the contributor lane also approves a registry-trusted author's held runs at `ci-unverified` when every `pull_request` run on the head is held.

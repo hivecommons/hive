@@ -25,6 +25,11 @@ type ProjectConfig struct {
 	// polarity is Governor.Labels.Exempt, which wins on conflict. Absent/empty
 	// = no filtering, the pre-existing behavior. See IssueFilterConfig.
 	IssueFilter IssueFilterConfig `yaml:"issue_filter,omitempty"`
+	// AgentIssueDecisionPolicy is "resolve" (default) or "escalate". Resolve
+	// keeps Hive-authored issues actionable when the only parking reason is a
+	// non-risk engineering choice (sequencing, naming, numbering, config shape,
+	// or approach A vs B). Risk questions still park at stage/045.
+	AgentIssueDecisionPolicy string `yaml:"agent_issue_decision_policy,omitempty" json:"agent_issue_decision_policy,omitempty"`
 	// CheckoutsDir is a host-local directory holding one checkout per monitored
 	// repo, as "<CheckoutsDir>/<repo name>" — the bare name from Repos, without
 	// the org. It is how an operator supplies the per-repo checkout root the
@@ -37,6 +42,27 @@ type ProjectConfig struct {
 	// directory that is absent or holds no AGENTS.md is also a no-op; nothing
 	// here can fail a kick. See CheckoutRootFor.
 	CheckoutsDir string `yaml:"checkouts_dir,omitempty"`
+
+	// AgentsMdMaxBytes caps the rendered AGENTS.md block prepended to a kick
+	// (#12129). The block is cut at heading boundaries — whole sections are
+	// kept or dropped, never clipped mid-rule — and when anything is dropped
+	// the kick carries a one-line warning naming the omitted sections and the
+	// scheduler logs it. Zero means the agentsmd default (8192); values below
+	// 2048 are raised to 2048.
+	AgentsMdMaxBytes int `yaml:"agents_md_max_bytes,omitempty"`
+
+	// Style is the hive-wide house style: a short list of how-to-change rules
+	// prepended to every kick on every backend. A managed repo's HIVE_STYLE.md
+	// overrides it; when both this and StyleFile are empty the built-in text
+	// applies. Inline text wins over StyleFile. See docs/house-style.md.
+	Style string `yaml:"style,omitempty"`
+	// StyleFile is a path on the hive host holding the hive-wide house style;
+	// used when Style is empty.
+	StyleFile string `yaml:"style_file,omitempty"`
+	// StyleMaxBytes caps each house-style candidate; a larger file is skipped
+	// (not clipped) and the next source applies. Zero means 4096; values below
+	// 512 are raised to 512.
+	StyleMaxBytes int `yaml:"style_max_bytes,omitempty"`
 
 	// PausedRepos is the per-repo agent pause: the repos in Repos that are
 	// currently quiet. It is a RUN-STATE, and deliberately a SEPARATE list
@@ -53,6 +79,18 @@ type ProjectConfig struct {
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
 	RepoPolicies []RepoPolicy `yaml:"repo_policies,omitempty" json:"repo_policies,omitempty"`
+	// MergeFrontTimeout is the hive-wide front timeout of the serialized merge
+	// lane (hivecommons/hive#12952) as a Go duration ("90m", "2h"); empty
+	// keeps the lane default of 60 minutes. repo_policies[].merge_front_timeout
+	// overrides it per repo. See RepoMergeFrontTimeout in repo_policy.go.
+	MergeFrontTimeout string `yaml:"merge_front_timeout,omitempty" json:"merge_front_timeout,omitempty"`
+	// RedMainThreshold is the hive-wide red-main circuit breaker threshold
+	// (hivecommons/hive#13630) as a Go duration: once a required check has
+	// been red on a repo's default branch for longer, fix-main PRs rank
+	// first and new PR opening pauses in that repo until it is green.
+	// Empty means 6h; repo_policies[].red_main_threshold overrides it per
+	// repo. See RepoRedMainThreshold in repo_policy.go.
+	RedMainThreshold string `yaml:"red_main_threshold,omitempty" json:"red_main_threshold,omitempty"`
 	// WritingGuide is the hive owner's instruction for how the issues, PRs and
 	// reviews its agents write should READ — length, structure, register — as
 	// free text (hivecommons/hive#7667). It is rendered into every default
@@ -66,6 +104,33 @@ type ProjectConfig struct {
 	// Empty (the default) renders nothing, so a hive that never sets it gets
 	// byte-identical prompts. See WritingGuideSection.
 	WritingGuide string `yaml:"writing_guide,omitempty"`
+
+	// LabelDrivenApprovalLabels, LabelDrivenTrustOrgMembers and
+	// LabelDrivenTrustedBots configure label-driven approval
+	// (hivecommons/hive#11313) on repos that set
+	// project.repo_policies[].label_driven. They have no effect on any other
+	// repo. See LabelDrivenApprovalLabels / LabelDrivenTrust in repo_policy.go.
+	LabelDrivenApprovalLabels  []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
+	LabelDrivenTrustOrgMembers *bool    `yaml:"label_driven_trust_org_members,omitempty" json:"label_driven_trust_org_members,omitempty"`
+	LabelDrivenTrustedBots     []string `yaml:"label_driven_trusted_bots,omitempty" json:"label_driven_trusted_bots,omitempty"`
+	// LabelDrivenSupersedeParkActors are automation logins (a lifecycle bot
+	// such as github-actions[bot]) whose park labels a later trusted
+	// acceptance removes on label-driven repos (hivecommons/hive#13605).
+	// Empty (the default) keeps Hive from removing any park label it did not
+	// add. Per-repo override: repo_policies[].label_driven_supersede_park_actors.
+	LabelDrivenSupersedeParkActors []string `yaml:"label_driven_supersede_park_actors,omitempty" json:"label_driven_supersede_park_actors,omitempty"`
+}
+
+const (
+	ProjectAgentIssueDecisionResolve  = "resolve"
+	ProjectAgentIssueDecisionEscalate = "escalate"
+)
+
+func (p ProjectConfig) EffectiveAgentIssueDecisionPolicy() string {
+	if strings.EqualFold(strings.TrimSpace(p.AgentIssueDecisionPolicy), ProjectAgentIssueDecisionEscalate) {
+		return ProjectAgentIssueDecisionEscalate
+	}
+	return ProjectAgentIssueDecisionResolve
 }
 
 const MaxWritingGuideBytes = 64 * 1024
@@ -157,21 +222,6 @@ type PoliciesConfig struct {
 	Path         string        `yaml:"path"`
 	PollInterval time.Duration `yaml:"poll_interval"`
 	LocalDir     string        `yaml:"local_dir"`
-}
-
-// StatsDisplayEntry defines a single metric to show in the agent's sidebar/detail view.
-type StatsDisplayEntry struct {
-	Key        string `yaml:"key" json:"key"`
-	Label      string `yaml:"label" json:"label"`
-	Source     string `yaml:"source" json:"source"`
-	Field      string `yaml:"field" json:"field"`
-	Style      string `yaml:"style" json:"style"`
-	Icon       string `yaml:"icon,omitempty" json:"icon,omitempty"`
-	TrendField string `yaml:"trend_field,omitempty" json:"trendField,omitempty"`
-	Target     int    `yaml:"target,omitempty" json:"target,omitempty"`
-	// Desc is a one-line explanation of what the stat verifies, rendered
-	// as a hover tooltip in the dashboard (health checks especially).
-	Desc string `yaml:"desc,omitempty" json:"desc,omitempty"`
 }
 
 // ProjectObservabilityBackendRef names references an agent may place in managed

@@ -1,0 +1,1 @@
+- Bumped the Go toolchain to 1.26.10 so the `govulncheck` gate stops flagging GO-2026-6809 (`crypto/x509` certificate verification), reachable from the dashboard's HTTP server. The gate was red on the default branch itself, blocking every open PR.

@@ -151,6 +151,57 @@ func TestTriggerAutoUpgradesRecoversStaleManualUpgrade(t *testing.T) {
 	}
 }
 
+// staleAutoUpgradeTarget runs triggerAutoUpgrades for an AutoUpgrade hive whose
+// latch is past staleUpgradeTimeout while a newer SHA exists, and returns the
+// armed heartbeat target and the registry entry afterwards.
+func staleAutoUpgradeTarget(t *testing.T, spokeReportsUpgrading bool) (string, RegistryEntry) {
+	t.Helper()
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	installScriptedKubectl(t)
+
+	remote := ClusterConfig{ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Context: "ctx"}
+	saveSaaSHive(&SaaSHive{ID: "auto-1", Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "remote"})
+	resetSHACaches(t)
+	latestSHAMu.Lock()
+	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "newer99"}
+	latestSHAMu.Unlock()
+
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "auto-1", GitBranch: "v2", GitHash: "old1234", Upgrading: true,
+		UpgradeTarget: "fc32ae4", UpgradeStartedAt: time.Now().Add(-2 * time.Hour),
+		SpokeReportedUpgrading: spokeReportsUpgrading,
+		LastHeartbeat:          time.Now().UTC().Add(-30 * time.Second).Format(time.RFC3339),
+	}}
+
+	s.triggerAutoUpgrades()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.heartbeatUpgrade["auto-1"], s.registry.Hives[0]
+}
+
+func TestTriggerAutoUpgradesStaleMidRolloutDoesNotAdvance(t *testing.T) {
+	armed, entry := staleAutoUpgradeTarget(t, true)
+	if entry.UpgradeTarget != "fc32ae4" {
+		t.Errorf("a spoke still reporting Upgrading must keep its target, got %q", entry.UpgradeTarget)
+	}
+	if armed != "" {
+		t.Errorf("a mid-rollout spoke must not be re-armed, heartbeatUpgrade = %q", armed)
+	}
+	if !entry.Upgrading || time.Since(entry.UpgradeStartedAt) < 119*time.Minute {
+		t.Errorf("the latch and its start clock must be untouched so stuck-upgrade alerting is unchanged, got Upgrading=%v started %v ago", entry.Upgrading, time.Since(entry.UpgradeStartedAt))
+	}
+}
+
+func TestTriggerAutoUpgradesStaleNotUpgradingStillAdvances(t *testing.T) {
+	armed, entry := staleAutoUpgradeTarget(t, false)
+	if entry.UpgradeTarget != "newer99" || armed != "newer99" {
+		t.Errorf("a stale upgrade the spoke is not rolling must advance to latest, target=%q armed=%q", entry.UpgradeTarget, armed)
+	}
+}
+
 // TestTriggerAutoUpgradesRecoversStaleDailyModeHiveHeldBySchedule pins the
 // #2496 half of the restructure: a daily-mode hive that already fired today is
 // held by the schedule gate ("already upgraded today") — but staleness
@@ -353,5 +404,69 @@ func TestUpgradeStartedAtRoundTripsThroughRegistryAndRecovery(t *testing.T) {
 	defer s.mu.RUnlock()
 	if !s.registry.Hives[0].UpgradeStartedAt.Equal(started) {
 		t.Fatalf("recovery must keep the rehydrated clock, got %v want %v", s.registry.Hives[0].UpgradeStartedAt, started)
+	}
+}
+
+// Channel promotions during stale recovery must not extend the silent-drain
+// window. The deadline belongs to the original attempt, not its latest target.
+func TestTriggerAutoUpgradesPromotionPreservesHoldDeadline(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	resetSHACaches(t)
+	stubChannelImageVerificationUnavailable(t)
+	resetCommitOrderState(t)
+	stubCommitCompare(func(base, head string, logger *slog.Logger) (string, error) {
+		return "behind", nil
+	})
+	seedLatestSHA(t, "v5", "bbbbbbb")
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "stable-hold", Owner: "alice", AutoUpgrade: true,
+		Status: "running", ClusterID: "remote", TrackedChannel: "stable",
+	}); err != nil {
+		t.Fatalf("save hive: %v", err)
+	}
+	started := time.Now().Add(-23 * time.Minute)
+	s := &HubServer{
+		logger: slog.Default(), heartbeatUpgrade: make(map[string]string),
+		alerts:   newAlertState(),
+		clusters: map[string]ClusterConfig{"remote": {ID: "remote"}},
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "stable-hold", GitBranch: "v5", GitHash: "1111111",
+		ImageRef:  "ghcr.io/hivecommons/hive:stable",
+		Upgrading: true, UpgradeTarget: "2222222", UpgradeStartedAt: started,
+		LastHeartbeat: rfc3339At(time.Now()),
+	}}
+	s.alerts.noteUpgrade("stable-hold", started)
+	for promotion, target := range []string{"3333333", "4444444"} {
+		stubChannelRevisions(t, map[string]string{"stable": target})
+		s.triggerAutoUpgrades()
+		entry := s.registry.Hives[0]
+		if !entry.Upgrading || entry.UpgradeTarget != target || s.heartbeatUpgrade[entry.ID] != target {
+			t.Fatalf("promotion must advance registry and delivery targets to %s: %+v", target, entry)
+		}
+		if !entry.UpgradeStartedAt.Equal(started) {
+			t.Fatalf("promotion reset the original start: got %v, want %v", entry.UpgradeStartedAt, started)
+		}
+		// Distinct starts after each promotion are planned rollouts, even
+		// though the preserved attempt clock is beyond the upgrade grace.
+		restarted := time.Now().Add(time.Duration(promotion+1) * time.Minute)
+		if crashes := s.alerts.observeStart(entry.ID, rfc3339At(restarted), restarted); crashes != 0 {
+			t.Fatalf("promotion restart must not count as a crash: got %d", crashes)
+		}
+		if ev := evaluateOrphanedUpgrade(&entry, started.Add(silentDrainClearAfter-time.Second), ""); ev.orphaned {
+			t.Fatalf("original silent-drain window must still hold: %+v", ev)
+		}
+		entry.LastHeartbeat = rfc3339At(started.Add(silentDrainClearAfter))
+		if ev := evaluateOrphanedUpgrade(&entry, started.Add(silentDrainClearAfter+time.Second), ""); !ev.orphaned || ev.converged {
+			t.Fatalf("promotion must not extend the original silent-drain deadline: %+v", ev)
+		}
+	}
+	// Recovery must still self-heal a lost clock when advancing the target.
+	s.registry.Hives[0].UpgradeStartedAt = time.Time{}
+	stubChannelRevisions(t, map[string]string{"stable": "5555555"})
+	s.triggerAutoUpgrades()
+	if entry := s.registry.Hives[0]; entry.UpgradeStartedAt.IsZero() || entry.UpgradeTarget != "5555555" {
+		t.Fatalf("recovery must stamp a lost clock and advance the target: %+v", entry)
 	}
 }

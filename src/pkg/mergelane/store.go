@@ -54,6 +54,12 @@ type Front struct {
 	// LastReason is the last no-merge reason audited for this front, so a
 	// round that waits for the same reason is not audited again.
 	LastReason string `json:"last_reason,omitempty"`
+	// ChecksPending is set while the evaluated head's required checks are all
+	// queued or in progress (none failed, none missing); Extensions counts the
+	// front timeouts granted for that since the last branch update
+	// (hivecommons/hive#12952).
+	ChecksPending bool `json:"checks_pending,omitempty"`
+	Extensions    int  `json:"extensions,omitempty"`
 }
 
 // Waiter is an eligible pull request behind the front.

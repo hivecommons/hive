@@ -1,1 +1,0 @@
-- hub: stable-promotion status is cached and uses authenticated GitHub reads; GHCR tag-generation lookups are cached and per-evaluation build verification is bounded.

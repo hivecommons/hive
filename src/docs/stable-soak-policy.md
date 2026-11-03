@@ -1,27 +1,43 @@
-# Stable chases candidate and is always 24 hours behind it (v5 line)
+# How builds move from candidate to stable (v5)
 
-Stable chases candidate and is always 24 hours behind it: at each evaluation,
-`stable` is the newest `v5` build whose `docker.yml` run completed at least
-`SOAK_HOURS` ago — the build `candidate` pointed at 24 hours ago — regardless of
-how many newer candidate builds exist.
+<a id="stable-chases-candidate-and-is-always-24-hours-behind-it-v5-line"></a>
+
+**For release maintainers promoting images, not owners waiting for one hive
+to update.** For the latter, use the [individual-hive update timeline](release-channels.md#what-happens-to-your-hive-after-stable-moves).
+
+Normally a v5 build must be at least **24 hours old** before it can move from
+`candidate` to `stable`. The workflow chooses the newest eligible build that
+passes the promotion checks. Blocked checks, a pause, or delayed workflow
+execution can make promotion take longer. A documented emergency exception
+can shorten the wait; “always 24 hours behind” is not a guarantee.
+
+## Terms and reading route
+
+- **Channel:** a moving label for a published image; **digest:** its exact registry identifier.
+- **Soak:** the waiting/observation period, normally `SOAK_HOURS=24`, measured from that build's successful `docker.yml` completion.
+- **Build / generation:** one successful v5 `docker.yml` run / that run's number.
+- **Smoke signal:** a maintained hive's healthy heartbeat and restart evidence.
+- **Chases candidate:** stable follows the newest build old enough to qualify, not necessarily today's candidate tip.
+- **Compare-and-set guard:** re-read the published generation before moving tags and stop if it changed; the registry update itself is not atomic.
+
+Read [Promotion rule](#promotion-rule) for the policy and hard gates,
+[CI enforcement](#ci-enforcement) for implementation, or the
+[emergency checklist](#emergency-promotion-exception) for the exceptional task.
 
 ## Goals
 
 - Keep `candidate` fast: it should move on every green `v5` release build.
 - Keep `stable` predictable: when `v5` is busy and the promotion workflow runs
   hourly, `stable` lags `candidate` by 24 to 25 hours, not by a quiet period.
-- Make longer lag explicit: green evidence, `release-blocker`, and smoke-signal
-  gates are the only normal reasons `stable` stays farther behind, and the
-  workflow names the gate and build holding it.
+- Make longer lag explicit: failed gates, pauses, and workflow delays can keep
+  stable behind. A completed evaluation names the gate and build it is holding.
 - Preserve rollback safety with immutable short-SHA tags and digest evidence.
 
 ## Promotion rule
 
-Stable chases candidate and is always 24 hours behind it. In this document a
-*build* is one successful `docker.yml` run on `v5`; its *generation* is that
-run's number and its *digest* is the image manifest list it published for each
-image (`hive`, `hive-contributor`, and `hive-hub`). `candidate` is the newest
-build pointer. `stable` promotes an already-built digest; it does not rebuild.
+`candidate` follows successful v5 builds. Promotion moves `stable` to
+already-built manifest-list digests for `hive`, `hive-contributor`, and
+`hive-hub`; it does not rebuild them.
 
 At each hourly evaluation, the workflow finds the newest build newer than the
 current `stable` generation whose own `docker.yml` completion time is at least
@@ -59,8 +75,9 @@ The workflow moves `stable` to that build only when these hard gates pass:
    until evidence is available.
 
 If any hard gate fails, the run exits successfully without moving `stable` and
-prints which gate is holding which build. Those gates are the only normal reasons
-`stable` can lag more than 24 to 25 hours on the hourly cadence.
+prints which gate is holding which build. With hourly execution and passing
+gates, a busy line normally trails by 24–25 hours. A pause or delayed workflow
+can extend that even before a gate is evaluated.
 
 Worked example: `stable` is B1. During the next day, `docker.yml` publishes B2,
 B3, … B52 and `candidate` ends at B52. At time T, B52 is only minutes old, but
@@ -102,19 +119,17 @@ The existing release build continues to publish immutable short-SHA tags and mov
 `Promote Stable Channel` workflow runs hourly and can also be manually dispatched.
 It:
 
-1. reads the current `stable` generation for `hive`, `hive-contributor`, and
-   `hive-hub`;
-2. lists successful `docker.yml` runs on `v5` newest-to-oldest;
-3. skips builds whose own `docker.yml` completion time has not yet crossed the
-   configured soak line, remembering the newest unsoaked build's `eligible_at`;
-4. selects the first build that has crossed the line — the newest build
-   `candidate` pointed at 24 hours ago;
-5. resolves that build's three short-SHA image tags by digest and verifies their
-   revision and generation labels match that run;
-6. checks required release evidence, open `release-blocker` issues, and
-   maintained-hive smoke evidence for that build; and
-7. retags all three `stable` images to the chosen build's digests only after the
-   stable-generation compare-and-set passes.
+1. Reads current stable generations, then scans successful v5 `docker.yml`
+   runs newest-to-oldest. It remembers the next unsoaked build's `eligible_at`
+   while selecting the newest build that crosses the age threshold.
+2. Applies the four hard gates in [Promotion rule](#promotion-rule), using
+   the selected run's three short-SHA image tags and their revision/generation
+   labels.
+3. Re-reads stable generations immediately before publishing, then retags all
+   three images only if the independent generation guard still passes.
+
+The policy above defines what qualifies; this section describes how the
+workflow selects, checks, and records it.
 
 The hub dashboard's release-channel block has a play/pause control on the
 `stable` row for hub admins. Play is the default: scheduled runs advance `stable`
@@ -126,7 +141,11 @@ resumes.
 
 The public GET endpoint exposes only non-secret channel state, `eligible_at`, an
 `eligible_build` object (`sha`, `generation`, `built_at`, and digest when known),
-and maintained-hive smoke summaries; the PUT toggle is hub-admin gated and audit
+maintained-hive smoke summaries, and the outcome of the latest GitHub
+`docker.yml` runs fetch (`last_runs_fetch_ok`, `last_runs_fetch_error`,
+`last_runs_fetch_at`). The runs fetch has one 30-second deadline, stops paging
+at the current stable build, and a fetch that fails part-way never drives
+eligibility; the last good run list keeps being served. The PUT toggle is hub-admin gated and audit
 logged. Stable-channel hive rows and spoke dashboards use this same `eligible_at`
 calculation for their "Next update" ETA. When there is no eligible or soaking
 build ahead of stable, they say that no update is queued instead of hiding the
@@ -150,16 +169,40 @@ gate is holding build <sha> generation <N>`.
 
 ## Emergency promotion exception
 
+**Who:** a release maintainer able to dispatch the promotion workflow, with
+hub-admin coordination if promotion is paused. This is not a hive-owner
+**Upgrade now** action.
+
+1. Confirm why waiting is riskier than promoting. Check required workflows,
+   blockers, candidate freshness, and image metadata; the exception does not
+   waive those checks or the generation guard.
+2. **Before dispatch**, resolve and record the current stable digest for
+   **each of the three images**. Keep those rollback targets in the follow-up
+   issue, not just one short SHA.
+3. Open the follow-up issue for skipped soak/smoke evidence. Supply
+   `emergency-exception-reason` and `emergency-followup-issue` on manual dispatch.
+4. Verify the workflow summary and promoted digests. If blocked, fix the
+   non-waived gate or roll back; do not treat the exception as a universal bypass.
+5. Collect the [closure evidence](#closing-the-follow-up-issue), then update
+   the [exception ledger](#recorded-exceptions).
+
 Manual dispatch may set `emergency-exception-reason` to shorten the 24-hour soak.
 The reason must name the risk of waiting, the checks that passed, and the
 rollback digest, and `emergency-followup-issue` must name the follow-up issue for
 skipped soak or smoke evidence. The exception still requires the candidate to be
 current, required workflows to be green, no open `release-blocker`, and the
 monotonic generation guard to pass. When an emergency promotion succeeds, the
-workflow records the exception in the step summary and comments on the follow-up
-issue.
+workflow records the exception in the step summary, comments on the follow-up
+issue, and stamps the issue body with `<!-- hive:ops-tracking -->` and
+`<!-- hive:recheck-after <promotion + soak-hours> -->` so the hive's
+good-first-issue picker and contributor lane leave the checklist to the
+maintainer ([good-first-issue.md](good-first-issue.md#what-qualifies)); a
+hand-written follow-up should carry the same two markers.
 
 ### What the exception actually waives
+
+<details>
+<summary>Implementation reference: branch order and the exact two waived checks</summary>
 
 `normalized_decision` in `src/scripts/promote-stable.sh` checks the emergency
 branch *before* the soak-age and smoke-evidence branches, so an exception waives
@@ -180,6 +223,8 @@ back instead.
 
 Those two waived conditions are exactly what the follow-up issue owes after the
 fact, which is what makes it a *post-hoc soak*, not a waiver.
+
+</details>
 
 ### Closing the follow-up issue
 
@@ -202,7 +247,7 @@ all four:
    hub's **My Hives** page the version pill reads `stable (v5)`; if it reads
    `stable (<short digest>)` the hub could not attribute the digest to a tracked
    branch, and if it reads `stable (?)` the channel tag did not resolve at all
-   (see [release-channels.md](release-channels.md#the-version-pill-stable-v4)).
+   (see [release-channels.md](release-channels.md#the-version-pill-stable-v5)).
    Record which hive reported it.
 
 3. **The gate works unassisted.** The next scheduled `promote-stable.yml` run
@@ -245,6 +290,9 @@ The `ghcr.io/kubestellar/*` mirrors carry the same three `stable` digests, so th
 cross-org mirror step of that run landed.
 
 ### What the "before" column has to get right
+
+**Historical reconstruction and retention reference.** Record digests before
+dispatch using the checklist above; the details below explain why.
 
 **The workflow does not record it for you.** `promote` in
 `src/scripts/promote-stable.sh` reads each image's current `stable` digest into

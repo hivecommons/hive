@@ -1,0 +1,1 @@
+- Ensure Hive-authored default-branch PRs that cover issues get closing-keyword links, while partial or non-default PRs leave issue-stage comments explaining GitHub link limitations.

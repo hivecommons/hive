@@ -18,7 +18,7 @@ Pluk is installed in the container image as an npm global package
 Hive-authored component; Hive only shells out to it.
 
 When the agent manager creates a tmux session for an agent
-(`pkg/agent/manager.go`), it looks up `pluk` on `PATH` and, if found, attaches
+(`crux/agent/manager.go`), it looks up `pluk` on `PATH` and, if found, attaches
 it to that session's pane with:
 
 ```
@@ -58,7 +58,7 @@ fails, because it writes through a named FIFO and confirms delivery via a
 - The run directory (`/var/run/pluk` — `logs/` and `commands/` subdirectories)
   is created ahead of time in the image (`Dockerfile`) and re-created
   defensively before each attach by `ensurePlukRunDirs`
-  (`pkg/agent/pluk_dirs.go`). Both subdirectories are `0770` plus setgid,
+  (`crux/agent/pluk_dirs.go`). Both subdirectories are `0770` plus setgid,
   owned by the `dev` user and the shared `node` group, so any agent UID in
   that group can read another agent's log without world-readable
   permissions.
@@ -82,7 +82,7 @@ object, newline-delimited (JSONL), appended as the agent produces output.
 The file is written by a shell redirect, not by pluk. `pluk watch` classifies
 its stdin and prints events to stdout; it opens no file of its own. `tmux
 pipe-pane` feeds the pane into that command's stdin but does nothing with its
-stdout, so the publisher invocation in `pkg/agent/manager.go` has to end in
+stdout, so the publisher invocation in `crux/agent/manager.go` has to end in
 `>> /var/run/pluk/logs/<session>.jsonl` for anything to be written at all. It
 did not between [#1759](https://github.com/hivecommons/hive/pull/1759) — which
 replaced the Go `pluk-publish` binary, a publisher that wrote the log itself,
@@ -246,18 +246,44 @@ read the logs of the last several runs — not just the latest —
 ([#4296](https://github.com/hivecommons/hive/issues/4296),
 [#4295](https://github.com/hivecommons/hive/issues/4295)):
 
-- **When snapshots happen.** The scrollback is captured to a file *before*
-  it can be destroyed: when the next kick is delivered (the previous kick's
-  output is archived and the tmux history is cleared, so each archive covers
-  exactly one kick), before `kill-session` on an agent restart, and on
-  graceful shutdown (SIGTERM — pod roll or hive upgrade) for every agent
-  with un-archived kick output.
+- **When snapshots happen.** The scrollback is captured to a file as soon
+  as the kick's turn is observed to end (the CLI is back at its idle prompt —
+  the same moment the `kick turn ended` log line and the kick outcome come
+  from), and again *before* it can be destroyed: when the next kick is
+  delivered (the previous kick's output is archived and the tmux history is
+  cleared, so each archive covers exactly one kick), before `kill-session`
+  on an agent restart, and on graceful shutdown (SIGTERM — pod roll or hive
+  upgrade) for every agent with un-archived kick output. There is one
+  archive per kick: the later snapshot of the same kick replaces the
+  turn-end one (latest content wins), so a daily-cadence agent whose
+  container crashes hours after its turn ended — a hard kill that never runs
+  the shutdown snapshot — still has that run under *past kicks*.
 - **Where they live.** `/data/logs/kicks/<agent>/<timestamp>-<reason>.log`
   (override the root with `HIVE_KICK_LOG_DIR`). `/data` is the persistent
   volume on hosted hives, so archives survive agent restarts, pod rolls, and
   hive image upgrades. Each file starts with a small header (agent, archive
-  time, snapshot reason, kick start time, prompt snippet) followed by the raw
-  scrollback. `<reason>` is `kick`, `restart`, or `shutdown`.
+  time, snapshot reason, kick start time, prompt snippet, build/backend/model,
+  `source`) followed by the raw scrollback. `<reason>` is `turn-end`, `kick`,
+  `restart`, or `shutdown` — what wrote the archive, not how the kick ended.
+- **Transcript source.** The scrollback is what the CLI painted, so tool
+  output the CLI collapsed (`(N lines hidden)`) is not in it.
+  `HIVE_KICK_LOG_SOURCE=transcript` (or `auto`) builds the archive and the
+  live full log from the CLI's own transcript instead — Copilot CLI
+  `events.jsonl` and Claude Code session JSONL — rendered as plain text:
+  timestamped turns, every tool call with its full arguments (the shell
+  command on a `$ ` line) and its full output. Only entries since the kick
+  started are included. A missing, stale or unparseable transcript falls back
+  to the scrollback with one warning in the hive log, and the header's
+  `source:` line says which was used. A transcript over
+  `HIVE_KICK_LOG_MAX_BYTES` keeps its head and tail around a
+  `[… N bytes omitted …]` marker. The default, `scrollback`, is unchanged.
+  The source is also a dashboard setting: **Settings → Logging → Kick log
+  source** (config key `governor.logging.kick_log_source`) offers
+  *Scrollback*, *CLI transcript* and *Auto*, applies to the next kick without
+  a restart, and the kick history page shows each archive's `source`. A
+  `HIVE_KICK_LOG_SOURCE` set on the deployment wins over the saved setting;
+  the control is then shown disabled with the effective value and a "set by
+  `HIVE_KICK_LOG_SOURCE`" note.
 - **Retention.** Per agent, the newest **10** archives are kept
   (`HIVE_KICK_LOG_RETENTION`; `0` disables archiving) within a **64 MiB**
   per-agent size cap (`HIVE_KICK_LOG_MAX_BYTES`); the oldest files are pruned
@@ -271,11 +297,27 @@ read the logs of the last several runs — not just the latest —
   `GET /api/agents/{name}/kicks/{id}` (`text/plain`; `?download=1` for an
   attachment). Same auth rule as the full-log endpoint (any authenticated
   role), and archived content passes through the same token redaction.
-- **Limitations.** Sandbox-executor kicks have no tmux session and are not
-  archived here. The archive holds at most the retained scrollback
+- **Sandboxed agents.** A sandboxed kick (`sandbox.enabled: true`, Podman or
+  `runtime: job`) has no tmux session. When the run ends hive archives the
+  container's captured stdout/stderr here instead, as
+  `<kick-start>-sandbox.log` with `source: sandbox-podman` or
+  `source: sandbox-job` and an outcome block (exit code, commits, branch,
+  PR or `pr_withheld` reason, agent-report path and status, error) ahead of
+  the output, followed by one `---- verify: <cmd> (<verdict>) ----` section
+  per `publish.verify` command that ran. For these agents the `📄 full log` / `📋 log text` controls and
+  `GET /api/agents/{name}/log` serve the newest such archive — the only
+  durable copy, since a completed Job is deleted at once and the sandbox
+  workspace is swept after two hours — and an agent that has not run yet
+  gets a plain "no archived run yet" message rather than a pane error.
+  `HIVE_KICK_LOG_RETENTION=0` disables these archives too, and the card
+  then has no log to show.
+- **Limitations.** The archive holds at most the retained scrollback
   (`history-limit`, 50000 lines by default), so an extremely long run
-  self-truncates from the top. A hard kill (SIGKILL, node loss) skips the
-  shutdown snapshot; the previous kicks' archives on `/data` are unaffected.
+  self-truncates from the top. A hard kill (SIGKILL, OOM, node loss) skips the
+  shutdown snapshot, so a turn still running at that moment loses whatever
+  it produced after the last snapshot; turns that had already ended were
+  archived at turn end, and the previous kicks' archives on `/data` are
+  unaffected.
 
 ## Related
 

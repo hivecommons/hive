@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/taskmcp"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/planning"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 func (p dashboardTaskMCPProvider) RepoConventions(ctx context.Context, scope taskmcp.Scope, page taskmcp.PageRequest) (taskmcp.RepoConventionsData, taskmcp.PageInfo, error) {
@@ -129,7 +129,8 @@ func (p dashboardTaskMCPProvider) scopedKnowledgeFacts(ctx context.Context, repo
 	seen := map[string]bool{}
 	for _, fact := range facts {
 		key := string(fact.Layer) + "/" + fact.Slug
-		if !factForRepo(fact, repo) || !factMatchesQuery(fact, query) {
+		// Task MCP serves agents: approved knowledge only (#14546).
+		if fact.EffectiveState() != knowledge.StateApproved || !factForRepo(fact, repo) || !factMatchesQuery(fact, query) {
 			continue
 		}
 		if seen[key] {

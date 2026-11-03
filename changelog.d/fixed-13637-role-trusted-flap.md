@@ -1,0 +1,1 @@
+- Stop role/trusted flapping on and off: keep the PR's existing role label when no lane reports an author tier in a pass (#13637)

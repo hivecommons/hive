@@ -1,0 +1,1 @@
+- Hive activity monitor: stage chevrons no longer pulse for Open, Open · hold, Claimed or any other waiting step; only a step the hive is acting on (gentle pulse) or one waiting on a person (slower amber→red breathe) animates, and `prefers-reduced-motion` silences both.

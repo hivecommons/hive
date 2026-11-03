@@ -1,0 +1,1 @@
+- Review swarm: a re-review triggered by a PR body edit no longer asks the reviewer to revise its old review in place in repos outside `review.revise_repos`. The publish side refuses that request, so the finished review was discarded and the PR re-dispatched until it parked as review-dispatch-exhausted.

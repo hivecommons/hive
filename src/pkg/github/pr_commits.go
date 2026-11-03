@@ -35,6 +35,10 @@ type PRCommit struct {
 	// one identifies merge-from-base maintenance commits that do not, by
 	// themselves, address a human review.
 	ParentCount int
+	// Parents are the parent commit SHAs in git order (first parent first).
+	// The hold guard uses them to prove a post-update head is the hive's own
+	// merge-from-base rather than a contributor push (hivecommons/hive#14534).
+	Parents []string
 }
 
 func prCommitTime(rc *gh.RepositoryCommit) time.Time {
@@ -72,6 +76,10 @@ func (c *Client) ListPRCommits(ctx context.Context, repo string, number int) ([]
 		if i := strings.IndexByte(title, '\n'); i >= 0 {
 			title = title[:i]
 		}
+		parents := make([]string, 0, len(rc.Parents))
+		for _, p := range rc.Parents {
+			parents = append(parents, p.GetSHA())
+		}
 		out = append(out, PRCommit{
 			SHA:         rc.GetSHA(),
 			Author:      author,
@@ -79,6 +87,7 @@ func (c *Client) ListPRCommits(ctx context.Context, repo string, number int) ([]
 			Message:     message,
 			AuthoredAt:  prCommitTime(rc),
 			ParentCount: len(rc.Parents),
+			Parents:     parents,
 		})
 	}
 	return out, nil

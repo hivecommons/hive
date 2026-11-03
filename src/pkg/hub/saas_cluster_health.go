@@ -23,6 +23,15 @@ const (
 	semverCoreParts             = 3
 )
 
+const (
+	// pushReportedNodeHealthDoc is the runbook for the one-time, cluster-admin
+	// Node RBAC grant every push-reported spoke namespace needs.
+	pushReportedNodeHealthDoc = "src/docs/push-reported-node-health.md"
+	// nodeRBACForbidden is HeartbeatClusterHealthReport.NodeRBAC when the
+	// spoke's ServiceAccount got HTTP 403 listing /api/v1/nodes.
+	nodeRBACForbidden = "forbidden"
+)
+
 // CPU and memory bar thresholds are NOT declared here. The hub serves the
 // cluster-health panel raw percentages and the panel colours them with its own
 // CLUSTER_CPU_WARN_PCT / CLUSTER_CPU_DANGER_PCT / CLUSTER_MEM_* constants, so a
@@ -140,6 +149,10 @@ type PerClusterHealth struct {
 	DataSource string               `json:"data_source,omitempty"` // "heartbeat" when data comes from spoke heartbeat instead of kubectl
 	DataStale  bool                 `json:"data_stale,omitempty"`  // true when heartbeat data is older than heartbeatHealthStaleness
 	DataAge    string               `json:"data_age,omitempty"`    // human-readable age or collection timestamp
+	// NodeRBAC is the push-reporting spoke's Node read access ("ok" or
+	// "forbidden"), so a missing one-time cluster-admin grant stays visible.
+	// Empty when unknown (kubectl-queried clusters, older spokes).
+	NodeRBAC string `json:"node_rbac,omitempty"`
 	// StuckPods reports hive-namespace pods stuck Terminating — the residue of
 	// nodes disappearing without draining (#5328 item 3). Nil means the hub
 	// could not determine it (unreachable cluster, push-reported pool, failed
@@ -856,7 +869,21 @@ func (s *HubServer) pushReportedNoHealthNote(clusterID string) string {
 	if diag.predatesHealthFix {
 		return "push-reported · heartbeat carries no node health — spoke build predates " + clusterHealthUpgradeFixPR + "; upgrade spokes to ≥ " + clusterHealthUpgradeVersion + ageSuffix
 	}
-	return "push-reported · heartbeat carries no node health — spoke is not sending cluster_health; set hub.cluster_id or HIVE_CLUSTER_ID, then check node-metrics RBAC and metrics-server" + ageSuffix
+	return "push-reported · heartbeat carries no node health — spoke is not sending cluster_health; the hub delivers cluster_id over the heartbeat, so upgrade spokes to a build that adopts it (or set hub.cluster_id / HIVE_CLUSTER_ID). Node RBAC needs a cluster-admin on this cluster — apply " + pushReportedNodeHealthDoc + ageSuffix
+}
+
+// heartbeatReportNodeRBACForbidden reports whether a spoke's cluster_health
+// says its ServiceAccount may not list Nodes. NodeRBAC is authoritative when
+// present; older spokes only carry the 403 inside NodeHealthError.
+func heartbeatReportNodeRBACForbidden(report *HeartbeatClusterHealthReport) bool {
+	if report == nil {
+		return false
+	}
+	if report.NodeRBAC != "" {
+		return report.NodeRBAC == nodeRBACForbidden
+	}
+	return strings.Contains(report.NodeHealthError, "/api/v1/nodes") &&
+		strings.Contains(report.NodeHealthError, "HTTP 403")
 }
 
 type pushReportedHeartbeatDiagnostic struct {
@@ -1002,6 +1029,12 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 		pch.Error = report.NodeHealthError
 		pch.Status = perClusterHealthStatusMissingHealth
 		pch.Note = "push-reported · node health partial — " + report.NodeHealthError
+	}
+	pch.NodeRBAC = report.NodeRBAC
+	if heartbeatReportNodeRBACForbidden(report) {
+		pch.NodeRBAC = nodeRBACForbidden
+		pch.Status = perClusterHealthStatusMissingHealth
+		pch.Note = "push-reported · node RBAC missing — spoke ServiceAccount cannot list /api/v1/nodes (HTTP 403); a cluster-admin on this cluster must apply " + pushReportedNodeHealthDoc
 	}
 
 	// Mark staleness if heartbeat data is too old.

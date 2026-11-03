@@ -121,11 +121,13 @@ func reviewerTestScheduler(t *testing.T, acmmLevel int, fixture string) *Schedul
 	}
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Agents: map[string]config.AgentConfig{
-			// An operator-added adjudicator: name is NOT "reviewer"; the ROLE
-			// is what routes it into the lane.
-			"adjudicator": {Role: "reviewer", Mode: "ISSUES_AND_PRS"},
-			"scanner":     {Mode: "ISSUES_AND_PRS"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				// An operator-added adjudicator: name is NOT "reviewer"; the ROLE
+				// is what routes it into the lane.
+				"adjudicator": {Role: "reviewer", Mode: "ISSUES_AND_PRS"},
+				"scanner":     {Mode: "ISSUES_AND_PRS"},
+			},
 		},
 	}
 	if acmmLevel > 0 {
@@ -188,6 +190,12 @@ func TestBuildReviewerMessage_ContractAtL5(t *testing.T) {
 		"advisory digest",
 		"If either record fails, leave `needs-human` in place",
 		"--add-label " + ReviewerRecommendCloseLabel,
+		"HAND-OFF",
+		"gh label create " + ReviewerHandoffLabel + " --repo <owner/repo>",
+		"--add-label " + ReviewerHandoffLabel,
+		"--body \"" + ReviewerHandoffNextStepPrefix + " <one concrete action>\n",
+		"Reviewer adjudication: HAND-OFF",
+		"There is NO other verdict (no HOLD",
 		"NEVER close the PR yourself",
 		fmt.Sprintf("AT MOST %d PRs this kick", reviewerMaxPRsPerKick),
 		"NEVER touch a human-authored PR",
@@ -509,5 +517,91 @@ func TestBuildAgentMessage_ClosingInstructionKeptWhenNotStandingDown(t *testing.
 		if !strings.Contains(msg, concreteKickClosingInstruction) {
 			t.Errorf("%s: kick must carry the closing instruction:\n%s", agent, msg)
 		}
+	}
+}
+
+// #11910: the watchdog asks the scheduler whether the reviewer lane would
+// skip this agent's kick, so a lane with nothing to adjudicate is not reported
+// as alive but not producing. Only an agent whose kick routes to the lane is
+// excused.
+func TestReviewerLaneIdleReason(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		level        int
+		fixture      string
+		agent        string
+		kickTemplate string
+		want         string
+	}{
+		{name: "empty escalated queue", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "adjudicator", want: reviewerLaneIdleNothingToAdjudicate},
+		{name: "below ACMM gate", level: reviewerLaneMinACMMLevel - 1, fixture: reviewerFixture, agent: "adjudicator", want: reviewerLaneIdleDormant()},
+		{name: "lane has work", level: 5, fixture: reviewerOneEscalatedFixture, agent: "adjudicator", want: ""},
+		{name: "kick_template shadows the lane", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "adjudicator", kickTemplate: "reviewer-queue.md", want: ""},
+		{name: "non-reviewer agent", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "scanner", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := reviewerTestScheduler(t, tc.level, tc.fixture)
+			if tc.kickTemplate != "" {
+				ac := s.cfg.Agents[tc.agent]
+				ac.KickTemplate = tc.kickTemplate
+				s.cfg.Agents[tc.agent] = ac
+			}
+			if got := s.ReviewerLaneIdleReason(tc.agent); got != tc.want {
+				t.Errorf("ReviewerLaneIdleReason(%q) = %q, want %q", tc.agent, got, tc.want)
+			}
+		})
+	}
+}
+
+// #12876: the heartbeat reports the reviewer lane's own depth, nil when the
+// agent's kick does not route there.
+func TestReviewerLaneQueuedWork(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		level   int
+		fixture string
+		agent   string
+		want    *int
+	}{
+		{name: "empty escalated queue", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "adjudicator", want: intPtr(0)},
+		{name: "below ACMM gate", level: reviewerLaneMinACMMLevel - 1, fixture: reviewerOneEscalatedFixture, agent: "adjudicator", want: intPtr(0)},
+		{name: "lane has work", level: 5, fixture: reviewerOneEscalatedFixture, agent: "adjudicator", want: intPtr(1)},
+		{name: "missing queue file", level: 5, fixture: "", agent: "adjudicator", want: intPtr(0)},
+		{name: "non-reviewer agent", level: 5, fixture: reviewerOneEscalatedFixture, agent: "scanner", want: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := reviewerTestScheduler(t, tc.level, tc.fixture)
+			got := s.ReviewerLaneQueuedWork(tc.agent)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("ReviewerLaneQueuedWork(%q) = %d, want nil", tc.agent, *got)
+			case tc.want != nil && (got == nil || *got != *tc.want):
+				t.Errorf("ReviewerLaneQueuedWork(%q) = %v, want %d", tc.agent, got, *tc.want)
+			}
+		})
+	}
+}
+
+func intPtr(n int) *int { return &n }
+
+// A HAND-OFF verdict (hivecommons/hive#13183) is a delivered verdict like the
+// others: the row carrying reviewer-handoff stays escalated for a maintainer
+// and must never be re-adjudicated on the next kick.
+func TestFormatReviewerWorkList_ReviewerHandoffExcluded(t *testing.T) {
+	data := `{"ci_failing":[
+  {"number":7,"repo":"o/r","title":"handed off","agent":"scanner","escalated":true,
+   "labels":["needs-human","` + ReviewerHandoffLabel + `"],"failing_checks":["build"]},
+  {"number":8,"repo":"o/r","title":"awaiting adjudication","agent":"scanner","escalated":true,
+   "labels":["needs-human"],"failing_checks":["build"]}
+]}`
+	out := formatReviewerWorkList([]byte(data))
+	if strings.Contains(out, "o/r#7") {
+		t.Errorf("reviewer-handoff PR must be excluded: the verdict was already delivered:\n%s", out)
+	}
+	if !strings.Contains(out, "o/r#8") {
+		t.Errorf("unadjudicated escalated PR missing from the work list:\n%s", out)
+	}
+	if got := len(reviewerWorkRows([]byte(data))); got != 1 {
+		t.Errorf("reviewerWorkRows = %d rows, want 1", got)
 	}
 }

@@ -1,0 +1,1 @@
+- When ioscan fails closed and blocks a kick because the semantic classifier errored, the warning now names the underlying classifier error and the config to fix it (served classifier model/endpoint, `ioscan.classifier.enabled`, `ioscan.classifier.fail_mode`) instead of only "ioscan fail-closed blocked kick"; fail-closed stays the default (#14714).
