@@ -373,7 +373,7 @@ handles rejected/broken heads; there is no second fixer or merge engine.
 
 - If the authoritative DCO App cannot enumerate a large PR's complete commit
   history, admission reports **DCO provider unavailable / verdict UNKNOWN**
-  and remains blocked. Follow the [provider diagnosis and recovery runbook](../../docs/operations/dco-provider-unavailable.md);
+  and remains blocked. Follow the [provider diagnosis and recovery runbook](operator-reference/dco-provider-unavailable.md);
   a provider enumeration failure does not request a PR source change or permit
   substitution of the lowercase prow `dco` status.
 - Inspect the PR's exact-head checks and the **group SHA** checks separately.

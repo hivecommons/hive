@@ -29,12 +29,19 @@ class PendingEvidence extends Error {}
 // A provider's inability to evaluate is not a negative sign-off verdict. It
 // still blocks admission, and is deliberately not PendingEvidence: polling or
 // retrying the admission job cannot repair the external provider.
+const DCO_ENUMERATION_SUMMARY_PREFIX =
+  'The DCO check could not be evaluated because the complete pull request commit list could not be retrieved.';
+const DCO_ENUMERATION_SUMMARY_FALLBACK =
+  'That fallback did not complete, so the DCO verdict is unknown.';
+const DCO_PROVIDER_UNAVAILABLE_TEXT = 'DCO provider unavailable';
+const DCO_PROVIDER_RUNBOOK = 'src/docs/operator-reference/dco-provider-unavailable.md';
+
 class ProviderUnavailable extends Error {
   constructor(run, head) {
-    super(`DCO provider unavailable on ${head}: verdict UNKNOWN (App ${DCO_APP_ID}, ` +
+    super(`${DCO_PROVIDER_UNAVAILABLE_TEXT} on ${head}: verdict UNKNOWN (App ${DCO_APP_ID}, ` +
       `check run ${run.id}, conclusion ${run.conclusion}). Admission remains blocked. ` +
       'An operator must investigate the DCO provider enumeration path; see ' +
-      'docs/operations/dco-provider-unavailable.md. No PR source change is requested.');
+      `${DCO_PROVIDER_RUNBOOK}. No PR source change is requested.`);
   }
 }
 
@@ -43,8 +50,8 @@ function dcoEnumerationUnavailable(run) {
   // Call only after validating provider, head and completed status.
   return run.name === 'DCO' && run.conclusion === 'failure' &&
     typeof run.output?.summary === 'string' &&
-    run.output.summary.startsWith('The DCO check could not be evaluated because the complete pull request commit list could not be retrieved.') &&
-    run.output.summary.includes('That fallback did not complete, so the DCO verdict is unknown.');
+    run.output.summary.startsWith(DCO_ENUMERATION_SUMMARY_PREFIX) &&
+    run.output.summary.includes(DCO_ENUMERATION_SUMMARY_FALLBACK);
 }
 
 function membersForGroup(entries, group) {
@@ -265,4 +272,6 @@ module.exports = {
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError,
   ProviderUnavailable,
+  DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
+  DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,
 };
