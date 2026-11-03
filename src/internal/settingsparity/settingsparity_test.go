@@ -170,7 +170,7 @@ func TestConfigLeavesRealRepoEnumeratesAttention(t *testing.T) {
 	for _, leaf := range leaves {
 		got[leaf.Path] = true
 	}
-	for _, want := range []string{"github.attention.admitter.<key>", "github.attention.flap_window"} {
+	for _, want := range []string{"github.attention.admitter.<key>", "github.attention.flap_window", "github.attention.recipient_budget", "github.attention.digest_recipients[]"} {
 		if !got[want] {
 			t.Errorf("leaf %q must be enumerated", want)
 		}

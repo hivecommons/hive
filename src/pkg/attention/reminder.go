@@ -85,6 +85,7 @@ func (s *Store) ResolveItem(repo string, item int) ([]Episode, error) {
 		e.State = Resolved
 		e.ResolvedAt = now
 		e.WouldNotify = false
+		s.releaseBudget(e)
 		out = append(out, *e)
 	}
 	if len(out) == 0 {

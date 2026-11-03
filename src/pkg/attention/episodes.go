@@ -14,8 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/attentionbudget"
 	"github.com/hivecommons/hive/pkg/findingidentity"
 )
 
@@ -31,6 +33,10 @@ type Config struct {
 	// ReminderInterval is the minimum gap between pings of one unresolved
 	// episode (attention_pilot reminders); zero means DefaultReminderInterval.
 	ReminderInterval time.Duration `yaml:"reminder_interval,omitempty" json:"reminder_interval,omitempty"`
+	// Config carries github.attention.recipient_budget and
+	// github.attention.digest_recipients (#16271): the per-recipient budget
+	// every non-urgent ping and reminder is admitted through. Off by default.
+	attentionbudget.Config `yaml:",inline"`
 }
 
 func (c Config) Owner(repo string) string {
@@ -48,6 +54,9 @@ func (c Config) Validate() error {
 	}
 	if c.ReminderInterval < 0 {
 		return errors.New("github.attention.reminder_interval must not be negative")
+	}
+	if err := c.Config.Validate(); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for repo, owner := range c.Admitter {
@@ -139,6 +148,11 @@ type Episode struct {
 	RemindedAt       time.Time `json:"reminded_at,omitempty"`
 	Reminders        int       `json:"reminders,omitempty"`
 	RecipientActedAt time.Time `json:"recipient_acted_at,omitempty"`
+	// Class is the producer's attention class (see Observation.Class).
+	Class attentionbudget.Class `json:"class,omitempty"`
+	// Overflowed is set while the per-recipient attention budget holds the
+	// episode's ping or reminder back; the episode stays open and listed.
+	Overflowed bool `json:"overflowed,omitempty"`
 }
 
 func (e Episode) Marker() string {
@@ -151,6 +165,11 @@ type Observation struct {
 	Resolved   bool
 	Evidence   string
 	Body       string
+	// Class says whether the first ping is budgeted. Empty means an
+	// ordinary non-urgent ask (attentionbudget.Ping); producers of security,
+	// required-review, protocol-command or hold notices set the exempt class
+	// so the per-recipient budget never holds them back.
+	Class attentionbudget.Class
 }
 
 // Delivery is supplied by the existing write boundary. History returns the keys
@@ -183,11 +202,29 @@ type Store struct {
 	path  string
 	state disk
 	now   func() time.Time
+
+	budgetOnce sync.Once
+	budget     *attentionbudget.Budget
+	budgetCfg  atomic.Pointer[attentionbudget.Config]
 }
 
 // Open treats missing/corrupt state as recovery, never as permission to replay.
 // Unknown versions are refused rather than clobbered during rolling upgrades.
+// The per-recipient attention budget is seeded from the ledger's delivered
+// history so its rolling window survives restarts.
 func Open(path string) (*Store, error) {
+	s, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	writes := s.deliveredWrites()
+	s.mu.Unlock()
+	s.Budget().Seed(writes)
+	return s, nil
+}
+
+func open(path string) (*Store, error) {
 	s := &Store{path: path, now: time.Now, state: disk{Version: 1, Items: map[string]bool{}, ItemSeen: map[string]time.Time{}, Episodes: map[string]*Episode{}}}
 	if path == "" {
 		return s, nil
@@ -309,6 +346,7 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 	if owner == "" {
 		return nil, nil
 	}
+	s.setBudgetConfig(cfg)
 	if item <= 0 || d == nil {
 		return nil, errors.New("attention: item and delivery are required")
 	}
@@ -466,11 +504,15 @@ func (s *Store) record(cfg Config, itemKey string, first bool, history []string,
 		e.Key = o.Key
 		e.LastSeen = now
 		e.Evidence = o.Evidence
+		if o.Class != "" {
+			e.Class = o.Class
+		}
 		if o.Resolved {
 			e.State = Resolved
 			if e.ResolvedAt.IsZero() {
 				e.ResolvedAt = now
 			}
+			s.releaseBudget(e)
 			continue
 		}
 		if o.Actionable && e.State == Observed {
@@ -508,6 +550,19 @@ func (s *Store) deliver(ctx context.Context, d Delivery, o Observation, hiveID, 
 	}
 	needFind := reconcileOnly || e.Attempt != ""
 	if !needFind {
+		// Only a fresh POST is admitted: a retry of an uncertain attempt was
+		// already counted. An over-budget ask is never dropped; it stays an
+		// open, would-notify episode, listed as overflowed until delivered.
+		if s.Budget().Admit(budgetAsk(*e, attentionbudget.Ping, now)).Outcome == attentionbudget.Overflow {
+			var err error
+			if !e.Overflowed {
+				e.Overflowed = true
+				err = s.save()
+			}
+			s.mu.Unlock()
+			return err
+		}
+		e.Overflowed = false
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err != nil {
 			s.mu.Unlock()
@@ -609,5 +664,88 @@ func (s *Store) Update(key Key, state State, snooze time.Time) error {
 		return errors.New("attention: unsupported transition")
 	}
 	e.SnoozedUntil = snooze
+	s.releaseBudget(e)
 	return s.save()
+}
+
+// Budget is the store's per-recipient attention budget (#16271). With
+// github.attention.recipient_budget 0 (the default) it only counts, in
+// shadow mode; every decision is Deliver.
+func (s *Store) Budget() *attentionbudget.Budget {
+	s.budgetOnce.Do(func() {
+		s.budget = attentionbudget.New(func() attentionbudget.Config {
+			if c := s.budgetCfg.Load(); c != nil {
+				return *c
+			}
+			return attentionbudget.Config{}
+		})
+	})
+	return s.budget
+}
+
+// setBudgetConfig applies the hot-reloadable budget keys of cfg.
+func (s *Store) setBudgetConfig(cfg Config) {
+	c := cfg.Config
+	s.budgetCfg.Store(&c)
+}
+
+// AdmitReminder asks the budget whether a reminder for e may be posted now.
+// An Overflow outcome must not be posted: the episode is marked overflowed
+// and stays open (and listed) until its recipient's budget frees or it is
+// acknowledged, snoozed or resolved. Exempt classes always Deliver.
+func (s *Store) AdmitReminder(cfg Config, e Episode, now time.Time) (attentionbudget.Decision, error) {
+	s.setBudgetConfig(cfg)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.Budget().Admit(budgetAsk(e, attentionbudget.Reminder, now))
+	cur := s.state.Episodes[e.Key.Hash()]
+	if cur == nil || cur.Overflowed == (d.Outcome == attentionbudget.Overflow) {
+		return d, nil
+	}
+	cur.Overflowed = d.Outcome == attentionbudget.Overflow
+	return d, s.save()
+}
+
+// budgetClass maps an episode's producer class onto the budget: an empty or
+// non-urgent class is the given non-urgent kind (Ping or Reminder); every
+// exempt class passes through unchanged.
+func budgetClass(c, nonUrgent attentionbudget.Class) attentionbudget.Class {
+	if c == "" || c == attentionbudget.Ping || c == attentionbudget.Reminder {
+		return nonUrgent
+	}
+	return c
+}
+
+func budgetAsk(e Episode, nonUrgent attentionbudget.Class, now time.Time) attentionbudget.Ask {
+	return attentionbudget.Ask{
+		Repo:      e.Key.Repo,
+		Item:      e.Key.Item,
+		Recipient: e.Key.Recipient,
+		Class:     budgetClass(e.Class, nonUrgent),
+		Summary:   e.Key.Action,
+		At:        now,
+		Key:       e.Key.Hash(),
+	}
+}
+
+// releaseBudget clears e's overflowed ask once it was acknowledged, snoozed
+// or resolved. Caller holds s.mu.
+func (s *Store) releaseBudget(e *Episode) {
+	e.Overflowed = false
+	s.Budget().Resolve(e.Key.Repo, e.Key.Hash())
+}
+
+// deliveredWrites is the ledger's delivered history (paged_to/paged_at and
+// the last reminder) for seeding the budget. Caller holds s.mu.
+func (s *Store) deliveredWrites() []attentionbudget.Write {
+	var out []attentionbudget.Write
+	for _, e := range s.state.Episodes {
+		if !e.PagedAt.IsZero() && e.PagedTo != "" {
+			out = append(out, attentionbudget.Write{Recipient: e.PagedTo, At: e.PagedAt, Class: budgetClass(e.Class, attentionbudget.Ping)})
+		}
+		if !e.RemindedAt.IsZero() && e.Key.Recipient != "" {
+			out = append(out, attentionbudget.Write{Recipient: e.Key.Recipient, At: e.RemindedAt, Class: budgetClass(e.Class, attentionbudget.Reminder)})
+		}
+	}
+	return out
 }

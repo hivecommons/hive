@@ -166,6 +166,7 @@ func (s *Store) Apply(repo string, item int, actor string, maintainer bool, cmd 
 			e.SnoozedBy = actor
 		}
 		e.WouldNotify = false
+		s.releaseBudget(e)
 		out = append(out, *e)
 	}
 	if err := s.save(); err != nil {
