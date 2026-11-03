@@ -86,7 +86,7 @@ func TestReleaseStepMenuPolicy(t *testing.T) {
 		}
 	}
 	enabled := renderUnparkNoticeForPolicy(unparkMenuFromBody(body), true)
-	for _, want := range []string{"`/hive approve`: Hive creates release `v0.12.0`", "`" + step.Target + "`", "`/hive done`", "`/hive decision <your instructions>`"} {
+	for _, want := range []string{"`/hive approve` → Hive creates release `v0.12.0`", "`" + step.Target + "`", "`/hive done`", "`/hive decision <your instructions>`"} {
 		if !strings.Contains(enabled, want) {
 			t.Errorf("enabled release notice missing %q:\n%s", want, enabled)
 		}

@@ -165,7 +165,7 @@ func TestReleaseApprovalCreatesOncePostsURLAuditsAndClearsPark(t *testing.T) {
 	if !strings.Contains(posted, "https://github.com/org/repo/releases/tag/v0.12.0") || !strings.Contains(posted, unparkAcceptedMarker) {
 		t.Fatalf("success reply = %q", posted)
 	}
-	if !strings.Contains(posted, "`/hive approve`: Hive creates release `v0.12.0`") || !strings.Contains(posted, "`"+testReleaseStep().Target+"`") {
+	if !strings.Contains(posted, "`/hive approve` → Hive creates release `v0.12.0`") || !strings.Contains(posted, "`"+testReleaseStep().Target+"`") {
 		t.Fatalf("release notice did not name the approved tag and target: %q", posted)
 	}
 	if !containsFold(fx.removed, issueNeedsDecisionLabel) || containsFold(fx.removed, "hold") {

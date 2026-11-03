@@ -63,7 +63,7 @@ func TestUnparkNoticeReadsPlainListOptionsOnAMarkedPark(t *testing.T) {
 		t.Fatalf("options = %v, want A B C", m.options)
 	}
 	notice := renderUnparkNotice(m)
-	for _, want := range []string{"`/hive approve`: go with option A: Keep the rule.", "`/hive decision B`: go with option B: Change the rule", "`/hive decision C`"} {
+	for _, want := range []string{"`/hive approve` → go with option A: Keep the rule.", "`/hive decision B` → go with option B: Change the rule", "`/hive decision C`"} {
 		if !strings.Contains(notice, want) {
 			t.Fatalf("notice missing %q:\n%s", want, notice)
 		}
@@ -85,7 +85,7 @@ func TestUnparkNoticeReadsThePolicyRecommendationLine(t *testing.T) {
 		body := ownerStepCommentBody("Option A: keep the rule\nOption B: change the rule\nOption C: accept\n\n"+line, true)
 		m := c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", body)})
 		bullets := m.bullets()
-		if m.ownerStep || m.recommended != "B" || !strings.Contains(bullets, "`/hive approve`: go with the recommendation (option B): change the rule") {
+		if m.ownerStep || m.recommended != "B" || !strings.Contains(bullets, "`/hive approve` → go with the recommendation (option B): change the rule") {
 			t.Fatalf("%q: recommended = %q, ownerStep = %v:\n%s", line, m.recommended, m.ownerStep, bullets)
 		}
 		if decision, ok := m.approveDecision(); !ok || !strings.Contains(decision, "option B") {
