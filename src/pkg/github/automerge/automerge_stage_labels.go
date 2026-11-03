@@ -1547,8 +1547,17 @@ func (f *engineStatusForge) EditComment(ctx context.Context, id int64, body stri
 }
 
 func (f *engineStatusForge) CreateComment(ctx context.Context, body string) error {
-	_, _, err := f.e.gh.Issues.CreateComment(ctx, f.owner, f.repo, f.number, &gh.IssueComment{Body: gh.Ptr(body)})
-	return err
+	commenter, ok := f.e.transport.(issueCommenter)
+	if !ok {
+		return fmt.Errorf("creating hive status comment on %s/%s#%d: transport has no comment primitive", f.owner, f.repo, f.number)
+	}
+	return commenter.CreateIssueComment(ctx, f.owner+"/"+f.repo, f.number, body)
+}
+
+// issueCommenter is the tagged notification-write primitive (canary gate,
+// effects journal) the production transport, *hgithub.Client, provides.
+type issueCommenter interface {
+	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
 
 func (f *engineStatusForge) DeleteComment(ctx context.Context, id int64) error {
