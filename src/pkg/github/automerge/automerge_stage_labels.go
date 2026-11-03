@@ -1499,7 +1499,10 @@ func (c *Engine) writeStatusSection(ctx context.Context, owner, repo string, num
 }
 
 // engineStatusForge adapts the engine's comment calls on one PR to
-// prstatus.Forge.
+// prstatus.Forge. It is plumbing under prstatus.Write, reached only from
+// postStageNote: the write-back decision for a stage note is made (and
+// ratcheted) at that entry point, and the forge's edit/delete touch only the
+// hive's own status comment, so its calls carry writeback:gated.
 type engineStatusForge struct {
 	e      *Engine
 	owner  string
@@ -1524,19 +1527,19 @@ func (f *engineStatusForge) ListComments(ctx context.Context) ([]prstatus.Commen
 }
 
 func (f *engineStatusForge) EditComment(ctx context.Context, id int64, body string) error {
-	if _, _, err := f.e.gh.Issues.EditComment(ctx, f.owner, f.repo, id, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	if _, _, err := f.e.gh.Issues.EditComment(ctx, f.owner, f.repo, id, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 		return fmt.Errorf("editing hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
 	}
 	return nil
 }
 
 func (f *engineStatusForge) CreateComment(ctx context.Context, body string) error {
-	_, _, err := f.e.gh.Issues.CreateComment(ctx, f.owner, f.repo, f.number, &gh.IssueComment{Body: gh.Ptr(body)})
+	_, _, err := f.e.gh.Issues.CreateComment(ctx, f.owner, f.repo, f.number, &gh.IssueComment{Body: gh.Ptr(body)}) // writeback:gated
 	return err
 }
 
 func (f *engineStatusForge) DeleteComment(ctx context.Context, id int64) error {
-	if _, err := f.e.gh.Issues.DeleteComment(ctx, f.owner, f.repo, id); err != nil {
+	if _, err := f.e.gh.Issues.DeleteComment(ctx, f.owner, f.repo, id); err != nil { // writeback:gated
 		return fmt.Errorf("deleting hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
 	}
 	return nil
