@@ -182,17 +182,17 @@ func (c Config) Validate() error {
 			if !ValidID(group) || len(m) == 0 || len(m) > DefaultMaxMembers {
 				return fmt.Errorf("%w: delivery group", ErrInvalid)
 			}
-			for group, m := range l.Recoverers {
-				if !ValidID(group) || len(m) == 0 || len(m) > DefaultMaxMembers {
-					return fmt.Errorf("%w: recovery capability", ErrInvalid)
-				}
-				for _, p := range m {
-					if !allowed(l.Groups[group], p) {
-						return fmt.Errorf("%w: recoverer must be a group member", ErrInvalid)
-					}
+			members = append(members, m...)
+		}
+		for group, recoverers := range l.Recoverers {
+			if !ValidID(group) || len(recoverers) == 0 || len(recoverers) > DefaultMaxMembers {
+				return fmt.Errorf("%w: recovery capability", ErrInvalid)
+			}
+			for _, project := range recoverers {
+				if !allowed(l.Groups[group], project) {
+					return fmt.Errorf("%w: recoverer must be a group member", ErrInvalid)
 				}
 			}
-			members = append(members, m...)
 		}
 		if len(l.Publishers) > DefaultMaxMembers || len(l.Subscribers) > DefaultMaxMembers {
 			return fmt.Errorf("%w: membership bounds", ErrInvalid)
