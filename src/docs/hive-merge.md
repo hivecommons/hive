@@ -258,7 +258,7 @@ projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authori
 `auto_merge.human_merge_pin_only`; see the
 [operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
 for its configuration and deployment prerequisites. The schema/classifier
-(#16262), relay admission (#16265), and sweep admission (#16266, landed) are
+(#16262), relay admission (#16265, landed), and sweep admission (#16266, landed) are
 separate changes: this attribution change alone does **not** enable the exception.
 New path-hold comments retain `<!-- hive-human-merge-path -->` and append
 `<!-- hive-human-merge-path-head: <40-character SHA> -->` only when Hive
