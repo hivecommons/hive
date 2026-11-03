@@ -5456,7 +5456,9 @@ const RELAY_SECRET_PATTERNS = [
   // floor and underscore support match pkg/logscrub.
   { category: 'github-token', pattern: /(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}/g },
   { category: 'jwt', pattern: /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g },
+  { category: 'api-key', pattern: /(^|[^A-Za-z0-9._-])(sk-[A-Za-z0-9._\-]{6,})/g },
   { category: 'aws-access-key', pattern: /\b(AKIA|ASIA)[0-9A-Z]{16}\b/g },
+  { category: 'basic-auth', pattern: /\bauthorization["']?\s*[:=]\s*["']?basic\s+[A-Za-z0-9+/_-]{4,}={0,2}/gi },
   { category: 'bearer-token', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b/gi },
   { category: 'private-key', pattern: /-----BEGIN\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----/gs },
   { category: 'encrypted-private-key', pattern: /-----BEGIN\s+ENCRYPTED\s+PRIVATE\s+KEY-----.*?-----END\s+ENCRYPTED\s+PRIVATE\s+KEY-----/gs },
@@ -5465,8 +5467,10 @@ const RELAY_SECRET_PATTERNS = [
 
 function redactTokens(text) {
   let output = text;
-  for (const { pattern } of RELAY_SECRET_PATTERNS) {
-    output = output.replace(pattern, '[REDACTED]');
+  for (const { category, pattern } of RELAY_SECRET_PATTERNS) {
+    output = category === 'api-key'
+      ? output.replace(pattern, '$1[REDACTED]')
+      : output.replace(pattern, '[REDACTED]');
   }
   return BACKEND === 'pi' ? redactPiCredentials(output, PI_SELECTION, PI_ENV) : output;
 }
