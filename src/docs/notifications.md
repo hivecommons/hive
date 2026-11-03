@@ -424,6 +424,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).priorArtGateClose` | `status` |  |
 | `github.(*Client).reconcileBlockedTargets` | `status` |  |
 | `github.(*Client).recordReviewEvidenceMerge` | `status` |  |
+| `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper; attributed to its caller |
 | `github.SyncIssueStageLabelsWith` | `status` |  |
 | `github.ensureIssueStagePRLink` | `status` |  |
 | `github.githubIssueBacklogSink.AppendToItem` | `status` |  |
