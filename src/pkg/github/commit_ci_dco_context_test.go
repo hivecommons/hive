@@ -35,7 +35,7 @@ func TestDCOContextSucceeded(t *testing.T) {
 		return &gh.RepoStatus{Context: gh.Ptr(ctx), State: gh.Ptr(state)}
 	}
 	run := func(id int64, name, status, conclusion string, started time.Time) *gh.CheckRun {
-		cr := &gh.CheckRun{ID: gh.Ptr(id), Name: gh.Ptr(name), Status: gh.Ptr(status), StartedAt: &gh.Timestamp{Time: started}}
+		cr := &gh.CheckRun{ID: gh.Ptr(id), Name: gh.Ptr(name), Status: gh.Ptr(status), StartedAt: &gh.Timestamp{Time: started}, App: &gh.App{ID: gh.Ptr(int64(10))}}
 		if conclusion != "" {
 			cr.Conclusion = gh.Ptr(conclusion)
 		}
@@ -61,6 +61,14 @@ func TestDCOContextSucceeded(t *testing.T) {
 		},
 		{name: "check-run action_required", runs: []*gh.CheckRun{run(1, "DCO", "completed", "action_required", t0)}, want: false},
 		{name: "check-run still running", runs: []*gh.CheckRun{run(1, "DCO", "in_progress", "", t0)}, want: false},
+		{
+			name: "unknown producer cannot prove latest success",
+			runs: []*gh.CheckRun{
+				{ID: gh.Ptr(int64(1)), Name: gh.Ptr("DCO"), Status: gh.Ptr("completed"), Conclusion: gh.Ptr("success")},
+				{ID: gh.Ptr(int64(2)), Name: gh.Ptr("DCO"), Status: gh.Ptr("completed"), Conclusion: gh.Ptr("failure")},
+			},
+			want: false,
+		},
 		{
 			name: "newer rerun failure supersedes older success",
 			runs: []*gh.CheckRun{

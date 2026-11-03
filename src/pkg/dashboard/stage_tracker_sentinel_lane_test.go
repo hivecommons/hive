@@ -376,13 +376,13 @@ assert.ok(lit[1].includes('title="' + TIP + ' — '), 'the chevron tooltip leads
 assert.ok(lit[1].includes('aria-current="step"'));
 assert.ok(lit[1].includes('aria-label="Sentinel alert · needs human — ' + TIP + '"'), 'aria-label carries the wording: ' + lit[1]);
 assert.ok(lit[2].includes('aria-label="Next move: human"'), 'the 👤 actor icon stays');
-assert.ok(parked.includes('<p class="ham-current-stage">Needs human decision · Sentinel alert · needs human · Next move: human</p>'), 'the compact caption says it too: ' + parked);
+assert.ok(parked.includes('<p class="ham-current-stage">Needs human decision · Sentinel alert · needs human · Next move: human'), 'the compact caption preserves the human gate beside independent tracks: ' + parked);
 assert.ok(!parked.includes('ham-badge-sentinel'), 'no chip when the lane word already says it');
 assert.ok(parked.includes(esc(TIP)), 'the PR link tooltip carries the sentinel line');
 
 // Other lanes: chip beside the modifier pill, same tooltip.
 const review = stageTrackerRowHtml(P('o/r', 110, 50, Object.assign({ modifiers: ['needs-rebase'] }, flagged)), stages, ctx);
-assert.ok(review.includes('<span class="ham-detour">') === false && review.includes('<span class="ham-seg-t">CI / Review</span>'), 'lane word unchanged off the merge gate');
+assert.ok(!review.includes('<span class="ham-detour">') && review.includes('data-track="ci"') && review.includes('data-track="review"'), 'the informational notice preserves both independent tracks off the merge gate');
 const chips = /<span class="ham-badges">([\s\S]*?)<\/span><\/li>/.exec(review);
 assert.ok(chips, review);
 assert.ok(/^<span class="ham-badge ham-badge-sentinel" title="[^"]+" aria-label="Sentinel alert — [^"]+">sentinel<\/span><span class="ham-badge ham-badge-mod ham-mod-needs-rebase">needs rebase<\/span>$/.test(chips[1]), 'sentinel chip leads the chip area: ' + chips[1]);
