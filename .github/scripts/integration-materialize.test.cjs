@@ -286,6 +286,8 @@ test('real Git plumbing produces exact deterministic prefixes and retains an act
     GIT_AUTHOR_DATE: clock.toISOString(), GIT_COMMITTER_DATE: clock.toISOString(),
     GIT_TERMINAL_PROMPT: '0',
   };
+  // gc.auto/maintenance.auto off for the same reason as integration-governance.test.cjs:
+  // a background `git gc --auto` must not race the recursive rmSync teardown (ENOTEMPTY).
   const git = (args, env = {}) => execFileSync('git',
     ['-c', 'core.hooksPath=/dev/null', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '--literal-pathspecs', ...args],
     {cwd: directory, env: {...environment, ...env}, encoding: 'utf8',
