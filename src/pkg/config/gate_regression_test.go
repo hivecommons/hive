@@ -9,7 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
-func gateCfg(org string, mutate func(c *Config)) *Config {
+func regCfg(org string, mutate func(c *Config)) *Config {
 	c := &Config{}
 	c.Project.Org = org
 	if mutate != nil {
@@ -18,7 +18,7 @@ func gateCfg(org string, mutate func(c *Config)) *Config {
 	return c
 }
 
-func gateNames(regs []GateRegression) []string {
+func gateRegNames(regs []GateRegression) []string {
 	out := make([]string, 0, len(regs))
 	for _, g := range regs {
 		out = append(out, g.Gate)
@@ -44,18 +44,18 @@ func TestDetectGateRegressions(t *testing.T) {
 	}{
 		{
 			name:      "unchanged",
-			prior:     gateCfg("acme", full),
-			effective: gateCfg("acme", full),
+			prior:     regCfg("acme", full),
+			effective: regCfg("acme", full),
 		},
 		{
 			name:      "no prior gates",
-			prior:     gateCfg("acme", nil),
-			effective: gateCfg("acme", nil),
+			prior:     regCfg("acme", nil),
+			effective: regCfg("acme", nil),
 		},
 		{
 			name:  "all dropped",
-			prior: gateCfg("acme", full),
-			effective: gateCfg("acme", func(c *Config) {
+			prior: regCfg("acme", full),
+			effective: regCfg("acme", func(c *Config) {
 				c.Review.RequireLabels = []string{" "}
 			}),
 			want: []string{
@@ -72,8 +72,8 @@ func TestDetectGateRegressions(t *testing.T) {
 		},
 		{
 			name:  "weakened per-repo writeback mode",
-			prior: gateCfg("acme", full),
-			effective: gateCfg("acme", func(c *Config) {
+			prior: regCfg("acme", full),
+			effective: regCfg("acme", func(c *Config) {
 				full(c)
 				c.Writeback.PerRepo["torch-spyre/spyre-inference"] = writeback.RepoOverride{Mode: writeback.RepoModeFull}
 			}),
@@ -81,45 +81,45 @@ func TestDetectGateRegressions(t *testing.T) {
 		},
 		{
 			name:  "tightened per-repo writeback mode is not a regression",
-			prior: gateCfg("acme", full),
-			effective: gateCfg("acme", func(c *Config) {
+			prior: regCfg("acme", full),
+			effective: regCfg("acme", func(c *Config) {
 				full(c)
 				c.Writeback.PerRepo["torch-spyre/spyre-inference"] = writeback.RepoOverride{Mode: writeback.RepoModeOff}
 			}),
 		},
 		{
 			name: "dropped full override is a tightening",
-			prior: gateCfg("acme", func(c *Config) {
+			prior: regCfg("acme", func(c *Config) {
 				c.Writeback.PerRepo = map[string]writeback.RepoOverride{"acme/x": {Mode: writeback.RepoModeFull}}
 			}),
-			effective: gateCfg("acme", nil),
+			effective: regCfg("acme", nil),
 		},
 		{
 			name:  "label list changed but still non-empty",
-			prior: gateCfg("acme", full),
-			effective: gateCfg("acme", func(c *Config) {
+			prior: regCfg("acme", full),
+			effective: regCfg("acme", func(c *Config) {
 				full(c)
 				c.Review.RequireLabels = []string{"other-label"}
 			}),
 		},
 		{
 			name:  "pause matched across spellings",
-			prior: gateCfg("acme", func(c *Config) { c.Project.PausedRepos = []RepoPause{{Repo: "acme/Console"}} }),
-			effective: gateCfg("acme", func(c *Config) {
+			prior: regCfg("acme", func(c *Config) { c.Project.PausedRepos = []RepoPause{{Repo: "acme/Console"}} }),
+			effective: regCfg("acme", func(c *Config) {
 				c.Project.PausedRepos = []RepoPause{{Repo: "console"}}
 			}),
 		},
 		{
 			name:      "nil configs",
 			prior:     nil,
-			effective: gateCfg("acme", nil),
+			effective: regCfg("acme", nil),
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := DetectGateRegressions(tc.effective, tc.prior)
-			if strings.Join(gateNames(got), ",") != strings.Join(tc.want, ",") {
-				t.Fatalf("gates = %v, want %v", gateNames(got), tc.want)
+			if strings.Join(gateRegNames(got), ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("gates = %v, want %v", gateRegNames(got), tc.want)
 			}
 			for _, g := range got {
 				if want, ok := tc.wantPrev[g.Gate]; ok && g.Previous != want {
@@ -142,7 +142,7 @@ func TestDetectPriorOverlayGateRegressions(t *testing.T) {
 		}
 		return p
 	}
-	effective := gateCfg("acme", nil)
+	effective := regCfg("acme", nil)
 	effective.SourcePath = write("hive.yaml", "project:\n  org: acme\n")
 
 	t.Run("no prior overlay", func(t *testing.T) {
@@ -161,7 +161,7 @@ func TestDetectPriorOverlayGateRegressions(t *testing.T) {
 	})
 
 	t.Run("effective source path is skipped", func(t *testing.T) {
-		eff := gateCfg("acme", nil)
+		eff := regCfg("acme", nil)
 		eff.SourcePath = write("gated.yaml", "project:\n  org: acme\nreview:\n  require_labels: [hive-review]\n")
 		if got := DetectPriorOverlayGateRegressions(eff, []string{eff.SourcePath}); len(got) != 0 {
 			t.Fatalf("got %v, want none", got)
@@ -173,8 +173,8 @@ func TestDetectPriorOverlayGateRegressions(t *testing.T) {
 		dash := write("prior.dashboard", "project:\n  org: acme\n  paused_repos:\n    - repo: console\nreview:\n  require_labels: [other]\n")
 		got := DetectPriorOverlayGateRegressions(effective, []string{runtime, dash})
 		want := []string{GateReviewRequireLabels, GatePausedRepos + "[acme/console]"}
-		if strings.Join(gateNames(got), ",") != strings.Join(want, ",") {
-			t.Fatalf("gates = %v, want %v", gateNames(got), want)
+		if strings.Join(gateRegNames(got), ",") != strings.Join(want, ",") {
+			t.Fatalf("gates = %v, want %v", gateRegNames(got), want)
 		}
 		if got[0].Previous != "[hive-review]" || got[0].Source != runtime {
 			t.Errorf("review gate = %+v, want previous from %s", got[0], runtime)
