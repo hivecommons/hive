@@ -3134,22 +3134,21 @@ func standbyProposeItemTier(item standbypkg.Item) standbypkg.Tier {
 	return standbypkg.NormalizeTier(classify.ProposeStandbyItemTierFromLabels(item.Labels).Tier)
 }
 
-// standbyLaneItems projects the hive's actionable queue into the per-lane item
-// lists QualifiedStandbyCounts takes. The lane split mirrors
-// buildLaneQueueDepths so the M in "N waiting, M qualify" is counted over the
-// same items as the N.
-func standbyLaneItems(lanes []string, actionable *ghpkg.ActionableResult) map[string][]standbypkg.Item {
-	if len(lanes) == 0 || actionable == nil {
+// standbyLaneItems projects the dispatchable admission queue into the per-lane
+// item lists QualifiedStandbyCounts takes. Its lane and held-item filters match
+// standbyDispatchItem so the tile counts only work dispatch can offer.
+func standbyLaneItems(lanes []string, queue []ReadyQueueItem) map[string][]standbypkg.Item {
+	if len(lanes) == 0 || queue == nil {
 		return nil
 	}
 	out := make(map[string][]standbypkg.Item, len(lanes))
 	for _, lane := range lanes {
-		items := make([]standbypkg.Item, 0, len(actionable.Issues.Items))
-		for _, issue := range actionable.Issues.Items {
-			if lane != "scanner" && issue.Lane != lane && issue.Lane != "" {
+		items := make([]standbypkg.Item, 0, len(queue))
+		for _, item := range queue {
+			if item.Held || !strings.EqualFold(strings.TrimSpace(item.Lane), lane) {
 				continue
 			}
-			items = append(items, standbypkg.Item{Repo: issue.Repo, Labels: issue.Labels})
+			items = append(items, standbypkg.Item{Repo: item.Repo, Labels: item.Labels})
 		}
 		out[lane] = items
 	}

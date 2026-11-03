@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/github"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
 )
 
@@ -133,29 +132,29 @@ func TestQualifiedStandbyCountsHonourItemTiers(t *testing.T) {
 	}
 }
 
-// TestStandbyLaneItemsSplitsTheQueueByLane covers what feeds the count on a
-// live hub: each lane's share of the hive's actionable queue, split the same
-// way buildLaneQueueDepths splits it, so the M and the N beside it are counted
-// over the same items.
-func TestStandbyLaneItemsSplitsTheQueueByLane(t *testing.T) {
-	actionable := &github.ActionableResult{}
-	actionable.Issues.Items = []github.Issue{
-		{Repo: "my-org/repo-a", Lane: "quality", Labels: []string{"dependencies"}},
+// TestStandbyLaneItemsUsesDispatchableQueue verifies the tile counts only
+// unheld admission items that standby dispatch can select for each lane.
+func TestStandbyLaneItemsUsesDispatchableQueue(t *testing.T) {
+	queue := []ReadyQueueItem{
 		{Repo: "my-org/repo-a", Lane: "architect", Labels: []string{"rfc"}},
-		{Repo: "my-org/repo-b", Lane: "", Labels: []string{"kind/bug"}},
+		{Repo: "my-org/repo-b", Lane: "guide", Labels: []string{"dependencies"}},
+		{Repo: "my-org/repo-b", Lane: "scanner", Labels: []string{"kind/security"}, Held: true},
 	}
-	items := standbyLaneItems([]string{"quality", "architect"}, actionable)
-	if len(items["quality"]) != 2 {
-		t.Errorf("quality items = %v, want its own issue and the unrouted one", items["quality"])
+	items := standbyLaneItems([]string{"scanner", "guide", "architect"}, queue)
+	if len(items["scanner"]) != 0 {
+		t.Errorf("scanner items = %v, want no dispatchable items", items["scanner"])
 	}
-	if len(items["architect"]) != 2 {
-		t.Errorf("architect items = %v, want its own issue and the unrouted one", items["architect"])
+	if len(items["guide"]) != 1 {
+		t.Errorf("guide items = %v, want only its dispatchable issue", items["guide"])
 	}
-	if got := items["quality"][0].Labels; len(got) != 1 || got[0] != "dependencies" {
+	if len(items["architect"]) != 1 {
+		t.Errorf("architect items = %v, want only its dispatchable issue", items["architect"])
+	}
+	if got := items["guide"][0].Labels; len(got) != 1 || got[0] != "dependencies" {
 		t.Errorf("labels were not carried: %v", got)
 	}
-	if standbyLaneItems(nil, actionable) != nil || standbyLaneItems([]string{"quality"}, nil) != nil {
-		t.Error("standbyLaneItems must be nil when there is no lane or no enumeration to project")
+	if standbyLaneItems(nil, queue) != nil || standbyLaneItems([]string{"guide"}, nil) != nil {
+		t.Error("standbyLaneItems must be nil when there are no lanes or no queue")
 	}
 }
 
