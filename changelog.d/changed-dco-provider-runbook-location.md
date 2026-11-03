@@ -1,0 +1,1 @@
+- Moved the DCO provider-unavailable runbook to `src/docs/operator-reference/` and named its policy-message literals; admission behavior is unchanged ([#16404](https://github.com/hivecommons/hive/issues/16404)).
