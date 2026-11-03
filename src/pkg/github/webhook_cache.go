@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	itemblocker "github.com/hivecommons/hive/pkg/blocker"
@@ -131,7 +132,15 @@ func newWebhookTracker() *webhookTracker {
 	}
 }
 
-var sharedWebhookTracker = newWebhookTracker()
+// webhookTrackerPtr is atomic because tests swap the tracker while goroutines
+// from earlier tests (a refresher flush) may still be reading it.
+var webhookTrackerPtr = func() *atomic.Pointer[webhookTracker] {
+	p := &atomic.Pointer[webhookTracker]{}
+	p.Store(newWebhookTracker())
+	return p
+}()
+
+func sharedWebhookTracker() *webhookTracker { return webhookTrackerPtr.Load() }
 
 // SetWebhookHealthWindow sets how recent the last webhook event must be for
 // webhooks to count as healthy. The governor publishes 2 × eval_interval_s.
@@ -139,7 +148,7 @@ func SetWebhookHealthWindow(d time.Duration) {
 	if d <= 0 {
 		d = DefaultWebhookHealthWindow
 	}
-	t := sharedWebhookTracker
+	t := sharedWebhookTracker()
 	t.mu.Lock()
 	t.window = d
 	t.mu.Unlock()
@@ -147,7 +156,7 @@ func SetWebhookHealthWindow(d time.Duration) {
 
 // WebhookHealthSnapshot returns the current webhook health block.
 func WebhookHealthSnapshot() WebhookHealth {
-	return sharedWebhookTracker.snapshot()
+	return sharedWebhookTracker().snapshot()
 }
 
 // ObserveWebhookHealth reports whether webhooks are healthy and whether this
@@ -155,7 +164,7 @@ func WebhookHealthSnapshot() WebhookHealth {
 // (stale → healthy, healthy → stale), so callers can log exactly once per
 // transition.
 func ObserveWebhookHealth() (healthy, becameHealthy, becameStale bool) {
-	return sharedWebhookTracker.observe()
+	return sharedWebhookTracker().observe()
 }
 
 // RecordWebhookEventForTest records a delivery for repo as if a verified
@@ -163,7 +172,7 @@ func ObserveWebhookHealth() (healthy, becameHealthy, becameStale bool) {
 // without a GitHub client.
 func RecordWebhookEventForTest(repo string) {
 	key := canonicalPRDetailRepo(repo)
-	sharedWebhookTracker.recordEvent([]string{key})
+	sharedWebhookTracker().recordEvent([]string{key})
 }
 
 func (t *webhookTracker) recordEvent(aliases []string) {
@@ -193,14 +202,14 @@ func (t *webhookTracker) recordInvalidations(n int) {
 // RecordWebhookTargetedRefreshes counts n single-item GitHub reads made on
 // behalf of webhook deliveries (/api/status webhooks.targeted_refreshes_1h).
 func RecordWebhookTargetedRefreshes(n int) {
-	t := sharedWebhookTracker
+	t := sharedWebhookTracker()
 	t.recordStamped(&t.refreshes, n)
 }
 
 // RecordWebhookTrackerInvalidations counts n stage-tracker cache drops caused
 // by webhook deliveries (/api/status webhooks.tracker_invalidations_1h).
 func RecordWebhookTrackerInvalidations(n int) {
-	t := sharedWebhookTracker
+	t := sharedWebhookTracker()
 	t.recordStamped(&t.trackerDrops, n)
 }
 
@@ -268,7 +277,7 @@ func (t *webhookTracker) takeDirtyIssues() int {
 // a non-zero answer to run early instead of waiting out its interval; polling
 // stays the fallback when webhooks are not delivered.
 func TakeDirtyIssueCount() int {
-	return sharedWebhookTracker.takeDirtyIssues()
+	return sharedWebhookTracker().takeDirtyIssues()
 }
 
 // clearDirtyBefore clears a dirty mark set before since. A mark set after the
@@ -388,13 +397,13 @@ func pruneWebhookTimes(in []time.Time, now time.Time) []time.Time {
 }
 
 func resetWebhookTrackerForTest(now func() time.Time) func() {
-	old := sharedWebhookTracker
+	old := sharedWebhookTracker()
 	t := newWebhookTracker()
 	if now != nil {
 		t.now = now
 	}
-	sharedWebhookTracker = t
-	return func() { sharedWebhookTracker = old }
+	webhookTrackerPtr.Store(t)
+	return func() { webhookTrackerPtr.Store(old) }
 }
 
 // ResetWebhookTrackerForTest swaps in a fresh process-wide webhook tracker and
@@ -508,7 +517,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	res.KnownRepo = true
 	res.ConfiguredRepo = configured
 	aliases := webhookRepoAliases(configured, p.Repository.FullName)
-	sharedWebhookTracker.recordEvent(aliases)
+	sharedWebhookTracker().recordEvent(aliases)
 
 	res.Item = webhookItemHint(event, p)
 	if n, ok := webhookTouchedIssue(event, p); ok {
@@ -540,16 +549,16 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	}
 
 	if n, ok := webhookIssueDirtyTarget(event, p); ok {
-		sharedWebhookTracker.markIssueDirty(aliases, n)
+		sharedWebhookTracker().markIssueDirty(aliases, n)
 		res.DirtyIssues = []int{n}
 	}
 	if n, ok := webhookIssueReopenedTarget(event, p); ok {
 		res.ReopenedIssue = n
 		if hook := issueReopenedHook(); hook != nil {
-			hook(configured, n, sharedWebhookTracker.now())
+			hook(configured, n, sharedWebhookTracker().now())
 		}
 	}
-	if d, ok := c.webhookPRClaimDelivery(event, configured, p, sharedWebhookTracker.now()); ok {
+	if d, ok := c.webhookPRClaimDelivery(event, configured, p, sharedWebhookTracker().now()); ok {
 		// The PR's claims take effect now, not on the next reconcile pass
 		// (hivecommons/hive#14814); the live open-PR index for the repo is
 		// stale the same instant, so the next guard call lists again.
@@ -577,7 +586,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	for _, n := range numbers {
 		c.invalidateWebhookPR(aliases, n)
 	}
-	sharedWebhookTracker.recordInvalidations(len(numbers))
+	sharedWebhookTracker().recordInvalidations(len(numbers))
 	res.Invalidated = numbers
 	return res, nil
 }
@@ -664,7 +673,7 @@ func webhookIssueCommentBody(event string, p webhookEventPayload) (string, time.
 	if event != "issue_comment" || p.Comment == nil || (p.Action != "created" && p.Action != "edited") {
 		return "", time.Time{}, false
 	}
-	at := sharedWebhookTracker.now()
+	at := sharedWebhookTracker().now()
 	if p.Comment.CreatedAt != nil && !p.Comment.CreatedAt.IsZero() {
 		at = *p.Comment.CreatedAt
 	}
@@ -799,7 +808,7 @@ func (c *Client) invalidateWebhookPR(aliases []string, number int) {
 		sharedPRDetailCache.invalidate(repo, number)
 		c.invalidateGraphQLPRBatchPR(repo, number)
 	}
-	sharedWebhookTracker.markDirty(aliases, number)
+	sharedWebhookTracker().markDirty(aliases, number)
 }
 
 // webhookCIFailureResult pairs a failed-check delivery with the PRs it

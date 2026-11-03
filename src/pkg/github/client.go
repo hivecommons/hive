@@ -2605,13 +2605,13 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	full, ok := c.cachedPRDetailFromList(pr.Repo, pr.Number, pr.HeadSHA, pr.UpdatedAt)
 	if !ok {
 		var err error
-		started := sharedWebhookTracker.now()
+		started := sharedWebhookTracker().now()
 		full, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number)
 		if err != nil {
 			c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
 		} else {
 			c.storePRDetail(pr.Repo, pr.Number, full)
-			sharedWebhookTracker.clearDirtyBefore(pr.Repo, pr.Number, started)
+			sharedWebhookTracker().clearDirtyBefore(pr.Repo, pr.Number, started)
 		}
 	}
 	if full != nil {
