@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/crux/config"
+	"github.com/hivecommons/hive/crux/config"
 )
 
 // syncCopilotToken PROMOTE: a token in config but none held by the hive → the
