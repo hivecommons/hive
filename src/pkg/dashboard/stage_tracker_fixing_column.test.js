@@ -38,7 +38,7 @@ const src = [
   pick(/const STAGE_TRACKER_TERMINAL = \d+;/, 'STAGE_TRACKER_TERMINAL'),
   pick(/const STAGE_TRACKER_REPAIR_STAGE_WHY = [^\n]*\n/, 'STAGE_TRACKER_REPAIR_STAGE_WHY'),
   pick(/function stageTrackerUnderRepair\(stage, reason\) \{[\s\S]*?\n    \}\n/, 'stageTrackerUnderRepair'),
-  pick(/function stageTrackerAnchor\(stage, stages, kind, item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
+  pick(/function stageTrackerAnchor\(stage, stages, kind, item, presentation\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
 ].join('\n');
 const lifted = new Function(src + '; return { anchor: stageTrackerAnchor, underRepair: stageTrackerUnderRepair };')();
 
@@ -98,8 +98,9 @@ const STAGE_COLUMN = {
 };
 const REPAIR_STAGES = [70, 71, 72, 74];
 
-function expectedColumn(stage, gate, train, reason) {
+function expectedColumn(stage, gate, train, reason, presentation = true) {
   if (stage >= COLUMN.DONE) return COLUMN.DONE;
+  if (presentation && [71, 72, 74].includes(stage) && !gate && !train) return COLUMN.PR;
   // 085 is the decision park: it rides no train but the person decides at the gate.
   if (stage > COLUMN.PR && stage !== 85 && (REPAIR_STAGES.indexOf(stage) >= 0 || /^(required-)?check-failing:|^ci-red$/.test(reason))) return COLUMN.REVIEW;
   if (stage > COLUMN.PR && (gate === 'merging' || gate === 'merge-failed')) return COLUMN.MERGE_GATE;
@@ -116,6 +117,7 @@ test('ratchet: every state lands in the column its current state earns', () => {
     const want = expectedColumn(stage, gate, train, reason);
     const label = 'stage ' + stage + ' gate ' + gate + ' train ' + train + ' reason ' + JSON.stringify(reason);
     assert.strictEqual(lifted.anchor(stage, STAGES, 'pr', item), want, label);
+    assert.strictEqual(lifted.anchor(stage, STAGES, 'pr', item, false), expectedColumn(stage, gate, train, reason, false), label + ' native sort/count mapping');
     // A row under repair never lands past CI / Review, whatever else it carries.
     if (lifted.underRepair(stage, reason) && stage > COLUMN.PR && stage !== 85 && stage < COLUMN.DONE) assert.ok(lifted.anchor(stage, STAGES, 'pr', item) <= COLUMN.REVIEW, label + ' promoted while under repair');
     cases++;

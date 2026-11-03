@@ -1596,14 +1596,26 @@ func regressionNotable(reason string) bool {
 	return classifyCIReason(reason) != ciReasonPending && !stageReasonWaitsOnHive(reason)
 }
 
-// postStageNote delivers one of the stage notes (stall, regression, 071) to
+// postStageNote delivers one of the stage notes (stall, regression) to
 // the PR. In normal mode it is a fresh comment. In quiet mode it is folded
 // into the PR's single hive status comment under key, edited in place: the
 // comment is created only the first time, and only that creation counts
-// as a comment posted. Returns the number of comments created.
+// as a comment posted. body is copied prose: in quiet mode prstatus.Write
+// neutralises any @login in it. Returns the number of comments created.
 func (c *Engine) postStageNote(ctx context.Context, policy StageLabelPolicy, obs stageObservation, key, body string) (int, error) {
+	return c.postStageNoteWith(ctx, policy, obs, key, body, prstatus.Write)
+}
+
+// postStageNoteMentioning is postStageNote for the trusted-human 071 note,
+// whose @author is deliberate: body is delivered verbatim, so the composer
+// must have neutralised the copied text in it itself.
+func (c *Engine) postStageNoteMentioning(ctx context.Context, policy StageLabelPolicy, obs stageObservation, key, body string) (int, error) {
+	return c.postStageNoteWith(ctx, policy, obs, key, body, prstatus.WriteMentioning)
+}
+
+func (c *Engine) postStageNoteWith(ctx context.Context, policy StageLabelPolicy, obs stageObservation, key, body string, write statusWriter) (int, error) {
 	if policy.QuietNotifications {
-		return c.writeStatusSection(ctx, obs.Owner, obs.Repo, obs.Number, key, body)
+		return c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, key, body, write)
 	}
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		return 0, err
@@ -1611,14 +1623,18 @@ func (c *Engine) postStageNote(ctx context.Context, policy StageLabelPolicy, obs
 	return 1, nil
 }
 
-// writeStatusSection rewrites section key of the PR's hive status comment
-// to text through prstatus.Write, the one status writer
-// the GitHub client shares: it is serialised per PR, the edit is retried
-// when the comment changed underneath, and the comment is created only when
-// the PR has none. Returns the number of comments created.
-func (c *Engine) writeStatusSection(ctx context.Context, owner, repo string, number int, key, text string) (int, error) {
+// statusWriter is prstatus.Write or prstatus.WriteMentioning.
+type statusWriter func(ctx context.Context, f prstatus.Forge, item, key, text string) (prstatus.WriteResult, error)
+
+// writeStatusSectionWith rewrites section key of the PR's hive status
+// comment to text through write (prstatus.Write or prstatus.WriteMentioning),
+// the one status writer the GitHub client shares: it is serialised per PR,
+// the edit is retried when the comment changed underneath, and the comment
+// is created only when the PR has none. Returns the number of comments
+// created.
+func (c *Engine) writeStatusSectionWith(ctx context.Context, owner, repo string, number int, key, text string, write statusWriter) (int, error) {
 	f := &engineStatusForge{e: c, owner: owner, repo: repo, number: number}
-	res, err := prstatus.Write(ctx, f, prstatus.ItemKey(owner+"/"+repo, number), key, text)
+	res, err := write(ctx, f, prstatus.ItemKey(owner+"/"+repo, number), key, text)
 	if res.Created {
 		return 1, err
 	}
@@ -1639,12 +1655,14 @@ func (f *engineStatusForge) ListComments(ctx context.Context) ([]prstatus.Commen
 	if err != nil {
 		return nil, err
 	}
+	// Own is an exact match on this hive's App login; unknown fails closed.
+	appLogin := strings.TrimSpace(f.e.transport.AppBotLogin())
 	out := make([]prstatus.Comment, 0, len(comments))
 	for _, cm := range comments {
 		if cm == nil {
 			continue
 		}
-		own := strings.TrimSpace(cm.GetUser().GetLogin()) != "" && !f.e.isPersonLogin(cm.GetUser())
+		own := appLogin != "" && strings.EqualFold(strings.TrimSpace(cm.GetUser().GetLogin()), appLogin)
 		out = append(out, prstatus.Comment{ID: cm.GetID(), Body: cm.GetBody(), Own: own})
 	}
 	return out, nil
@@ -1658,8 +1676,17 @@ func (f *engineStatusForge) EditComment(ctx context.Context, id int64, body stri
 }
 
 func (f *engineStatusForge) CreateComment(ctx context.Context, body string) error {
-	_, _, err := f.e.gh.Issues.CreateComment(ctx, f.owner, f.repo, f.number, &gh.IssueComment{Body: gh.Ptr(body)})
-	return err
+	commenter, ok := f.e.transport.(issueCommenter)
+	if !ok {
+		return fmt.Errorf("creating hive status comment on %s/%s#%d: transport has no comment primitive", f.owner, f.repo, f.number)
+	}
+	return commenter.CreateIssueComment(ctx, f.owner+"/"+f.repo, f.number, body)
+}
+
+// issueCommenter is the tagged notification-write primitive (canary gate,
+// effects journal) the production transport, *hgithub.Client, provides.
+type issueCommenter interface {
+	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
 
 func (f *engineStatusForge) DeleteComment(ctx context.Context, id int64) error {

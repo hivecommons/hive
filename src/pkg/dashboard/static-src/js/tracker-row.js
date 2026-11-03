@@ -23,6 +23,20 @@
         detour.text = stageTrackerReturnedWord(item, detour.text);
         detour.sentinelSuffix = stageTrackerSentinelAsSuffix(item);
       }
+      const code = item.code_activity;
+      const codeMatches = code && String(code.head || '') === String(item.head || '');
+      const codeObserved = codeMatches && code.observed_at ? Date.parse(code.observed_at) : NaN;
+      const activityFreshMS = 2 * 60 * 1000;
+      const clock = Number(nowMs) || Date.now();
+      const codeWorking = codeMatches && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
+      const codeCaption = codeMatches ? (!codeWorking && code.state === 'fixing' ? 'Fix task assigned · activity unknown' : code.caption) : 'Code activity unknown';
+      if (detour && !code && cur === 70 && !detour.sentinel) detour.text = 'Waiting for fixer · activity unknown';
+      if (detour && code && [70, 71, 72].includes(cur)) detour.text = codeCaption || detour.text;
+      if (detour && code && cur === 74 && codeWorking) detour.text += ' · ' + codeCaption;
+      if (detour && code && cur === 74 && !codeWorking) {
+        if (detour.text === 'Adopting · fixer resolving conflicts') detour.text = 'Adopted repair' + (Number(item.adopted_by) ? ' → #' + Number(item.adopted_by) : '');
+        detour.text += ' · activity unknown';
+      }
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -35,12 +49,15 @@
         // read as 080 with "Next move: human").
         const tipStage = (state === 'active' && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
+        if (state === 'active' && n === 50) word = 'CI + Review';
+        if (state === 'active' && n === 30 && cur === 70 && !codeWorking) word = 'PR in progress';
         // A merge-train member's word is its place in the train (#15117).
         if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
         // A PR the hive is rebasing (the train's or the fixer's episode)
         // reads "Rebasing · attempt 1/2" in the CI / Review column it sits
         // in (hive#15825) — its head has no CI yet, so no merge-queue word.
         if (state === 'active' && !detour && n > 0 && n < 80 && item.rebase && item.rebase.text && !(typeof stageTrackerTrain === 'function' && stageTrackerTrain(item))) word = String(item.rebase.text);
+        if (state === 'active' && n === 30 && code && code.state === 'fixing') word = codeCaption;
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.

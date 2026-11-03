@@ -250,6 +250,8 @@ func (b *Boundary) Reconcile(ctx context.Context, claim effects.Claim, state eff
 	if executor.Journal == nil {
 		return fmt.Errorf("mutation boundary requires a journal when mode is enabled")
 	}
+	ctx, cancel := journalResolutionContext(ctx)
+	defer cancel()
 	op, err := executor.Journal.ReconcileContext(ctx, boundaryEffect(claim).LogicalID(), ExternalState{
 		Known:   true,
 		Applied: state.Applied,
@@ -259,6 +261,23 @@ func (b *Boundary) Reconcile(ctx context.Context, claim effects.Claim, state eff
 		b.noteResolved(op.LogicalID)
 	}
 	return err
+}
+
+// journalResolutionTimeout bounds the journal write that records a
+// reconciliation or expiry: one wait for the in-process writer slot plus one
+// bounded wait for the cross-process lock.
+const journalResolutionTimeout = 2 * DefaultJournalLockTimeout
+
+// journalResolutionContext detaches the journal write that resolves an
+// unresolved operation from the caller's deadline and gives it its own bound.
+// Callers reach Reconcile at the END of an attempt, after the external read
+// that observed the item; that read (and any queueing ahead of it) can spend
+// nearly all of the attempt's budget, so writing the observation under the
+// inherited deadline failed with "context deadline exceeded", discarded the
+// observation and left the operation Planned for the next attempt to repeat
+// verbatim — every retry until the entry aged out (hivecommons/hive#16389).
+func journalResolutionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), journalResolutionTimeout)
 }
 
 // ExpireUnresolved implements effects.Expirer: when claim's journaled
@@ -293,6 +312,8 @@ func (b *Boundary) ExpireUnresolved(ctx context.Context, claim effects.Claim, tt
 	if now.Sub(op.UpdatedAt) < ttl {
 		return false, nil
 	}
+	ctx, cancel := journalResolutionContext(ctx)
+	defer cancel()
 	if _, err := executor.Journal.ReconcileContext(ctx, id, ExternalState{Known: true, Applied: false}, now); err != nil {
 		return false, err
 	}

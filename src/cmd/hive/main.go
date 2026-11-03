@@ -2364,6 +2364,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
+	autoMergeOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	// Commit messages on a merge-ready head are read for closing keywords
@@ -4169,6 +4170,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// firing, so a later config reload that arms or disarms hooks is picked up
 	// without re-registering.
 	installGovernorModeChangeEmitter(b.gov)
+	b.installLaneParticipant()
 	installAgentPauseEmitter(b.agentMgr)
 
 	// Register custom GHE hostnames with the proxy allowlist so mode

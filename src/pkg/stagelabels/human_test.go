@@ -169,7 +169,7 @@ func TestRouteHumanDecision(t *testing.T) {
 			e.HumanSummaries = []string{"security requires human: relay owner should confirm before merge"}
 		}, "reviewer summary: security requires human: relay owner should confirm before merge"},
 		{"lane rule", func(e *Evidence) { e.Cause, e.CauseReason = CauseDecision, "the lane excludes `workflow-paths` edits" }, "the lane excludes `workflow-paths` edits"},
-		{"lane rule unnamed", func(e *Evidence) { e.Cause = CauseDecision }, "the automerge lane will not merge this unattended"},
+		{"lane rule unnamed", func(e *Evidence) { e.Cause = CauseDecision }, decisionConsequenceReason},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -711,7 +711,7 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	if r.Stage != NeedsDecision || r.LaneReason != "" || !containsString(r.Reasons, want) {
 		t.Fatalf("fork-guard route = %+v", r)
 	}
-	if containsString(r.Reasons, "the automerge lane will not merge this unattended") {
+	if containsString(r.Reasons, decisionConsequenceReason) {
 		t.Fatalf("fork-guard route names the generic lane rule: %+v", r)
 	}
 	if got := DecisionComment(r); !strings.Contains(got, want) {

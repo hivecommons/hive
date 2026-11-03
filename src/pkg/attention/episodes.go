@@ -14,8 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/attentionbudget"
 	"github.com/hivecommons/hive/pkg/findingidentity"
 )
 
@@ -28,6 +30,13 @@ const MaxItems = 4096
 type Config struct {
 	Admitter   map[string]string `yaml:"admitter,omitempty" json:"admitter,omitempty"`
 	FlapWindow time.Duration     `yaml:"flap_window,omitempty" json:"flap_window,omitempty"`
+	// ReminderInterval is the minimum gap between pings of one unresolved
+	// episode (attention_pilot reminders); zero means DefaultReminderInterval.
+	ReminderInterval time.Duration `yaml:"reminder_interval,omitempty" json:"reminder_interval,omitempty"`
+	// Config carries github.attention.recipient_budget and
+	// github.attention.digest_recipients (#16271): the per-recipient budget
+	// every non-urgent ping and reminder is admitted through. Off by default.
+	attentionbudget.Config `yaml:",inline"`
 }
 
 func (c Config) Owner(repo string) string {
@@ -42,6 +51,12 @@ func (c Config) Owner(repo string) string {
 func (c Config) Validate() error {
 	if c.FlapWindow < 0 {
 		return errors.New("github.attention.flap_window must not be negative")
+	}
+	if c.ReminderInterval < 0 {
+		return errors.New("github.attention.reminder_interval must not be negative")
+	}
+	if err := c.Config.Validate(); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for repo, owner := range c.Admitter {
@@ -127,6 +142,17 @@ type Episode struct {
 	// (see Store.Apply); reminder scheduling reads them, holds never do.
 	AckedBy   string `json:"acked_by,omitempty"`
 	SnoozedBy string `json:"snoozed_by,omitempty"`
+	// RemindedAt and Reminders record the attention-pilot reminders sent
+	// for this episode; RecipientActedAt is the last time the recipient was
+	// seen acting on the item after a ping (see ReminderDue).
+	RemindedAt       time.Time `json:"reminded_at,omitempty"`
+	Reminders        int       `json:"reminders,omitempty"`
+	RecipientActedAt time.Time `json:"recipient_acted_at,omitempty"`
+	// Class is the producer's attention class (see Observation.Class).
+	Class attentionbudget.Class `json:"class,omitempty"`
+	// Overflowed is set while the per-recipient attention budget holds the
+	// episode's ping or reminder back; the episode stays open and listed.
+	Overflowed bool `json:"overflowed,omitempty"`
 }
 
 func (e Episode) Marker() string {
@@ -139,6 +165,11 @@ type Observation struct {
 	Resolved   bool
 	Evidence   string
 	Body       string
+	// Class says whether the first ping is budgeted. Empty means an
+	// ordinary non-urgent ask (attentionbudget.Ping); producers of security,
+	// required-review, protocol-command or hold notices set the exempt class
+	// so the per-recipient budget never holds them back.
+	Class attentionbudget.Class
 }
 
 // Delivery is supplied by the existing write boundary. History returns the keys
@@ -152,22 +183,49 @@ type Delivery interface {
 }
 
 type disk struct {
-	Version  int                 `json:"version"`
-	Items    map[string]bool     `json:"items"`
-	Episodes map[string]*Episode `json:"episodes"`
+	Version int             `json:"version"`
+	Items   map[string]bool `json:"items"`
+	// ItemSeen is additive: ledgers written before it existed load with zero times.
+	ItemSeen map[string]time.Time `json:"item_seen,omitempty"`
+	Episodes map[string]*Episode  `json:"episodes"`
+}
+
+// gate serializes Reports for one item while s.mu is released.
+type gate struct {
+	mu   sync.Mutex
+	refs int
 }
 
 type Store struct {
 	mu    sync.Mutex
+	gates map[string]*gate
 	path  string
 	state disk
 	now   func() time.Time
+
+	budgetOnce sync.Once
+	budget     *attentionbudget.Budget
+	budgetCfg  atomic.Pointer[attentionbudget.Config]
 }
 
 // Open treats missing/corrupt state as recovery, never as permission to replay.
 // Unknown versions are refused rather than clobbered during rolling upgrades.
+// The per-recipient attention budget is seeded from the ledger's delivered
+// history so its rolling window survives restarts.
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, now: time.Now, state: disk{Version: 1, Items: map[string]bool{}, Episodes: map[string]*Episode{}}}
+	s, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	writes := s.deliveredWrites()
+	s.mu.Unlock()
+	s.Budget().Seed(writes)
+	return s, nil
+}
+
+func open(path string) (*Store, error) {
+	s := &Store{path: path, now: time.Now, state: disk{Version: 1, Items: map[string]bool{}, ItemSeen: map[string]time.Time{}, Episodes: map[string]*Episode{}}}
 	if path == "" {
 		return s, nil
 	}
@@ -198,6 +256,9 @@ func Open(path string) (*Store, error) {
 		if e == nil {
 			return s, nil
 		}
+	}
+	if d.ItemSeen == nil {
+		d.ItemSeen = map[string]time.Time{}
 	}
 	s.state = d
 	return s, nil
@@ -264,6 +325,7 @@ func (s *Store) prune(now time.Time, window time.Duration) {
 	for k := range s.state.Items {
 		if !live[k] {
 			delete(s.state.Items, k)
+			delete(s.state.ItemSeen, k)
 		}
 	}
 }
@@ -272,11 +334,11 @@ func (s *Store) prune(now time.Time, window time.Duration) {
 // snapshot per item consults delivery history: a condition with a prior trusted
 // attention marker is seeded as a baseline WITHOUT sending, while a condition
 // that was never paged notifies immediately, ledger loss or not.
-// Calls are serialized through the POST outcome, including concurrent producers.
+// Calls for the same item are serialized through the POST outcome, including
+// concurrent producers; s.mu is never held across a Delivery call, so slow
+// GitHub listings for one item do not block other items or Snapshot.
 // Non-admitters only record would-notify. No marker lookup grants ownership.
 func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, item int, observations []Observation, d Delivery) ([]Episode, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -284,6 +346,7 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 	if owner == "" {
 		return nil, nil
 	}
+	s.setBudgetConfig(cfg)
 	if item <= 0 || d == nil {
 		return nil, errors.New("attention: item and delivery are required")
 	}
@@ -293,19 +356,116 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 			return nil, errors.New("attention: incomplete, oversized or mismatched key")
 		}
 	}
+	release := s.lockItem(itemKey)
+	defer release()
+
+	s.mu.Lock()
 	now := s.now().UTC()
 	s.prune(now, cfg.Window())
 	first := !s.state.Items[itemKey]
-	historical := map[string]bool{}
+	var capErr error
 	if first {
-		if len(s.state.Items) >= MaxItems {
-			return nil, errors.New("attention: item capacity reached; refusing replay-prone eviction")
-		}
-		keys, err := d.History(ctx, repo, item)
-		if err != nil {
+		capErr = s.admitItem()
+	}
+	s.mu.Unlock()
+	if capErr != nil {
+		return nil, capErr
+	}
+	var history []string
+	if first {
+		var err error
+		if history, err = d.History(ctx, repo, item); err != nil {
 			return nil, err
 		}
-		for _, k := range keys {
+	}
+	work, err := s.record(cfg, itemKey, first, history, observations, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range work {
+		if err := s.deliver(ctx, d, o, hiveID, owner, now); err != nil {
+			return nil, err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshot(repo, item), nil
+}
+
+// lockItem serializes Reports per item without holding s.mu.
+func (s *Store) lockItem(key string) func() {
+	s.mu.Lock()
+	if s.gates == nil {
+		s.gates = map[string]*gate{}
+	}
+	g := s.gates[key]
+	if g == nil {
+		g = &gate{}
+		s.gates[key] = g
+	}
+	g.refs++
+	s.mu.Unlock()
+	g.mu.Lock()
+	return func() {
+		g.mu.Unlock()
+		s.mu.Lock()
+		if g.refs--; g.refs == 0 {
+			delete(s.gates, key)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// admitItem makes room for one new item. Only items whose episodes are all
+// resolved and reconciled are evicted, oldest-touched first; History re-seeds
+// them replay-safely. With only open items left it fails closed as before.
+// Caller holds s.mu.
+func (s *Store) admitItem() error {
+	if len(s.state.Items) < MaxItems {
+		return nil
+	}
+	open := map[string]bool{}
+	for _, e := range s.state.Episodes {
+		if e.State != Resolved || e.Uncertain {
+			open[fmt.Sprintf("%s#%d", canonical(e.Key.Repo), e.Key.Item)] = true
+		}
+	}
+	victim := ""
+	for k := range s.state.Items {
+		if open[k] || s.gates[k] != nil {
+			continue
+		}
+		if victim == "" || s.state.ItemSeen[k].Before(s.state.ItemSeen[victim]) || (s.state.ItemSeen[k].Equal(s.state.ItemSeen[victim]) && k < victim) {
+			victim = k
+		}
+	}
+	if victim == "" {
+		return errors.New("attention: item capacity reached; refusing replay-prone eviction")
+	}
+	for h, e := range s.state.Episodes {
+		if fmt.Sprintf("%s#%d", canonical(e.Key.Repo), e.Key.Item) == victim {
+			delete(s.state.Episodes, h)
+		}
+	}
+	delete(s.state.Items, victim)
+	delete(s.state.ItemSeen, victim)
+	return nil
+}
+
+// record applies the observations under s.mu and persists them, returning the
+// observations that still need delivery.
+func (s *Store) record(cfg Config, itemKey string, first bool, history []string, observations []Observation, now time.Time) ([]Observation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	historical := map[string]bool{}
+	if first {
+		// Another item may have filled the ledger while History was in flight.
+		if !s.state.Items[itemKey] {
+			if err := s.admitItem(); err != nil {
+				return nil, err
+			}
+		}
+		for _, k := range history {
 			historical[k] = true
 			if s.state.Episodes[k] == nil {
 				if len(s.state.Episodes) >= MaxEpisodes {
@@ -344,11 +504,15 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 		e.Key = o.Key
 		e.LastSeen = now
 		e.Evidence = o.Evidence
+		if o.Class != "" {
+			e.Class = o.Class
+		}
 		if o.Resolved {
 			e.State = Resolved
 			if e.ResolvedAt.IsZero() {
 				e.ResolvedAt = now
 			}
+			s.releaseBudget(e)
 			continue
 		}
 		if o.Actionable && e.State == Observed {
@@ -358,76 +522,101 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 		e.WouldNotify = o.Actionable && !e.QuietReopen && e.PagedAt.IsZero() && e.AckedAt.IsZero() && !now.Before(e.SnoozedUntil)
 	}
 	s.state.Items[itemKey] = true
+	s.state.ItemSeen[itemKey] = now
 	if err := s.save(); err != nil {
 		return nil, err
 	}
-	for _, o := range observations {
-		e := s.state.Episodes[o.Key.Hash()]
-		if o.Resolved && e.Uncertain && e.Attempt != "" && owner == hiveID && hiveID != "" {
-			// Reconcile an uncertain POST once its condition resolved so the episode can be pruned.
-			found, err := d.Find(ctx, *e)
-			if err != nil {
-				return nil, err
+	return observations, nil
+}
+
+// deliver runs the Find/Post step for one observation. State is read and
+// written under s.mu; the Delivery calls themselves run without it.
+func (s *Store) deliver(ctx context.Context, d Delivery, o Observation, hiveID, owner string, now time.Time) error {
+	s.mu.Lock()
+	e := s.state.Episodes[o.Key.Hash()]
+	if e == nil {
+		s.mu.Unlock()
+		return nil
+	}
+	reconcileOnly := o.Resolved && e.Uncertain && e.Attempt != "" && owner == hiveID && hiveID != ""
+	if !reconcileOnly && (!e.WouldNotify || o.Resolved || e.Baseline || owner != hiveID || hiveID == "") {
+		s.mu.Unlock()
+		return nil
+	}
+	if !reconcileOnly && e.Attempt != "" && e.AttemptOwner != hiveID {
+		// Configuration handoff must not retry a previous admitter's uncertain POST.
+		s.mu.Unlock()
+		return nil
+	}
+	needFind := reconcileOnly || e.Attempt != ""
+	if !needFind {
+		// Only a fresh POST is admitted: a retry of an uncertain attempt was
+		// already counted. An over-budget ask is never dropped; it stays an
+		// open, would-notify episode, listed as overflowed until delivered.
+		if s.Budget().Admit(budgetAsk(*e, attentionbudget.Ping, now)).Outcome == attentionbudget.Overflow {
+			var err error
+			if !e.Overflowed {
+				e.Overflowed = true
+				err = s.save()
 			}
-			if found {
-				e.PagedAt = now
-				e.PagedTo = e.Key.Recipient
+			s.mu.Unlock()
+			return err
+		}
+		e.Overflowed = false
+		var id [16]byte
+		if _, err := rand.Read(id[:]); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		e.Attempt = hex.EncodeToString(id[:])
+		e.AttemptOwner = hiveID
+	}
+	snap := *e
+	s.mu.Unlock()
+
+	if needFind {
+		found, err := d.Find(ctx, snap)
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		if found {
+			e.PagedAt = now
+			e.PagedTo = e.Key.Recipient
+			if !reconcileOnly {
+				e.State = Notified
 			}
+		}
+		if found || reconcileOnly {
 			e.Uncertain = false
 			e.WouldNotify = false
-			if err = s.save(); err != nil {
-				return nil, err
-			}
-			continue
+			err := s.save()
+			s.mu.Unlock()
+			return err
 		}
-		if !e.WouldNotify || o.Resolved || e.Baseline || owner != hiveID || hiveID == "" {
-			continue
-		}
-		if e.Attempt != "" {
-			// Configuration handoff must not retry a previous admitter's uncertain POST.
-			if e.AttemptOwner != hiveID {
-				continue
-			}
-			found, err := d.Find(ctx, *e)
-			if err != nil {
-				return nil, err
-			}
-			if found {
-				e.PagedAt = now
-				e.PagedTo = e.Key.Recipient
-				e.State = Notified
-				e.Uncertain = false
-				e.WouldNotify = false
-				if err = s.save(); err != nil {
-					return nil, err
-				}
-				continue
-			}
-		} else {
-			var id [16]byte
-			if _, err := rand.Read(id[:]); err != nil {
-				return nil, err
-			}
-			e.Attempt = hex.EncodeToString(id[:])
-			e.AttemptOwner = hiveID
-		}
-		e.Uncertain = true
-		if err := s.save(); err != nil {
-			return nil, err
-		}
-		if err := d.Post(ctx, *e, o.Body+"\n\n"+e.Marker()); err != nil {
-			return nil, err
-		}
-		e.PagedAt = now
-		e.PagedTo = e.Key.Recipient
-		e.State = Notified
-		e.Uncertain = false
-		e.WouldNotify = false
-		if err := s.save(); err != nil {
-			return nil, err
-		}
+		// Not found and not reconcile-only: fall through to retry the POST
+		// with s.mu still held from above.
+	} else {
+		s.mu.Lock()
 	}
-	return s.snapshot(repo, item), nil
+	e.Uncertain = true
+	err := s.save()
+	snap = *e
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := d.Post(ctx, snap, o.Body+"\n\n"+snap.Marker()); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e.PagedAt = now
+	e.PagedTo = e.Key.Recipient
+	e.State = Notified
+	e.Uncertain = false
+	e.WouldNotify = false
+	return s.save()
 }
 
 func (s *Store) snapshot(repo string, item int) []Episode {
@@ -475,5 +664,88 @@ func (s *Store) Update(key Key, state State, snooze time.Time) error {
 		return errors.New("attention: unsupported transition")
 	}
 	e.SnoozedUntil = snooze
+	s.releaseBudget(e)
 	return s.save()
+}
+
+// Budget is the store's per-recipient attention budget (#16271). With
+// github.attention.recipient_budget 0 (the default) it only counts, in
+// shadow mode; every decision is Deliver.
+func (s *Store) Budget() *attentionbudget.Budget {
+	s.budgetOnce.Do(func() {
+		s.budget = attentionbudget.New(func() attentionbudget.Config {
+			if c := s.budgetCfg.Load(); c != nil {
+				return *c
+			}
+			return attentionbudget.Config{}
+		})
+	})
+	return s.budget
+}
+
+// setBudgetConfig applies the hot-reloadable budget keys of cfg.
+func (s *Store) setBudgetConfig(cfg Config) {
+	c := cfg.Config
+	s.budgetCfg.Store(&c)
+}
+
+// AdmitReminder asks the budget whether a reminder for e may be posted now.
+// An Overflow outcome must not be posted: the episode is marked overflowed
+// and stays open (and listed) until its recipient's budget frees or it is
+// acknowledged, snoozed or resolved. Exempt classes always Deliver.
+func (s *Store) AdmitReminder(cfg Config, e Episode, now time.Time) (attentionbudget.Decision, error) {
+	s.setBudgetConfig(cfg)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.Budget().Admit(budgetAsk(e, attentionbudget.Reminder, now))
+	cur := s.state.Episodes[e.Key.Hash()]
+	if cur == nil || cur.Overflowed == (d.Outcome == attentionbudget.Overflow) {
+		return d, nil
+	}
+	cur.Overflowed = d.Outcome == attentionbudget.Overflow
+	return d, s.save()
+}
+
+// budgetClass maps an episode's producer class onto the budget: an empty or
+// non-urgent class is the given non-urgent kind (Ping or Reminder); every
+// exempt class passes through unchanged.
+func budgetClass(c, nonUrgent attentionbudget.Class) attentionbudget.Class {
+	if c == "" || c == attentionbudget.Ping || c == attentionbudget.Reminder {
+		return nonUrgent
+	}
+	return c
+}
+
+func budgetAsk(e Episode, nonUrgent attentionbudget.Class, now time.Time) attentionbudget.Ask {
+	return attentionbudget.Ask{
+		Repo:      e.Key.Repo,
+		Item:      e.Key.Item,
+		Recipient: e.Key.Recipient,
+		Class:     budgetClass(e.Class, nonUrgent),
+		Summary:   e.Key.Action,
+		At:        now,
+		Key:       e.Key.Hash(),
+	}
+}
+
+// releaseBudget clears e's overflowed ask once it was acknowledged, snoozed
+// or resolved. Caller holds s.mu.
+func (s *Store) releaseBudget(e *Episode) {
+	e.Overflowed = false
+	s.Budget().Resolve(e.Key.Repo, e.Key.Hash())
+}
+
+// deliveredWrites is the ledger's delivered history (paged_to/paged_at and
+// the last reminder) for seeding the budget. Caller holds s.mu.
+func (s *Store) deliveredWrites() []attentionbudget.Write {
+	var out []attentionbudget.Write
+	for _, e := range s.state.Episodes {
+		if !e.PagedAt.IsZero() && e.PagedTo != "" {
+			out = append(out, attentionbudget.Write{Recipient: e.PagedTo, At: e.PagedAt, Class: budgetClass(e.Class, attentionbudget.Ping)})
+		}
+		if !e.RemindedAt.IsZero() && e.Key.Recipient != "" {
+			out = append(out, attentionbudget.Write{Recipient: e.Key.Recipient, At: e.RemindedAt, Class: budgetClass(e.Class, attentionbudget.Reminder)})
+		}
+	}
+	return out
 }

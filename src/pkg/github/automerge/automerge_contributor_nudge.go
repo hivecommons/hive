@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -399,6 +400,11 @@ func TrustedHuman071Comment(n ContributorNudge, stage stagelabels.Stage) string 
 // TrustedHuman071Note is TrustedHuman071Comment with the @-mention optional:
 // in quiet notification mode the author is mentioned once per cause, and a
 // re-render for a new head with the same cause names them without the @.
+//
+// The author's mention is the only deliberate one. The diagnosis quotes
+// check names and review text the hive did not write, so that part is
+// neutralised (advisory.NeutralizeMentions) and never notifies the people
+// it happens to name.
 func TrustedHuman071Note(n ContributorNudge, stage stagelabels.Stage, mention bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s head=%s -->\n", TrustedHuman071MarkerPrefix, n.HeadSHA)
@@ -407,18 +413,20 @@ func TrustedHuman071Note(n ContributorNudge, stage stagelabels.Stage, mention bo
 		at = ""
 	}
 	fmt.Fprintf(&b, "%s%s this PR is held at `%s` and the hive will not merge it yet.\n\n", at, n.Author, stage.Label())
+	var d strings.Builder
 	if len(n.FailingChecks) > 0 {
-		b.WriteString("**Failing checks:**\n")
+		d.WriteString("**Failing checks:**\n")
 		for _, c := range n.FailingChecks {
-			fmt.Fprintf(&b, "- `%s`\n", c)
+			fmt.Fprintf(&d, "- `%s`\n", c)
 		}
 	}
 	if len(n.ReviewAsks) > 0 {
-		b.WriteString("**Why:**\n")
+		d.WriteString("**Why:**\n")
 		for _, a := range n.ReviewAsks {
-			fmt.Fprintf(&b, "- %s\n", a)
+			fmt.Fprintf(&d, "- %s\n", a)
 		}
 	}
+	b.WriteString(advisory.NeutralizeMentions(d.String()))
 	b.WriteString("\nNext: the hive does not push to your branch. Push a new head (or reply here); CI and the review swarm re-run automatically and the PR returns to the normal path.\n")
 	return b.String()
 }
@@ -445,7 +453,7 @@ func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Sto
 	// mention — a new head failing the same way is the same ask.
 	mention := !policy.QuietNotifications || rec.MentionDue(obs.Reason)
 	body := TrustedHuman071Note(n, stagelabels.NeedsAuthor, mention)
-	posted, err := c.postStageNote(ctx, policy, obs, prstatus.KeyHuman071Note, body)
+	posted, err := c.postStageNoteMentioning(ctx, policy, obs, prstatus.KeyHuman071Note, body)
 	if err != nil {
 		c.warn("stage labels: trusted human 071 note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return 0, err

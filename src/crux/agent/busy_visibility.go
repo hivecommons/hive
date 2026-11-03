@@ -41,14 +41,17 @@ const (
 const copilotQuestionFormMessage = "Copilot CLI asked the user a question; no human is attached — dismissed with Escape so the kick can be delivered"
 
 type transcriptActivityScan struct {
-	name string
-	uid  int
+	name   string
+	uid    int
+	target kickTranscriptTarget
 }
 
 type transcriptActivityResult struct {
-	name string
-	at   time.Time
-	ok   bool
+	name     string
+	at       time.Time
+	ok       bool
+	codeWork *crux.CodeWork
+	since    time.Time
 }
 
 // transcriptSessionCache remembers, per agent, the events.jsonl mtime last
@@ -325,7 +328,7 @@ func (m *Manager) pendingTranscriptActivityScansLocked(now time.Time) []transcri
 		if !agent.lastTranscriptScanAt.IsZero() && now.Sub(agent.lastTranscriptScanAt) < transcriptLivenessScanInterval {
 			continue
 		}
-		scans = append(scans, transcriptActivityScan{name: agent.Name, uid: agent.UID})
+		scans = append(scans, transcriptActivityScan{name: agent.Name, uid: agent.UID, target: m.kickTranscriptTargetLocked(agent)})
 	}
 	return scans
 }
@@ -368,6 +371,8 @@ func scanTranscriptActivity(scans []transcriptActivityScan, caches map[string]*t
 			defer func() { <-sem }()
 			at, ok := scanAgentTranscript(scan, perAgent[i], now)
 			results[i] = transcriptActivityResult{name: scan.name, at: at, ok: ok}
+			results[i].codeWork = scanCodeWork(scan.target, perAgent[i], now)
+			results[i].since = scan.target.since
 		}()
 	}
 	wg.Wait()
@@ -385,6 +390,9 @@ func (m *Manager) applyTranscriptActivityResultsLocked(results []transcriptActiv
 		agent.lastTranscriptScanAt = scannedAt
 		if result.ok {
 			agent.LastTranscriptActivity = result.at
+		}
+		if agent.LastKick != nil && agent.LastKick.Equal(result.since) {
+			agent.CodeWork = cloneCodeWork(result.codeWork)
 		}
 	}
 }

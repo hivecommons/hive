@@ -522,6 +522,11 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 						continue
 					}
 				}
+				// Stays a standalone comment even under the attention pilot:
+				// blockedSweepComments finds the current blocker from the
+				// newest comment carrying the marker, and a status-card
+				// section keeps the card's original position and would
+				// hide this marker from that ordering.
 				note := fmt.Sprintf("%s\nRe-targeted: blocker #%d was superseded by #%d.", BlockedOnMarker(prRepo, supersededBy), prNumber, supersededBy)
 				if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
 					logger.Warn("blocked sweep: re-target note not posted", "repo", t.repo, "issue", t.number, "error", err)
@@ -712,7 +717,9 @@ func (c *Client) postUnblockedNote(ctx context.Context, repo string, number int,
 			return
 		}
 	}
-	if c.notificationsQuiet() {
+	// The attention pilot folds dependency progress into the issue's
+	// status card whatever github.notifications.mode says.
+	if c.notificationsQuiet() || c.attentionPilot() {
 		if created, err := c.UpsertPRStatusSection(ctx, repo, number, prstatus.KeyUnblocked, note); err != nil {
 			logger.Warn("blocked sweep: unblock note not recorded on status comment", "repo", repo, "issue", number, "error", err)
 		} else if !created {

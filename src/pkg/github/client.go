@@ -66,6 +66,7 @@ type Client struct {
 	graphQLPRBatchPageSize func() int
 	prBatchMu              sync.Mutex
 	prBatchCheckRuns       map[prBatchCheckRunKey][]*gh.CheckRun
+	prBatchCheckObservedAt map[prBatchCheckRunKey]time.Time
 	prBatchReviews         map[string]map[int]prReviewState
 	prBatchStats           GraphQLPRBatchStats
 	prBatchGraphQLRate     RateLimitEntry
@@ -301,6 +302,10 @@ type Client struct {
 	// recorded in notificationShadow. nil reads as off.
 	shadowNotificationsFn func() bool
 	notificationShadow    notificationShadow
+	// attentionPilotFn is github.notifications.attention_pilot, read live:
+	// when it returns true routine issue notes fold into the issue's
+	// hive:status card (issue_status_card.go). nil reads as off.
+	attentionPilotFn func() bool
 	// reviewRequireLabelsFn returns review.require_labels, read live so a
 	// Features-tab edit gates the next relay request without a rebuild. nil
 	// or empty means the gate is off.
@@ -1027,8 +1032,9 @@ type PullRequest struct {
 	// carries nothing the base does not already have (an adoption whose
 	// original landed another way, hivecommons/hive#15499). Only the
 	// single-PR GET carries these counts; false until EnrichCIStatus ran.
-	BaseDiffEmpty bool   `json:"base_diff_empty,omitempty"`
-	CIStatus      string `json:"ci_status"`
+	BaseDiffEmpty bool          `json:"base_diff_empty,omitempty"`
+	CIStatus      string        `json:"ci_status"`
+	CIActivity    *PRCIActivity `json:"ci_activity,omitempty"`
 	// CIRealCheckRuns is the count of non-meta check runs observed on the head.
 	// CIRealCheckRunsKnown distinguishes an observed metadata-only head from
 	// older/test payloads that did not collect this evidence.
@@ -2721,6 +2727,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	const ciStatusSuccess = "success"
 	const ciStatusFailure = "failure"
 	const ciStatusPending = "pending"
+	pr.CIActivity = nil
 
 	if pr.HeadSHA == "" {
 		pr.CIStatus = ciStatusPending
@@ -2735,13 +2742,13 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	full, ok := c.cachedPRDetailFromList(pr.Repo, pr.Number, pr.HeadSHA, pr.UpdatedAt)
 	if !ok {
 		var err error
-		started := sharedWebhookTracker.now()
+		started := sharedWebhookTracker().now()
 		full, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number)
 		if err != nil {
 			c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
 		} else {
 			c.storePRDetail(pr.Repo, pr.Number, full)
-			sharedWebhookTracker.clearDirtyBefore(pr.Repo, pr.Number, started)
+			sharedWebhookTracker().clearDirtyBefore(pr.Repo, pr.Number, started)
 		}
 	}
 	if full != nil {
@@ -2755,20 +2762,35 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	}
 
 	var allCheckRuns []*gh.CheckRun
-	if cached, ok := c.graphQLBatchCheckRuns(pr.Repo, pr.Number, pr.HeadSHA); ok {
+	checkSource := "github-check-runs"
+	var checkObservedAt *time.Time
+	if cached, observedAt, ok := c.graphQLBatchCheckRunsObservation(pr.Repo, pr.Number, pr.HeadSHA); ok {
 		allCheckRuns = cached
+		checkSource = "github-graphql-cache"
+		checkObservedAt = observedAt
 	} else {
-		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
+		options := &gh.ListCheckRunsOptions{
 			ListOptions: gh.ListOptions{PerPage: 100},
-		})
-		if err != nil {
-			c.logger.Warn("failed to fetch check runs", "repo", pr.Repo, "pr", pr.Number, "error", err)
-			pr.CIStatus = ciStatusPending
-			return nil
 		}
-		allCheckRuns = checkRuns.CheckRuns
+		for {
+			checkRuns, response, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, options)
+			if err != nil || checkRuns == nil || checkRuns.CheckRuns == nil {
+				c.logger.Warn("failed to fetch check runs", "repo", pr.Repo, "pr", pr.Number, "error", err)
+				pr.CIStatus = ciStatusPending
+				return nil
+			}
+			allCheckRuns = append(allCheckRuns, checkRuns.CheckRuns...)
+			if response == nil || response.NextPage == 0 {
+				break
+			}
+			options.Page = response.NextPage
+		}
+		at := time.Now().UTC()
+		checkObservedAt = &at
 	}
-	latestCheckRuns := latestCheckRunsByNameAndApp(allCheckRuns)
+	currentHeadRuns := checkRunsOnHead(allCheckRuns, pr.HeadSHA)
+	latestCheckRuns := latestCheckRunsByNameAndApp(currentHeadRuns)
+	pr.CIActivity = prCIActivity(pr.HeadSHA, checkSource, activityCheckRunsByNameAndApp(currentHeadRuns), checkObservedAt)
 	// Snapshot the CI verdict for the evidence bundle once it is known. Never
 	// affects the verdict or any merge decision.
 	// Keyed by owner/name: pr.Repo may be the bare repo name, and a bundle
@@ -2943,6 +2965,9 @@ func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, ru
 	seen := map[string]bool{}
 	perRun := make([][]string, 0, len(runIDs))
 	for idx, id := range runIDs {
+		if id <= 0 {
+			continue
+		}
 		if idx >= excerptMaxRuns {
 			break
 		}

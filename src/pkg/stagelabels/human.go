@@ -380,6 +380,10 @@ func ParseFixerExhausted(reason string) (attempts int, ok bool) {
 	return n, true
 }
 
+// decisionConsequenceReason is the 085 bullet for a lane rule that names no
+// specific cause; EntryCause leaves it out of the dedup digest.
+const decisionConsequenceReason = "the automerge lane will not merge this unattended"
+
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
 func RouteHuman(e Evidence) Route {
 	fixing := FixingStageFor(e.SelfAuthored, e.AuthorKind)
@@ -517,7 +521,7 @@ func RouteHuman(e Evidence) Route {
 	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" && !manualMergeApproved {
 		decide = append(decide, e.CauseReason)
 	} else if e.Cause == CauseDecision && len(e.ForkGuard) == 0 && !manualMergeApproved {
-		decide = append(decide, "the automerge lane will not merge this unattended")
+		decide = append(decide, decisionConsequenceReason)
 	}
 	if len(decide) > 0 {
 		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,

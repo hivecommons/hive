@@ -6,12 +6,51 @@
       const byNum = {};
       (stages || []).forEach(st => { byNum[st.number] = st; });
       const cols = STAGE_TRACKER_PATH.map(n => {
+        if (n === 50) return '<li class="ham-seg ham-track-head"><span class="ham-seg-t">CI</span></li><li class="ham-seg ham-track-head"><span class="ham-seg-t">Review</span></li>';
         const name = n === 0 ? 'Open' : ((byNum[n] || {}).short || (byNum[n] || {}).label || String(n));
         // The Merge queue column wears the same train as the train header chip.
         const ico = n === 80 && typeof stageTrackerTrainIconHtml === 'function' ? stageTrackerTrainIconHtml('ham-ico ham-train-icon ham-col-ico') : '';
         return `<li class="ham-seg"><span class="ham-seg-t">${ico}${esc(name)}</span></li>`;
       }).join('');
       return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap ham-history-head" title="History — decisions and actions on this item">${stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — decisions and actions on this item')}</li></ol><span class="ham-since">since</span></div></div>`;
+    }
+
+    // Evidence is supplied independently by the backend. A native 050 label
+    // cannot say who reviews, whether checks run, or whether an author codes.
+    function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
+      if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
+      const name = kind === 'ci' ? 'CI' : 'Review';
+      const a = item && item[kind + '_activity'];
+      const matches = a && item.head && a.head === item.head;
+      let caption = matches ? a.caption || name + ' unknown' : name + ' unknown';
+      const observed = matches && a.observed_at ? Date.parse(a.observed_at) : NaN;
+      const activityFreshMS = 2 * 60 * 1000;
+      const clock = Number(nowMs) || Date.now();
+      const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
+      const active = matches && a.active && Number.isFinite(observed) && !stale;
+      const state = matches ? a.state || 'unknown' : 'unknown';
+      if (matches && (a.active || ['running', 'reviewing', 'adjudicating'].includes(state)) && (!Number.isFinite(observed) || stale)) caption = name + ' activity unknown · last observed ' + state;
+      const cls = Number.isFinite(observed) && !stale && (state === 'passing' || state === 'approved') ? 'done' : active ? 'active' : 'todo';
+      const source = matches ? a.source || 'unavailable' : 'unavailable';
+      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
+      const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
+      const blocker = matches && a.blocker ? ' · ' + a.blocker : '';
+      let tip = caption + blocker + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
+      const ownsPR = item.kind === 'pr' || item.via_pr;
+      const code = item.code_activity;
+      const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
+        ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
+      if (codeNote) tip += ' · code source ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown') + (code.blocker ? ' · ' + code.blocker : '');
+      const contextWord = kind === 'review' && sg.state === 'active' && !codeNote && sg.detour ? sg.detour.text : '';
+      let decided = kind === 'review' && sg.state === 'active' && item.decided && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
+      const codeObserved = Date.parse(code && code.observed_at || '');
+      const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
+      if (!codeFresh) decided = decided.replace(/>Fixing(?=\s|<)/g, '>Fix requested');
+      const word = esc(caption.replace(new RegExp('^' + name + ' ?'), '') || state);
+      const evidenceURL = matches && /^https?:\/\//i.test(String(a.url || '')) ? a.url : '';
+      const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${word}</a>` : word;
+      const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
+      return `<li class="ham-seg ham-activity-track ${cls}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}"${sg.state === 'active' ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(tip + (codeNote ? ' · ' + codeNote : ''))}"` : ''} aria-label="${esc(name + ': ' + tip + (codeNote ? ' · ' + codeNote : ''))}"><span class="ham-track-name">${name}</span><span class="ham-track-state">${evidenceLink}</span>${codeNote || contextWord ? `<span class="ham-track-code-note">${esc(codeNote || contextWord)}</span>` : ''}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}${stale || !Number.isFinite(observed) ? '<span class="ham-track-freshness">?</span>' : ''}</li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -51,10 +90,18 @@
       // tracker-cues helpers are optional here so a lifted copy of this
       // function (tests, previews) renders without them.
       const worker = typeof stageTrackerWorkingOn === 'function' ? stageTrackerWorkingOn(item, ctx && ctx.workers) : null;
+      const code = item.code_activity;
+      const codeObserved = code && code.observed_at ? Date.parse(code.observed_at) : NaN;
+      const codeFreshMS = 2 * 60 * 1000;
+      const clock = Number(nowMs) || Date.now();
+      const codeWorking = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= codeFreshMS;
       let motion = stageTrackerMotion(item);
+      if (code && !codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_STATIC;
       if (motion === STAGE_TRACKER_MOTION_ACTIVE && !worker) motion = STAGE_TRACKER_MOTION_STATIC;
+      if (codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
       const motionAttr = motion === STAGE_TRACKER_MOTION_STATIC ? '' : ` data-motion="${motion}"`;
       return segs.map(sg => {
+        if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs)).join('');
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
@@ -92,6 +139,11 @@
           else if (sentinelSuffix) tip = tip + ' — ' + stageTrackerSentinelTip(item);
           // Working or waiting leads: what happens now, or what it waits on.
           if (!sg.cap && typeof stageTrackerCueLead === 'function') tip = stageTrackerCueLead(item, worker, nowMs) + tip;
+          if (sg.number === 30 && item.code_activity && Number(item.display_column) === 30) {
+            tip = (codeWorking ? code.caption : sg.detour ? sg.detour.text : 'Code activity unknown') + ' · head ' + (item.head || 'unknown') + ' · ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown');
+            if (code.blocker) tip += ' · ' + code.blocker;
+            if (claimant) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
+          }
         }
         let inner;
         // A lit chevron on a row parked on a person ("Needs human decision",
@@ -113,7 +165,7 @@
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
-        const workTip = worker && typeof stageTrackerCueLead === 'function' ? stageTrackerCueLead(item, worker, nowMs).replace(/ — $/, '') : '';
+        const workTip = code && Number(item.display_column) === 30 ? (codeWorking ? code.caption : '') : worker && typeof stageTrackerCueLead === 'function' ? stageTrackerCueLead(item, worker, nowMs).replace(/ — $/, '') : '';
         const workIco = workTip ? `<span class="ham-active-ico-wrap" role="img" title="${esc(workTip)}" aria-label="${esc(workTip)}">${stageTrackerIcon(sg.number, 'ham-ico ham-active-ico')}</span>` : stageTrackerIcon(sg.number, 'ham-ico ham-active-ico');
         // The cap chevron is the ✓ only once the PR is merged; until then
         // the column is the row's history and wears the history mark.
@@ -132,11 +184,32 @@
         && (!range || range.from == null || sg.number >= range.from)
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
-      const actor = active.cap ? '' : stageTrackerActorTip(item);
+      const actor = active.cap || active.number === 50 ? '' : stageTrackerActorTip(item);
       const by = active.cap && item.terminal_merge && typeof stageTrackerMergedByText === 'function' ? stageTrackerMergedByText(item.merged_by) : '';
       const regressed = stageTrackerRegressionText(item, Date.now());
-      const text = active.short + (by ? ' ' + by : '') + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
-      return `<p class="ham-current-stage">${esc(text)}</p>`;
+      let text = active.short + (by ? ' ' + by : '') + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
+      const decidedInfo = active.number === 50 && item.decided && typeof stageTrackerMergeGateInfo === 'function' ? stageTrackerMergeGateInfo(item, nowMs) : null;
+      if (decidedInfo) {
+        const code = item.code_activity;
+        const observed = Date.parse(code && code.observed_at || '');
+        const activityFreshMS = 2 * 60 * 1000;
+        const clock = Number(nowMs) || Date.now();
+        const working = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
+        const word = !working && decidedInfo.word === 'Fixing' ? 'Fix requested' : decidedInfo.word;
+        text = word + (decidedInfo.detail ? ' · ' + decidedInfo.detail : '') + (regressed ? ' · ' + regressed : '');
+      }
+      const tracks = (item.kind === 'pr' || item.via_pr) && item.head ? ['ci', 'review'].map(kind => {
+        const a = item[kind + '_activity'];
+        const name = kind === 'ci' ? 'CI' : 'Review';
+        if (!a || a.head !== item.head) return name + ' unknown';
+        const observed = Date.parse(a.observed_at || '');
+        const activityFreshMS = 2 * 60 * 1000;
+        const clock = Number(nowMs) || Date.now();
+        const fresh = Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
+        if ((a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state)) && !fresh) return name + ' activity unknown · last observed ' + (a.state || 'unknown');
+        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · stale observation' : '');
+      }).join(' · ') : '';
+      return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
     }
 
     // "040 Covered by PR" — the stage code plus the strip word the payload
@@ -225,6 +298,8 @@
         : [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
       if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (' + (akPlain[ak] || ak) + akSource + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.origin) lines.push('Origin: origin/' + item.origin);
+      const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      if (claimant) lines.push(stageTrackerClaimantLine(claimant, nowMs));
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : ''));
       let actorLine = stageTrackerActorTip(item).replace(/^ · /, '');

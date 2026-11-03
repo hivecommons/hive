@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
@@ -197,6 +198,11 @@ type IssueResponse struct {
 	// "request_review" request asked, after normalization.
 	ReviewersRequested     []string `json:"reviewers_requested,omitempty"`
 	TeamReviewersRequested []string `json:"team_reviewers_requested,omitempty"`
+	// ReviewersAlreadyPending and TeamReviewersAlreadyPending report who was
+	// skipped because their review request on the PR is still pending, so
+	// asking again would only re-ping them for the same ask.
+	ReviewersAlreadyPending     []string `json:"reviewers_already_pending,omitempty"`
+	TeamReviewersAlreadyPending []string `json:"team_reviewers_already_pending,omitempty"`
 	// ParentLinked reports that the created issue was linked as a GitHub
 	// sub-issue of req.Parent. ParentLinkError carries the (non-fatal) reason
 	// when a requested link did not succeed; the issue is still created OK.
@@ -730,9 +736,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			if issueDecisionDowngrade.Active {
 				commentBody = appendHiveDecisionTaken(commentBody, issueDecisionDowngrade.Question)
 			}
-			if key := relayStatusNoteKey(commentBody); key != "" && c.notificationsQuiet() {
+			if key := relayStatusNoteKey(commentBody); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
 				// A one-line state note (awaiting-ci, parking, already fixed)
-				// is a section of the item's status comment in quiet mode.
+				// is a section of the item's status comment in quiet mode or
+				// under the attention pilot.
 				var created bool
 				created, err = c.UpsertPRStatusSection(ctx, req.Repo, req.Number, key, commentBody)
 				if err == nil && !created {
@@ -812,7 +819,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			}
 		}
 		if err == nil && issueDecisionDowngrade.Active {
-			err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, issueDecisionDowngrade.Note)
+			// Pilot only: quiet mode leaves issue notes as standalone
+			// comments (docs/notifications.md), so it keeps the raw note.
+			if c.attentionPilot() {
+				var created bool
+				created, err = c.UpsertPRStatusSection(ctx, req.Repo, req.Number, prstatus.KeyIssueDecisionDowngrade, issueDecisionDowngrade.Note)
+				if err == nil && !created {
+					c.noteCommentSuppressed()
+				}
+			} else {
+				err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, issueDecisionDowngrade.Note)
+			}
 		}
 		if err == nil {
 			resp.OK = true
@@ -821,12 +838,16 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	case "request_review":
 		reviewers := normalizeReviewers(req.Reviewers)
 		teams := normalizeTeamReviewers(req.TeamReviewers)
+		var pendingUsers, pendingTeams []string
+		reviewers, teams, pendingUsers, pendingTeams = c.dropPendingReviewers(ctx, req.Repo, req.Number, reviewers, teams)
 		err = c.RequestReviewers(ctx, req.Repo, req.Number, reviewers, teams)
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
 			resp.ReviewersRequested = reviewers
 			resp.TeamReviewersRequested = teams
+			resp.ReviewersAlreadyPending = pendingUsers
+			resp.TeamReviewersAlreadyPending = pendingTeams
 		}
 	case "close":
 		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
@@ -980,6 +1001,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		extra = []string{
 			"reviewers", strings.Join(resp.ReviewersRequested, " "),
 			"team_reviewers", strings.Join(resp.TeamReviewersRequested, " "),
+			"already_pending", strings.Join(append(append([]string{}, resp.ReviewersAlreadyPending...), resp.TeamReviewersAlreadyPending...), " "),
 		}
 	}
 	if closedPR {

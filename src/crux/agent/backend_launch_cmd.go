@@ -7,14 +7,10 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 )
 
-// toolRulesToLaunchCmd builds a backend-specific CLI command from ToolsConfig.
+// toolRulesToLaunchCmdWithBobSession builds a backend-specific CLI command from ToolsConfig.
 // effort is the configured per-agent reasoning effort; only backends with an
 // effort control consume it (see codexEffortFlag / agyLaunchEffort /
 // claudeEffortFlag).
-func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort string) string {
-	return toolRulesToLaunchCmdWithBobSession(binary, model, backend, tools, isInference, effort, "")
-}
-
 func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort, bobLabel string) string {
 	denies := tools.DenyPatterns()
 
@@ -76,18 +72,14 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 	}
 }
 
-// backendLaunchCmd builds the per-backend CLI command used when an agent has no
+// backendLaunchCmdWithBobSession builds the per-backend CLI command used when an agent has no
 // explicit ToolsConfig. It is the default-path counterpart to
-// toolRulesToLaunchCmd and is deliberately pure — no Manager, no tmux, no
+// toolRulesToLaunchCmdWithBobSession and is deliberately pure — no Manager, no tmux, no
 // process — so the flag contract each backend depends on can be asserted
 // directly in tests instead of by polling a live pane for typed output.
 // effort is the configured per-agent reasoning effort; only backends with an
 // effort control consume it (see codexEffortFlag / agyLaunchEffort /
 // claudeEffortFlag).
-func backendLaunchCmd(binary, model, backend string, isInference bool, effort string) string {
-	return backendLaunchCmdWithBobSession(binary, model, backend, isInference, effort, "")
-}
-
 func backendLaunchCmdWithBobSession(binary, model, backend string, isInference bool, effort, bobLabel string) string {
 	var launchCmd string
 	switch backend {

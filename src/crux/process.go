@@ -27,6 +27,7 @@ type Process struct {
 	KicksUndeliverable     int
 	BusySince              time.Time
 	LastTranscriptActivity time.Time
+	CodeWork               *CodeWork
 	BusyCondition          string
 	BusyConditionMessage   string
 	Paused                 bool

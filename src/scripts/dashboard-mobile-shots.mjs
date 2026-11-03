@@ -242,8 +242,14 @@ async function main() {
   async function cleanup() {
     chrome.kill('SIGTERM');
     await new Promise((resolve) => chrome.once('exit', resolve));
-    // Chrome helpers can still finish profile writes after the browser exits.
-    fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // Chrome helpers can still finish profile writes after the browser exits,
+    // so removal can race (ENOTEMPTY on Default/). The profile is scratch:
+    // retry generously, then warn instead of failing an otherwise-good run.
+    try {
+      fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    } catch (err) {
+      console.warn(`WARN: could not remove ${PROFILE_DIR}: ${err.message}`);
+    }
   }
 
   const report = [];
@@ -367,9 +373,9 @@ async function main() {
     }
   } finally {
     if (socket) socket.close();
-    await cleanup();
     fs.writeFileSync(path.join(opts.out, 'overflow-report.json'), JSON.stringify(report, null, 2) + '\n');
     fs.writeFileSync(path.join(opts.out, 'preparation-rail-layout.json'), JSON.stringify(preparationRailReport, null, 2) + '\n');
+    await cleanup();
   }
   console.log(`wrote ${report.length} finding(s) to ${path.join(opts.out, 'overflow-report.json')}`);
 }

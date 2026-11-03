@@ -399,18 +399,6 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	}
 }
 
-// codexUpdatePromptLabel identifies the codex update menu in blockingPrompts.
-//
-// NOTE: answering "skip until next version" is deliberate, and updating in
-// place is NOT a viable alternative here. The prompt's own "1. Update now"
-// runs `npm install -g @openai/codex`, which needs write access to
-// /usr/local/lib/node_modules (root:root). Neither the agent UID nor the hub
-// process has it — attempting the install from the hub fails with the same
-// exit status 243. "Skip until next version" persists in each agent's
-// CODEX_HOME, so the prompt is answered once per agent and does not recur.
-// Updating the CLI belongs to the image build, not to a running agent.
-const codexUpdatePromptLabel = "codex update prompt"
-
 // watchForTrustPromptForAgent monitors a tmux session for startup-blocking
 // modal prompts using the agent's tmux socket, and answers each with the
 // specific option that unblocks it (see blockingPrompts).

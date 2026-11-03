@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
+	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -453,6 +454,21 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, agg, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
 		stageTrackerApplyFixerStatus(&it, review.FixDispatchStatusFor(dispatchState, qualifyRepo(repoName), pr.Number, pr.HeadSHA), workers)
+		activityPR := pr
+		activityPR.Repo = qualifyRepo(repoName)
+		it.CIActivity = stageTrackerCIActivity(activityPR, now)
+		var bundle *evidence.Bundle
+		if evidenceVerifier != nil && pr.HeadSHA != "" {
+			bundle, _ = github.LoadVerifiedReviewEvidence(github.ReviewEvidencePath("", activityPR.Repo, pr.Number, pr.HeadSHA), *evidenceVerifier)
+		}
+		var currentAggregate *review.Aggregate
+		if a, found := verdictFor(activityPR.Repo, pr.Number, pr.HeadSHA, false); found {
+			currentAggregate = &a
+		} else if a, found := verdictFor(repoName, pr.Number, pr.HeadSHA, false); found {
+			a.Repo = activityPR.Repo
+			currentAggregate = &a
+		}
+		it.ReviewActivity = stageTrackerReviewActivity(activityPR, bundle, currentAggregate, dispatchState, status, now)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
 			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
@@ -500,6 +516,36 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	s.applyDecidedProjection(resp.Items, now)
 	applyRebaseAttempts(resp.Items, now)
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
+	for i := range resp.Items {
+		it := &resp.Items[i]
+		if it.Kind != "pr" {
+			continue
+		}
+		activityItem := *it
+		activityItem.Repo = qualifyRepo(it.Repo)
+		// A push projection can advance the head ahead of the cached PR list.
+		// Never leave old-head approval/check verdicts on the projected item.
+		if it.CIActivity == nil || !strings.EqualFold(it.CIActivity.Head, it.Head) {
+			it.CIActivity = trackerUnknownActivity(it.Head, "CI unknown · current-head checks not observed")
+		}
+		if it.ReviewActivity == nil || !strings.EqualFold(it.ReviewActivity.Head, it.Head) {
+			currentPR := github.PullRequest{Repo: activityItem.Repo, Number: it.Number, HeadSHA: it.Head, Author: it.Author}
+			var bundle *evidence.Bundle
+			if evidenceVerifier != nil && it.Head != "" {
+				bundle, _ = github.LoadVerifiedReviewEvidence(github.ReviewEvidencePath("", currentPR.Repo, it.Number, it.Head), *evidenceVerifier)
+			}
+			var currentAggregate *review.Aggregate
+			if a, found := verdictFor(currentPR.Repo, it.Number, it.Head, false); found {
+				currentAggregate = &a
+			} else if a, found := verdictFor(it.Repo, it.Number, it.Head, false); found {
+				a.Repo = currentPR.Repo
+				currentAggregate = &a
+			}
+			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
+		}
+		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
+		it.CodeActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.DisplayColumn, activityItem.Caption
+	}
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
 	resp.IntegrationQueues = s.stageTrackerNativeQueues(now)

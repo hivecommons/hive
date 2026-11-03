@@ -2012,33 +2012,40 @@ func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspective
 func removeCompletedReviews(pending []PendingReview, artifact Artifact) []PendingReview {
 	out := pending[:0]
 	for _, p := range pending {
-		agg, ok := artifact.AggregateForBody(p.Repo, p.Number, p.HeadSHA, p.BodyDigest)
-		if !ok || strings.TrimSpace(agg.BodyDigest) != strings.TrimSpace(p.BodyDigest) ||
-			(!agg.RecordedAt.IsZero() && agg.RecordedAt.Before(p.Dispatched)) {
-			out = append(out, p)
-			continue
-		}
-		_, reported := agg.Perspectives[p.Perspective]
-		if p.Decision {
-			reported = reported && agg.Decided && agg.Verdict != VerdictIncomplete
-		} else if p.Head != "" {
-			reported = containsHead(agg.Heads[p.Perspective], p.Head)
-		}
-		fresh := false
-		for _, receipt := range agg.ReportReceipts {
-			if receipt.Agent != "" && receipt.Agent == p.Agent &&
-				receipt.Perspective == p.Perspective && receipt.Head == p.Head &&
-				receipt.Decided == p.Decision && !receipt.ReceivedAt.IsZero() &&
-				!receipt.ReceivedAt.Before(p.Dispatched) {
-				fresh = true
-				break
-			}
-		}
-		if !reported || !fresh {
+		if !PendingReviewCompleted(p, artifact) {
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+// PendingReviewCompleted is the dispatch ledger's completion rule, shared
+// with display consumers. Another agent's same-perspective report is not a
+// receipt for this assignment.
+func PendingReviewCompleted(p PendingReview, artifact Artifact) bool {
+	agg, ok := artifact.AggregateForBody(p.Repo, p.Number, p.HeadSHA, p.BodyDigest)
+	if !ok || strings.TrimSpace(agg.BodyDigest) != strings.TrimSpace(p.BodyDigest) ||
+		(!agg.RecordedAt.IsZero() && agg.RecordedAt.Before(p.Dispatched)) {
+		return false
+	}
+	_, reported := agg.Perspectives[p.Perspective]
+	if p.Decision {
+		reported = reported && agg.Decided && agg.Verdict != VerdictIncomplete
+	} else if p.Head != "" {
+		reported = containsHead(agg.Heads[p.Perspective], p.Head)
+	}
+	if !reported {
+		return false
+	}
+	for _, receipt := range agg.ReportReceipts {
+		if receipt.Agent != "" && receipt.Agent == p.Agent &&
+			receipt.Perspective == p.Perspective && receipt.Head == p.Head &&
+			receipt.Decided == p.Decision && !receipt.ReceivedAt.IsZero() &&
+			!receipt.ReceivedAt.Before(p.Dispatched) {
+			return true
+		}
+	}
+	return false
 }
 
 // PendingReviewerOccupancy counts durable dispatch bookkeeping, not running

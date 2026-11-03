@@ -617,6 +617,16 @@ func humanMergePathsFor(cfg *config.Config, repo string) []string {
 	return cfg.AutoMerge.HumanMergePathsFor(repo)
 }
 
+// humanMergePinOnlyFor returns the enabled auto_merge.human_merge_pin_only
+// exception for repo (owner/repo), read through cfg on every evaluation so a
+// reload applies without a restart (#16266). nil cfg means no exception.
+func humanMergePinOnlyFor(cfg *config.Config, repo string) (config.PinOnlyException, bool) {
+	if cfg == nil {
+		return config.PinOnlyException{}, false
+	}
+	return cfg.AutoMerge.HumanMergePinOnlyFor(repo)
+}
+
 // humanMergeRuleFor reads auto_merge.human_merge_title_prefixes /
 // human_merge_labels through cfg on every call so a reload applies
 // (hivecommons/hive#15442). A nil config means the defaults.

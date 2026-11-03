@@ -14,6 +14,8 @@
     function stageTrackerSinceHtml(item, nowMs) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       let sinceMs = Date.parse(item.stage_since || '');
+      const code = item.code_activity;
+      if (Number(item.display_column) === 30 && code && code.head === item.head && Number.isFinite(Date.parse(code.since || ''))) sinceMs = Date.parse(code.since);
       // A blocked row without stage_since still shows its age, from created_at.
       if (!sinceMs && mods.indexOf('blocked') >= 0) sinceMs = stageTrackerOpenSince(item).ms;
       const stalled = mods.indexOf('stalled') >= 0;
@@ -61,6 +63,7 @@
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x, issue)) : [];
       const canonical = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/.exec(String(lp.url || ''));
       return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+        ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
         state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
@@ -271,7 +274,7 @@
     function stageTrackerLinkedSorted(item, stages) {
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item) && !stageTrackerLinkedSupersededGone(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
-      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y) - stageTrackerAnchor(x.stage, stages, 'pr', x)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
+      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr', y, false) - stageTrackerAnchor(x.stage, stages, 'pr', x, false)) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
 
     // Pure: a PR whose drawn_under issue is not a row of this page (filtered
@@ -321,7 +324,7 @@
     // far along as its furthest covering PR — then longest-waiting first.
     function stageTrackerSortKey(item, stages) {
       const l = stageTrackerLead(item, stages);
-      return { anchor: stageTrackerAnchor(l.stage, stages, l.kind, l.lead), since: Date.parse(l.since) || Infinity };
+      return { anchor: stageTrackerAnchor(l.stage, stages, l.kind, l.lead, false), since: Date.parse(l.since) || Infinity };
     }
 
     /* ---- Repo chip and group-by-repo (pure; run under node by

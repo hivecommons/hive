@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -124,6 +125,11 @@ type Options struct {
 	// It costs one commit-list read per merge-ready head. The hive turns it
 	// on; false leaves the commits unread.
 	ScanCommitClosingKeywords bool
+	// HumanMergePinOnly returns the live, enabled
+	// auto_merge.human_merge_pin_only exception for an owner/repo (#16266).
+	// A qualifying pin-only PR by a trusted author is not held by
+	// HumanMergePaths. nil, or false, means no exception.
+	HumanMergePinOnly func(repo string) (config.PinOnlyException, bool)
 	// HumanMergeRule returns the live auto_merge.human_merge_title_prefixes /
 	// human_merge_labels rule (hivecommons/hive#15442). Every lane and the
 	// merge train skip a PR RequiresHumanMerge. nil means the defaults.
@@ -349,8 +355,11 @@ type Engine struct {
 
 	reviewVerdictHold       ReviewVerdictHoldFunc
 	recordReviewHoldRelease ReviewHoldReleaseFunc
-	humanMergeRuleMu        sync.RWMutex
-	humanMergeRule          func() prstage.HumanMergeRule
+	humanMergePinOnlyMu     sync.RWMutex
+	humanMergePinOnly       func(repo string) (config.PinOnlyException, bool)
+
+	humanMergeRuleMu sync.RWMutex
+	humanMergeRule   func() prstage.HumanMergeRule
 
 	requireCurrentBase       func(repo string) bool
 	requireCurrentBaseStrict func(repo string) bool
@@ -487,6 +496,7 @@ func New(transport Transport, opts Options) *Engine {
 		reviewVerdictHold:                 opts.ReviewVerdictHold,
 		recordReviewHoldRelease:           opts.RecordReviewHoldRelease,
 		scanCommitClosingKeywords:         opts.ScanCommitClosingKeywords,
+		humanMergePinOnly:                 opts.HumanMergePinOnly,
 		humanMergeRule:                    opts.HumanMergeRule,
 		requireCurrentBase:                opts.RequireCurrentBase,
 		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,

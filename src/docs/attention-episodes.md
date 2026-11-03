@@ -15,6 +15,9 @@ github:
     admitter:
       hivecommons/hive: hosted-hive-id
     flap_window: 12h
+    reminder_interval: 24h
+    recipient_budget: 0        # off; see notifications.md
+    digest_recipients: []
 ```
 
 Keys must be fully qualified repositories. Exactly one deployment may own the
@@ -28,7 +31,13 @@ Unknown-owner uncertain attempts remain visible and are not automatically retrie
 
 Unset/empty `admitter` means this new path does nothing, without opening a ledger
 or changing today's quiet-mode delivery. The default flap window is 12 hours.
-There is no reminder or per-recipient budget in this layer (#16270 / #16271).
+Every first ping and reminder is admitted through the per-recipient attention
+budget (`recipient_budget`, off by default, #16271); see
+[Per-recipient attention budget](notifications.md#per-recipient-attention-budget-opt-in-off-by-default).
+With
+`github.notifications.attention_pilot` on, `reminder_interval` (default `24h`)
+bounds reminders to one per unresolved episode per interval; see
+[Attention section, tracking issue and reminders](notifications.md#attention-section-tracking-issue-and-reminders).
 
 ## Producer contract
 
@@ -84,8 +93,10 @@ mutation journal remains in the GitHub write path as an additional safeguard.
 The file is bounded to 4096 episodes and 4096 initialized items. Resolved
 episodes are pruned once the flap window has passed (recurrence would start a
 fresh episode anyway); uncertain episodes and history-seeded baselines are kept.
-Capacity errors fail closed and retain history instead of evicting an active
-incident and replaying it. Operators must reconcile/archive inventory before
+When the item cap is reached, the least recently touched item whose episodes
+are all resolved is evicted to admit a new one (History re-seeds it without
+replay). Capacity errors fail closed and retain history instead of evicting an
+active incident and replaying it. Operators must reconcile/archive inventory before
 resetting a full ledger; a reset re-enters baseline recovery, never an automatic
 re-page. Status displays up to 20 active conditions with an overflow count; all
 records remain in the ledger. Status includes owner/action, last evidence,

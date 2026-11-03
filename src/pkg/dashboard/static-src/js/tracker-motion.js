@@ -387,7 +387,7 @@
     // refresh runs then.
     const STAGE_TRACKER_SETTLE_MS = 1200;
     const STAGE_TRACKER_HEADER_KEY = '__cols';
-    const STAGE_TRACKER_CAP_COLUMN = STAGE_TRACKER_PATH.length;
+    const STAGE_TRACKER_CAP_COLUMN = STAGE_TRACKER_PATH.length + 1;
     var _stageTrackerCols = null;
     var _stageTrackerMoves = {};
     var _stageTrackerRowSrc = typeof WeakMap === 'function' ? new WeakMap() : null;
@@ -398,7 +398,8 @@
     function stageTrackerColIndex(item, stages) {
       const anchor = stageTrackerAnchor(item.stage, stages, item.via_pr ? 'pr' : item.kind, item);
       if (anchor >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_CAP_COLUMN;
-      return STAGE_TRACKER_PATH.indexOf(anchor);
+      const idx = STAGE_TRACKER_PATH.indexOf(anchor);
+      return idx + (anchor > 50 ? 1 : 0);
     }
 
     // Pure: item key → column for every row a payload draws. An issue with
@@ -410,9 +411,9 @@
       for (const it of items) {
         if (!it || !it.kind || !(Number(it.number) > 0)) continue;
         const linked = it.kind === 'issue' ? stageTrackerLinkedSorted(it, stages).filter(lp => lp && Number(lp.number) > 0) : [];
-        const shown = linked.length === 1 ? Object.assign({}, it, { via_pr: true, stage: linked[0].stage || 40 }) : it;
+        const shown = linked.length === 1 ? Object.assign({}, it, { via_pr: true, stage: linked[0].stage || 40, display_column: linked[0].display_column || 0, head: linked[0].head, code_activity: linked[0].code_activity }) : it;
         out[stageTrackerItemKey(it)] = stageTrackerColIndex(shown, stages);
-        for (const lp of linked) out[stageTrackerItemKey({ repo: it.repo, kind: 'pr', number: lp.number })] = stageTrackerColIndex({ kind: 'pr', stage: lp.stage || 0 }, stages);
+        for (const lp of linked) out[stageTrackerItemKey({ repo: it.repo, kind: 'pr', number: lp.number })] = stageTrackerColIndex({ kind: 'pr', stage: lp.stage || 0, display_column: lp.display_column || 0, head: lp.head, code_activity: lp.code_activity }, stages);
       }
       return out;
     }

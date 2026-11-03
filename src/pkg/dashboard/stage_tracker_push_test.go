@@ -307,33 +307,38 @@ func TestStageTrackerPushChevronJS(t *testing.T) {
 	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+"\n"+stageTrackerPushJS(t, html)+stageTrackerRowsFixtureJS+`
 Date.now = () => now;
 const litWord = (html) => text((/<li class="ham-seg active[^"]*"[^>]*>([\s\S]*?)<\/li>/.exec(strip(html)) || ['', ''])[1]);
+const assertTracks = (html) => {
+  assert.strictEqual((strip(html).match(/data-track="ci"/g) || []).length, 1);
+  assert.strictEqual((strip(html).match(/data-track="review"/g) || []).length, 1);
+  assert.strictEqual(litWord(html), '', 'a push cannot fabricate observed coding or a reviewer');
+};
 const since = new Date(now - 3 * 3600000).toISOString();
 const row = (extra) => stageTrackerRowHtml(Object.assign({ repo: 'hivecommons/hive', number: 8, kind: 'pr', title: 'docs', url: 'https://x/8', stage: 71, stage_since: since, caption: 'Needs author', author: 'zoe', author_kind: 'human', stage_actor: { kind: 'human', login: 'zoe', why: '@zoe must act' } }, extra || {}), stages, ctx);
 const waiting = row({ push: { state: 'waiting', login: 'zoe', since } });
 assert.ok(/^Needs @zoe\b/.test(litWord(waiting)), litWord(waiting));
 const pushed = row({ stage_actor: { kind: 'hive', why: '@zoe pushed abc1234 — CI runs on the new head' }, push: { state: 'pushed', login: 'zoe', since: new Date(now - 120000).toISOString(), sha: 'abc1234', url: 'https://x/commit/abc1234', next: 'ci' } });
-assert.ok(/^CI \/ Review\b/.test(litWord(pushed)), litWord(pushed));
+assertTracks(pushed);
 assert.ok(!/ham-actor-ico[^>]*aria-label="Next move: human"/.test(pushed), 'the hive carries it: no person glyph on the chevron');
 assert.ok(!/Needs @zoe/.test(litWord(pushed)), litWord(pushed));
 assert.ok(pushed.includes('>@zoe pushed abc1234 · 2m</a>'), pushed);
 assert.ok(pushed.includes('Push: @zoe pushed abc1234 2m ago'), 'hover line');
 // 072 the same.
 const back = row({ stage: 72, caption: 'Returned to contributor', push: { state: 'pushed', login: 'zoe', since: new Date(now - 120000).toISOString(), sha: 'abc1234', next: 're-review' } });
-assert.ok(/^CI \/ Review\b/.test(litWord(back)), litWord(back));
+assertTracks(back);
 assert.ok(back.includes('pushed abc1234 · re-review pending · 2m'), back);
 // The nudge names the old head, but no webhook booked a push time.
 // The canonical backend projection still releases the author wait.
 const reconciled = row({ stage_actor: { kind: 'hive', why: '@zoe pushed abc1234 — the re-review is queued for the new head' },
   head: 'abc1234', caption: 'new head observed → re-review pending',
   presence: null, rework: null, push: { state: 'pushed', login: 'zoe', sha: 'abc1234', next: 're-review' } });
-assert.ok(/^CI \/ Review\b/.test(litWord(reconciled)), litWord(reconciled));
+assertTracks(reconciled);
 assert.ok(reconciled.includes('pushed abc1234 · re-review pending'), reconciled);
 assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(reconciled), reconciled);
 // A retry on the same head is not a fabricated push.
 const retry = row({ head: 'abc1234', stage_actor: { kind: 'hive', why: 'checks pending again — no new push requested' },
   caption: 'checks pending again on the current head — no new push requested', presence: null, rework: null,
   push: { state: 'checking', sha: 'abc1234', next: 'ci' } });
-assert.ok(/^CI \/ Review\b/.test(litWord(retry)), litWord(retry));
+assertTracks(retry);
 assert.ok(retry.includes('checks pending · no new push requested'), retry);
 assert.ok(!/waiting on @zoe to push|Needs @zoe|pushed abc1234/.test(retry), retry);
 // A single covering PR keeps the issue's row identity. Its via_pr view
@@ -344,7 +349,7 @@ const covered = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 9, kind:
     author: 'zoe', author_kind: 'human', state: 'open', caption: 'new head observed → re-review pending',
     stage_actor: { kind: 'hive', why: 're-review queued for the new head' },
     push: { state: 'pushed', login: 'zoe', sha: 'abc1234', next: 're-review' } }] }, stages, ctx);
-assert.ok(/^CI \/ Review\b/.test(litWord(covered)), litWord(covered));
+assertTracks(covered);
 assert.ok(covered.includes('pushed abc1234 · re-review pending'), covered);
 assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(covered), covered);
 console.log('push chevron ok');

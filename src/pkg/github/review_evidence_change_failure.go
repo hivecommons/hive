@@ -294,7 +294,7 @@ func webhookMergedPR(event string, p webhookEventPayload) (MergedPRText, bool) {
 		out.MergedAt = p.PullRequest.MergedAt.UTC()
 	}
 	if out.MergedAt.IsZero() {
-		out.MergedAt = sharedWebhookTracker.now().UTC()
+		out.MergedAt = sharedWebhookTracker().now().UTC()
 	}
 	return out, true
 }
