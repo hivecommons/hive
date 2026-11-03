@@ -1183,10 +1183,17 @@ func (s *Store) MarkEntryCommentedCause(key, head, cause string) {
 
 // EntryCause digests an entry comment's reasons (the bullet list, not the
 // evidence summary whose soak clock ticks) so two comments that would tell
-// the maintainer the same thing compare equal.
+// the maintainer the same thing compare equal. The lane-rule consequence
+// bullet is presentation, not cause: RouteHuman adds it only when the
+// observing lane handed off at 085, so a PR two lanes observe alternately
+// would otherwise digest the same decision twice on one head
+// (hivecommons/hive#16405). It still counts when it is the only bullet.
 func EntryCause(reasons []string) string {
 	if len(reasons) == 0 {
 		return ""
+	}
+	if kept := slices.DeleteFunc(slices.Clone(reasons), func(r string) bool { return r == decisionConsequenceReason }); len(kept) > 0 {
+		reasons = kept
 	}
 	sum := sha256.Sum256([]byte(strings.Join(reasons, "\n")))
 	return hex.EncodeToString(sum[:8])

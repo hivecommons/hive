@@ -627,6 +627,47 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 	}
 }
 
+// TestDecisionEntryNotRepostedWhenObservingLaneFlaps: one requires_human
+// verdict on one head reaches 085 through the contributor lane's verdict
+// hand-off on one sweep and the trusted lane's trust hand-off on the next.
+// The lane-rule consequence bullet only the first adds is presentation, not
+// cause: the maintainer is owed one explanation, not one per observing lane
+// (hivecommons/hive#16405).
+func TestDecisionEntryNotRepostedWhenObservingLaneFlaps(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+	ctx := context.Background()
+	sweep := func(lane, reason string, labels ...string) {
+		t.Helper()
+		pr := stagePR(9, labels...)
+		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		e.recordStage(lane, "acme/widget", "acme", "widget", pr, reason, false, nil)
+		if lane == stageLaneContributor {
+			e.noteStageVerdict("acme", "widget", 9, *verdict)
+		}
+		e.noteStageRole("acme", "widget", 9, stagelabels.RoleContributor)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
+			t.Fatalf("%s lane: stage=%v want 085", lane, got)
+		}
+	}
+
+	api.reset()
+	sweep(stageLaneContributor, stageReasonVerdictRequiresHuman, "role/contributor", "author/clanker", "stage/050-review-pending")
+	sweep(stageLaneTrusted, "untrusted-author-role", "role/contributor", "author/clanker", "stage/085-needs-decision")
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) {
+		t.Fatalf("085 entry comment reposted on the same head when the observing lane changed: %q", api.comments)
+	}
+	if rec, _ := store.Get(stageKey("acme", "widget", 9)); len(rec.EntryCommentedCauses) != 1 || rec.EntryCommentedHead != "sha" {
+		t.Fatalf("one decision recorded as several causes: %+v", rec)
+	}
+}
+
 // Admission skips carry no CI state in their reasons,
 // so the human route's check digest decides whether the 050 head waits on
 // the hive (hivecommons/hive#15009, #15164): running checks do, a settled head with
