@@ -1114,7 +1114,7 @@ func activityCheckRunsByNameAndApp(checks []*gh.CheckRun) []*gh.CheckRun {
 		best := latestCheckRunsByNameAndApp(group)[0]
 		out = append(out, best)
 		for _, check := range group {
-			if check.GetID() == best.GetID() && check.GetStartedAt().Equal(best.GetStartedAt().Time) &&
+			if check.GetID() == best.GetID() && check.GetStartedAt().Time.Equal(best.GetStartedAt().Time) &&
 				(check.GetStatus() != best.GetStatus() || check.GetConclusion() != best.GetConclusion()) {
 				out = append(out, check)
 			}
@@ -1147,7 +1147,7 @@ func sortedCheckRuns(out []*gh.CheckRun) []*gh.CheckRun {
 		if out[i].GetHeadSHA() != out[j].GetHeadSHA() {
 			return out[i].GetHeadSHA() < out[j].GetHeadSHA()
 		}
-		if !out[i].GetStartedAt().Equal(out[j].GetStartedAt().Time) {
+		if !out[i].GetStartedAt().Time.Equal(out[j].GetStartedAt().Time) {
 			return out[i].GetStartedAt().Before(out[j].GetStartedAt().Time)
 		}
 		if out[i].GetID() != out[j].GetID() {

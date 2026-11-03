@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
-	runtimeagent "github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/cruxtest"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/github"
@@ -178,7 +178,7 @@ func TestStageTrackerSuccessfulSourceEditCollectionThroughProjection(t *testing.
 	}
 	args, _ := json.Marshal(map[string]string{"path": file})
 	transcript := fmt.Sprintf("{\"type\":\"tool.execution_start\",\"timestamp\":%q,\"data\":{\"toolCallId\":\"edit\",\"toolName\":\"edit\",\"arguments\":%s}}\n{\"type\":\"tool.execution_complete\",\"timestamp\":%q,\"data\":{\"toolCallId\":\"edit\",\"success\":true}}\n", editAt.Format(time.RFC3339Nano), args, now.Format(time.RFC3339Nano))
-	observation := runtimeagent.ObserveCodeWorkTranscript(strings.NewReader(transcript), dir, kick, now)
+	observation := cruxruntime.ObserveCodeWorkTranscript(strings.NewReader(transcript), dir, kick, now)
 	if observation == nil {
 		t.Fatal("actual successful source edit was not collected")
 	}
