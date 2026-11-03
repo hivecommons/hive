@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/attention"
 )
 
 // Item is what the gate needs to know about the target of a write. Callers
@@ -192,7 +194,26 @@ type Gate struct {
 	recent  []Suppressed
 	summary map[string]bool
 	// dedupe is the content layer's table (dedupe.go).
-	dedupe *dedupeState
+	dedupe         *dedupeState
+	attentionOnce  sync.Once
+	attentionStore *attention.Store
+	attentionErr   error
+}
+
+// AttentionStore shares one ledger among all clients using this process gate.
+// Its file is adjacent to, but versioned independently of, the legacy ledger.
+func (g *Gate) AttentionStore() (*attention.Store, error) {
+	if g == nil {
+		return nil, errors.New("attention: writeback gate not installed")
+	}
+	g.attentionOnce.Do(func() {
+		path := ""
+		if g.path != "" {
+			path = g.path + ".attention"
+		}
+		g.attentionStore, g.attentionErr = attention.Open(path)
+	})
+	return g.attentionStore, g.attentionErr
 }
 
 // SuppressedRetention bounds the drill-down list (and the 24h counter).
