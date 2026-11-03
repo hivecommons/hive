@@ -268,32 +268,48 @@ func (b *Broker) Registry(project string) []api.Lane {
 	return out
 }
 
-func bound(field string, bad bool, rng string, got any) error {
+// bound defers formatting of the range and value text until the bound is violated.
+func bound(field string, bad bool, text func() (rng string, got any)) error {
 	if !bad {
 		return nil
 	}
+	rng, got := text()
 	return fmt.Errorf("%w: lanes: %s must be %s, got %v", ErrInvalid, field, rng, got)
 }
 
 func (c Config) validateBounds() error {
 	checks := []error{
-		bound("namespace", !ValidID(c.Namespace), fmt.Sprintf("a lowercase identifier of at most %d characters", MaxIDLength), fmt.Sprintf("%q", c.Namespace)),
-		bound("retention", c.Retention < MinRetention || c.Retention > MaxRetention, fmt.Sprintf("between %s and %s", MinRetention, MaxRetention), c.Retention),
-		bound("dedup", c.Dedup < MinDedup || c.Dedup > c.Retention, fmt.Sprintf("between %s and retention (%s)", MinDedup, c.Retention), c.Dedup),
-		bound("lease", c.Lease < MinLease || c.Lease > MaxLease, fmt.Sprintf("between %s and %s", MinLease, MaxLease), c.Lease),
-		bound("ack_retention", c.AckRetention < c.Lease || c.AckRetention > c.Retention, fmt.Sprintf("between lease (%s) and retention (%s)", c.Lease, c.Retention), c.AckRetention),
-		bound("timeout", c.Timeout <= 0 || c.Timeout > MaxTimeout, fmt.Sprintf("greater than 0 and at most %s", MaxTimeout), c.Timeout),
-		bound("retry_delay", c.RetryDelay < MinRetryDelay, fmt.Sprintf("at least %s", MinRetryDelay), c.RetryDelay),
-		bound("max_retry_delay", c.MaxRetryDelay < c.RetryDelay || c.MaxRetryDelay > MaxRetryDelay, fmt.Sprintf("between retry_delay (%s) and %s", c.RetryDelay, MaxRetryDelay), c.MaxRetryDelay),
-		bound("max_payload", c.MaxPayload <= 0 || c.MaxPayload > MaxPayload, fmt.Sprintf("between 1 and %d", MaxPayload), c.MaxPayload),
-		bound("max_messages", c.MaxMessages <= 0 || c.MaxMessages > MaxLaneMessages, fmt.Sprintf("between 1 and %d", MaxLaneMessages), c.MaxMessages),
-		bound("max_bytes", c.MaxBytes < int64(c.MaxPayload) || c.MaxBytes > MaxStorageBytes, fmt.Sprintf("between max_payload (%d) and %d", c.MaxPayload, MaxStorageBytes), c.MaxBytes),
-		bound("max_kv_bytes", c.MaxKVBytes <= 0 || c.MaxKVBytes > MaxStorageBytes, fmt.Sprintf("between 1 and %d", MaxStorageBytes), c.MaxKVBytes),
-		bound("max_pending", c.MaxPending <= 0, "at least 1", c.MaxPending),
-		bound("max_ledger", c.MaxLedger < c.MaxPending || c.MaxLedger > MaxLedgerEntries, fmt.Sprintf("between max_pending (%d) and %d", c.MaxPending, MaxLedgerEntries), c.MaxLedger),
-		bound("replicas", c.Replicas < 1 || c.Replicas > MaxReplicas, fmt.Sprintf("between 1 and %d", MaxReplicas), c.Replicas),
-		bound("lanes", len(c.Lanes) > DefaultMaxLanes, fmt.Sprintf("at most %d entries", DefaultMaxLanes), len(c.Lanes)),
-		bound("principals", len(c.Principals) == 0 || len(c.Principals) > DefaultMaxMembers, fmt.Sprintf("between 1 and %d entries", DefaultMaxMembers), len(c.Principals)),
+		bound("namespace", !ValidID(c.Namespace), func() (string, any) {
+			return fmt.Sprintf("a lowercase identifier of at most %d characters", MaxIDLength), fmt.Sprintf("%q", c.Namespace)
+		}),
+		bound("retention", c.Retention < MinRetention || c.Retention > MaxRetention, func() (string, any) { return fmt.Sprintf("between %s and %s", MinRetention, MaxRetention), c.Retention }),
+		bound("dedup", c.Dedup < MinDedup || c.Dedup > c.Retention, func() (string, any) {
+			return fmt.Sprintf("between %s and retention (%s)", MinDedup, c.Retention), c.Dedup
+		}),
+		bound("lease", c.Lease < MinLease || c.Lease > MaxLease, func() (string, any) { return fmt.Sprintf("between %s and %s", MinLease, MaxLease), c.Lease }),
+		bound("ack_retention", c.AckRetention < c.Lease || c.AckRetention > c.Retention, func() (string, any) {
+			return fmt.Sprintf("between lease (%s) and retention (%s)", c.Lease, c.Retention), c.AckRetention
+		}),
+		bound("timeout", c.Timeout <= 0 || c.Timeout > MaxTimeout, func() (string, any) { return fmt.Sprintf("greater than 0 and at most %s", MaxTimeout), c.Timeout }),
+		bound("retry_delay", c.RetryDelay < MinRetryDelay, func() (string, any) { return fmt.Sprintf("at least %s", MinRetryDelay), c.RetryDelay }),
+		bound("max_retry_delay", c.MaxRetryDelay < c.RetryDelay || c.MaxRetryDelay > MaxRetryDelay, func() (string, any) {
+			return fmt.Sprintf("between retry_delay (%s) and %s", c.RetryDelay, MaxRetryDelay), c.MaxRetryDelay
+		}),
+		bound("max_payload", c.MaxPayload <= 0 || c.MaxPayload > MaxPayload, func() (string, any) { return fmt.Sprintf("between 1 and %d", MaxPayload), c.MaxPayload }),
+		bound("max_messages", c.MaxMessages <= 0 || c.MaxMessages > MaxLaneMessages, func() (string, any) { return fmt.Sprintf("between 1 and %d", MaxLaneMessages), c.MaxMessages }),
+		bound("max_bytes", c.MaxBytes < int64(c.MaxPayload) || c.MaxBytes > MaxStorageBytes, func() (string, any) {
+			return fmt.Sprintf("between max_payload (%d) and %d", c.MaxPayload, MaxStorageBytes), c.MaxBytes
+		}),
+		bound("max_kv_bytes", c.MaxKVBytes <= 0 || c.MaxKVBytes > MaxStorageBytes, func() (string, any) { return fmt.Sprintf("between 1 and %d", MaxStorageBytes), c.MaxKVBytes }),
+		bound("max_pending", c.MaxPending <= 0, func() (string, any) { return "at least 1", c.MaxPending }),
+		bound("max_ledger", c.MaxLedger < c.MaxPending || c.MaxLedger > MaxLedgerEntries, func() (string, any) {
+			return fmt.Sprintf("between max_pending (%d) and %d", c.MaxPending, MaxLedgerEntries), c.MaxLedger
+		}),
+		bound("replicas", c.Replicas < 1 || c.Replicas > MaxReplicas, func() (string, any) { return fmt.Sprintf("between 1 and %d", MaxReplicas), c.Replicas }),
+		bound("lanes", len(c.Lanes) > DefaultMaxLanes, func() (string, any) { return fmt.Sprintf("at most %d entries", DefaultMaxLanes), len(c.Lanes) }),
+		bound("principals", len(c.Principals) == 0 || len(c.Principals) > DefaultMaxMembers, func() (string, any) {
+			return fmt.Sprintf("between 1 and %d entries", DefaultMaxMembers), len(c.Principals)
+		}),
 	}
 	for _, err := range checks {
 		if err != nil {
