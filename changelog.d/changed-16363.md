@@ -1,1 +1,1 @@
-- Hive-maintained Actions workflows that duplicate runtime narration (refs sweep, closed-issue `/reopen` hint) skip or edit in place when the `hive:status` card already carries the condition (#16363)
+- The post-merge refs sweep (`src/scripts/comment-merged-refs.sh`) no longer posts its "PR #N has merged and referenced this issue with a non-closing `Refs`" nudge when the issue's `hive:status` card already carries an `issue-partial:<pr>` section for that PR (#16363)

@@ -11,11 +11,29 @@
 # `issue-close`, `issue-partial:163`). Only when SECTION ends in `:` is it a
 # prefix (e.g. `issue-partial:` matches any `issue-partial:<pr>`), so
 # `issue-partial:163` never matches a card that only carries `issue-partial:1638`.
+#
+# Authorship: `has` only trusts a card whose author is a Bot account (the
+# runtime posts the card from its App identity; a human quoting the card's
+# invisible markers must not suppress a workflow). `upsert` only edits a
+# comment authored by HIVE_COMMENT_AUTHOR (default `github-actions[bot]`, the
+# identity `${{ github.token }}` posts as), so a third party's comment that
+# happens to contain MARKER is never overwritten.
+#
+# Environment:
+#   GH_BIN              gh binary (default: gh)
+#   HIVE_COMMENT_AUTHOR login whose comments `upsert` may edit (default: github-actions[bot])
+#   HIVE_COMMENTS_FILE  optional path to the issue's already-fetched comments
+#                       (a flat JSON array); when set, no GET is issued
 set -euo pipefail
 
 GH_BIN="${GH_BIN:-gh}"
+HIVE_COMMENT_AUTHOR="${HIVE_COMMENT_AUTHOR:-github-actions[bot]}"
 
 comments() {
+  if [ -n "${HIVE_COMMENTS_FILE:-}" ]; then
+    cat "$HIVE_COMMENTS_FILE"
+    return
+  fi
   "$GH_BIN" api --paginate --slurp "repos/$1/issues/$2/comments?per_page=100" |
     python3 -c 'import json,sys
 out=[]
@@ -35,6 +53,8 @@ def matches(key):
         return key.startswith(want)
     return key == want
 for c in json.load(sys.stdin):
+    if (c.get("user") or {}).get("type") != "Bot":
+        continue
     body=c.get("body") or ""
     if "<!-- hive:status -->" not in body:
         continue
@@ -45,9 +65,12 @@ sys.exit(1)' "$section"
   upsert)
     marker="${4:?marker required}"; body_file="${5:?body file required}"
     id=$(comments "$repo" "$number" | python3 -c 'import json,sys
+marker, author = sys.argv[1], sys.argv[2]
 for c in json.load(sys.stdin):
-    if sys.argv[1] in (c.get("body") or ""):
-        print(c["id"]); break' "$marker")
+    if (c.get("user") or {}).get("login") != author:
+        continue
+    if marker in (c.get("body") or ""):
+        print(c["id"]); break' "$marker" "$HIVE_COMMENT_AUTHOR")
     if [ -n "$id" ]; then
       "$GH_BIN" api -X PATCH "repos/${repo}/issues/comments/${id}" -F "body=@${body_file}" >/dev/null
     else

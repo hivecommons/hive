@@ -634,7 +634,15 @@ than from the runtime. When one of them says what a `hive:status` card
 section already says, it now defers (the check is
 `.github/scripts/hive-status-card.sh has <repo> <number> <section>`, which
 looks for `<!-- hive:status:section=<key> -->` inside the comment carrying
-`<!-- hive:status -->`):
+`<!-- hive:status -->`, considering only comments by a Bot account so a
+human quoting the card's invisible markers cannot suppress a workflow; a
+caller that has already fetched the comments passes them via
+`HIVE_COMMENTS_FILE` instead of re-fetching). The companion
+`hive-status-card.sh upsert <repo> <number> <marker> <body-file>` edits the
+workflow's own earlier comment carrying `<marker>` in place, or creates it;
+it only edits comments authored by `HIVE_COMMENT_AUTHOR` (default
+`github-actions[bot]`, the identity `${{ github.token }}` posts as), never a
+third party's comment that happens to contain the marker:
 
 | Workflow / script | Comment it posts | Behaviour |
 | --- | --- | --- |

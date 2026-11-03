@@ -160,6 +160,11 @@ JSON
 {"number":13,"merged_at":"2026-09-10T21:30:00Z","html_url":"https://github.com/hivecommons/hive/pull/13","body":"Refs #23"}
 JSON
     ;;
+  repos/hivecommons/hive/pulls/133)
+    cat <<'JSON'
+{"number":133,"merged_at":"2026-09-10T21:35:00Z","html_url":"https://github.com/hivecommons/hive/pull/133","body":"Refs #24"}
+JSON
+    ;;
   repos/hivecommons/hive/issues/10)
     printf '{"number":10,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
     ;;
@@ -183,6 +188,9 @@ JSON
     ;;
   repos/hivecommons/hive/issues/23)
     printf '{"number":23,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
+    ;;
+  repos/hivecommons/hive/issues/24)
+    printf '{"number":24,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
     ;;
   repos/hivecommons/hive/collaborators/maintainer/permission)
     printf 'write\n'
@@ -210,6 +218,9 @@ JSON
   repos/hivecommons/hive/issues/23/timeline*)
     printf '[[]]\n'
     ;;
+  repos/hivecommons/hive/issues/24/timeline*)
+    printf '[[]]\n'
+    ;;
   repos/hivecommons/hive/issues/10/comments*)
     printf '[[]]\n'
     ;;
@@ -226,7 +237,22 @@ JSON
     ;;
   repos/hivecommons/hive/issues/23/comments*)
     cat <<'JSON'
-[[{"body":"<!-- hive:status -->\n**Hive status**\n\n<!-- hive:status:section=issue-partial:132 -->\nPartially addressed by #132.\n<!-- /hive:status:section -->"}]]
+[[{"id":2301,"user":{"login":"hivecommons-hive[bot]","type":"Bot"},"body":"<!-- hive:status -->\n**Hive status**\n\n<!-- hive:status:section=issue-partial:132 -->\nPartially addressed by #132.\n<!-- /hive:status:section -->"}]]
+JSON
+    ;;
+  repos/hivecommons/hive/issues/24/comments*)
+    cat <<'JSON'
+[[{"id":2401,"user":{"login":"somebody","type":"User"},"body":"quoting the card:\n<!-- hive:status -->\n<!-- hive:status:section=issue-partial:133 -->\nPartially addressed by #133.\n<!-- /hive:status:section -->"}]]
+JSON
+    ;;
+  repos/hivecommons/hive/issues/90/comments*)
+    cat <<'JSON'
+[[{"id":9001,"user":{"login":"somebody","type":"User"},"body":"I saw this: <!-- issue-closed-reopen-hint --> quoted"},{"id":9002,"user":{"login":"github-actions[bot]","type":"Bot"},"body":"<!-- issue-closed-reopen-hint -->\n@reporter this issue was closed"}]]
+JSON
+    ;;
+  repos/hivecommons/hive/issues/91/comments*)
+    cat <<'JSON'
+[[{"id":9101,"user":{"login":"somebody","type":"User"},"body":"I saw this: <!-- issue-closed-reopen-hint --> quoted"}]]
 JSON
     ;;
   *)
@@ -481,6 +507,27 @@ else
   echo "$card_output" | sed 's/^/      | /'
   cat "$CALL_LOG" | sed 's/^/      | /'
 fi
+comment_gets=$(grep -c '^GET repos/hivecommons/hive/issues/23/comments' "$CALL_LOG" || true)
+if [ "$comment_gets" -eq 1 ]; then
+  pass "the card check reuses the sweep's fetched comments instead of re-fetching them"
+else
+  bad "expected exactly one GET of #23 comments (sweep + card check share it), got ${comment_gets}"
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+
+# --- hive:status card: a human quoting the card's markers must not suppress the nudge
+: > "$CALL_LOG"
+set +e
+card_human_output=$(CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" bash "$CHECKER" --repo hivecommons/hive --pr 133 2>&1)
+card_human_rc=$?
+set -e
+if [ "$card_human_rc" -eq 0 ] && grep -q '^POST repos/hivecommons/hive/issues/24/comments' "$CALL_LOG"; then
+  pass "a hive:status card quoted by a non-Bot author does not suppress the refs-sweep comment"
+else
+  bad "expected a POST on #24 (the only card-shaped comment is human-authored)"
+  echo "$card_human_output" | sed 's/^/      | /'
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
 
 # --- hive:status card: a section for a longer PR number (132) must not match PR 13
 : > "$CALL_LOG"
@@ -493,6 +540,50 @@ if [ "$card_prefix_rc" -eq 0 ] && grep -q '^POST repos/hivecommons/hive/issues/2
 else
   bad "expected a POST on #23 for PR 13 (card only carries issue-partial:132)"
   echo "$card_prefix_output" | sed 's/^/      | /'
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+
+# --- hive-status-card.sh upsert: edits only the posting identity's comment ---
+CARD_HELPER="${HERE}/../../.github/scripts/hive-status-card.sh"
+UPSERT_BODY="$TMP/upsert-body.md"
+printf '<!-- issue-closed-reopen-hint -->\nupdated hint\n' > "$UPSERT_BODY"
+
+: > "$CALL_LOG"
+set +e
+CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" bash "$CARD_HELPER" upsert hivecommons/hive 90 '<!-- issue-closed-reopen-hint -->' "$UPSERT_BODY" >/dev/null 2>&1
+upsert_rc=$?
+set -e
+if [ "$upsert_rc" -eq 0 ] && grep -q '^PATCH repos/hivecommons/hive/issues/comments/9002$' "$CALL_LOG" \
+  && ! grep -q 'issues/comments/9001' "$CALL_LOG" \
+  && ! grep -q '^POST repos/hivecommons/hive/issues/90/comments' "$CALL_LOG"; then
+  pass "upsert edits the github-actions[bot] comment carrying the marker, not a human's quote of it"
+else
+  bad "expected a single PATCH of comment 9002 for upsert on #90 (rc=${upsert_rc})"
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+
+: > "$CALL_LOG"
+set +e
+CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" bash "$CARD_HELPER" upsert hivecommons/hive 91 '<!-- issue-closed-reopen-hint -->' "$UPSERT_BODY" >/dev/null 2>&1
+upsert_new_rc=$?
+set -e
+if [ "$upsert_new_rc" -eq 0 ] && grep -q '^POST repos/hivecommons/hive/issues/91/comments$' "$CALL_LOG" \
+  && ! grep -q '^PATCH' "$CALL_LOG"; then
+  pass "upsert creates a new comment when only a third party's comment carries the marker"
+else
+  bad "expected a POST on #91 and no PATCH (rc=${upsert_new_rc})"
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+
+: > "$CALL_LOG"
+set +e
+CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" HIVE_COMMENT_AUTHOR=somebody bash "$CARD_HELPER" upsert hivecommons/hive 91 '<!-- issue-closed-reopen-hint -->' "$UPSERT_BODY" >/dev/null 2>&1
+upsert_env_rc=$?
+set -e
+if [ "$upsert_env_rc" -eq 0 ] && grep -q '^PATCH repos/hivecommons/hive/issues/comments/9101$' "$CALL_LOG"; then
+  pass "HIVE_COMMENT_AUTHOR overrides the identity whose comment upsert may edit"
+else
+  bad "expected a PATCH of comment 9101 with HIVE_COMMENT_AUTHOR=somebody (rc=${upsert_env_rc})"
   cat "$CALL_LOG" | sed 's/^/      | /'
 fi
 
