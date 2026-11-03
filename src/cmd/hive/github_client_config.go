@@ -9,6 +9,7 @@ import (
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
@@ -109,6 +110,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// one process-wide write-back gate (pkg/writeback); a rebuilt client
 	// must inherit it or the sweeps regress to ungated.
 	client.SetWritebackGate(b.writebackGate())
+	client.SetAttention(b.cfg.HiveID, func() attention.Config { return b.cfg.GitHub.Attention })
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 	// Evaluated heads persist so a restart or rebuild neither re-diffs every
 	// open PR nor blanks the Matrix feed until the next sweep (#16276).
