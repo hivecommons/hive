@@ -1,0 +1,1 @@
+- logscrub: align v5 scrubber categories with v6 (#16470)
