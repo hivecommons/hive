@@ -102,7 +102,8 @@ func TestPRApproveReply(t *testing.T) {
 // and anything the sweep would hold still is.
 func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
 	pin := "@@ -1 +1 @@\n-" + testPinOldLine + "\n+" + testPinNewLine
-	verifiedHead := []*gh.RepositoryCommit{{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}}}
+	webFlow := &gh.User{Login: gh.Ptr("web-flow")}
+	verifiedHead := []*gh.RepositoryCommit{{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Committer: webFlow, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}}}
 	for _, tc := range []struct {
 		name, patch string
 		trusted     []string
@@ -113,10 +114,13 @@ func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
 		{name: "untrusted author", patch: pin, trusted: []string{"someone-else"}, want: "requires a person to merge manually"},
 		{name: "missing patch", trusted: []string{testHiveAppBotLogin}, want: "requires a person to merge manually"},
 		{name: "head commit pushed by another login", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
-			verifiedHead[0], {SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr("mallory")}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}},
+			verifiedHead[0], {SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr("mallory")}, Committer: webFlow, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}},
+		}, want: "requires a person to merge manually"},
+		{name: "head commit trusted author but foreign committer, verified", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
+			{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Committer: &gh.User{Login: gh.Ptr("mallory")}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}},
 		}, want: "requires a person to merge manually"},
 		{name: "head commit unverified", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
-			{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(false)}}},
+			{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Committer: webFlow, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(false)}}},
 		}, want: "requires a person to merge manually"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

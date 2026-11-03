@@ -182,14 +182,21 @@ entry, the PR author is in `trusted_authors` (case-insensitive login match),
 GitHub's reported changed-file count is present and equals the fetched list,
 the classifier accepts the diff, and every commit behind the head is a
 trusted author's: the PR's commit list must end at the current head and each
-commit must have an author login in `trusted_authors` **and** a signature
+commit must have an author login in `trusted_authors`, a committer login that
+is either GitHub's own `web-flow` or in `trusted_authors`, **and** a signature
 GitHub reports as verified. The PR author login only records who opened the
 PR; any principal with write access can push onto that branch afterwards, and
-a locally crafted commit can carry a bot's author email, so the verified
-signature is what ties the commits to the listed identity. Dependabot and
-Renovate commits are web-flow signed; a human trusted author must sign. A
-commit list that cannot be fetched, is empty, is longer than GitHub serves, or
-does not end at the head holds the PR. The diff check reuses the file list the
+a locally crafted commit can carry a bot's author email. GitHub verifies a
+signature against the committer's email only, so a verified signature proves
+the committer, not the author; a write-access principal with their own signing
+key could otherwise sign a commit authored as a bot. Requiring the committer to
+be `web-flow` (GitHub created and signed the commit, so GitHub set its author)
+or a trusted login (a human trusted author signing locally) is what ties the
+commit to the listed identity, since a spoofed committer email is not on the
+signer's account and fails verification. Dependabot and Renovate commits are
+web-flow committed and signed; a human trusted author must commit and sign as
+themselves. A commit list that cannot be fetched, is empty, is longer than
+GitHub serves, or does not end at the head holds the PR. The diff check reuses the file list the
 path gate already fetches, so a PR the classifier refuses costs no extra API
 call; the commit list is read only once the diff qualifies. A repo without an
 enabled entry behaves exactly as before. `/hive approve` applies the same check, so its
@@ -223,8 +230,8 @@ binding, file-list completeness, semantic interpretation or review of upstream
 references. The sweep supplies the author (GitHub's PR author login), the
 verified-commit provenance of the head and file-list completeness itself; it
 does not yet anchor a replaced action SHA to the upstream action's own refs
-(GitHub resolves `uses:` SHAs across the fork network); the relay integration
-remains #16265;
+(GitHub resolves `uses:` SHAs across the fork network; the open second item
+of #16399); the relay integration remains #16265;
 attribution and safe hold release are tracked in #16269. None of the
 schema or classifier APIs grants permission to merge or clears a hold. Native
 required checks and producer bindings, freshness, current reviews, substantive

@@ -527,7 +527,7 @@ auto_merge:
 | `enabled` | Absent/false preserves the existing human-merge-path gate. |
 | `paths` | Explicit allowed paths within the protected path matches, not a replacement for `human_merge_paths`. Required when enabled. |
 | `kinds` | Explicit subset of `action-sha`, `image-digest`, `version-pin`; unknown kinds rejected. Required when enabled. |
-| `trusted_authors` | Explicit author allowlist; required when enabled. Matched against the PR author login and against the author login of every commit behind the head, each of which must also carry a GitHub-verified signature (web-flow-signed bot commits qualify; human authors must sign). Not permission to trust arbitrary bot-looking logins. |
+| `trusted_authors` | Explicit author allowlist; required when enabled. Matched against the PR author login and against the author login of every commit behind the head; each commit must also be committed by GitHub (`web-flow`) or by a trusted login and carry a GitHub-verified signature, since GitHub verifies the committer, not the author (web-flow-committed bot commits qualify; human authors must commit and sign as themselves). Not permission to trust arbitrary bot-looking logins. |
 
 Edit the controller's active `hive.yaml` seed, not the consumer image repo.
 The config file watcher loads the seed plus dashboard overlay after a debounced

@@ -135,11 +135,18 @@ func pinOnlyTrustedLogin(policy config.PinOnlyException, login string) bool {
 const pinOnlyCommitsMaxPages = 3
 
 // pinOnlyCommitsTrusted returns "" when every commit of pr is attributed to a
-// trusted author AND carries a signature GitHub verified, and the current
-// head is the newest listed commit. The signature is what makes the login
-// non-spoofable: a locally crafted commit can set a bot's author email, but
-// cannot carry GitHub's web-flow signature. Any listing error, an empty or
-// truncated list, or a head not in the list fails closed with a reason.
+// trusted author, was committed by a trusted login or by GitHub itself
+// (web-flow), carries a signature GitHub verified, and the current head is
+// the newest listed commit. GitHub verifies a signature against the
+// committer's email only, so a verified commit proves the committer, not the
+// author: a write-access principal with their own signing key can craft a
+// commit whose author is a bot's noreply address and sign it as themselves
+// (see pr_merge_state.go on verification reasons). Requiring the committer to
+// be web-flow (GitHub-created and GitHub-signed, so GitHub set the author) or
+// a trusted login (a human trusted author signing locally) closes that; a
+// spoofed committer email fails verification because it is not on the
+// signer's account. Any listing error, an empty or truncated list, or a head
+// not in the list fails closed with a reason.
 func (c *Engine) pinOnlyCommitsTrusted(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy config.PinOnlyException) string {
 	head := pr.GetHead().GetSHA()
 	if head == "" {
@@ -176,11 +183,25 @@ func (c *Engine) pinOnlyCommitsTrusted(ctx context.Context, owner, repo string, 
 		if login := hgithub.SafeGetLogin(rc.GetAuthor()); !pinOnlyTrustedLogin(policy, login) {
 			return fmt.Sprintf("commit %s author %q is not in trusted_authors", stagelabels.ShortSHA(sha), login)
 		}
+		if committer := hgithub.SafeGetLogin(rc.GetCommitter()); !pinOnlyTrustedCommitter(policy, committer) {
+			return fmt.Sprintf("commit %s committer %q is neither GitHub nor in trusted_authors", stagelabels.ShortSHA(sha), committer)
+		}
 		if !rc.GetCommit().GetVerification().GetVerified() {
 			return fmt.Sprintf("commit %s has no GitHub-verified signature", stagelabels.ShortSHA(sha))
 		}
 	}
 	return ""
+}
+
+// pinOnlyWebFlowLogin is the login GitHub attaches as committer to commits it
+// creates and signs itself (web UI, Apps such as Dependabot and Renovate).
+const pinOnlyWebFlowLogin = "web-flow"
+
+// pinOnlyTrustedCommitter accepts GitHub's own committer identity or a
+// trusted author committing (and signing) locally; the signature check then
+// binds to this identity.
+func pinOnlyTrustedCommitter(policy config.PinOnlyException, login string) bool {
+	return strings.EqualFold(strings.TrimSpace(login), pinOnlyWebFlowLogin) || pinOnlyTrustedLogin(policy, login)
 }
 
 // humanMergePathGate refuses a PR that touches a path a person must merge.
