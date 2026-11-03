@@ -82,6 +82,7 @@ func newBootConfigFake(t *testing.T) *bootConfigFake {
 			cfg.Debug.PprofAddr = config.PprofAddrOff
 			return cfg, nil
 		},
+		gateRegressions: func(*config.Config) []config.GateRegression { return nil },
 		// Every logger the phase installs is captured, including the stdout
 		// bootstrap logger's replacement, so assertions see the whole boot.
 		fileLogger: func(*config.Config) *slog.Logger {
@@ -513,4 +514,64 @@ func TestBootConfigWith_HubModeNotGatedByProxyInjectGuard(t *testing.T) {
 	if !returned || ok || !f.hubRun {
 		t.Fatalf("returned=%v ok=%v code=%d hubRun=%v, want the hub started", returned, ok, code, f.hubRun)
 	}
+}
+
+// #16438: a safety gate a previous runtime overlay carried that the effective
+// config lacks is logged once per gate at WARN and kept on the config for
+// /api/status; with config.refuse_gate_regression it is fatal, with its own
+// exit code and the gates named in the log.
+func TestBootConfigWith_GateRegressionWarnsOrRefuses(t *testing.T) {
+	regs := []config.GateRegression{
+		{Gate: config.GateReviewRequireLabels, Previous: "[hive-review]", Effective: "none", Source: "/data/hive.yaml.runtime.bak"},
+		{Gate: config.GatePausedRepos + "[acme/widgets]", Previous: "paused", Effective: "not paused", Source: "/data/hive.yaml.dashboard"},
+	}
+	t.Run("warns and boots by default", func(t *testing.T) {
+		f := newBootConfigFake(t)
+		f.deps.gateRegressions = func(*config.Config) []config.GateRegression { return regs }
+		b := &boot{}
+		if returned, ok, code := runBootConfig(t, b, f.deps); !returned || !ok {
+			t.Fatalf("returned=%v ok=%v code=%d, want a normal boot", returned, ok, code)
+		}
+		log := f.log.String()
+		if n := strings.Count(log, "safety gate dropped"); n != len(regs) {
+			t.Fatalf("want %d 'safety gate dropped' lines, got %d:\n%s", len(regs), n, log)
+		}
+		for _, want := range []string{"review.require_labels", "[hive-review]", "acme/widgets", "level=WARN"} {
+			if !strings.Contains(log, want) {
+				t.Fatalf("gate warning lacks %q:\n%s", want, log)
+			}
+		}
+		if len(b.cfg.GateRegressions) != len(regs) {
+			t.Fatalf("cfg.GateRegressions = %v, want the detector's list", b.cfg.GateRegressions)
+		}
+	})
+	t.Run("refuses when config.refuse_gate_regression is on", func(t *testing.T) {
+		f := newBootConfigFake(t)
+		load := f.deps.loadConfig
+		f.deps.loadConfig = func(p string) (*config.Config, error) {
+			cfg, err := load(p)
+			cfg.ConfigGuard.RefuseGateRegression = true
+			return cfg, err
+		}
+		f.deps.gateRegressions = func(*config.Config) []config.GateRegression { return regs }
+		returned, _, code := runBootConfig(t, &boot{}, f.deps)
+		if returned || code != gateRegressionExitCode {
+			t.Fatalf("returned=%v code=%d, want exit(%d)", returned, code, gateRegressionExitCode)
+		}
+		log := f.log.String()
+		for _, want := range []string{"refusing to start", "refuse_gate_regression", "review.require_labels", "acme/widgets"} {
+			if !strings.Contains(log, want) {
+				t.Fatalf("refusal log lacks %q:\n%s", want, log)
+			}
+		}
+	})
+	t.Run("quiet when nothing regressed", func(t *testing.T) {
+		f := newBootConfigFake(t)
+		if returned, ok, code := runBootConfig(t, &boot{}, f.deps); !returned || !ok {
+			t.Fatalf("returned=%v ok=%v code=%d, want a normal boot", returned, ok, code)
+		}
+		if strings.Contains(f.log.String(), "safety gate dropped") {
+			t.Fatal("gate warning logged with no regressions")
+		}
+	})
 }

@@ -4386,6 +4386,7 @@
     .cmp-banner { border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 8%, transparent); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-6); font-size: var(--fs-sm); }
     .cmp-banner strong { color: var(--text); }
     .cmp-banner-detail { color: var(--muted); margin-top: var(--sp-2); }
+    ul.cmp-banner-detail { margin: var(--sp-2) 0 0 var(--sp-5); }
     .cmp-framework { display: flex; gap: var(--sp-4); align-items: flex-start; padding: var(--sp-3) var(--sp-0); cursor: pointer; }
     .cmp-framework input { width: auto; margin-top: var(--sp-1); }
     .cmp-framework-name { font-weight: 600; color: var(--text); }
@@ -52337,7 +52338,7 @@ function burnAreaChart() {
         // agent's kick history over the selected time window.
         if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
-        body.innerHTML = renderGovernorTab(tabId);
+        body.innerHTML = renderGateRegressionBanner() + renderGovernorTab(tabId);
         settingsAnnotateRows(body);
         if (tabId === 'Hub') { fetchQueueCount(); fetchAutoUpdateStatus(); }
         // The escalation breaker lives at the top level of hive.yaml, so the
@@ -52370,6 +52371,18 @@ function burnAreaChart() {
       // invariant on every render (requirement #4). Cheap and idempotent — a
       // no-op on tabs/dialogs without a repos list.
       if (typeof syncRepoSaveGuard === 'function') syncRepoSaveGuard();
+    }
+
+    // Safety-gate regression banner (#16438): /api/status config.gate_regressions
+    // lists the gates (review.require_labels, project.paused_repos, …) a
+    // previous runtime overlay carried that this boot's config dropped or
+    // loosened. Shown at the top of every Settings tab until the operator
+    // restores the gate (or removes it on purpose) and the hive restarts.
+    function renderGateRegressionBanner() {
+      const regs = ((window._lastStatus || {}).config || {}).gate_regressions || [];
+      if (!regs.length) return '';
+      const items = regs.map(g => `<li><code>${esc(g.gate || '')}</code> was <code>${esc(g.previous || '')}</code>, now ${esc(g.effective || '')}${g.source ? ` <span class="text-muted">(from ${esc(g.source)})</span>` : ''}</li>`).join('');
+      return `<div class="cmp-banner" id="gate-regression-banner" role="alert"><strong>Safety gate dropped at boot.</strong> This hive booted without ${regs.length === 1 ? 'a gate' : regs.length + ' gates'} its previous runtime config enforced; agents may now act on items it used to leave alone. Restore the setting here and save, or set <code>config.refuse_gate_regression: true</code> to make this fatal.<ul class="cmp-banner-detail">${items}</ul></div>`;
     }
 
     function renderAgentImport() {
