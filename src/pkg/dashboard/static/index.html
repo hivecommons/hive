@@ -7035,14 +7035,14 @@ body.matrix-mode #hive-matrix {
   --matrix-muted: #b8ccbb;
   position: fixed; inset: 0; z-index: 100000; background: var(--matrix-bg); color: var(--matrix-color, var(--matrix-fg)); font: 16px monospace;
 }
-body.matrix-mode .matrix-canvas { width: 100%; height: 100%; }
-body.matrix-mode .matrix-labels { position: absolute; bottom: 1rem; left: 1rem; right: 1rem; padding: var(--sp-3); background: var(--matrix-surface); color: var(--matrix-text); font-size: var(--fs-base); overflow-wrap: anywhere; }
-body.matrix-mode .matrix-notice { position: absolute; top: 2rem; left: 1rem; right: 1rem; color: var(--matrix-text); }
-body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; overflow: hidden; }
+body.matrix-mode .matrix-canvas { display: block; position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; }
+body.matrix-mode .matrix-labels { position: fixed; bottom: 1rem; left: 1rem; max-width: min(60vw, 48rem); z-index: 2; padding: var(--sp-3); background: var(--matrix-surface); color: var(--matrix-text); font-size: var(--fs-base); overflow-wrap: anywhere; }
+body.matrix-mode .matrix-notice { position: fixed; top: 2rem; left: 1rem; right: 1rem; z-index: 2; color: var(--matrix-text); }
+body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; z-index: 1; overflow: hidden; }
 body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 1rem; }
 body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
 body.matrix-mode #hive-matrix [hidden] { display: none !important; }
-body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
+body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -7137,6 +7137,10 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
       rs: 'rs', c: 'c', h: 'c', cc: 'c', cpp: 'c', hpp: 'c', java: 'c', cs: 'c'};
     Object.keys(languages).forEach(function(k){ languages[k].words = new Set(languages[k].words.split(' ')); });
     function paused(){ return manualPause || document.hidden; }
+    // Height of the bottom band the freshness HUD occupies, so typed rows
+    // never run under it in any effect (#16441). 100px is the floor used
+    // before the HUD was measured.
+    function hudBand(){ return Math.max(100, (labels.offsetHeight || 0) + 32); }
     function resize(){
       width = window.innerWidth; height = window.innerHeight;
       canvas.width = width; canvas.height = height;
@@ -7232,7 +7236,7 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
         top = 56;
       }
       ctx.font = '16px monospace';
-      var visible = Math.max(1, Math.floor((height - top - 100) / rowH));
+      var visible = Math.max(1, Math.floor((height - top - hudBand()) / rowH));
       var current = {n: tab.count + 1, path: typing.line.path, text: typing.chars.slice(0, Math.floor(typing.typed)).join(''), current: true};
       tab.rows.slice(-(visible - 1) || tab.rows.length).concat([current]).forEach(function(row, i){
         var y = top + (i + 1) * rowH, col = 0;
@@ -7262,7 +7266,7 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
       if (!termRows.length) emitTerminal();
       termClock += dt * 4;
       while (termClock >= 1) { termClock -= 1; emitTerminal(); }
-      var bottom = height - 100;
+      var bottom = height - hudBand();
       ctx.font = '16px monospace';
       termRows.forEach(function(row, i){
         var y = bottom - (termRows.length - 1 - i + termClock) * rowH;
