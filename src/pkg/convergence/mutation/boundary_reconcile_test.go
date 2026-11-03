@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/effects"
 )
@@ -105,4 +106,49 @@ func TestBoundaryReconcileOffModeIsNoop(t *testing.T) {
 	if err := b.Reconcile(context.Background(), effects.Claim{}, effects.ExternalState{Applied: true}); err != nil {
 		t.Fatalf("off-mode Reconcile = %v, want nil", err)
 	}
+}
+
+// #16389: the external read that precedes Reconcile can spend the caller's
+// whole attempt budget. Recording that observation (or an expiry) must not
+// fail on the inherited deadline, or the operation stays unresolved and every
+// retry repeats the same refusal.
+func TestBoundaryResolutionSurvivesExpiredCallerDeadline(t *testing.T) {
+	claim := effects.Claim{Repo: "acme/widget", Kind: effects.KindLabelMutation, Target: "7", Inputs: map[string]string{"remove_label": "hive/claimed-by-human"}}
+	strand := func(t *testing.T, b *Boundary) {
+		t.Helper()
+		if _, err := b.Execute(context.Background(), claim, func(context.Context) (effects.Result, error) {
+			return effects.Result{}, errors.New("connection reset")
+		}); err == nil {
+			t.Fatal("ambiguous effect error must surface")
+		}
+	}
+	expired := func(t *testing.T) context.Context {
+		ctx, cancel := context.WithDeadline(context.Background(), time.Unix(1, 0))
+		t.Cleanup(cancel)
+		return ctx
+	}
+
+	t.Run("reconcile", func(t *testing.T) {
+		b := testBoundary(t, "enforce")
+		strand(t, b)
+		if err := effects.Reconcile(expired(t), b, claim, effects.ExternalState{Applied: true, Provenance: "acme/widget#7"}); err != nil {
+			t.Fatalf("Reconcile under an expired caller deadline = %v, want the observation recorded", err)
+		}
+		if op, _ := b.Executor.Journal.Get(boundaryEffect(claim).LogicalID()); op.Status != StatusApplied {
+			t.Fatalf("journal status = %s, want %s", op.Status, StatusApplied)
+		}
+	})
+
+	t.Run("expire", func(t *testing.T) {
+		b := testBoundary(t, "enforce")
+		strand(t, b)
+		b.Executor.Now = func() time.Time { return time.Unix(100, 0).Add(2 * time.Hour) }
+		ok, err := effects.ExpireUnresolved(expired(t), b, claim, time.Hour)
+		if err != nil || !ok {
+			t.Fatalf("ExpireUnresolved under an expired caller deadline = (%v, %v), want (true, nil)", ok, err)
+		}
+		if op, _ := b.Executor.Journal.Get(boundaryEffect(claim).LogicalID()); op.Status != StatusNotApplied {
+			t.Fatalf("journal status = %s, want %s", op.Status, StatusNotApplied)
+		}
+	})
 }

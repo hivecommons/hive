@@ -78,7 +78,7 @@ const decidedPending = { action: 'let-hive-decide', verdict: 'adopt-supersede', 
 const original = (over) => Object.assign({ number: 15029, title: 'fix: tracker pill', url: 'u29', stage: 90, author: 'Karibhou', author_kind: 'clanker', modifiers: ['untrusted-author'], human_merge_reason_text: 'untrusted author', manual_merge: true }, over || {});
 const issueOf = (prs, over) => Object.assign({ repo: 'hivecommons/hive', number: 15023, kind: 'issue', title: 'Pill contradicts itself', url: 'u23', stage: prs[0].stage, linked_prs: prs }, over || {});
 const subHtml = (row, n) => subs(row).find(s => s.includes('pr#' + n + '"')) || '';
-const pill = (html) => text((/<li class="ham-seg active[^"]*"[\s\S]*?<\/li>/.exec(html) || ['', ''])[0]).replace(/&amp;/g, '&');
+const pill = (html) => text((/<li class="ham-seg active[^"]*"[\s\S]*?<\/li>/.exec(html) || /<span class="ham-track-context">([\s\S]*?)<\/li>/.exec(html) || ['', ''])[0]).replace(/&amp;/g, '&');
 
 // ── 1. deciding: the 090 row with the job in flight ─────────────────────
 // Before the verdict there is no decided projection: the row keeps its
@@ -202,8 +202,8 @@ for (const a of ['adopted', 'directed', 'closed', 'merged', 'queued-for-merge', 
   const chipTip = (/class="ham-badge ham-adopted-from"[^>]*title="([^"]*)"/.exec(cp) || [])[1] || '';
   assert.ok(chipTip.includes('#15029 is superseded and still open; it closes when this merges.'), 'the chip tooltip names the superseded state: ' + chipTip);
   assert.ok(!text(cp).includes('untrusted author'), 'the copy is hive-authored');
-  assert.strictEqual((row.match(/aria-current="step"/g) || []).length, 1, 'exactly one active chevron: the copy');
-  assert.ok(pill(row).includes('CI / Review'), 'the active pill follows the copy: ' + pill(row));
+  assert.strictEqual((row.match(/aria-current="step"/g) || []).length, 2, 'one current copy phase, represented by the parallel CI and Review tracks');
+  assert.ok(row.includes('data-track="ci"') && row.includes('data-track="review"'), 'the current phase follows the copy as two independent tracks');
   assert.ok(!/Approving/.test(row));
   // The same muted line without superseded_by (an older payload): adopted_by
   // with a live copy in the list is enough.

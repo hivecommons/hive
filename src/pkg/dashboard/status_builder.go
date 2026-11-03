@@ -1161,6 +1161,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			Starting:        proc.Starting && proc.State != crux.StateRunning,
 			Busy:            busy,
 			AwaitingCI:      awaitingCI,
+			CodeWork:        proc.CodeWork,
 			Paused:          proc.Paused,
 			PausedAt:        formatOptionalTime(proc.PausedAt),
 			PausedReason:    redactTokens(proc.PausedReason),
@@ -1228,6 +1229,14 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			CadenceModes:      cadenceModes,
 		}
 		applyAgentLastAction(&a, proc, busy)
+		if a.CodeWork != nil {
+			if proc.LastKick == nil || !proc.LastKick.Equal(a.CodeWork.KickAt) {
+				a.CodeWork = nil
+			} else {
+				observation := *a.CodeWork
+				a.CodeWork = &observation
+			}
+		}
 		// #7421: how the last kicked turn ended, so the card can say "asked
 		// the operator what to do" or "stood down" instead of implying work.
 		if proc.KickOutcome.Settled(proc.LastKick) {

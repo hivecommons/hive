@@ -28,6 +28,9 @@ const MaxItems = 4096
 type Config struct {
 	Admitter   map[string]string `yaml:"admitter,omitempty" json:"admitter,omitempty"`
 	FlapWindow time.Duration     `yaml:"flap_window,omitempty" json:"flap_window,omitempty"`
+	// ReminderInterval is the minimum gap between pings of one unresolved
+	// episode (attention_pilot reminders); zero means DefaultReminderInterval.
+	ReminderInterval time.Duration `yaml:"reminder_interval,omitempty" json:"reminder_interval,omitempty"`
 }
 
 func (c Config) Owner(repo string) string {
@@ -42,6 +45,9 @@ func (c Config) Owner(repo string) string {
 func (c Config) Validate() error {
 	if c.FlapWindow < 0 {
 		return errors.New("github.attention.flap_window must not be negative")
+	}
+	if c.ReminderInterval < 0 {
+		return errors.New("github.attention.reminder_interval must not be negative")
 	}
 	seen := map[string]bool{}
 	for repo, owner := range c.Admitter {
@@ -127,6 +133,12 @@ type Episode struct {
 	// (see Store.Apply); reminder scheduling reads them, holds never do.
 	AckedBy   string `json:"acked_by,omitempty"`
 	SnoozedBy string `json:"snoozed_by,omitempty"`
+	// RemindedAt and Reminders record the attention-pilot reminders sent
+	// for this episode; RecipientActedAt is the last time the recipient was
+	// seen acting on the item after a ping (see ReminderDue).
+	RemindedAt       time.Time `json:"reminded_at,omitempty"`
+	Reminders        int       `json:"reminders,omitempty"`
+	RecipientActedAt time.Time `json:"recipient_acted_at,omitempty"`
 }
 
 func (e Episode) Marker() string {

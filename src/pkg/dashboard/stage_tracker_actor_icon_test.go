@@ -27,22 +27,24 @@ const detour = (html) => (/<span class="ham-detour(?: ham-has-holder)?">([^<]*)<
 const litTitle = (html) => (/<li class="ham-seg active[^"]*"[^>]*title="([^"]*)"/.exec(strip(html)) || [])[1] || '';
 const since = new Date(now - 10 * 3600000).toISOString();
 const pr = (n, extra) => Object.assign({ repo: 'hivecommons/docs', number: n, kind: 'pr', title: 'docs: resync', url: 'https://x/' + n, stage: 70, stage_since: since, caption: 'Fixing', author: 'alice', author_kind: 'human' }, extra || {});
+const fixing = (n, extra, actor) => pr(n, Object.assign({head:'head', display_column:30,
+  code_activity:{head:'head',state:'fixing',caption:'Fixing · '+actor,actor,source:'fix-dispatch+successful-edit+verified-git-worktree',active:true,observed_at:new Date(now).toISOString()}}, extra));
 
 // hive → honeycomb.
-let row = stageTrackerRowHtml(pr(501, { author: 'hive-bot', author_kind: 'hive', stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer commented · 3m ago' } }), stages, ctx);
+let row = stageTrackerRowHtml(fixing(501, { author: 'hive-bot', author_kind: 'hive', stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer commented · 3m ago' } }, 'fixer'), stages, ctx);
 assert.strictEqual(actorSvg(row)[1], 'Next move: hive', row);
 assert.ok(actorSvg(row)[2].includes(STAGE_TRACKER_ICONS.hive), 'hive draws the honeycomb');
-assert.strictEqual(detour(row), 'Fixing', 'an agent on it: the pill stays Fixing');
-assert.ok(litTitle(row).includes('Next move: hive @fixer — fixer commented · 3m ago'), litTitle(row));
+assert.strictEqual(detour(row), 'Fixing · fixer', 'an observed assigned fixer is named');
+assert.ok(litTitle(row).includes('fix-dispatch+successful-edit+verified-git-worktree'), litTitle(row));
 
 // clanker → robot head.
-row = stageTrackerRowHtml(pr(502, { author_kind: 'clanker', stage_actor: { kind: 'clanker', login: 'acme-agent', why: '@acme-agent must push a fix' } }), stages, ctx);
+row = stageTrackerRowHtml(fixing(502, { author_kind: 'clanker', stage_actor: { kind: 'clanker', login: 'acme-agent', why: '@acme-agent must push a fix' } }, 'acme-agent'), stages, ctx);
 assert.strictEqual(actorSvg(row)[1], 'Next move: clanker');
 assert.ok(actorSvg(row)[2].includes(STAGE_TRACKER_ICONS.clanker));
-assert.strictEqual(detour(row), 'Fixing');
+assert.strictEqual(detour(row), 'Fixing · acme-agent');
 
 // human → the person glyph "Needs human decision" uses.
-row = stageTrackerRowHtml(pr(503, { stage_actor: { kind: 'human', login: 'alice', why: '@alice must push a fix' } }), stages, ctx);
+row = stageTrackerRowHtml(fixing(503, { stage_actor: { kind: 'human', login: 'alice', why: '@alice must push a fix' } }, 'alice'), stages, ctx);
 assert.strictEqual(actorSvg(row)[1], 'Next move: human');
 assert.ok(actorSvg(row)[2].includes(STAGE_TRACKER_ICONS.human), 'human draws the person glyph');
 const decision = stageTrackerRowHtml(pr(509, { stage: 85, stage_actor: { kind: 'human' } }), stages, ctx);
@@ -51,75 +53,75 @@ assert.strictEqual(actorSvg(decision)[2], actorSvg(row)[2], 'same glyph as the N
 // bot → cog, and the pill reads the state instead of an active Fixing (docs#500).
 const botWhy = 'bot-authored PR (@github-actions[bot]) — the hive does not fix bot PRs; it waits for the bot\'s next run to replace it (superseded by #497)';
 row = stageTrackerRowHtml(pr(500, { author: 'github-actions[bot]', author_kind: '', modifiers: ['stalled', 'regressed', 'needs-rebase'], caption: 'Conflicting with the base branch; ' + botWhy, stage_actor: { kind: 'bot', login: 'github-actions[bot]', why: botWhy } }), stages, ctx);
-assert.strictEqual(actorSvg(row)[1], 'Next move: bot', row);
-assert.ok(actorSvg(row)[2].includes(STAGE_TRACKER_ICONS.bot), 'bot draws the cog');
-assert.ok(!actorSvg(row)[2].includes(STAGE_TRACKER_ICONS.clanker), 'a bot is not drawn as a clanker');
-assert.strictEqual(detour(row), 'Conflicting · bot PR', 'nobody is fixing: the pill says the state in plain words');
-assert.ok(litTitle(row).includes('Next move: bot @github-actions[bot] — bot-authored PR'), litTitle(row));
-assert.ok(text(row).includes('Conflicting · bot PR'), 'the compact caption carries the same words: ' + text(row));
+assert.strictEqual(actorSvg(row).length, 0, 'the next mover is not observed fixing');
+assert.ok(text(row).includes('Waiting for fixer'), 'native 070 cannot fabricate coding');
+assert.ok(tooltip(row).includes('bot-authored PR'), tooltip(row));
+assert.ok(!strip(row).includes('data-motion="active"'));
 
 // none is not abandonment evidence for an author-owned external PR.
 row = stageTrackerRowHtml(pr(504, { author_kind: '', stage_actor: { kind: 'none', why: 'the PR is red and no agent or author is on it' } }), stages, ctx);
 assert.strictEqual(actorSvg(row).length, 0, 'no invented live actor: ' + strip(row));
-assert.strictEqual(detour(row), 'CI failing · author-owned');
-assert.ok(litTitle(row).includes('Author-owned PR @alice — current work activity is unknown'), litTitle(row));
+assert.ok(text(row).includes('Waiting for fixer'));
+assert.ok(tooltip(row).includes('Author-owned PR @alice — current work activity is unknown'), tooltip(row));
 assert.ok(!tooltip(row).includes('no one is working'), tooltip(row));
 row = stageTrackerRowHtml(pr(504, { author:'', author_kind:'', stage_actor:{kind:'none'} }),stages,ctx);
-assert.strictEqual(detour(row),'CI failing · owner unknown');
-assert.ok(litTitle(row).includes('ownership and current work activity are unknown'));
+assert.ok(text(row).includes('Waiting for fixer'));
+assert.ok(tooltip(row).includes('ownership and current work activity are unknown'));
 row = stageTrackerRowHtml(pr(504, {author:'',author_kind:'',stage_actor:{kind:'none'},
   claimant:{kind:'person',login:'recorded-owner',source:'assignee'}}),stages,ctx);
-assert.strictEqual(detour(row),'CI failing · owner recorded');
-assert.ok(litTitle(row).includes('Recorded PR owner @recorded-owner — current work activity is unknown'));
+assert.ok(text(row).includes('Waiting for fixer'));
+assert.ok(tooltip(row).includes('Recorded PR owner @recorded-owner — current work activity is unknown'));
 
-// No stage_actor (older server): the stage-table heuristic still applies and the word stays Fixing.
+// An older payload has no activity evidence: a stage-table heuristic cannot show fixing.
 row = stageTrackerRowHtml(pr(505, { author_kind: 'clanker' }), stages, ctx);
-assert.strictEqual(actorSvg(row)[1], 'Next move: clanker', 'legacy payloads keep the author-kind fallback');
-assert.strictEqual(detour(row), 'Fixing');
-assert.ok(litTitle(row).includes(' · Next move: clanker'), litTitle(row));
+assert.strictEqual(actorSvg(row).length, 0, 'legacy author-kind is not activity evidence');
+assert.ok(text(row).includes('Waiting for fixer'));
+assert.strictEqual(litTitle(row), '');
 
 // The server word wins over the heuristic: a hive stage with none → no icon.
 row = stageTrackerRowHtml(pr(506, { stage: 50, caption: 'CI running', stage_actor: { kind: 'none', why: 'CI is still running' } }), stages, ctx);
 assert.strictEqual(actorSvg(row).length, 0, strip(row));
-assert.ok(strip(row).includes('<span class="ham-seg-t">CI / Review</span>'), 'a path column keeps its name');
-assert.ok(litTitle(row).includes('Author-owned PR @alice — current work activity is unknown'));
+assert.ok(strip(row).includes('CI unknown') && strip(row).includes('Review unknown'), 'missing evidence remains unknown in both tracks');
+assert.strictEqual(litTitle(row), '', 'an aggregate stage alone does not fabricate a reviewer or working chevron');
 
 // An issue riding its one covering PR takes the PR's actor.
 const lp = { number: 500, title: 'docs: resync', url: 'https://x/500', author: 'github-actions[bot]', author_kind: '', stage: 70, stage_since: since, modifiers: ['needs-rebase'], stage_actor: { kind: 'bot', login: 'github-actions[bot]', why: botWhy } };
 row = stageTrackerRowHtml({ repo: 'hivecommons/docs', number: 496, kind: 'issue', title: 'Resync', url: 'https://x/496', stage: 40, stage_since: since, linked_prs: [lp] }, stages, ctx);
-assert.strictEqual(actorSvg(row)[1], 'Next move: bot', 'single covering PR: the issue strip carries the PR actor: ' + row);
-assert.strictEqual(detour(row), 'Conflicting · bot PR');
+assert.strictEqual(actorSvg(row).length, 0, 'a covering PR does not invent observed coding');
+assert.ok(text(row).includes('Waiting for fixer'));
 
 // Sub-rows carry their own actor: one with an agent, one with nobody.
 row = stageTrackerRowHtml({ repo: 'hivecommons/docs', number: 497, kind: 'issue', title: 'Two', url: 'https://x/497', stage: 40, stage_since: since, linked_prs: [
-  Object.assign({}, lp, { number: 510, stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer is on it' } }),
+  Object.assign({}, lp, { number: 510, head:'head', display_column:30,
+    code_activity:{head:'head',state:'fixing',caption:'Fixing · fixer',actor:'fixer',source:'fix-dispatch+successful-edit+verified-git-worktree',active:true,observed_at:new Date(now).toISOString()},
+    stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer is on it' } }),
   Object.assign({}, lp, { number: 511, author:'hive-bot', author_kind:'hive', modifiers: [], stage_actor: { kind: 'none', why: 'no agent is on it' } }),
 ] }, stages, ctx);
 const subRows = subs(row);
 assert.strictEqual(subRows.length, 2);
-assert.ok(subRows[0].includes('aria-label="Next move: hive"') && subRows[0].includes('<span class="ham-detour">Fixing</span>'), subRows[0]);
-assert.ok(!subRows[1].includes('ham-actor-ico') && subRows[1].includes('<span class="ham-detour">Red · nobody on it</span>') && subRows[1].includes(STAGE_TRACKER_NOBODY_LEAD + ' — no agent is on it'), subRows[1]);
+assert.ok(subRows[0].includes('aria-label="Next move: hive"') && subRows[0].includes('<span class="ham-detour">Fixing · fixer</span>'), subRows[0]);
+assert.ok(!subRows[1].includes('ham-actor-ico') && subRows[1].includes('Waiting for fixer'), subRows[1]);
 const externalLP={...lp,author:'clubanderson',author_kind:'',modifiers:[],stage_actor:{kind:'none',why:'author kind unknown'}};
 row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',linked_prs:[externalLP]},stages,ctx);
-assert.strictEqual(detour(row),'CI failing · author-owned');
-assert.ok(litTitle(row).includes('Author-owned PR @clubanderson'),litTitle(row));
-assert.ok(!litTitle(row).includes('@issue-filer'));
+assert.ok(text(row).includes('Waiting for fixer'));
+assert.ok(tooltip(row).includes('Author-owned PR @clubanderson'),tooltip(row));
+assert.ok(!tooltip(row).includes('Author-owned PR @issue-filer'));
 for(const kind of ['human','hive']){
   row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',author_kind:kind,
     linked_prs:[{...externalLP,author:''}]},stages,ctx);
-  assert.strictEqual(detour(row),'CI failing · owner unknown','an unknown inline PR author never inherits the issue filer');
-  assert.ok(litTitle(row).includes('ownership and current work activity are unknown'),litTitle(row));
-  assert.ok(!litTitle(row).includes('@issue-filer'),litTitle(row));
+  assert.ok(text(row).includes('Waiting for fixer'));
+  assert.ok(tooltip(row).includes('ownership and current work activity are unknown'),tooltip(row));
+  assert.ok(!tooltip(row).includes('Author-owned PR @issue-filer'),tooltip(row));
 }
 row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',
   claimant:{kind:'person',login:'issue-holder',source:'assignee'},linked_prs:[{...externalLP,author:'',
     claimant:{kind:'person',login:'pr-holder',source:'assignee'}}]},stages,ctx);
-assert.strictEqual(detour(row),'CI failing · owner recorded');
-assert.ok(litTitle(row).includes('Recorded PR owner @pr-holder'),litTitle(row));
-assert.ok(!litTitle(row).includes('@issue-holder'),litTitle(row));
+assert.ok(text(row).includes('Waiting for fixer'));
+assert.ok(tooltip(row).includes('Recorded PR owner @pr-holder'),tooltip(row));
+assert.ok(!tooltip(row).includes('Recorded PR owner @issue-holder'),tooltip(row));
 row=stageTrackerRowHtml({repo:'hivecommons/docs',number:601,kind:'issue',stage:40,linked_prs:[externalLP,{...externalLP,number:512}]},stages,ctx);
 for(const sub of subs(row)){
-  assert.ok(sub.includes('CI failing · author-owned'),sub);
+  assert.ok(sub.includes('Waiting for fixer'),sub);
   assert.ok(sub.includes('current work activity is unknown'),sub);
   assert.ok(!sub.includes('nobody on it'),sub);
 }
@@ -134,7 +136,9 @@ func TestStageTrackerLinkedDrawnUnderJS(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+stageTrackerRowsFixtureJS+`
 const since = new Date(now - 3600000).toISOString();
-const lp = (n, under, extra) => Object.assign({ number: n, title: 'fix', url: 'https://x/' + n, author: 'hive-bot', author_kind: 'hive', stage: 70, stage_since: since, drawn_under: under, stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer is on it' } }, extra || {});
+const lp = (n, under, extra) => Object.assign({ number: n, title: 'fix', url: 'https://x/' + n, author: 'hive-bot', author_kind: 'hive', stage: 70, stage_since: since, drawn_under: under, head:'head', display_column:30,
+  code_activity:{head:'head',state:'fixing',caption:'Fixing · fixer',actor:'fixer',source:'fix-dispatch+successful-edit+verified-git-worktree',active:true,observed_at:new Date(now).toISOString()},
+  stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer is on it' } }, extra || {});
 const issue = (n, prs) => ({ repo: 'hivecommons/hive', number: n, kind: 'issue', title: 'Issue ' + n, url: 'https://x/' + n, stage: 40, stage_since: since, caption: 'open PR #14921 covers it', linked_prs: prs });
 const elsewhere = (row) => Array.from(row.matchAll(/<a class="ham-badge ham-linked-elsewhere"[^>]*title="([^"]*)"[^>]*>([^<]*)<\/a>/g)).map(m => ({ title: m[1], text: m[2] }));
 
@@ -143,7 +147,7 @@ let row = stageTrackerRowHtml(issue(14910, [lp(14921, 14910)]), stages, ctx);
 assert.deepStrictEqual(prCol(row).length, 1, 'owner: the PR sits in the PR column: ' + row);
 assert.ok(prCol(row)[0].includes('#14921'));
 assert.strictEqual(strips(row).length, 1);
-assert.ok(row.includes('<span class="ham-detour">Fixing</span>') && row.includes('aria-label="Next move: hive"'), row);
+assert.ok(row.includes('<span class="ham-detour">Fixing · fixer</span>') && row.includes('aria-label="Next move: hive"'), row);
 assert.deepStrictEqual(elsewhere(row), [], 'owner carries no elsewhere chip');
 
 // The other issue does not redraw the PR: its own strip (040 Covered by PR) and a chip pointing at the owner row.
@@ -265,7 +269,7 @@ assert.ok(header.startsWith('<div class="ham-cols" aria-hidden="true"><div class
 assert.strictEqual((header.match(/<div class="ham-strip-row/g) || []).length, 1, 'no counter row above the names');
 assert.ok(!header.includes('ham-merged'), 'the header carries no chip slot');
 const lis = header.match(/<li class="ham-seg[^"]*"/g);
-assert.strictEqual(lis.length, STAGE_TRACKER_PATH.length + 1, 'one cell per column plus the ✓ cap');
+assert.strictEqual(lis.length, STAGE_TRACKER_PATH.length + 2, 'native 050 has separate CI and Review cells plus the history cap');
 assert.ok(lis[lis.length - 1].includes('cap'), 'the last cell is the cap');
 
 // ---- DOM fake: the chip is one node, cached, re-resolved by id when detached ----

@@ -15,7 +15,7 @@ raw pkg/github/automerge/automerge_held_runs.go 3
 raw pkg/github/automerge/automerge_merge_commit.go 1
 raw pkg/github/automerge/automerge_merge_forward.go 1
 raw pkg/github/automerge/automerge_stage_human.go 1
-raw pkg/github/automerge/automerge_stage_labels.go 5
+raw pkg/github/automerge/automerge_stage_labels.go 4
 raw pkg/github/automerge/automerge_sweep_queued.go 3
 raw pkg/github/automerge/automerge_sweep_trusted.go 4
 raw pkg/github/automerge/automerge_unauthorized.go 3
@@ -81,6 +81,7 @@ wrap pkg/forge/gitea_forge.go 2
 wrap pkg/forge/github_forge.go 3
 wrap pkg/forge/gitlab_forge.go 2
 wrap pkg/gfi/gfi.go 3
+wrap pkg/github/automerge/automerge_stage_labels.go 1
 wrap pkg/github/claimed_by_human_migration.go 2
 wrap pkg/github/claimed_by_label.go 5
 wrap pkg/github/clarity_gate_resume.go 1

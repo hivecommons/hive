@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/prstatus"
@@ -29,6 +30,15 @@ func (c *Client) UpsertPRStatusSection(ctx context.Context, repo string, number 
 	return res.Created, err
 }
 
+// ownStatusCommentLogin reports whether login is exactly this hive's App bot
+// login. Any other account, including another bot, is not the owner, and an
+// unknown App login fails closed so nothing is ever edited or deleted.
+func (c *Client) ownStatusCommentLogin(login string) bool {
+	login = strings.TrimSpace(login)
+	app := strings.TrimSpace(c.appBotLogin)
+	return login != "" && app != "" && strings.EqualFold(login, app)
+}
+
 // clientStatusForge adapts the client's comment calls on one item to
 // prstatus.Forge. Creates go through CreateIssueComment (canary gate,
 // effects journal, created tally); edits are tallied as edited.
@@ -49,7 +59,7 @@ func (f *clientStatusForge) ListComments(ctx context.Context) ([]prstatus.Commen
 		if cm == nil {
 			continue
 		}
-		out = append(out, prstatus.Comment{ID: cm.GetID(), Body: cm.GetBody(), Own: f.c.hiveAuthoredLogin(cm.GetUser().GetLogin())})
+		out = append(out, prstatus.Comment{ID: cm.GetID(), Body: cm.GetBody(), Own: f.c.ownStatusCommentLogin(cm.GetUser().GetLogin())})
 	}
 	return out, nil
 }

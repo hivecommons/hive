@@ -27,6 +27,8 @@ func TestStageTrackerHeadReconciliationReachesCoveredRows(t *testing.T) {
 		ActionableIssues: []any{github.Issue{Number: 16010, Title: "Covered work", State: "open", Labels: []string{"stage/040-covered-by-pr"},
 			LinkedPRs: []github.IssueLinkedPR{{Number: 16012, State: "open", Closing: true}}}},
 		OpenPrs: []any{FrontendPR{PullRequest: github.PullRequest{Number: 16012, Title: "Fix", Author: "clubanderson", HeadSHA: newHead,
+			CIActivity: &github.PRCIActivity{Head: oldHead, RequiredKnown: true, Required: []string{"build"},
+				Checks: []github.PRActivityCheck{{Name: "build", State: "completed", Conclusion: "success"}}},
 			URL: "https://github.com/hivecommons/hive/pull/16012", Labels: []string{"stage/071-needs-author", "author/human"},
 			LinkedIssues: []github.PRLinkedIssue{{Number: 16010, State: "open"}}}}}}}
 	s.UpdateStatus(status)
@@ -40,6 +42,11 @@ func TestStageTrackerHeadReconciliationReachesCoveredRows(t *testing.T) {
 
 	if it.Caption != "new head observed → re-review pending" || it.NoteChangedAt != nil || it.StageActor == nil || it.StageActor.Kind != StageActorHive {
 		t.Fatalf("caption/actor disagree with push: %+v", it)
+	}
+	if it.CIActivity == nil || it.CIActivity.Head != newHead || it.CIActivity.State != "unknown" ||
+		it.ReviewActivity == nil || it.ReviewActivity.Head != newHead || it.ReviewActivity.State != "unknown" ||
+		it.CodeActivity == nil || it.CodeActivity.State != "pushed" || it.DisplayColumn != trackerNumberReviewPending {
+		t.Fatalf("new push retained an old approval/check verdict or owner-wait display: %+v", it)
 	}
 	issue := trackerItem(t, tr, "issue", 16010)
 	if len(issue.LinkedPRs) != 1 || issue.LinkedPRs[0].Push == nil || issue.LinkedPRs[0].Push.State != pushStatePushed ||
@@ -57,5 +64,8 @@ func TestStageTrackerHeadReconciliationReachesCoveredRows(t *testing.T) {
 	}
 	if strings.Contains(it.Caption, "new head observed") {
 		t.Fatalf("fresh author action still claims only re-review is pending: %q", it.Caption)
+	}
+	if it.CodeActivity == nil || it.CodeActivity.State != "waiting_owner" || it.CodeActivity.Active || it.DisplayColumn != trackerNumberPRInProgress {
+		t.Fatalf("fresh owner wait manufactured observed coding: %+v", it.CodeActivity)
 	}
 }

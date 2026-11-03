@@ -21,14 +21,15 @@ type NotificationWriteSite struct {
 // same table is documented in src/docs/notifications.md.
 var notificationWriteSites = map[string]NotificationWriteSite{
 	// Passthrough wrappers.
-	"github.(*Client).CreateIssueCommentBudgeted": {Class: NotificationClassStatus, Passthrough: true},
-	"github.(*Client).PostNoteOrFold":             {Class: NotificationClassStatus, Passthrough: true},
-	"github.(*Client).RequestReviewers":           {Class: NotificationClassRequiredReview, Passthrough: true},
-	"main.(*repoForgeRouter).CreateIssueComment":  {Class: NotificationClassAttention, Passthrough: true},
-	"main.liveTriageCommenter.CreateIssueComment": {Class: NotificationClassAttention, Passthrough: true},
-	"github.(*Client).UpsertIssueMarkerComment":   {Class: NotificationClassStatus, Passthrough: true},
-	"github.(*clientStatusForge).CreateComment":   {Class: NotificationClassStatus, Passthrough: true},
-	"github.(*Client).PostIssueNote":              {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).CreateIssueCommentBudgeted":  {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).PostNoteOrFold":              {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).RequestReviewers":            {Class: NotificationClassRequiredReview, Passthrough: true},
+	"main.(*repoForgeRouter).CreateIssueComment":   {Class: NotificationClassAttention, Passthrough: true},
+	"main.liveTriageCommenter.CreateIssueComment":  {Class: NotificationClassAttention, Passthrough: true},
+	"github.(*Client).UpsertIssueMarkerComment":    {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*clientStatusForge).CreateComment":    {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).PostIssueNote":               {Class: NotificationClassStatus, Passthrough: true},
+	"automerge.(*engineStatusForge).CreateComment": {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.
 	"dashboard.(*ContributeWSHub).markAlreadyDoneIssue":       {Class: NotificationClassStatus},
@@ -83,6 +84,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).handleOneIssueRequest":              {Class: NotificationClassAttention},
 	"github.(*Client).parkClankerRequestedPR":             {Class: NotificationClassAttention},
 	"github.(*Client).redirectToExistingPR":               {Class: NotificationClassAttention},
+	"github.(*Client).remindAttention":                    {Class: NotificationClassAttention},
 	"github.(*Client).resolveDuplicateFixGroup":           {Class: NotificationClassAttention},
 	"github.attentionDelivery.Post":                       {Class: NotificationClassAttention},
 	"main.claimEscalationLookup":                          {Class: NotificationClassAttention},

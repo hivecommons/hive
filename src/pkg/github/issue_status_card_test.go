@@ -60,6 +60,7 @@ func TestIssueStatusCardPilotFoldsRoutineNotes(t *testing.T) {
 	ctx := context.Background()
 	s := &statusCommentServer{}
 	c := testClient(t, s.start(t).URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	c.SetAttentionPilot(func() bool { return true })
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 	noLegacy := func(context.Context) error {
@@ -126,6 +127,7 @@ func TestIssueStatusCardAttentionAfterCardExists(t *testing.T) {
 	ctx := context.Background()
 	s := &statusCommentServer{}
 	c := testClient(t, s.start(t).URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	c.SetAttentionPilot(func() bool { return true })
 	noLegacy := func(context.Context) error {
 		t.Error("legacy write ran with the attention pilot on")
@@ -174,6 +176,7 @@ func TestIssueStatusCardAttentionCreatesCardOnce(t *testing.T) {
 	ctx := context.Background()
 	s := &statusCommentServer{}
 	c := testClient(t, s.start(t).URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	c.SetAttentionPilot(func() bool { return true })
 	noLegacy := func(context.Context) error {
 		t.Error("legacy write ran with the attention pilot on")
@@ -202,6 +205,7 @@ func TestIssueStatusCardAttentionGateRefusalRetries(t *testing.T) {
 	ctx := context.Background()
 	s := &statusCommentServer{}
 	c := testClient(t, s.start(t).URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	c.SetAttentionPilot(func() bool { return true })
 	noLegacy := func(context.Context) error {
 		t.Error("legacy write ran with the attention pilot on")

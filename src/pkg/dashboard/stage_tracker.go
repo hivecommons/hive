@@ -276,14 +276,19 @@ type StageTrackerHop struct {
 
 // StageTrackerItem is one open issue or PR on the tracker.
 type StageTrackerItem struct {
-	Preparation *StageTrackerPreparation      `json:"preparation,omitempty"`
-	Superseded  *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
-	Repo        string                        `json:"repo"`
-	Number      int                           `json:"number"`
-	Kind        string                        `json:"kind"`
-	Title       string                        `json:"title"`
-	URL         string                        `json:"url,omitempty"`
-	Author      string                        `json:"author,omitempty"`
+	CIActivity     *StageTrackerActivity `json:"ci_activity,omitempty"`
+	ReviewActivity *StageTrackerActivity `json:"review_activity,omitempty"`
+	CodeActivity   *StageTrackerActivity `json:"code_activity,omitempty"`
+	// DisplayColumn is presentation only; native stages, filters and merge gates remain unchanged.
+	DisplayColumn int                           `json:"display_column,omitempty"`
+	Preparation   *StageTrackerPreparation      `json:"preparation,omitempty"`
+	Superseded    *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
+	Repo          string                        `json:"repo"`
+	Number        int                           `json:"number"`
+	Kind          string                        `json:"kind"`
+	Title         string                        `json:"title"`
+	URL           string                        `json:"url,omitempty"`
+	Author        string                        `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
 	Head           string                `json:"head,omitempty"`
@@ -680,6 +685,10 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
+	CIActivity     *StageTrackerActivity       `json:"ci_activity,omitempty"`
+	ReviewActivity *StageTrackerActivity       `json:"review_activity,omitempty"`
+	CodeActivity   *StageTrackerActivity       `json:"code_activity,omitempty"`
+	DisplayColumn  int                         `json:"display_column,omitempty"`
 	HumanAttention *StageTrackerHumanAttention `json:"human_attention,omitempty"`
 	Preparation    *StageTrackerPreparation    `json:"preparation,omitempty"`
 	BaseRef        string                      `json:"base_ref,omitempty"`
