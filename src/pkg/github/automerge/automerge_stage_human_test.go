@@ -733,6 +733,12 @@ func (s *stageSupersededCloserSpy) StageReconciler(store *stagelabels.Store, opt
 	return s.stage.StageReconciler(store, opts, logger)
 }
 
+// Preserve the underlying transport's optional comment primitive as well
+// as its stage reconciler when wrapping it to observe superseded closes.
+func (s *stageSupersededCloserSpy) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
+	return s.Transport.(issueCommenter).CreateIssueComment(ctx, repo, number, body)
+}
+
 func newStageSupersededCloserSpy(t *testing.T, e *Engine, result hgithub.HiveSupersededClose) *stageSupersededCloserSpy {
 	t.Helper()
 	stage, ok := e.transport.(stageReconcilerTransport)
