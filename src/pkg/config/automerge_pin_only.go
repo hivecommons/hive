@@ -7,9 +7,11 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 )
 
-// PinOnlyException is staged policy, not authorization to merge. The eventual
-// admission gates must supply authenticated identity, exact-head diff and review
-// evidence before consulting the purely syntactic classifier.
+// PinOnlyException is policy wired in Engine.SetHumanMergePinOnly and
+// enforced by the automerge sweep and /approve gates via humanMergePinOnlyExempt
+// (#16266). It proves trusted PR author, complete file list, and SHA-bound merge,
+// but not upstream review (separate gates handle that). The hive-merge relay does
+// not yet apply it (#16265).
 type PinOnlyException struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
 	Paths          []string `yaml:"paths" json:"paths"`
