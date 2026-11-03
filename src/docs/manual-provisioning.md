@@ -1832,17 +1832,17 @@ never changes:
 
 | Key | Kind | Holds |
 |---|---|---|
-| `hive.kubestellar.io/hive-name` | label | The hive's display name (`ProjectName`), **sanitized** to a valid RFC-1123 label value. |
-| `hive.kubestellar.io/org` | label | The hive's forge org, sanitized the same way. |
-| `hive.kubestellar.io/hive-id` | label | The hive's internal `hive_id`, sanitized the same way. |
-| `hive.kubestellar.io/display-name` | annotation | The **exact, unsanitized** hive name — the recoverable source of truth when the sanitized label value has been lossily transformed. |
+| `hive.hivecommons.dev/hive-name` | label | The hive's display name (`ProjectName`), **sanitized** to a valid RFC-1123 label value. |
+| `hive.hivecommons.dev/org` | label | The hive's forge org, sanitized the same way. |
+| `hive.hivecommons.dev/hive-id` | label | The hive's internal `hive_id`, sanitized the same way. |
+| `hive.hivecommons.dev/display-name` | annotation | The **exact, unsanitized** hive name — the recoverable source of truth when the sanitized label value has been lossily transformed. |
 
 **Sanitization**: label values are lower-cased, restricted to `[a-z0-9.-]`
 (everything else — spaces, underscores, unicode, punctuation — is dropped
 outright rather than transliterated), trimmed of leading/trailing separators,
 and capped at 63 characters (the RFC-1123 label-value limit). So a hive named
 `"TradingAsBuddies"` gets the label value `tradingasbuddies`, while the
-`hive.kubestellar.io/display-name` annotation preserves the original
+`hive.hivecommons.dev/display-name` annotation preserves the original
 `TradingAsBuddies` exactly. A field that sanitizes to empty (or wasn't set
 yet — e.g. a fresh placeholder with no real name/org) is **omitted** from the
 labels rather than written as an empty/invalid label.
@@ -1851,14 +1851,14 @@ Given a hive name, find its namespace:
 
 ```bash
 kubectl --context <hub-reachable-cluster> get ns \
-  -l hive.kubestellar.io/hive-name=tradingasbuddies
+  -l hive.hivecommons.dev/hive-name=tradingasbuddies
 ```
 
 Given a namespace, find the hive that owns it:
 
 ```bash
 kubectl --context <hub-reachable-cluster> get ns hive-hosted-hosted-available-<cluster>-01-placeholder-bb95 \
-  -o jsonpath='{.metadata.annotations.hive\.kubestellar\.io/display-name}'
+  -o jsonpath='{.metadata.annotations.hive\.hivecommons\.dev/display-name}'
 # -> TradingAsBuddies
 ```
 
@@ -1868,7 +1868,7 @@ known or changes, so the namespace never goes stale:
 
 1. **Automatic provisioning** (`provisionHive`, Path A above) — stamps
    whatever is known at namespace-creation time. For a freshly-created pool
-   placeholder this is often just `hive.kubestellar.io/hive-id`, since
+   placeholder this is often just `hive.hivecommons.dev/hive-id`, since
    `org`/`name` are still placeholder values at this point.
 2. **Claim** (`handleApproveProvision`) — the real name/org become known here
    for the first time, so the labels/annotation are (re)written.

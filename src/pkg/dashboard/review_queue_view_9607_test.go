@@ -78,7 +78,7 @@ func TestReviewQueueViewStaticWiring(t *testing.T) {
 		`reviewEvidenceButtonHtml(e.repo, e.number) +`,
 		`function reviewEvidenceButtonHtml(repo, number)`,
 		`data-action="openReviewEvidence"`,
-		`() => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),`,
+		`['review-queue', () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); })],`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html is missing review-queue wiring %q", want)

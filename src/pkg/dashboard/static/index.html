@@ -7401,7 +7401,7 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     }
   };
 })();
-// Apply layout immediately and hide content until first data render.
+// Apply layout immediately; keep the shell visible while live data loads.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.
 // applyLayout() (defined in the main script) is the single source of truth
@@ -7487,9 +7487,6 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
-  document.body.style.opacity='0';
-  document.body.style.transition='opacity 0.15s ease-in';
-  setTimeout(function(){ document.body.style.opacity='1'; }, 3000);
   document.addEventListener('DOMContentLoaded', function(){
     if (typeof applyLayout === 'function' && typeof getLayout === 'function') {
       applyLayout(getLayout());
@@ -7574,7 +7571,6 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     document.addEventListener('DOMContentLoaded', renderStyleState);
   }
 })();
-
 </script>
 <div id="gh-auth-banner" class="gh-auth-banner" style="display:none">
   <span id="gh-auth-msg">GitHub login required for advisory posting</span>
@@ -8910,6 +8906,165 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     })();
 
 
+    const DASHBOARD_BACKGROUND_CONCURRENCY = 2;
+    const DASHBOARD_IDLE_TIMEOUT_MS = 1000;
+    const DASHBOARD_YIELD_MS = 32;
+    const DASHBOARD_BACKGROUND_DELAY_MS = 350;
+    const DASHBOARD_TASK_SECTIONS = Object.freeze({
+      'backend-discovery': ['debug-section'],
+      'stat-sources': ['agents-section'],
+      'cost': ['cost-panel'],
+      'hive-advice': ['advisory-section'],
+      'acmm-reco': ['advisory-section'],
+      'lifecycle': ['advisory-section'],
+      'pr-throughput': ['pr-throughput-section'],
+      'approvals': ['approvals-section'],
+      'fact-history': ['knowledge-section'],
+      'overview-kpi-history': ['overview-section'],
+      'history': ['overview-section', 'repos-section'],
+      'budget-ignore': ['repos-section'],
+      'budget-history': ['governor'],
+      'nous-status': ['nous-section'],
+      'public-knowledge': ['knowledge-section'],
+      'knowledge-stats': ['knowledge-section'],
+      'audit-log': ['audit-section'],
+      'review-queue': ['review-queue-section'],
+      'review-pipeline': ['review-queue-section'],
+      'stage-tracker': ['activity-monitor-section'],
+      'contributors': ['contributors-section'],
+      'leaderboard': ['contributors-section'],
+      'git-version': ['debug-section'],
+      'acmm-evaluation': ['acmm-eval-section'],
+      'version-check': ['debug-section'],
+      'version-reload-check': ['debug-section'],
+      'weekly-trends': ['overview-section'],
+      'timeline': ['governor'],
+      'agent-logs': ['logs-section'],
+      'debug-section': ['debug-section'],
+      'chat-capabilities': [],
+      'chat-presence': [],
+      'welcome-gh-auth': [],
+      'welcome-claude-auth': [],
+      'gh-auth-banner': [],
+    });
+    const _dashboardBackgroundJobs = new Map();
+    const _dashboardRenderJobs = new Map();
+    let _dashboardBackgroundRunning = 0;
+    let _dashboardBackgroundScheduled = false;
+    let _dashboardRenderScheduled = false;
+    let _dashboardBackgroundReady = false;
+
+    function dashboardWorkPriority(sections) {
+      let priority = 2;
+      for (const id of sections || []) {
+        if (window.location.hash === '#section-' + id) return 0;
+        const el = document.getElementById(id);
+        if (!el || !el.getClientRects().length) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom >= 0 && rect.top <= window.innerHeight) priority = 1;
+      }
+      return priority;
+    }
+    function dashboardNextWork(jobs) {
+      let next;
+      let priority = Infinity;
+      for (const job of jobs.values()) {
+        if (job.running) continue;
+        const rank = dashboardWorkPriority(job.sections);
+        if (rank < priority) { next = job; priority = rank; }
+      }
+      return next;
+    }
+    function dashboardIdle(callback) {
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(callback, { timeout: DASHBOARD_IDLE_TIMEOUT_MS });
+      } else {
+        setTimeout(callback, DASHBOARD_YIELD_MS);
+      }
+    }
+    function dashboardWakeBackground() {
+      if (!_dashboardBackgroundReady || document.hidden || _dashboardBackgroundScheduled ||
+          _dashboardBackgroundRunning >= DASHBOARD_BACKGROUND_CONCURRENCY ||
+          !dashboardNextWork(_dashboardBackgroundJobs)) return;
+      _dashboardBackgroundScheduled = true;
+      dashboardIdle(function() {
+        _dashboardBackgroundScheduled = false;
+        if (document.hidden) return;
+        const job = dashboardNextWork(_dashboardBackgroundJobs);
+        if (!job) return;
+        job.running = true;
+        _dashboardBackgroundRunning++;
+        function finished() {
+          _dashboardBackgroundJobs.delete(job.key);
+          _dashboardBackgroundRunning--;
+          dashboardWakeBackground();
+        }
+        Promise.resolve().then(job.fn).then(function(value) {
+          finished(); job.resolve(value);
+        }, function(err) {
+          finished(); job.reject(err);
+        });
+        dashboardWakeBackground();
+      });
+    }
+    // Keep a slot through JSON decoding and rendering, not just response headers.
+    // Repeated timer ticks share the same flight rather than adding stale work.
+    function dashboardScheduleWork(key, fn) {
+      const existing = _dashboardBackgroundJobs.get(key);
+      if (existing) return existing.promise;
+      let resolve, reject;
+      const promise = new Promise(function(ok, fail) { resolve = ok; reject = fail; });
+      _dashboardBackgroundJobs.set(key, {
+        key, fn, promise, resolve, reject, running: false,
+        sections: DASHBOARD_TASK_SECTIONS[key] || [],
+      });
+      dashboardWakeBackground();
+      return promise;
+    }
+    function dashboardWakeRender() {
+      if (document.hidden || _dashboardRenderScheduled || !_dashboardRenderJobs.size) return;
+      _dashboardRenderScheduled = true;
+      dashboardIdle(function() {
+        _dashboardRenderScheduled = false;
+        if (document.hidden) return;
+        const job = dashboardNextWork(_dashboardRenderJobs);
+        if (!job) return;
+        _dashboardRenderJobs.delete(job.key);
+        if (job.snapshot && !dashboardStatusCanRender(job.snapshot)) {
+          dashboardWakeRender();
+          return;
+        }
+        const anchor = typeof captureScrollAnchor === 'function' ? captureScrollAnchor() : null;
+        try {
+          job.fn();
+          job.sections.forEach(function(id) {
+            if (typeof applySectionCollapse === 'function') applySectionCollapse(id);
+          });
+          if (typeof refreshDashboardSectionSummaries === 'function') refreshDashboardSectionSummaries();
+        } catch (err) {
+          console.error('dashboard render ' + job.key + ' failed', err);
+        } finally {
+          if (anchor && typeof restoreScrollAnchor === 'function' &&
+              (typeof _hashScrollPending === 'undefined' || !_hashScrollPending)) restoreScrollAnchor(anchor);
+          dashboardWakeRender();
+        }
+      });
+    }
+    // Latest snapshot wins. Paint one section per idle turn so input and
+    // navigation can run between large cards, even when SSE arrives in a burst.
+    function dashboardRenderSection(key, sections, fn, snapshot) {
+      _dashboardRenderJobs.set(key, { key, sections, fn, snapshot });
+      dashboardWakeRender();
+    }
+    function dashboardProgressiveWake() {
+      dashboardWakeBackground();
+      dashboardWakeRender();
+    }
+    document.addEventListener('visibilitychange', dashboardProgressiveWake);
+    setTimeout(function() {
+      _dashboardBackgroundReady = true;
+      dashboardWakeBackground();
+    }, DASHBOARD_BACKGROUND_DELAY_MS);
     // ── Console-style dashboard feedback ───────────────────────────────────
     const FEEDBACK_DRAFT_KEY = 'hive-feedback-draft-v1';
     const FEEDBACK_IDENTITY_KEY = 'hive-feedback-github-username-v1';
@@ -11382,7 +11537,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);
-      } else { start(); }
+      } else { queueMicrotask(start); }
     })();
 
     const OC_TOPBAR_HEIGHT = 64;
@@ -11522,6 +11677,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-agent-nav="${(window.CSS && CSS.escape) ? CSS.escape(name) : String(name).replace(/["\\]/g, '\\$&')}"]`);
       if (active) active.classList.add('active');
+      if (typeof dashboardProgressiveWake === 'function') dashboardProgressiveWake();
       navPeekRestore('agents-section', { instant: true });
       const expanded = navPeekExpand('agents-section');
       if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
@@ -12322,7 +12478,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Agent descriptions now come from the JSON status payload (agent.description field).
     // This empty map serves as a fallback for agents without a description in config.
     const AGENT_DESCRIPTIONS = {};
-
     // ── Config-driven agent color/sort helpers ──────────────────────────────
     const _DEFAULT_AGENT_COLOR = 'var(--muted)';
     function _getAgentColor(name) {
@@ -12955,18 +13110,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function dashboardSetInterval(key, fn, ms) {
       dashboardClearInterval(key);
-      const entry = { fn, ms, timer: null };
+      const entry = { key, fn, ms, timer: null };
       DASHBOARD_INTERVALS[key] = entry;
       if (!document.hidden) dashboardStartInterval(entry);
       return entry;
     }
     function dashboardStartInterval(entry) {
-      entry.timer = setInterval(entry.fn, entry.ms);
+      entry.timer = setInterval(function() {
+        try { Promise.resolve(dashboardRunInterval(entry)).catch(console.error); } catch (err) { console.error(err); }
+      }, entry.ms);
     }
     function dashboardClearInterval(key) {
       if (!DASHBOARD_INTERVALS[key]) return;
       clearInterval(DASHBOARD_INTERVALS[key].timer);
       delete DASHBOARD_INTERVALS[key];
+    }
+    function dashboardRunInterval(entry) {
+      if (typeof dashboardScheduleWork === 'function' &&
+          Object.prototype.hasOwnProperty.call(DASHBOARD_TASK_SECTIONS, entry.key)) {
+        return dashboardScheduleWork(entry.key, entry.fn);
+      }
+      return entry.fn();
     }
     document.addEventListener('visibilitychange', () => {
       for (const [key, entry] of Object.entries(DASHBOARD_INTERVALS)) {
@@ -12978,7 +13142,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // A refresh failure must not prevent the other panels from resuming.
         // Snapshot iteration also permits a callback to clear/replace itself.
         if (DASHBOARD_INTERVALS[key] === entry) {
-          try { Promise.resolve(entry.fn()).catch(console.error); } catch (err) { console.error(err); }
+          try { Promise.resolve(dashboardRunInterval(entry)).catch(console.error); } catch (err) { console.error(err); }
         }
       }
     });
@@ -13428,7 +13592,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         capHistory(historyData);
       }
     }
-
     // ── Cost spend-over-time (hourly / daily / weekly / monthly / custom) ──
     // The server keeps 30 days of CUMULATIVE all-time estimated-$ snapshots at
     // ~5-min resolution. We derive per-bucket SPEND on the client by taking the
@@ -34453,11 +34616,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return INFERENCE_MODELS[backend] || [];
       }
     }
-    function refreshBackendDiscovery(force) {
-      INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b, force));
+    async function refreshBackendDiscovery(force) {
+      for (const backend of INFERENCE_BACKENDS) await fetchInferenceModels(backend, force);
       // Load configured gateway names so the backend/method pickers list them
       // (e.g. openrouter) alongside KNOWN_BACKENDS after the first paint.
-      fetchConfiguredGateways();
+      await fetchConfiguredGateways();
     }
 
     const CLI_MODEL_CACHE_TTL_MS = 30000;
@@ -36058,9 +36221,8 @@ function burnAreaChart() {
         renderCost(cost);
       } catch (e) { /* transient — leave last render in place */ }
     }
-    fetchCost();
+    dashboardScheduleWork('cost', fetchCost).catch(console.error);
     dashboardSetInterval('cost', fetchCost, COST_POLL_MS);
-
     // ── v4: ACMM level-up recommendation (advisory) + lifecycle timeline ──
     // Both are additive, read-only panels polled on their own modest interval.
     // They fail quietly: a transient error leaves the last render in place and
@@ -38754,7 +38916,13 @@ function burnAreaChart() {
 
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchPRThroughput(); fetchApprovals(); }
+    function v4RefreshPanels() {
+      [['hive-advice', fetchHiveAdvice], ['acmm-reco', fetchACMMReco],
+        ['lifecycle', fetchLifecycle], ['pr-throughput', fetchPRThroughput],
+        ['approvals', fetchApprovals]].forEach(function([key, fn]) {
+        dashboardScheduleWork(key, fn).catch(console.error);
+      });
+    }
     v4RefreshPanels();
     dashboardSetInterval('v4-panels', v4RefreshPanels, V4_PANELS_POLL_MS);
 
@@ -38794,7 +38962,7 @@ function burnAreaChart() {
         }
       } catch (_) { /* dashboard unreachable — different problem */ }
     }
-    checkGhAuth();
+    dashboardScheduleWork('gh-auth-banner', checkGhAuth).catch(console.error);
     dashboardSetInterval('gh-auth-banner', checkGhAuth, GH_AUTH_POLL_MS);
 
     function renderGhRateLimits(ghRateLimits) {
@@ -38906,7 +39074,6 @@ function burnAreaChart() {
     function setIfChanged(el, html) {
       if (el.innerHTML !== html) el.innerHTML = html;
     }
-
     // ── Experiment Lab (Nous) rendering ──────────────────────────────────────
     let _nousCache = null;
     let _nousPollTimer = null;
@@ -44210,27 +44377,22 @@ function burnAreaChart() {
       const n = Number(minSeq);
       if (Number.isFinite(n) && n > _statusSeqFloor) _statusSeqFloor = n;
     }
+    // A snapshot accepted before a mutation can become stale while queued.
+    function dashboardStatusCanRender(data) {
+      return data.statusSeq == null ||
+        (data.statusSeq >= _statusSeqFloor && data.statusSeq >= _lastStatusSeq &&
+          (!data.statusInstance || !_statusInstance || data.statusInstance === _statusInstance));
+    }
     var SCROLL_SETTLE_DELAY_MS = 500;
     var _deferredLoadPromise = null;
     function _afterPaint(callback) {
       _hashScrollPending = true;
-      if (_deferredLoadPromise) {
-        _deferredLoadPromise.then(function() {
-          requestAnimationFrame(function() {
-            requestAnimationFrame(function() {
-              callback();
-              setTimeout(function() { _hashScrollPending = false; }, 200);
-            });
-          });
-        });
-      } else {
+      requestAnimationFrame(function() {
         requestAnimationFrame(function() {
-          requestAnimationFrame(function() {
-            setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
-            setTimeout(function() { _hashScrollPending = false; }, 500);
-          });
+          setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
+          setTimeout(function() { _hashScrollPending = false; }, SCROLL_SETTLE_DELAY_MS);
         });
-      }
+      });
     }
 
     const NAVBAR_CLOCK_TICK_MS = 1000;
@@ -44573,7 +44735,9 @@ function burnAreaChart() {
       window._lastStatus = data;
       // The tracker's hop cue reads which agent is on which item from this
       // payload; redraw the rows when that set changes (no extra fetch).
-      if (typeof stageTrackerWorkers === 'function' && JSON.stringify(stageTrackerWorkers(data)) !== prevWorkers && typeof renderStageTracker === 'function') renderStageTracker();
+      if (typeof stageTrackerWorkers === 'function' && JSON.stringify(stageTrackerWorkers(data)) !== prevWorkers && typeof renderStageTracker === 'function') {
+        dashboardRenderSection('tracker-workers', ['activity-monitor-section'], () => renderStageTracker());
+      }
       applyDashboardFeatureVisibility();
       if (typeof refreshThroughputSLA === 'function') refreshThroughputSLA();
       if (window._acmmOverride) {
@@ -44612,25 +44776,29 @@ function burnAreaChart() {
       renderSystemAlerts(data.systemAlerts || []);
       if (!_dropdownOpen && !_configModalOpen) {
         applyPinOverrides(data.agents || []);
-        renderAgents(data.agents || []);
-        renderGovernor(data.governor || {}, data.cadenceMatrix || [], data);
+        dashboardRenderSection('agents', ['agents-section', 'agent-activity-section'], () => {
+          if (!_dropdownOpen && !_configModalOpen) renderAgents(data.agents || []);
+        }, data);
+        dashboardRenderSection('governor', ['governor'], () => {
+          if (!_dropdownOpen && !_configModalOpen) renderGovernor(data.governor || {}, data.cadenceMatrix || [], data);
+        }, data);
         // Keep the focused agent detail in sync with fresh payloads — its
         // fast path only rebuilds when the config fingerprint changes.
         if (_ocSelectedAgent) ocRenderAgentDetail();
       }
-      renderTokens(data.tokens || {});
-      renderAdvisoryDigest(data.advisoryDigest || null);
-      renderRepos(data.repos || []);
-      renderSwarm(data.swarm || {});
+      dashboardRenderSection('tokens', ['token-panel'], () => renderTokens(data.tokens || {}), data);
+      dashboardRenderSection('advisory', ['advisory-section'], () => renderAdvisoryDigest(data.advisoryDigest || null), data);
+      dashboardRenderSection('repos', ['repos-section', 'overview-section'], () => renderRepos(data.repos || []), data);
+      dashboardRenderSection('swarm', ['repos-section'], () => renderSwarm(data.swarm || {}), data);
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
       renderPlatform(data.platform || null);
-      renderHiveAdvice(data.hiveAdvice || null);
-      renderFleetReport(data.fleetReport || null);
-      renderSystemGauges(data.systemResources || null);
+      dashboardRenderSection('hive-advice', ['advisory-section'], () => renderHiveAdvice(data.hiveAdvice || null), data);
+      dashboardRenderSection('fleet-report', ['advisory-section'], () => renderFleetReport(data.fleetReport || null), data);
+      dashboardRenderSection('system-gauges', ['debug-section'], () => renderSystemGauges(data.systemResources || null), data);
       ocUpdateSidebarAgents();
-      renderDebugSection();
-      renderFAQ();
+      dashboardRenderSection('debug', ['debug-section'], () => renderDebugSection(), data);
+      dashboardRenderSection('faq', ['faq-section'], () => renderFAQ(), data);
       initializeDashboardSectionCards();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
@@ -51072,10 +51240,14 @@ function burnAreaChart() {
           const lastData = window._lastStatus || {};
           if (lastData.agents) {
             applyPinOverrides(lastData.agents);
-            renderAgents(lastData.agents);
+            dashboardRenderSection('agents', ['agents-section', 'agent-activity-section'], () => {
+              if (!_dropdownOpen && !_configModalOpen) renderAgents(lastData.agents);
+            });
             // Keep the cost table's "running agents" column live as agents
             // switch models or pause/resume between cost polls.
-            if (_lastCost) renderCost(_lastCost);
+            if (_lastCost) dashboardRenderSection('cost', ['cost-panel'], () => {
+              if (_lastCost) renderCost(_lastCost);
+            });
           }
           ocUpdateFocusedState();
           const _lvl = (lastData.acmmLevel != null) ? lastData.acmmLevel : 0;
@@ -58978,7 +59150,7 @@ function burnAreaChart() {
       }
       return _statSources;
     }
-    ensureStatSources();
+    dashboardScheduleWork('stat-sources', ensureStatSources).catch(console.error);
 
     /* statSourcesForDialog returns the source catalogue for the agent the
        config dialog is showing. The agent config response carries a catalogue
@@ -59190,7 +59362,6 @@ function burnAreaChart() {
           <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
         </div>`;
     }
-
     // ── Watchdog activity strip (#7254) ──────────────────────────────────────
     // "Review the watchdog-*-observed entries in the Audit Log, then switch to
     // Heal" is only a data-driven decision if the data is on the page. The
@@ -65565,8 +65736,8 @@ function burnAreaChart() {
     chatInput.value = localStorage.getItem(CHAT_DRAFT_KEY) || '';
     renderChatCheatsheet();
     renderChatSuggestions();
-    detectChatCapabilities();
-    refreshChatPresence();
+    dashboardScheduleWork('chat-capabilities', detectChatCapabilities).catch(console.error);
+    dashboardScheduleWork('chat-presence', refreshChatPresence).catch(console.error);
     dashboardSetInterval('chat-presence', refreshChatPresence, 30000);
 
     chatFab.onclick = () => {
@@ -65692,7 +65863,6 @@ function burnAreaChart() {
         handle.classList.remove('dragging');
       });
     })();
-
     // GitHub Device Flow Auth
     let ghPollTimer = null;
     let ghPollIntervalMs = 6000;
@@ -67453,11 +67623,10 @@ function burnAreaChart() {
       updateWelcomeProgress();
     }
 
-    checkGHAuth();
+    dashboardScheduleWork('welcome-gh-auth', checkGHAuth).catch(console.error);
     dashboardSetInterval('welcome-gh-auth', checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
     initWelcomeDialog();
     initNPSSurvey();
-
     // ── One-shot attention shimmy ──────────────────────────────────────
     // Draw the eye, once per page load, to two interactive affordances users
     // often miss: the ACMM level badge and the topbar Guide (Getting Started
@@ -67489,7 +67658,7 @@ function burnAreaChart() {
     }
     triggerAttentionShimmy();
 
-    checkClaudeAuth();
+    dashboardScheduleWork('welcome-claude-auth', checkClaudeAuth).catch(console.error);
     var CLAUDE_AUTH_CHECK_INTERVAL_MS = 60000;
     dashboardSetInterval('welcome-claude-auth', checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
 
@@ -67547,59 +67716,38 @@ function burnAreaChart() {
       sendPresencePing();
     })();
 
-    // Deferred initialization — non-critical fetches staggered after first paint.
-    // Each entry returns a promise so anchor scrolling can wait for layout to settle.
-    const DEFERRED_INIT_DELAY_MS = 1500;
-    const DEFERRED_STAGGER_MS = 200;
+    // Visible sections win; slow background panels cannot delay navigation.
+    const DEFERRED_INIT_DELAY_MS = DASHBOARD_BACKGROUND_DELAY_MS;
     _deferredLoadPromise = new Promise(function(resolveAll) {
       setTimeout(() => {
         const deferred = [
-          () => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig()),
-          () => fetchFactHistory(),
-          () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); }),
-          () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); }),
-          () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
-          () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); }),
-          () => ensureNousPolling(),
-          () => fetchPublicKnowledgeSetting(),
-          () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); }),
-          () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); }),
-          () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
-          () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); }),
-          () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); }),
-          () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); }),
-          () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); }),
-          () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); }),
-          () => fetchACMMEvaluation().then(() => { dashboardSetInterval('acmm-evaluation', fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); }),
-          () => Promise.resolve(startVersionCheck()),
-          () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}).then(() => { dashboardSetInterval('weekly-trends', () => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); }),
-          () => fetchTimeline().then(() => { dashboardSetInterval('timeline', fetchTimeline, TIMELINE_REFRESH_MS); }),
-          () => fetchAgentLogs().then(() => { dashboardSetInterval('agent-logs', fetchAgentLogs, LOGS_REFRESH_MS); }),
+          ['backend-discovery', () => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig())],
+          ['fact-history', () => fetchFactHistory()],
+          ['overview-kpi-history', () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); })],
+          ['history', () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); })],
+          ['budget-ignore', () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(console.error)],
+          ['budget-history', () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); })],
+          ['nous-status', () => ensureNousPolling()],
+          ['public-knowledge', () => fetchPublicKnowledgeSetting()],
+          ['knowledge-stats', () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); })],
+          ['audit-log', () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); })],
+          ['review-queue', () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); })],
+          ['review-pipeline', () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); })],
+          ['stage-tracker', () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); })],
+          ['contributors', () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); })],
+          ['leaderboard', () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); })],
+          ['git-version', () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); })],
+          ['acmm-evaluation', () => fetchACMMEvaluation().then(() => { dashboardSetInterval('acmm-evaluation', fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); })],
+          ['version-check', () => Promise.resolve(startVersionCheck())],
+          ['weekly-trends', () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(console.error).then(() => { dashboardSetInterval('weekly-trends', () => { return fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(console.error); }, TREND_REFRESH_MS); })],
+          ['timeline', () => fetchTimeline().then(() => { dashboardSetInterval('timeline', fetchTimeline, TIMELINE_REFRESH_MS); })],
+          ['agent-logs', () => fetchAgentLogs().then(() => { dashboardSetInterval('agent-logs', fetchAgentLogs, LOGS_REFRESH_MS); })],
         ];
-        // `Promise.resolve().then(fn)` rather than `fn()`, so ONE bad entry
-        // cannot strand the whole chain (#6581). `fn()` was called bare inside
-        // the setTimeout callback, so an entry that threw synchronously — or
-        // returned undefined and had `.then` called on it, which is what
-        // fetchTimeline did — threw out of the callback with nothing to catch
-        // it. That entry's promise then never settled, so Promise.all never
-        // settled, so resolveAll never ran and _deferredLoadPromise stayed
-        // pending for the life of the page. _afterPaint awaits it, so first-
-        // load view restoration (making #oc-agent-detail active, navigating to
-        // a saved section) silently never happened.
-        //
-        // Wrapping turns a synchronous throw into a rejection, which
-        // `.then(resolve, resolve)` already handles: the entry is recorded as
-        // finished-badly instead of never finishing, and the other twelve
-        // entries still complete. The throw is still reported below rather
-        // than swallowed — the point is that one broken entry degrades to one
-        // broken feature, not to a dashboard that never finishes initialising.
-        const allDone = deferred.map((fn, i) =>
-          new Promise(resolve => setTimeout(() => {
-            Promise.resolve().then(fn).then(resolve, err => {
-              console.error('deferred init entry ' + i + ' failed', err);
-              resolve();
-            });
-          }, i * DEFERRED_STAGGER_MS))
+        // A synchronous throw must not strand the other panels (#6581).
+        const allDone = deferred.map(([key, fn]) =>
+          dashboardScheduleWork(key, () => Promise.resolve().then(fn)).catch(err => {
+            console.error('deferred init ' + key + ' failed', err);
+          })
         );
         Promise.all(allDone).then(resolveAll);
       }, DEFERRED_INIT_DELAY_MS);
@@ -67801,7 +67949,6 @@ function burnAreaChart() {
       gh84: function (event, A) { markSentinelDirty('exemptLogins', parseSecurityList(this.value)); },
       gh85: function (event, A) { markSentinelDirty('repos', parseSecurityList(this.value)); },
     };
-
   </script>
 </body>
 </html>

@@ -153,7 +153,13 @@
 
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchPRThroughput(); fetchApprovals(); }
+    function v4RefreshPanels() {
+      [['hive-advice', fetchHiveAdvice], ['acmm-reco', fetchACMMReco],
+        ['lifecycle', fetchLifecycle], ['pr-throughput', fetchPRThroughput],
+        ['approvals', fetchApprovals]].forEach(function([key, fn]) {
+        dashboardScheduleWork(key, fn).catch(console.error);
+      });
+    }
     v4RefreshPanels();
     dashboardSetInterval('v4-panels', v4RefreshPanels, V4_PANELS_POLL_MS);
 
@@ -193,7 +199,7 @@
         }
       } catch (_) { /* dashboard unreachable — different problem */ }
     }
-    checkGhAuth();
+    dashboardScheduleWork('gh-auth-banner', checkGhAuth).catch(console.error);
     dashboardSetInterval('gh-auth-banner', checkGhAuth, GH_AUTH_POLL_MS);
 
     function renderGhRateLimits(ghRateLimits) {
@@ -305,4 +311,3 @@
     function setIfChanged(el, html) {
       if (el.innerHTML !== html) el.innerHTML = html;
     }
-
