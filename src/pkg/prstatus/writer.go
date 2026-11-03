@@ -70,8 +70,26 @@ var (
 // duplicates are reconciled: their sections are merged into the oldest
 // hive-authored comment and the other hive-authored copies deleted. A
 // comment the hive did not author is never edited or deleted.
+//
+// text is copied prose as far as Write is concerned: every @login in it is
+// neutralised (advisory.NeutralizeMentions) so that a quoted title or
+// comment never notifies the person named, and so are the bodies of
+// foreign status comments merged into a hive-owned one. A section that
+// deliberately mentions someone goes through WriteMentioning instead.
 func Write(ctx context.Context, f Forge, item, key, text string) (WriteResult, error) {
-	text = advisory.NeutralizeMentions(text)
+	return write(ctx, f, item, key, advisory.NeutralizeMentions(text))
+}
+
+// WriteMentioning is Write for the one kind of section that is meant to
+// notify: text is posted verbatim, so a deliberate @login in it stays live.
+// The caller owns the hygiene of that text and must neutralise any copied
+// prose (check names, review quotes, titles) it composed into it. Foreign
+// status comments merged into the hive-owned one are still neutralised.
+func WriteMentioning(ctx context.Context, f Forge, item, key, text string) (WriteResult, error) {
+	return write(ctx, f, item, key, text)
+}
+
+func write(ctx context.Context, f Forge, item, key, text string) (WriteResult, error) {
 	unlock := lockItem(item)
 	defer unlock()
 	var res WriteResult
@@ -84,10 +102,12 @@ func Write(ctx context.Context, f Forge, item, key, text string) (WriteResult, e
 			return res, nil
 		}
 		// Foreign status comments are merged from but never edited, so a
-		// hive-owned comment is created to carry the merged sections.
+		// hive-owned comment is created to carry the merged sections. Their
+		// text becomes part of a body the hive owns and re-edits, so any
+		// live mention in it is neutralised on the way in.
 		bodies := make([]string, 0, len(status))
 		for _, c := range status {
-			bodies = append(bodies, c.Body)
+			bodies = append(bodies, foreignBody(c))
 		}
 		if err := f.CreateComment(ctx, Upsert(Merge(bodies...), key, text)); err != nil {
 			return res, err
@@ -144,7 +164,7 @@ func reconcile(ctx context.Context, f Forge, res *WriteResult) error {
 			continue
 		}
 		newer = append(newer, c)
-		others = append(others, c.Body)
+		others = append(others, foreignBody(c))
 	}
 	edited, err := editCompareAndRetry(ctx, f, oldest.ID, oldest.Body, func(cur string) string {
 		return Merge(append([]string{cur}, others...)...)
@@ -163,6 +183,18 @@ func reconcile(ctx context.Context, f Forge, res *WriteResult) error {
 		res.Deleted++
 	}
 	return nil
+}
+
+// foreignBody returns c's body as it may be merged into a hive-owned
+// comment: a comment the hive did not author is neutralised, since its
+// mentions would otherwise notify again on every later edit of the merged
+// body; a hive-authored body is already hygienic (or deliberately
+// mentioning) and is taken as is.
+func foreignBody(c Comment) string {
+	if c.Own {
+		return c.Body
+	}
+	return advisory.NeutralizeMentions(c.Body)
 }
 
 // ownStatus returns the hive-authored comments of status, keeping order.

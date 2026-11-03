@@ -204,10 +204,17 @@ comment writer (`prstatus.Write`) passes every section through
 `advisory.NeutralizeMentions`, the same convention the advisory digest and
 duplicate-sweep renderers use: `@login` becomes `` `login` `` (only the `@` is
 dropped inside code spans and fences). Email addresses, URLs and `#123`
-references are untouched, and the rewrite is idempotent. Deliberate mentions
-are posted as their own comments or reviews through the notification-class
-framework and are not rewritten. This applies regardless of the attention-pilot
-flag.
+references are untouched, and the rewrite is idempotent. Sections of a status
+comment another author posted are neutralised too when they are merged into
+the hive-owned comment, since that body is re-edited on every pass. This
+applies regardless of the attention-pilot flag.
+
+Deliberate mentions are posted as their own comments or reviews through the
+notification-class framework and are not rewritten. The one deliberate mention
+that lives in the status comment, the trusted-human 071 note's `@author` in
+quiet-notification mode, goes through `prstatus.WriteMentioning`, which posts
+the section verbatim; its composer neutralises the copied check names and
+review asks itself, so the author is the only person it notifies.
 
 ## Testing delivery
 
