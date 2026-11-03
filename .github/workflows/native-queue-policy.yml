@@ -33,12 +33,12 @@ jobs:
           ref: ${{ github.event.merge_group.base_sha || format('refs/heads/{0}', github.event.pull_request.base.ref) }}
           persist-credentials: false
       - name: Test policy behavior
-        run: node --test .github/scripts/native-queue-policy.test.cjs
+        run: node --test .github/scripts/native-queue-policy.test.cjs .github/scripts/diagnose-dco-provider.test.cjs
       - name: Validate exact-head evidence (bounded wait for PR providers)
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { evaluate, PendingEvidence } = require('./.github/scripts/native-queue-policy.cjs');
+            const { evaluate, PendingEvidence, ProviderUnavailable } = require('./.github/scripts/native-queue-policy.cjs');
             const attempts = 90;
             const intervalMs = 15000;
             for (let attempt = 0; attempt < attempts; attempt++) {
@@ -46,6 +46,14 @@ jobs:
                 core.info(await evaluate({github, context}));
                 return;
               } catch (error) {
+                if (error instanceof ProviderUnavailable) {
+                  await core.summary
+                    .addHeading('Admission blocked: DCO provider unavailable')
+                    .addRaw(error.message)
+                    .write();
+                  core.setFailed(error.message);
+                  return;
+                }
                 if (!(error instanceof PendingEvidence) || attempt === attempts - 1) throw error;
                 core.info(error.message);
                 await new Promise(resolve => setTimeout(resolve, intervalMs));

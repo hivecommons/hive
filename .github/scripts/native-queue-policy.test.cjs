@@ -5,9 +5,14 @@ const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError,
+  ProviderUnavailable,
 } = require('./native-queue-policy.cjs');
 
 const sha = n => n.toString(16).padStart(40, '0');
+// App 1861 check run 125732155592 on #16378, head 1989d20aa8d0d92cce761786ac05825aef1d9d3a.
+const unavailableSummary = 'The DCO check could not be evaluated because the complete pull request commit list could not be retrieved.\n\n' +
+  'GitHub returned 250 commits from the REST API, so the app attempted to retrieve the full list through GraphQL before evaluating the pull request. ' +
+  'That fallback did not complete, so the DCO verdict is unknown.\n\nHTTP status: unknown\nGitHub request ID: unavailable';
 const group = {
   base_sha: sha(1), head_sha: sha(4), base_ref: 'refs/heads/v5',
   head_ref: 'refs/heads/gh-readonly-queue/v5/pr-2-example',
@@ -155,6 +160,44 @@ test('no Actions-generated DCO, stale success, or skipped policy proof', () => {
   }
   const technical = runs.map(r => Object.hasOwn(BUILD_CHECKS, r.name) ? { ...r, conclusion: 'skipped' } : r);
   assert.equal(evidenceForHead(technical, sha(11), BUILD_CHECKS).length, 6);
+});
+
+test('provider enumeration UNKNOWN blocks both admission paths without retry or substituted proof', async () => {
+  for (const eventName of ['pull_request_target', 'merge_group']) {
+    const f = fixture(eventName);
+    const runs = f.state.runs.get(sha(11));
+    const dco = runs.find(r => r.name === 'DCO');
+    Object.assign(dco, { conclusion: 'failure', output: { summary: unavailableSummary } });
+    // Neither an older authoritative success nor a lowercase status-like
+    // check can replace the latest failed authoritative run.
+    runs.push({ ...dco, id: 1, conclusion: 'success' },
+      { ...dco, id: 999, name: 'dco', conclusion: 'success', app: { id: 999 } });
+    await assert.rejects(evaluate(f), error => {
+      assert.ok(error instanceof ProviderUnavailable);
+      assert.ok(!(error instanceof PendingEvidence));
+      assert.match(error.message, /verdict UNKNOWN.*App 1861/);
+      assert.match(error.message, /Admission remains blocked/);
+      assert.match(error.message, /No PR source change is requested/);
+      return true;
+    });
+    dco.conclusion = 'success';
+    assert.match(await evaluate(f), /policy providers succeeded|validated all/);
+  }
+});
+
+test('UNKNOWN reporting requires trusted exact-head completed DCO and the specific enumeration diagnostic', () => {
+  const dco = checks(sha(11), { DCO: null })[0];
+  const unknown = { ...dco, conclusion: 'failure', output: { summary: unavailableSummary } };
+  for (const change of [
+    { app: { id: ACTIONS_APP_ID } }, { head_sha: sha(99) }, { status: 'in_progress' },
+    { output: undefined }, { output: { summary: 'The sign-off is missing.' } },
+    { output: { summary: 'DCO verdict is unknown.' } }, { conclusion: 'action_required' },
+  ]) {
+    assert.throws(() => evidenceForHead([{ ...unknown, ...change }], sha(11), { DCO: null }),
+      error => !(error instanceof ProviderUnavailable));
+  }
+  assert.throws(() => evidenceForHead([{ ...dco, conclusion: 'failure' }], sha(11), { DCO: null }),
+    error => !(error instanceof ProviderUnavailable) && error.message === 'DCO: failure');
 });
 
 test('draft, closed, held and moved-head/base PRs cannot pass', () => {
