@@ -15,7 +15,20 @@ const (
 	minGroupSlots    = 1
 )
 
-var completionBudget = sync.OnceValues(buildCompletionBudget)
+type completionSizes struct {
+	base     int
+	delivery int
+}
+
+var cachedCompletionBudget = sync.OnceValues(func() (completionSizes, error) {
+	base, delivery, err := buildCompletionBudget()
+	return completionSizes{base: base, delivery: delivery}, err
+})
+
+func completionBudget() (int, int, error) {
+	sizes, err := cachedCompletionBudget()
+	return sizes.base, sizes.delivery, err
+}
 
 // Reserve the exact serialized maximum of every allowed recovery record and
 // every field of every delivery, including terminal/retry timestamps. Padding
