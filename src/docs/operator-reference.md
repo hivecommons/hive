@@ -129,6 +129,8 @@ The reference is organized into the sections below. Existing links to this page 
 - [Dashboard Runs section](operator-reference/v6-controls.md#dashboard-runs-section)
 <a id="per-repo-merge-strategy-merge_strategy"></a>
 - [Per-repo merge strategy](operator-reference/v6-controls.md#per-repo-merge-strategy-merge_strategy)
+<a id="front-timeout-merge_front_timeout"></a>
+  - [Front timeout (`merge_front_timeout`)](operator-reference/v6-controls.md#front-timeout-merge_front_timeout)
 <a id="red-main-circuit-breaker-red_main_threshold"></a>
 - [Red-main circuit breaker](operator-reference/v6-controls.md#red-main-circuit-breaker-red_main_threshold)
 <a id="open-held-pr-cap-max_open_held_prs"></a>

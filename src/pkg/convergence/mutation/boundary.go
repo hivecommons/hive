@@ -161,7 +161,7 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 					b.Stats.IncFenced()
 				}
 			}
-			if err := executor.Journal.reopenLabel(op, executor.now()); err != nil {
+			if err := executor.Journal.reopenLabelContext(ctx, op, executor.now()); err != nil {
 				return out, err
 			}
 			op, execErr = executor.ExecuteContext(ctx, mutEffect, entry.Epoch, holder, run)

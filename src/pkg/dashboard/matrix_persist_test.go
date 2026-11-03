@@ -94,7 +94,7 @@ func TestMatrixSourcePersistCapsAndTolerates(t *testing.T) {
 
 	// Disabling the matrix empties the file too, so a later re-enable does
 	// not resurrect lines captured under the old config.
-	m.setConfig(config.MatrixConfig{})
+	m.setConfig(config.DashboardMatrixConfig{})
 	m.reset()
 	empty, _ := newTestMatrixSource(t, matrixTestConfig())
 	empty.persistPath = path

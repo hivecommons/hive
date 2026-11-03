@@ -665,7 +665,7 @@ func (c *Client) mergeThroughLane(ctx context.Context, path string, req MergeReq
 		c.logger.Info("merge-request watcher: PR merged by App bot through the serialized lane",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
 			slog.String("sha", res.SHA), slog.String("agent", req.Agent))
-		c.clearMergeFailureAlertsForRepo(req.Repo)
+		c.clearMergeFailureAlertsAfterMerge(req.Repo, req.Number, res.Method)
 	default:
 		c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts - 1, Error: res.Reason, At: nowFn().UTC().Format(time.RFC3339)})
 		c.logger.Info("merge-request watcher: request waiting in the serialized lane",

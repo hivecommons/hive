@@ -294,7 +294,7 @@ repository, never per agent, and off unless configured.
   (`src/pkg/github/open_held_prs.go`).
 - **Requires GitHub App auth:** PRs are attributed to the hive by the App's
   bot login, so under a personal access token
-  ([`HIVE_GITHUB_TOKEN`](#hive_github_token-permissions)) no PR can be
+  ([`HIVE_GITHUB_TOKEN`](runtime-and-quota.md#hive_github_token-permissions)) no PR can be
   attributed, every count stays 0 and the cap never fires. The governor then logs
   `max_open_held_prs is set but cannot be enforced` once, naming the capped
   repos ([#13739](https://github.com/hivecommons/hive/issues/13739)).

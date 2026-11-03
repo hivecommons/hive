@@ -593,10 +593,6 @@ func mergeQueueRequiredMergeError(err error) bool {
 	return mergeQueueRequiredRE.MatchString(ghErr.Message) || mergeQueueRequiredRE.MatchString(ghErr.Error())
 }
 
-func mergeQueueBaseKey(owner, repo, base string) string {
-	return strings.ToLower(owner+"/"+repo) + "#" + base
-}
-
 // noteMergeQueueBase records that base refused a direct merge as
 // merge-queue-only.
 func (c *Engine) noteMergeQueueBase(owner, repo, base string) {

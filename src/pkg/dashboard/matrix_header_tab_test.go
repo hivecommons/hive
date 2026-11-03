@@ -35,7 +35,7 @@ func TestDashboardMatrixHeaderTabHiddenByDefault(t *testing.T) {
 func TestHandleStatus_MatrixEnabledFlag(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		s := newTestServer()
-		s.MatrixObserver(config.MatrixConfig{Enabled: enabled, Repos: []string{"org/repo"}})
+		s.MatrixObserver(config.DashboardMatrixConfig{Enabled: enabled, Repos: []string{"org/repo"}})
 		s.UpdateStatus(minimalPayload())
 
 		rec := httptest.NewRecorder()

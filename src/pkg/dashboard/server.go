@@ -214,9 +214,6 @@ type Server struct {
 	recentlyClosedMu sync.Mutex
 	recentlyClosed   []StageTrackerClosed
 
-	sidebar   interface{}
-	sidebarMu sync.RWMutex
-
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
 	startedAt time.Time
@@ -4043,7 +4040,7 @@ type statusWithWebhooks struct {
 	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
 	*EvalLoopStatus
 	// MatrixEnabled reports whether the Matrix block is active (enabled with
-	// at least one repo, see config.MatrixConfig.Active) so the header shows
+	// at least one repo, see config.DashboardMatrixConfig.Active) so the header shows
 	// the Matrix tab only on hives whose /api/matrix/lines will serve it.
 	MatrixEnabled bool `json:"matrixEnabled"`
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state

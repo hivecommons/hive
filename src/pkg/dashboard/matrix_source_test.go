@@ -13,8 +13,8 @@ import (
 
 const matrixTestRepo = "hivecommons/hive"
 
-func matrixTestConfig() config.MatrixConfig {
-	return config.MatrixConfig{Enabled: true, Repos: []string{matrixTestRepo}}
+func matrixTestConfig() config.DashboardMatrixConfig {
+	return config.DashboardMatrixConfig{Enabled: true, Repos: []string{matrixTestRepo}}
 }
 
 type matrixClock struct{ t time.Time }
@@ -22,7 +22,7 @@ type matrixClock struct{ t time.Time }
 func (c *matrixClock) now() time.Time          { return c.t }
 func (c *matrixClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
-func newTestMatrixSource(t *testing.T, cfg config.MatrixConfig) (*matrixSource, *matrixClock) {
+func newTestMatrixSource(t *testing.T, cfg config.DashboardMatrixConfig) (*matrixSource, *matrixClock) {
 	t.Helper()
 	m := newMatrixSource(cfg, nil)
 	clk := &matrixClock{t: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
@@ -112,7 +112,7 @@ func TestMatrixSourceObservationGates(t *testing.T) {
 	file := sentinel.File{Path: "main.go", Patch: matrixPatch("x := 1")}
 	tests := []struct {
 		name   string
-		cfg    config.MatrixConfig
+		cfg    config.DashboardMatrixConfig
 		mutate func(*github.SentinelPatchObservation)
 		want   int
 	}{
@@ -120,8 +120,8 @@ func TestMatrixSourceObservationGates(t *testing.T) {
 		{name: "not hive identified", cfg: matrixTestConfig(), mutate: func(o *github.SentinelPatchObservation) { o.HiveIdentified = false }},
 		{name: "private repo", cfg: matrixTestConfig(), mutate: func(o *github.SentinelPatchObservation) { o.Private = true }},
 		{name: "repo not allowlisted", cfg: matrixTestConfig(), mutate: func(o *github.SentinelPatchObservation) { o.Repo = "other/repo" }},
-		{name: "disabled", cfg: config.MatrixConfig{Repos: []string{matrixTestRepo}}},
-		{name: "empty allowlist", cfg: config.MatrixConfig{Enabled: true}},
+		{name: "disabled", cfg: config.DashboardMatrixConfig{Repos: []string{matrixTestRepo}}},
+		{name: "empty allowlist", cfg: config.DashboardMatrixConfig{Enabled: true}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -443,10 +443,10 @@ func TestServerMatrixObserver(t *testing.T) {
 		t.Fatal("nil server returned an observer")
 	}
 	s := &Server{}
-	if s.MatrixObserver(config.MatrixConfig{}) != nil || s.matrix != nil {
+	if s.MatrixObserver(config.DashboardMatrixConfig{}) != nil || s.matrix != nil {
 		t.Fatal("disabled matrix registered an observer or built a source")
 	}
-	if s.MatrixObserver(config.MatrixConfig{Enabled: true}) != nil || s.matrix != nil {
+	if s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true}) != nil || s.matrix != nil {
 		t.Fatal("matrix without an allowlist registered an observer")
 	}
 	obs := s.MatrixObserver(matrixTestConfig())
@@ -467,7 +467,7 @@ func TestServerMatrixObserver(t *testing.T) {
 	if src.Latest() != 1 {
 		t.Fatalf("Latest() = %d, want 1", src.Latest())
 	}
-	if s.MatrixObserver(config.MatrixConfig{}) != nil {
+	if s.MatrixObserver(config.DashboardMatrixConfig{}) != nil {
 		t.Fatal("disabling still returned an observer")
 	}
 	if lines, latest := src.Since(0, 10); len(lines) != 0 || latest != 1 || len(src.prs) != 0 {

@@ -41,6 +41,14 @@ const (
 // directory (src/internal/testutil).
 var cruxFileSizeRoot = filepath.Join("..", "..", "crux")
 
+func TestCruxFileSizeRatchetRetainsV6ManagerCeiling(t *testing.T) {
+	const retainedManagerCeiling = 1653
+	ceiling, ok := loadCruxFileSizeBaseline(t)["agent/manager.go"]
+	if !ok || ceiling > retainedManagerCeiling {
+		t.Fatalf("manager ceiling = %d (listed=%v), must retain v6 ceiling <= %d", ceiling, ok, retainedManagerCeiling)
+	}
+}
+
 // TestCruxFileSizeRatchet fails when a non-test Go file under src/crux is over
 // its baseline, or over cruxFileSizeLimit when it is not in the baseline.
 func TestCruxFileSizeRatchet(t *testing.T) {

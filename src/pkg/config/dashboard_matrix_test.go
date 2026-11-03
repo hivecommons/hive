@@ -1,11 +1,47 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestDashboardMatrixRemainsSeparateFromNotificationMatrix(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(`
+dashboard:
+  matrix:
+    enabled: true
+    repos: [owner/repo]
+notifications:
+  matrix:
+    enabled: true
+    homeserver_url: https://matrix.example
+    access_token: fixture-token
+    room_id: "!room:example"
+    allowed_users: ["@owner:example"]
+`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Dashboard.Matrix.Active() || !cfg.Dashboard.Matrix.RepoAllowed("OWNER/REPO") {
+		t.Fatal("public dashboard Matrix lost its explicit repository scope")
+	}
+	chat := cfg.Notifications.Matrix
+	if chat == nil || chat.HomeserverURL != "https://matrix.example" || chat.AccessToken != "fixture-token" || len(chat.AllowedUsers) != 1 {
+		t.Fatal("v6 notification Matrix lost its credential or command-allowlist schema")
+	}
+	data, err := json.Marshal(cfg.Dashboard.Matrix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"access_token", "homeserver_url", "allowed_users", "fixture-token"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("dashboard Matrix exposes notification-only field %q", forbidden)
+		}
+	}
+}
 
 func TestMatrixConfigDefaultsOff(t *testing.T) {
 	cfg := &Config{}
@@ -20,13 +56,13 @@ func TestMatrixConfigDefaultsOff(t *testing.T) {
 func TestMatrixConfigActive(t *testing.T) {
 	tests := []struct {
 		name string
-		m    MatrixConfig
+		m    DashboardMatrixConfig
 		want bool
 	}{
-		{"zero", MatrixConfig{}, false},
-		{"enabled no repos", MatrixConfig{Enabled: true}, false},
-		{"repos but disabled", MatrixConfig{Repos: []string{"o/r"}}, false},
-		{"enabled with repos", MatrixConfig{Enabled: true, Repos: []string{"o/r"}}, true},
+		{"zero", DashboardMatrixConfig{}, false},
+		{"enabled no repos", DashboardMatrixConfig{Enabled: true}, false},
+		{"repos but disabled", DashboardMatrixConfig{Repos: []string{"o/r"}}, false},
+		{"enabled with repos", DashboardMatrixConfig{Enabled: true, Repos: []string{"o/r"}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,7 +74,7 @@ func TestMatrixConfigActive(t *testing.T) {
 }
 
 func TestMatrixConfigRepoAllowed(t *testing.T) {
-	m := MatrixConfig{Repos: []string{"HiveCommons/Hive"}}
+	m := DashboardMatrixConfig{Repos: []string{"HiveCommons/Hive"}}
 	tests := []struct {
 		repo string
 		want bool
@@ -59,18 +95,18 @@ func TestMatrixConfigRepoAllowed(t *testing.T) {
 func TestMatrixConfigValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		m       MatrixConfig
+		m       DashboardMatrixConfig
 		wantErr string
 	}{
-		{"zero", MatrixConfig{}, ""},
-		{"valid", MatrixConfig{Repos: []string{"o/r", "my-org/my.repo_1"}, ExcludePaths: []string{"secrets/**"}}, ""},
-		{"wildcard name", MatrixConfig{Repos: []string{"org/*"}}, "dashboard.matrix.repos[0]"},
-		{"star", MatrixConfig{Repos: []string{"*"}}, "dashboard.matrix.repos[0]"},
-		{"url", MatrixConfig{Repos: []string{"https://github.com/o/r"}}, "dashboard.matrix.repos[0]"},
-		{"bare name", MatrixConfig{Repos: []string{"o"}}, "dashboard.matrix.repos[0]"},
-		{"empty repo", MatrixConfig{Repos: []string{"o/r", ""}}, "dashboard.matrix.repos[1]"},
-		{"empty parts", MatrixConfig{Repos: []string{"/r"}}, "dashboard.matrix.repos[0]"},
-		{"empty exclude", MatrixConfig{ExcludePaths: []string{"a", " "}}, "dashboard.matrix.exclude_paths[1]"},
+		{"zero", DashboardMatrixConfig{}, ""},
+		{"valid", DashboardMatrixConfig{Repos: []string{"o/r", "my-org/my.repo_1"}, ExcludePaths: []string{"secrets/**"}}, ""},
+		{"wildcard name", DashboardMatrixConfig{Repos: []string{"org/*"}}, "dashboard.matrix.repos[0]"},
+		{"star", DashboardMatrixConfig{Repos: []string{"*"}}, "dashboard.matrix.repos[0]"},
+		{"url", DashboardMatrixConfig{Repos: []string{"https://github.com/o/r"}}, "dashboard.matrix.repos[0]"},
+		{"bare name", DashboardMatrixConfig{Repos: []string{"o"}}, "dashboard.matrix.repos[0]"},
+		{"empty repo", DashboardMatrixConfig{Repos: []string{"o/r", ""}}, "dashboard.matrix.repos[1]"},
+		{"empty parts", DashboardMatrixConfig{Repos: []string{"/r"}}, "dashboard.matrix.repos[0]"},
+		{"empty exclude", DashboardMatrixConfig{ExcludePaths: []string{"a", " "}}, "dashboard.matrix.exclude_paths[1]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

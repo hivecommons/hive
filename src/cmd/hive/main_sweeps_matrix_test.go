@@ -16,15 +16,15 @@ func TestSentinelSweepOptionsMatrixObserverWiring(t *testing.T) {
 	ghClient := hgithub.NewClient("", "hivecommons", []string{"hivecommons/hive"}, nil, "")
 	tests := []struct {
 		name    string
-		matrix  config.MatrixConfig
+		matrix  config.DashboardMatrixConfig
 		withSrv bool
 		want    bool
 	}{
 		{name: "default off", withSrv: true},
-		{name: "enabled without allowlist", matrix: config.MatrixConfig{Enabled: true}, withSrv: true},
-		{name: "allowlist without enabled", matrix: config.MatrixConfig{Repos: []string{"hivecommons/hive"}}, withSrv: true},
-		{name: "active without dashboard", matrix: config.MatrixConfig{Enabled: true, Repos: []string{"hivecommons/hive"}}},
-		{name: "active", matrix: config.MatrixConfig{Enabled: true, Repos: []string{"hivecommons/hive"}}, withSrv: true, want: true},
+		{name: "enabled without allowlist", matrix: config.DashboardMatrixConfig{Enabled: true}, withSrv: true},
+		{name: "allowlist without enabled", matrix: config.DashboardMatrixConfig{Repos: []string{"hivecommons/hive"}}, withSrv: true},
+		{name: "active without dashboard", matrix: config.DashboardMatrixConfig{Enabled: true, Repos: []string{"hivecommons/hive"}}},
+		{name: "active", matrix: config.DashboardMatrixConfig{Enabled: true, Repos: []string{"hivecommons/hive"}}, withSrv: true, want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

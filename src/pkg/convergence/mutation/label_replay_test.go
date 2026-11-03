@@ -9,6 +9,32 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 )
 
+func TestLabelReplayContextCancellationKeepsAppliedObservation(t *testing.T) {
+	b := testBoundary(t, "enforce")
+	now := time.Unix(100, 0)
+	b.Executor.Now = func() time.Time { return now }
+	claim := effects.Claim{Repo: "o/r", Kind: effects.KindLabelMutation, Target: "63", Inputs: map[string]string{"remove_label": "claimed"}}
+	if _, err := b.Execute(context.Background(), claim, func(context.Context) (effects.Result, error) {
+		return effects.Result{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	journal := b.Executor.Journal
+	applied, ok := journal.Get(boundaryEffect(claim).LogicalID())
+	if !ok || applied.Status != StatusApplied {
+		t.Fatal("fixture did not record an applied observation")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := journal.reopenLabelContext(ctx, applied, now); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled replay: %v", err)
+	}
+	current, ok := journal.Get(applied.LogicalID)
+	if !ok || current.Status != StatusApplied || len(current.Attempts) != len(applied.Attempts) {
+		t.Fatalf("canceled replay changed committed observation: %+v", current)
+	}
+}
+
 func TestLabelReplayKeepsUnknownAndFencesExpiredObserver(t *testing.T) {
 	for _, expired := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ambiguous replay", true: "expired observer"}[expired], func(t *testing.T) {

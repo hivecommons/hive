@@ -52,6 +52,7 @@ function load() {
     function renderKnowledge() { knowledgeRenders++; }
     function fetchBeadSynthStatus() {}
     function fetchFactHistory() {}
+    function viewerIsOwner() { return false; }
     function stageTrackerNoteMerges() {}
     function stageTrackerReconcileMerges() {}
     function stageTrackerNoteOpened() {}
@@ -78,7 +79,7 @@ function load() {
     function esc(s) { return String(s); }
   `, ctx);
   for (const [file, names] of [
-    ['knowledge', ['sidebarPairBadgeText', 'setSidebarPairBadge', 'setSidebarCountBadge', 'kbTotalFactsFromStats', 'kbFactsLabel', 'kbSidebarFactCount', 'fetchKnowledgeStats']],
+    ['knowledge', ['sidebarPairBadgeText', 'setSidebarPairBadge', 'setSidebarCountBadge', 'kbTotalFactsFromStats', 'kbFactsLabel', 'kbSidebarFactCount', 'fetchKnowledgeReviewDrafts', 'fetchKnowledgeStats']],
     ['contributors', ['contributorsOnlineTitle', 'contributorsOnlineTooltip', 'updateContributorBadge', 'fetchContributors']],
     ['tracker-waiting', ['stageTrackerWaitingOnYou', 'stageTrackerWaitingTitle', 'stageTrackerWaitKindWords', 'stageTrackerRenderWaiting']],
     ['tracker-words-stage', ['stageTrackerDefaultFilter']],

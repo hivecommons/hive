@@ -71,7 +71,7 @@ type matrixPRState struct {
 // de-duplicated in-memory backlog. Observe never blocks; one goroutine does
 // all the parsing. Nothing is written to disk.
 type matrixSource struct {
-	cfg     atomic.Pointer[config.MatrixConfig]
+	cfg     atomic.Pointer[config.DashboardMatrixConfig]
 	in      chan github.SentinelPatchObservation
 	dropped atomic.Uint64
 	logger  *slog.Logger
@@ -106,7 +106,7 @@ type matrixSource struct {
 	persistPath string
 }
 
-func newMatrixSource(cfg config.MatrixConfig, logger *slog.Logger) *matrixSource {
+func newMatrixSource(cfg config.DashboardMatrixConfig, logger *slog.Logger) *matrixSource {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -123,7 +123,7 @@ func newMatrixSource(cfg config.MatrixConfig, logger *slog.Logger) *matrixSource
 	return m
 }
 
-func (m *matrixSource) setConfig(cfg config.MatrixConfig) {
+func (m *matrixSource) setConfig(cfg config.DashboardMatrixConfig) {
 	c := cfg
 	c.Repos = append([]string(nil), cfg.Repos...)
 	c.ExcludePaths = append([]string(nil), cfg.ExcludePaths...)
@@ -490,7 +490,7 @@ func (m *matrixSource) setNotify(fn func(seq uint64)) {
 // created, and a source left over from an earlier
 // active config stops admitting and forgets its backlog. The source is built on first use and
 // later calls refresh its allowlist and exclude globs.
-func (s *Server) MatrixObserver(cfg config.MatrixConfig) func(github.SentinelPatchObservation) {
+func (s *Server) MatrixObserver(cfg config.DashboardMatrixConfig) func(github.SentinelPatchObservation) {
 	if s == nil {
 		return nil
 	}

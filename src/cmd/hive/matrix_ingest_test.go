@@ -76,7 +76,7 @@ func (g *matrixIngestFakeGitHub) setHead(h string) {
 
 func matrixIngestTestConfig(active bool) *config.Config {
 	cfg := &config.Config{}
-	cfg.Dashboard.Matrix = config.MatrixConfig{Enabled: active, Repos: []string{"o/r"}}
+	cfg.Dashboard.Matrix = config.DashboardMatrixConfig{Enabled: active, Repos: []string{"o/r"}}
 	return cfg
 }
 

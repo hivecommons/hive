@@ -44,7 +44,7 @@ func TestHandleMatrixLines_404WhenOff(t *testing.T) {
 	}
 
 	// 2. Matrix configured with Enabled: false
-	s.MatrixObserver(config.MatrixConfig{Enabled: false, Repos: []string{"org/repo"}})
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: false, Repos: []string{"org/repo"}})
 	rr = httptest.NewRecorder()
 	s.handleMatrixLines(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -52,7 +52,7 @@ func TestHandleMatrixLines_404WhenOff(t *testing.T) {
 	}
 
 	// 3. Matrix configured with Enabled: true but empty repos (inactive)
-	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{}})
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true, Repos: []string{}})
 	rr = httptest.NewRecorder()
 	s.handleMatrixLines(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -64,7 +64,7 @@ func TestHandleMatrixLines_AuthRejectionAndKiosk(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := NewServerWithAuth(0, "matrix-secret-123", logger)
 	s.mux.HandleFunc("GET /api/matrix/lines", s.handleMatrixLines)
-	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
 
 	// isPublicPath must be false
 	if isPublicPath("/api/matrix/lines") {
@@ -107,7 +107,7 @@ func TestHandleMatrixLines_AuthRejectionAndKiosk(t *testing.T) {
 
 func TestHandleMatrixLines_PerRepoFilter(t *testing.T) {
 	s := newTestServer()
-	cfg := config.MatrixConfig{
+	cfg := config.DashboardMatrixConfig{
 		Enabled: true,
 		Repos:   []string{"hivecommons/allowed"},
 	}
@@ -153,7 +153,7 @@ func TestHandleMatrixLines_PerRepoFilter(t *testing.T) {
 	}
 
 	// 3. Removing repo from allowlist hides its lines immediately
-	updatedCfg := config.MatrixConfig{
+	updatedCfg := config.DashboardMatrixConfig{
 		Enabled: true,
 		Repos:   []string{"hivecommons/other"},
 	}
@@ -175,7 +175,7 @@ func TestHandleMatrixLines_PerRepoFilter(t *testing.T) {
 
 func TestHandleMatrixLines_PagingAndClamp(t *testing.T) {
 	s := newTestServer()
-	cfg := config.MatrixConfig{
+	cfg := config.DashboardMatrixConfig{
 		Enabled: true,
 		Repos:   []string{"hivecommons/hive"},
 	}
@@ -330,7 +330,7 @@ func TestMatrixLinesSSEFrame_ContentFree(t *testing.T) {
 	}
 
 	// Server broadcasts when flag is active
-	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
 	s.nudgeMatrixLines(100)
 	if len(ch) != 1 {
 		t.Fatalf("flag active: expected 1 broadcast frame, got %d", len(ch))
@@ -346,7 +346,7 @@ func TestMatrixLinesSSEFrame_ContentFree(t *testing.T) {
 // a client following the "last returned line's seq" contract can never advance.
 func TestHandleMatrixLines_MaxCountsOnlyAllowedLines(t *testing.T) {
 	s := newTestServer()
-	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"hivecommons/allowed"}})
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true, Repos: []string{"hivecommons/allowed"}})
 	src := s.matrix
 	for i := 0; i < 3; i++ {
 		helperAddMatrixLine(src, "hivecommons/denied", "hidden")
@@ -365,7 +365,7 @@ func TestHandleMatrixLines_MaxCountsOnlyAllowedLines(t *testing.T) {
 
 func TestHandleMatrixLines_PagingWithMaxVisitsEveryAllowedLine(t *testing.T) {
 	s := newTestServer()
-	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"hivecommons/allowed"}})
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true, Repos: []string{"hivecommons/allowed"}})
 	src := s.matrix
 	var want []uint64
 	for i := 0; i < 12; i++ {
@@ -422,7 +422,7 @@ func getMatrixLines(t *testing.T, s *Server, target string) matrixLinesResponse 
 func TestHandleMatrixLines_IngestFreshness(t *testing.T) {
 	s := newTestServer()
 	s.RecordMatrixIngest(time.Now(), time.Minute) // no source yet: no-op
-	s.MatrixObserver(config.MatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true, Repos: []string{"org/repo"}})
 	src := s.matrix
 	t.Cleanup(src.close)
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)

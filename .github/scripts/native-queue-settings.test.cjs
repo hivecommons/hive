@@ -37,6 +37,7 @@ test('native queue enable and disable stage owner policy without dropping scope'
       toggle(key) { if (classes.delete(key)) return false; classes.add(key); return true; },
     },
     setAttribute: (key, value) => { attributes[key] = value; },
+    hasAttribute: key => Object.prototype.hasOwnProperty.call(attributes, key),
   };
   context.markDirtyNativeQueue('bases', 'hivecommons/hive#v5');
   context.toggleConfigSwitch(element, 'native-queue', 'enabled');

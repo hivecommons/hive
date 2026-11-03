@@ -5,12 +5,12 @@ import (
 	"strings"
 )
 
-// MatrixConfig is the experimental, default-off dashboard.matrix block
+// DashboardMatrixConfig is the experimental, default-off dashboard.matrix block
 // (#15862). Repos is the single explicit public-repo allowlist gating every
 // Matrix output; empty means nothing is captured. ExcludePaths adds globs to
 // the built-in deny-list. There are deliberately no authors or private_repos
 // keys.
-type MatrixConfig struct {
+type DashboardMatrixConfig struct {
 	Enabled      bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Repos        []string `yaml:"repos,omitempty" json:"repos,omitempty"`
 	ExcludePaths []string `yaml:"exclude_paths,omitempty" json:"exclude_paths,omitempty"`
@@ -18,12 +18,12 @@ type MatrixConfig struct {
 
 // Active reports whether Matrix may capture anything: enabled with at least
 // one allowlisted repo.
-func (m MatrixConfig) Active() bool {
+func (m DashboardMatrixConfig) Active() bool {
 	return m.Enabled && len(m.Repos) > 0
 }
 
 // RepoAllowed does an exact, case-insensitive owner/name match.
-func (m MatrixConfig) RepoAllowed(ownerName string) bool {
+func (m DashboardMatrixConfig) RepoAllowed(ownerName string) bool {
 	for _, r := range m.Repos {
 		if strings.EqualFold(r, ownerName) {
 			return true
@@ -51,7 +51,7 @@ func validMatrixRepo(s string) bool {
 
 // Validate rejects anything that is not an exact owner/name repo entry and
 // empty exclude_paths entries.
-func (m MatrixConfig) Validate() error {
+func (m DashboardMatrixConfig) Validate() error {
 	for i, r := range m.Repos {
 		if !validMatrixRepo(r) {
 			return fmt.Errorf("dashboard.matrix.repos[%d]: %q must be an exact owner/name (no wildcards, URLs or empty values)", i, r)

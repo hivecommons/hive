@@ -303,7 +303,6 @@ type Route struct {
 	Verdict      VerdictState
 	Holds        []string
 	Sentinel     bool
-	ManualMerge  bool
 	// ApprovalReleasesFence is Evidence.ApprovalReleasesFence: the
 	// manual-merge reason is a workflow-path fence an approval releases.
 	ApprovalReleasesFence bool

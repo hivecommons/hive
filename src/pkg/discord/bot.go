@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"

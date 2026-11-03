@@ -37,10 +37,10 @@ func (s *Server) nudgeMatrixLines(seq uint64) {
 	})
 }
 
-// currentMatrixConfig returns the effective MatrixConfig.
-func (s *Server) currentMatrixConfig() config.MatrixConfig {
+// currentMatrixConfig returns the effective DashboardMatrixConfig.
+func (s *Server) currentMatrixConfig() config.DashboardMatrixConfig {
 	if s == nil {
-		return config.MatrixConfig{}
+		return config.DashboardMatrixConfig{}
 	}
 	if s.deps != nil && s.deps.Config != nil {
 		return s.deps.Config.Dashboard.Matrix
@@ -52,12 +52,12 @@ func (s *Server) currentMatrixConfig() config.MatrixConfig {
 			return *cfg
 		}
 	}
-	return config.MatrixConfig{}
+	return config.DashboardMatrixConfig{}
 }
 
 // matrixActiveSource returns the active matrix line source and its active config,
 // or (nil, nil) if the source is nil or the flag is off/inactive.
-func (s *Server) matrixActiveSource() (*matrixSource, *config.MatrixConfig) {
+func (s *Server) matrixActiveSource() (*matrixSource, *config.DashboardMatrixConfig) {
 	if s == nil {
 		return nil, nil
 	}
