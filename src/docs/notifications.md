@@ -219,6 +219,26 @@ Operator-defined [hooks](hooks.md) with the `notify` action send through the sam
 
 The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
 
+## Mention hygiene
+
+Text the hive copies into a body it authors (issue/PR titles, quoted comments,
+evidence, attribution) must never notify the people it names. The status
+comment writer (`prstatus.Write`) passes every section through
+`advisory.NeutralizeMentions`, the same convention the advisory digest and
+duplicate-sweep renderers use: `@login` becomes `` `login` `` (only the `@` is
+dropped inside code spans and fences). Email addresses, URLs and `#123`
+references are untouched, and the rewrite is idempotent. Sections of a status
+comment another author posted are neutralised too when they are merged into
+the hive-owned comment, since that body is re-edited on every pass. This
+applies regardless of the attention-pilot flag.
+
+Deliberate mentions are posted as their own comments or reviews through the
+notification-class framework and are not rewritten. The one deliberate mention
+that lives in the status comment, the trusted-human 071 note's `@author` in
+quiet-notification mode, goes through `prstatus.WriteMentioning`, which posts
+the section verbatim; its composer neutralises the copied check names and
+review asks itself, so the author is the only person it notifies.
+
 ## Testing delivery
 
 Test the target channel directly before putting it in `hive.yaml`:
