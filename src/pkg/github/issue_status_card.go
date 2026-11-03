@@ -121,14 +121,13 @@ func (c *Client) issueAttentionAllowed(ctx context.Context, owner, name string, 
 	if issue == nil {
 		return fmt.Errorf("issue attention %s#%d: reading issue: empty response", repo, number)
 	}
+	author := safeGetLogin(issue.GetUser())
 	item := writeback.Item{
 		Number:       number,
-		Author:       issue.GetUser().GetLogin(),
-		HiveAuthored: issue.GetUser().GetType() == "Bot" && c.IsHiveAuthorLogin(issue.GetUser().GetLogin()),
+		Author:       author,
+		HiveAuthored: issue.GetUser().GetType() == "Bot" && c.IsHiveAuthorLogin(author),
+		Labels:       issueLabelNames(issue.Labels),
 		CreatedAt:    issue.GetCreatedAt().Time,
-	}
-	for _, l := range issue.Labels {
-		item.Labels = append(item.Labels, l.GetName())
 	}
 	if d := c.WritebackAllowed(repo, item, writeback.KindNeedsDecisionComment, body); !d.Allowed {
 		return fmt.Errorf("issue attention %s#%d: %w: %s", repo, number, writeback.ErrSuppressed, d.Reason)

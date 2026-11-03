@@ -35,7 +35,7 @@ func TestFilesMatchEmbed(t *testing.T) {
 func TestAssetsDefineRowFunctions(t *testing.T) {
 	want := map[string][]string{
 		"tracker-row-anchor.js": {
-			"function stageTrackerAnchor(stage, stages, kind, item) {",
+			"function stageTrackerAnchor(stage, stages, kind, item, presentation) {",
 		},
 		"tracker-row-title.js": {
 			"function stageTrackerSplitTitleTag(title) {",

@@ -494,6 +494,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).handleOneIssueRequest` | `attention` |  |
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
+| `github.(*Client).remindAttention` | `attention` | attention-pilot reminder: at most one per unresolved episode per `reminder_interval`; write-back gate consulted first |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
@@ -583,3 +584,45 @@ Acknowledge/snooze commands, reminders and the per-repo attention queue are
 separate pilot steps ([#16359](https://github.com/hivecommons/hive/issues/16359),
 [#16361](https://github.com/hivecommons/hive/issues/16361)–[#16363](https://github.com/hivecommons/hive/issues/16363))
 and are not part of this flag's first behaviour.
+
+### Attention section, tracking issue and reminders
+
+The reminder policy ([#16361](https://github.com/hivecommons/hive/issues/16361))
+and the GitHub-native action queue ([#16362](https://github.com/hivecommons/hive/issues/16362))
+now run under the same flag, on repositories whose `github.attention.admitter`
+is this hive. The un-park sweep (every 5 minutes) makes one pass per
+repository after it has recorded that pass's `/hive ack` and `/hive snooze`:
+
+- **Attention section.** Each item's `hive:status` card carries an
+  **Attention** section (key `attention`): one line per unresolved episode
+  naming the action, who owes it, since when, any snooze deadline and how
+  many reminders were sent. It is written by the single status writer and
+  edited in place.
+- **Per-repo tracking issue.** One issue titled `[governor] Hive attention
+  queue` (label `origin/governor`, body tag `<!-- hive:attention-queue -->`)
+  lists every open episode in the repository. It is created once, when the
+  first episode is open — its only notifying write — and afterwards edited in
+  place only when the list changes; item numbers are code spans and logins
+  are neutralised, so an edit never mentions or cross-references anyone. A
+  queue issue a person closed is left alone; reopen it to resume updates.
+- **Closure.** When an item with open episodes is closed, its episodes are
+  resolved, its Attention section is removed from the card and it drops out
+  of the tracking issue, so no stale ask or reminder outlives it.
+- **Reminders.** At most one reminder comment per unresolved episode per
+  `github.attention.reminder_interval` (default `24h`), counted from the page,
+  the previous reminder or the recipient's last action, whichever is latest.
+  None while the episode is acknowledged or snoozed, none for a never-paged
+  or uncertain episode, and none when the recipient has commented, reviewed
+  or changed a label on the item since the last ping. A reminder consults
+  the write-back gate like any unsolicited comment, goes through
+  `CreateIssueComment` (so shadow mode counts it under
+  `github.(*Client).remindAttention`) and refreshes the card. Hive never
+  removes and re-adds a reviewer or requests a review to manufacture a
+  reminder, so a request GitHub, CODEOWNERS or Prow already owns is never
+  duplicated.
+
+```yaml
+github:
+  attention:
+    reminder_interval: 24h   # default 24h
+```
