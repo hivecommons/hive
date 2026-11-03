@@ -15,6 +15,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -624,7 +625,11 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	}
 	if closeOnMergeReopenedAfter(events, opts.Identity) {
 		res.Action, res.Reason = CloseOnMergeSkipped, "reopened_after_merge"
-		if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeReopenedComment(pr))}); err != nil && opts.Logger != nil {
+		body := closeOnMergeReopenedComment(pr)
+		if _, err := c.PostIssueNote(WithRESTCaller(ctx, "hive:close_on_merge"), issueRepo, issueNumber, prstatus.KeyIssueReopened, body, func(ctx context.Context) error {
+			_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(body)})
+			return err
+		}); err != nil && opts.Logger != nil {
 			opts.Logger.Warn("close-on-merge: posting reopened-after-merge marker failed", "repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "error", err)
 		}
 		return res
@@ -636,7 +641,12 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			return res
 		}
 		body := closeOnMergeAwaitingComment(pr)
-		if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		// Confirming the fix is an action asked of a person, so under the
+		// attention pilot it is announced once rather than only edited in.
+		if _, err := c.PostIssueAttention(WithRESTCaller(ctx, "hive:close_on_merge"), issueRepo, issueNumber, fmt.Sprintf("close-on-merge-awaiting-%d", pr.GetNumber()), body, func(ctx context.Context) error {
+			_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(body)})
+			return err
+		}); err != nil {
 			res.Action, res.Reason = CloseOnMergeNoop, "awaiting_comment_failed"
 			return res
 		}
@@ -658,7 +668,10 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	// comment per issue is enough (hivecommons/hive#15727 vs #15843).
 	if stageNoted {
 		c.noteCommentSuppressed()
-	} else if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeCloseComment(pr))}); err != nil {
+	} else if _, err := c.PostIssueNote(WithRESTCaller(ctx, "hive:close_on_merge"), issueRepo, issueNumber, prstatus.KeyIssueClose, closeOnMergeCloseComment(pr), func(ctx context.Context) error {
+		_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeCloseComment(pr))})
+		return err
+	}); err != nil {
 		res.Action, res.Reason = CloseOnMergeNoop, "close_comment_failed"
 		return res
 	}

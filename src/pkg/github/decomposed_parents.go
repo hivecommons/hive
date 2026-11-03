@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -296,7 +297,10 @@ func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, 
 	if store != nil {
 		store.Forget(key)
 	}
-	if err := c.CreateIssueCommentBudgeted(ctx, in.Repo, in.Number, decomposedParentCloseComment(children, closers)); err != nil && logger != nil {
+	note := decomposedParentCloseComment(children, closers)
+	if _, err := c.PostIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssueClose, note, func(ctx context.Context) error {
+		return c.CreateIssueCommentBudgeted(ctx, in.Repo, in.Number, note)
+	}); err != nil && logger != nil {
 		logger.Warn("issue stage labels: decomposed parent close comment failed", "repo", in.Repo, "issue", in.Number, "error", err)
 	}
 	if logger != nil {
