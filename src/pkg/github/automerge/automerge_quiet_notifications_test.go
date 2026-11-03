@@ -180,3 +180,34 @@ func TestQuietNotificationsHuman071MentionOncePerCause(t *testing.T) {
 		t.Fatalf("still one comment expected, got %q", api.comments)
 	}
 }
+
+// Own is this hive's App login, not "any bot": a status comment another App
+// posted is neither edited nor deleted (a fresh one is created), while one by
+// this hive's login is edited in place.
+func TestWriteStatusSectionOwnsOnlyThisAppLogin(t *testing.T) {
+	statusBody := prstatus.Upsert("", prstatus.KeyStageStalled, "old")
+	for _, tc := range []struct {
+		name        string
+		login       string
+		wantCreated int
+		wantEdits   int
+	}{
+		{"other bot", "other-app[bot]", 1, 0},
+		{"this hive", testHiveAppBotLogin, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &stageAPI{issueComments: map[int][]map[string]any{
+				7: {{"id": 55, "body": statusBody, "user": map[string]any{"login": tc.login, "type": "Bot"}}},
+			}}
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}
+			e, _ := quietStageEngine(t, api, clock)
+			created, err := e.writeStatusSectionWith(context.Background(), "acme", "widget", 7, prstatus.KeyStageStalled, "new", prstatus.Write)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if created != tc.wantCreated || len(api.commentEdits) != tc.wantEdits {
+				t.Fatalf("created=%d edits=%d, want created=%d edits=%d", created, len(api.commentEdits), tc.wantCreated, tc.wantEdits)
+			}
+		})
+	}
+}

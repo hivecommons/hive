@@ -1,4 +1,4 @@
-package agent
+package copilottoken
 
 import (
 	"os"
@@ -80,10 +80,8 @@ func TestConfigHasTokensChecksBothSources(t *testing.T) {
 					t.Fatalf("write copilot config: %v", err)
 				}
 			}
-			withSharedPaths(t, copilotPath, claudePath)
-
-			if got := configHasTokens(); got != tc.want {
-				t.Errorf("configHasTokens() = %v, want %v", got, tc.want)
+			if got := ConfigHasTokens(claudePath, copilotPath); got != tc.want {
+				t.Errorf("ConfigHasTokens() = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -105,9 +103,7 @@ func TestConfigHasTokensFallsThroughToCopilot(t *testing.T) {
 		[]byte("{\"copilotTokens\": {\"user\": \"gho_abc\"}}"), 0o600); err != nil {
 		t.Fatalf("write copilot config: %v", err)
 	}
-	withSharedPaths(t, copilotPath, claudePath)
-
-	if !configHasTokens() {
-		t.Error("configHasTokens() = false, want true: a broken Claude file must fall through to Copilot")
+	if !ConfigHasTokens(claudePath, copilotPath) {
+		t.Error("ConfigHasTokens() = false, want true: a broken Claude file must fall through to Copilot")
 	}
 }

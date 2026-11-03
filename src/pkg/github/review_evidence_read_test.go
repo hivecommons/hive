@@ -294,6 +294,8 @@ func newEvidenceMergeServer(t *testing.T, f *evidenceMergeFixture) *httptest.Ser
 func evidenceMergeClient(t *testing.T, f *evidenceMergeFixture, settings *ReviewEvidenceSettings) *Client {
 	t.Helper()
 	c := newTestClient(t, newEvidenceMergeServer(t, f), "o", []string{"o/r"})
+	// The fixture stamps comments as hive-app[bot]; make the client own them.
+	c.SetAppBotLogin("hive-app[bot]")
 	if settings != nil {
 		s := *settings
 		c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return s })
