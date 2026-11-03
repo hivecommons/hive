@@ -175,6 +175,29 @@ takes effect once the ledger routes its non-urgent writes through it.
   every security/merge hold notice always deliver immediately and do not
   consume budget. Unclassified writes are treated as exempt.
 
+### Attention action contract
+
+Every admitted attention event must let the recipient act without digging
+([#16359](https://github.com/hivecommons/hive/issues/16359), part of
+[#16270](https://github.com/hivecommons/hive/issues/16270)). Producers build
+the event body with `attention.NewObservation`, which refuses an incomplete
+`attention.Event`; `Event.Render` emits, in order:
+
+| Field | Meaning |
+|---|---|
+| **Who** | The person or team asked to act. |
+| **What changed / why now** | The change that made the condition need attention now. |
+| **Requested action** | The single concrete thing asked of the recipient. |
+| **Evidence** | What the condition was observed from (run, finding, SHA). |
+| **What Hive tried** | What Hive already attempted on its own. |
+| **What happens next** | What Hive will do if nobody acts. |
+| **How to ack, snooze or resolve** | `/hive ack`, `/hive snooze <duration>`, and what clears the condition. |
+
+Every event ends with the same wording: *Acknowledgement is not approval:
+`/hive ack` and `/hive snooze` only quiet reminders. They release no security,
+merge or review hold, change no label and open no merge gate.* See
+[maintainer commands](maintainer-commands.md#attention-ack-and-snooze).
+
 ## What triggers notifications
 
 The Hive Go process sends notifications for these events:

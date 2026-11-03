@@ -554,6 +554,10 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+
+	// HumanMergePinOnly stages opt-in pin-only policy. Admission wiring must
+	// independently prove trusted identity, exact-head evidence and upstream review.
+	HumanMergePinOnly map[string]PinOnlyException `yaml:"human_merge_pin_only,omitempty" json:"human_merge_pin_only,omitempty"`
 	// Unset uses the default owner-merge rule; explicit empty lists disable
 	// their half of the title/label rule.
 	HumanMergeTitlePrefixes []string `yaml:"human_merge_title_prefixes,omitempty" json:"human_merge_title_prefixes,omitempty"`

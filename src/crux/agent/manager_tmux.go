@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/agent/tmux"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/internal/textutil"
 )
 
 // paneCaptureSleep is a pacing var, not a const, for the same reason as the
@@ -546,21 +547,9 @@ func (m *Manager) waitForCLIReadyForAgent(agent *AgentProcess) bool {
 	}
 }
 
-func truncateHead(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n]) + "..."
-}
+func truncateHead(s string, n int) string { return textutil.Head(s, n) }
 
-func truncateTail(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return "..." + string(runes[len(runes)-n:])
-}
+func truncateTail(s string, n int) string { return textutil.Tail(s, n) }
 
 func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 	return m.waitForInputPromptForAgentUnless(agent, nil)

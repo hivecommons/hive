@@ -154,6 +154,10 @@ agents.session_recycle.max_rss_mb # TODO #11854
 agents.session_recycle.min_idle # TODO #11854
 auto_merge.credit_issue_authors # merge-time Co-authored-by credit (#14581); yaml-only
 auto_merge.allow_unprotected_base[] # TODO #11854
+auto_merge.human_merge_pin_only.<key>.enabled # bounded pin-only human-merge policy (#16262); yaml-only
+auto_merge.human_merge_pin_only.<key>.kinds[] # bounded pin-only human-merge policy (#16262); yaml-only
+auto_merge.human_merge_pin_only.<key>.paths[] # bounded pin-only human-merge policy (#16262); yaml-only
+auto_merge.human_merge_pin_only.<key>.trusted_authors[] # bounded pin-only human-merge policy (#16262); yaml-only
 auto_merge.human_merge_title_prefixes[] # breaking-titled PRs wait for a human; yaml-only
 auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-only
 auto_merge.merge_forward_trusted_human[] # TODO #11854

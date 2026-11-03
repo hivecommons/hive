@@ -254,6 +254,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateKnowledgeAgentScopes(c.Knowledge.AgentScopes); err != nil {
 		return err
 	}
+	if err := c.AutoMerge.ValidateHumanMergePinOnly(); err != nil {
+		return err
+	}
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
 		return err
 	}

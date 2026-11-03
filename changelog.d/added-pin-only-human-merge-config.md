@@ -1,0 +1,1 @@
+- Add validated per-repository `auto_merge.human_merge_pin_only` schema, changed-file patch evidence and a fail-closed pin-replacement syntax classifier as building blocks for #16242; merge-path exceptions are not yet enabled and existing human-merge protections remain unchanged.

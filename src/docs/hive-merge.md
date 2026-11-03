@@ -141,7 +141,10 @@ five minutes (`mergeAlertRevalidateInterval` in
 `src/pkg/github/merge_failure_alert.go`): an alert is dropped once the blocked
 PR is no longer open, and a fork-approval alert is dropped as soon as the PR
 head has no workflow runs still `action_required` — i.e. the operator approved
-them or relaxed the repo/org setting. API errors keep the alert in place.
+them or relaxed the repo/org setting. A merge-queue-required alert is dropped
+once the base branch's active rules, read successfully, no longer include a
+merge queue; otherwise it stays until the PR is closed or merged. API errors
+keep the alert in place.
 
 **Unprotected base branches are allowed.** The watcher no longer makes a
 separate branch-protection lookup and no longer refuses solely because the base
@@ -169,7 +172,47 @@ can edit the map from **Settings → Features → Auto-merge → Per-repository 
 policy**, one comma-separated pattern list per repo in `project.repos`. See
 [operator-reference.md](operator-reference.md).
 
-**Pin-only exception rollout (#16242).** The proposed opt-in key is
+**Staged pin-only policy (not yet enforced).**
+
+`auto_merge.human_merge_pin_only` provides the schema and conservative diff
+classifier for #16242 / #16262. **It does not currently enable an exception:**
+relay, sweep, `/approve` and native-queue gates still require the existing
+human-merge path policy. Do not remove `human_merge_paths` or manually clear a
+hold to simulate this feature. The YAML example, per-field contract and seed
+reload instructions live in the
+[operator reference](operator-reference/README.md#human-merge-pin-only-rollout);
+this section covers only the grammar and restrictions of the classifier.
+
+Repository keys are case-insensitive; duplicate normalized keys are rejected.
+Absent/disabled entries have no effect. Enabled entries require nonempty paths,
+kinds and trusted authors; unknown kinds are rejected, including when disabled.
+The classifier accepts only existing modified files in both the actual guarded
+path matches and exception paths, and checks **all** files in the PR. Every
+changed line must be a paired pin replacement. Supported forms are unquoted
+`uses: owner/repo[/path]@<40-hex>` (an existing simple `# vN[.N[.N]]`
+comment may change), `FROM image@sha256:<64-hex>` / `image: image@sha256:...`,
+and literal `version: 1.2.3` / `ARG TOOL_VERSION=1.2.3` updates. Other syntax,
+missing patches, line-count mismatches, added/renamed files, owner files,
+permission/credential/signing text and non-pin edits fail closed.
+
+This classifier proves **syntax only**, not authenticated identity, exact-head
+binding, file-list completeness, semantic interpretation or review of upstream
+references. Those proofs must be added by the integration children (#16265,
+#16266); attribution and safe hold release are tracked in #16269. None of the
+schema or classifier APIs grants permission to merge or clears a hold. Native
+required checks and producer bindings, freshness, current reviews, substantive
+objections, unrelated holds and configured soak must remain independent gates.
+
+Operators stage the key in the controller's configured `hive.yaml` seed, not in
+the image repository (reload behaviour is documented in the operator reference
+linked above). Reloading this schema alone still does **not** enable admission.
+The integration PRs must wire live policy updates into every merge path.
+
+There is **no minimum deployable version enabling this lane yet**. Utah rollout
+and current-head positive/negative deployment evidence remain tracked by
+projectbluefin/utah#1082 and #16242; projectbluefin/utah#1068 is not pre-authorized.
+
+**Pin-only exception rollout (#16242).** The opt-in key is
 `auto_merge.human_merge_pin_only`; see the
 [operator reference](operator-reference/README.md#human-merge-pin-only-rollout)
 for its configuration and deployment prerequisites. The schema/classifier

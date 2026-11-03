@@ -312,7 +312,7 @@ func TestListChangedFilesPagesThroughFilesAPI(t *testing.T) {
 		switch r.URL.Query().Get("page") {
 		case "":
 			w.Header().Set("Link", `<`+base+`/repos/acme/widget/pulls/7/files?page=2>; rel="next"`)
-			json.NewEncoder(w).Encode([]map[string]any{{"filename": testIntentSourceFile, "status": "modified", "additions": 1, "deletions": 2}})
+			json.NewEncoder(w).Encode([]map[string]any{{"filename": testIntentSourceFile, "status": "modified", "additions": 1, "deletions": 2, "patch": "@@ -1,2 +1 @@\n-old\n-old2\n+new"}})
 		case "2":
 			json.NewEncoder(w).Encode([]map[string]any{{"filename": testIntentDocsFile, "status": "added", "additions": 3, "deletions": 0}})
 		default:
@@ -329,7 +329,7 @@ func TestListChangedFilesPagesThroughFilesAPI(t *testing.T) {
 		t.Fatalf("ListChangedFiles() error = %v, want nil for a complete two-page list", err)
 	}
 	want := []intent.ChangedFile{
-		{Filename: testIntentSourceFile, Status: "modified", Additions: 1, Deletions: 2},
+		{Filename: testIntentSourceFile, Status: "modified", Additions: 1, Deletions: 2, Patch: "@@ -1,2 +1 @@\n-old\n-old2\n+new"},
 		{Filename: testIntentDocsFile, Status: "added", Additions: 3, Deletions: 0},
 	}
 	if !reflect.DeepEqual(files, want) {

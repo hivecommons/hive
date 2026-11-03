@@ -342,6 +342,15 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			if issue == nil {
 				continue
 			}
+			// `/hive ack` / `/hive snooze` only touch the attention ledger
+			// (hivecommons/hive#16359); the item then continues through
+			// the un-park paths below unchanged.
+			// Items without an open episode cost no API call.
+			n, err := c.replyAttentionCommands(ctx, owner+"/"+repoName, owner, repoName, issue, cutoff)
+			result.Replies += n
+			if err != nil && c.logger != nil {
+				c.logger.Warn("unpark sweep skipped attention commands", "repo", repo, "item", issue.GetNumber(), "error", err)
+			}
 			labels := issueLabelNames(issue.Labels)
 			if issue.IsPullRequest() {
 				// `/hive approve` on any PR gets an acknowledgement or an

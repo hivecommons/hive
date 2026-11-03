@@ -268,6 +268,7 @@ Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through 
 | `project.label_driven_supersede_park_actors` | `[]` (off) | Automation logins (for example a lifecycle bot running as `github-actions[bot]`) whose park labels a later trusted acceptance supersedes on label-driven repos: Hive removes the label, says so in the release comment, and releases the issue ([#13605](https://github.com/hivecommons/hive/issues/13605)). Park labels added by people, by unlisted bots, or by a listed bot after the acceptance still block; `hold` is never superseded. Per-repo override: `project.repo_policies[].label_driven_supersede_park_actors`. |
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
+| `auto_merge.human_merge_pin_only` | Unset (off); **not yet enforced**. | Staged per-repo schema for `enabled`, `paths`, `kinds` (`action-sha`, `image-digest`, `version-pin`) and `trusted_authors`. Enabled entries require all three lists. Provides syntax-classification building blocks only: no merge route grants an exception or clears a hold. See [hive-merge.md](../hive-merge.md) for grammar, restrictions and outstanding integration/deployment requirements (#16242). |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
 | `auto_merge.human_merge_title_prefixes` | `["⚠️", "⚠"]` | Title prefixes (after trimming) that mark a PR as a breaking change a person must merge. Every auto-merge lane and the merge train skip the PR; the tracker parks it at 090 *Ready for human merge · human merge*. Set to `[]` to disable. |
 | `auto_merge.human_merge_labels` | `["needs-owner-merge"]` | Labels (case-insensitive) that mark a PR a person must merge; same effect as the title prefixes. Set to `[]` to disable. |
@@ -546,7 +547,7 @@ supported version: the first deployed v5 release containing the schema/classifie
 digest/version and live positive/negative evidence in projectbluefin/utah#1082
 before enabling that rollout.
 
-The planned additive configuration (requires the schema change) is:
+The additive configuration (schema landed in #16262; not yet enforced) is:
 
 ```yaml
 auto_merge:

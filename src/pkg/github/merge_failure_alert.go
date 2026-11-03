@@ -188,6 +188,12 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 			})
 			resolved = rerr == nil && runs != nil && runs.GetTotalCount() == 0
 		}
+		if !resolved && w.entry.key == "merge-queue-required" && pr.GetBase().GetRef() != "" {
+			// Positive evidence the rule is gone: the base branch's active
+			// rules were read successfully and none is a merge queue.
+			rules, _, rerr := c.client.Repositories.GetRulesForBranch(ctx, owner, name, pr.GetBase().GetRef(), nil)
+			resolved = rerr == nil && rules != nil && len(rules.MergeQueue) == 0
+		}
 		if !resolved {
 			continue
 		}

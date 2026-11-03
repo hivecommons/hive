@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/crux/cline"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
+	"github.com/hivecommons/hive/crux/internal/textutil"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/outputschema"
 	"github.com/hivecommons/hive/crux/pushbroker"
@@ -374,16 +375,7 @@ func readWorkspaceText(path string, max int) string {
 	return truncateRunes(text, max)
 }
 
-func truncateRunes(s string, max int) string {
-	if max <= 0 {
-		return s
-	}
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max])
-}
+func truncateRunes(s string, max int) string { return textutil.Runes(s, max) }
 
 func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 	if cfg.Backend == "cline" {
