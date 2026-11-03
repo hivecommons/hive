@@ -486,7 +486,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # installer here: it is mutable and executes remote shell as root. Pi publishes
 # npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts
 # disabled and fail the image build if the binary is absent.
-ARG PI_CODING_AGENT_VERSION=1.4.0
+ARG PI_CODING_AGENT_VERSION=1.5.0
 # Registry tarballs can briefly return 404 while a release propagates. npm's
 # fetch retries do not cover 404s, so retry the install with a bounded delay.
 RUN for attempt in 1 2 3; do \
