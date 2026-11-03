@@ -31,6 +31,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { preparationRailLayoutFixture } from './fixtures/dashboard-preparation-rail.mjs';
 import { activityDensityFixture } from './fixtures/dashboard-activity-density.mjs';
+import { waitForDashboardPaint, resetDashboardFixtureOverlays } from './fixtures/dashboard-browser-readiness.mjs';
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
@@ -300,7 +301,9 @@ async function main() {
       if (result.result.exceptionDetails) throw new Error(result.result.exceptionDetails.exception?.description || 'evaluate failed');
       return result.result.result.value;
     };
+    const renderReady = () => evaluate('(' + waitForDashboardPaint.toString() + ')({ dedicatedPreview: true })');
     const screenshot = async (file, viewportOnly = false) => {
+      const readiness = await renderReady();
       const viewport = viewportOnly ? await evaluate(`({
         x: scrollX, y: scrollY, width: innerWidth, height: innerHeight,
         clientWidth: document.documentElement.clientWidth,
@@ -329,7 +332,7 @@ async function main() {
         }
         return { painted, width: canvas.width, height: canvas.height, inspectedWidth: width, inspectedHeight: height };
       })()`);
-      return { file, viewport, clip, ...pixels,
+      return { file, readiness, viewport, clip, ...pixels,
         failures: pixels.painted ? [] : ['Viewport capture contains only a uniform background; DOM assertions are not visual proof'] };
     };
     const nativeDecisionInput = async prefix => {
@@ -414,19 +417,10 @@ async function main() {
 
     // Each state callback is best-effort: a missing helper yields a skipped shot, not a harness error.
     const setThemeJS = (theme) => `document.body.classList.toggle('light-mode', ${theme === 'light'}); document.documentElement.style.colorScheme = '${theme}'; true`;
-    const resetJS = `(() => {
+    const resetJS = `(async () => {
       window.__activityDensityCleanup?.();
       document.getElementById('preparation-rail-layout-fixture')?.remove();
-      // The preceding terminal state owns a native dialog and capture listener.
-      // Close it through its API, not by hiding/removing its DOM.
-      document.querySelectorAll('.hive-dialog-overlay').forEach((el) => {
-        if (typeof el.hiveDialogClose !== 'function') throw new Error('Cannot clean up prior fixture dialog');
-        el.hiveDialogClose();
-      });
-      if (document.querySelector('.hive-dialog-overlay')) throw new Error('Prior fixture dialog survived native cleanup');
-      document.querySelectorAll('.config-overlay, .modal-overlay').forEach((el) => { el.classList.add('hidden'); });
-      document.documentElement.classList.remove('modal-open'); document.body.classList.remove('modal-open');
-      return true;
+      return await (${resetDashboardFixtureOverlays.toString()})({ dedicatedPreview: true });
     })()`;
     const collapseAllJS = `(() => {
       const ids = Array.from(document.querySelectorAll('[data-dashboard-section]')).map((el) => el.id).filter(Boolean);
@@ -471,6 +465,8 @@ async function main() {
           link.href = url;
         })))`);
         await evaluate(setThemeJS(theme));
+        const pageReadiness = await renderReady();
+        let fixtureCleanup;
 
         const sectionIDs = await evaluate(collapseAllJS);
         const states = [{ name: 'collapsed', run: async () => true }];
@@ -515,14 +511,14 @@ async function main() {
           const nativeOK = native.failures.length === 0;
           results.push({ probe: 'native-CDP-pointer-keyboard', ok: nativeOK, result: native });
           if (!nativeOK) activityFailures.push(vp.name + ' ' + theme + ' native input');
-          const result = { viewport: vp.name, theme, provenance, fixture, results };
+          const result = { viewport: vp.name, theme, provenance, pageReadiness, fixtureCleanup, fixture, results };
           activityReport.push(result);
           fs.writeFileSync(path.join(opts.out, `${vp.name}-${theme}-activity-probes.json`), JSON.stringify(result, null, 2) + '\n');
           return true;
         } });
 
         for (const state of states) {
-          await evaluate(resetJS);
+          fixtureCleanup = await evaluate(resetJS);
           let ok;
           try { ok = await state.run(); }
           catch (error) {
