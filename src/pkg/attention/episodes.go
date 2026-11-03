@@ -509,7 +509,6 @@ func (s *Store) deliver(ctx context.Context, d Delivery, o Observation, hiveID, 
 			return err
 		}
 		s.mu.Lock()
-		defer s.mu.Unlock()
 		if found {
 			e.PagedAt = now
 			e.PagedTo = e.Key.Recipient
@@ -520,10 +519,15 @@ func (s *Store) deliver(ctx context.Context, d Delivery, o Observation, hiveID, 
 		if found || reconcileOnly {
 			e.Uncertain = false
 			e.WouldNotify = false
-			return s.save()
+			err := s.save()
+			s.mu.Unlock()
+			return err
 		}
+		// Not found and not reconcile-only: fall through to retry the POST
+		// with s.mu still held from above.
+	} else {
+		s.mu.Lock()
 	}
-	s.mu.Lock()
 	e.Uncertain = true
 	err := s.save()
 	snap = *e

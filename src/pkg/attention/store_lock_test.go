@@ -52,6 +52,33 @@ func TestReportDoesNotHoldStoreLockAcrossDelivery(t *testing.T) {
 	}
 }
 
+func TestUncertainAbsentRetryDoesNotDeadlock(t *testing.T) {
+	s := openStore(t, "")
+	f := &forge{fail: true}
+	_, _ = s.Report(context.Background(), testConfig, "owner", "org/repo", 1, []Observation{observation()}, f)
+	f.landed = map[string]bool{}
+	f.fail = false
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Report(context.Background(), testConfig, "owner", "org/repo", 1, []Observation{observation()}, f)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("uncertain-POST retry deadlocked on the store lock")
+	}
+	if len(f.posts) != 2 || f.finds != 1 {
+		t.Fatalf("posts=%d finds=%d", len(f.posts), f.finds)
+	}
+	if s.Snapshot("org/repo", 1)[0].Uncertain {
+		t.Fatal("successful retry left the episode uncertain")
+	}
+}
+
 func TestItemCapEvictsResolvedItems(t *testing.T) {
 	s := openStore(t, "")
 	base := time.Now().UTC()
