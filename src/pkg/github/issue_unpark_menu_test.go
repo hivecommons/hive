@@ -54,13 +54,13 @@ func TestUnparkMenuReadsOptionsFromHiveComment(t *testing.T) {
 	c := menuTestClient()
 	comments := []*gh.IssueComment{
 		ghComment("hive[bot]", dakotaStyleOptions),
-		ghComment("hive[bot]", unparkNoticeMarker+"\n**What to reply**\n- `/hive decision <your instructions>`: go ahead"),
+		ghComment("hive[bot]", unparkNoticeMarker+"\n**What to reply**\n- `/hive decision <your instructions>` → go ahead"),
 	}
 	notice := renderUnparkNotice(c.unparkMenuFor("A finding with no options in the body.", menuTestHiveUser, comments))
 	for _, want := range []string{
-		"`/hive approve`: go with the recommendation (option B)",
-		"`/hive decision A`: go with option A",
-		"`/hive decision C`: go with option C",
+		"`/hive approve` → go with the recommendation (option B)",
+		"`/hive decision A` → go with option A",
+		"`/hive decision C` → go with option C",
 	} {
 		if !strings.Contains(notice, want) {
 			t.Fatalf("notice missing %q:\n%s", want, notice)
@@ -108,11 +108,11 @@ func TestUnparkNoticeWithoutOptionsOrRecommendation(t *testing.T) {
 		t.Fatalf("the free-text form is still offered:\n%s", notice)
 	}
 	withRec := unparkNoticeBody("Recommendation: revert the change.")
-	if !strings.Contains(withRec, "`/hive approve`: go with the recommendation") {
+	if !strings.Contains(withRec, "`/hive approve` → go with the recommendation") {
 		t.Fatalf("a stated recommendation keeps approve:\n%s", withRec)
 	}
 	noRecOptions := unparkNoticeBody("Option A: one\nOption B: two\n")
-	if !strings.Contains(noRecOptions, "`/hive approve`: go with option A") || strings.Contains(noRecOptions, "recommendation") {
+	if !strings.Contains(noRecOptions, "`/hive approve` → go with option A") || strings.Contains(noRecOptions, "recommendation") {
 		t.Fatalf("options without a recommendation must not claim one:\n%s", noRecOptions)
 	}
 }
@@ -192,7 +192,7 @@ func TestUnparkMenuRecommendationFollowsItsOwnText(t *testing.T) {
 		t.Fatalf("recommended = %q, want B", m.recommended)
 	}
 	bullets := m.bullets()
-	if !strings.Contains(bullets, "`/hive approve`: go with the recommendation (option B)") || !strings.Contains(bullets, "`/hive decision A`") || strings.Contains(bullets, "/hive decision B") {
+	if !strings.Contains(bullets, "`/hive approve` → go with the recommendation (option B)") || !strings.Contains(bullets, "`/hive decision A`") || strings.Contains(bullets, "/hive decision B") {
 		t.Fatalf("approve must name option B:\n%s", bullets)
 	}
 
@@ -203,7 +203,7 @@ func TestUnparkMenuRecommendationFollowsItsOwnText(t *testing.T) {
 	if m.recommended != "" || strings.Contains(bullets, "(option") {
 		t.Fatalf("no option may be attributed to a recommendation that names none:\n%s", bullets)
 	}
-	for _, want := range []string{"`/hive approve`: go with the recommendation", "`/hive decision A`", "`/hive decision B`"} {
+	for _, want := range []string{"`/hive approve` → go with the recommendation", "`/hive decision A`", "`/hive decision B`"} {
 		if !strings.Contains(bullets, want) {
 			t.Fatalf("bullets missing %q:\n%s", want, bullets)
 		}
@@ -400,7 +400,7 @@ func TestUnparkOptionSummaryStripsMarkersAndMentions(t *testing.T) {
 
 func TestUnparkNoticeShowsOptionSummaries(t *testing.T) {
 	notice := unparkNoticeBody("Recommendation: B.\n\n- **A.** keep it\n- **B.** drop it\n")
-	for _, want := range []string{"`/hive decision A`: go with option A: keep it", "go with the recommendation (option B): drop it"} {
+	for _, want := range []string{"`/hive decision A` → go with option A: keep it", "go with the recommendation (option B): drop it"} {
 		if !strings.Contains(notice, want) {
 			t.Fatalf("notice missing %q:\n%s", want, notice)
 		}
@@ -422,7 +422,7 @@ func TestUnparkNoticeLinksOptionComment(t *testing.T) {
 	second.HTMLURL = gh.Ptr("https://example.com/c2")
 
 	notice := renderUnparkNotice(c.unparkMenuFor("no options here", menuTestHiveUser, []*gh.IssueComment{first}))
-	for _, want := range []string{"The options are in [this comment](https://example.com/c1).\n- `/hive approve`", "(option A): first a", "option B: first b"} {
+	for _, want := range []string{"> The options are in [this comment](https://example.com/c1).\n> - **`/hive approve`", "(option A): first a", "option B: first b"} {
 		if !strings.Contains(notice, want) {
 			t.Fatalf("notice missing %q:\n%s", want, notice)
 		}

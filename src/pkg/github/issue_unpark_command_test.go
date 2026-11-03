@@ -53,6 +53,8 @@ type unparkServer struct {
 	posted map[int][]string
 	// edited maps comment ID to the body it was edited to.
 	edited map[int64]string
+	// deleted lists the comment IDs DELETEd, in order.
+	deleted []int64
 	// added maps issue number to the labels added to it.
 	added map[int][]string
 	// removed maps issue number to the labels removed from it.
@@ -220,6 +222,12 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			rec.edited[id] = body.Body
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id})
+
+		case strings.HasPrefix(path, "issues/comments/") && r.Method == http.MethodDelete:
+			var id int64
+			fmt.Sscanf(path, "issues/comments/%d", &id)
+			rec.deleted = append(rec.deleted, id)
+			w.WriteHeader(http.StatusNoContent)
 
 		case strings.HasSuffix(path, "/labels") && r.Method == http.MethodPost:
 			var n int
