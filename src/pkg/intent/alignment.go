@@ -274,7 +274,10 @@ func boundedFiles(files []ChangedFile) ([]DiffFileSummary, int) {
 	}
 	out := make([]DiffFileSummary, 0, limit)
 	for _, f := range files[:limit] {
-		out = append(out, DiffFileSummary(f))
+		out = append(out, DiffFileSummary{
+			Filename: f.Filename, Status: f.Status,
+			Additions: f.Additions, Deletions: f.Deletions,
+		})
 	}
 	return out, len(files) - limit
 }
@@ -282,7 +285,10 @@ func boundedFiles(files []ChangedFile) ([]DiffFileSummary, int) {
 func allFiles(files []ChangedFile) []DiffFileSummary {
 	out := make([]DiffFileSummary, 0, len(files))
 	for _, f := range files {
-		out = append(out, DiffFileSummary(f))
+		out = append(out, DiffFileSummary{
+			Filename: f.Filename, Status: f.Status,
+			Additions: f.Additions, Deletions: f.Deletions,
+		})
 	}
 	return out
 }
