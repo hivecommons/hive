@@ -57,8 +57,11 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
 
 ## The API
 
-All routes are under `/v1`. Bodies and responses are JSON; errors are
+All routes are under `/v1`. Bodies and responses are JSON; agent-control errors are
 `{"error": "...", "code": "unauthorized|bad_request|not_found|conflict|runtime_error"}`.
+Opt-in lane routes require a separate project bearer credential and capability
+ACLs; see the [lane routes and request types](crux-lanes.md#public-http-and-go-api)
+and [lane error codes and failure behavior](crux-lanes.md#bounds-and-failure-behavior).
 
 | Route | Body | Runtime method | Returns |
 |---|---|---|---|
@@ -71,6 +74,7 @@ All routes are under `/v1`. Bodies and responses are JSON; errors are
 | `POST /v1/agents/{name}/kick` | `{"message":…}` | `Kicker.SendKick` | `{"agent","process"}` |
 | `POST /v1/agents/{name}/stop` | | `Lifecycle.Stop` | `{"agent","process"}` |
 | `GET /v1/events` | | watcher + `Kicker.SetKickObserver` + the `crux.Host` observers | `text/event-stream` of `Event` records |
+| `GET /v1/lanes` and lane/group subroutes | Publish/recovery/receipt JSON; [request shapes](crux-lanes.md#public-http-and-go-api) | `lanes.Broker` | Opt-in only; lane-project credential and capability ACLs; JSON or `204`; [full routes and responses](crux-lanes.md#public-http-and-go-api) |
 
 ### Runtime families (#14138 stage 3)
 
@@ -290,7 +294,13 @@ link the runtime. Errors from the server are `*api.StatusError`;
 
 ## What this is not
 
-It is not tenancy, quotas or hive-as-a-client: the server trusts whoever can
-reach the socket or holds the token, and hive still constructs
+For agent control it is not tenancy, quotas or hive-as-a-client: those routes
+trust whoever can reach the socket or holds the token, and hive still constructs
 `*agent.Manager` in-process. Those are the rest of Stage 3 in
 [design/crux.md](design/crux.md#after-the-cut).
+
+The opt-in [durable lanes](crux-lanes.md) are a separate project-authenticated
+surface with explicit capability ACLs, configured per-lane retention/storage
+bounds and per-group lease/ledger limits. Hive uses them as an ordinary lane
+client. This does not provide general multi-tenant isolation, change Hive's
+agent hosting model or grant lane credentials agent-control privileges.

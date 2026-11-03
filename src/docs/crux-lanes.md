@@ -388,6 +388,7 @@ Reusable-slot tests poll five empty groups at a 1 MiB bucket cap before any
 publication, then claim through each group; they also exercise pruning and
 foreign retirement at that same replacement-growth boundary, with durable
 high-water reuse, broker restart and lost-response fencing.
-Existing API/SSE tests remain in their
-normal CI selection. Repository policy prohibits local Go test/build/vet;
-the executable verdict is CI, not a fake-store-only claim.
+Existing API/SSE tests remain in their normal CI selection. For AI agents,
+repository policy prohibits local Go test/build/vet; their executable verdict
+comes from CI. Human contributors should follow the
+[CONTRIBUTING local development guide](../../CONTRIBUTING.md#local-development).
