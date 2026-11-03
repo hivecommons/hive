@@ -707,6 +707,5 @@
         renderCost(cost);
       } catch (e) { /* transient — leave last render in place */ }
     }
-    fetchCost();
+    dashboardScheduleWork('cost', fetchCost).catch(console.error);
     dashboardSetInterval('cost', fetchCost, COST_POLL_MS);
-

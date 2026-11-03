@@ -177,7 +177,7 @@ func TestDeferredInitGuardsCoverEveryEntry(t *testing.T) {
 	// Count TOP-LEVEL entries only: one per line, at the array's indentation.
 	// Counting every `() =>` in the block would also count the nested arrows
 	// inside each entry's own .then chains.
-	entryLine := regexp.MustCompile(`(?m)^\s+\(\)\s*=>`)
+	entryLine := regexp.MustCompile(`(?m)^\s+\['[^']+',\s*\(\)\s*=>`)
 	entries := len(entryLine.FindAllString(block, -1))
 	matched := len(deferredEntryCall.FindAllString(block, -1))
 	if entries == 0 {

@@ -1,4 +1,4 @@
-// Apply layout immediately and hide content until first data render.
+// Apply layout immediately; keep the shell visible while live data loads.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.
 // applyLayout() (defined in the main script) is the single source of truth
@@ -84,9 +84,6 @@
   if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
-  document.body.style.opacity='0';
-  document.body.style.transition='opacity 0.15s ease-in';
-  setTimeout(function(){ document.body.style.opacity='1'; }, 3000);
   document.addEventListener('DOMContentLoaded', function(){
     if (typeof applyLayout === 'function' && typeof getLayout === 'function') {
       applyLayout(getLayout());
@@ -171,4 +168,3 @@
     document.addEventListener('DOMContentLoaded', renderStyleState);
   }
 })();
-
