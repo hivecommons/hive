@@ -212,12 +212,22 @@ func processResponse(t *testing.T, p *publisherProcess) publisherProcessResult {
 }
 
 func TestTwoCruxProcessesFenceDelayedExpiredPublicationGeneration(t *testing.T) {
-	b := testBroker(t, shortRetention)
+	// Three seconds leaves a slow -race child time to reach the pause; the
+	// reservation is still awaited to expiry below.
+	b := testBroker(t, func(c *Config) {
+		c.Retention, c.Lease, c.AckRetention = 3*time.Second, 3*time.Second, 3*time.Second
+		c.Dedup = MinDedup
+	})
 	a := startPublisherProcess(t, b.Config(), "payload-A", true)
 	select {
 	case <-a.ready:
 	case <-a.finished:
-		t.Fatalf("A failed before pause: %v", a.waitErr)
+		select {
+		case result := <-a.results:
+			t.Fatalf("A failed before pause: %v (result: %+v)", a.waitErr, result)
+		default:
+			t.Fatalf("A failed before pause: %v", a.waitErr)
+		}
 	case <-time.After(testWait):
 		t.Fatal("A never reserved")
 	}
@@ -242,7 +252,7 @@ func TestTwoCruxProcessesFenceDelayedExpiredPublicationGeneration(t *testing.T) 
 		t.Fatal("publishers were not separate processes")
 	}
 	// Read the durable response before waiting for process exit: the race
-	// detector's exit delay alone exceeds this stream's one-second retention.
+	// detector's exit delay alone can exceed this stream's three-second retention.
 	winner := processResponse(t, second)
 	if winner.Error != "" || winner.Published.Sequence == 0 {
 		t.Fatalf("B did not publish: %+v", winner)
