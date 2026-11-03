@@ -1,6 +1,7 @@
 package lanes
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -56,6 +57,23 @@ func TestGroupBudgetRejectsShapesOutsideItsValidatedContract(t *testing.T) {
 		}
 	}
 
+}
+
+func TestEncodeGroupValidatesBeforeTimestampSerialization(t *testing.T) {
+	state, l, err := maximumGroupShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Expires = l.Expires.In(time.FixedZone("non-utc", int(time.Hour/time.Second)))
+	state.Slots = minGroupSlots
+	state.Leases[1] = l
+	var marshaler *json.MarshalerError
+	if _, err := json.Marshal(state); !errors.As(err, &marshaler) {
+		t.Fatal("fixture must fail timestamp serialization before validation", err)
+	}
+	if _, err := encodeGroup(state, 0); !errors.Is(err, ErrConflict) {
+		t.Fatal("invalid persistent shape escaped the typed state contract", err)
+	}
 }
 
 func TestSlotAllocationRejectsInvalidPersistentShape(t *testing.T) {

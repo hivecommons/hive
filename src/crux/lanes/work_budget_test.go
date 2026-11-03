@@ -20,6 +20,7 @@ func TestByteBoundAdmissionPreservesCompletionAndRecoveryHeadroom(t *testing.T) 
 	b := testBroker(t, func(c *Config) {
 		c.MaxLedger, c.MaxPending = byteCapacityLedgerLimit, byteCapacityLedgerLimit
 		c.Retention, c.AckRetention, c.Lease = byteCapacityRetention, byteCapacityRetention, MinLease
+		c.Dedup = MinDedup
 		c.RetryDelay, c.MaxRetryDelay = MinRetryDelay, MinRetryDelay
 	})
 	ctx := context.Background()

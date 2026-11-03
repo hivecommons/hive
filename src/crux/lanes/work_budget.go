@@ -100,15 +100,15 @@ func encodeGroup(state groupState, revision uint64) ([]byte, error) {
 	}
 	state.Slots = max(state.Slots, len(state.Leases), minGroupSlots)
 	state.Padding = ""
+	if err := validateGroup(state); err != nil {
+		return nil, err
+	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return nil, err
 	}
 	if len(data) > maxStateBytes {
 		return nil, ErrCapacity
-	}
-	if err := validateGroup(state); err != nil {
-		return nil, err
 	}
 	reserved, err := groupReservation(state.Slots)
 	if err != nil {

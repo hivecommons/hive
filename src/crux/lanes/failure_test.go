@@ -99,9 +99,33 @@ func TestReceiptTerminalAndInvalidStates(t *testing.T) {
 			t.Fatal("invalid/unknown receipt accepted")
 		}
 	}
-	data := groupState{Leases: map[uint64]lease{1: {Receipt: strings.Repeat("a", maxStateBytes)}}}
+	data, delivery, err := maximumGroupShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, perDelivery, err := completionBudget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data.Slots = (maxStateBytes-base)/perDelivery + minGroupSlots
+	for seq := uint64(1); len(data.Leases) < data.Slots; seq++ {
+		data.Leases[seq] = delivery
+	}
+	if err := validateGroup(data); err != nil {
+		t.Fatal("capacity fixture must satisfy the durable state contract", err)
+	}
+	if reserved, err := groupReservation(data.Slots); err != nil || reserved <= maxStateBytes {
+		t.Fatal("capacity fixture must exceed the byte reservation cap", reserved, err)
+	}
 	if err := b.saveGroup(ctx, "oversized", data, 0); !errors.Is(err, ErrCapacity) {
 		t.Fatal("oversized durable ledger accepted", err)
+	}
+}
+
+func TestMalformedDurableLedgerFailsConflictBeforeCapacity(t *testing.T) {
+	data := groupState{Leases: map[uint64]lease{1: {Receipt: strings.Repeat("a", maxStateBytes)}}}
+	if _, err := encodeGroup(data, 0); !errors.Is(err, ErrConflict) {
+		t.Fatal("malformed oversized state must fail its typed contract first", err)
 	}
 }
 

@@ -173,16 +173,27 @@ func startPublisherProcess(t *testing.T, cfg Config, payload string, delay bool,
 
 func processOutcome(t *testing.T, p *publisherProcess) publisherProcessResult {
 	t.Helper()
+	result := processResponse(t, p)
+	waitPublisherProcess(t, p)
+	return result
+}
+
+func waitPublisherProcess(t *testing.T, p *publisherProcess) {
+	t.Helper()
+	select {
+	case <-p.finished:
+	case <-time.After(testWait):
+		t.Fatal("publisher process did not exit after its result")
+	}
+	if p.waitErr != nil {
+		t.Fatalf("publisher process failed after result: %v", p.waitErr)
+	}
+}
+
+func processResponse(t *testing.T, p *publisherProcess) publisherProcessResult {
+	t.Helper()
 	select {
 	case result := <-p.results:
-		select {
-		case <-p.finished:
-		case <-time.After(testWait):
-			t.Fatal("publisher process did not exit after its result")
-		}
-		if p.waitErr != nil {
-			t.Fatalf("publisher process failed after result: %v", p.waitErr)
-		}
 		return result
 	case <-p.finished:
 		if p.waitErr != nil {
@@ -230,14 +241,16 @@ func TestTwoCruxProcessesFenceDelayedExpiredPublicationGeneration(t *testing.T) 
 	if a.pid == second.pid {
 		t.Fatal("publishers were not separate processes")
 	}
-	winner := processOutcome(t, second)
+	// Read the durable response before waiting for process exit: the race
+	// detector's exit delay alone exceeds this stream's one-second retention.
+	winner := processResponse(t, second)
 	if winner.Error != "" || winner.Published.Sequence == 0 {
 		t.Fatalf("B did not publish: %+v", winner)
 	}
 	if _, err := a.input.Write([]byte("r")); err != nil {
 		t.Fatal(err)
 	}
-	loser := processOutcome(t, a)
+	loser := processResponse(t, a)
 	if loser.Error != "conflict" && loser.Error != "stale" {
 		t.Fatalf("delayed A falsely succeeded or only timed out: %+v", loser)
 	}
@@ -255,6 +268,8 @@ func TestTwoCruxProcessesFenceDelayedExpiredPublicationGeneration(t *testing.T) 
 	if string(envelope.Payload) != "payload-B" || record.Header.Get(reservationHeader) == first.Generation {
 		t.Fatal("A replaced B or shared expired generation")
 	}
+	waitPublisherProcess(t, second)
+	waitPublisherProcess(t, a)
 }
 
 type wrongAckPublisher struct {
