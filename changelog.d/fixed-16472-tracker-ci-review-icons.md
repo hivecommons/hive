@@ -1,0 +1,1 @@
+- The Activity Monitor tracker strip now shows a flask glyph for the CI track and keeps the eye for the Review track, so the two adjacent chevrons are no longer identical ([#16472](https://github.com/hivecommons/hive/issues/16472)).
