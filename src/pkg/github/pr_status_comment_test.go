@@ -94,6 +94,7 @@ func TestUpsertPRStatusSectionCreatesOnceThenEdits(t *testing.T) {
 	s := &statusCommentServer{}
 	srv := s.start(t)
 	c := testClient(t, srv.URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	ctx := context.Background()
 
 	created, err := c.UpsertPRStatusSection(ctx, "o/r", 5, prstatus.KeyStageStalled, "stalled at 080")
@@ -140,6 +141,7 @@ func TestUpsertPRStatusSectionMergesDuplicateStatusComments(t *testing.T) {
 		{"id": 12, "body": prstatus.Upsert("", prstatus.KeyStageRegressed, "regressed"), "user": bot},
 	}}
 	c := testClient(t, s.start(t).URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	created, err := c.UpsertPRStatusSection(context.Background(), "o/r", 5, prstatus.KeyEvidence, "evidence")
 	if err != nil || created {
 		t.Fatalf("created=%v err=%v", created, err)
@@ -164,12 +166,38 @@ func TestUpsertPRStatusSectionMergesDuplicateStatusComments(t *testing.T) {
 	}
 }
 
+// Own is this hive's App login, not "any bot": another App's status comment
+// is never edited or deleted, and an unknown App login fails closed.
+func TestUpsertPRStatusSectionIgnoresOtherBotsComments(t *testing.T) {
+	for _, tc := range []struct{ name, appLogin string }{
+		{"other bot", "hive-app[bot]"},
+		{"unknown own login", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			other := map[string]any{"login": "other-app[bot]", "type": "Bot"}
+			s := &statusCommentServer{comments: []map[string]any{
+				{"id": 11, "body": prstatus.Upsert("", prstatus.KeyStageStalled, "stalled"), "user": other},
+			}}
+			c := testClient(t, s.start(t).URL)
+			c.SetAppBotLogin(tc.appLogin)
+			created, err := c.UpsertPRStatusSection(context.Background(), "o/r", 5, prstatus.KeyEvidence, "evidence")
+			if err != nil || !created {
+				t.Fatalf("created=%v err=%v, want a fresh comment", created, err)
+			}
+			if s.edits != 0 || len(s.deletes) != 0 {
+				t.Fatalf("edits=%d deletes=%v, want the other bot's comment untouched", s.edits, s.deletes)
+			}
+		})
+	}
+}
+
 // Quiet mode: the duplicate-guard redirect lands in the status comment of
 // the PR it points at and a retry edits it rather than stacking comments.
 func TestCreatePR_DuplicateGuardQuietModeUsesStatusComment(t *testing.T) {
 	g := &guardServer{open: []guardPR{{Number: 7, Ref: "a", Body: "Fixes #42", User: "human"}}}
 	srv := g.start(t)
 	c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+	c.SetAppBotLogin("hive-app[bot]")
 	c.SetNotificationsQuiet(func() bool { return true })
 	res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "Closes #42")
 	if err != nil || res.Number != 7 || res.DuplicateReason != DuplicateReasonClosesIssue {
