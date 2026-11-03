@@ -121,6 +121,9 @@ func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
 				switch r.URL.Path {
 				case "/repos/acme/widget/pulls/7":
 					json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), ChangedFiles: gh.Ptr(1), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}})
+				case "/repos/acme/widget/pulls/7/commits":
+					bot := &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+					json.NewEncoder(w).Encode([]*gh.RepositoryCommit{{SHA: gh.Ptr("c1"), Author: bot, Committer: bot}})
 				case "/repos/acme/widget/pulls/7/files":
 					json.NewEncoder(w).Encode([]*gh.CommitFile{{Filename: gh.Ptr("sensitive/build.yml"), Status: gh.Ptr("modified"), Additions: gh.Ptr(1), Deletions: gh.Ptr(1), Patch: gh.Ptr(tc.patch)}})
 				default:

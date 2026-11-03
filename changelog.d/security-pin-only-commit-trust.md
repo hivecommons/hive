@@ -1,0 +1,1 @@
+- The human-merge pin-only exception now also requires every commit on the PR to be authored and committed by a trusted author, not just the PR opener (#16380)

@@ -85,7 +85,7 @@ func (c *Engine) currentHumanMergePinOnly(repo string) (config.PinOnlyException,
 // edits any other file (even an unguarded changelog or doc) is not pin-only
 // and stays held (#16326). The sweep lanes and /approve share this helper so
 // they never disagree.
-func (c *Engine) humanMergePinOnlyExempt(owner, repo string, pr *gh.PullRequest, files []intent.ChangedFile, matches []string) (bool, string) {
+func (c *Engine) humanMergePinOnlyExempt(ctx context.Context, owner, repo string, pr *gh.PullRequest, files []intent.ChangedFile, matches []string) (bool, string) {
 	if len(matches) == 0 || pr == nil {
 		return false, ""
 	}
@@ -109,7 +109,55 @@ func (c *Engine) humanMergePinOnlyExempt(owner, repo string, pr *gh.PullRequest,
 	if reported := pr.GetChangedFiles(); reported <= 0 || reported != len(files) {
 		return false, "complete changed-file list not proven"
 	}
+	if why := c.pinOnlyCommitsUntrusted(ctx, owner, repo, pr, policy.TrustedAuthors); why != "" {
+		return false, why
+	}
 	return intent.ClassifyPinOnly(files, matches, policy.Spec())
+}
+
+// pinOnlyCommitsUntrusted proves the pushed commits, not just the PR opener,
+// are the trusted author's: anyone with push access to the head branch could
+// add a commit under a trusted bot's PR. Every commit's author and committer
+// login must be trusted and the list must be complete; it returns a reason
+// when that is not proven (including on a listing error, failing closed).
+func (c *Engine) pinOnlyCommitsUntrusted(ctx context.Context, owner, repo string, pr *gh.PullRequest, trustedAuthors []string) string {
+	trusted := func(u *gh.User) bool {
+		login := strings.TrimSpace(hgithub.SafeGetLogin(u))
+		if login == "" {
+			return false
+		}
+		for _, t := range trustedAuthors {
+			if strings.EqualFold(strings.TrimSpace(t), login) {
+				return true
+			}
+		}
+		return false
+	}
+	opts := &gh.ListOptions{PerPage: 100}
+	total := 0
+	for page := 0; ; page++ {
+		if page >= stageDCOMaxPages {
+			return "complete commit list not proven"
+		}
+		commits, resp, err := c.gh.PullRequests.ListCommits(ctx, owner, repo, pr.GetNumber(), opts)
+		if err != nil {
+			return "commit list unavailable"
+		}
+		for _, rc := range commits {
+			if rc == nil || !trusted(rc.Author) || !trusted(rc.Committer) {
+				return "PR has a commit not authored and committed by a trusted author"
+			}
+		}
+		total += len(commits)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	if total == 0 || (pr.GetCommits() > 0 && pr.GetCommits() != total) {
+		return "complete commit list not proven"
+	}
+	return ""
 }
 
 // humanMergePathGate refuses a PR that touches a path a person must merge.
@@ -140,7 +188,7 @@ func (c *Engine) humanMergePathGate(ctx context.Context, displayRepo, owner, rep
 	if len(matches) == 0 {
 		return "", nil
 	}
-	exempt, why := c.humanMergePinOnlyExempt(owner, repo, pr, files, matches)
+	exempt, why := c.humanMergePinOnlyExempt(ctx, owner, repo, pr, files, matches)
 	if exempt {
 		c.info("automerge sweep admitted pin-only change on human-merge paths", "repo", displayRepo, "pr", number, "paths", matches, "config", humanMergePinOnlyConfigKey, "reason", why)
 		return "", nil

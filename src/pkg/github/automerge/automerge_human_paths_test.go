@@ -31,6 +31,7 @@ type humanPathFront struct {
 	fileEntries []map[string]any // when set, served first, before the entries built from files
 	filesStatus int
 	filesHits   int
+	commits     []map[string]any // served as the PR commit list
 	labels      []string
 	comments    []string
 }
@@ -57,6 +58,8 @@ func newHumanPathFront(t *testing.T, backend string, f *humanPathFront) *httptes
 				files = append(files, map[string]any{"filename": name, "status": "modified", "additions": 1})
 			}
 			json.NewEncoder(w).Encode(files)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/commits":
+			json.NewEncoder(w).Encode(f.commits)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
 			var labels []string
 			_ = json.NewDecoder(r.Body).Decode(&labels)
@@ -365,7 +368,8 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 		paths    func(string) []string
 		pinOnly  func(string) (config.PinOnlyException, bool)
 		author   string
-		changed  int // 0 means len(entries)
+		changed  int      // 0 means len(entries)
+		pushers  []string // commit author/committer logins; nil means one commit by author
 		entries  []map[string]any
 		wantHold bool
 		wantHits int
@@ -374,6 +378,7 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 		{name: "exception unconfigured: held as before", paths: humanPathsFor("acme/widget", testHumanMergePattern), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
 		{name: "exception for another repo: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/other", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
 		{name: "untrusted author: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "mallory", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
+		{name: "trusted PR with a commit pushed by another account: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", pushers: []string{"renovate-bot", "mallory"}, entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
 		{name: "trusted pure pin: not held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHits: 1},
 		{name: "trusted pin plus non-pin line: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{{
 			"filename": workflow, "status": "modified", "additions": 2, "deletions": 1,
@@ -396,6 +401,13 @@ func TestHumanMergePathGatePinOnlyException(t *testing.T) {
 			}))
 			defer backend.Close()
 			front := &humanPathFront{fileEntries: tc.entries}
+			pushers := tc.pushers
+			if pushers == nil {
+				pushers = []string{tc.author}
+			}
+			for _, login := range pushers {
+				front.commits = append(front.commits, map[string]any{"sha": "c-" + login, "author": map[string]any{"login": login}, "committer": map[string]any{"login": login}})
+			}
 			srv := newHumanPathFront(t, backend.URL, front)
 			defer srv.Close()
 
