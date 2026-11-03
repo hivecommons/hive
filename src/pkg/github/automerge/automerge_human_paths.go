@@ -120,9 +120,8 @@ func (c *Engine) humanMergePinOnlyExempt(ctx context.Context, owner, repo string
 	return true, "all changes are approved pin replacements by verified trusted-author commits, anchored upstream"
 }
 
-// pinOnlyActionPinsUpstream, pinOnlyCommitsTrusted, pinOnlyTrustedLogin and
-// pinOnlyTrustedCommitter delegate to the pkg/github helpers the merge-request
-// relay also uses (#16265), so the sweep, /approve and the relay apply one
+// pinOnlyActionPinsUpstream, pinOnlyCommitsTrusted and pinOnlyTrustedLogin
+// delegate to the pkg/github helpers the merge-request relay also uses (#16265), so the sweep, /approve and the relay apply one
 // provenance policy (#16399).
 func (c *Engine) pinOnlyActionPinsUpstream(ctx context.Context, pins []intent.ActionPin) string {
 	return hgithub.PinOnlyActionPinsUpstream(ctx, c.gh, pins)
@@ -134,10 +133,6 @@ func (c *Engine) pinOnlyCommitsTrusted(ctx context.Context, owner, repo string, 
 
 func pinOnlyTrustedLogin(policy config.PinOnlyException, login string) bool {
 	return hgithub.PinOnlyTrustedLogin(policy.TrustedAuthors, login)
-}
-
-func pinOnlyTrustedCommitter(policy config.PinOnlyException, login string) bool {
-	return hgithub.PinOnlyTrustedCommitter(policy.TrustedAuthors, login)
 }
 
 // humanMergePathGate refuses a PR that touches a path a person must merge.
