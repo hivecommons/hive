@@ -140,27 +140,22 @@
       const n = Number(minSeq);
       if (Number.isFinite(n) && n > _statusSeqFloor) _statusSeqFloor = n;
     }
+    // A snapshot accepted before a mutation can become stale while queued.
+    function dashboardStatusCanRender(data) {
+      return data.statusSeq == null ||
+        (data.statusSeq >= _statusSeqFloor && data.statusSeq >= _lastStatusSeq &&
+          (!data.statusInstance || !_statusInstance || data.statusInstance === _statusInstance));
+    }
     var SCROLL_SETTLE_DELAY_MS = 500;
     var _deferredLoadPromise = null;
     function _afterPaint(callback) {
       _hashScrollPending = true;
-      if (_deferredLoadPromise) {
-        _deferredLoadPromise.then(function() {
-          requestAnimationFrame(function() {
-            requestAnimationFrame(function() {
-              callback();
-              setTimeout(function() { _hashScrollPending = false; }, 200);
-            });
-          });
-        });
-      } else {
+      requestAnimationFrame(function() {
         requestAnimationFrame(function() {
-          requestAnimationFrame(function() {
-            setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
-            setTimeout(function() { _hashScrollPending = false; }, 500);
-          });
+          setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
+          setTimeout(function() { _hashScrollPending = false; }, SCROLL_SETTLE_DELAY_MS);
         });
-      }
+      });
     }
 
     const NAVBAR_CLOCK_TICK_MS = 1000;
@@ -503,7 +498,9 @@
       window._lastStatus = data;
       // The tracker's hop cue reads which agent is on which item from this
       // payload; redraw the rows when that set changes (no extra fetch).
-      if (typeof stageTrackerWorkers === 'function' && JSON.stringify(stageTrackerWorkers(data)) !== prevWorkers && typeof renderStageTracker === 'function') renderStageTracker();
+      if (typeof stageTrackerWorkers === 'function' && JSON.stringify(stageTrackerWorkers(data)) !== prevWorkers && typeof renderStageTracker === 'function') {
+        dashboardRenderSection('tracker-workers', ['activity-monitor-section'], () => renderStageTracker());
+      }
       applyDashboardFeatureVisibility();
       if (typeof refreshThroughputSLA === 'function') refreshThroughputSLA();
       if (window._acmmOverride) {
@@ -542,25 +539,29 @@
       renderSystemAlerts(data.systemAlerts || []);
       if (!_dropdownOpen && !_configModalOpen) {
         applyPinOverrides(data.agents || []);
-        renderAgents(data.agents || []);
-        renderGovernor(data.governor || {}, data.cadenceMatrix || [], data);
+        dashboardRenderSection('agents', ['agents-section', 'agent-activity-section'], () => {
+          if (!_dropdownOpen && !_configModalOpen) renderAgents(data.agents || []);
+        }, data);
+        dashboardRenderSection('governor', ['governor'], () => {
+          if (!_dropdownOpen && !_configModalOpen) renderGovernor(data.governor || {}, data.cadenceMatrix || [], data);
+        }, data);
         // Keep the focused agent detail in sync with fresh payloads — its
         // fast path only rebuilds when the config fingerprint changes.
         if (_ocSelectedAgent) ocRenderAgentDetail();
       }
-      renderTokens(data.tokens || {});
-      renderAdvisoryDigest(data.advisoryDigest || null);
-      renderRepos(data.repos || []);
-      renderSwarm(data.swarm || {});
+      dashboardRenderSection('tokens', ['token-panel'], () => renderTokens(data.tokens || {}), data);
+      dashboardRenderSection('advisory', ['advisory-section'], () => renderAdvisoryDigest(data.advisoryDigest || null), data);
+      dashboardRenderSection('repos', ['repos-section', 'overview-section'], () => renderRepos(data.repos || []), data);
+      dashboardRenderSection('swarm', ['repos-section'], () => renderSwarm(data.swarm || {}), data);
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
       renderPlatform(data.platform || null);
-      renderHiveAdvice(data.hiveAdvice || null);
-      renderFleetReport(data.fleetReport || null);
-      renderSystemGauges(data.systemResources || null);
+      dashboardRenderSection('hive-advice', ['advisory-section'], () => renderHiveAdvice(data.hiveAdvice || null), data);
+      dashboardRenderSection('fleet-report', ['advisory-section'], () => renderFleetReport(data.fleetReport || null), data);
+      dashboardRenderSection('system-gauges', ['debug-section'], () => renderSystemGauges(data.systemResources || null), data);
       ocUpdateSidebarAgents();
-      renderDebugSection();
-      renderFAQ();
+      dashboardRenderSection('debug', ['debug-section'], () => renderDebugSection(), data);
+      dashboardRenderSection('faq', ['faq-section'], () => renderFAQ(), data);
       initializeDashboardSectionCards();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [

@@ -113,7 +113,9 @@
           const lastData = window._lastStatus || {};
           if (lastData.agents) {
             applyPinOverrides(lastData.agents);
-            renderAgents(lastData.agents);
+            dashboardRenderSection('agents', ['agents-section', 'agent-activity-section'], () => {
+              if (!_dropdownOpen && !_configModalOpen) renderAgents(lastData.agents);
+            });
             // Keep the cost table's "running agents" column live as agents
             // switch models or pause/resume between cost polls.
             if (_lastCost) renderCost(_lastCost);

@@ -1,0 +1,1 @@
+- Show the dashboard shell before downloading its cacheable application script, prioritize the selected and visible panels, limit background refresh concurrency, and progressively render the latest live data without waiting for every panel before restoring navigation.

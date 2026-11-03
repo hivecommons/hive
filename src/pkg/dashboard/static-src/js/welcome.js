@@ -536,8 +536,7 @@
       updateWelcomeProgress();
     }
 
-    checkGHAuth();
+    dashboardScheduleWork('welcome-gh-auth', checkGHAuth).catch(console.error);
     dashboardSetInterval('welcome-gh-auth', checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
     initWelcomeDialog();
     initNPSSurvey();
-

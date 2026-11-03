@@ -20,13 +20,22 @@
     }
     function dashboardSetInterval(key, fn, ms) {
       dashboardClearInterval(key);
-      const entry = { fn, ms, timer: null };
+      const entry = { key, fn, ms, timer: null };
       DASHBOARD_INTERVALS[key] = entry;
       if (!document.hidden) dashboardStartInterval(entry);
       return entry;
     }
     function dashboardStartInterval(entry) {
-      entry.timer = setInterval(entry.fn, entry.ms);
+      entry.timer = setInterval(function() {
+        try { Promise.resolve(dashboardRunInterval(entry)).catch(console.error); } catch (err) { console.error(err); }
+      }, entry.ms);
+    }
+    function dashboardRunInterval(entry) {
+      if (typeof dashboardScheduleWork === 'function' &&
+          Object.prototype.hasOwnProperty.call(DASHBOARD_TASK_SECTIONS, entry.key)) {
+        return dashboardScheduleWork(entry.key, entry.fn);
+      }
+      return entry.fn();
     }
     function dashboardClearInterval(key) {
       if (!DASHBOARD_INTERVALS[key]) return;
@@ -43,7 +52,7 @@
         // A refresh failure must not prevent the other panels from resuming.
         // Snapshot iteration also permits a callback to clear/replace itself.
         if (DASHBOARD_INTERVALS[key] === entry) {
-          try { Promise.resolve(entry.fn()).catch(console.error); } catch (err) { console.error(err); }
+          try { Promise.resolve(dashboardRunInterval(entry)).catch(console.error); } catch (err) { console.error(err); }
         }
       }
     });
@@ -493,4 +502,3 @@
         capHistory(historyData);
       }
     }
-
