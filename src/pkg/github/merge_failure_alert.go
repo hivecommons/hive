@@ -260,6 +260,11 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 	switch {
 	case isMergeFailureRateLimited(lower), isConflictMergeBlocker(msg), isCIGateReadFailure(lower):
 		return mergeFailureAlert{}, false
+	case isMergeQueueRequiredMergeBlocker(msg):
+		return mergeFailureAlert{
+			key:     "merge-queue-required",
+			message: fmt.Sprintf("Merge blocked for %s: the base branch requires changes to be made through the merge queue, so the hive cannot merge directly. Enqueue the PR via the merge queue (or merge it by hand), or remove the merge-queue rule from the branch ruleset at https://github.com/%s/settings/rules.", repo, repo),
+		}, true
 	case strings.Contains(lower, "fork pr workflow runs are awaiting maintainer approval"):
 		return mergeFailureAlert{
 			key:     "fork-run-approval",
