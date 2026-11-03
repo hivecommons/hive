@@ -1561,6 +1561,7 @@ let fetchHubRegistry = (registryURL, cb) => {
 function handleTLSHostMismatch(hub, err) {
   hub.tlsHostMismatch = true;
   hub.authenticated = false;
+  hub.standbyAcked = false;
   const registryURL = hub.relocationAttempted ? null : hubRegistryURLFor(hub.sourceURL || hub.url);
   if (!registryURL) {
     console.error(tlsHostMismatchRemediation(hub, null));
@@ -1710,6 +1711,9 @@ function makeHub(url, token, disabled = false, contributorId = '', repoScope = n
     readyRequestSeq: 0,
     authenticated: false,
     authFailed: false,
+    // #16462/#16463: set by standby_ack, cleared whenever the connection it
+    // was granted on goes away.
+    standbyAcked: false,
     // Set by handleTLSHostMismatch when the dialed host is not in the served
     // certificate; parks the hub (no reconnect loop) until contributor.env
     // changes. relocationAttempted bounds the hub-registry re-resolution to
@@ -2699,6 +2703,7 @@ function stopHub(hub, reason) {
     hub.ws = null;
   }
   hub.authenticated = false;
+  hub.standbyAcked = false;
   hub.readyOutstanding = false;
   hub.connectGeneration++;
   writeRelayStatus();
@@ -10178,6 +10183,7 @@ function connectHub(hub) {
     hub.readyOutstanding = false;
     hub.authenticated = false;
     hub.scopeAckVersion = null;
+    hub.standbyAcked = false;
     hub.scopePending = hub.repoScope !== null || !!hub.scopeSent;
     writeRelayStatus();
     invalidateReadyRetry(hub, 'socket closed');

@@ -16793,3 +16793,52 @@ test('#16422 standby assignment from an acknowledging non-active hub is accepted
     assert.strictEqual(sentA.filter(m => m.type === 'task_failed').length, 0);
   } finally { relay.setCurrentTask(null); teardown(relay); }
 });
+
+test('#16463 standby acknowledgement does not outlive the connection it was granted on', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_STANDBY: '1' } });
+  const log = console.log; const error = console.error;
+  console.log = () => {}; console.error = () => {};
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    const hub = hubs[1];
+    scopeAuth(relay, hubs[0], []);
+    relay.__wsInstances.length = 0;
+    relay.connectHub(hub);
+    const ws = relay.__wsInstances[0];
+    assert.ok(ws, 'setup: connectHub must open a socket');
+    ws.send = p => sentB.push(JSON.parse(p));
+    const ack = JSON.stringify({ type: 'standby_ack', standby: { accepted: [{ lane: 'guide' }], rejected: [] } });
+    const offer = { type: 'task_assign', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x', standby_lane: 'guide' };
+
+    // ws close handler: the socket the ack arrived on dies.
+    scopeAuth(relay, hub, ['standby_v1']);
+    relay.handleMessage(ack, hub);
+    assert.strictEqual(hub.standbyAcked, true, 'setup: standby acknowledged on the first connection');
+    ws.emit('close', 1006, '');
+    if (hub.reconnectTimer) { clearTimeout(hub.reconnectTimer); hub.reconnectTimer = null; }
+    assert.strictEqual(hub.standbyAcked, false, 'the close handler forgets the acknowledgement');
+    // The reconnected hub no longer advertises standby_v1, so declareStandby
+    // never asks and no standby_ack arrives; its standby_lane push must be
+    // refused like any other non-active-hub assignment.
+    scopeAuth(relay, hub, []);
+    relay.handleMessage(JSON.stringify({ ...offer, task_id: 'after-close' }), hub);
+    assert.ok(sentB.some(m => m.type === 'task_failed' && m.task_id === 'after-close' && m.reason === 'Hub is not the active polling slot'),
+      `standby push after reconnect is rejected: ${JSON.stringify(sentB.filter(m => m.task_id === 'after-close'))}`);
+    assert.ok(!sentB.some(m => m.type === 'task_accepted' && m.task_id === 'after-close'));
+
+    // TLS host-mismatch redial: tears the socket down without its close handler.
+    scopeAuth(relay, hub, ['standby_v1']);
+    relay.handleMessage(ack, hub);
+    assert.strictEqual(hub.standbyAcked, true, 'setup: standby acknowledged again');
+    relay.handleTLSHostMismatch(hub, ALTNAME_ERR);
+    assert.strictEqual(hub.standbyAcked, false, 'the mismatch path forgets the acknowledgement too');
+    hub.tlsHostMismatch = false;
+    scopeAuth(relay, hub, []);
+    relay.handleMessage(JSON.stringify({ ...offer, task_id: 'after-mismatch' }), hub);
+    assert.ok(sentB.some(m => m.type === 'task_failed' && m.task_id === 'after-mismatch' && m.reason === 'Hub is not the active polling slot'));
+    assert.ok(!sentB.some(m => m.type === 'task_accepted' && m.task_id === 'after-mismatch'));
+  } finally {
+    console.log = log; console.error = error;
+    relay.setCurrentTask(null); teardown(relay);
+  }
+});
