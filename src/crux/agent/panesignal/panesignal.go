@@ -8,6 +8,8 @@ package panesignal
 import (
 	"regexp"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/cline"
 )
 
 const (
@@ -64,6 +66,8 @@ var CLIPaneMarkers = []string{
 	// launch, reuse, crash-detection and startup-kick gates keep working
 	// without treating a bare shell as a live backend.
 	AgyHeadlessReadyMarker,
+	cline.ReadyMarker,
+	cline.RunningMarker,
 }
 
 const (
@@ -158,6 +162,9 @@ func ShowsAgentWorking(pane string) bool {
 	if pane == "" {
 		return false
 	}
+	if strings.LastIndex(pane, cline.RunningMarker) > strings.LastIndex(pane, cline.ReadyMarker) {
+		return true
+	}
 	if lastRunning := strings.LastIndex(pane, AgyHeadlessRunningMarker); lastRunning >= 0 {
 		lastReady := strings.LastIndex(pane, AgyHeadlessReadyMarker)
 		if lastReady < lastRunning {
@@ -203,6 +210,7 @@ func ShowsInputPrompt(output string) bool {
 		strings.Contains(output, CodexInputPromptMarker) ||
 		strings.Contains(output, PiContextMarker) ||
 		strings.Contains(output, AgyHeadlessReadyMarker) ||
+		strings.Contains(output, cline.ReadyMarker) ||
 		strings.Contains(output, "π >") ||
 		strings.Contains(output, "╰─")
 }

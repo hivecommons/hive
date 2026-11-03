@@ -1,0 +1,1 @@
+- The merge-request watcher now treats GitHub's "Changes must be made through the merge queue" 405 as terminal: it stops retrying the direct merge and logs one classified message per PR head instead of repeated warnings. (#16229)

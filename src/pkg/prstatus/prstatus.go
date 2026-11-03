@@ -4,8 +4,11 @@
 // nothing. So instead of one comment per note (stage stalled, stage
 // regressed, the trusted-human 071 note, the duplicate-PR redirect, …) the
 // hive keeps a single comment tagged Marker and rewrites one keyed section
-// of it in place. The package is pure string handling; the GitHub client
-// and the auto-merge engine each own the list/edit/create calls around it.
+// of it in place. Write (writer.go) is the one path every writer goes
+// through: the GitHub client and the auto-merge engine each adapt their
+// list/edit/create/delete calls to its Forge, and Write serialises them
+// per item, retries an edit whose base changed underneath, and merges
+// duplicate status comments into the oldest.
 package prstatus
 
 import (

@@ -1,0 +1,1 @@
+- Added `github.notifications.shadow` (default off): would-notify instrumentation that classifies every notification-capable GitHub write by producer and class, counts repeats it would suppress, exports the counters on `/metrics`, and documents the write-site inventory — measurement only, no write changes (#16264).

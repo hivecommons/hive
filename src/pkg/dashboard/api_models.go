@@ -87,6 +87,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		cliBackendEntry("gemini", "Gemini", geminiCLI),
 		cliBackendEntry("goose", "Goose", gooseCLI),
 		cliBackendEntry("codex", "OpenAI Codex", codexCLI),
+		cliBackendEntry("cline", "Cline (provider/model)", cliModelResult{fallback: true, discoveryErr: "Cline has no CLI model-catalog command; enter an authenticated provider/model explicitly"}),
 		cliBackendEntry(agyBackendID, "Google Antigravity (agy)", agyCLI),
 		cliBackendEntry(ompBackendID, "Oh My Pi (omp)", ompCLI),
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},

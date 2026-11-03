@@ -18,14 +18,18 @@ import (
 	"github.com/hivecommons/hive/pkg/resolve"
 )
 
+// defaultLaunchCmdForBackend renders the launch command shown for an agent
+// with no launch_cmd of its own. An empty model omits --model entirely
+// (config.ModelFlag): a bare `--model` makes the CLI consume the next flag as
+// its value, which is how a claude agent lost --dangerously-skip-permissions.
 func (s *Server) defaultLaunchCmdForBackend(backend, model string) string {
 	switch {
 	case backend == "copilot":
-		return fmt.Sprintf("/usr/bin/copilot --allow-all --model %s", model)
+		return "/usr/bin/copilot --allow-all" + config.ModelFlag(model)
 	case backend == "claude" || config.IsInferenceBackend(backend) || s.deps.Config.Governor.ResolveGateway(backend) != nil:
-		return fmt.Sprintf("claude --model %s --dangerously-skip-permissions", model)
+		return "claude" + config.ModelFlag(model) + " --dangerously-skip-permissions"
 	default:
-		return fmt.Sprintf("%s --model %s", backend, model)
+		return backend + config.ModelFlag(model)
 	}
 }
 

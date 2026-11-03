@@ -548,6 +548,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	var created *gh.PullRequestReview
 	decisionDeduped := false
 	ownPRNote := ""
+	reviewSubmitted := false
 	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 	} else if req.Revise {
@@ -557,6 +558,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		var revised bool
 		created, revised, err = c.reviseReview(ctx, req, body)
 		if err == nil && created == nil && !revised {
+			reviewSubmitted = true
 			created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 		}
 	} else if existing := c.findOwnOpenDecisionReview(ctx, owner, repoName, req.Number, req.Body); existing != nil && apiEvent == "COMMENT" {
@@ -569,6 +571,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 			decisionDeduped = true
 		}
 	} else {
+		reviewSubmitted = true
 		provenance := owner + "/" + repoName + "#" + strconv.Itoa(req.Number)
 		_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 			Repo:   owner + "/" + repoName,
@@ -603,6 +606,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 				}
 			}
 		})
+	}
+	if reviewSubmitted {
+		c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteReview, repo: owner + "/" + repoName, item: req.Number, body: body, class: NotificationClassRequiredReview, err: err})
 	}
 	if errors.Is(err, errReviseNotAllowlisted) {
 		// Policy, not a transient fault (#13252): the repo is not in

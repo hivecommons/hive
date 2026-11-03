@@ -55,16 +55,11 @@ func TestDockerfileInstallsPiCLI(t *testing.T) {
 }
 
 func TestPiLaunchCommandPassesModelFlag(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	if got, want := backendLaunchCmd("pi", "gpt-5.6-luna", "pi", false, ""), "pi --model gpt-5.6-luna"; got != want {
+		t.Fatalf("pi launch path must invoke pi with --model: got %q, want %q", got, want)
 	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "manager_launch.go"))
-	if err != nil {
-		t.Fatalf("read manager.go: %v", err)
-	}
-	text := string(body)
-	if !strings.Contains(text, "case \"pi\":") || !strings.Contains(text, "launchCmd = fmt.Sprintf(\"%s --model %s\", binary, model)") {
-		t.Fatal("pi launch path must invoke pi with --model")
+	// An empty model omits the flag rather than emitting a bare --model.
+	if got, want := backendLaunchCmd("pi", "", "pi", false, ""), "pi"; got != want {
+		t.Fatalf("pi launch with no model = %q, want %q", got, want)
 	}
 }

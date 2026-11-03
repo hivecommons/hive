@@ -1747,6 +1747,9 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		AppBotLogin:        b.cfg.GitHub.BotLogin(),
 		AppBotUserID:       b.appBotUserIDResolver(),
 		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
+		InferenceDefaultModel: func(backend string) string {
+			return b.cfg.Governor.DefaultInferenceModel(backend)
+		},
 	}
 	return true
 }
@@ -2736,6 +2739,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
+	b.tokenCollector.SetClineHomesRoot("/data/home")
 	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
@@ -7113,6 +7117,8 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
+	case "cline-turn":
+		return true, cruxruntime.RunClineTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.

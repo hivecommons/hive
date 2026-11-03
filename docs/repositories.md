@@ -24,7 +24,7 @@ infrastructure reasons only).
 | [hive-demo](https://github.com/hivecommons/hive-demo) | GitHub template repository for trying Hive on a sample service and walking it up the ACMM levels. Work in progress. | Early development | No |
 | [homebrew-hive](https://github.com/hivecommons/homebrew-hive) | Homebrew tap for one-command install of the Hive contribute app, hotshot and Crux. | Supporting | No, packaging only |
 | [homebrew-repo](https://github.com/hivecommons/homebrew-repo) | Homebrew tap for Spektacular (`brew install hivecommons/homebrew-repo/spektacular`); the formula is updated by Spektacular's release automation. | Supporting | No, packaging only |
-| [docs](https://github.com/hivecommons/docs) | Source for [docs.hivecommons.dev](https://docs.hivecommons.dev). Hive, hotshot, pluk, rationguard, promptargs, dibs and Spektacular docs are single-sourced from their repositories at build time. | Supporting | No |
+| [docs](https://github.com/hivecommons/docs) | Source for [docs.hivecommons.dev](https://docs.hivecommons.dev). Hive, Crux, hotshot, pluk, rationguard, promptargs, dibs and Spektacular docs are single-sourced from their repositories at build time. | Supporting | No |
 | [spektacular-website](https://github.com/hivecommons/spektacular-website) | Source for [spektacular.dev](https://spektacular.dev). | Early development | No |
 | [infra](https://github.com/hivecommons/infra) | Shared CI workflows, Prow configuration and org automation. | Supporting | No |
 | [.github](https://github.com/hivecommons/.github) | Organization profile and community health files (code of conduct, security policy, issue templates). | Supporting | No |
