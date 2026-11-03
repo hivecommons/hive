@@ -251,3 +251,86 @@ func TestContributorFirst_GetStateIsACopy(t *testing.T) {
 		t.Fatalf("GetState must return a copy; mutation leaked: %q", got)
 	}
 }
+
+// Replicas (quality-2) and review heads (quality-fast-1) copy the base
+// agent's config and carry ReplicaOf = base, while the hub reports coverage
+// under the BASE role a relay acts as. Every derived agent of a covered lane
+// must be withheld, and the lane must be published once, not per replica.
+func TestContributorFirst_ReplicasAndReviewHeadsFollowTheBaseLane(t *testing.T) {
+	cfg, agents := standardConfig("quality", "quality-2", "quality-fast-1", "scanner")
+	base := agents["quality"]
+	base.ContributorFirst = true
+	base.ContributorFirstGrace = 5 * time.Minute
+	agents["quality"] = base
+	replica := base
+	replica.ReplicaOf = "quality"
+	replica.ReplicaIndex = 2
+	agents["quality-2"] = replica
+	head := base
+	head.ReplicaOf = "quality"
+	head.ReviewHead = "quality-fast"
+	agents["quality-fast-1"] = head
+	g := New(cfg, agents, testLogger())
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	g.now = func() time.Time { return now }
+
+	g.SetContributorCoverage(coverage("alice"))
+	due := dueSet(g)
+	for _, name := range []string{"quality", "quality-2", "quality-fast-1"} {
+		if due[name] {
+			t.Errorf("%s belongs to the covered quality lane and must not be due", name)
+		}
+	}
+	if !due["scanner"] {
+		t.Error("scanner is not covered and must be due")
+	}
+	lanes := g.GetState().CoveredLanes
+	if len(lanes) != 1 || len(lanes["quality"].Contributors) != 1 {
+		t.Fatalf("CoveredLanes = %+v, want exactly one entry for the quality lane", lanes)
+	}
+	if g.AgentEligibleForCELKick("quality-2") {
+		t.Error("a replica of a covered lane must not be CEL-kickable either")
+	}
+
+	// The grace is the lane's, for replicas too.
+	now = now.Add(time.Minute)
+	g.SetContributorCoverage(nil)
+	if d := dueSet(g); d["quality-2"] || d["quality-fast-1"] {
+		t.Errorf("within grace the derived agents must still be withheld, got %v", d)
+	}
+	now = now.Add(10 * time.Minute)
+	g.SetContributorCoverage(nil)
+	if d := dueSet(g); !d["quality"] || !d["quality-2"] || !d["quality-fast-1"] {
+		t.Errorf("after the grace every agent of the lane must resume, got %v", d)
+	}
+}
+
+// Agent lookups are case-insensitive, so a lane's own grace is honoured
+// however the agent is spelled in hive.yaml (the loader rejects mixed-case
+// contributor-first names, but the governor must not depend on that).
+func TestContributorFirst_MixedCaseAgentNameKeepsItsGrace(t *testing.T) {
+	cfg, agents := standardConfig("Quality")
+	q := agents["Quality"]
+	q.ContributorFirst = true
+	q.ContributorFirstGrace = 30 * time.Minute
+	agents["Quality"] = q
+	g := New(cfg, agents, testLogger())
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	g.now = func() time.Time { return now }
+
+	g.SetContributorCoverage(coverage("alice"))
+	if dueSet(g)["Quality"] {
+		t.Fatal("covered: Quality must not be due")
+	}
+	now = now.Add(time.Minute)
+	g.SetContributorCoverage(nil)
+	// Past the 10m default but inside the agent's own 30m grace.
+	now = now.Add(15 * time.Minute)
+	g.SetContributorCoverage(nil)
+	if dueSet(g)["Quality"] {
+		t.Fatal("inside the agent's 30m grace Quality must still be withheld; the default grace must not have expired the record")
+	}
+	if want := time.Date(2026, 11, 3, 12, 30, 0, 0, time.UTC); !g.GetState().CoveredLanes["quality"].GraceUntil.Equal(want) {
+		t.Fatalf("GraceUntil = %v, want %v", g.GetState().CoveredLanes["quality"].GraceUntil, want)
+	}
+}

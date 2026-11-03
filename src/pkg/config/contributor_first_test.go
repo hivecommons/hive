@@ -44,6 +44,11 @@ func TestValidateContributorFirst(t *testing.T) {
 			delegatable: []string{"architect"},
 		},
 		{
+			name:    "mixed-case agent name could never be claimed",
+			agents:  map[string]AgentConfig{"Quality": {Backend: "claude", ContributorFirst: true}},
+			wantErr: "lower-case",
+		},
+		{
 			name:    "supervisor is never delegatable",
 			agents:  map[string]AgentConfig{"supervisor": {Backend: "claude", ContributorFirst: true}},
 			wantErr: "supervisor",

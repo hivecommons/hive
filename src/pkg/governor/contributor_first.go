@@ -147,9 +147,44 @@ func (g *Governor) SetContributorCoverage(coverage map[string]ContributorCoverag
 	}
 }
 
+// coverageLane is the key the hub reports coverage under for an agent: the
+// base lane name, case-folded. A replica (quality-2) or a review head
+// (quality-fast-1) carries ReplicaOf = base and a relay acts as the BASE role,
+// so every derived agent of a contributor-first lane is withheld together
+// with its base rather than only replica 1.
+func coverageLane(agentName string, ac config.AgentConfig) string {
+	lane := agentName
+	if ac.ReplicaOf != "" {
+		lane = ac.ReplicaOf
+	}
+	return strings.ToLower(strings.TrimSpace(lane))
+}
+
+// baseAgentForLaneLocked finds the configuration that owns a coverage lane:
+// the base agent whose case-folded name is the lane or, failing that, one of
+// its derived agents, which carry the base's copied flag and grace. Agent
+// names are matched case-insensitively so a lane's grace is honoured however
+// the agent is spelled in hive.yaml. Callers must hold g.mu.
+func (g *Governor) baseAgentForLaneLocked(lane string) (config.AgentConfig, bool) {
+	var derived config.AgentConfig
+	found := false
+	for name, ac := range g.agents {
+		if coverageLane(name, ac) != lane {
+			continue
+		}
+		if ac.ReplicaOf == "" {
+			return ac, true
+		}
+		if !found {
+			derived, found = ac, true
+		}
+	}
+	return derived, found
+}
+
 // contributorCoveredLocked reports whether the named agent's kicks are
-// withheld because a contributor relay is covering its role: the agent has
-// contributor_first set, and either a relay covers the role right now or the
+// withheld because a contributor relay is covering its lane: the agent has
+// contributor_first set, and either a relay covers the lane right now or the
 // last one disappeared less than contributor_first_grace ago. Callers must
 // hold g.mu.
 func (g *Governor) contributorCoveredLocked(agentName string) (LaneCoverage, bool) {
@@ -157,7 +192,7 @@ func (g *Governor) contributorCoveredLocked(agentName string) (LaneCoverage, boo
 	if !ok || !ac.ContributorFirst {
 		return LaneCoverage{}, false
 	}
-	rec, ok := g.coverage[strings.ToLower(strings.TrimSpace(agentName))]
+	rec, ok := g.coverage[coverageLane(agentName, ac)]
 	if !ok {
 		return LaneCoverage{}, false
 	}
@@ -176,11 +211,12 @@ func (g *Governor) contributorCoveredLocked(agentName string) (LaneCoverage, boo
 }
 
 // coveredLanesLocked is the per-evaluation publication: every contributor-first
-// agent whose kicks are currently withheld, with who is covering it. Callers
-// must hold g.mu.
+// lane whose kicks are currently withheld, keyed by the base lane name (one
+// entry per lane, not per replica), with who is covering it. Callers must
+// hold g.mu.
 func (g *Governor) coveredLanesLocked() map[string]LaneCoverage {
 	var out map[string]LaneCoverage
-	for name := range g.agents {
+	for name, ac := range g.agents {
 		cov, ok := g.contributorCoveredLocked(name)
 		if !ok {
 			continue
@@ -188,18 +224,18 @@ func (g *Governor) coveredLanesLocked() map[string]LaneCoverage {
 		if out == nil {
 			out = make(map[string]LaneCoverage)
 		}
-		out[name] = cov
+		out[coverageLane(name, ac)] = cov
 	}
 	return out
 }
 
-func (g *Governor) contributorFirstLocked(role string) bool {
-	ac, ok := g.agents[role]
+func (g *Governor) contributorFirstLocked(lane string) bool {
+	ac, ok := g.baseAgentForLaneLocked(lane)
 	return ok && ac.ContributorFirst
 }
 
-func (g *Governor) contributorFirstGraceLocked(role string) time.Duration {
-	if ac, ok := g.agents[role]; ok {
+func (g *Governor) contributorFirstGraceLocked(lane string) time.Duration {
+	if ac, ok := g.baseAgentForLaneLocked(lane); ok {
 		return ac.ContributorFirstGraceOrDefault()
 	}
 	return config.DefaultContributorFirstGrace

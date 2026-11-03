@@ -27,6 +27,13 @@ func (c *Config) validateContributorFirst() error {
 			continue
 		}
 		role := strings.ToLower(strings.TrimSpace(name))
+		// Relays request roles in lower case and the hub looks the agent up by
+		// that spelling (contribute_agent_roles.go), so a contributor-first
+		// agent with a mixed-case name could never be covered. Reject it for
+		// the same reason as an undelegatable role: the flag would be inert.
+		if role != name {
+			return fmt.Errorf("agent %s: contributor_first is true but the agent name is not lower-case — relays claim roles in lower case, so %q could never be covered", label, name)
+		}
 		if role == "supervisor" {
 			return fmt.Errorf("agent %s: contributor_first is true but the supervisor role is never delegatable to contributors", label)
 		}
