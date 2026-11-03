@@ -39,7 +39,8 @@ func (s *statusCommentServer) start(t *testing.T) *httptest.Server {
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			s.creates++
-			cm := map[string]any{"id": 100 + s.creates, "body": body["body"]}
+			// GitHub stamps the authenticated App as the comment's user.
+			cm := map[string]any{"id": 100 + s.creates, "body": body["body"], "user": map[string]any{"login": "hive-app[bot]", "type": "Bot"}}
 			s.comments = append(s.comments, cm)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(cm)
