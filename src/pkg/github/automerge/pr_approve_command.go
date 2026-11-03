@@ -87,10 +87,16 @@ func (c *Engine) PRApproveReply(ctx context.Context, displayRepo string, number 
 		if contributor {
 			diffReason = contributorLaneDiffReason(files)
 		}
-		if len(intent.HumanMergePathMatches(files, patterns)) == 0 && diffReason == contributorLaneReasonWorkflowPath && c.currentContributorLanePolicy().OwnerApprovalReleasesWorkflowFence {
+		// The same pin-only exception the sweep lanes apply (#16266), so the
+		// reply never contradicts what the lane will do on its next pass.
+		matches := intent.HumanMergePathMatches(files, patterns)
+		if exempt, _ := c.humanMergePinOnlyExempt(owner, repo, pr, files, matches); exempt {
+			matches = nil
+		}
+		if len(matches) == 0 && diffReason == contributorLaneReasonWorkflowPath && c.currentContributorLanePolicy().OwnerApprovalReleasesWorkflowFence {
 			return "`/hive approve` acknowledged, but this PR edits CI workflow / action files, which the contributor lane merges only on a hive owner's explicit approval: a trusted merger submits a GitHub **Approve** review for the current head (`" + stagelabels.ShortSHA(head) + "`) or approves it from the Hive dashboard, and the lane merges once CI and the other gates are clear. Approval on an earlier head does not carry over.", nil
 		}
-		if len(intent.HumanMergePathMatches(files, patterns)) > 0 || diffReason != "" {
+		if len(matches) > 0 || diffReason != "" {
 			return "`/hive approve` acknowledged, but this PR changes files that its lane requires a person to merge manually. The command cannot override that rule; a maintainer must review and merge it.", nil
 		}
 	}
