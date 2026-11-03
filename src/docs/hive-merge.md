@@ -211,15 +211,17 @@ permission/credential/signing text and non-pin edits fail closed.
 This classifier proves **syntax only**, not authenticated identity, exact-head
 binding, file-list completeness, semantic interpretation or review of upstream
 references. The sweep supplies the author (GitHub's PR author login) and
-file-list completeness itself; the relay integration remains #16265; attribution and safe hold release are tracked in #16269. None of the
+file-list completeness itself; the relay integration remains #16265;
+attribution and safe hold release are tracked in #16269. None of the
 schema or classifier APIs grants permission to merge or clears a hold. Native
 required checks and producer bindings, freshness, current reviews, substantive
 objections, unrelated holds and configured soak must remain independent gates.
 
 Operators stage the key in the controller's configured `hive.yaml` seed, not in
 the image repository (reload behaviour is documented in the operator reference
-linked above). Reloading this schema alone still does **not** enable admission.
-The integration PRs must wire live policy updates into every merge path.
+linked above). On an image that contains #16266, reloading the seed enables
+the sweep and `/approve` exception at once; the `hive-merge` relay still
+ignores the key until #16265 lands, so relay merges keep holding matching PRs.
 
 There is **no minimum deployable version enabling this lane yet**. Utah rollout
 and current-head positive/negative deployment evidence remain tracked by

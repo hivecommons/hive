@@ -28,7 +28,7 @@ const testHumanMergePattern = ".github/workflows/**"
 type humanPathFront struct {
 	mu          sync.Mutex
 	files       []string
-	fileEntries []map[string]any // when set, served verbatim instead of files
+	fileEntries []map[string]any // when set, served first, before the entries built from files
 	filesStatus int
 	filesHits   int
 	labels      []string

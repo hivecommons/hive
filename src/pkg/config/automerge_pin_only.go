@@ -8,10 +8,13 @@ import (
 )
 
 // PinOnlyException is policy, not authorization to merge. The automerge sweep
-// lanes and /approve apply it via humanMergePinOnlyExempt (#16266), which
-// supplies trusted identity, exact-head diff and review evidence before
-// consulting the purely syntactic classifier; the hive-merge relay does not
-// yet (#16265).
+// lanes and /approve apply it (#16266) through Engine.SetHumanMergePinOnly /
+// Options.HumanMergePinOnly: before consulting the purely syntactic
+// classifier they prove the PR opener is a trusted author and that the
+// fetched changed-file list is complete, and the merge itself is bound to
+// the evaluated head SHA. They do not prove review of the referenced
+// upstream changes; review stays with the lanes' independent review gates.
+// The hive-merge relay does not apply the exception yet (#16265).
 type PinOnlyException struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
 	Paths          []string `yaml:"paths" json:"paths"`
