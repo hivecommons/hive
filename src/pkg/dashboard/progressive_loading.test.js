@@ -282,3 +282,39 @@ test('backend discovery retains its slot until each model request is decoded', a
   await run;
   assert.deepEqual(calls, ['one', 'two', 'gateways']);
 });
+
+for (const readyState of ['loading', 'interactive', 'complete']) {
+  test('modal initialization waits for later main-script constants when readyState is ' + readyState, () => {
+    const install = html.match(/\(function installModalScrollLock\(\) \{[\s\S]*?\n    \}\)\(\);/);
+    const helpers = html.slice(html.indexOf('    const HIVE_MODAL_SCROLL_EPS ='), html.indexOf('    // On narrow viewports a .hive-dialog'));
+    assert.ok(install);
+    assert.ok(helpers.includes('function hiveModalScrollInit'));
+    assert.ok(html.indexOf(install[0]) < html.indexOf(helpers), 'exercise production declaration order');
+    const callbacks = [], classes = new Set(['modal-scroll']);
+    const scroller = {
+      scrollHeight: 100, clientHeight: 10, scrollTop: 0, dataset: {},
+      addEventListener() {},
+      classList: {
+        contains: cls => classes.has(cls), add: cls => classes.add(cls),
+        toggle(cls, on) { if (on) classes.add(cls); else classes.delete(cls); },
+      },
+    };
+    const root = { classList: { toggle() {} } };
+    const document = {
+      readyState, body: root, documentElement: root,
+      querySelectorAll: selector => selector.startsWith('.modal-scroll') ? [scroller] : [],
+      addEventListener(event, callback) {
+        assert.equal(event, 'DOMContentLoaded');
+        callbacks.push(callback);
+      },
+    };
+    assert.doesNotThrow(() => new Function('document', 'window', 'MutationObserver', 'queueMicrotask',
+      install[0] + '\n' + helpers,
+    )(document, { addEventListener() {} }, class { observe() {} }, fn => callbacks.push(fn)));
+    assert.equal(scroller.dataset.modalScrollWired, undefined, 'initialization must not run mid-script');
+    assert.equal(callbacks.length, 1);
+    callbacks[0]();
+    assert.equal(scroller.dataset.modalScrollWired, '1');
+    assert.equal(classes.has('is-scrollable-more'), true);
+  });
+}
