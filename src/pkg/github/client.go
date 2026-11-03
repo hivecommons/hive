@@ -511,6 +511,20 @@ type Client struct {
 	// issues:write) still surface within ~an hour instead of never. Guarded by
 	// advisoryMu.
 	advisoryDigestSkips map[string]int
+	// advisoryDigestAnchors memoizes, per "owner/repo#issue", the ID of the
+	// App-authored digest comment the last successful write landed on
+	// (#16439). It is the pin the digest returns to when a foreign-authored
+	// digest comment sits newer on the issue, and the key for the per-anchor
+	// last-written material fingerprint in advisoryDigestAnchorHashes, which
+	// lets an unchanged re-render skip the PATCH even when the listed body is
+	// stale. Guarded by advisoryMu.
+	advisoryDigestAnchors      map[string]int
+	advisoryDigestAnchorHashes map[string]string
+	// advisoryForeignDigestWarned records, per "owner/repo#issue", that the
+	// "digest comment not authored by this App" condition has already been
+	// logged at Warn in this process; later cycles log it at Debug (#16439).
+	// Guarded by advisoryMu.
+	advisoryForeignDigestWarned map[string]bool
 	// hiveIdentity records which accounts count as "this hive" for the
 	// self-authorization gate (pr_self_authorization.go, #5117). It is optional
 	// — the gate recognises the App bot without it — and exists so an issue
