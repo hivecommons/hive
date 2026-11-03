@@ -110,8 +110,11 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 
 	models, complete := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
 	fallback := false
+	if len(models) > 0 {
+		noModelsWarned.clear(backend)
+	}
 	if len(models) == 0 {
-		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
+		warnNoModelsOnce(s.logger, backend, len(endpoints))
 		// Discovery is authoritative (a LiteLLM gateway entitlement-filters
 		// /v1/models per API key); only when it fails do we fall back to
 		// the common static aliases, flagged so the UI can mark them as
