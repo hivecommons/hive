@@ -242,10 +242,13 @@ func (s *Store) save() error {
 // prune drops resolved episodes once recurrence would start a fresh episode
 // anyway, so the capacity cap bounds live inventory rather than eventually
 // refusing every report. Uncertain episodes stay until reconciled, items drop once they have no episodes, and
-// history-seeded hash-only baselines stay as the replay guard.
+// history-seeded hash-only baselines (no Key, never observed) are dropped once
+// the window has passed, when a recurrence would start a fresh episode anyway.
 func (s *Store) prune(now time.Time, window time.Duration) {
 	for k, e := range s.state.Episodes {
 		if e.State == Resolved && !e.Uncertain && !e.ResolvedAt.IsZero() && now.Sub(e.ResolvedAt) > window {
+			delete(s.state.Episodes, k)
+		} else if e.Baseline && e.State == Observed && e.Key == (Key{}) && now.Sub(e.FirstSeen) > window {
 			delete(s.state.Episodes, k)
 		}
 	}
