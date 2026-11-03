@@ -1,6 +1,10 @@
 package review
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hivecommons/hive/pkg/outputschema"
+)
 
 func TestNoFindingsAcknowledgement(t *testing.T) {
 	yes := []string{
@@ -42,7 +46,7 @@ func TestCleanReview(t *testing.T) {
 		{"no further findings", "Re-read after the fixup; no further findings from me.", approve, true},
 		{"not-applicable perspective", "Nothing to review for style here — no findings.", []PerspectiveReport{{Perspective: PerspectiveStyle, Verdict: VerdictApprove, NotApplicable: true}}, true},
 		{"narration without the phrase", "Read the tree at `c7c8dfb`. Looks correct to me.", approve, false},
-		{"says no findings but report has one", narrated, []PerspectiveReport{{Perspective: PerspectiveCorrectness, Verdict: VerdictApprove, Findings: []PerspectiveFinding{{Perspective: PerspectiveCorrectness}}}}, false},
+		{"says no findings but report has one", narrated, []PerspectiveReport{{AgentReport: outputschema.AgentReport{Findings: []outputschema.Finding{{Title: "nil deref"}}}, Perspective: PerspectiveCorrectness, Verdict: VerdictApprove}}, false},
 		{"says no findings but requests changes", narrated, []PerspectiveReport{{Perspective: PerspectiveCorrectness, Verdict: VerdictChangesRequested}}, false},
 		{"decision requested", "No findings, but a maintainer should decide the API shape.", []PerspectiveReport{{Perspective: PerspectiveCorrectness, Verdict: VerdictApprove, DecisionRequested: true}}, false},
 		{"hidden marker", "<!-- hive-decision-question: keep the flag? -->\nNo findings otherwise.", approve, false},
