@@ -174,7 +174,11 @@ func TestRecoveryAuditsForeignExpirationWithoutAcknowledgement(t *testing.T) {
 }
 
 func TestRecoveryPreservesStillValidLeasesAndAcknowledgementHistory(t *testing.T) {
-	b := testBroker(t, shortRetention)
+	// The live lease must outlast the old message's expiry by a margin that survives CI scheduling stalls.
+	b := testBroker(t, func(c *Config) {
+		shortRetention(c)
+		c.Retention, c.Lease, c.AckRetention = 4*time.Second, 4*time.Second, 4*time.Second
+	})
 	ctx := context.Background()
 	oldPub := publish(t, b, "old", api.LaneWork)
 	old := claim(t, b, "atlas", "workers")
@@ -182,7 +186,7 @@ func TestRecoveryPreservesStillValidLeasesAndAcknowledgementHistory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	timer := time.NewTimer(time.Until(msg.Time.Add(b.cfg.Retention / 2)))
+	timer := time.NewTimer(time.Until(msg.Time.Add(b.cfg.Retention * 3 / 4)))
 	<-timer.C
 	publish(t, b, "still-live", api.LaneWork)
 	live := claim(t, b, "beacon", "workers")
