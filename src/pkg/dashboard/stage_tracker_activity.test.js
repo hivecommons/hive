@@ -242,7 +242,10 @@ test('decision pointer, focus and keyboard delegation retain the same accessible
   assert.deepEqual(opened.pop(), { button, pin: { focus: true } }, 'pointer activation preserves the native decision action path');
   let hidden = 0;
   let actionFocused = 0;
-  const action = { focus() { actionFocused++; } };
+  const action = { focus(options) {
+    assert.deepEqual(options, { preventScroll: true }, 'keyboard entry cannot generate the scroll event that closes its own decision dialog');
+    actionFocused++;
+  } };
   const dialog = { querySelector() { return action; } };
   const openExisting = new Function('hideConfigTooltip', 'dialog', 'let _stageTrackerDecisionPop = { key: "hivecommons/hive/pr#7", timer: 0, el: dialog };\n' + fn(actions, 'stageTrackerOpenDecisionPop') + ';return stageTrackerOpenDecisionPop;')(() => { hidden++; }, dialog);
   openExisting(button, false);
@@ -269,6 +272,9 @@ test('canonical activity browser wiring is retained (not browser/visual proof)',
   assert.match(harness, /captureBeyondViewport: !viewportOnly/);
   assert.match(harness, /screenshot\(prefix \+ '-decision-pointer\.png', true\)/);
   assert.match(harness, /screenshot\(prefix \+ '-decision-keyboard\.png', true\)/);
+  assert.match(harness, /every native decision action must be reachable and unobscured/);
+  assert.match(harness, /elementFromPoint/);
+  assert.match(harness, /activity-density-viewport\.png`, true\)/);
   assert.match(harness, /preparationRailLayoutFixture\.toString/);
   assert.match(harness, /if \(activityFailures\.length\) throw new Error/);
   assert.match(harness, /activity-probes\.json/);
@@ -291,6 +297,8 @@ test('browser probes require a dedicated preview and cannot count offscreen head
       assert.match(source, /entire header control stays horizontally inside the toolbar and viewport/);
       assert.match(source, /control\.scrollIntoView/);
       assert.match(source, /coverage\.controlTargets === coverage\.hitTested/);
+      assert.match(source, /await settleScroll\(control, name\)/);
+      assert.match(source, /control\/visual viewport must settle before its mandatory hit-test/);
       assert.doesNotMatch(source, /if \(x >= 0|if \(!visible\(control\)\) continue/);
     } else {
       assert.match(source, /new PointerEvent\('pointerover'/);

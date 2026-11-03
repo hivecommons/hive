@@ -85,6 +85,15 @@ function rule(selector) {
   return found[1];
 }
 
+test('persistent human/preparation context wins the generic event-entry animation cascade', () => {
+  assert.match(rule('.cue-event'), /animation: cue-event-in/);
+  for (const selector of ['.cue-event.ham-human-context', '.cue-event.ham-preparation-comment']) {
+    assert.match(rule(selector), /animation: none/);
+    assert.ok(selector.split('.').length > '.cue-event'.split('.').length,
+      'persistent context has greater specificity even when the generic event rule appears later');
+  }
+});
+
 test('row materialization binds canonical header boundaries for root and nested rows', () => {
   const headers = ['4', '5'].map(hamPrStart => ({
     dataset: { hamPrStart }, properties: {},

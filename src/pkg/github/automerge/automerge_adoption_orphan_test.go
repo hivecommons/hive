@@ -239,7 +239,9 @@ func TestAdoptionMarkerWithClosedCopyReadopts(t *testing.T) {
 	h.adopt.superseders[89] = map[string]any{"number": 89, "state": "closed", "merged": false}
 	h.adopt.mu.Unlock()
 	res := observe()
-	if h.adopt.commentReads != 1 {
+	// One read for the marker scan, one for the 085 entry-comment upsert
+	// (hivecommons/hive#16433) that precedes posting the entry.
+	if h.adopt.commentReads != 2 {
 		t.Fatalf("comment reads = %d", h.adopt.commentReads)
 	}
 	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 0 {
@@ -261,7 +263,7 @@ func TestAdoptionMarkerWithClosedCopyReadopts(t *testing.T) {
 	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" {
 		t.Fatalf("074 after marker recovery: added=%v removed=%v", h.api.added, h.api.removed)
 	}
-	if h.adopt.commentReads != 1 {
+	if h.adopt.commentReads != 2 {
 		t.Fatalf("comments re-read: %d", h.adopt.commentReads)
 	}
 }
@@ -320,7 +322,10 @@ func TestAdoptionMarkerSettledOrAbsentIsNotRecovered(t *testing.T) {
 	h.adopt.mu.Unlock()
 	observe()
 	observe()
-	if len(h.adopt.pulls) != 0 || h.adopt.commentReads != 1 {
+	// The marker scan reads once per head; the 085 entry-comment upsert
+	// reads once more before the entry is posted, and not again for the
+	// same head and cause (hivecommons/hive#16433).
+	if len(h.adopt.pulls) != 0 || h.adopt.commentReads != 2 {
 		t.Fatalf("settled marker recovered: pulls=%d reads=%d", len(h.adopt.pulls), h.adopt.commentReads)
 	}
 	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))

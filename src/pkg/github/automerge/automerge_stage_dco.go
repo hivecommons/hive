@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -104,18 +105,10 @@ func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key str
 			}
 		}
 	}
-	opts := &gh.ListOptions{PerPage: 100}
-	var all []*gh.RepositoryCommit
-	for page := 0; page < stageDCOMaxPages; page++ {
-		commits, resp, err := c.gh.PullRequests.ListCommits(ctx, obs.Owner, obs.Repo, obs.Number, opts)
-		if err != nil {
-			return dcoStats{}, fmt.Errorf("listing commits for %s#%d: %w", obs.Display, obs.Number, err)
-		}
-		all = append(all, commits...)
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
+	// A list cut off at GitHub's cap is judged as read, as before.
+	all, _, err := hgithub.ListPRRepositoryCommits(ctx, c.gh, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		return dcoStats{}, err
 	}
 	return dcoCommitStatsDetailedForAuthor(all, c.transport.AppBotLogin(), obs.Author), nil
 }

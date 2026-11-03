@@ -128,6 +128,9 @@ func (c Claim) Live(now time.Time) bool {
 type Release struct {
 	Identity string
 	At       time.Time
+	// Kind is the released holder's kind when the marker carries kind=
+	// (human, agent, contributor, external); "" on older markers.
+	Kind string
 }
 
 // ParseReleaseMarker reads a `<!-- hive:release who=<identity> ... -->`
@@ -151,6 +154,8 @@ func ParseReleaseMarker(body string) (Release, bool) {
 		switch key {
 		case "who":
 			rel.Identity = val
+		case "kind":
+			rel.Kind = val
 		case "at":
 			at, err := time.Parse(time.RFC3339, val)
 			if err != nil {

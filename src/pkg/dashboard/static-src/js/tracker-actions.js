@@ -1033,7 +1033,7 @@
         clearTimeout(_stageTrackerDecisionPop.timer);
         if (pin && pin.focus) {
           const first = _stageTrackerDecisionPop.el.querySelector('.ham-decision-act:not([aria-disabled="true"])');
-          (first || _stageTrackerDecisionPop.el).focus();
+          (first || _stageTrackerDecisionPop.el).focus({ preventScroll: true });
         }
         return;
       }
@@ -1087,7 +1087,7 @@
       window.addEventListener('resize', p.onAway);
       window.addEventListener('scroll', p.onAway, true);
       _stageTrackerDecisionPop = p;
-      if (pin && pin.focus) { const first = el.querySelector('.ham-decision-act:not([aria-disabled="true"])'); (first || el).focus(); }
+      if (pin && pin.focus) { const first = el.querySelector('.ham-decision-act:not([aria-disabled="true"])'); (first || el).focus({ preventScroll: true }); }
     }
     // The pointer left the trigger or the popover: close after a beat unless
     // it is pinned or the pointer is back over either (rows re-render, so

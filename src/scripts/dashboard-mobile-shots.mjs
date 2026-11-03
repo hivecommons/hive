@@ -329,12 +329,25 @@ async function main() {
         const result = await evaluate(`(() => {
           const dialogs = [...document.querySelectorAll('.ham-decision-pop')];
           const portal = document.getElementById('config-tooltip-portal');
+          const tolerance = 1;
+          const actions = [...(dialogs[0]?.querySelectorAll('.ham-decision-act') || [])].map(action => {
+            const box = action.getBoundingClientRect();
+            const target = document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2);
+            return { label: action.textContent.trim(), box: box.toJSON(),
+              target: target?.className || target?.tagName || null,
+              reachable: box.width > 0 && box.height > 0 && box.left >= -tolerance &&
+                box.right <= innerWidth + tolerance && box.top >= -tolerance &&
+                box.bottom <= innerHeight + tolerance && (target === action || action.contains(target)) };
+          });
           return { dialogs: dialogs.length,
             tooltipOpen: !!portal && !portal.hidden && getComputedStyle(portal).display !== 'none',
-            focusInside: !!dialogs[0]?.contains(document.activeElement) };
+            focusInside: !!dialogs[0]?.contains(document.activeElement), actions };
         })()`);
         if (result.dialogs !== 1 || result.tooltipOpen) failures.push(mode + ': one unobscured decision dialog required');
         if (mode !== 'native pointer' && !result.focusInside) failures.push(mode + ': keyboard must enter the existing dialog');
+        if (!result.actions.length || result.actions.some(action => !action.reachable)) {
+          failures.push(mode + ': every native decision action must be reachable and unobscured: ' + JSON.stringify(result.actions));
+        }
         return { mode, ...result };
       };
       const observations = [await inspect('native pointer')];
@@ -439,6 +452,8 @@ async function main() {
           await evaluate(collapseAllJS);
           if (!await evaluate(expandOneJS('activity-monitor-section'))) throw new Error('Cannot expand actual Activity Monitor');
           const fixture = await evaluate('(' + activityDensityFixture.toString() + ')(' + JSON.stringify(density) + ')');
+          await sleep(STATE_SETTLE_MS);
+          await screenshot(`${vp.name}-${theme}-activity-density-viewport.png`, true);
           const results = [];
           for (const probe of probes) {
             const result = await evaluate(`(async () => {

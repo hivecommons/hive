@@ -10,6 +10,21 @@
   const visible = el => el && el.getClientRects().length && getComputedStyle(el).display !== 'none';
   const rect = el => el.getBoundingClientRect();
   const assert = (ok, label) => { if (!ok) failures.push(label); };
+  const settleScroll = async (control, name) => {
+    const maxFrames = 12;
+    const requiredStableFrames = 2;
+    let previous = '', stable = 0;
+    for (let frame = 0; frame < maxFrames; frame++) {
+      await new Promise(requestAnimationFrame);
+      const box = rect(control), viewport = window.visualViewport;
+      const next = JSON.stringify([box.x, box.y, scrollX, scrollY,
+        viewport?.offsetLeft, viewport?.offsetTop, viewport?.scale]);
+      stable = next === previous ? stable + 1 : 0;
+      if (stable >= requiredStableFrames) return;
+      previous = next;
+    }
+    assert(false, name + 'control/visual viewport must settle before its mandatory hit-test');
+  };
   const inspectControl = async (control, toolbar, name) => {
     coverage.controlTargets++;
     assert(visible(control), name + 'expected header control is not hidden');
@@ -30,13 +45,16 @@
     }
     try {
       control.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-      await new Promise(requestAnimationFrame);
+      await settleScroll(control, name);
       const box = contained();
       assert(box.top >= -tolerance && box.bottom <= innerHeight + tolerance, name + 'entire control is vertically reachable after deliberate scrolling');
       const hit = document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2);
       coverage.hitTested++;
       assert(hit === control || control.contains(hit), name + 'every control center hits that control, not an overlay or offscreen null: ' +
-        JSON.stringify({ control: control.className, box: box.toJSON(), hit: hit?.className || hit?.tagName || null }));
+        JSON.stringify({ control: control.className, box: box.toJSON(), hit: hit?.className || hit?.tagName || null,
+          viewport: window.visualViewport?.toJSON?.() || { offsetLeft: window.visualViewport?.offsetLeft,
+            offsetTop: window.visualViewport?.offsetTop, width: window.visualViewport?.width,
+            height: window.visualViewport?.height, scale: window.visualViewport?.scale } }));
     } finally {
       for (const { el, left, top } of scrollParents) el.scrollTo({ left, top, behavior: 'instant' });
       await new Promise(requestAnimationFrame);

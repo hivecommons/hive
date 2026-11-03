@@ -47,7 +47,8 @@ Browser fixture evidence is explicitly mocked and rebased to the browser clock;
 permissions are mocked only in this isolated file-page, restored on cleanup.
 This does not validate private authenticated live projection or production rollout.
 The existing `dashboard-mobile-shots` artifact contains `activity-layout.json`,
-per-viewport/theme `*-activity-probes.json` and `*-activity-density.png`, with
+per-viewport/theme `*-activity-probes.json`, full-document `*-activity-density.png`
+and actual-viewport `*-activity-density-viewport.png`, with
 PR head, checkout SHA and generated-asset SHA256 provenance. Activity probe
 violations fail capture after saving the results/screenshots for every viewport;
 the existing reporting-only workflow policy and permissions are unchanged.
@@ -60,6 +61,12 @@ the isolated headless page owns emulated focus, recorded in pointer precondition
 Geometry failures include the actual control hit target or measured content gap;
 no decision action is activated. Fixture/probe failures remain failures, not
 skipped or string-assertion substitutes for browser proof.
+Persistent human/preparation context overrides the generic event-entry animation
+so transient translation cannot move neighboring narrow captions. Keyboard entry
+focuses decision actions without scrolling, which would otherwise close the
+dialog through its scroll-away listener. Control probes await a bounded stable
+scroll/visual viewport before every mandatory hit-test; native pointer/keyboard
+reports also retain each decision action's bounds and actual hit target.
 The 12:36 screenshot shapes additionally exercise nested #16450 and root
 #16451 recorded/unverified preparation fronts, #16446 awaiting a superseding
 human decision, pluk #436 assigned review after passing CI, #16437 approved
