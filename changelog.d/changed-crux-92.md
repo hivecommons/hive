@@ -1,1 +1,1 @@
-- chore(crux): consolidate rune-truncation helpers into internal/textutil (hivecommons/crux#92)
+- Crux rune-aware string truncation helpers (`truncateHead`, `truncateTail`, `truncateStr` and `truncateRunes`, previously implemented separately inside `crux/agent`) moved into the new leaf package `crux/internal/textutil` as `Head`, `Tail` and `Runes`; `crux/agent` keeps one-line delegates, so behaviour and callers are unchanged ([hivecommons/crux#92](https://github.com/hivecommons/crux/issues/92)).

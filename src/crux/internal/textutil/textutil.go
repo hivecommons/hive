@@ -21,15 +21,15 @@ func Tail(s string, n int) string {
 	return ellipsis + string(runes[len(runes)-n:])
 }
 
-// Runes hard-cuts s to at most max runes with no ellipsis. A max <= 0 returns
+// Runes hard-cuts s to at most n runes with no ellipsis. An n <= 0 returns
 // s unchanged.
-func Runes(s string, max int) string {
-	if max <= 0 {
+func Runes(s string, n int) string {
+	if n <= 0 {
 		return s
 	}
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= n {
 		return s
 	}
-	return string(r[:max])
+	return string(r[:n])
 }
