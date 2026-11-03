@@ -167,8 +167,11 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 	// passes the marker check, but a kick typed into it is consumed by the
 	// menu — or by bash once the default "No, exit" selection exits the CLI
 	// (observed live: "-bash: NEVER: command not found").
+	// A Claude permission dialog is a blocking prompt too, but a restart
+	// relaunches into the same dialog; the prompt wait below answers it in
+	// place (or names it in the error) instead.
 	pane := m.captureVisiblePaneForAgent(agent)
-	if !paneHasCLIMarker(pane) || paneShowsConsentScreen(pane) {
+	if (!paneHasCLIMarker(pane) || paneShowsConsentScreen(pane)) && !paneShowsClaudePermissionDialog(pane) {
 		consentScreen := paneShowsConsentScreen(pane)
 		m.mu.Unlock()
 		// Answer the bypass consent screen in place: a restart relaunches
@@ -236,35 +239,6 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 // must hold m.mu and must already have verified the CLI is ready for input
 // (crash detect + waitForCLIReadyForAgent + waitForInputPromptForAgent) —
 // this function does no readiness checking of its own.
-// kickChunkPauseUnlocked waits out one inter-chunk delay with m.mu released,
-// then re-acquires it and re-validates that the kick still belongs to the
-// session it was pinned to.
-//
-// Returns false if the agent disappeared, was replaced, or restarted while
-// unlocked, meaning the remaining chunks must not be typed — the pane they
-// would land in is a different run's. This mirrors the epoch revalidation
-// SendKick already does around waitForInputPromptForAgent (#7363).
-//
-// The identity check is deliberately pointer-based as well as epoch-based: a
-// replacement AgentProcess for the same name starts its kickEpoch at zero, so
-// an epoch comparison alone could alias a fresh object as "unchanged".
-//
-// Always returns with m.mu held, including on the false path, so callers can
-// keep their `Locked` contract.
-func (m *Manager) kickChunkPauseUnlocked(agent *AgentProcess, epoch int, d time.Duration) bool {
-	name := agent.Name
-
-	m.mu.Unlock()
-	time.Sleep(d)
-	m.mu.Lock()
-
-	current, ok := m.agents[name]
-	if !ok || current != agent {
-		return false
-	}
-	return agent.kickEpoch == epoch
-}
-
 func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) error {
 	// Consume the one-shot resume flag first, before any early return, so a
 	// skipped delivery cannot leave it armed for an unrelated later kick.
@@ -287,21 +261,8 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	defer agent.kickDelivering.Store(false)
 
 	visible := m.captureVisiblePaneForAgent(agent)
-	menuFooter := paneTUIMenuFooter(effectiveBackend(agent), visible)
-	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) || paneShowsCopilotQuestionForm(visible) || menuFooter != "" {
-		reason := "pane not at a ready input prompt"
-		if menuFooter != "" {
-			reason = tuiMenuNotReadyReason(menuFooter)
-		}
-		m.markKickUndeliverableLocked(agent, time.Now(), reason)
-		m.logger.Warn("kick delivery skipped: CLI is not at a ready prompt; refusing to type kick into shell",
-			"agent", agent.Name, "trigger", trigger, "has_cli_marker", paneHasCLIMarker(visible),
-			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible),
-			"question_form", paneShowsCopilotQuestionForm(visible), "menu_footer", menuFooter)
-		if menuFooter != "" {
-			return fmt.Errorf("agent %s pane not at a ready input prompt: %s", agent.Name, reason)
-		}
-		return m.kickNotReadyErrorLocked(agent, time.Now(), fmt.Errorf("agent %s pane not at a ready input prompt", agent.Name))
+	if err := m.checkKickPromptReadyLocked(agent, visible, trigger); err != nil {
+		return err
 	}
 
 	// Archive the PREVIOUS kick's scrollback and clear the history before any
@@ -313,6 +274,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// Ctrl+C at that prompt, leaving the subsequent task to be executed by
 	// bash. Clear its input with Ctrl+U alone. Goose skips clearing entirely.
 	backend := effectiveBackend(agent)
+	if backend == "cline" && agent.Config.LaunchCmd == "" {
+		return m.deliverClineKickLocked(agent, message, trigger)
+	}
 	if agentUsesAgyHeadless(backend, agent) {
 		return m.deliverAgyHeadlessKickLocked(agent, message, trigger)
 	}

@@ -1476,11 +1476,7 @@ func regressionNotable(reason string) bool {
 // as a comment posted. Returns the number of comments created.
 func (c *Engine) postStageNote(ctx context.Context, policy StageLabelPolicy, obs stageObservation, key, body string) (int, error) {
 	if policy.QuietNotifications {
-		done, fresh, err := c.editStatusSection(ctx, obs.Owner, obs.Repo, obs.Number, key, body)
-		if err != nil || done {
-			return 0, err
-		}
-		body = fresh
+		return c.writeStatusSection(ctx, obs.Owner, obs.Repo, obs.Number, key, body)
 	}
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		return 0, err
@@ -1488,29 +1484,62 @@ func (c *Engine) postStageNote(ctx context.Context, policy StageLabelPolicy, obs
 	return 1, nil
 }
 
-// editStatusSection rewrites section key of the PR's hive status comment
-// (prstatus.Marker) to text when that comment exists, and reports done. When
-// the PR has no status comment yet nothing is written: the caller creates
-// one from the returned body, so the create stays a single call site.
-func (c *Engine) editStatusSection(ctx context.Context, owner, repo string, number int, key, text string) (done bool, fresh string, err error) {
-	comments, err := c.listIssueComments(ctx, owner, repo, number)
-	if err != nil {
-		return false, "", err
+// writeStatusSection rewrites section key of the PR's hive status comment
+// to text through prstatus.Write, the one status writer
+// the GitHub client shares: it is serialised per PR, the edit is retried
+// when the comment changed underneath, and the comment is created only when
+// the PR has none. Returns the number of comments created.
+func (c *Engine) writeStatusSection(ctx context.Context, owner, repo string, number int, key, text string) (int, error) {
+	f := &engineStatusForge{e: c, owner: owner, repo: repo, number: number}
+	res, err := prstatus.Write(ctx, f, prstatus.ItemKey(owner+"/"+repo, number), key, text)
+	if res.Created {
+		return 1, err
 	}
+	return 0, err
+}
+
+// engineStatusForge adapts the engine's comment calls on one PR to
+// prstatus.Forge.
+type engineStatusForge struct {
+	e      *Engine
+	owner  string
+	repo   string
+	number int
+}
+
+func (f *engineStatusForge) ListComments(ctx context.Context) ([]prstatus.Comment, error) {
+	comments, err := f.e.listIssueComments(ctx, f.owner, f.repo, f.number)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]prstatus.Comment, 0, len(comments))
 	for _, cm := range comments {
-		if cm == nil || !prstatus.IsStatusComment(cm.GetBody()) {
+		if cm == nil {
 			continue
 		}
-		next := prstatus.Upsert(cm.GetBody(), key, text)
-		if next == cm.GetBody() {
-			return true, "", nil
-		}
-		if _, _, err := c.gh.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(next)}); err != nil {
-			return true, "", fmt.Errorf("editing hive status comment on %s/%s#%d: %w", owner, repo, number, err)
-		}
-		return true, "", nil
+		own := strings.TrimSpace(cm.GetUser().GetLogin()) != "" && !f.e.isPersonLogin(cm.GetUser())
+		out = append(out, prstatus.Comment{ID: cm.GetID(), Body: cm.GetBody(), Own: own})
 	}
-	return false, prstatus.Upsert("", key, text), nil
+	return out, nil
+}
+
+func (f *engineStatusForge) EditComment(ctx context.Context, id int64, body string) error {
+	if _, _, err := f.e.gh.Issues.EditComment(ctx, f.owner, f.repo, id, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		return fmt.Errorf("editing hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
+	}
+	return nil
+}
+
+func (f *engineStatusForge) CreateComment(ctx context.Context, body string) error {
+	_, _, err := f.e.gh.Issues.CreateComment(ctx, f.owner, f.repo, f.number, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
+}
+
+func (f *engineStatusForge) DeleteComment(ctx context.Context, id int64) error {
+	if _, err := f.e.gh.Issues.DeleteComment(ctx, f.owner, f.repo, id); err != nil {
+		return fmt.Errorf("deleting hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
+	}
+	return nil
 }
 
 // ensureStageLabels provisions (or recolours) the family's labels in a repo

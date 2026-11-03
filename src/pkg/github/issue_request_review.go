@@ -124,5 +124,6 @@ func (c *Client) RequestReviewers(ctx context.Context, repo string, number int, 
 		})
 		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
 	})
+	c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteReviewRequest, repo: owner + "/" + repoName, item: number, requested: reviewers, class: NotificationClassRequiredReview, err: err})
 	return err
 }

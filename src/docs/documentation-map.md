@@ -223,7 +223,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Automatic repo ACMM onboarding reconciler](design/repo-acmm-onboarding.md) — proposed design for per-repo ACMM targets, gap-to-work reconciliation, human hand-off, waivers, and anti-gaming controls (RFC #6235).
 - [Hive federation design](../../docs/federation-design.md) — the multi-hive registry: live `/api/hives` endpoints, project onboarding, contributor flow across hubs, and what remains future design work.
 - [Public roadmap](roadmap.md) — available foundations, current/future direction, release-line status, completed work, and dated decision evidence. Not a delivery promise.
-- [Integrations](integrations.md) — one page of logos and status (Supported / Opt-in / Planned) for agent backends, work sources, forges, sandboxes and upstream projects.
+- [Integrations](integrations.md) — one page of logos and status (Supported / Opt-in / In progress / Planned) for agent backends, work sources, forges, sandboxes and upstream projects.
 - [Landscape and positioning](landscape.md) — how Hive's operations-plane design compares to nearby agentic orchestration tools, with public references per project. Explicitly time-sensitive; check the conducted date in its header before quoting product details.
 - [CNCF sandbox onboarding status](cncf-sandbox-onboarding.md) — repo-local map of the onboarding tracker and repository evidence (LICENSE, governance, security, OWNERS, DCO).
 - [CNCF reference architecture](cncf-reference-architecture.md) — CNCF submission/reference template.

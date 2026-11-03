@@ -439,7 +439,7 @@ func TestContributeLandingHasWatsonxOption(t *testing.T) {
 		// CLIENTS metadata tile.
 		`watsonx:{name:'watsonx.ai',tag:'IBM'}`,
 		// Headless-capable: must be registered so Kubernetes mode does not warn.
-		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1}`,
+		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1,cline:1}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/contribute watsonx onboarding surface missing %q", want)

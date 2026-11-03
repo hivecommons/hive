@@ -10,6 +10,7 @@ Status key:
 | **Supported** | Wired into a running code path and covered by tests. |
 | **Opt-in** | Works, but an operator must turn it on, or it needs a per-backend escape hatch. |
 | **Planned** | Not usable today. The linked issue tracks the work. |
+| **In progress** | Started, not finished. The linked tracker lists what is left. |
 
 ## Agent backends
 
@@ -100,7 +101,7 @@ per-backend confinement matrix.
 
 <table>
 <tr><th>Logo</th><th>Integration</th><th>Status</th><th>Docs</th></tr>
-<tr><td><img src="assets/logos/cncf.svg" height="40" alt="CNCF logo"></td><td>CNCF sandbox onboarding</td><td>Planned</td><td><a href="cncf-sandbox-onboarding.md">cncf-sandbox-onboarding.md</a></td></tr>
+<tr><td><img src="assets/logos/cncf.svg" height="40" alt="CNCF logo"></td><td>CNCF sandbox onboarding</td><td>In progress</td><td><a href="cncf-sandbox-onboarding.md">cncf-sandbox-onboarding.md</a>, <a href="https://github.com/hivecommons/hive/issues/9846">#9846</a></td></tr>
 <tr><td><img src="assets/logos/gh-aw-badge.svg" height="40" alt="gh-aw"></td><td>GitHub Agentic Workflows (gh-aw) report-only sample</td><td>Supported (sample)</td><td><a href="../deploy/gh-aw/README.md">deploy/gh-aw</a>, <a href="backend-support-tiers.md#github-agentic-workflows-on-ramp-not-a-cli-backend">tiers note</a></td></tr>
 <tr><td><img src="assets/logos/goose-badge.svg" height="40" alt="Goose"></td><td>Goose-at-scale guide upstreamed to AAIF</td><td>Planned</td><td><a href="../../docs/goose-at-scale.md">goose-at-scale.md</a>, <a href="https://github.com/hivecommons/hive/issues/14095">#14095</a></td></tr>
 </table>

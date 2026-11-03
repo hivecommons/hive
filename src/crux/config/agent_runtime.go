@@ -249,6 +249,7 @@ const ClaudeBackend = "claude"
 // here have no effort flag; a configured effort is ignored for them rather
 // than breaking their launch command.
 var ReasoningEffortsByBackend = map[string][]string{
+	"cline":       {"none", "low", "medium", "high", "xhigh"},
 	"codex":       {"minimal", "low", "medium", "high", "xhigh"},
 	"agy":         {"low", "medium", "high"},
 	ClaudeBackend: {ClaudeEffortLow, ClaudeEffortMedium, ClaudeEffortHigh, ClaudeEffortXHigh, ClaudeEffortMax},
@@ -1160,7 +1161,7 @@ func IsInferenceBackend(backend string) bool {
 // a backend here without also updating the shell side (or, if it genuinely
 // belongs on only one side, documenting why in cliBackendExceptions) fails
 // that test.
-var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini", "agy", "opencode", "kilo", "muse", "omp", "openhands", "omnigent"}
+var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini", "agy", "opencode", "kilo", "muse", "omp", "openhands", "omnigent", "cline"}
 
 // IsCLIBackend returns true if the backend launches an agentic CLI binary.
 func IsCLIBackend(backend string) bool {

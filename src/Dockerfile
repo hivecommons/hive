@@ -317,6 +317,10 @@ RUN timeout 120s npm install -g --ignore-scripts --no-fund --no-audit \
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
 ARG CODEX_VERSION=0.166.0
+ARG CLINE_VERSION=3.0.74
+RUN npm install -g --ignore-scripts --no-fund --no-audit cline@${CLINE_VERSION} \
+    && ln -sf "$(npm root -g)/cline/bin/cline" /usr/local/bin/cline \
+    && cline --version
 RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 

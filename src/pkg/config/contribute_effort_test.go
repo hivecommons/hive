@@ -8,7 +8,7 @@ func TestReasoningEffortRank(t *testing.T) {
 			t.Errorf("rank(%q) = %d, want %d", v, got, i)
 		}
 	}
-	if got := ReasoningEffortRank(" HIGH "); got != 3 {
+	if got := ReasoningEffortRank(" HIGH "); got != ReasoningEffortRank("high") {
 		t.Errorf("rank should be case/space-insensitive, got %d", got)
 	}
 	for _, v := range []string{"", "turbo"} {
@@ -61,6 +61,9 @@ func TestReasoningEffortMeetsFloor(t *testing.T) {
 		{"codex high meets medium", "codex", "high", "medium", true, true},
 		{"codex equal meets", "codex", "medium", "medium", true, true},
 		{"codex minimal below low", "codex", "minimal", "low", false, true},
+		{"cline none below minimal", "cline", "none", "minimal", false, true},
+		{"cline none meets none", "cline", "none", "none", true, true},
+		{"cline xhigh meets clamped max", "cline", "xhigh", "max", true, true},
 		{"claude max meets xhigh", "claude", "max", "xhigh", true, true},
 		{"codex xhigh below max floor clamps to xhigh", "codex", "xhigh", "max", true, true},
 		{"codex high below clamped max floor", "codex", "high", "max", false, true},

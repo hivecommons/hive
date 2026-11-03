@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
+  isTransientAPIError,
 } = require('./native-queue-policy.cjs');
 
 const sha = n => n.toString(16).padStart(40, '0');
@@ -205,6 +206,34 @@ test('PR closed during evidence wait passes as a no-op', async () => {
     return res;
   };
   assert.match(await evaluate(f), new RegExp(closedNoop(f.state.prs[0])));
+});
+
+test('a 5xx from the API is retried as pending evidence, never read as a verdict', async () => {
+  const apiError = status => Object.assign(new Error(`GET /check-runs - ${status}`), { status });
+  for (const eventName of ['pull_request_target', 'merge_group']) {
+    const f = fixture(eventName);
+    const paginate = f.github.paginate;
+    let calls = 0;
+    f.github.paginate = async (method, args) => {
+      if (method === 'checks' && ++calls === 1) throw apiError(500);
+      return paginate(method, args);
+    };
+    await assert.rejects(evaluate(f), error =>
+      error instanceof PendingEvidence && /GitHub API 500/.test(error.message) && error.cause?.status === 500);
+    // The retry is the workflow loop's job: the next evaluate succeeds on its own.
+    assert.match(await evaluate(f), /policy providers succeeded|validated all/);
+  }
+  // Only the server side is transient: a 4xx or a non-HTTP failure stays a hard failure.
+  for (const failure of [apiError(404), apiError(403), new Error('socket hang up')]) {
+    const f = fixture('pull_request_target');
+    f.github.paginate = async () => { throw failure; };
+    await assert.rejects(evaluate(f), error => !(error instanceof PendingEvidence) && error === failure);
+  }
+  assert.equal(isTransientAPIError({ status: 502 }), true);
+  assert.equal(isTransientAPIError({ status: '503' }), true);
+  assert.equal(isTransientAPIError({ status: 429 }), false);
+  assert.equal(isTransientAPIError({ status: 600 }), false);
+  assert.equal(isTransientAPIError(undefined), false);
 });
 
 test('open PR with moved head still fails closed on pull_request_target', async () => {

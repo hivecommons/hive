@@ -165,9 +165,9 @@
         </div>
         <div class="config-field">
           <label>Model ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Model', `Per-agent model override. Precedence: this model if set → otherwise the backend default (a gateway's default_model from Settings → Model Gateways, or the CLI's own default). Pick "(backend default — …)" to clear the per-agent model. A model marked "not allowed by gateway" fails every call with a 403. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.`)}</label>
-          <select id="cfg-model" title="${esc(MODEL_PRECEDENCE_TITLE)}" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
+          ${_agentBackend === 'cline' ? `<input id="cfg-model" type="text" value="${esc(g.model || '')}" placeholder="provider/model (required)" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">` : `<select id="cfg-model" title="${esc(MODEL_PRECEDENCE_TITLE)}" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
             ${modelSelectOptionsHtml(_agentBackend, g.model || '', _modelOpts)}
-          </select>
+          </select>`}
         </div>
         <div class="config-field">
           <label>Caveman Mode ${settingHelpMark('agent-configuration', 'caveman-prompt-compression', 'Caveman Mode', `Enable Caveman output compression to reduce token usage by ~65%. Modes: lite (removes filler), full (caveman-speak), ultra (telegraphic), wenyan (classical Chinese). Leave empty to disable.`)}</label>
