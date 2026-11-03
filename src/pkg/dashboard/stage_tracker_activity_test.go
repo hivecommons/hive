@@ -74,6 +74,7 @@ func TestStageTrackerActivityParallelAndReviewHead(t *testing.T) {
 	pr, dispatch, status := trackerActivityFixture(now)
 	pr.CIActivity = &github.PRCIActivity{Head: pr.HeadSHA, Source: "github-check-runs", ObservedAt: &now, RequiredKnown: true,
 		RequiredSource: "protection", RequiredChecks: []github.PRRequiredCheck{{Name: "build", AppKnown: true}},
+		StatusesKnown: true, StatusesObservedAt: &now,
 		Required: []string{"build"}, Checks: []github.PRActivityCheck{{Name: "build", State: "in_progress"}}}
 	ci := stageTrackerCIActivity(pr, now)
 	rev := stageTrackerReviewActivity(pr, nil, nil, dispatch, status, now)
@@ -90,6 +91,11 @@ func TestStageTrackerActivityParallelAndReviewHead(t *testing.T) {
 	agg := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: review.Verdict("changes_requested")}
 	dispatch.Waits = nil
 	pr.CIActivity.Checks[0].State, pr.CIActivity.Checks[0].Conclusion = "completed", "success"
+	pr.CIActivity.StatusesKnown = false
+	if stageTrackerCIActivity(pr, now).State != "unknown" || stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now).State != "changes_requested" {
+		t.Fatal("an uncollected any-App status side invented green CI or hid review findings")
+	}
+	pr.CIActivity.StatusesKnown = true
 	if stageTrackerCIActivity(pr, now).State != "passing" || stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now).State != "changes_requested" {
 		t.Fatal("green CI suppressed review findings")
 	}
@@ -103,6 +109,25 @@ func TestStageTrackerActivityParallelAndReviewHead(t *testing.T) {
 	pr.HeadSHA = "new-head"
 	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != "unknown" || got.Actor != "" {
 		t.Fatalf("old review survived new push: %+v", got)
+	}
+}
+
+func TestStageTrackerCodeActivityPreservesNativeNonCodingFacts(t *testing.T) {
+	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
+	for _, caption := range []string{
+		"Conflicting with the base branch; bot-authored PR (@automation[bot]) — the hive does not fix bot PRs",
+		"Rebasing · attempt 1/2",
+		"On hold · waiting for a human",
+	} {
+		t.Run(caption, func(t *testing.T) {
+			it := StageTrackerItem{Kind: "pr", Repo: "org/repo", Number: 7, Head: "head", Stage: trackerNumberFixing, Caption: caption}
+			stageTrackerApplyCodeActivity(&it, review.DispatchState{}, nil, now)
+			stageTrackerApplyCodeActivity(&it, review.DispatchState{}, nil, now)
+			if it.Caption != caption || it.CodeActivity == nil || it.CodeActivity.Active ||
+				it.CodeActivity.State != "waiting_fixer" || it.DisplayColumn != trackerNumberReviewPending {
+				t.Fatalf("native fact was replaced or invented source work: %+v", it)
+			}
+		})
 	}
 }
 
@@ -149,8 +174,12 @@ func TestStageTrackerActivitySourceRepairAndWaits(t *testing.T) {
 	}
 	dispatch.Fixes = []review.PendingFix{{Repo: pr.Repo, Number: pr.Number, HeadSHA: it.Head, Agent: "fixer", Dispatched: now}}
 	it.Stage = trackerNumberFixing
-	stageTrackerApplyCodeActivity(&it, dispatch, status, now.Add(trackerActivityFreshWindow+time.Second))
-	if it.CodeActivity.Active {
+	stageTrackerApplyCodeActivity(&it, dispatch, status, resumed.Add(trackerActivityFreshWindow))
+	if !it.CodeActivity.Active {
+		t.Fatal("source work at the existing inclusive freshness boundary was discarded")
+	}
+	stageTrackerApplyCodeActivity(&it, dispatch, status, resumed.Add(trackerActivityFreshWindow+time.Second))
+	if it.CodeActivity.Active || it.DisplayColumn != trackerNumberReviewPending {
 		t.Fatal("stale worker manufactured active coding")
 	}
 }

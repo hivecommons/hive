@@ -140,13 +140,3 @@ func (c *Client) info(msg string, args ...any) {
 		c.logger.Info(msg, args...)
 	}
 }
-
-// requiredStatusCheckContexts returns the set of status-check contexts /
-// check-run names the base branch requires, and whether that set is known.
-// See RequiredStatusCheckContexts for the resolution order; on v5 the merge
-// sweep itself lives in pkg/github/automerge, so this Client-level shim is
-// used only by the protection-facts collector (#7515).
-func (c *Client) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
-	set, ok := c.configRequiredChecksForRepo(owner + "/" + repo)
-	return RequiredStatusCheckContexts(ctx, c.client, owner, repo, branch, set, ok)
-}

@@ -254,11 +254,6 @@ func requiredContextsFromRequiredStatusChecks(contexts *[]string, checks *[]*gh.
 	return required
 }
 
-func requiredStatusChecksFromBranchEndpoint(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error) {
-	required, known, err, _ := requiredStatusChecksFromBranchEndpointWithBindings(ctx, client, owner, repo, branch)
-	return required, known, err
-}
-
 func requiredStatusChecksFromBranchEndpointWithBindings(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error, []PRRequiredCheck) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return nil, false, nil, nil
@@ -299,11 +294,6 @@ func requiredStatusChecksFromBranchEndpointWithBindings(ctx context.Context, cli
 	}
 	contexts := resp.Protection.RequiredStatusChecks.Contexts
 	return required, true, nil, bindingsFromWire(contexts, resp.Protection.RequiredStatusChecks.Checks)
-}
-
-func requiredStatusChecksFromRulesEndpoint(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error) {
-	required, known, err, _ := requiredStatusChecksFromRulesEndpointWithBindings(ctx, client, owner, repo, branch)
-	return required, known, err
 }
 
 func requiredStatusChecksFromRulesEndpointWithBindings(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error, []PRRequiredCheck) {

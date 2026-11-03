@@ -105,8 +105,10 @@ func requiredStatusChecksFromProtectionEndpoint(ctx context.Context, client *gh.
 		Contexts []string            `json:"contexts"`
 		Checks   []requiredCheckWire `json:"checks"`
 	}
-	reply, err := client.Do(ctx, request, &response)
-	if reply != nil && reply.StatusCode == http.StatusNotFound {
+	_, err = client.Do(ctx, request, &response)
+	// Match go-github's sentinel conversion: a generic 404 does not prove
+	// the branch is unprotected and must still try the readable fallbacks.
+	if apiError, ok := err.(*gh.ErrorResponse); ok && apiError.Message == "Branch not protected" {
 		return nil, nil, gh.ErrBranchNotProtected
 	}
 	if err != nil {

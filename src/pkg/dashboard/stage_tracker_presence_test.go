@@ -364,8 +364,7 @@ assert.ok(!stageTrackerDecisionPopHtml(Object.assign({}, ask, { presence: null }
 	if n := strings.Count(html, "presence: lp.presence || null"); n < 2 {
 		t.Errorf("linked-PR mappings carrying presence = %d, want the single-cover mapping and stageTrackerLinkedPRItem", n)
 	}
-	i := strings.Index(html, "function stageTrackerLinkedPRItem(")
-	if i < 0 || !strings.Contains(html[i:i+2000], "presence: lp.presence || null") {
+	if !strings.Contains(jsFunc(t, html, "stageTrackerLinkedPRItem"), "presence: lp.presence || null") {
 		t.Errorf("stageTrackerLinkedPRItem does not carry presence")
 	}
 }

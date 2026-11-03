@@ -87,15 +87,17 @@ func TestStageTrackerGraphQLCollectionPreservesRequiredProducer(t *testing.T) {
 					fmt.Fprint(w, `[{"number":7,"state":"open","title":"Repair source","user":{"login":"person"},"updated_at":"2026-11-02T21:00:00Z","head":{"sha":"head","ref":"repair","repo":{"full_name":"org/repo"}},"base":{"sha":"base","ref":"v5","repo":{"full_name":"org/repo"}}}]`)
 				case strings.HasSuffix(r.URL.Path, "/pulls/7"):
 					fmt.Fprint(w, `{"number":7,"state":"open","mergeable":true,"mergeable_state":"clean","head":{"sha":"head"},"base":{"ref":"v5"}}`)
-				case strings.HasSuffix(r.URL.Path, "/check-runs"):
+				case strings.HasSuffix(r.URL.Path, "/commits/head/check-runs"):
 					t.Error("GraphQL check evidence unexpectedly fell back to REST")
+					fmt.Fprint(w, `{"check_runs":[]}`)
+				case strings.HasSuffix(r.URL.Path, "/commits/v5/check-runs"):
 					fmt.Fprint(w, `{"check_runs":[]}`)
 				default:
 					fmt.Fprint(w, `[]`)
 				}
 			}))
 			defer srv.Close()
-			client := github.NewClientForTest(srv.URL, "org", []string{"repo"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			client := github.NewClientForTest(srv.URL, "org", []string{"org/repo"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			client.SetGraphQLPRBatchConfig(func() bool { return true }, func() int { return 50 })
 			if _, err := client.EnumerateActionable(context.Background()); err != nil {
 				t.Fatal(err)
@@ -109,6 +111,9 @@ func TestStageTrackerGraphQLCollectionPreservesRequiredProducer(t *testing.T) {
 			var projected github.PullRequest
 			if err := json.Unmarshal(bytes, &projected); err != nil {
 				t.Fatal(err)
+			}
+			if projected.CIActivity == nil || projected.CIActivity.Source != "github-graphql-cache" {
+				t.Fatalf("current-head GraphQL collection provenance was lost: %+v", projected.CIActivity)
 			}
 			got := stageTrackerCIActivity(projected, time.Now())
 			if got.State != tc.want {

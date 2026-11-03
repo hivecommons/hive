@@ -382,6 +382,8 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 }
 
 func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.DispatchState, status *StatusPayload, now time.Time) {
+	activityCaption := it.CodeActivity != nil && it.CodeActivity.Caption != "" &&
+		(it.Caption == it.CodeActivity.Caption || strings.HasPrefix(it.Caption, it.CodeActivity.Caption+" · "))
 	it.DisplayColumn = 0
 	out := trackerUnknownActivity(it.Head, "Code activity unknown")
 	qualify := stageTrackerRepoQualifier(status)
@@ -465,7 +467,10 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 		out.Source += "+fix-dispatch-status"
 	}
 	it.CodeActivity = out
-	if it.Stage == trackerNumberFixing && it.Superseded == nil {
+	// Replace generic or previously projected activity, not independent
+	// native facts such as a foreign bot conflict, hold or rebase episode.
+	if it.Stage == trackerNumberFixing && it.Superseded == nil &&
+		(it.Caption == "" || strings.HasPrefix(it.Caption, "Fixing") || activityCaption || out.Active) {
 		it.Caption = out.Caption
 		if out.Actor != "" && !out.Active {
 			it.Caption += " · " + out.Actor

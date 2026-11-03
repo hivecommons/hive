@@ -23,7 +23,7 @@ func TestStageTrackerRESTCheckPaginationMustCompleteBeforeProjection(t *testing.
 				switch {
 				case strings.HasSuffix(r.URL.Path, "/pulls/7"):
 					fmt.Fprint(w, `{"number":7,"mergeable":true,"mergeable_state":"blocked","head":{"sha":"head"},"base":{"ref":"v5"}}`)
-				case strings.HasSuffix(r.URL.Path, "/check-runs"):
+				case strings.HasSuffix(r.URL.Path, "/commits/head/check-runs"):
 					reads++
 					if mode == "malformed" {
 						fmt.Fprint(w, `{}`)
