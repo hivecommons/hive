@@ -120,16 +120,28 @@ inputs, not a claimed live backend snapshot. Use these structures plus long
 unbroken-handle stress data for preview coverage; a fixture passing is not proof
 that the published application renders correctly.
 
-The split CI/Review cards also distinguish position from activity: a steady
-outline and accessible current-phase label identify the occupied phase, even when
-evidence is unknown, work is queued or a PR is held. The running-work class and
+The split CI/Review lanes are chevrons like every other stage — the same notch
+polygon, padding and content-driven height as their neighbours, never a bordered
+card (the boxed opt-out of #16384 is gone). They express lane state the way the
+other chevrons do, through fill, tint and text colour: `done` (passed/approved),
+dimmed `todo`, the lit `active` fill for fresh observed work, a muted amber tint
+for `ham-current` occupancy, and an amber-on-tint treatment for failing CI or
+changes requested. They also distinguish position from activity: a steady
+current-phase tint and accessible current-phase label identify the occupied
+phase, even when evidence is unknown, work is queued or a PR is held. The running-work class and
 motion still require fresh current-head activity evidence; completion remains
 evidence-based. Both parallel tracks can occupy the current phase without
 claiming either is running. Native stages, holds and merge authority do not
 change.
 
-All progress chevrons share a fixed two-line text budget, wrapping even unbroken
-handles. Icons have reserved space clear of the chevron points. Full details
+All progress chevrons share a two-line text budget, wrapping even unbroken
+handles, but a row is only as tall as its longest caption: one line of text gives
+a one-line-tall chevron, two lines a two-line-tall one, never more (the grid row
+sizes to content above a one-line floor; sibling cells stretch to the row's
+tallest chevron, not to a fixed box). The caption, with its reserved icons, is
+centred in the chevron both horizontally and vertically, as before the two-line
+budget; a wrapped second line is centred under the first. Icons have reserved
+space clear of the chevron points. Full details
 remain in the native title and/or shared hover/focus tooltip portal; links and
 decision controls remain interactive. Decision chevrons, including native
 merge-gate claim conflicts, instead use their existing decision dialog as the

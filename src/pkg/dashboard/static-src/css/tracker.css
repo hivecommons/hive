@@ -318,9 +318,12 @@
     .ham-badge-reroute.ham-reroute-online .ham-presence-dot { background: var(--status-ok); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); --ham-notch: 8px; --ham-visible-columns: 7; --ham-chevron-text-lines: 2; --ham-chevron-line-height: 1.3; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
-    .ham-activity-track { clip-path: none; border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); white-space: normal; }
+    /* The concurrent CI / Review lanes are chevrons like every other stage
+       (same clip-path, padding and height — the boxed card opt-out of
+       #16384 is gone); their lane state reads through fill, tint and text
+       colour exactly as done / todo / active do, never a border or ring,
+       which the notched polygon would clip anyway. */
     .ham-track-state a { color: inherit; }
-    .ham-activity-track[data-activity-state="failing"], .ham-activity-track[data-activity-state="changes_requested"] { border-color: var(--amber); color: var(--amber); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
     .ham-seg.cap { flex: 0 0 4em; }
     .ham-seg.active.merged { background: var(--green); color: var(--surface-0); animation: none; }
@@ -346,9 +349,15 @@
        movement effects' (flash / ripple / wash). */
     .ham-seg.active { background: var(--amber); color: var(--surface-0); }
     /* Position is independent of observed work: queued, held and unknown
-       tracks retain a steady current-phase outline, never a work pulse. */
-    .ham-activity-track.ham-current { border-color: var(--amber); opacity: 1; box-shadow: inset 0 0 0 var(--line-width) var(--amber); }
-    .ham-activity-track.ham-current:not(.active) { background: color-mix(in srgb, var(--amber) 12%, var(--panel)); }
+       tracks keep a steady current-phase tint (a muted amber fill, full
+       opacity, no dimming ring), never a work pulse; only fresh observed
+       work earns the lit .active fill. */
+    .ham-activity-track.ham-current { opacity: 1; box-shadow: none; }
+    .ham-activity-track.ham-current:not(.active) { background: color-mix(in srgb, var(--amber) 28%, var(--panel)); color: var(--text); }
+    /* Findings (red CI, changes requested) are an amber-tinted chevron with
+       amber words — full opacity, still not the hive's own work; the finding
+       outranks the current-phase tint when both apply. */
+    .ham-seg.ham-activity-track[data-activity-state="failing"], .ham-seg.ham-activity-track[data-activity-state="changes_requested"] { background: color-mix(in srgb, var(--amber) 18%, var(--panel)); color: var(--amber); box-shadow: none; opacity: 1; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
@@ -379,14 +388,22 @@
     .ham-gate-ico { display: inline-flex; align-items: center; margin-right: var(--sp-1); cursor: help; }
     .ham-gate-ico .ham-ico { width: 12px; height: 12px; }
     .ham-gate-detail { font-weight: normal; opacity: 0.85; font-variant-numeric: tabular-nums; }
-    /* All physical chevrons share a two-line budget. The portal tooltip is
-       outside the clipped polygon; keyboard focus exposes the same full text. */
-    .ham-strip[aria-label="Pipeline progress"] { grid-auto-rows: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em + 2 * var(--sp-2) + 2 * var(--line-width)); }
-    .ham-strip[aria-label="Pipeline progress"] > .ham-seg { box-sizing: border-box; height: 100%; line-height: var(--ham-chevron-line-height); padding: var(--sp-2) calc(var(--ham-notch) + var(--sp-2)); }
+    /* All physical chevrons share a two-line text budget, but a row is only
+       as tall as its longest caption: one line of text → a one-line chevron,
+       two lines → two (the clamp below caps it there). The grid row sizes
+       to content with a one-line floor so icon-only cells and siblings
+       stretch to the row's tallest chevron, never to a fixed box. The
+       portal tooltip is outside the clipped polygon; keyboard focus
+       exposes the same full text. */
+    .ham-strip[aria-label="Pipeline progress"] { grid-auto-rows: minmax(calc(var(--ham-chevron-line-height) * 1em + 2 * var(--sp-2) + 2 * var(--line-width)), auto); }
+    .ham-strip[aria-label="Pipeline progress"] > .ham-seg { box-sizing: border-box; align-self: stretch; line-height: var(--ham-chevron-line-height); padding: var(--sp-2) calc(var(--ham-notch) + var(--sp-2)); }
     .ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); width: 100%; height: 100%; min-width: 0; flex-shrink: 1; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; position: static; }
     .ham-chevron-info.config-info:hover { background: transparent; border: 0; color: inherit; }
     .ham-chevron-info:focus-visible, .ham-chevron-decision:focus-within { outline: var(--line-width) solid currentColor; outline-offset: var(--sp-1); }
-    .ham-chevron-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-height: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em); flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
+    /* The copy shrink-wraps its text (flex 0 1 auto) so the words, with
+       their icons, sit centred in the chevron as before; a wrapped second
+       line is centred under the first rather than ragged-left. */
+    .ham-chevron-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-height: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em); flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: normal; overflow-wrap: anywhere; text-align: center; }
     .ham-chevron-copy :is(.ham-seg-t, .ham-detour, .ham-holder, .ham-gate-detail) { display: inline; white-space: normal; overflow-wrap: anywhere; }
     .ham-chevron-copy > .ham-decision-trigger { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
     .config-tooltip.ham-chevron-tip { overflow-wrap: anywhere; max-width: calc(100vw - var(--sp-8)); max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; }

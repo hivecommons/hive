@@ -5,7 +5,7 @@
   if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
   const tolerance = 1;
   const failures = [];
-  const coverage = { issueOnly: 0, linked: 0, prOnly: 0, nested: 0, multiIssue: 0, unknown: 0, queuedApproved: 0, wrapped: 0, controls: 0, controlTargets: 0, hitTested: 0, currentRows: 0, preparation: 0, superseded: 0, states: {} };
+  const coverage = { issueOnly: 0, linked: 0, prOnly: 0, nested: 0, multiIssue: 0, unknown: 0, queuedApproved: 0, wrapped: 0, singleLineRows: 0, wrappedRows: 0, controls: 0, controlTargets: 0, hitTested: 0, currentRows: 0, preparation: 0, superseded: 0, states: {} };
   const near = (a, b) => Math.abs(a - b) <= tolerance;
   const visible = el => el && el.getClientRects().length && getComputedStyle(el).display !== 'none';
   const rect = el => el.getBoundingClientRect();
@@ -150,6 +150,29 @@
     }
     const heights = columns.map(cell => rect(cell).height);
     assert(Math.max(...heights) - Math.min(...heights) <= tolerance, name + 'all physical chevrons have uniform height');
+    // Content-driven height: the row is exactly as tall as its longest
+    // caption (one or two text lines plus the chevron's own padding and
+    // border), with a one-line floor for icon-only rows — never a fixed
+    // two-line box around one line of text.
+    const lineWidth = parseFloat(getComputedStyle(strip).getPropertyValue('--line-width')) || 0;
+    const cellBudget = (cell, lines, border) => {
+      const style = getComputedStyle(cell);
+      return lines * parseFloat(style.lineHeight) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) +
+        (border === undefined ? parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth) : border);
+    };
+    let rowLines = 0, expectedHeight = cellBudget(columns[0], 1, 2 * lineWidth);
+    for (const cell of columns) {
+      for (const copy of cell.querySelectorAll('.ham-chevron-copy, .cue-acting-cap')) {
+        if (!visible(copy)) continue;
+        const lines = Math.max(1, Math.round(rect(copy).height / parseFloat(getComputedStyle(copy).lineHeight)));
+        rowLines = Math.max(rowLines, lines);
+        expectedHeight = Math.max(expectedHeight, cellBudget(cell, lines));
+      }
+    }
+    assert(near(Math.max(...heights), expectedHeight), name + 'chevron height is content-driven (' + (rowLines || 1) + ' text line(s) + padding), not a fixed two-line box: ' +
+      JSON.stringify({ measured: Math.max(...heights), expected: expectedHeight, lines: rowLines }));
+    if (rowLines === 1) coverage.singleLineRows++;
+    if (rowLines === 2) coverage.wrappedRows++;
     const ci = strip.querySelector('[data-track="ci"]');
     const review = strip.querySelector('[data-track="review"]');
     const current = columns.filter(cell => !cell.classList.contains('cap') &&
@@ -163,7 +186,18 @@
       if (cell.dataset.routeState?.split(' ').includes('active')) {
         assert(cell.classList.contains('ham-current'), name + 'current phase remains highlighted independently of work');
         const style = getComputedStyle(cell);
-        assert(Number(style.opacity) >= 0.9 && style.boxShadow !== 'none', name + 'queued/unknown/assigned/completed current tracks retain a visible steady outline');
+        assert(Number(style.opacity) >= 0.9 && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent', name + 'queued/unknown/assigned/completed current tracks retain a visible steady fill');
+      }
+      if (cell.dataset.track) {
+        // CI / Review lanes are chevrons like their neighbours: same notch
+        // polygon, padding and height, state expressed by fill, not a box.
+        const style = getComputedStyle(cell);
+        const peer = columns.find(other => other !== cell && !other.dataset.track && !other.classList.contains('cap') && other !== columns[0]);
+        const peerStyle = getComputedStyle(peer);
+        assert(style.clipPath !== 'none' && style.clipPath === peerStyle.clipPath, name + 'activity track keeps the chevron notch polygon: ' + JSON.stringify({ track: style.clipPath, peer: peerStyle.clipPath }));
+        assert(style.borderTopWidth === '0px' && style.borderLeftWidth === '0px' && style.borderRadius === peerStyle.borderRadius, name + 'activity track is not a bordered box');
+        assert(style.paddingLeft === peerStyle.paddingLeft && style.paddingRight === peerStyle.paddingRight && style.paddingTop === peerStyle.paddingTop, name + 'activity track shares chevron padding');
+        assert(near(rect(cell).height, rect(peer).height), name + 'activity track shares chevron height');
       }
       if (cell.dataset.displayState === 'unknown') {
         coverage.unknown++;
@@ -192,6 +226,30 @@
         if (bounds.height > lineHeight + tolerance) coverage.wrapped++;
         assert(bounds.left >= rect(cell).left + parseFloat(getComputedStyle(cell).paddingLeft) - tolerance, name + 'text clears the left chevron notch');
         assert(bounds.right <= rect(cell).right - parseFloat(getComputedStyle(cell).paddingRight) + tolerance, name + 'text clears the right chevron point');
+        // Centred as before the two-line budget: the glyphs sit centred in
+        // their copy box (a stretched copy with start-aligned text fails
+        // here), and the copy together with its reserved icons sits centred
+        // in the chevron's content box, both horizontally and vertically.
+        const content = { left: rect(cell).left + parseFloat(getComputedStyle(cell).paddingLeft), right: rect(cell).right - parseFloat(getComputedStyle(cell).paddingRight),
+          top: rect(cell).top + parseFloat(getComputedStyle(cell).paddingTop), bottom: rect(cell).bottom - parseFloat(getComputedStyle(cell).paddingBottom) };
+        const range = document.createRange();
+        range.selectNodeContents(copy);
+        const glyphs = [...range.getClientRects()].filter(line => line.width > 0 && line.top >= bounds.top - tolerance && line.bottom <= bounds.bottom + tolerance);
+        const glyphTolerance = parseFloat(style.fontSize) / 2; // a trailing wrap space, never a ragged-left line
+        if (glyphs.length) {
+          const text = { left: Math.min(...glyphs.map(line => line.left)), right: Math.max(...glyphs.map(line => line.right)) };
+          assert(Math.abs((text.left + text.right) / 2 - (bounds.left + bounds.right) / 2) <= glyphTolerance, name + 'caption text is horizontally centred within its copy box: ' +
+            JSON.stringify({ text, copy: { left: bounds.left, right: bounds.right } }));
+        }
+        const group = copy.parentElement === info
+          ? [...info.children].filter(child => visible(child) && !child.classList.contains('config-tooltip')).map(rect)
+          : [bounds];
+        const union = { left: Math.min(...group.map(box => box.left)), right: Math.max(...group.map(box => box.right)),
+          top: Math.min(...group.map(box => box.top)), bottom: Math.max(...group.map(box => box.bottom)) };
+        assert(Math.abs((union.left + union.right) / 2 - (content.left + content.right) / 2) <= tolerance, name + 'caption and icons are horizontally centred in the chevron: ' +
+          JSON.stringify({ union, content }));
+        assert(Math.abs((union.top + union.bottom) / 2 - (content.top + content.bottom) / 2) <= tolerance, name + 'caption and icons are vertically centred in the chevron: ' +
+          JSON.stringify({ union, content }));
         const icons = info ? [...info.querySelectorAll(':scope > svg, :scope > .ham-active-ico-wrap svg, :scope > .ham-gate-ico svg')].filter(visible) : [];
         for (const icon of icons) {
           const box = rect(icon);
@@ -211,6 +269,7 @@
     assert(coverage.states[state] > 0, 'preview must exercise current-head activity state ' + state);
   }
   assert(coverage.unknown > 0 && coverage.queuedApproved > 0 && coverage.wrapped > 0 && coverage.controls > 0, 'preview must include unknown, queued-CI/approved-review, long wrapped text and action/history controls');
+  assert(coverage.singleLineRows > 0 && coverage.wrappedRows > 0, 'preview must include both a one-line-caption row (one-line-tall chevrons) and a two-line-caption row (two-line-tall chevrons)');
   assert(coverage.controlTargets > 0 && coverage.controlTargets === coverage.hitTested, 'every relevant header control must be hit-tested, never skipped as offscreen');
   if (failures.length) throw new Error(JSON.stringify({ viewport: innerWidth, coverage, failures }));
   return { viewport: innerWidth, coverage, failures };

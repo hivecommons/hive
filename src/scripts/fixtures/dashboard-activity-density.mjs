@@ -61,7 +61,13 @@ export function activityDensityFixture(input) {
   const triage = { repo: 'fixture/activity', kind: 'issue', number: 9008, stage: 15,
     state: 'open', title: 'Mock issue-only triage controls and long wrapping metadata',
     url: 'https://example.invalid/activity/9008', operator_action_count: 7 };
-  items.push(unknown, conflict, waiting, running, held, coding, triage);
+  // One short caption ("Open · hold") → a one-line-tall chevron row; the
+  // long-handle row above wraps to two. Both heights are probed.
+  const parked = { repo: 'fixture/activity', kind: 'issue', number: 9009, stage: 0,
+    state: 'open', title: 'Mock held issue with a one-line chevron caption',
+    url: 'https://example.invalid/activity/9009', modifiers: ['hold'],
+    hold: { by: 'hanthor', pill: 'Held by @hanthor', reason: 'Mock human hold' } };
+  items.push(unknown, conflict, waiting, running, held, coding, triage, parked);
   const prUnder = (repo, issueNumber, pr, title) => ({
     repo, kind: 'issue', number: issueNumber, stage: 40, state: 'open',
     title, url: 'https://example.invalid/activity/' + issueNumber, linked_prs: [pr],
