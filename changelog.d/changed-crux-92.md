@@ -1,0 +1,1 @@
+- chore(crux): consolidate rune-truncation helpers into internal/textutil (hivecommons/crux#92)
