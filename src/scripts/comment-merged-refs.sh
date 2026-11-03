@@ -122,6 +122,7 @@ json.dump(obj, sys.stdout)'
 
 posted=0
 skipped=0
+card_errors=0
 while IFS= read -r issue; do
   [ -n "$issue" ] || continue
   issue_json=$(api "repos/${REPO}/issues/${issue}")
@@ -180,18 +181,26 @@ sys.exit(1)'
   # The runtime's hive:status card carries the same condition as an
   # `issue-partial:<pr>` section; a second notifying comment would duplicate it.
   # The comments fetched above are handed to the helper so it does not
-  # re-fetch the same pages.
+  # re-fetch the same pages. Exit 1 is "no such section"; anything else is a
+  # read/parse failure, which must not be mistaken for absence and post.
   card_helper="$(dirname "${BASH_SOURCE[0]}")/../../.github/scripts/hive-status-card.sh"
   if [ -x "$card_helper" ]; then
     comments_file=$(mktemp)
     printf '%s' "$comments_json" > "$comments_file"
-    if GH_BIN="$GH_BIN" HIVE_COMMENTS_FILE="$comments_file" "$card_helper" has "$REPO" "$issue" "issue-partial:${PR_NUMBER}" 2>/dev/null; then
-      rm -f "$comments_file"
+    card_rc=0
+    GH_BIN="$GH_BIN" HIVE_COMMENTS_FILE="$comments_file" "$card_helper" has "$REPO" "$issue" "issue-partial:${PR_NUMBER}" || card_rc=$?
+    rm -f "$comments_file"
+    if [ "$card_rc" -eq 0 ]; then
       echo "Skipping #${issue}: hive:status card already carries the partial-merge note."
       skipped=$((skipped + 1))
       continue
     fi
-    rm -f "$comments_file"
+    if [ "$card_rc" -ne 1 ]; then
+      echo "::error::Skipping #${issue}: could not read its hive:status card (hive-status-card.sh exit ${card_rc}); not posting a possible duplicate." >&2
+      card_errors=$((card_errors + 1))
+      skipped=$((skipped + 1))
+      continue
+    fi
   fi
 
   comment_body=$(printf '%s\nPR #%s has merged (%s) and referenced this issue with a non-closing `%s` rather than a closing keyword.\n\nThis issue remains open because the merged PR did not use `Closes` / `Fixes` / `Resolves`. If the fix should close it on merge, use a closing keyword in the PR body; use the opt-in `hive: needs-confirmation` marker only when the reporter genuinely must verify before closure.' \
@@ -308,3 +317,8 @@ $closing_issues
 EOF_CLOSING
 
 printf 'Parent auto-close sweep complete for PR #%s: %s parent(s) closed, %s parent(s) skipped.\n' "$PR_NUMBER" "$parent_closed" "$parent_skipped"
+
+if [ "$card_errors" -gt 0 ]; then
+  echo "Refs sweep for PR #${PR_NUMBER}: ${card_errors} issue(s) skipped because their hive:status card could not be read." >&2
+  exit 1
+fi
