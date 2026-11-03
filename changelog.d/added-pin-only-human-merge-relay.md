@@ -1,0 +1,1 @@
+- Enforce the configured trusted-author pin-only exception in the GitHub merge-request relay, requiring a complete diff and exact requested head while preserving all other merge gates.

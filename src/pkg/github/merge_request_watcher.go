@@ -423,8 +423,8 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 	// Human-merge paths (#11039): a PR touching a path listed in
-	// auto_merge.human_merge_paths for its repo is never merged by the App,
-	// whatever agent asks. A match is terminal (the request is refused, the
+	// auto_merge.human_merge_paths for its repo requires a person unless the
+	// configured pin-only exception is proven, whatever agent asks. A match is terminal (the request is refused, the
 	// PR gets `hold` and one marker comment); an unknown changed-file list on
 	// a configured repo fails closed through the bounded retry path. Checked
 	// before the optional branch-update so a refused PR receives no push.
