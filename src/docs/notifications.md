@@ -686,6 +686,15 @@ paths apply only where a card exists; with
 `github.notifications.attention_pilot` off there is no issue card, and the
 workflows behave as before.
 
+A failure to read the card is not treated as "no card": when the comments
+API call fails or its response is not a JSON list of comment objects,
+`hive-status-card.sh` writes a `hive-status-card: error:` line and exits 3
+(`has` otherwise exits 0 for present, 1 for absent), and `upsert` writes
+nothing. The refs sweep then skips that issue with an `::error::` annotation
+and exits non-zero instead of posting a possible duplicate.
+`.github/scripts/test-hive-status-card.sh` and
+`src/scripts/test-comment-merged-refs.sh` pin this behaviour.
+
 **Outside Hive's control.** Comments from external bots, such as Prow, tide
 and kubestellar-prow, are posted by their own services and cannot be edited,
 folded or skipped from this repository. Hive does not try to suppress them;

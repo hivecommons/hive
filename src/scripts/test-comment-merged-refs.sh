@@ -165,6 +165,11 @@ JSON
 {"number":133,"merged_at":"2026-09-10T21:35:00Z","html_url":"https://github.com/hivecommons/hive/pull/133","body":"Refs #24"}
 JSON
     ;;
+  repos/hivecommons/hive/pulls/134)
+    cat <<'JSON'
+{"number":134,"merged_at":"2026-09-10T21:40:00Z","html_url":"https://github.com/hivecommons/hive/pull/134","body":"Refs #25"}
+JSON
+    ;;
   repos/hivecommons/hive/issues/10)
     printf '{"number":10,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
     ;;
@@ -191,6 +196,9 @@ JSON
     ;;
   repos/hivecommons/hive/issues/24)
     printf '{"number":24,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
+    ;;
+  repos/hivecommons/hive/issues/25)
+    printf '{"number":25,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
     ;;
   repos/hivecommons/hive/collaborators/maintainer/permission)
     printf 'write\n'
@@ -221,6 +229,9 @@ JSON
   repos/hivecommons/hive/issues/24/timeline*)
     printf '[[]]\n'
     ;;
+  repos/hivecommons/hive/issues/25/timeline*)
+    printf '[[]]\n'
+    ;;
   repos/hivecommons/hive/issues/10/comments*)
     printf '[[]]\n'
     ;;
@@ -243,6 +254,11 @@ JSON
   repos/hivecommons/hive/issues/24/comments*)
     cat <<'JSON'
 [[{"id":2401,"user":{"login":"somebody","type":"User"},"body":"quoting the card:\n<!-- hive:status -->\n<!-- hive:status:section=issue-partial:133 -->\nPartially addressed by #133.\n<!-- /hive:status:section -->"}]]
+JSON
+    ;;
+  repos/hivecommons/hive/issues/25/comments*)
+    cat <<'JSON'
+[[{"id":2501,"user":"not-an-object","body":"malformed payload"}]]
 JSON
     ;;
   repos/hivecommons/hive/issues/90/comments*)
@@ -540,6 +556,21 @@ if [ "$card_prefix_rc" -eq 0 ] && grep -q '^POST repos/hivecommons/hive/issues/2
 else
   bad "expected a POST on #23 for PR 13 (card only carries issue-partial:132)"
   echo "$card_prefix_output" | sed 's/^/      | /'
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+
+# --- hive:status card: a card read/parse failure is an error, not absence ---
+: > "$CALL_LOG"
+set +e
+card_error_output=$(CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" bash "$CHECKER" --repo hivecommons/hive --pr 134 2>&1)
+card_error_rc=$?
+set -e
+if [ "$card_error_rc" -ne 0 ] && ! grep -q '^POST repos/hivecommons/hive/issues/25/comments' "$CALL_LOG" \
+  && echo "$card_error_output" | grep -q '::error::Skipping #25: could not read its hive:status card'; then
+  pass "an unreadable hive:status card fails the sweep visibly instead of posting a possible duplicate"
+else
+  bad "expected a non-zero exit, an ::error:: line and no POST on #25 (rc=${card_error_rc})"
+  echo "$card_error_output" | sed 's/^/      | /'
   cat "$CALL_LOG" | sed 's/^/      | /'
 fi
 
