@@ -19,6 +19,8 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 | `/hive decision proceed — <gap>` | Confirms a feature request parked by the prior-art gate is a real gap. | The issue author, or a human commenter with `write`, `maintain`, or `admin`. | Open issues carrying `stage/017-possible-existing` below a `<!-- hive:prior-art-gate -->` comment. | Next un-park sweep. | Removes `stage/017-possible-existing`, appends a **Scope vs existing** section with `<gap>` to the issue body, records the un-park so the issue re-derives `stage/010-actionable` ([#13575](https://github.com/hivecommons/hive/issues/13575)). |
 | `/hive decision exists` | Agrees the request already exists. | Same as above. | Same as above. | Next un-park sweep. | Adds `already-exists`, closes the issue `not_planned`, replies with a pointer at the quoted findings. Reopen the issue to continue; the gate does not ask again. |
 | `/hive help` | Posts this command list. On parked issues it also repeats the issue-specific approve/decision options. | Any human commenter with at least `triage` repository permission for the on-demand workflow; the sweep path on parked issues requires `write`, `maintain`, or `admin`. | Any open issue or pull request. | GitHub Actions on the new comment; if Actions is unavailable on a parked issue, the next un-park sweep can also answer. | None. |
+| `/hive ack [episode]` | Acknowledges an attention episode on the item: you have seen it, so reminders for it stop. **Acknowledgement is not approval.** See [Attention ack and snooze](#attention-ack-and-snooze). | The episode's named responsible person, or a human with `write`, `maintain`, or `admin` repository permission. Anyone else is ignored in silence. | Open issues and pull requests with an unresolved attention episode, on a repository whose `github.attention.admitter` is this hive. | Next un-park sweep, normally within 5 minutes. | None. Never releases a security, merge or review hold and never opens a merge gate. |
+| `/hive snooze <duration> [episode]` | Pauses reminders for an attention episode until the duration elapses (`90m`, `4h`, `2d`, `1w`; 1m to 30d). | Same as `/hive ack`. | Same as `/hive ack`. | Next un-park sweep, normally within 5 minutes. | None. A snooze releases no hold. |
 | `/fixed` | Confirms that an open issue's fix is verified — or that what a parked issue waited on was done, in or outside the repository — and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. On a parked issue (`stage/045-needs-decision`, `needs-human`, or a retired park spelling) the un-park sweep honours it from a human with `write`, `maintain`, or `admin` permission. | Open issues only, not pull requests. | GitHub Actions on the new comment where the repository runs the `/fixed` workflow; on parked issues, the next un-park sweep, normally within 5 minutes ([dibs#459](https://github.com/hivecommons/dibs/issues/459)). | Closes the issue as completed. The workflow adds `hive: reporter-confirmed` and removes `hive/likely-done` and `needs-reporter-confirmation` when present. On a parked issue the sweep removes `needs-human` and the retired park spellings, the stage engine strips `stage/*`, and Hive posts one acknowledgement; `hold` is never touched. |
 | `/reopen` | Reopens a closed issue that was closed too early. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Closed issues only, not pull requests. | GitHub Actions on the new comment. | Removes `needs-reporter-confirmation` when present. The reopen sticks: close-on-merge does not close the issue again for a PR that merged before the reopen, whether Hive (`<!-- hive-close-on-merge -->` comment) or GitHub's closing keyword closed it; Hive records the latter with a `<!-- hive-reopened-after-merge pr=<pr> -->` comment. A later PR can still close it. |
 | `/help-wanted` | Adds the `help wanted` label. | Any non-bot commenter accepted by the label-helper workflow. | Issues and pull requests. | GitHub Actions on the new comment. | Adds `help wanted`. |
@@ -127,6 +129,32 @@ instead of closing. On a parked issue — many park for an action a person must
 take outside the repository — the un-park sweep itself honours a maintainer's
 `/fixed`, so a repository without the `/fixed` workflow still gets the close,
 the label clean-up and one acknowledgement.
+
+## Attention ack and snooze
+
+Attention episodes ([#16270](https://github.com/hivecommons/hive/issues/16270))
+ask one named person to act on one condition. `/hive ack` and
+`/hive snooze <duration>` let that person, or a maintainer, answer the ask
+without resolving it ([#16359](https://github.com/hivecommons/hive/issues/16359)):
+
+- The command must be the first non-empty line of a recent, unedited comment
+  by a human, outside quotes and fences — the same rules as the un-park
+  commands. Only the hive named by `github.attention.admitter` for the
+  repository answers, so a fleet replies once.
+- Without an `[episode]` argument the command applies to every unresolved
+  episode on the item that you may act on. To target one, pass the key prefix
+  shown in the item's attention status section, e.g. `/hive ack 3f9a0c12b7de`.
+- `/hive ack` records who acknowledged and when; `/hive snooze` records who
+  snoozed and until when. Both are stored on the episode in the attention
+  ledger, refresh the status section, and get one reply.
+- **Acknowledgement is not approval.** Neither command adds or removes a
+  label, releases a security, merge or review hold, or opens a merge gate. To
+  release a hold use the lever the hold names (for example a trusted merger's
+  GitHub **Approve** review); to resolve the episode, fix the condition — it
+  resolves when Hive no longer observes it.
+- A caller who is neither the episode's responsible person nor a maintainer
+  is ignored in silence and nothing is recorded. A malformed duration from an
+  eligible caller gets a reply explaining the accepted forms.
 
 ## Prose replies on parked issues
 

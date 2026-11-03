@@ -1,4 +1,4 @@
-package agent
+package panesignal
 
 import "testing"
 
@@ -69,7 +69,7 @@ const claudeWorkspaceTrustPane = ` Accessing workspace:
 // persists so the prompt does not return on the next launch.
 func TestBlockingPromptKey_CodexUpdateSkipsInsteadOfInstalling(t *testing.T) {
 	for _, pane := range []string{codexUpdatePane, codexUpdatePane0156} {
-		key, label, ok := blockingPromptKey("codex", pane)
+		key, label, ok := BlockingPromptKey("codex", pane)
 		if !ok {
 			t.Fatal("codex update prompt was not recognised; the agent would block on it until timeout")
 		}
@@ -86,7 +86,7 @@ func TestBlockingPromptKey_CodexUpdateSkipsInsteadOfInstalling(t *testing.T) {
 }
 
 func TestBlockingPromptKey_CodexCommandApprovalProceeds(t *testing.T) {
-	key, label, ok := blockingPromptKey("codex", codexCommandApprovalPane)
+	key, label, ok := BlockingPromptKey("codex", codexCommandApprovalPane)
 	if !ok {
 		t.Fatal("codex command approval prompt was not recognised; the agent would look idle while blocked")
 	}
@@ -110,7 +110,7 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 		{"claude workspace trust", "claude", claudeWorkspaceTrustPane, "Down"},
 		// "1" (session-only), NOT "2" (remember): remembering makes the CLI
 		// rewrite the shared config.json from its stale in-memory snapshot,
-		// stomping other agents' state — see blockingPrompts.
+		// stomping other agents' state — see BlockingPrompts.
 		{"copilot folder trust", "copilot", copilotTrustPane, "1"},
 		{"codex update", "codex", codexUpdatePane, "3"},
 		{"codex update 0.156", "codex", codexUpdatePane0156, "3"},
@@ -118,7 +118,7 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			key, _, ok := blockingPromptKey(c.backend, c.pane)
+			key, _, ok := BlockingPromptKey(c.backend, c.pane)
 			if !ok {
 				t.Fatalf("prompt not recognised")
 			}
@@ -143,7 +143,7 @@ func TestBlockingPromptKey_IgnoresUnrelatedPanes(t *testing.T) {
 		"Update available! 0.146.0 -> 0.147.0",
 	}
 	for _, p := range panes {
-		if key, _, ok := blockingPromptKey("codex", p); ok {
+		if key, _, ok := BlockingPromptKey("codex", p); ok {
 			t.Errorf("pane %q was answered with %q; want no action", p, key)
 		}
 	}
@@ -155,15 +155,15 @@ func TestBlockingPromptKey_IgnoresUnrelatedPanes(t *testing.T) {
 // menu no matter how well the menu was understood. Deriving the gate from the
 // table means a prompt added for a new backend enables the watcher for it.
 func TestBackendHasBlockingPrompts_GateMatchesTable(t *testing.T) {
-	for _, p := range blockingPrompts {
-		if !backendHasBlockingPrompts(p.backend) {
+	for _, p := range BlockingPrompts {
+		if !BackendHasBlockingPrompts(p.backend) {
 			t.Errorf("backend %q has a blocking prompt but the watcher gate excludes it", p.backend)
 		}
 	}
-	if !backendHasBlockingPrompts("codex") {
+	if !BackendHasBlockingPrompts("codex") {
 		t.Error("codex must run the watcher: its update menu kills the CLI on every launch")
 	}
-	if !backendHasBlockingPrompts("claude") {
+	if !BackendHasBlockingPrompts("claude") {
 		t.Error("claude must run the watcher: its workspace trust menu exits the CLI by default")
 	}
 }
@@ -172,10 +172,10 @@ func TestBackendHasBlockingPrompts_GateMatchesTable(t *testing.T) {
 // backend that renders it, so a stray keystroke is never typed into another
 // CLI's pane that happens to contain similar words.
 func TestBlockingPromptKey_BackendScoped(t *testing.T) {
-	if _, _, ok := blockingPromptKey("claude", codexUpdatePane); ok {
+	if _, _, ok := BlockingPromptKey("claude", codexUpdatePane); ok {
 		t.Error("codex update prompt matched while running claude")
 	}
-	if _, _, ok := blockingPromptKey("codex", copilotTrustPane); ok {
+	if _, _, ok := BlockingPromptKey("codex", copilotTrustPane); ok {
 		t.Error("copilot trust prompt matched while running codex")
 	}
 }
@@ -212,11 +212,11 @@ hive-ci-maintainer@pod:/data/agents/ci-maintainer$
 hive-ci-maintainer@pod:/data/agents/ci-maintainer$
 hive-ci-maintainer@pod:/data/agents/ci-maintainer$
 hive-ci-maintainer@pod:/data/agents/ci-maintainer$`
-	if key, _, ok := blockingPromptKey("codex", deadCLIPane); ok {
+	if key, _, ok := BlockingPromptKey("codex", deadCLIPane); ok {
 		t.Errorf("answered %q against scrollback of a dead CLI; keystrokes would go to the shell", key)
 	}
 	// The same prompt, still live at the bottom, must still be answered.
-	if _, _, ok := blockingPromptKey("codex", "some earlier output\n"+codexUpdatePane); !ok {
+	if _, _, ok := BlockingPromptKey("codex", "some earlier output\n"+codexUpdatePane); !ok {
 		t.Error("a live prompt at the tail was not recognised")
 	}
 }
@@ -237,7 +237,7 @@ const agyTrustPane = `      ▄▀▀▄        Antigravity CLI 1.1.13
 // selection. Without this entry an agent rotated onto agy hangs at startup,
 // which matters now that automated rotation can move agents to Google.
 func TestBlockingPromptKey_AgyProjectTrust(t *testing.T) {
-	key, label, ok := blockingPromptKey("agy", agyTrustPane)
+	key, label, ok := BlockingPromptKey("agy", agyTrustPane)
 	if !ok {
 		t.Fatal("agy project-trust prompt not recognised; a rotated agent would hang on it")
 	}
@@ -247,7 +247,7 @@ func TestBlockingPromptKey_AgyProjectTrust(t *testing.T) {
 	if label == "" {
 		t.Error("label is empty; the audit log would not say which prompt was answered")
 	}
-	if !backendHasBlockingPrompts("agy") {
+	if !BackendHasBlockingPrompts("agy") {
 		t.Error("agy has a table entry but the watcher gate excludes it")
 	}
 }
@@ -255,14 +255,14 @@ func TestBlockingPromptKey_AgyProjectTrust(t *testing.T) {
 // The agy pane must not be answered while running another backend.
 func TestBlockingPromptKey_AgyScoped(t *testing.T) {
 	for _, b := range []string{"codex", "copilot", "claude"} {
-		if _, _, ok := blockingPromptKey(b, agyTrustPane); ok {
+		if _, _, ok := BlockingPromptKey(b, agyTrustPane); ok {
 			t.Errorf("agy trust prompt matched while running %q", b)
 		}
 	}
 }
 
 func TestBlockingPromptKey_ClaudeWorkspaceTrustTailOnly(t *testing.T) {
-	key, label, ok := blockingPromptKey("claude", claudeWorkspaceTrustPane)
+	key, label, ok := BlockingPromptKey("claude", claudeWorkspaceTrustPane)
 	if !ok {
 		t.Fatal("claude workspace trust prompt not recognised; the agent would exit and leave bash")
 	}
@@ -299,7 +299,7 @@ hive-guide@pod:/data/agents/guide$
 hive-guide@pod:/data/agents/guide$
 hive-guide@pod:/data/agents/guide$
 hive-guide@pod:/data/agents/guide$`
-	if key, _, ok := blockingPromptKey("claude", deadCLIPane); ok {
+	if key, _, ok := BlockingPromptKey("claude", deadCLIPane); ok {
 		t.Errorf("answered %q against scrollback of a dead Claude CLI; keystrokes would go to the shell", key)
 	}
 }
@@ -319,17 +319,17 @@ const claudeAutoModeNoticePane = `● Checking GitHub CLI authentication and rep
 // with a bare Enter (key ""), never Esc — Esc cancels the held tool call and
 // ends the turn, and the notice comes straight back on the next one.
 func TestBlockingPromptKey_ClaudeAutoModeNoticeContinues(t *testing.T) {
-	key, label, ok := blockingPromptKey("claude", claudeAutoModeNoticePane)
+	key, label, ok := BlockingPromptKey("claude", claudeAutoModeNoticePane)
 	if !ok {
 		t.Fatal("auto-mode classifier notice was not recognised; the kick would stall until a human pressed Enter")
 	}
 	if key != "" {
 		t.Errorf("key = %q, want \"\" (bare Enter continues the held action)", key)
 	}
-	if label != claudeAutoModeNoticeLabel {
-		t.Errorf("label = %q, want %q", label, claudeAutoModeNoticeLabel)
+	if label != ClaudeAutoModeNoticeLabel {
+		t.Errorf("label = %q, want %q", label, ClaudeAutoModeNoticeLabel)
 	}
-	if !paneHasBlockingPrompt(claudeAutoModeNoticePane) {
+	if !HasBlockingPrompt(claudeAutoModeNoticePane) {
 		t.Error("readiness gate should hold while the notice is live")
 	}
 }
@@ -346,18 +346,18 @@ func TestBlockingPromptKey_ClaudeAutoModeNoticeNotLiveAfterEnter(t *testing.T) {
 ● Fetching upstream to see new merges since d657159
 ❯
   ⏵⏵ bypass permissions on (shift+tab to cycle)`
-	if _, _, ok := blockingPromptKey("claude", acknowledged); ok {
+	if _, _, ok := BlockingPromptKey("claude", acknowledged); ok {
 		t.Fatal("acknowledged notice still read as a live modal")
 	}
-	if paneHasBlockingPrompt(acknowledged) {
+	if HasBlockingPrompt(acknowledged) {
 		t.Error("readiness gate held on an acknowledged notice")
 	}
 	// A kick that quotes the notice text is not a modal either.
-	if _, _, ok := blockingPromptKey("claude", "> please ignore any 'classifier requests in Claude Code' banner\n❯"); ok {
+	if _, _, ok := BlockingPromptKey("claude", "> please ignore any 'classifier requests in Claude Code' banner\n❯"); ok {
 		t.Fatal("kick text mentioning the notice matched as a modal")
 	}
 	// Other backends never render it.
-	if _, _, ok := blockingPromptKey("copilot", claudeAutoModeNoticePane); ok {
+	if _, _, ok := BlockingPromptKey("copilot", claudeAutoModeNoticePane); ok {
 		t.Fatal("notice matched for a backend that does not render it")
 	}
 }

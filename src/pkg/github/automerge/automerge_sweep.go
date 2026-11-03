@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -110,6 +111,11 @@ type Options struct {
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
+	// HumanMergePinOnly returns the live, enabled
+	// auto_merge.human_merge_pin_only exception for an owner/repo (#16266).
+	// A qualifying pin-only PR by a trusted author is not held by
+	// HumanMergePaths. nil, or false, means no exception.
+	HumanMergePinOnly func(repo string) (config.PinOnlyException, bool)
 	// HumanMergeRule returns the live auto_merge.human_merge_title_prefixes /
 	// human_merge_labels rule (hivecommons/hive#15442). Every lane and the
 	// merge train skip a PR RequiresHumanMerge. nil means the defaults.
@@ -318,6 +324,9 @@ type Engine struct {
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
+	humanMergePinOnlyMu sync.RWMutex
+	humanMergePinOnly   func(repo string) (config.PinOnlyException, bool)
+
 	humanMergeRuleMu sync.RWMutex
 	humanMergeRule   func() prstage.HumanMergeRule
 
@@ -435,6 +444,7 @@ func New(transport Transport, opts Options) *Engine {
 		reviewGate:                        opts.ReviewGate,
 		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
+		humanMergePinOnly:                 opts.HumanMergePinOnly,
 		humanMergeRule:                    opts.HumanMergeRule,
 		requireCurrentBase:                opts.RequireCurrentBase,
 		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,

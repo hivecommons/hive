@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agent/panesignal"
 )
 
 const (
@@ -12,7 +14,7 @@ const (
 	// bypassConsentTitle is the heading of the --dangerously-skip-permissions
 	// consent screen. Its default selection is "No, exit" — confirming it
 	// terminates the CLI and leaves a bare bash pane.
-	bypassConsentTitle = "Bypass Permissions mode"
+	bypassConsentTitle = panesignal.BypassConsentTitle
 	// bypassConsentDefaultOption is the default (negative) option on the
 	// bypass-permissions consent screen.
 	bypassConsentDefaultOption = "No, exit"
@@ -24,13 +26,13 @@ const (
 	// shown when ANTHROPIC_API_KEY is not in customApiKeyResponses.approved.
 	// Its default selection is "No (recommended)" with the affirmative option
 	// above it.
-	apiKeyPromptTitle = "Detected a custom API key"
+	apiKeyPromptTitle = panesignal.APIKeyPromptTitle
 	// apiKeyPromptAcceptOption is the affirmative option on the
 	// custom-API-key approval prompt.
 	apiKeyPromptAcceptOption = "Yes"
 	// cliWorkingMarker is shown while Claude Code is actively processing a
 	// request; a pane in this state is never a consent screen.
-	cliWorkingMarker = "esc to interrupt"
+	cliWorkingMarker = panesignal.CLIWorkingMarker
 )
 
 // paneShowsConsentScreen reports whether the pane is showing an interactive
