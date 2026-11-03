@@ -24,6 +24,27 @@ const MAX_QUEUE_PAGES = 10;
 
 class PendingEvidence extends Error {}
 
+// A provider's inability to evaluate is not a negative sign-off verdict. It
+// still blocks admission, and is deliberately not PendingEvidence: polling or
+// retrying the admission job cannot repair the external provider.
+class ProviderUnavailable extends Error {
+  constructor(run, head) {
+    super(`DCO provider unavailable on ${head}: verdict UNKNOWN (App ${DCO_APP_ID}, ` +
+      `check run ${run.id}, conclusion ${run.conclusion}). Admission remains blocked. ` +
+      'An operator must investigate the DCO provider enumeration path; see ' +
+      'docs/operations/dco-provider-unavailable.md. No PR source change is requested.');
+  }
+}
+
+function dcoEnumerationUnavailable(run) {
+  // This text only classifies a diagnostic, never supplies passing evidence.
+  // Call only after validating provider, head and completed status.
+  return run.name === 'DCO' && run.conclusion === 'failure' &&
+    typeof run.output?.summary === 'string' &&
+    run.output.summary.startsWith('The DCO check could not be evaluated because the complete pull request commit list could not be retrieved.') &&
+    run.output.summary.includes('That fallback did not complete, so the DCO verdict is unknown.');
+}
+
 function membersForGroup(entries, group) {
   if (!SHA.test(group.head_sha) || !SHA.test(group.base_sha) ||
       !group.base_ref?.startsWith('refs/heads/') ||
@@ -72,6 +93,7 @@ function evidenceForHead(runs, head, checks) {
       throw new Error(`Untrusted provider or wrong head for ${name}`);
     }
     if (run.status !== 'completed') throw new PendingEvidence(`${name} is pending`);
+    if (dcoEnumerationUnavailable(run)) throw new ProviderUnavailable(run, head);
     // Existing PR path scoping legitimately skips technical jobs only. Policy
     // proofs, especially external DCO, must have actually succeeded.
     const scopedSkip = Object.hasOwn(BUILD_CHECKS, name) && run.conclusion === 'skipped';
@@ -217,4 +239,5 @@ async function evaluate({ github, context }) {
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, evaluate,
+  ProviderUnavailable,
 };
