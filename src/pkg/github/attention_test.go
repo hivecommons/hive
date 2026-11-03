@@ -42,6 +42,7 @@ func TestAttentionNonAdmitterOnlyFoldsStatus(t *testing.T) {
 	server := &statusCommentServer{}
 	srv := server.start(t)
 	c := testClient(t, srv.URL)
+	c.SetAppBotLogin("hive-app[bot]")
 	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{}, ""))
 	c.SetAttention("other-hive", func() attention.Config { return attention.Config{Admitter: map[string]string{"o/r": "owner-hive"}} })
 	item := writeback.Item{Number: 5, HiveAuthored: true}

@@ -1528,12 +1528,14 @@ func (f *engineStatusForge) ListComments(ctx context.Context) ([]prstatus.Commen
 	if err != nil {
 		return nil, err
 	}
+	// Own is an exact match on this hive's App login; unknown fails closed.
+	appLogin := strings.TrimSpace(f.e.transport.AppBotLogin())
 	out := make([]prstatus.Comment, 0, len(comments))
 	for _, cm := range comments {
 		if cm == nil {
 			continue
 		}
-		own := strings.TrimSpace(cm.GetUser().GetLogin()) != "" && !f.e.isPersonLogin(cm.GetUser())
+		own := appLogin != "" && strings.EqualFold(strings.TrimSpace(cm.GetUser().GetLogin()), appLogin)
 		out = append(out, prstatus.Comment{ID: cm.GetID(), Body: cm.GetBody(), Own: own})
 	}
 	return out, nil
