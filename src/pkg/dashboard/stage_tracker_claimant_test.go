@@ -169,7 +169,7 @@ assert.strictEqual(litWord(row), 'Claimed', litWord(row));
 assert.strictEqual(heldLine(row), '', litTitle(row));
 row = stageTrackerRowHtml(issue(7, { claimant: { kind: 'person', source: 'assignee' } }), stages, ctx);
 assert.strictEqual(litWord(row), 'Claimed', 'a claimant without an identity adds nothing: ' + litWord(row));
-assert.ok(!/hive-agent|kick-history|claim-comment|unknown/i.test(text(row)), 'no slug leakage: ' + text(row));
+assert.ok(!/hive-agent|kick-history|claim-comment|unknown holder/i.test(text(row)), 'no claimant slug leakage; track evidence may explicitly be unknown: ' + text(row));
 
 // A returned-to-contributor PR names its author on the detour word.
 const pr = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 8, kind: 'pr', title: 'docs', url: 'https://x/8', stage: 72, stage_since: since, caption: 'Returned', author: 'bob', author_kind: 'clanker', stage_actor: { kind: 'clanker', login: 'bob', why: '@bob must act' }, claimant: { kind: 'clanker', login: 'bob', since, source: 'author' } }, stages, ctx);
@@ -203,11 +203,15 @@ assert.ok(!strip(sub).includes('ham-has-holder'), 'no holder class without a hol
 
 // The covering-PR sub-row carries its PR's holder.
 const covered = stageTrackerRowHtml(issue(9, { stage: 40, caption: 'Covered by PR', stage_actor: { kind: 'hive', why: 'its PR' }, linked_prs: [
-  { number: 91, url: 'https://x/91', title: 'fix', author: 'hive-bot', author_kind: 'hive', stage: 70, stage_since: since, caption: 'Fixing', stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer is on it' }, claimant: { kind: 'hive-agent', agent: 'fixer', since, source: 'kick-history' } },
+  { number: 91, url: 'https://x/91', title: 'fix', author: 'hive-bot', author_kind: 'hive', stage: 70, stage_since: since, caption: 'Fixing', head:'head',display_column:30,
+    code_activity:{head:'head',state:'fixing',caption:'Fixing · fixer',actor:'fixer',source:'fix-dispatch+successful-edit+verified-git-worktree',active:true,observed_at:new Date(now).toISOString()},
+    stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer is on it' }, claimant: { kind: 'hive-agent', agent: 'fixer', since, source: 'kick-history' } },
   { number: 92, url: 'https://x/92', title: 'alt', author: 'alice', author_kind: 'human', stage: 50, stage_since: since, caption: 'CI', stage_actor: { kind: 'hive', why: 'review' }, claimant: { kind: 'person', login: 'alice', since, source: 'author' } },
 ] }), stages, ctx);
 const subWords = strips(covered).slice(1).map(s => text((/<li class="ham-seg active[^"]*"[^>]*>([\s\S]*?)<\/li>/.exec(s) || ['', ''])[1]));
-assert.deepStrictEqual(subWords, ['Fixing · fixer', 'CI / Review · @alice'], JSON.stringify(subWords));
+assert.deepStrictEqual(subWords, ['Fixing · fixer', ''], JSON.stringify(subWords));
+assert.ok(subs(covered)[1].includes('CI unknown') && subs(covered)[1].includes('Review unknown'), 'the PR owner is not an assigned reviewer');
+assert.ok(subs(covered)[1].includes('Held by: @alice'), 'ownership stays available without implying review activity');
 console.log('claimant chevron ok');
 `)
 }

@@ -183,7 +183,7 @@ func TestStageTrackerDecidedProjection(t *testing.T) {
 		if pr.DecisionNeeded != nil || contains(pr.Modifiers, modNeedsHuman) || pr.MergeGate != nil {
 			t.Fatalf("stale 085 ask survived the decision: %+v", pr)
 		}
-		if pr.Caption != "Fixing · hive is addressing @hanthor's review" {
+		if pr.Caption != "Waiting for fixer · no code work observed" || pr.CodeActivity == nil || pr.CodeActivity.Active || pr.DisplayColumn != trackerNumberReviewPending {
 			t.Fatalf("caption %q", pr.Caption)
 		}
 		if !strings.HasPrefix(pr.Decided.Title, "You chose Let hive decide · hive decided: direction given (") {

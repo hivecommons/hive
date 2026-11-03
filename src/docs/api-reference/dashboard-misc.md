@@ -3,6 +3,21 @@
 Part of the [Dashboard REST API reference](../api-reference.md); see that page for how auth levels and `pkg/<file>:<line>` source citations are read and checked. Edit this file for routes in this area and run `src/scripts/check-api-reference-citations.sh --fix` to resync citations.
 
 
+`GET /api/stage-tracker` adds independent PR `ci_activity`, `review_activity`
+and `code_activity` observations, also copied to `linked_prs[]`. Each is
+`{head, state, caption, actor?, source, observed_at?, since?, blocker?, url?, active?}`.
+These are display evidence, **not merge authorization**. An absent timestamp
+means unknown freshness; a different head invalidates the observation.
+CI is classified only against the resolved required set from the existing
+check snapshot. Review assignment comes from dispatch, current work additionally
+requires its actual worker, and approval/findings require verified current-head
+review evidence. Authors and claimants are not inferred reviewers.
+`display_column` may be `30` (source repair or explicit owner/adoption wait)
+or `50` (CI and re-review), without changing native stage identities, counts,
+filters or routing. Consumers must not turn either display field into a gate.
+The monitor renders CI and Review concurrently on one shared PR row; see
+[Reading the tracks](../streaming-the-activity-monitor.md#reading-the-tracks).
+
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/audit` | Read-write role | Audit Log — `{"entries": [...]}` envelope, newest first, capped at 200; response shape and the serve-time `user_name` field in [audit-log.md](../audit-log.md#get-apiaudit) | `pkg/dashboard/api.go:62` |
@@ -66,3 +81,41 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:378` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:379` |
 | `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1669` |
+### Activity observation provenance
+
+The CI snapshot retains real check/node IDs, head, App ID and transition times.
+Its `required_checks` entries retain forge policy's context/App binding:
+with `app_known: true`, `app_id: null` or `-1` is an observed any-App rule, not
+permission to replace a pinned producer. `required_source` distinguishes actual protection/branch/rules
+reads from config fallback; failed actual policy reads do not make the activity
+track's `required_known` true. Context-name-only fallback cannot establish an
+App binding and remains unknown, rather than treating missing detail as an
+explicit any-App rule. Unordered or producer-unknown duplicates remain
+ambiguous, never synthetic positional IDs.
+
+For REST check-run snapshots, an absent required name also checks the actual
+head's legacy commit statuses before claiming it is missing. Explicit any-App
+rules collect statuses even when a check run exists: a check cannot hide a
+same-name failing/pending status, or turn a failed status read green.
+`statuses_known`
+and `statuses_observed_at` distinguish a complete status read from denied,
+partial or wrong-head reads; those remain unknown, not missing or passing.
+Status observations retain `kind: "commit_status"` and actual IDs/URLs/times.
+An unbound status cannot establish a pinned App's success. Canonical protection
+facts keep their existing name-set contract; display ambiguity does not become
+a new merge/DCO authorization rule.
+
+Real check IDs order retries consistently, including queued runs with no start
+time. Start time never changes the ordering rule depending on its comparison
+partner. Conflicting equal-identity snapshots remain ambiguous for display;
+canonical selection remains one observation per producer and does not let
+missing IDs erase an observed blocker.
+REST check-run and status pages must finish successfully; malformed or partial
+collections cannot establish absence or passing CI.
+
+Source repair activity is derived from the assigned actor's fresh
+`codeWork` runtime observation plus current-round PR scope, not administrative
+PR writes. Push and same-head retry observations do not inherit an old fixer,
+owner or worker observation timestamp. Review completion uses the dispatch
+ledger's own agent/review-head/decision receipt and aggregate participation;
+another agent's same-perspective bundle verdict cannot settle that assignment.

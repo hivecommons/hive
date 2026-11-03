@@ -2,10 +2,58 @@
 
 An unattended, 24/7 Twitch stream of the hive dashboard's **Activity Monitor**
 (the stage tracker: every tracked issue and PR walking Open → Actionable →
-Claimed → PR in progress → CI / Review → Merge queue). The first stream is
+Claimed → PR in progress → parallel **CI** and **Review** tracks → Merge queue). The first stream is
 hive's own hosted spoke on `hive-oke`, channel
 [`twitch.tv/hivecommons`](https://www.twitch.tv/hivecommons). The stream is
 listed alongside the other community links in [Community and support](community.md).
+
+### Reading the tracks
+
+CI and Review are separate columns on the same PR row, not serial steps.
+Native stage `050` remains the aggregate CI / Review stage for API consumers,
+stage filters, counts and routing. Both tracks can work at once; green CI does
+not imply review approval, and approval does not imply green CI or admission.
+Required-check evidence comes from the existing GitHub check snapshot and
+required-set resolver. Missing runs, unknown required sets, optional checks
+and skipped checks do not manufacture a passing or failing required verdict.
+Legacy commit statuses also count as observed required contexts for an
+explicit any-App rule. A failed or partial status read leaves absence unknown;
+an unbound status cannot prove a pinned App passed. Real retry IDs, not mixed
+pairwise start-time comparisons, keep the result independent of API ordering.
+
+Observed source repair is shown in **PR in progress**: a current-head fix
+assignment names its actual fixer, but only a verified fresh source edit says
+**Fixing** and returns an otherwise CI/Review repair there. Assignment alone
+stays activity unknown, rather than moving CI-only work back to coding.
+Author-wait stages `071`/`072` explicitly say waiting for the owner, and adopted
+repair `074` retains its provenance without claiming the owner is coding.
+An unassigned `070` says waiting for a fixer; CI-only retries stay in CI.
+A recorded new-head push returns the row to CI and re-review, invalidating
+old-head observations. Review findings alone never animate author code work.
+Human decisions still belong to their human gates.
+Default sorting and linked-PR ordering continue to use the native route,
+not the display projection. Repair's displayed since-time comes from its
+recorded assignment/transition, never an invented return date.
+
+Track tooltips disclose the head, evidence source, observation time, state
+time and blocker where known. A `?` means stale or missing observation time;
+unknown activity has no spinner. Review assignment is read from dispatch, not
+the PR author, claimant, scanner or Prow approval labels. Verified current-head
+review evidence and the current aggregate supply approval/findings; missing
+reviewer identity is left unknown. An assignment is not proof of execution,
+and activity visibility is not a throughput or latency promise. Tracker
+freshness and `/api/status` freshness remain separate; their counts are not
+silently reconciled.
+A worker observation is conservative: its current-round PR scope must match
+the head-bound assignment. Source work additionally requires a successful edit
+tool receipt, a real changed file in the matching Git origin/head worktree and
+fresh event/observation times within two minutes. A comment, claim, label,
+review request or investigation intention is never source-work proof.
+The existing cached runtime transcript scan currently observes supported
+Copilot absolute-path edit/create/patch completions; unsupported backends,
+relative paths, oversized/partial transcripts and unverifiable changes remain
+assigned with activity unknown. Paused agents and CI-only pollers do not prove
+current coding. These are read-only observations, not scheduling authority.
 
 Everything lives in [`src/deploy/stream/`](../deploy/stream/README.md): a
 container that renders the dashboard in a virtual display and pushes it to

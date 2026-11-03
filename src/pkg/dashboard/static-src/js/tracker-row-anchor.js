@@ -16,9 +16,19 @@
     // attempt that found the conflict) or a planner-ordered merge_train
     // still rides on the record — hive's own #15574 read "Fixing" under
     // Merge queue after "fell back to Fixing — conflicting".
-    function stageTrackerAnchor(stage, stages, kind, item) {
+    function stageTrackerAnchor(stage, stages, kind, item, presentation) {
       const cur = Number(stage) || 0;
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
+      // Backend evidence owns this presentation mapping, never a label or
+      // client-side interpretation of a CI failure. Native stages stay intact.
+      const displayHeadMatches = item && item.code_activity && String(item.code_activity.head || '') === String(item.head || '');
+      if (presentation !== false && cur < 80 && displayHeadMatches && (Number(item.display_column) === 30 || Number(item.display_column) === 50)) return Number(item.display_column);
+      // Older payloads can identify owner waits/adoption, but cannot prove
+      // coding. Keep their native words; never use this fallback for counts/sort.
+      if (presentation !== false && item && !item.code_activity && !item.merge_gate && !item.merge_train && [71, 72, 74].includes(cur)) {
+        if (item.push && ['pushed', 'checking'].includes(item.push.state)) return 50;
+        return STAGE_TRACKER_PR_COLUMN;
+      }
       // Under repair past 030 → CI / Review, before any gate or train
       // promotion. The one park the predicate also names, 085 needs
       // decision, stays at the gate: the person decides there.

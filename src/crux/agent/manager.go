@@ -221,6 +221,7 @@ type AgentProcess struct {
 	// LastTranscriptActivity is the newest events.jsonl mtime seen under this
 	// agent's own Copilot session-state tree.
 	LastTranscriptActivity time.Time
+	CodeWork               *crux.CodeWork
 	BusyCondition          string
 	BusyConditionMessage   string
 	Paused                 bool

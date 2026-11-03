@@ -1,0 +1,474 @@
+package dashboard
+
+import (
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
+)
+
+// StageTrackerActivity keeps independent observations separate from the lane's
+// native stage and next mover. Worker activity requires assignment AND worker;
+// CI activity comes only from observed required checks.
+type StageTrackerActivity struct {
+	Head       string     `json:"head"`
+	State      string     `json:"state"`
+	Caption    string     `json:"caption"`
+	Actor      string     `json:"actor,omitempty"`
+	Source     string     `json:"source"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	Since      *time.Time `json:"since,omitempty"`
+	Blocker    string     `json:"blocker,omitempty"`
+	URL        string     `json:"url,omitempty"`
+	Active     bool       `json:"active,omitempty"`
+}
+
+const trackerActivityFreshWindow = 2 * time.Minute
+
+func trackerUnknownActivity(head, caption string) *StageTrackerActivity {
+	return &StageTrackerActivity{Head: head, State: "unknown", Caption: caption, Source: "unavailable"}
+}
+
+func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerActivity {
+	out := trackerUnknownActivity(pr.HeadSHA, "CI unknown · required checks not observed")
+	a := pr.CIActivity
+	if a == nil || pr.HeadSHA == "" || !strings.EqualFold(a.Head, pr.HeadSHA) {
+		return out
+	}
+	out.Source, out.ObservedAt = a.Source, a.ObservedAt
+	if a.RequiredSource != "" {
+		out.Source += "+required-" + a.RequiredSource
+	}
+	if a.StatusesKnown {
+		out.Source += "+github-commit-statuses"
+	}
+	if !a.RequiredKnown || a.RequiredSource == "" || len(a.RequiredChecks) == 0 || len(a.Required) == 0 {
+		return out
+	}
+	type requiredObservation struct {
+		name   string
+		checks []github.PRActivityCheck
+	}
+	var observations []requiredObservation
+	for _, name := range a.Required {
+		found := false
+		for _, binding := range a.RequiredChecks {
+			if binding.Name == name {
+				scoped := *a
+				scoped.RequiredChecks = []github.PRRequiredCheck{binding}
+				checks := scoped.ChecksForRequired(name)
+				var runs, statuses []github.PRActivityCheck
+				for _, check := range checks {
+					if check.Kind == "commit_status" {
+						statuses = append(statuses, check)
+					} else {
+						runs = append(runs, check)
+					}
+				}
+				if len(statuses) > 0 && binding.AppKnown && (binding.AppID == nil || *binding.AppID == -1) {
+					observations = append(observations, requiredObservation{name, statuses})
+					if len(runs) > 0 {
+						observations = append(observations, requiredObservation{name, runs})
+					}
+				} else {
+					observations = append(observations, requiredObservation{name, checks})
+				}
+				found = true
+			}
+		}
+		if !found {
+			return out
+		}
+	}
+	out.State, out.Caption = "passing", "CI passed"
+	running := false
+	for _, observation := range observations {
+		name := observation.name
+		check := github.PRActivityCheck{}
+		ok := len(observation.checks) > 0
+		if ok {
+			check = observation.checks[0]
+		}
+		state := "unknown"
+		switch {
+		case len(observation.checks) > 1:
+			state = "unknown"
+		case !ok:
+			if a.StatusesKnown {
+				state = "missing"
+			}
+		case check.State == "queued" || check.State == "waiting" || check.State == "pending" || check.State == "requested":
+			state = "queued"
+		case check.State == "in_progress":
+			state = "running"
+			running = true
+		case check.State == "completed":
+			switch check.Conclusion {
+			case "success":
+				state = "passing"
+			case "neutral", "skipped":
+				state = "skipped"
+			case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+				state = "failing"
+			}
+		}
+		// A red required check leads, then missing/unknown, then running/queued.
+		rank := map[string]int{"passing": 0, "queued": 1, "running": 2, "skipped": 3, "unknown": 4, "missing": 5, "failing": 6}
+		if rank[state] >= rank[out.State] {
+			out.State, out.Since, out.URL = state, check.Since, check.URL
+			out.ObservedAt = a.ObservedAt
+			if check.Kind == "commit_status" {
+				out.ObservedAt = a.StatusesObservedAt
+			}
+			if state != "passing" {
+				out.Blocker = name
+			}
+		}
+	}
+	if out.State == "passing" && a.NeedsCommitStatusEvidence() && !a.StatusesKnown {
+		out.State, out.Blocker = "unknown", "commit statuses not observed"
+	}
+	switch out.State {
+	case "failing":
+		out.Caption = "CI failing · " + out.Blocker
+	case "running":
+		out.Caption = "CI running"
+	case "queued":
+		out.Caption = "CI queued"
+	case "missing":
+		out.Caption = "CI waiting · " + out.Blocker + " not observed"
+	case "unknown":
+		out.Caption = "CI unknown · " + out.Blocker
+	case "skipped":
+		out.Caption = "CI skipped · " + out.Blocker
+	}
+	out.Active = running && a.ObservedAt != nil && !a.ObservedAt.After(now) && now.Sub(*a.ObservedAt) <= trackerActivityFreshWindow
+	if running && out.State != "running" {
+		out.Caption += " · others running"
+	}
+	return out
+}
+
+func trackerHeadMatches(repo string, number int, head, observedRepo string, observedNumber int, observedHead string) bool {
+	return number == observedNumber && head != "" && strings.EqualFold(head, observedHead) && strings.EqualFold(repo, observedRepo)
+}
+
+func trackerLatestBundleVerdicts(bundle *evidence.Bundle) []evidence.Verdict {
+	latest := map[string]evidence.Verdict{}
+	for _, verdict := range bundle.Verdicts {
+		key := verdict.Perspective + "\x00" + verdict.Backend + "\x00" + verdict.Model
+		if previous, ok := latest[key]; !ok || verdict.RecordedAt.After(previous.RecordedAt) ||
+			(verdict.RecordedAt.Equal(previous.RecordedAt) && previous.Verdict == "approve" && verdict.Verdict != "approve") {
+			latest[key] = verdict
+		}
+	}
+	keys := make([]string, 0, len(latest))
+	for key := range latest {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	out := make([]evidence.Verdict, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, latest[key])
+	}
+	return out
+}
+
+func trackerBundleApproves(bundle *evidence.Bundle, agg *review.Aggregate) bool {
+	latest := trackerLatestBundleVerdicts(bundle)
+	if len(latest) == 0 || len(agg.Perspectives) == 0 {
+		return false
+	}
+	perspectives := map[string]bool{}
+	for _, verdict := range latest {
+		if verdict.Verdict != "approve" || verdict.Perspective == "" || verdict.RecordedAt.IsZero() {
+			return false
+		}
+		perspectives[verdict.Perspective] = true
+	}
+	for perspective, verdict := range agg.Perspectives {
+		if verdict != review.Verdict("approve") || !perspectives[string(perspective)] {
+			return false
+		}
+	}
+	return true
+}
+
+// The normal worker map has one seat per PR. Tracks instead inspect each agent,
+// so a reviewer and fixer on the same PR cannot overwrite each other's evidence.
+func trackerAssignedWorker(status *StatusPayload, repo string, number int, agent string, since, now time.Time) *time.Time {
+	if status == nil || agent == "" {
+		return nil
+	}
+
+	qualify := stageTrackerRepoQualifier(status)
+	for _, worker := range status.Agents {
+		action := worker.LastAction
+		if strings.EqualFold(worker.Name, agent) && worker.Busy == "working" && !worker.Paused && !worker.AwaitingCI && action != nil &&
+			action.Current && agentCausedAuditActions[action.Action] && action.Number == number && strings.EqualFold(qualify(action.Repo), repo) {
+			if at, err := time.Parse(time.RFC3339Nano, action.At); err == nil && !at.Before(since) && !at.After(now) && now.Sub(at) <= trackerActivityFreshWindow {
+				return &at
+			}
+		}
+	}
+	return nil
+}
+
+func trackerAssignedCodeWorker(status *StatusPayload, repo string, number int, head, agent string, since, now time.Time) *crux.CodeWork {
+	if status == nil || agent == "" || head == "" {
+		return nil
+	}
+	qualify := stageTrackerRepoQualifier(status)
+	for _, worker := range status.Agents {
+		observation := worker.CodeWork
+		action := worker.LastAction
+		if !strings.EqualFold(worker.Name, agent) || worker.Busy != "working" || worker.Paused || worker.AwaitingCI ||
+			action == nil || !action.Current || !agentCausedAuditActions[action.Action] ||
+			action.Number != number || !strings.EqualFold(qualify(action.Repo), repo) ||
+			observation == nil || observation.Source != crux.CodeWorkSource || observation.Path == "" ||
+			!strings.EqualFold(observation.Repo, repo) || !strings.EqualFold(observation.Head, head) ||
+			observation.At.IsZero() || observation.At.Before(since) || observation.At.After(now) ||
+			observation.KickAt.IsZero() || observation.KickAt.Before(since) || observation.At.Before(observation.KickAt) ||
+			observation.ObservedAt.IsZero() || observation.ObservedAt.Before(observation.At) || observation.ObservedAt.After(now) ||
+			now.Sub(observation.At) > trackerActivityFreshWindow || now.Sub(observation.ObservedAt) > trackerActivityFreshWindow {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, action.At)
+		if err != nil || at.Before(observation.KickAt) || at.After(now) {
+			continue
+		}
+		return observation
+	}
+	return nil
+}
+
+func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, agg *review.Aggregate, dispatch review.DispatchState, status *StatusPayload, now time.Time) *StageTrackerActivity {
+	out := trackerUnknownActivity(pr.HeadSHA, "Review unknown · current-head evidence unavailable")
+	if agg != nil && !trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, agg.Repo, agg.Number, agg.HeadSHA) {
+		agg = nil
+	}
+	qualify := stageTrackerRepoQualifier(status)
+	if bundle != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, bundle.Repo, bundle.Number, bundle.HeadSHA) {
+		out.Source, out.ObservedAt = "verified-review-bundle", timePtr(bundle.UpdatedAt)
+		for _, verdict := range trackerLatestBundleVerdicts(bundle) {
+			if !verdict.RecordedAt.IsZero() && (out.Since == nil || verdict.RecordedAt.After(*out.Since)) {
+				at := verdict.RecordedAt
+				out.Since = &at
+			}
+		}
+		for _, posted := range bundle.PostedReviews {
+			if strings.EqualFold(posted.Head, pr.HeadSHA) {
+				out.URL = posted.URL
+			}
+		}
+		if agg != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, agg.Repo, agg.Number, agg.HeadSHA) && len(bundle.Verdicts) > 0 {
+			switch string(agg.Verdict) {
+			case "approve":
+				if agg.MergeEligible && trackerBundleApproves(bundle, agg) {
+					out.State, out.Caption = "approved", "Review approved"
+				} else {
+					out.Caption = "Review unknown · bundle and aggregate do not establish approval"
+				}
+			case "changes_requested", "reject":
+				out.State, out.Caption = "changes_requested", "Review findings · awaiting author"
+				out.Blocker = stageTrackerFixerExhaustedSummary(agg)
+			case "requires_human":
+				out.State, out.Caption = "human_decision", "Review findings · human decision"
+				out.Blocker = agg.DecisionQuestion
+			}
+		}
+		if out.State == "unknown" && (agg == nil || string(agg.Verdict) != "approve") {
+			for _, verdict := range trackerLatestBundleVerdicts(bundle) {
+				if verdict.Verdict == "changes_requested" || verdict.Verdict == "reject" {
+					out.State, out.Caption = "changes_requested", "Review findings · awaiting author"
+					if len(verdict.Findings) > 0 {
+						out.Blocker = verdict.Findings[0].Summary
+					}
+					break
+				}
+			}
+		}
+		if out.State != "unknown" && agg != nil {
+			var confirmed time.Time
+			for _, recent := range dispatch.Recent {
+				if recent.Agent != "" && !recent.Decision && !recent.Confirmed.IsZero() && !recent.Confirmed.After(now) &&
+					trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, qualify(recent.Repo), recent.Number, recent.HeadSHA) &&
+					recent.Confirmed.After(confirmed) {
+					for _, receipt := range agg.ReportReceipts {
+						if receipt.Agent == recent.Agent && receipt.Perspective == recent.Perspective &&
+							receipt.Head == recent.Head && !receipt.Decided && !receipt.ReceivedAt.IsZero() &&
+							!receipt.ReceivedAt.Before(recent.Confirmed) && !receipt.ReceivedAt.After(now) {
+							confirmed, out.Actor = recent.Confirmed, recent.Agent
+						}
+					}
+				}
+			}
+			if out.Actor != "" {
+				out.Caption += " · " + out.Actor
+			}
+		}
+	}
+	for _, wait := range dispatch.Waits {
+		if trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, qualify(wait.Repo), wait.Number, wait.HeadSHA) && out.State == "unknown" {
+			out.State, out.Caption, out.Source = "unassigned", "Review queued · unassigned", "review-dispatch-wait"
+			out.Since, out.ObservedAt, out.Blocker = timePtr(wait.FirstAt), timePtr(wait.LastAt), wait.Reason
+		}
+	}
+	hadApproval := out.State == "approved"
+	approvalAt := out.Since
+	for _, pending := range dispatch.Pending {
+		if !trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, qualify(pending.Repo), pending.Number, pending.HeadSHA) ||
+			pending.Dispatched.IsZero() || pending.Dispatched.After(now) || now.Sub(pending.Dispatched) > review.DefaultPendingReviewTTL {
+			continue
+		}
+		if out.State == "human_decision" {
+			continue
+		}
+		settled := false
+		if agg != nil && !agg.RecordedAt.After(now) {
+			currentAggregate := *agg
+			currentAggregate.ReportReceipts = nil
+			for _, receipt := range agg.ReportReceipts {
+				if !receipt.ReceivedAt.After(now) {
+					currentAggregate.ReportReceipts = append(currentAggregate.ReportReceipts, receipt)
+				}
+			}
+			currentPending := pending
+			currentPending.Repo = qualify(pending.Repo)
+			settled = review.PendingReviewCompleted(currentPending, review.Artifact{Items: []review.Aggregate{currentAggregate}})
+		}
+		if settled {
+			continue
+		}
+		out.State, out.Caption, out.Actor, out.Source = "assigned", "Review assigned", pending.Agent, "review-dispatch"
+		if pending.Agent == "" {
+			out.State, out.Caption = "unassigned", "Review queued · unassigned"
+		}
+		if pending.Decision {
+			out.Caption = "Review adjudication assigned"
+			if pending.Agent == "" {
+				out.Caption = "Review adjudication queued · unassigned"
+			}
+		}
+		out.Since, out.ObservedAt = timePtr(pending.Dispatched), timePtr(dispatch.GeneratedAt)
+		workerAt := trackerAssignedWorker(status, pr.Repo, pr.Number, pending.Agent, pending.Dispatched, now)
+		out.Active = workerAt != nil
+		if out.Active {
+			out.State, out.Caption = "reviewing", "Review working"
+			out.Source, out.ObservedAt = "review-dispatch+current-worker", workerAt
+			if pending.Decision {
+				out.State, out.Caption = "adjudicating", "Review adjudication working"
+			}
+		}
+		if out.Actor != "" {
+			out.Caption += " · " + out.Actor
+		}
+		if hadApproval {
+			if approvalAt != nil && pending.Dispatched.After(*approvalAt) {
+				out.Caption += " · re-review after approval"
+			} else {
+				out.Caption += " · another assignment not completed"
+			}
+		}
+		if out.Active {
+			break
+		}
+	}
+	return out
+}
+
+func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.DispatchState, status *StatusPayload, now time.Time) {
+	it.DisplayColumn = 0
+	out := trackerUnknownActivity(it.Head, "Code activity unknown")
+	qualify := stageTrackerRepoQualifier(status)
+	if it.Stage == trackerNumberNeedsAuthor || it.Stage == trackerNumberReturned {
+		out.State, out.Caption, out.Actor, out.Source = "waiting_owner", "Waiting for owner · not observed coding", it.Author, "native-author-wait"
+		if it.Author != "" {
+			out.Caption = "Waiting for @" + it.Author + " · not observed coding"
+		}
+		out.Since = it.StageSince
+		it.DisplayColumn = trackerNumberPRInProgress
+	}
+	if it.Stage == trackerNumberAdopted {
+		out.State, out.Caption, out.Source = "adopted", "Adopted repair · activity unknown", "native-adoption"
+		out.Since = it.StageSince
+		it.DisplayColumn = trackerNumberPRInProgress
+	}
+	if it.Stage == trackerNumberFixing {
+		out.State, out.Caption, out.Source = "waiting_fixer", "Waiting for fixer · no code work observed", "native-fix-request"
+		out.Since = it.StageSince
+		it.DisplayColumn = trackerNumberReviewPending
+	}
+	for _, fix := range dispatch.Fixes {
+		if !trackerHeadMatches(it.Repo, it.Number, it.Head, qualify(fix.Repo), fix.Number, fix.HeadSHA) ||
+			fix.Dispatched.IsZero() || fix.Dispatched.After(now) || now.Sub(fix.Dispatched) > review.DefaultPendingFixTTL {
+			continue
+		}
+		out.State, out.Caption, out.Actor, out.Source = "assigned", "Fix task assigned · activity unknown", fix.Agent, "fix-dispatch"
+		out.Since, out.ObservedAt = timePtr(fix.Dispatched), timePtr(dispatch.GeneratedAt)
+		// A dispatch and PR administration are not source-work evidence.
+		// Bind an observed successful, worktree-verified edit to the exact
+		// actor/repo/head assignment; unsupported instrumentation is unknown.
+		if codeWork := trackerAssignedCodeWorker(status, it.Repo, it.Number, it.Head, fix.Agent, fix.Dispatched, now); codeWork != nil {
+			out.State, out.Caption, out.Active = "fixing", "Fixing · "+fix.Agent, true
+			out.Source, out.ObservedAt = "fix-dispatch+"+codeWork.Source, timePtr(codeWork.At)
+			it.DisplayColumn = trackerNumberPRInProgress
+		}
+		if status != nil {
+			for _, worker := range status.Agents {
+				action := worker.LastAction
+				if strings.EqualFold(worker.Name, fix.Agent) && worker.Busy == "working" && !worker.Paused && worker.AwaitingCI &&
+					action != nil && action.Current && agentCausedAuditActions[action.Action] && action.Number == it.Number && strings.EqualFold(qualify(action.Repo), it.Repo) {
+					at, err := time.Parse(time.RFC3339Nano, action.At)
+					if err != nil || at.Before(fix.Dispatched) || at.After(now) || now.Sub(at) > trackerActivityFreshWindow {
+						continue
+					}
+					out.State, out.Caption = "waiting_ci", "Fix task waiting on CI · not observed coding"
+					out.Source, out.ObservedAt = "fix-dispatch+current-worker-ci-wait", &at
+					if it.Stage != trackerNumberNeedsAuthor && it.Stage != trackerNumberReturned && it.Stage != trackerNumberAdopted {
+						it.DisplayColumn = trackerNumberReviewPending
+					}
+					break
+				}
+			}
+		}
+		break
+	}
+	if it.Rework != nil && it.Rework.State == reworkStateInProgress && !out.Active {
+		out.State, out.Caption, out.Actor, out.Source = "claimed", "Fix task claimed · activity unknown", it.Rework.Actor, "contributor-fix-claim"
+		out.Since = it.Rework.Since
+	}
+	if it.Push != nil && (it.Push.State == pushStatePushed || it.Push.State == pushStateChecking) {
+		// Current-head work observed after the push can coexist with checks;
+		// a persistent push marker must not hide a later repair.
+		workAfterPush := out.Active && (it.Push.State == pushStateChecking || it.Push.Since == nil ||
+			(out.ObservedAt != nil && out.ObservedAt.After(*it.Push.Since)))
+		if !workAfterPush {
+			it.DisplayColumn = trackerNumberReviewPending
+			out = &StageTrackerActivity{Head: it.Head, State: "pushed", Caption: "New head pushed · CI and re-review",
+				Source: "recorded-push", Since: it.Push.Since}
+			if it.Push.State == pushStateChecking {
+				out.State, out.Caption, out.Source = "waiting_ci", "CI retry · no new head observed", "recorded-ci-retry"
+			}
+		}
+	}
+	// Human decisions and superseded originals remain their native gates.
+	if it.Stage == trackerNumberNeedsDecision || it.Stage >= trackerNumberAwaitingMerge || it.Superseded != nil {
+		it.DisplayColumn = 0
+	}
+	if out.State == "waiting_fixer" && strings.HasPrefix(it.Caption, "Fixing paused") {
+		out.Blocker = strings.Replace(it.Caption, "Fixing paused", "Fix task blocked", 1)
+		out.Source += "+fix-dispatch-status"
+	}
+	it.CodeActivity = out
+	if it.Stage == trackerNumberFixing && it.Superseded == nil {
+		it.Caption = out.Caption
+		if out.Actor != "" && !out.Active {
+			it.Caption += " · " + out.Actor
+		}
+	}
+}
