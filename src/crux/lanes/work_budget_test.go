@@ -70,11 +70,6 @@ func TestByteBoundAdmissionPreservesCompletionAndRecoveryHeadroom(t *testing.T) 
 	if err := b.Nack(ctx, "atlas", "shared", "workers", receipt(last)); err != nil {
 		t.Fatal("accepted near-cap lease cannot NACK", err)
 	}
-	for _, in := range receipts[2:] {
-		if err := b.Ack(ctx, "atlas", "shared", "workers", in); err != nil {
-			t.Fatal("accepted near-cap lease cannot ACK", err)
-		}
-	}
 	clock = clock.Add(b.cfg.RetryDelay + time.Nanosecond)
 	retried := claim(t, b, "atlas", "workers")
 	if retried.Sequence != last.Sequence {
@@ -95,6 +90,13 @@ func TestByteBoundAdmissionPreservesCompletionAndRecoveryHeadroom(t *testing.T) 
 	}
 	if err := b.Nack(ctx, "atlas", "shared", "workers", receipt(retried)); err != nil {
 		t.Fatal(err)
+	}
+	// Full-ledger ACKs under the race detector can outlive retention.
+	// Finish retained-work retries first; expiry and recovery follow below.
+	for _, in := range receipts[2:] {
+		if err := b.Ack(ctx, "atlas", "shared", "workers", in); err != nil {
+			t.Fatal("accepted near-cap lease cannot ACK", err)
+		}
 	}
 	entry, err = b.state.Get(ctx, key)
 	if err != nil || len(entry.Value()) > reservedBytes {
