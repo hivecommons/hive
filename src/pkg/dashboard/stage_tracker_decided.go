@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/review"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -202,11 +203,11 @@ func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now ti
 		d.Effect = decidedEffectPending
 		target := verb.Stage
 		// Decision wins over a stale park label: a row still wearing 085
-		// after a recorded direction sits where the hive really is — 070
-		// Fixing — not on the ask it already answered (hivecommons/hive#15096 N13).
+		// after a recorded direction becomes a native 070 repair request,
+		// not evidence of coding or an unanswered ask (hivecommons/hive#15096 N13).
 		if target == stagelabels.None && verdict == string(delegatedecision.VerdictDirection) && it.Stage == stagelabels.NeedsDecision.Number() {
 			target = stagelabels.Fixing
-			d.Text = "Fixing · hive is addressing " + stageTrackerReviewerPossessive(it) + " review"
+			d.Text = "Fix requested · awaiting repair of " + stageTrackerReviewerPossessive(it) + " review"
 		}
 		if target != stagelabels.None {
 			d.StageBefore, d.Stage, d.stage = it.Stage, target.Number(), target
@@ -324,6 +325,8 @@ func stageTrackerProjectDecided(it *StageTrackerItem, d *StageTrackerDecided, sw
 		it.Reason = ""
 		if stage == stagelabels.Fixing {
 			it.MergeGate = nil
+			stageTrackerApplyCodeActivity(it, review.DispatchState{}, nil, now)
+			it.Caption = it.CodeActivity.Caption
 		} else {
 			it.MergeGate = stageTrackerMergeGate(it.Repo, it.Number, stage, stagelabels.Record{}, false, sweep, now)
 		}

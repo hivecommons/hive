@@ -112,6 +112,10 @@ func (d attentionDelivery) Post(ctx context.Context, e attention.Episode, body s
 	return d.c.CreateIssueComment(ctx, e.Key.Repo, e.Key.Item, body) // writeback:gated — live policy and admitter rechecked above
 }
 
+// attentionSectionHeading opens the card's Attention section: one line per
+// unresolved episode — who owes what, since when, snoozed until.
+const attentionSectionHeading = "**Attention** — who owes what (`/hive ack` or `/hive snooze <duration>` on this item quiets reminders):\n"
+
 func attentionStatus(episodes []attention.Episode) string {
 	sort.Slice(episodes, func(i, j int) bool { return episodes[i].Key.Hash() < episodes[j].Key.Hash() })
 	var b strings.Builder
@@ -129,6 +133,9 @@ func attentionStatus(episodes []attention.Episode) string {
 		if !e.SnoozedUntil.IsZero() {
 			fmt.Fprintf(&b, "; snoozed until %s", e.SnoozedUntil.UTC().Format("2006-01-02T15:04Z"))
 		}
+		if e.Reminders > 0 {
+			fmt.Fprintf(&b, "; reminded %d× (last %s)", e.Reminders, e.RemindedAt.UTC().Format("2006-01-02T15:04Z"))
+		}
 		if e.Evidence != "" {
 			fmt.Fprintf(&b, "; evidence: %s", statusText(e.Evidence))
 		}
@@ -143,7 +150,11 @@ func attentionStatus(episodes []attention.Episode) string {
 	if active > 20 {
 		fmt.Fprintf(&b, "\n%d further active episodes retained in the durable ledger.\n", active-20)
 	}
-	return b.String()
+	if active == 0 {
+		// An empty section is removed from the card (closure clears it).
+		return ""
+	}
+	return attentionSectionHeading + b.String()
 }
 
 func statusText(s string) string {

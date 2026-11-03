@@ -53,9 +53,9 @@ func decodeGQLPRNode(t *testing.T, raw string) graphQLPRBatchNode {
 
 func TestGraphQLCheckRunsMixesCheckRunsAndStatusContexts(t *testing.T) {
 	n := decodeGQLPRNode(t, gqlPRNodeWithContextsJSON(1, "sha-1",
-		`{"__typename":"CheckRun","name":"unit","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://ci.example/unit"},`+
-			`{"__typename":"StatusContext","context":"DCO","state":"FAILURE","targetUrl":"https://probot.github.io/apps/dco/"},`+
-			`{"__typename":"StatusContext","context":"ci/pending","state":"PENDING"},`+
+		`{"__typename":"CheckRun","id":"CR_unit","databaseId":101,"name":"unit","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://ci.example/unit"},`+
+			`{"__typename":"StatusContext","id":"SC_DCO","context":"DCO","state":"FAILURE","targetUrl":"https://probot.github.io/apps/dco/"},`+
+			`{"__typename":"StatusContext","id":"SC_pending","context":"ci/pending","state":"PENDING"},`+
 			`{"__typename":"SomethingElse","name":"ignored","status":"COMPLETED","conclusion":"FAILURE"}`))
 
 	checks, ok := graphQLCheckRuns(n)
@@ -65,15 +65,18 @@ func TestGraphQLCheckRunsMixesCheckRunsAndStatusContexts(t *testing.T) {
 	if len(checks) != 3 {
 		t.Fatalf("got %d check runs, want 3 (unknown __typename skipped)", len(checks))
 	}
-	want := []struct{ name, status, conclusion, url string }{
-		{"unit", "completed", "success", "https://ci.example/unit"},
-		{"DCO", "completed", "failure", "https://probot.github.io/apps/dco/"},
-		{"ci/pending", "in_progress", "", ""},
+	want := []struct {
+		id                                    int64
+		nodeID, name, status, conclusion, url string
+	}{
+		{101, "CR_unit", "unit", "completed", "success", "https://ci.example/unit"},
+		{0, "SC_DCO", "DCO", "completed", "failure", "https://probot.github.io/apps/dco/"},
+		{0, "SC_pending", "ci/pending", "in_progress", "", ""},
 	}
 	for i, w := range want {
 		cr := checks[i]
-		if cr.GetID() != int64(i+1) {
-			t.Fatalf("check[%d] id = %d, want %d", i, cr.GetID(), i+1)
+		if cr.GetID() != w.id || cr.GetNodeID() != w.nodeID || cr.GetHeadSHA() != "sha-1" {
+			t.Fatalf("check[%d] identity = %d/%s/%s, want %d/%s/sha-1", i, cr.GetID(), cr.GetNodeID(), cr.GetHeadSHA(), w.id, w.nodeID)
 		}
 		if cr.GetName() != w.name || cr.GetStatus() != w.status || cr.GetConclusion() != w.conclusion || cr.GetDetailsURL() != w.url {
 			t.Fatalf("check[%d] = %s/%s/%s/%s, want %s/%s/%s/%s", i,

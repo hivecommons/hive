@@ -383,6 +383,15 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 				result.Skipped++
 			}
 		}
+		// Reminders, closure clean-up and the per-repo attention queue
+		// (attention pilot, hivecommons/hive#16361, #16362) run after this
+		// pass recorded its `/hive ack` and `/hive snooze` commands.
+		if c.stageArchived.has(strings.ToLower(owner + "/" + repoName)) {
+			continue
+		}
+		if _, err := c.SweepAttentionQueue(ctx, owner+"/"+repoName); err != nil && c.logger != nil {
+			c.logger.Warn("unpark sweep: attention queue pass incomplete", "repo", repo, "error", err)
+		}
 	}
 	return result, nil
 }
