@@ -34,6 +34,12 @@ func TestMatrixUIWiring(t *testing.T) {
 		}
 	}
 	css := read("css/matrix.css")
+	// Overlays must be viewport-pinned and layered above the canvas in every effect (#16441).
+	for _, want := range []string{"body.matrix-mode .matrix-canvas { display: block; position: absolute; inset: 0; z-index: 0;", "body.matrix-mode .matrix-labels { position: fixed; bottom: 1rem; left: 1rem;", "body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001;"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("matrix.css missing %q", want)
+		}
+	}
 	for _, rule := range strings.Split(css, "}") {
 		selector, _, ok := strings.Cut(strings.TrimSpace(rule), "{")
 		if !ok {
@@ -123,6 +129,13 @@ async function scenario(query, reduced = false, status = 200) {
     if (/cascade|ghost|terminal/.test(query)) assert(draws.some(a => a[0] === 'org/repo#2 · main.go'));
     if (query.includes('ghost')) assert(draws.some(a => a[0] === 'main.go'));
     if (query.includes('terminal')) assert(draws.some(a => a[0] === '+ <script>alert(1)</script>'));
+    // The freshness HUD stays mounted, unhidden and populated in every effect,
+    // and the typed effects keep their baseline above the HUD band (#16441).
+    const hud = byClass('matrix-labels');
+    assert(!hud.hidden); assert.equal(hud.children.length, 3);
+    assert(hud.children[0].textContent.includes('lines pushed')); assert(hud.children[1].textContent);
+    assert.equal(doc.getElementById('hive-matrix').children.indexOf(hud), 3);
+    if (/ghost|terminal/.test(query)) assert(draws.filter(a => a.length === 3).every(a => a[2] <= win.innerHeight - 100));
   }
   doc.hidden = true; docEvents.visibilitychange.forEach(fn => fn());
   assert.equal(raf.size, 0); assert.equal(timers.size, 0);
