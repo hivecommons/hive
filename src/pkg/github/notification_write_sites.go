@@ -27,6 +27,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.(*repoForgeRouter).CreateIssueComment":  {Class: NotificationClassAttention, Passthrough: true},
 	"main.liveTriageCommenter.CreateIssueComment": {Class: NotificationClassAttention, Passthrough: true},
 	"github.(*Client).UpsertIssueMarkerComment":   {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*clientStatusForge).CreateComment":   {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.
 	"dashboard.(*ContributeWSHub).markAlreadyDoneIssue":       {Class: NotificationClassStatus},
