@@ -1490,11 +1490,10 @@ func (c *Engine) postStageNoteWith(ctx context.Context, policy StageLabelPolicy,
 	if policy.QuietNotifications {
 		return c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, key, body, write)
 	}
-	commenter, ok := c.transport.(issueCommenter)
-	if !ok {
-		return 0, fmt.Errorf("creating stage note on %s/%s#%d: transport has no comment primitive", obs.Owner, obs.Repo, obs.Number)
-	}
-	if err := commenter.CreateIssueComment(ctx, obs.Owner+"/"+obs.Repo, obs.Number, body); err != nil {
+	// Share the quiet-mode creation adapter so both modes use the same
+	// transport primitive and fail closed when it is unavailable.
+	f := &engineStatusForge{e: c, owner: obs.Owner, repo: obs.Repo, number: obs.Number}
+	if err := f.CreateComment(ctx, body); err != nil {
 		return 0, err
 	}
 	return 1, nil
