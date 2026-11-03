@@ -121,8 +121,9 @@ func (c *Engine) humanMergePinOnlyExempt(ctx context.Context, owner, repo string
 }
 
 // pinOnlyActionPinsUpstream, pinOnlyCommitsTrusted and pinOnlyTrustedLogin
-// delegate to the pkg/github helpers the merge-request relay also uses (#16265), so the sweep, /approve and the relay apply one
-// provenance policy (#16399).
+// delegate to the pkg/github helpers the merge-request relay also uses
+// (#16265), so the sweep, /approve and the relay apply one provenance policy
+// (#16399).
 func (c *Engine) pinOnlyActionPinsUpstream(ctx context.Context, pins []intent.ActionPin) string {
 	return hgithub.PinOnlyActionPinsUpstream(ctx, c.gh, pins)
 }
