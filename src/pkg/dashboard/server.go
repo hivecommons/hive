@@ -551,9 +551,10 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
-	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
-	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
+	ConfigSafetyWarnings []string               `json:"configSafetyWarnings,omitempty"`
+	OverviewBands        *OverviewBands         `json:"overview_bands,omitempty"`
+	OverviewTotals       FrontendOverviewTotals `json:"overviewTotals"`
+	ActionableNow        FrontendActionableNow  `json:"actionableNow"`
 	// OpenItems is the canonical open-items set the Overview tile, its
 	// sidebar pill and the Hive activity monitor all count (open_items.go).
 	OpenItems        FrontendOpenItems         `json:"openItems"`

@@ -74,8 +74,9 @@ func notifySaveObserver() {
 var dashboardAuthTokenFile = "/secrets/dashboard-token"
 
 type Config struct {
-	Project  ProjectConfig  `yaml:"project"`
-	Policies PoliciesConfig `yaml:"policies"`
+	Config   *ConfigLoadPolicy `yaml:"config,omitempty" json:"config,omitempty"`
+	Project  ProjectConfig     `yaml:"project"`
+	Policies PoliciesConfig    `yaml:"policies"`
 	// AgentRuntimeConfig groups the keys the agent runtime (Crux,
 	// hivecommons/hive#13536) owns. It is inlined so the YAML shape is
 	// unchanged: `agents:`, `backends:`, ... stay top-level.

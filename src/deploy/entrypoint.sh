@@ -962,6 +962,16 @@ hive_write_system_gitconfig() {
   echo "[entrypoint] agents commit as ${_hwsg_name} <${_hwsg_email}> (system gitconfig)"
 }
 
+# Capture safety deltas BEFORE snapshot writes erase the prior runtime config.
+# The exported JSON survives the root -> dev re-exec and config reloads, keeping
+# recovery warnings visible in /api/status for the entire boot.
+hive_check_safety_gates() {
+  if [ -z "${HIVE_BOOT_SAFETY_WARNINGS:-}" ]; then
+    HIVE_BOOT_SAFETY_WARNINGS="$(hive config diff --config "${HIVE_CONFIG:-$HIVE_CONFIG_PATH}" --json)" || return 1
+    export HIVE_BOOT_SAFETY_WARNINGS
+  fi
+}
+
 # Detect Kubernetes vs Docker environment
 IS_KUBERNETES=false
 if [ -n "${KUBERNETES_SERVICE_HOST:-}" ] || [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
@@ -1141,6 +1151,7 @@ PYEOF
         echo "[entrypoint] K8s mode — dashboard overlay invalid, using ConfigMap seed as-is"
       fi
     fi
+    hive_check_safety_gates
     # Write the (merged) config as the disaster-recovery snapshot. Always
     # under the new name; the legacy file is left untouched on the PVC.
     cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" 2>/dev/null || true
@@ -1202,6 +1213,8 @@ else
     exit 1
   fi
 fi
+
+hive_check_safety_gates
 
 # ── Cleanup stale stderr logs from previous agent launches ────────────
 STDERR_LOG_MAX_AGE_MINUTES=60

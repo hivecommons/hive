@@ -7113,6 +7113,12 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	case "--version", "version":
 		fmt.Fprintf(stdout, "hive %s (commit %s, branch %s)\n", reportedVersion(), gitShort, gitBranch)
 		return true, 0
+	case "config":
+		if len(args) > 1 && args[1] == "diff" {
+			return true, runConfigDiff(args[2:], stdout, stderr)
+		}
+		fmt.Fprintln(stderr, "usage: hive config diff [-config path] [-json] [previous paths...]")
+		return true, 1
 	case "validate", "--config-check":
 		return true, runConfigCheck(args[1:], stdout, stderr)
 	case "agy-turn":

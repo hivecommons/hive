@@ -392,6 +392,7 @@ func BuildFrontendStatus(
 	}
 	repos := buildReposWithForge(cfg, actionable, govState, forge)
 	payload := &StatusPayload{
+		ConfigSafetyWarnings:  config.BootSafetyWarnings(),
 		Timestamp:             time.Now().UTC().Format(time.RFC3339),
 		TimeZone:              dashboardTimeZoneName(),
 		HiveID:                cfg.HiveID,

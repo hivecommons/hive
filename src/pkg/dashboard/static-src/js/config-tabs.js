@@ -35,7 +35,9 @@
         // agent's kick history over the selected time window.
         if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
-        body.innerHTML = renderGovernorTab(tabId);
+        const gateWarnings = (window._lastStatus || {}).configSafetyWarnings || [];
+        const gateBanner = gateWarnings.length ? '<div class="config-safety-warning" role="alert" style="color:var(--amber);padding:12px"><strong>Safety gates dropped at startup</strong><ul>' + gateWarnings.map(w => '<li>' + escapeHtml(w) + '</li>').join('') + '</ul></div>' : '';
+        body.innerHTML = gateBanner + renderGovernorTab(tabId);
         settingsAnnotateRows(body);
         if (tabId === 'Hub') { fetchQueueCount(); fetchAutoUpdateStatus(); }
         // The escalation breaker lives at the top level of hive.yaml, so the

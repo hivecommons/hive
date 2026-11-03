@@ -1,0 +1,1 @@
+- Warn before boot recovery drops safety gates from prior runtime or dashboard config, retain the warning in status and settings, and allow operators to refuse startup with `config.refuse_gate_regression: true`; `hive config diff` shows the same gate deltas ([#16438](https://github.com/hivecommons/hive/issues/16438)).

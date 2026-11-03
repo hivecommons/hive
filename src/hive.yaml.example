@@ -1,3 +1,9 @@
+# Compare boot safety gates with surviving runtime/backup/dashboard config.
+# Warn by default; true refuses startup before replacing the runtime snapshot.
+# Inspect deltas manually with: hive config diff --config /path/to/hive.yaml
+config:
+  refuse_gate_regression: false
+
 # Hive v2 Configuration
 # All values support ${ENV_VAR} interpolation for secrets.
 # Copy this file to hive.yaml and customize for your setup.

@@ -231,4 +231,49 @@ else
   trap - EXIT
 fi
 
+# #16438: execute the actual recovery branch, including its snapshot write.
+# A fake diff command controls the verdict; Go tests exercise the comparator.
+SAFETY_HELPER="$(sed -n '/^hive_check_safety_gates() {/,/^}/p' "$ENTRYPOINT")"
+BOOT_BLOCK="$(sed -n '/^# Detect Kubernetes vs Docker environment/,/^# ── Cleanup stale stderr logs/{ /^# ── Cleanup stale stderr logs/d; p; }' "$ENTRYPOINT")"
+exercise_safety_boot() (
+  set -e
+  local verdict="$1" dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' EXIT
+  HIVE_CONFIG_PATH="$dir/seed"
+  HIVE_CONFIG_RUNTIME="$dir/runtime"
+  HIVE_CONFIG_RUNTIME_LEGACY="$dir/legacy"
+  HIVE_CONFIG_BOOT=""
+  HIVE_CONFIG=""
+  HIVE_BOOT_SAFETY_WARNINGS=""
+  KUBERNETES_SERVICE_HOST=probe
+  printf 'project: {org: probe}\n' > "$HIVE_CONFIG_PATH"
+  # Resolve no boot input, simulating an operator moving runtime aside.
+  hive_runtime_config_read() { :; }
+  hive_harden_runtime_config() { :; }
+  hive() {
+    if [ "$verdict" = refuse ]; then return 1; fi
+    printf '["safety gate dropped: review.require_labels"]\n'
+  }
+  # Use a separate shell so set -e remains active even when this harness
+  # captures its exit status in an if statement.
+  export HIVE_CONFIG_PATH HIVE_CONFIG_RUNTIME HIVE_CONFIG_RUNTIME_LEGACY
+  export KUBERNETES_SERVICE_HOST HIVE_CONFIG HIVE_BOOT_SAFETY_WARNINGS verdict
+  export -f hive_runtime_config_read hive_harden_runtime_config hive
+  local status=0
+  BOOT_BLOCK="${BOOT_BLOCK//\/data\/hive.yaml.dashboard/$dir/dashboard}"
+  bash -ec "$SAFETY_HELPER
+$BOOT_BLOCK
+[ -n \"\$HIVE_BOOT_SAFETY_WARNINGS\" ]" >"$dir/log" 2>&1 || status=$?
+  if [ "$verdict" = refuse ]; then
+    [ "$status" != 0 ] && [ ! -e "$HIVE_CONFIG_RUNTIME" ] && echo refused-before-snapshot
+  else
+    [ "$status" = 0 ] && cmp -s "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" && echo warned-and-snapshotted
+  fi
+)
+check "strict gate regression refuses before runtime snapshot" \
+  "refused-before-snapshot" "$(exercise_safety_boot refuse)"
+check "normal recovery keeps boot warning across second guard call" \
+  "warned-and-snapshotted" "$(exercise_safety_boot warn)"
+
 hive_test_report
