@@ -123,6 +123,10 @@ type Episode struct {
 	// Baseline is fail-quiet recovery: history must be reconciled, not replayed.
 	Baseline    bool `json:"baseline,omitempty"`
 	QuietReopen bool `json:"quiet_reopen,omitempty"`
+	// AckedBy and SnoozedBy record who ran `/hive ack` / `/hive snooze`
+	// (see Store.Apply); reminder scheduling reads them, holds never do.
+	AckedBy   string `json:"acked_by,omitempty"`
+	SnoozedBy string `json:"snoozed_by,omitempty"`
 }
 
 func (e Episode) Marker() string {
