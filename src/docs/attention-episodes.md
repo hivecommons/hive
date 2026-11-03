@@ -16,6 +16,8 @@ github:
       hivecommons/hive: hosted-hive-id
     flap_window: 12h
     reminder_interval: 24h
+    recipient_budget: 0        # off; see notifications.md
+    digest_recipients: []
 ```
 
 Keys must be fully qualified repositories. Exactly one deployment may own the
@@ -29,7 +31,10 @@ Unknown-owner uncertain attempts remain visible and are not automatically retrie
 
 Unset/empty `admitter` means this new path does nothing, without opening a ledger
 or changing today's quiet-mode delivery. The default flap window is 12 hours.
-There is no per-recipient budget in this layer (#16271). With
+Every first ping and reminder is admitted through the per-recipient attention
+budget (`recipient_budget`, off by default, #16271); see
+[Per-recipient attention budget](notifications.md#per-recipient-attention-budget-opt-in-off-by-default).
+With
 `github.notifications.attention_pilot` on, `reminder_interval` (default `24h`)
 bounds reminders to one per unresolved episode per interval; see
 [Attention section, tracking issue and reminders](notifications.md#attention-section-tracking-issue-and-reminders).

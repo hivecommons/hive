@@ -292,7 +292,12 @@ the PR and audits it as `agent_review_requested` with the repository and number
 ([#9587](https://github.com/hivecommons/hive/issues/9587)). It is the audited
 alternative to `gh pr edit --add-reviewer`. Logins and team slugs are checked
 before any GitHub call; an impossible name, or more than 15 reviewers in total,
-is quarantined as malformed rather than retried.
+is quarantined as malformed rather than retried. Users and teams whose review
+request on the PR is still pending are skipped rather than re-pinged; they are
+listed in the `.result.json` as `reviewers_already_pending` /
+`team_reviewers_already_pending`, and when everyone named is already pending
+no GitHub call is made (see
+[notifications.md › Review requests](notifications.md#review-requests)).
 
 ## It is asynchronous, by design
 

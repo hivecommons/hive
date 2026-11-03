@@ -279,7 +279,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if err := checkStatus(resp); err != nil {
 		return err
 	}
-	if out == nil {
+	if out == nil || resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

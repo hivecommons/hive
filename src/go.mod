@@ -33,6 +33,19 @@ require (
 )
 
 require (
+	github.com/antithesishq/antithesis-sdk-go v0.8.0-default-no-op // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/minio/highwayhash v1.0.4 // indirect
+	github.com/nats-io/jwt/v2 v2.8.2 // indirect
+	github.com/nats-io/nats.go v1.55.0 // indirect
+	github.com/nats-io/nkeys v0.4.16 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/time v0.16.0 // indirect
+)
+
+require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymanbagabas/go-udiff v0.3.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
@@ -47,6 +60,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.27 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
+	github.com/nats-io/nats-server/v2 v2.15.2
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect

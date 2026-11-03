@@ -147,15 +147,25 @@ items, and never drops an ask that goes over the cap
 | `github.attention.digest_recipients` | empty | GitHub logins (case-insensitive, optional `@`) that opted into the digest. |
 
 These keys live in the `github.attention` block owned by the condition-episode
-ledger ([#16267](https://github.com/hivecommons/hive/issues/16267)); the budget
-takes effect once the ledger routes its non-urgent writes through it.
+ledger ([#16267](https://github.com/hivecommons/hive/issues/16267)), which
+admits every non-urgent write through the budget: the ledger's first ping for
+a newly actionable episode (`Store.Report`) and every attention-pilot reminder
+(`SweepAttentionQueue`). The budget is seeded from the ledger's delivered
+history (`paged_to`/`paged_at` and the last reminder) when the ledger opens, so
+the rolling window survives restarts. An over-budget ask is never dropped: its
+episode stays open and would-notify, is marked `overflowed` in the ledger,
+stays in the repo's attention queue issue, and is posted on a later pass once
+the recipient's budget frees up (or cleared when it is acknowledged, snoozed
+or resolved). Producers mark exempt asks with `Observation.Class`
+(`security`, `required_review`, `protocol_command`, `hold`); an unset class is
+an ordinary non-urgent ping.
 
 - **Off (shadow mode).** With `recipient_budget: 0` every write is delivered
   exactly as before. The budget still counts, per recipient, how many writes
   would have overflowed a candidate cap of 5 (`ShadowBudget`) and reports
   `delivered`, `exempt`, `overflowed` and `would_overflow` per login in the
-  `attention budget:` log line, so an operator can choose N from evidence
-  before enabling it.
+  `attention budget:` log line (emitted on every attention-queue sweep), so an
+  operator can choose N from evidence before enabling it.
 - **Enabled, recipient opted into the digest.** The (N+1)th non-urgent ping or
   reminder in the window is not posted. It stays an open, overflowed ask: it is
   listed in the item's status card (`attention-overflow` section), in the
@@ -164,9 +174,9 @@ takes effect once the ledger routes its non-urgent writes through it.
   actionable asks are always posted; only reminders over the cap are deferred
   (and remain visible in the status card and action queue).
 - **Digest.** One comment per recipient per repo, identified by
-  `<!-- hive:attention-digest recipient=<login> -->`, created once through the
-  existing marker-comment upsert and edited in place afterwards (edits notify
-  nobody). It serves as the reminder for the asks it lists. No external
+  `<!-- hive:attention-digest recipient=<login> -->`, posted on the repo's
+  attention queue issue, created once through the existing marker-comment
+  upsert and edited in place afterwards (edits notify nobody). It serves as the reminder for the asks it lists. No external
   service is involved.
 - **Never budgeted.** Materially new security risk or imminent destructive
   action, mandatory/required reviews, machine-consumed protocol commands, and
@@ -218,6 +228,19 @@ The dashboard **Settings → Notifications** tab can set ntfy, Discord, and Slac
 Operator-defined [hooks](hooks.md) with the `notify` action send through the same fanout: title, message, and priority come from the hook definition (`ActionNotify` in `src/pkg/hooks/action.go`, bridged by `notifierAdapter` in `src/cmd/hive/hookwire.go`). An unknown priority falls back to `default`, so any transition a hook can observe can also page these channels.
 
 The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
+
+## Review requests
+
+An agent's `request_review` relay (`hive-open-issue request-review`, or
+`gh pr edit --add-reviewer`) skips any user or team whose review request on
+the PR is still pending: asking again would only re-ping them for the same
+unresolved ask. The skipped names are reported in the request result as
+`reviewers_already_pending` / `team_reviewers_already_pending` and in the
+audit entry as `already_pending`; when everyone named is already pending, no
+GitHub call is made. Someone who has already submitted a review is no longer
+pending, so they can still be asked again for a new head. If the pending list
+cannot be read, everyone named is requested, so a needed review is never
+dropped.
 
 ## Mention hygiene
 
@@ -457,7 +480,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostNoteOrFold` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
 | `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
-| `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
+| `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper shared by normal-mode stage notes and the quiet-mode status-comment forge under `prstatus.Write`; attributed to its caller |
 | `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
 | `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
@@ -556,11 +579,19 @@ issue gets the same card, written through the same single status writer
   "Fixed by #N … Reply /reopen if the problem persists" and the decomposed
   parent's all-children-delivered close — (`issue-close`),
   reopened-after-merge (`issue-reopened`), a lapsed claim's stage regression
-  (`stage-regressed`), the covering-PR stage note (`issue-pr-link`) and the
-  blocker-settled note (`unblocked`, whatever `mode` says). Claim notes
-  already fold under `claim` in quiet mode. The legacy markers stay inside
-  each section, so every reader that greps for them still finds them, and
-  the reopen/release guidance stays visible on the card.
+  (`stage-regressed`), the covering-PR stage note (`issue-pr-link`), the
+  relay's one-line state notes — awaiting CI, parking, already fixed —
+  (`agent-note:<state>`), the decision-downgrade note left when a label
+  change walks back an earlier maintainer decision
+  (`issue-decision-downgrade`) and the blocker-settled note (`unblocked`,
+  whatever `mode` says). Claim notes and the relay state notes already fold
+  under `claim` and `agent-note:<state>` in quiet mode; the
+  decision-downgrade note folds under the pilot only. The legacy markers
+  stay inside each section, so every reader that greps for them still finds
+  them, and the reopen/release guidance stays visible on the card. Section
+  text that quotes issue-authored prose has the card's own
+  `<!-- hive:status… -->` markers neutralised, so it cannot close its
+  section or open another.
 - **Native events notify instead.** The issue is still closed (with its
   state reason) by the API call, which is GitHub's own notification; the
   hive no longer adds a "for visibility" comment beside it.
@@ -626,3 +657,36 @@ github:
   attention:
     reminder_interval: 24h   # default 24h
 ```
+
+### Hive-maintained Actions workflows that defer to the card
+
+Some comments come from GitHub Actions workflows in this repository rather
+than from the runtime. When one of them says what a `hive:status` card
+section already says, it now defers (the check is
+`.github/scripts/hive-status-card.sh has <repo> <number> <section>`, which
+looks for `<!-- hive:status:section=<key> -->` inside the comment carrying
+`<!-- hive:status -->`, considering only comments by a Bot account so a
+human quoting the card's invisible markers cannot suppress a workflow; a
+caller that has already fetched the comments passes them via
+`HIVE_COMMENTS_FILE` instead of re-fetching). The companion
+`hive-status-card.sh upsert <repo> <number> <marker> <body-file>` edits the
+workflow's own earlier comment carrying `<marker>` in place, or creates it;
+it only edits comments authored by `HIVE_COMMENT_AUTHOR` (default
+`github-actions[bot]`, the identity `${{ github.token }}` posts as), never a
+third party's comment that happens to contain the marker:
+
+| Workflow / script | Comment it posts | Behaviour |
+| --- | --- | --- |
+| Refs sweep (`.github/workflows/refs-sweep.yml`, `src/scripts/comment-merged-refs.sh`) | "PR #N has merged and referenced this issue with a non-closing `Refs`" (`<!-- hive-post-merge-refs-sweep: issue=N -->`) | **Skips** when the card carries `issue-partial:<pr>` for that PR; otherwise unchanged (still once per issue). |
+| Issue Closed Hint (`.github/workflows/issue-closed-reopen-hint.yml`) | "@reporter this issue was closed by … comment `/reopen`" | **Pending** (tracked in #16363; the workflow edit must be landed by a maintainer). Once applied: **skips** when the card carries `issue-close`, which already says "Reply /reopen"; otherwise **edits** its earlier comment (`<!-- issue-closed-reopen-hint -->`) instead of adding one per closure. Until then it posts a new comment on every closure as before. |
+
+Editing a comment notifies nobody, so a workflow comment that is edited in
+place stops re-mentioning the reporter on every close/reopen cycle. Both
+paths apply only where a card exists; with
+`github.notifications.attention_pilot` off there is no issue card, and the
+workflows behave as before.
+
+**Outside Hive's control.** Comments from external bots, such as Prow, tide
+and kubestellar-prow, are posted by their own services and cannot be edited,
+folded or skipped from this repository. Hive does not try to suppress them;
+configure those bots in the project that runs them.

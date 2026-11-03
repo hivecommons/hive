@@ -170,11 +170,11 @@ func (c *Client) prefetchOpenPRDetailsGraphQL(ctx context.Context, owner, repoNa
 	}
 	// With healthy webhooks and nothing marked dirty since the last batch,
 	// the cached batch still describes every open PR (#11177).
-	if sharedWebhookTracker.repoCleanAndHealthy(fullRepo) && c.hasGraphQLPRBatchRepo(fullRepo) {
+	if sharedWebhookTracker().repoCleanAndHealthy(fullRepo) && c.hasGraphQLPRBatchRepo(fullRepo) {
 		c.recordGraphQLPRBatchWebhookSkip()
 		return
 	}
-	started := sharedWebhookTracker.now()
+	started := sharedWebhookTracker().now()
 	c.clearGraphQLPRBatchRepo(fullRepo)
 	pageSize := c.graphQLPRBatchPageSizeEffective()
 	var cursor string
@@ -208,7 +208,7 @@ func (c *Client) prefetchOpenPRDetailsGraphQL(ctx context.Context, owner, repoNa
 		}
 	}
 	c.recordGraphQLPRBatchSuccess(repoPRs, pages)
-	sharedWebhookTracker.clearDirtyRepoBefore(fullRepo, started)
+	sharedWebhookTracker().clearDirtyRepoBefore(fullRepo, started)
 }
 
 func (c *Client) hasGraphQLPRBatchRepo(repo string) bool {

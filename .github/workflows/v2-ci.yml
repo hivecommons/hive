@@ -197,6 +197,14 @@ jobs:
           go build -o /dev/null ./cmd/crux
           (cd crux && GOWORK=off go build -o /dev/null ./cmd/crux)
 
+      # Real embedded JetStream only: no live broker, cluster or deployment.
+      # Keep the standalone module boundary honest as well as the Hive adapter.
+      # Normal v2-tests shards also collect coverage for these packages.
+      - name: Durable Crux lane and Hive participant integration
+        run: |
+          (cd crux && GOWORK=off go test -race -timeout 3m ./lanes ./api ./serve)
+          GOWORK=off go test -race -timeout 3m ./pkg/laneparticipant
+
       # crux/scripts/smoke.sh (`make -C crux smoke` locally; the self-hosted
       # runners have no make) starts `crux serve` on a private unix socket
       # with an empty runtime, drives it with `crux --server … ps` and GET

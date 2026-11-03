@@ -121,6 +121,10 @@ jobs:
       run: |
         go build -o /dev/null ./cmd/crux
         (cd crux && GOWORK=off go build -o /dev/null ./cmd/crux)
+    - name: Durable Crux lane and Hive participant integration
+      run: |
+        (cd crux && GOWORK=off go test -race -timeout 3m ./lanes ./api ./serve)
+        GOWORK=off go test -race -timeout 3m ./pkg/laneparticipant
     - name: Crux module smoke (crux serve over a unix socket)
       working-directory: src/crux
       run: GOWORK=off bash scripts/smoke.sh

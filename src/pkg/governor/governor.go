@@ -378,6 +378,23 @@ func (g *Governor) SetModeChangeObserver(obs ModeChangeObserver) {
 	g.modeChangeObserver = obs
 }
 
+// AddModeChangeObserver preserves the existing local observer while attaching
+// an optional participant. Both callbacks still run outside the governor lock.
+func (g *Governor) AddModeChangeObserver(obs ModeChangeObserver) {
+	if obs == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	previous := g.modeChangeObserver
+	g.modeChangeObserver = func(change ModeChange) {
+		if previous != nil {
+			previous(change)
+		}
+		obs(change)
+	}
+}
+
 func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int) []string {
 	return g.EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaViolations, nil)
 }

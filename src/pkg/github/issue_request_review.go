@@ -99,6 +99,46 @@ func reviewRequestShapeError(reviewers, teams []string) string {
 	return ""
 }
 
+// dropPendingReviewers removes the users and teams whose review request on
+// the PR is still pending (#16075 §4): asking them again re-pings them for the
+// same unresolved ask. Someone who has already reviewed is no longer pending
+// and can still be re-requested for a new head. If the pending list cannot be
+// read, everyone is kept, because a newly needed review must never be dropped.
+func (c *Client) dropPendingReviewers(ctx context.Context, repo string, number int, reviewers, teams []string) (keepUsers, keepTeams, pendingUsers, pendingTeams []string) {
+	owner, repoName := c.splitRepo(repo)
+	pending, _, err := c.client.PullRequests.ListReviewers(ctx, owner, repoName, number, &gh.ListOptions{PerPage: 100})
+	if err != nil || pending == nil {
+		if err != nil && c.logger != nil {
+			c.logger.Warn("request_review: could not read pending review requests; requesting everyone",
+				"repo", repo, "number", number, "error", err)
+		}
+		return reviewers, teams, nil, nil
+	}
+	users := map[string]bool{}
+	for _, u := range pending.Users {
+		users[strings.ToLower(u.GetLogin())] = true
+	}
+	slugs := map[string]bool{}
+	for _, t := range pending.Teams {
+		slugs[strings.ToLower(t.GetSlug())] = true
+	}
+	for _, r := range reviewers {
+		if users[strings.ToLower(r)] {
+			pendingUsers = append(pendingUsers, r)
+		} else {
+			keepUsers = append(keepUsers, r)
+		}
+	}
+	for _, t := range teams {
+		if slugs[strings.ToLower(t)] {
+			pendingTeams = append(pendingTeams, t)
+		} else {
+			keepTeams = append(keepTeams, t)
+		}
+	}
+	return keepUsers, keepTeams, pendingUsers, pendingTeams
+}
+
 // RequestReviewers asks users and/or teams to review a pull request. An empty
 // request is a no-op.
 func (c *Client) RequestReviewers(ctx context.Context, repo string, number int, reviewers, teams []string) error {

@@ -1,0 +1,17 @@
+{
+  "url": "nats://127.0.0.1:4222",
+  "principals": [
+    {"project": "atlas", "token_env": "ATLAS_TOKEN"},
+    {"project": "beacon", "token_env": "BEACON_TOKEN"}
+  ],
+  "lanes": [
+    {
+      "id": "shared",
+      "owner": "atlas",
+      "publishers": ["atlas", "beacon"],
+      "subscribers": ["atlas", "beacon"],
+      "groups": {"workers": ["atlas", "beacon"], "other": ["beacon"]},
+      "recoverers": {"workers": ["atlas", "beacon"]}
+    }
+  ]
+}

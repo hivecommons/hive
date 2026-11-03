@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/attention"
+	"github.com/hivecommons/hive/pkg/attentionbudget"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -53,6 +54,10 @@ func (c *Client) ReportAttention(ctx context.Context, repo string, item writebac
 		episodes = store.Snapshot(repo, item.Number)
 	}
 	_, statusErr := c.UpsertPRStatusSection(ctx, repo, item.Number, "attention", attentionStatus(episodes))
+	if cfg.Config.Enabled() && statusErr == nil {
+		// Asks the per-recipient budget held back stay visible on the item.
+		_, statusErr = c.UpsertPRStatusSection(ctx, repo, item.Number, attentionbudget.SectionKey, attentionbudget.RenderSection(store.Budget().Overflowed(repo, "", item.Number)))
+	}
 	if reportErr != nil {
 		return episodes, reportErr
 	}
