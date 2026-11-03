@@ -10178,6 +10178,7 @@ function connectHub(hub) {
     hub.readyOutstanding = false;
     hub.authenticated = false;
     hub.scopeAckVersion = null;
+    hub.standbyAcked = false;
     hub.scopePending = hub.repoScope !== null || !!hub.scopeSent;
     writeRelayStatus();
     invalidateReadyRetry(hub, 'socket closed');
