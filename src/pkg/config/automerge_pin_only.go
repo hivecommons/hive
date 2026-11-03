@@ -10,8 +10,8 @@ import (
 // PinOnlyException is policy wired in Engine.SetHumanMergePinOnly and
 // enforced by the automerge sweep and /approve gates via humanMergePinOnlyExempt
 // (#16266). It proves trusted PR author, complete file list, and SHA-bound merge,
-// but not upstream review (separate gates handle that). The hive-merge relay does
-// not yet apply it (#16265).
+// but not upstream review (separate gates handle that). The hive-merge relay
+// applies the same policy through Client.SetHumanMergePinOnly (#16265).
 type PinOnlyException struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
 	Paths          []string `yaml:"paths" json:"paths"`

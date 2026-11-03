@@ -19,6 +19,10 @@ import (
 type humanPathMergeFixture struct {
 	mu          sync.Mutex
 	files       []string
+	fileDetails []map[string]any
+	prPayload   map[string]any
+	movedHead   string
+	ci          *ciFixture
 	prStatus    int
 	filesStatus int
 	filesHits   int
@@ -29,7 +33,10 @@ type humanPathMergeFixture struct {
 
 func newHumanPathMergeServer(t *testing.T, f *humanPathMergeFixture) *httptest.Server {
 	t.Helper()
-	green := greenFixture()
+	green := f.ci
+	if green == nil {
+		green = greenFixture()
+	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -38,13 +45,19 @@ func newHumanPathMergeServer(t *testing.T, f *humanPathMergeFixture) *httptest.S
 		case r.Method == http.MethodGet && p == "/repos/o/r/pulls/42" && f.prStatus != 0:
 			w.WriteHeader(f.prStatus)
 			return
+		case r.Method == http.MethodGet && p == "/repos/o/r/pulls/42" && f.prPayload != nil:
+			if f.movedHead != "" && f.filesHits > 0 {
+				f.prPayload["head"] = map[string]any{"sha": f.movedHead}
+			}
+			_ = json.NewEncoder(w).Encode(f.prPayload)
+			return
 		case r.Method == http.MethodGet && p == "/repos/o/r/pulls/42/files":
 			f.filesHits++
 			if f.filesStatus != 0 {
 				w.WriteHeader(f.filesStatus)
 				return
 			}
-			var out []map[string]any
+			out := f.fileDetails
 			for _, name := range f.files {
 				out = append(out, map[string]any{"filename": name, "status": "modified"})
 			}
@@ -85,12 +98,15 @@ func newHumanPathMergeServer(t *testing.T, f *humanPathMergeFixture) *httptest.S
 	}))
 }
 
-func runHumanPathMergeRequest(t *testing.T, f *humanPathMergeFixture, paths map[string][]string) (string, MergeResponse) {
+func runHumanPathMergeRequest(t *testing.T, f *humanPathMergeFixture, paths map[string][]string, pinOnly ...map[string]PinOnlySpec) (string, MergeResponse) {
 	t.Helper()
 	srv := newHumanPathMergeServer(t, f)
 	t.Cleanup(srv.Close)
 	c := testMergeClient(t, srv.URL)
 	c.SetHumanMergePaths(paths)
+	if len(pinOnly) > 0 {
+		c.SetHumanMergePinOnly(pinOnly[0])
+	}
 
 	dir := t.TempDir()
 	mergeRequestDirForTest = dir
@@ -225,5 +241,116 @@ func TestHumanMergePathHelpersGuardNilInputs(t *testing.T) {
 	reason := HumanMergePathReason([]string{"a", "b"})
 	if !strings.Contains(reason, "`a`, `b`") || !strings.Contains(reason, HumanMergePathsConfigKey) {
 		t.Fatalf("reason = %q", reason)
+	}
+}
+
+func pinOnlyRelayFixture() *humanPathMergeFixture {
+	return &humanPathMergeFixture{
+		prPayload:   map[string]any{"number": 42, "state": "open", "user": map[string]any{"login": "alice", "type": "User"}, "head": map[string]any{"sha": "abc", "repo": map[string]any{"full_name": "o/r"}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "o/r"}}, "changed_files": 1},
+		fileDetails: []map[string]any{{"filename": "Containerfile", "status": "modified", "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-FROM image@sha256:" + strings.Repeat("a", 64) + "\n+FROM image@sha256:" + strings.Repeat("b", 64)}},
+	}
+}
+
+func TestMergeRequestPinOnlyException(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		change      func(*humanPathMergeFixture, *PinOnlySpec)
+		wantPass    bool
+		wantUnknown bool
+	}{
+		{name: "trusted pin", wantPass: true},
+		{name: "disabled", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { ex.Enabled = false }},
+		{name: "untrusted", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { ex.TrustedAuthors = []string{"bob"} }},
+		{name: "empty trust list", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { ex.TrustedAuthors = nil }},
+		{name: "mixed diff", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.fileDetails[0]["patch"] = strings.Replace(f.fileDetails[0]["patch"].(string), "@@ -1 +1 @@", "@@ -1 +1,2 @@", 1) + "\n+RUN echo unsafe"
+			f.fileDetails[0]["additions"] = 2
+		}},
+		{name: "unguarded extra file", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.prPayload["changed_files"] = 2
+			f.files = []string{"README.md"}
+		}},
+		{name: "outside exception paths", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { ex.Paths = []string{".github/workflows/*.yml"} }},
+		{name: "missing patch", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { delete(f.fileDetails[0], "patch") }},
+		{name: "missing count", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { delete(f.prPayload, "changed_files") }},
+		{name: "incomplete list", wantUnknown: true, change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { f.prPayload["changed_files"] = 2 }},
+		{name: "wrong head", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { f.prPayload["head"] = map[string]any{"sha": "other"} }},
+		{name: "head moves during file fetch", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { f.movedHead = "other" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := pinOnlyRelayFixture()
+			ex := PinOnlySpec{Enabled: true, Paths: []string{"Containerfile"}, Kinds: []string{"image-digest"}, TrustedAuthors: []string{"ALICE"}}
+			if tc.change != nil {
+				tc.change(f, &ex)
+			}
+			_, resp := runHumanPathMergeRequest(t, f, map[string][]string{"o/r": {"Containerfile"}}, map[string]PinOnlySpec{"O/R": ex})
+			if tc.wantPass {
+				if !resp.OK || f.merges != 1 || len(f.labels) != 0 || len(f.comments) != 0 {
+					t.Fatalf("result=%+v merges=%d labels=%v comments=%v; want merge without hold", resp, f.merges, f.labels, f.comments)
+				}
+			} else {
+				if resp.OK || f.merges != 0 {
+					t.Fatalf("result=%+v merges=%d; want refusal", resp, f.merges)
+				}
+				if tc.wantUnknown {
+					if !strings.Contains(resp.Error, "fail closed") || len(f.labels) != 0 || len(f.comments) != 0 {
+						t.Fatalf("unknown list must fail closed without a hold: %+v", resp)
+					}
+				} else if len(f.labels) != 1 || len(f.comments) != 1 || !strings.Contains(f.comments[0], HumanMergePathMarker) {
+					t.Fatalf("labels=%v comments=%v; want hold and marker", f.labels, f.comments)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeRequestPinOnlyStillRequiresGreenCI(t *testing.T) {
+	f := pinOnlyRelayFixture()
+	f.ci = greenFixture()
+	f.ci.checks[0].conclusion = "failure"
+	_, resp := runHumanPathMergeRequest(t, f, map[string][]string{"o/r": {"Containerfile"}}, map[string]PinOnlySpec{"r": {Enabled: true, Paths: []string{"Containerfile"}, Kinds: []string{"image-digest"}, TrustedAuthors: []string{"alice"}}})
+	if resp.OK || f.merges != 0 || len(f.labels) != 0 || len(f.comments) != 0 {
+		t.Fatalf("result=%+v merges=%d labels=%v comments=%v; pin exception must still fail CI", resp, f.merges, f.labels, f.comments)
+	}
+}
+
+func TestSetHumanMergePinOnlyReload(t *testing.T) {
+	c := NewClientForTest("http://127.0.0.1:0", "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ex := PinOnlySpec{Enabled: true, Paths: []string{"Containerfile"}, Kinds: []string{"image-digest"}, TrustedAuthors: []string{"alice"}}
+	c.SetHumanMergePinOnly(map[string]PinOnlySpec{" O/R ": ex})
+	ex.Paths[0] = "unsafe"
+	got := c.humanMergePinOnlyFor("r")
+	if !got.Enabled || got.Paths[0] != "Containerfile" {
+		t.Fatalf("policy not normalized or copied: %+v", got)
+	}
+	got.Paths[0] = "unsafe"
+	if c.humanMergePinOnlyFor("r").Paths[0] != "Containerfile" {
+		t.Fatal("lookup must return a copy")
+	}
+	c.SetHumanMergePinOnly(map[string]PinOnlySpec{"r": ex, "O/R": ex})
+	if c.humanMergePinOnlyFor("r").Enabled {
+		t.Fatal("duplicate normalized keys must fail closed")
+	}
+	c.SetHumanMergePinOnly(nil)
+	if c.humanMergePinOnlyFor("r").Enabled {
+		t.Fatal("nil must clear policy")
+	}
+	var absent *Client
+	absent.SetHumanMergePinOnly(nil)
+	if absent.humanMergePinOnlyFor("r").Enabled {
+		t.Fatal("nil client must have no policy")
+	}
+}
+
+func TestMergeRequestPinOnlyRequiresExpectedHead(t *testing.T) {
+	f := pinOnlyRelayFixture()
+	srv := newHumanPathMergeServer(t, f)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	c.SetHumanMergePaths(map[string][]string{"o/r": {"Containerfile"}})
+	c.SetHumanMergePinOnly(map[string]PinOnlySpec{"o/r": {Enabled: true, Paths: []string{"Containerfile"}, Kinds: []string{"image-digest"}, TrustedAuthors: []string{"alice"}}})
+	refusal, err := c.mergeRequestHumanMergePathRefusal(context.Background(), MergeRequest{Repo: "o/r", Number: 42})
+	if err != nil || refusal == "" || len(f.labels) != 1 || len(f.comments) != 1 {
+		t.Fatalf("refusal=%q err=%v labels=%v comments=%v; missing requested head must hold", refusal, err, f.labels, f.comments)
 	}
 }

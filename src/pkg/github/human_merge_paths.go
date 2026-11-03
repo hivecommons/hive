@@ -13,7 +13,8 @@ import (
 // Human-merge paths (#11027): auto_merge.human_merge_paths lists, per repo,
 // paths a person must merge. Every App merge path (the automerge sweep lanes
 // and the merge-request relay) refuses a PR that touches one, adds `hold`,
-// and leaves one marker-stamped comment naming the path(s).
+// and leaves one marker-stamped comment naming the path(s), unless the
+// configured pin-only exception is proven.
 const (
 	// HumanMergePathsConfigKey is the config key named in every refusal.
 	HumanMergePathsConfigKey = "auto_merge.human_merge_paths"
@@ -192,9 +193,58 @@ func (c *Client) humanMergePathsFor(repo string) []string {
 	return c.humanMergePaths[repoPolicyKey(c.org, repo)]
 }
 
+// PinOnlySpec is the relay's config-independent pin-only exception policy.
+// It only lifts the human-merge-path gate, never any other merge requirement.
+type PinOnlySpec struct {
+	Enabled        bool
+	Paths          []string
+	Kinds          []string
+	TrustedAuthors []string
+}
+
+func (p PinOnlySpec) clone() PinOnlySpec {
+	p.Paths = append([]string(nil), p.Paths...)
+	p.Kinds = append([]string(nil), p.Kinds...)
+	p.TrustedAuthors = append([]string(nil), p.TrustedAuthors...)
+	return p
+}
+
+// SetHumanMergePinOnly replaces the relay policy on config reload; nil clears it.
+// Duplicate normalized repository keys fail closed.
+func (c *Client) SetHumanMergePinOnly(policies map[string]PinOnlySpec) {
+	if c == nil {
+		return
+	}
+	normalized := make(map[string]PinOnlySpec, len(policies))
+	for repo, policy := range policies {
+		key := repoPolicyKey(c.org, repo)
+		if key == "" {
+			continue
+		}
+		if _, duplicate := normalized[key]; duplicate {
+			normalized[key] = PinOnlySpec{}
+			continue
+		}
+		normalized[key] = policy.clone()
+	}
+	c.mergePolicyMu.Lock()
+	defer c.mergePolicyMu.Unlock()
+	c.humanMergePinOnly = normalized
+}
+
+func (c *Client) humanMergePinOnlyFor(repo string) PinOnlySpec {
+	if c == nil {
+		return PinOnlySpec{}
+	}
+	c.mergePolicyMu.RLock()
+	defer c.mergePolicyMu.RUnlock()
+	return c.humanMergePinOnly[repoPolicyKey(c.org, repo)].clone()
+}
+
 // mergeRequestHumanMergePathRefusal checks a merge request against the
 // repo's human-merge paths. It returns a non-empty refusal (terminal) when
-// the PR touches one — after adding `hold` and the single marker comment —
+// the PR touches one without a proven pin-only exception — after adding
+// `hold` and the single marker comment —
 // and an error when the repo has paths configured but the complete
 // changed-file list cannot be established (fail closed). An unconfigured
 // repo costs no API call.
@@ -215,6 +265,37 @@ func (c *Client) mergeRequestHumanMergePathRefusal(ctx context.Context, req Merg
 	matches := intent.HumanMergePathMatches(files, patterns)
 	if len(matches) == 0 {
 		return "", nil
+	}
+	if ex := c.humanMergePinOnlyFor(req.Repo); ex.Enabled {
+		reason := "PR author is not trusted"
+		trusted := false
+		for _, author := range ex.TrustedAuthors {
+			if author != "" && strings.EqualFold(author, pr.GetUser().GetLogin()) {
+				trusted = true
+				break
+			}
+		}
+		if trusted {
+			switch {
+			case req.ExpectSHA == "" || pr.GetHead().GetSHA() != req.ExpectSHA:
+				reason = "PR head does not match requested head"
+			case pr.ChangedFiles == nil || pr.GetChangedFiles() != len(files):
+				reason = "complete changed-file count is unavailable"
+			default:
+				var ok bool
+				ok, reason = intent.ClassifyPinOnly(files, matches, intent.PinOnlySpec{Paths: ex.Paths, Kinds: ex.Kinds})
+				if ok {
+					// The files endpoint is not SHA-addressable. Ensure the head did not
+					// move while paging; the eventual merge also uses req.ExpectSHA.
+					current, _, err := c.client.PullRequests.Get(ctx, owner, name, req.Number)
+					if err == nil && current.GetHead().GetSHA() == req.ExpectSHA {
+						return "", nil
+					}
+					reason = "PR head could not be confirmed after listing files"
+				}
+			}
+		}
+		c.warn("merge-request watcher: pin-only exception rejected", "repo", req.Repo, "pr", req.Number, "reason", reason)
 	}
 	if err := HoldForHumanMergePaths(ctx, c.client, owner, name, req.Number, matches, pr.GetHead().GetSHA()); err != nil {
 		c.warn("merge-request watcher: human-merge-path hold failed", "repo", req.Repo, "pr", req.Number, "error", err)
