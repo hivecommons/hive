@@ -18,6 +18,7 @@ process restart. Never print token or private-key values while diagnosing them.
 | Rotate dashboard access (deployment admin and affected clients) | [Token generation/rotation](#generating-and-rotating-hive_dashboard_token) and [precedence](#precedence-dashboardauth_token-dashboard_auth_token-hive_dashboard_token) |
 | Change container/proxy behavior (deployment admin) | [Entrypoint/proxy knobs](#deployment-entrypoint-and-proxy-knobs); read the [credential-injection refusal](#proxy-credential-injection) before enabling it |
 | Configure inference or CLI launch (operator/deployment admin) | [Inference/backends](#inference-cli-backends-and-agents), [launch controls](#backend-launch-controls), [Linear integration](#linear-agent-integration) |
+| Configure Crux durable lanes or Hive's optional participant | [Crux durable lanes](#crux-durable-lanes): separate Crux server and Hive launch environments |
 | Understand a value already present in an agent terminal | [Inside an agent session](#inside-an-agent-session): **Hive-injected metadata, not operator knobs** |
 | Configure a local contributor/client command | [Contributor relay/helper scripts](#contributor-relay-and-top-level-helper-scripts) |
 | Understand platform-provided metadata (cluster admin) | [Kubernetes/platform variables](#kubernetes-downward-api-and-platform-variables): normally injected by the platform |
@@ -116,6 +117,24 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_DOSSIER_CACHE_MAX_ENTRIES` | No | `512` | Caps each public dossier cache. Bounds username-spray memory while keeping normal contributor reuse hot. |
 | `HIVE_CONTRIBUTOR_KNOWLEDGE_EXPORT_MAX_FACTS` | No | `80` | Caps the number of facts returned by the contributor knowledge export API. Unset, non-numeric, or non-positive values fall back to the default. |
 | `HIVE_PUBLIC_REPOS` | No | none | Comma-separated, case-insensitive allowlist of additional Gource project names the dashboard's public war-room view may render, beyond the always-allowed default (`hive`). |
+
+## Crux durable lanes
+
+The `HIVE_LANES_*` variables belong to the **Hive process** and are read at boot.
+`CRUX_LANES_CONFIG` belongs to **`crux serve`**, not to Hive or an agent session.
+The Hive participant uses the Crux HTTP API as an ordinary project principal;
+it does not connect directly to NATS or inherit broker, agent-control or forge
+permissions. See [Crux durable lanes](crux-lanes.md) for registry configuration,
+project capabilities, deployment requirements and recovery.
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `CRUX_LANES_CONFIG` | No | none (durable lanes disabled) | Crux server's lane configuration file, used when `crux serve --lanes-config` is absent. An explicit flag takes precedence. Broker credentials and project tokens are referenced by environment variable name in that file, not embedded as secret values. |
+| `HIVE_LANES_ADDRESS` | No | none (participant disabled) | Opts the Hive process into a Crux API endpoint. This is the Crux server address, not the NATS broker URL. |
+| `HIVE_LANES_LANE` | Yes when `HIVE_LANES_ADDRESS` is set | none | Registered lane ID for the Hive participant. Missing lane, group or token logs an explicit configuration error and leaves participation disabled. |
+| `HIVE_LANES_GROUP` | Yes when `HIVE_LANES_ADDRESS` is set | none | Registered delivery-group ID for Hive's claim loop; the configured project must have that group's work capability. |
+| `HIVE_LANES_TOKEN` | Yes when `HIVE_LANES_ADDRESS` is set | none | Secret bearer token bound to Hive's ordinary project principal in the Crux registry. Supply it through Hive's launch environment/secret configuration; never print it or use the agent-control/admin token as an implicit lane grant. |
+| `HIVE_LANES_SNAPSHOT_PROJECTS` | No | none (no snapshot handler registered) | Comma-separated explicit publisher-project allowlist for read-only `hive-governor-snapshot-request-v1` work. Use subject-safe IDs without surrounding whitespace. Requests must contain `{}`; this does not mirror events, execute prompts/tools or grant forge writes. |
 
 ## Generating and rotating `HIVE_DASHBOARD_TOKEN`
 

@@ -36,6 +36,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/lanes"
 )
 
 const (
@@ -96,6 +97,11 @@ type Server struct {
 	// endpoint's reachability as `crux serve --hive-callback` sees it.
 	HiveCallback func() api.HiveCallback
 
+	// Lanes and LaneAuth enable the separate, project-authenticated durable
+	// lane surface. They confer no agent-control permissions.
+	Lanes    *lanes.Broker
+	LaneAuth *lanes.Authenticator
+
 	now     func() time.Time
 	started time.Time
 
@@ -149,7 +155,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/stop", s.handleStop)
 	mux.HandleFunc("GET "+api.PathEvents, s.handleEvents)
 	s.registerFamilies(mux)
-	return s.authenticate(mux)
+	return s.laneHandler(s.authenticate(mux))
 }
 
 // agentNamePattern is the CLI's definition-name gate (cmd/crux
@@ -164,6 +170,11 @@ var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		network, _ := r.Context().Value(networkKey).(string)
+		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
+		if _, projectToken := s.LaneAuth.Project(token); projectToken {
+			s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "project credentials cannot access agent RPCs")
+			return
+		}
 		if s.Token == "" {
 			if network != networkUnix {
 				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "this server has no bearer token; only unix-socket requests are accepted")

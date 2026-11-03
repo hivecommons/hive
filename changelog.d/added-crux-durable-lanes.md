@@ -1,0 +1,1 @@
+- Add opt-in, forge-neutral Crux durable event/work lanes backed by NATS JetStream, project-scoped API credentials, verified publish generations, replay, fenced leases, authorized audited expiration recovery, persistent fair retry rotation and reusable reserved delivery slots, with Hive participating through a read-only governor adapter.
