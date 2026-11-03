@@ -110,9 +110,6 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 
 	models, complete := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
 	fallback := false
-	if len(models) > 0 {
-		noModelsWarned.clear(backend)
-	}
 	if len(models) == 0 {
 		warnNoModelsOnce(s.logger, backend, len(endpoints))
 		// Discovery is authoritative (a LiteLLM gateway entitlement-filters
@@ -121,6 +118,8 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		// unverified against the configured endpoint/key.
 		models = inferenceStaticModelAliases
 		fallback = true
+	} else {
+		noModelsWarned.clear(backend)
 	}
 
 	resp := map[string]interface{}{
