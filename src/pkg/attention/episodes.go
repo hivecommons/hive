@@ -241,12 +241,22 @@ func (s *Store) save() error {
 
 // prune drops resolved episodes once recurrence would start a fresh episode
 // anyway, so the capacity cap bounds live inventory rather than eventually
-// refusing every report. Uncertain episodes stay until reconciled, and
+// refusing every report. Uncertain episodes stay until reconciled, items drop once they have no episodes, and
 // history-seeded hash-only baselines stay as the replay guard.
 func (s *Store) prune(now time.Time, window time.Duration) {
 	for k, e := range s.state.Episodes {
 		if e.State == Resolved && !e.Uncertain && !e.ResolvedAt.IsZero() && now.Sub(e.ResolvedAt) > window {
 			delete(s.state.Episodes, k)
+		}
+	}
+	live := map[string]bool{}
+	for _, e := range s.state.Episodes {
+		live[fmt.Sprintf("%s#%d", canonical(e.Key.Repo), e.Key.Item)] = true
+	}
+	// Re-seeding a dropped item through History on its next report is replay-safe.
+	for k := range s.state.Items {
+		if !live[k] {
+			delete(s.state.Items, k)
 		}
 	}
 }
@@ -313,8 +323,8 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 				s.state.Episodes[hash] = e
 			} else {
 				e.State = Observed
-				e.QuietReopen = true
 				if !e.PagedAt.IsZero() {
+					e.QuietReopen = true
 					e.State = Notified
 				}
 				if !e.AckedAt.IsZero() {
@@ -345,6 +355,23 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 	}
 	for _, o := range observations {
 		e := s.state.Episodes[o.Key.Hash()]
+		if o.Resolved && e.Uncertain && e.Attempt != "" && owner == hiveID && hiveID != "" {
+			// Reconcile an uncertain POST once its condition resolved so the episode can be pruned.
+			found, err := d.Find(ctx, *e)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				e.PagedAt = now
+				e.PagedTo = e.Key.Recipient
+			}
+			e.Uncertain = false
+			e.WouldNotify = false
+			if err = s.save(); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if !e.WouldNotify || o.Resolved || e.Baseline || owner != hiveID || hiveID == "" {
 			continue
 		}

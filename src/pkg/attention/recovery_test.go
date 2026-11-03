@@ -99,7 +99,8 @@ func TestRecoveryFailuresFenceDelivery(t *testing.T) {
 				f.historyErr = errors.New("history unavailable")
 			case "items":
 				for i := 0; i < MaxItems; i++ {
-					s.state.Items[fmt.Sprint(i)] = true
+					s.state.Items[fmt.Sprintf("org/other#%d", i+1)] = true
+					s.state.Episodes[fmt.Sprint(i)] = &Episode{Key: Key{Repo: "org/other", Item: i + 1}}
 				}
 			case "recovery":
 				for i := 0; i < MaxEpisodes; i++ {
@@ -204,5 +205,49 @@ func TestHandoffDoesNotRetryPreviousOwnersAttempt(t *testing.T) {
 func TestDecisionSubjectTrimsIdentity(t *testing.T) {
 	if got := DecisionSubject(" decision-42 \n"); got != "decision:decision-42" {
 		t.Fatal(got)
+	}
+}
+
+func TestUncertainResolvedEpisodeReconcilesAndPrunes(t *testing.T) {
+	s := openStore(t, "")
+	f := &forge{fail: true}
+	ctx := context.Background()
+	if _, err := s.Report(ctx, testConfig, "owner", "org/repo", 1, []Observation{observation()}, f); err == nil {
+		t.Fatal("expected uncertain POST")
+	}
+	o := observation()
+	o.Resolved = true
+	es, err := s.Report(ctx, testConfig, "owner", "org/repo", 1, []Observation{o}, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.finds != 1 || es[0].Uncertain || es[0].PagedAt.IsZero() {
+		t.Fatalf("uncertain POST not reconciled on resolve: %+v", es)
+	}
+	s.now = func() time.Time { return time.Now().Add(2 * testConfig.Window()) }
+	s.prune(s.now().UTC(), testConfig.Window())
+	if len(s.state.Episodes) != 0 || len(s.state.Items) != 0 {
+		t.Fatal("resolved episode and item not pruned")
+	}
+}
+
+func TestFirstActionableReopenOfNeverPagedEpisodePages(t *testing.T) {
+	s := openStore(t, "")
+	f := &forge{}
+	ctx := context.Background()
+	o := observation()
+	o.Actionable = false
+	if _, err := s.Report(ctx, testConfig, "owner", "org/repo", 1, []Observation{o}, f); err != nil {
+		t.Fatal(err)
+	}
+	o.Resolved = true
+	if _, err := s.Report(ctx, testConfig, "owner", "org/repo", 1, []Observation{o}, f); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Report(ctx, testConfig, "owner", "org/repo", 1, []Observation{observation()}, f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.posts) != 1 {
+		t.Fatalf("never-paged reopen not paged: %d", len(f.posts))
 	}
 }
