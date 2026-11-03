@@ -75,6 +75,10 @@
       rs: 'rs', c: 'c', h: 'c', cc: 'c', cpp: 'c', hpp: 'c', java: 'c', cs: 'c'};
     Object.keys(languages).forEach(function(k){ languages[k].words = new Set(languages[k].words.split(' ')); });
     function paused(){ return manualPause || document.hidden; }
+    // Height of the bottom band the freshness HUD occupies, so typed rows
+    // never run under it in any effect (#16441). 100px is the floor used
+    // before the HUD was measured.
+    function hudBand(){ return Math.max(100, (labels.offsetHeight || 0) + 32); }
     function resize(){
       width = window.innerWidth; height = window.innerHeight;
       canvas.width = width; canvas.height = height;
@@ -170,7 +174,7 @@
         top = 56;
       }
       ctx.font = '16px monospace';
-      var visible = Math.max(1, Math.floor((height - top - 100) / rowH));
+      var visible = Math.max(1, Math.floor((height - top - hudBand()) / rowH));
       var current = {n: tab.count + 1, path: typing.line.path, text: typing.chars.slice(0, Math.floor(typing.typed)).join(''), current: true};
       tab.rows.slice(-(visible - 1) || tab.rows.length).concat([current]).forEach(function(row, i){
         var y = top + (i + 1) * rowH, col = 0;
@@ -200,7 +204,7 @@
       if (!termRows.length) emitTerminal();
       termClock += dt * 4;
       while (termClock >= 1) { termClock -= 1; emitTerminal(); }
-      var bottom = height - 100;
+      var bottom = height - hudBand();
       ctx.font = '16px monospace';
       termRows.forEach(function(row, i){
         var y = bottom - (termRows.length - 1 - i + termClock) * rowH;
