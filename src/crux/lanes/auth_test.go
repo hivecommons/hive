@@ -2,13 +2,12 @@ package lanes
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
-	"time"
+	"testing/iotest"
 )
 
 func TestPrincipalBindingsAreFailClosed(t *testing.T) {
@@ -45,34 +44,50 @@ func TestPrincipalBindingsAreFailClosed(t *testing.T) {
 }
 
 func TestLoadConfigStrictAndBounded(t *testing.T) {
-	path := fmt.Sprintf(".lane-config-%d.json", time.Now().UnixNano())
-	t.Cleanup(func() {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Error(err)
-		}
-	})
-	if _, err := LoadConfig(path); !errors.Is(err, ErrInvalid) {
+	if _, err := LoadConfig("testdata/missing-config.json"); !errors.Is(err, ErrInvalid) {
 		t.Fatal("missing config", err)
 	}
-	cfg := testConfig("nats://127.0.0.1:4222")
-	data, err := json.Marshal(cfg)
+	loaded, err := LoadConfig("testdata/config.json")
+	if err != nil || !reflect.DeepEqual(loaded, testConfig("nats://127.0.0.1:4222")) {
+		t.Fatalf("load: %+v %v", loaded, err)
+	}
+	if _, err := LoadConfig("testdata/unknown-config.json"); !errors.Is(err, ErrInvalid) {
+		t.Fatal("unknown config field accepted", err)
+	}
+}
+
+func TestConfigReaderStrictAndBounded(t *testing.T) {
+	data, err := os.ReadFile("testdata/config.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
+	atLimit := string(data) + strings.Repeat(" ", maxConfigBytes-len(data))
+	loaded, err := loadConfig(strings.NewReader(atLimit))
+	if err != nil || !reflect.DeepEqual(loaded, testConfig("nats://127.0.0.1:4222")) {
+		t.Fatalf("exact byte limit: %+v %v", loaded, err)
 	}
-	loaded, err := LoadConfig(path)
-	if err != nil || loaded.Namespace != DefaultNamespace {
-		t.Fatalf("load: %+v %v", loaded, err)
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{"unknown field", `{"unknown":true}`},
+		{"unknown nested field", `{"principals":[{"project":"atlas","token_env":"ATLAS_TOKEN","token":"dummy"}]}`},
+		{"trailing object", string(data) + `{}`},
+		{"trailing invalid JSON", string(data) + `not-json`},
+		{"malformed JSON", `not-json`},
+		{"empty input", ""},
+		{"invalid configuration", `{}`},
+		{"oversized whitespace", strings.Repeat(" ", maxConfigBytes+1)},
+		{"oversized valid prefix", atLimit + " "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := loadConfig(strings.NewReader(test.body)); !errors.Is(err, ErrInvalid) {
+				t.Fatal("invalid config accepted", err)
+			}
+		})
 	}
-	for _, bad := range []string{`{"unknown":true}`, `{} {}`, `not-json`, strings.Repeat(" ", maxConfigBytes+1)} {
-		if err := os.WriteFile(path, []byte(bad), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LoadConfig(path); !errors.Is(err, ErrInvalid) {
-			t.Fatal("invalid config accepted", err)
-		}
+	if _, err := loadConfig(iotest.ErrReader(errors.New("dummy-read-detail"))); !errors.Is(err, ErrInvalid) {
+		t.Fatal("failed read accepted", err)
 	}
 }
 

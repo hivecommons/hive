@@ -4,6 +4,19 @@ import "time"
 
 const PathLanes = "/" + Version + "/lanes"
 
+// Lane error codes retain the same meaning across HTTP handlers and clients.
+const (
+	CodeLaneUnavailable = "lane_unavailable"
+	CodeLaneForbidden   = "lane_forbidden"
+	CodeLaneInvalid     = "lane_invalid"
+	CodeLaneConflict    = "lane_conflict"
+	CodeLaneCursor      = "lane_cursor"
+	CodeLaneStale       = "lane_stale"
+	CodeLaneCapacity    = "lane_capacity"
+	CodeLaneTimeout     = "lane_timeout"
+	CodeLaneCanceled    = "lane_canceled"
+)
+
 // Lane IDs are plain subject-safe identifiers, not forge coordinates.
 type Lane struct {
 	ID          string              `json:"id"`

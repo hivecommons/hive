@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -95,8 +96,7 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 		}
 		broker, err := lanes.Open(ctx, lc, options...)
 		if err != nil {
-			fmt.Fprintln(e.Stderr, "crux: lanes: cannot initialize durable broker")
-			return ExitError
+			return e.laneBrokerFailure(err)
 		}
 		defer broker.Close()
 		srv.Lanes, srv.LaneAuth = broker, auth
@@ -118,4 +118,17 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	}
 	fmt.Fprintln(e.Stdout, "serve stopped")
 	return ExitOK
+}
+
+func (e *Env) laneBrokerFailure(err error) int {
+	category := "initialization error"
+	switch {
+	case errors.Is(err, lanes.ErrConflict):
+		category = "state conflict"
+	case errors.Is(err, lanes.ErrUnavailable):
+		category = "broker unavailable"
+	}
+	// Backend errors can contain addresses or credentials; only emit a typed category.
+	fmt.Fprintf(e.Stderr, "crux: lanes: cannot initialize durable broker (%s)\n", category)
+	return ExitError
 }

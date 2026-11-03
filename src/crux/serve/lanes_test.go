@@ -253,23 +253,57 @@ func TestLaneMalformedAndCancellationPaths(t *testing.T) {
 func TestLaneFailureHTTPClassification(t *testing.T) {
 	s := New(newFakeRuntime())
 	for _, test := range []struct {
-		err    error
-		status int
+		err     error
+		status  int
+		code    string
+		message string
 	}{
-		{lanes.ErrInvalid, http.StatusBadRequest},
-		{lanes.ErrForbidden, http.StatusForbidden},
-		{lanes.ErrConflict, http.StatusConflict},
-		{lanes.ErrCursor, http.StatusConflict},
-		{lanes.ErrStale, http.StatusConflict},
-		{lanes.ErrCapacity, http.StatusTooManyRequests},
-		{lanes.ErrUnavailable, http.StatusServiceUnavailable},
-		{context.DeadlineExceeded, http.StatusGatewayTimeout},
-		{context.Canceled, http.StatusRequestTimeout},
+		{lanes.ErrInvalid, http.StatusBadRequest, api.CodeLaneInvalid, "invalid lane request"},
+		{lanes.ErrForbidden, http.StatusForbidden, api.CodeLaneForbidden, "lane capability denied"},
+		{lanes.ErrConflict, http.StatusConflict, api.CodeLaneConflict, "lane state conflict"},
+		{lanes.ErrCursor, http.StatusConflict, api.CodeLaneCursor, "invalid or expired lane cursor"},
+		{lanes.ErrStale, http.StatusConflict, api.CodeLaneStale, "stale lane receipt"},
+		{lanes.ErrCapacity, http.StatusTooManyRequests, api.CodeLaneCapacity, "lane capacity exhausted"},
+		{lanes.ErrUnavailable, http.StatusServiceUnavailable, api.CodeLaneUnavailable, "lane broker unavailable"},
+		{context.DeadlineExceeded, http.StatusGatewayTimeout, api.CodeLaneTimeout, "lane operation timed out"},
+		{context.Canceled, http.StatusRequestTimeout, api.CodeLaneCanceled, "lane operation canceled"},
+		{errors.New("dummy-backend-detail"), http.StatusServiceUnavailable, api.CodeLaneUnavailable, "lane broker unavailable"},
 	} {
-		w := httptest.NewRecorder()
-		s.writeLaneError(w, test.err)
-		if w.Code != test.status {
-			t.Fatalf("%v: HTTP %d", test.err, w.Code)
-		}
+		t.Run(test.err.Error(), func(t *testing.T) {
+			for _, err := range []error{test.err, fmt.Errorf("%w: tls://dummy-user:dummy-password@broker.example:4222", test.err)} {
+				w := httptest.NewRecorder()
+				s.writeLaneError(w, err)
+				want := fmt.Sprintf("{\"error\":%q,\"code\":%q}\n", test.message, test.code)
+				if w.Code != test.status || w.Header().Get("Content-Type") != api.ContentTypeJSON || w.Body.String() != want {
+					t.Fatalf("HTTP %d, headers %v, body %q; want HTTP %d, body %q", w.Code, w.Header(), w.Body.String(), test.status, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLaneJSONFailureUsesPublicCode(t *testing.T) {
+	s := New(newFakeRuntime())
+	for _, test := range []struct {
+		body    string
+		message string
+	}{
+		{`{"unknown":"dummy-secret"}`, "invalid lane JSON body"},
+		{`not-json`, "invalid lane JSON body"},
+		{`{} {}`, "expected exactly one JSON object"},
+		{`{} not-json`, "expected exactly one JSON object"},
+	} {
+		t.Run(test.body, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, api.PathLanes+"/shared/publish", strings.NewReader(test.body))
+			var in api.LanePublish
+			if s.readLaneJSON(w, r, &in) {
+				t.Fatal("invalid lane JSON accepted")
+			}
+			want := fmt.Sprintf("{\"error\":%q,\"code\":%q}\n", test.message, api.CodeLaneInvalid)
+			if w.Code != http.StatusBadRequest || w.Header().Get("Content-Type") != api.ContentTypeJSON || w.Body.String() != want {
+				t.Fatalf("HTTP %d, headers %v, body %q; want HTTP 400, body %q", w.Code, w.Header(), w.Body.String(), want)
+			}
+		})
 	}
 }

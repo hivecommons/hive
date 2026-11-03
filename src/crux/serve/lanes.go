@@ -65,12 +65,12 @@ func (s *Server) readLaneJSON(w http.ResponseWriter, r *http.Request, v any) boo
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
-		s.writeError(w, http.StatusBadRequest, "lane_invalid", "invalid lane JSON body")
+		s.writeError(w, http.StatusBadRequest, api.CodeLaneInvalid, "invalid lane JSON body")
 		return false
 	}
 	var extra any
 	if err := d.Decode(&extra); err == nil || !errors.Is(err, io.EOF) {
-		s.writeError(w, http.StatusBadRequest, "lane_invalid", "expected exactly one JSON object")
+		s.writeError(w, http.StatusBadRequest, api.CodeLaneInvalid, "expected exactly one JSON object")
 		return false
 	}
 	return true
@@ -182,24 +182,24 @@ func (s *Server) handleLaneReceipt(operation string) http.HandlerFunc {
 }
 
 func (s *Server) writeLaneError(w http.ResponseWriter, err error) {
-	status, code, message := http.StatusServiceUnavailable, "lane_unavailable", "lane broker unavailable"
+	status, code, message := http.StatusServiceUnavailable, api.CodeLaneUnavailable, "lane broker unavailable"
 	switch {
 	case errors.Is(err, lanes.ErrForbidden):
-		status, code, message = http.StatusForbidden, "lane_forbidden", "lane capability denied"
+		status, code, message = http.StatusForbidden, api.CodeLaneForbidden, "lane capability denied"
 	case errors.Is(err, lanes.ErrInvalid):
-		status, code, message = http.StatusBadRequest, "lane_invalid", "invalid lane request"
+		status, code, message = http.StatusBadRequest, api.CodeLaneInvalid, "invalid lane request"
 	case errors.Is(err, lanes.ErrConflict):
-		status, code, message = http.StatusConflict, "lane_conflict", "lane state conflict"
+		status, code, message = http.StatusConflict, api.CodeLaneConflict, "lane state conflict"
 	case errors.Is(err, lanes.ErrCursor):
-		status, code, message = http.StatusConflict, "lane_cursor", "invalid or expired lane cursor"
+		status, code, message = http.StatusConflict, api.CodeLaneCursor, "invalid or expired lane cursor"
 	case errors.Is(err, lanes.ErrStale):
-		status, code, message = http.StatusConflict, "lane_stale", "stale lane receipt"
+		status, code, message = http.StatusConflict, api.CodeLaneStale, "stale lane receipt"
 	case errors.Is(err, lanes.ErrCapacity):
-		status, code, message = http.StatusTooManyRequests, "lane_capacity", "lane capacity exhausted"
+		status, code, message = http.StatusTooManyRequests, api.CodeLaneCapacity, "lane capacity exhausted"
 	case errors.Is(err, context.DeadlineExceeded):
-		status, code, message = http.StatusGatewayTimeout, "lane_timeout", "lane operation timed out"
+		status, code, message = http.StatusGatewayTimeout, api.CodeLaneTimeout, "lane operation timed out"
 	case errors.Is(err, context.Canceled):
-		status, code, message = http.StatusRequestTimeout, "lane_canceled", "lane operation canceled"
+		status, code, message = http.StatusRequestTimeout, api.CodeLaneCanceled, "lane operation canceled"
 	}
 	// Never expose broker connection details or credentials to API clients.
 	s.writeError(w, status, code, message)

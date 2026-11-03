@@ -14,6 +14,11 @@ it does not start another daemon. Without this option, existing behavior is
 unchanged. `/v1/events` remains the lossy, in-memory legacy observer SSE stream;
 it is **not** the durable lane log.
 
+Broker initialization failures distinguish typed `state conflict` and
+`broker unavailable` categories; other failures remain explicit initialization
+errors. These CLI diagnostics never print raw backend errors, broker addresses
+or credentials.
+
 Example administrator-owned `lanes.json` (no secrets):
 
 ```json
@@ -270,7 +275,11 @@ access to persisted state; retry with the same idempotency key.
 
 HTTP errors distinguish invalid requests (400), missing credentials (401),
 denied capabilities (403), state/cursor/stale-receipt conflicts (409), group
-capacity (429), unavailable broker (503), and deadlines (504).
+capacity (429), cancellation (408), unavailable broker (503), and deadlines (504).
+The existing JSON `code` values have Go constants in `crux/api`:
+`CodeLaneInvalid`, `CodeLaneForbidden`, `CodeLaneConflict`, `CodeLaneCursor`,
+`CodeLaneStale`, `CodeLaneCapacity`, `CodeLaneCanceled`, `CodeLaneUnavailable`
+and `CodeLaneTimeout`. Missing credentials still use `CodeUnauthorized`.
 Broker-side capacity/storage failures are unavailable errors, not accepted
 publications. A successful duplicate is returned only after verifying a
 durably persisted matching record.

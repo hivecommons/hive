@@ -1,6 +1,7 @@
 package lanes
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +20,15 @@ func LoadConfig(path string) (Config, error) {
 	if err != nil || stat.Size() > maxConfigBytes {
 		return Config{}, fmt.Errorf("%w: lane configuration size", ErrInvalid)
 	}
-	d := json.NewDecoder(io.LimitReader(f, maxConfigBytes+1))
+	return loadConfig(f)
+}
+
+func loadConfig(r io.Reader) (Config, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxConfigBytes+1))
+	if err != nil || len(data) > maxConfigBytes {
+		return Config{}, fmt.Errorf("%w: lane configuration size", ErrInvalid)
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	var cfg Config
 	if err := d.Decode(&cfg); err != nil {
