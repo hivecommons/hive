@@ -225,6 +225,7 @@ func newAttentionQueueFixture(t *testing.T) *attentionQueueFixture {
 	f := &attentionQueueFixture{s: newAttentionQueueServer(), cfg: &attention.Config{Admitter: map[string]string{"o/r": "hive-a"}}, pilot: new(bool)}
 	*f.pilot = true
 	f.c = testClient(t, f.s.start(t).URL)
+	f.c.SetAppBotLogin("hive-app[bot]")
 	f.c.SetWritebackGate(writeback.New(writeback.Config{PerRepo: map[string]writeback.RepoOverride{"o/r": {Mode: writeback.RepoModeFull}}}, writeback.Deps{}, ""))
 	f.c.SetAttention("hive-a", func() attention.Config { return *f.cfg })
 	f.c.SetAttentionPilot(func() bool { return *f.pilot })
