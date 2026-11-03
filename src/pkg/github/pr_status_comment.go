@@ -31,7 +31,11 @@ func (c *Client) UpsertPRStatusSection(ctx context.Context, repo string, number 
 
 // clientStatusForge adapts the client's comment calls on one item to
 // prstatus.Forge. Creates go through CreateIssueComment (canary gate,
-// effects journal, created tally); edits are tallied as edited.
+// effects journal, created tally); edits are tallied as edited. It is
+// plumbing under prstatus.Write, reached only from UpsertPRStatusSection:
+// the write-back decision belongs to that entry point's callers, and the
+// forge's edit/delete touch only the hive's own status comment, so its
+// calls carry writeback:gated.
 type clientStatusForge struct {
 	c      *Client
 	owner  string
@@ -55,7 +59,7 @@ func (f *clientStatusForge) ListComments(ctx context.Context) ([]prstatus.Commen
 }
 
 func (f *clientStatusForge) EditComment(ctx context.Context, id int64, body string) error {
-	if _, _, err := f.c.client.Issues.EditComment(ctx, f.owner, f.repo, id, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	if _, _, err := f.c.client.Issues.EditComment(ctx, f.owner, f.repo, id, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 		return fmt.Errorf("editing hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
 	}
 	f.c.noteCommentEdited()
@@ -63,11 +67,11 @@ func (f *clientStatusForge) EditComment(ctx context.Context, id int64, body stri
 }
 
 func (f *clientStatusForge) CreateComment(ctx context.Context, body string) error {
-	return f.c.CreateIssueComment(ctx, f.owner+"/"+f.repo, f.number, body)
+	return f.c.CreateIssueComment(ctx, f.owner+"/"+f.repo, f.number, body) // writeback:gated
 }
 
 func (f *clientStatusForge) DeleteComment(ctx context.Context, id int64) error {
-	if _, err := f.c.client.Issues.DeleteComment(ctx, f.owner, f.repo, id); err != nil {
+	if _, err := f.c.client.Issues.DeleteComment(ctx, f.owner, f.repo, id); err != nil { // writeback:gated
 		return fmt.Errorf("deleting hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
 	}
 	return nil
