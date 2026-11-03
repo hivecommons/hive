@@ -286,6 +286,10 @@ type Client struct {
 	// recorded in notificationShadow. nil reads as off.
 	shadowNotificationsFn func() bool
 	notificationShadow    notificationShadow
+	// attentionPilotFn is github.notifications.attention_pilot, read live:
+	// when it returns true routine issue notes fold into the issue's
+	// hive:status card (issue_status_card.go). nil reads as off.
+	attentionPilotFn func() bool
 	// reviewRequireLabelsFn returns review.require_labels, read live so a
 	// Features-tab edit gates the next relay request without a rebuild. nil
 	// or empty means the gate is off.
