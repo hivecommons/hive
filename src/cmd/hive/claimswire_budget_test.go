@@ -27,6 +27,11 @@ func TestClaimHooks_LeaseRevokedSharesClaimCommentBudget(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			posted := make(chan string, 1)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/issues/7/comments" {
+					// The claim ledger looks for its comment before writing.
+					_, _ = w.Write([]byte(`[]`))
+					return
+				}
 				if r.Method != http.MethodPost || r.URL.Path != "/repos/acme/widgets/issues/7/comments" {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 					http.NotFound(w, r)
@@ -77,7 +82,7 @@ func TestClaimHooks_LeaseRevokedSharesClaimCommentBudget(t *testing.T) {
 					t.Fatalf("missing lease release marker: %s", body)
 				}
 			case message := <-failed:
-				if !exhausted || !strings.Contains(message, github.ErrIssueCommentBudget.Error()) || !strings.Contains(message, "release comment") {
+				if !exhausted || !strings.Contains(message, github.ErrIssueCommentBudget.Error()) || !strings.Contains(message, "release ledger") {
 					t.Fatalf("unexpected hook failure: %s", message)
 				}
 			case <-time.After(5 * time.Second):
