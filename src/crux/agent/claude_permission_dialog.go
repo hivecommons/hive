@@ -1,8 +1,9 @@
 package agent
 
 import (
-	"regexp"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/agent/panesignal"
 )
 
 // Claude Code permission dialogs (#claude-permission-dialog).
@@ -34,107 +35,22 @@ import (
 const (
 	// claudePermissionDialogLabel is the blockingPrompts audit label and the
 	// kick-undeliverable reason prefix.
-	claudePermissionDialogLabel  = "claude permission dialog"
+	claudePermissionDialogLabel  = panesignal.ClaudePermissionDialogLabel
 	claudePermissionDialogReason = "CLI blocked on permission dialog"
 	// claudePermissionDialogKey is the option typed before Enter: Claude's
 	// permission dialogs list their affirmative, persistent choice first.
-	claudePermissionDialogKey = "1"
+	claudePermissionDialogKey = panesignal.ClaudePermissionDialogKey
 	// claudePermissionDialogAnswerAttempts bounds how many times one kick's
 	// prompt wait auto-answers before giving up with the dialog reason.
 	claudePermissionDialogAnswerAttempts = 3
 )
 
-// claudePermissionQuestions are the question lines (lower-cased) that
-// identify a permission dialog. At least one must be present alongside a
-// numbered option list for the pane to count as a dialog.
-var claudePermissionQuestions = []string{
-	"outside the working director",
-	"do you want to proceed?",
-	"do you want to allow",
-	"do you want to make this edit",
-	"do you want to create",
-	"do you want to run",
-	"allow this tool",
-}
-
-// claudePermissionOptionRe matches a numbered option line, selected ("❯ 1.")
-// or not ("  2."), after box-drawing borders are stripped.
-var claudePermissionOptionRe = regexp.MustCompile(`^(?:❯\s*)?([1-9])\.\s+\S`)
-
-// claudePermissionDialogExclusions are other claude modals that also render a
-// "?" title over a numbered list and have their own, different answers
-// (blockingPrompts / dismissInferencePrompts). They must never be read as a
-// permission dialog, or option 1 would be typed into them.
-var claudePermissionDialogExclusions = []string{
-	bypassConsentTitle,
-	"Is this a project you created or one you trust",
-	apiKeyPromptTitle,
-	"Update available",
-}
-
-// claudePermissionDialog reports whether the pane tail shows a Claude Code
-// permission dialog and returns its first line (the dialog title) for logs
-// and the kick error. Only the pane tail is considered: a dismissed dialog
-// lingers in scrollback.
 func claudePermissionDialog(pane string) (title string, ok bool) {
-	if pane == "" || strings.Contains(pane, cliWorkingMarker) {
-		return "", false
-	}
-	tail := paneTail(pane, blockingPromptTailLines)
-	for _, ex := range claudePermissionDialogExclusions {
-		if strings.Contains(tail, ex) {
-			return "", false
-		}
-	}
-	var (
-		question string
-		options  int
-		sawFirst bool
-	)
-	for _, raw := range strings.Split(tail, "\n") {
-		line := cleanDialogLine(raw)
-		if line == "" {
-			continue
-		}
-		if m := claudePermissionOptionRe.FindStringSubmatch(line); m != nil {
-			options++
-			if m[1] == "1" {
-				sawFirst = true
-			}
-			continue
-		}
-		if question == "" && strings.HasSuffix(line, "?") && isClaudePermissionQuestion(line) {
-			question = line
-		}
-	}
-	if question == "" || options < 2 || !sawFirst {
-		return "", false
-	}
-	return question, true
+	return panesignal.ClaudePermissionDialog(pane)
 }
 
-func isClaudePermissionQuestion(line string) bool {
-	lower := strings.ToLower(line)
-	for _, q := range claudePermissionQuestions {
-		if strings.Contains(lower, q) {
-			return true
-		}
-	}
-	return false
-}
-
-// cleanDialogLine strips the box-drawing border Claude Code draws around its
-// dialogs ("│ Read outside … │") and surrounding whitespace.
-func cleanDialogLine(line string) string {
-	line = strings.TrimSpace(line)
-	line = strings.Trim(line, "│┃|")
-	return strings.TrimSpace(line)
-}
-
-// paneShowsClaudePermissionDialog is claudePermissionDialog as a predicate.
 func paneShowsClaudePermissionDialog(pane string) bool {
-	_, ok := claudePermissionDialog(pane)
-	return ok
+	return panesignal.ShowsClaudePermissionDialog(pane)
 }
 
 // paneShowsQuestionForm reports whether the pane is blocked on ANY CLI

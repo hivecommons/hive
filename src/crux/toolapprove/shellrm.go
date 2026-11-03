@@ -2,6 +2,7 @@ package toolapprove
 
 import (
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -50,7 +51,12 @@ import (
 // and so is the text of a command substitution or a ${…} expansion that is
 // not a plain name.
 //
-// Not resolved. The value of any other parameter ($X, ${X:-…}, $1, …),
+// Empty expansions. A tool-issued command has no positional parameters, so
+// $1, $@ and $* expand to nothing (rm -rf /$1 is rm -rf /). A command
+// substitution glued to a path may print nothing, so it is dropped when
+// judging the operand (rm -rf $(true)/ is refused).
+//
+// Not resolved. The value of any other parameter ($X, ${X:-…}, $0, …),
 // command substitution output, other users' homes (~user), bracket globs,
 // aliases, functions and commands assembled at run time (x=rm; $x -rf /)
 // are unknown to a static reader; an operand holding one is not judged
@@ -91,6 +97,7 @@ const (
 	uQuoted              // quoted or escaped literal byte
 	uParam               // a known parameter: c is shParamHome, shParamPWD or shParamIFS
 	uOpaque              // an expansion whose value is unknown statically
+	uSubst               // a command substitution: unknown, and may expand to nothing
 )
 
 const (
@@ -103,6 +110,8 @@ const (
 var shParamText = map[byte]string{shParamHome: "${HOME}", shParamPWD: "${PWD}", shParamIFS: "${IFS}"}
 
 var shOpaqueUnit = shUnit{kind: uOpaque}
+
+var shSubstUnit = shUnit{kind: uSubst}
 
 // rmAnalysis carries the work budget and the verdict across nested reads.
 type rmAnalysis struct {
@@ -302,7 +311,7 @@ func (l *shLexer) doubleQuoted(i int) int {
 func (l *shLexer) backtick(i int) int {
 	end := closeIndex(l.src, i, '`')
 	l.hit = l.a.nested(l.src[i:end], l.depth)
-	l.add(shOpaqueUnit)
+	l.add(shSubstUnit)
 	return end + 1
 }
 
@@ -328,7 +337,7 @@ func (l *shLexer) dollar(i int, inDouble bool) int {
 		// it, so the enclosing simple command keeps its other words
 		// (rm -rf $(true) / is still rm -rf /); its text is re-read as a
 		// nested command.
-		l.add(shOpaqueUnit)
+		l.add(shSubstUnit)
 		end := closeParen(src, i+2)
 		l.hit = l.a.nested(src[i+2:min(end, len(src))], l.depth)
 		return end + 1
@@ -349,7 +358,12 @@ func (l *shLexer) dollar(i int, inDouble bool) int {
 		}
 		l.param(src[i+1:j], inDouble)
 		return j
-	case isASCIIDigit(n) || strings.IndexByte("@*#?-$!", n) >= 0:
+	case (isASCIIDigit(n) && n != '0') || n == '@' || n == '*':
+		// A tool-issued command has no positional parameters, so these
+		// expand to nothing; the word stays present, as "$1" is "".
+		l.inWord = true
+		return i + 2
+	case isASCIIDigit(n) || strings.IndexByte("#?-$!", n) >= 0:
 		l.add(shOpaqueUnit)
 		return i + 2
 	default:
@@ -665,7 +679,7 @@ func rmRemovesProtected(args [][]shUnit) bool {
 
 func hasOpaqueUnit(w []shUnit) bool {
 	for _, u := range w {
-		if u.kind == uOpaque {
+		if u.kind == uOpaque || u.kind == uSubst {
 			return true
 		}
 	}
@@ -677,6 +691,8 @@ func isSlashUnit(u shUnit) bool { return u.c == '/' && (u.kind == uLit || u.kind
 // isProtectedTarget reports whether the rm operand w names the root, the
 // home directory or the working directory, or an ancestor of one of them.
 func isProtectedTarget(w []shUnit) bool {
+	// A command substitution may print nothing, so $(true)/ may be /.
+	w = slices.DeleteFunc(slices.Clone(w), func(u shUnit) bool { return u.kind == uSubst })
 	rest, anchored := w, false
 	if len(w) > 0 && (len(w) == 1 || isSlashUnit(w[1])) {
 		switch first := w[0]; {

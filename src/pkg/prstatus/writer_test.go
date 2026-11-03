@@ -423,3 +423,74 @@ func TestNoStatusWriterOutsideWrite(t *testing.T) {
 		t.Fatalf("hive:status comments must be written through prstatus.Write only:\n%s", strings.Join(offenders, "\n"))
 	}
 }
+
+func TestWriteNeutralisesIncidentalMentions(t *testing.T) {
+	f := &fakeForge{}
+	text := "Title: fix for @someuser's bug, contact bob@example.com"
+	if _, err := Write(context.Background(), f, "o/r#1", "k", text); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.comments) != 1 {
+		t.Fatalf("comments = %d, want 1", len(f.comments))
+	}
+	body := f.comments[0].Body
+	if strings.Contains(body, "@someuser") {
+		t.Fatalf("live mention survived: %q", body)
+	}
+	if !strings.Contains(body, "`someuser`") {
+		t.Fatalf("login not preserved readably: %q", body)
+	}
+	if !strings.Contains(body, "bob@example.com") {
+		t.Fatalf("email address was altered: %q", body)
+	}
+}
+
+func TestWriteMentioningKeepsDeliberateMention(t *testing.T) {
+	f := &fakeForge{}
+	if _, err := WriteMentioning(context.Background(), f, "o/r#1", "k", "@author this PR is held"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.comments) != 1 || !strings.Contains(f.comments[0].Body, "@author this PR is held") {
+		t.Fatalf("deliberate mention must survive WriteMentioning: %+v", f.comments)
+	}
+}
+
+func TestWriteNeutralisesMergedForeignStatusBodies(t *testing.T) {
+	// Create path: the only status comment is foreign, so its sections are
+	// merged into the new hive-owned comment.
+	f := &fakeForge{}
+	f.add(Upsert("", "theirs", "see @victim for details"), false)
+	if _, err := Write(context.Background(), f, "o/r#1", "k", "ours"); err != nil {
+		t.Fatal(err)
+	}
+	var own []Comment
+	for _, c := range f.comments {
+		if c.Own {
+			own = append(own, c)
+		}
+	}
+	if len(own) != 1 {
+		t.Fatalf("own comments = %d, want 1", len(own))
+	}
+	if strings.Contains(own[0].Body, "@victim") {
+		t.Fatalf("foreign mention went live in the hive-owned comment: %q", own[0].Body)
+	}
+	if got, _ := Get(own[0].Body, "theirs"); !strings.Contains(got, "`victim`") {
+		t.Fatalf("foreign section not merged readably: %q", own[0].Body)
+	}
+	if strings.Contains(f.comments[0].Body, "`victim`") {
+		t.Fatalf("foreign comment must not be edited: %q", f.comments[0].Body)
+	}
+
+	// Reconcile path: a foreign status comment newer than the hive-owned one
+	// is merged into it.
+	f = &fakeForge{}
+	f.add(Upsert("", "k", "ours"), true)
+	f.add(Upsert("", "theirs", "ping @victim"), false)
+	if _, err := Reconcile(context.Background(), f, "o/r#1"); err != nil {
+		t.Fatal(err)
+	}
+	if b := f.comments[0].Body; strings.Contains(b, "@victim") || !strings.Contains(b, "`victim`") {
+		t.Fatalf("reconcile merged a live foreign mention: %q", b)
+	}
+}

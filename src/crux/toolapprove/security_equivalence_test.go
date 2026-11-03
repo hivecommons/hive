@@ -344,6 +344,16 @@ func TestDestructiveRmShellForms(t *testing.T) {
 		"echo \"`rm -rf /`\"",
 		"echo ${X:-$(rm -rf /)}",
 		"rm -rf $(true) /",
+		// Tool-issued commands have no positional parameters, so $1, $@ and
+		// $* expand to nothing; an empty command substitution glued to a
+		// protected path leaves that path (rm -rf $(true)/ is rm -rf /).
+		"rm -rf /$1",
+		"rm -rf /\"$@\"",
+		"rm -rf /$*",
+		"rm -rf $1/",
+		"rm -rf $(true)/",
+		"rm -rf `true`/",
+		"rm -rf ~/$(true)",
 		"rm -rf `true` /",
 		"rm -rf $(true) ~",
 		"rm $(true) -rf /",
@@ -382,7 +392,9 @@ func TestDestructiveRmShellForms(t *testing.T) {
 		"rm -rf /tmp/{a..c}",
 		"bash -c 'rm -rf /tmp/x'",
 		"echo \"$(rm -rf /tmp/x)\"",
-		"rm -rf $(true)/",
+		"rm -rf /tmp/$1",
+		"rm -rf /tmp/$(true)/x",
+		"rm -rf $0/",
 		"rm -f $(true) /tmp/x",
 		"git rm -r --cached .",
 		"git rm -r .",

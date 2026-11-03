@@ -1,0 +1,1 @@
+- chore(crux): drop test-only launch-cmd wrappers (hivecommons/crux#93)

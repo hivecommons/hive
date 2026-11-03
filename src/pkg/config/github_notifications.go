@@ -31,6 +31,14 @@ type GitHubNotificationsConfig struct {
 	// decision is recorded for repeats of the same condition. Measurement
 	// only — nothing is suppressed or rerouted. Default off.
 	Shadow bool `yaml:"shadow,omitempty" json:"shadow,omitempty"`
+	// AttentionPilot opts this hive in to the attention pilot
+	// (hivecommons/hive#16270): the single gate every attention-pilot
+	// change reads. With it on, routine issue notes (partial work,
+	// dependency progress, close/auto-close narration, regressions, PR
+	// links) fold into the issue's one hive:status card, and a newly
+	// required action is still announced by exactly one notifying write.
+	// Default off: behaviour is unchanged.
+	AttentionPilot bool `yaml:"attention_pilot,omitempty" json:"attention_pilot,omitempty"`
 }
 
 // Quiet reports whether the hive should fold its PR notes into one edited

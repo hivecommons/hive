@@ -219,6 +219,26 @@ Operator-defined [hooks](hooks.md) with the `notify` action send through the sam
 
 The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
 
+## Mention hygiene
+
+Text the hive copies into a body it authors (issue/PR titles, quoted comments,
+evidence, attribution) must never notify the people it names. The status
+comment writer (`prstatus.Write`) passes every section through
+`advisory.NeutralizeMentions`, the same convention the advisory digest and
+duplicate-sweep renderers use: `@login` becomes `` `login` `` (only the `@` is
+dropped inside code spans and fences). Email addresses, URLs and `#123`
+references are untouched, and the rewrite is idempotent. Sections of a status
+comment another author posted are neutralised too when they are merged into
+the hive-owned comment, since that body is re-edited on every pass. This
+applies regardless of the attention-pilot flag.
+
+Deliberate mentions are posted as their own comments or reviews through the
+notification-class framework and are not rewritten. The one deliberate mention
+that lives in the status comment, the trusted-human 071 note's `@author` in
+quiet-notification mode, goes through `prstatus.WriteMentioning`, which posts
+the section verbatim; its composer neutralises the copied check names and
+review asks itself, so the author is the only person it notifies.
+
 ## Testing delivery
 
 Test the target channel directly before putting it in `hive.yaml`:
@@ -438,6 +458,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
 | `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
+| `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
@@ -463,6 +484,7 @@ without a class. Review submissions and review requests are always counted as
 | `dashboard.(*Server).handleReviewPipelineSendToHuman` | `attention` |  |
 | `dashboard.(*Server).reroutePickupLapsed` | `attention` |  |
 | `dashboard.(*Server).settleRebaseMergeLedger` | `attention` |  |
+| `github.(*Client).PostIssueAttention` | `attention` | the one explicit announcement of a newly required action (`attention_pilot`) |
 | `github.(*Client).NudgeTrackingIssueClosingRefs` | `attention` |  |
 | `github.(*Client).appendFoldedFinding` | `attention` |  |
 | `github.(*Client).bindProwLgtm` | `attention` |  |
@@ -506,3 +528,57 @@ Go client; listed for completeness):
 | `promote-stable.yml` | `attention` | Emergency stable-promotion exception note. |
 | `weekly-competitor-report.md` (`.lock.yml`) | `status` | Weekly report comment on the tracking issue. |
 | `hive-ok-to-test.yml` | `protocol_command` | The `/ok-to-test` command that releases held workflow runs. |
+
+## Attention pilot and the issue status card (`github.notifications.attention_pilot`)
+
+The attention pilot is the opt-in gate for the attention changes in
+[#16270](https://github.com/hivecommons/hive/issues/16270); every
+attention-pilot behaviour reads this one flag. It is **off by default**, and
+with it off the hive behaves exactly as before.
+
+```yaml
+github:
+  notifications:
+    attention_pilot: true   # default false
+```
+
+Quiet mode (`github.notifications.mode: quiet`) folds the hive's PR
+bookkeeping into one edited `hive:status` comment but leaves issue notes as
+comments of their own, so one issue lifecycle (partial merge, remainder,
+close) could still email its watchers several times. With the pilot on, the
+issue gets the same card, written through the same single status writer
+(`prstatus.Write`, serialised per item, duplicates merged into the oldest):
+
+- **Folded into the card** (section key in brackets): partial work left by a
+  non-closing merged PR (`issue-partial:<pr>`), close/auto-close narration —
+  "Fixed by #N … Reply /reopen if the problem persists" and the decomposed
+  parent's all-children-delivered close — (`issue-close`),
+  reopened-after-merge (`issue-reopened`), a lapsed claim's stage regression
+  (`stage-regressed`), the covering-PR stage note (`issue-pr-link`) and the
+  blocker-settled note (`unblocked`, whatever `mode` says). Claim notes
+  already fold under `claim` in quiet mode. The legacy markers stay inside
+  each section, so every reader that greps for them still finds them, and
+  the reopen/release guidance stays visible on the card.
+- **Native events notify instead.** The issue is still closed (with its
+  state reason) by the API call, which is GitHub's own notification; the
+  hive no longer adds a "for visibility" comment beside it.
+- **A newly required action is still announced once.** Editing a comment
+  notifies nobody, so an action asked of a person (today: confirming a
+  merged fix with `/fixed` or `/reopen`) is recorded on the card under
+  `attention:<cause>` *and* announced by exactly one notifying write —
+  creating the card when the issue has none, otherwise one explicit
+  comment tagged `<!-- hive:attention cause=<cause> -->`. A later pass that
+  sees the tag only refreshes the card; a new cause gets its own single
+  announcement. The explicit comment consults the write-back gate like
+  every other unsolicited comment; a refusal is returned to the caller as
+  `writeback.ErrSuppressed` before anything is written (no comment, no tag
+  on the card), so the action is not reported as announced and the next
+  pass retries once the policy admits it.
+- **Not folded:** the blocked sweep's re-target note (`<!-- hive:blocked-on … -->`)
+  stays a comment, because the sweep reads the *newest* blocked-on marker
+  by comment order and a section in an older card would not be newest.
+
+Acknowledge/snooze commands, reminders and the per-repo attention queue are
+separate pilot steps ([#16359](https://github.com/hivecommons/hive/issues/16359),
+[#16361](https://github.com/hivecommons/hive/issues/16361)–[#16363](https://github.com/hivecommons/hive/issues/16363))
+and are not part of this flag's first behaviour.
