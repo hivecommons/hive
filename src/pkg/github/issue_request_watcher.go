@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -669,9 +670,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				parkBlocked = true
 			}
 		}
-		if key := relayStatusNoteKey(body); key != "" && c.notificationsQuiet() {
+		if key := relayStatusNoteKey(body); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
 			// A one-line state note (awaiting-ci, parking, already fixed)
-			// is a section of the item's status comment in quiet mode.
+			// is a section of the item's status comment in quiet mode or
+			// under the attention pilot.
 			var created bool
 			created, err = c.UpsertPRStatusSection(ctx, req.Repo, req.Number, key, body)
 			if err == nil && !created {
@@ -739,7 +741,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			}
 		}
 		if err == nil && issueDecisionDowngrade.Active {
-			err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, issueDecisionDowngrade.Note)
+			// Pilot only: quiet mode leaves issue notes as standalone
+			// comments (docs/notifications.md), so it keeps the raw note.
+			if c.attentionPilot() {
+				var created bool
+				created, err = c.UpsertPRStatusSection(ctx, req.Repo, req.Number, prstatus.KeyIssueDecisionDowngrade, issueDecisionDowngrade.Note)
+				if err == nil && !created {
+					c.noteCommentSuppressed()
+				}
+			} else {
+				err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, issueDecisionDowngrade.Note)
+			}
 		}
 		if err == nil {
 			resp.OK = true
