@@ -1,0 +1,1 @@
+- Restore activity issue/PR header spans and far-right action controls; keep truthful current-phase highlights across parallel CI/Review, wrap all chevrons within two lines with complete hover/keyboard details, and show unknown track states as icons rather than verbose panels.

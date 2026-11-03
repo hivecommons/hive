@@ -27,6 +27,64 @@ is *where edits land* — a toast fix touches `css/alerts-toasts.css`, a tracker
 fix touches `js/tracker-row.js`, and two such PRs no longer conflict on one
 60 000-line file.
 
+Activity row headers share the progress strip's physical grid. Their issue
+metadata spans Open through Claimed, even without a PR; PR metadata starts at
+the canonical PR in progress boundary and spans through Merge gate, including
+the independent CI and Review tracks. Modifier/action badges wrap in their own
+full-width, far-right-anchored toolbar line, rather than overflowing the history
+cap into a title or ending in an issue-side column. At narrow widths the header
+slots stack and wrap; small-screen progress strips scroll horizontally without
+moving header controls offscreen. `stage_tracker_header_spans.test.js`
+checks rendered markup and track arithmetic in CI; actual clipping and overlap
+still require browser geometry checks on a dedicated published-preview tab. Invoke
+`webstatic/testdata/tracker-header-geometry.js` as
+`(<file contents>)({ dedicatedPreview: true })` there at desktop and narrow
+widths with issue-only, linked, and PR-only rows present, including long titles
+and waiting/regression badges. It asserts measured lane boundaries, metadata
+containment, badge separation and header-to-progress separation. Every relevant
+header control must stay horizontally contained and pass center hit-testing;
+the probe deliberately scrolls vertically offscreen controls into view and
+restores scroll positions rather than silently skipping them. It never activates
+controls. Do not run interaction/scroll probes in the user's live dashboard tab.
+Nested PRs use the same explicit bounded grid-track contract as root rows,
+not implicit min-content tracks that long identity/context text can widen.
+The probe also compares physical lane positions/heights across rows and bounds
+vertical gaps by the actual CSS gap/margins, allowing real wrapped content but
+rejecting unexplained empty space.
+
+`webstatic/testdata/tracker-activity-density.json` records acceptance shapes from
+the owner's 12:01 screenshot: #16404 with #16442/#16378, Hotshot #343/#344,
+#16438 with #16446/#16449, issue-only #16420, and a PR-only #16437 view variant.
+It preserves full GitHub-read titles, author identities, heads and long waiting
+captions. Its stage/activity projections and frozen clock are deterministic test
+inputs, not a claimed live backend snapshot. Use these structures plus long
+unbroken-handle stress data for preview coverage; a fixture passing is not proof
+that the published application renders correctly.
+
+The split CI/Review cards also distinguish position from activity: a steady
+outline and accessible current-phase label identify the occupied phase, even when
+evidence is unknown, work is queued or a PR is held. The running-work class and
+motion still require fresh current-head activity evidence; completion remains
+evidence-based. Both parallel tracks can occupy the current phase without
+claiming either is running. Native stages, holds and merge authority do not
+change.
+
+All progress chevrons share a fixed two-line text budget, wrapping even unbroken
+handles. Icons have reserved space clear of the chevron points. Full details
+remain in the native title and/or shared hover/focus tooltip portal; links and
+decision controls remain interactive. Decision chevrons, including native
+merge-gate claim conflicts, instead use their existing decision dialog as the
+sole hover/focus detail surface. The gate caption remains a decision button;
+full caption, reason and head metadata go to its keyboard-accessible Details,
+without a competing tooltip or extra focus stop. The dedicated-preview
+`webstatic/testdata/tracker-decision-interaction.js` probe uses the same invocation
+to check pointer hover, focus, ArrowDown/Enter/Space entry, action hit-testing,
+and tooltip exclusion. It never activates a decision action. Unknown, stale or old-head CI/Review
+observations show only the existing 050 column glyph, with their full source,
+reason, owner and head metadata available in the keyboard-accessible tooltip.
+Unknown does not mean running, passed or approved. Known track captions use the
+same two-line budget; fixer/diagnostic detail belongs in the tooltip.
+
 The sources sit in a sibling directory (`static-src/`, not `static/src/`) on
 purpose: `//go:embed static` embeds everything under `static/` recursively, so
 sources placed inside it would be compiled into the binary and served.

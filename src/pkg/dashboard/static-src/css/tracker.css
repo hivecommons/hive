@@ -94,39 +94,29 @@
     /* Title line = a ghost strip with the same column widths as the chevrons
        below: a lead cell spanning Open..Claimed carries the number + title, a
        PR cell spanning PR in progress..Merge gate carries "[icon] #N title",
-       the cap column is kept for the modifier chip and the since column is
-       an empty spacer (the time on step rides the strip row's since cell, in
-       line with the chevrons). Both cells wrap rather than collide; the lead
-       keeps a clear gap before the PR column. The spanning cells' flex-basis
-       absorbs the gaps they cover so the PR cell starts exactly at the PR in
-       progress chevron. */
+       modifiers get a separate, full-width right-anchored toolbar line. The since column is
+       an empty spacer (the time on step rides the strip row's since cell).
+       Explicit grid spans share the chevrons' tracks, including the two
+       concurrent CI/Review tracks, without content changing their widths. */
     .ham-row-head { position: relative; display: flex; align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); min-width: 0; line-height: 1.3; }
     .ham-head-cols { flex: 1 1 auto; min-width: 0; min-height: 1.3em; align-items: flex-start; }
     .ham-head-cols .ham-strip { height: auto; }
     .ham-head-cols .ham-seg { background: transparent; clip-path: none; align-items: flex-start; justify-content: flex-start; padding: 0 var(--sp-2) 0 var(--sp-4); white-space: normal; }
-    /* Lead = exactly three of the six equal chevrons (half of the strip
-       minus the fixed 4em cap and the six gaps) plus the two gaps between
-       them, so the PR cell starts at the PR in progress chevron; the PR cell takes what
-       is left and gives way to the chip, which lives in the cap cell. */
-    .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - var(--ham-visible-columns) * var(--sp-1)) * 3 / var(--ham-visible-columns) + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
-    .ham-head-cols .ham-seg.ham-head-lead.ham-head-wide { flex: 1 1 0; }
-    /* The PR cell is one line: connector, author icon + #N + title, lineage
-       chip and base pill sit side by side; the lineage chip gives way first
-       (flex-shrink 2), then the title (1), the pills and the connector never shrink
-       (hivecommons/hive "consolidate from 3 lines of text to 1"). */
-    .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: var(--sp-2); min-width: 0; overflow: hidden; }
-    .ham-head-cols .ham-seg.ham-head-pr > .ham-linked-ico, .ham-head-cols .ham-seg.ham-head-pr > .ham-badge { flex: 0 0 auto; }
-    .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage, .ham-head-cols .ham-seg.ham-head-pr > .ham-adopted-from { display: block; flex: 0 2 auto; min-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+    .ham-head-cols .ham-seg.ham-head-lead { grid-column: 1 / var(--ham-pr-start); grid-row: 1; padding: 0 var(--sp-6) 0 0; }
+    .ham-head-cols .ham-seg.ham-head-pr { grid-column: var(--ham-pr-start) / -2; grid-row: 1; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; overflow: visible; padding: 0; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-linked-ico { flex: 0 0 auto; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage, .ham-head-cols .ham-seg.ham-head-pr > .ham-adopted-from { flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage > .ham-author-ico { vertical-align: text-bottom; margin-right: var(--sp-1); }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line { flex: 0 1 auto; }
-    /* The chip hugs the bottom of the title block (align-items: flex-end
-       inside the stretched cap cell): on a two-line title it sits on the
-       second line, directly over the strip it describes, never up at the
-       previous entry's edge. */
-    .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; align-items: flex-end; justify-content: flex-end; padding: 0; }
-    .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
-    .ham-head-main { display: flex; flex: 1; align-items: center; gap: var(--sp-3); min-width: 0; overflow: hidden; }
-    .ham-head-main > .ham-badge { flex: 0 0 auto; }
+    .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; grid-row: 2; min-width: 0; overflow: visible; align-items: flex-end; justify-content: flex-end; padding: 0; }
+    .ham-head-cols .ham-seg.cap:has(> .ham-badges:empty) { display: none; }
+    .ham-head-cols .ham-seg.cap .ham-badges { position: static; flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }
+    .ham-head-cols .ham-badges > :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    .ham-head-cols .ham-badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    .ham-head-main { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--sp-3); min-width: 0; }
+    .ham-head-main > .ham-badge { flex: 0 1 auto; }
+    .ham-head-main > .ham-title, .ham-head-pr .ham-pr-title { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+    .ham-head-pr .ham-pr-ref, .ham-head-pr .ham-pr-line { flex-wrap: wrap; overflow: visible; }
     .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
     .ham-pr-ref:hover { color: var(--text); }
     .ham-linked-ico { color: var(--text-faint); font-size: var(--fs-xs); margin-right: var(--sp-1); }
@@ -326,15 +316,10 @@
     .ham-badge-reroute { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-badge-reroute .ham-presence-dot { width: 0.5em; height: 0.5em; border-radius: var(--r-pill); background: var(--text-faint); flex: 0 0 auto; }
     .ham-badge-reroute.ham-reroute-online .ham-presence-dot { background: var(--status-ok); }
-    .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; --ham-visible-columns: 7; }
-    .ham-strip:not(.ham-head-cols) { display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; }
+    .ham-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); --ham-notch: 8px; --ham-visible-columns: 7; --ham-chevron-text-lines: 2; --ham-chevron-line-height: 1.3; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
-    .ham-activity-track { clip-path: none; border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); flex-direction: column; align-items: flex-start; padding: var(--sp-1) var(--sp-2); white-space: normal; }
-    .ham-track-name { font-weight: var(--fw-semibold); }
-    .ham-track-state { overflow-wrap: anywhere; font-size: var(--fs-xs); }
+    .ham-activity-track { clip-path: none; border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); white-space: normal; }
     .ham-track-state a { color: inherit; }
-    .ham-track-code-note, .ham-track-context { overflow-wrap: anywhere; font-size: var(--fs-xs); }
-    .ham-track-freshness { position: absolute; right: var(--sp-1); top: 0; color: var(--amber); }
     .ham-activity-track[data-activity-state="failing"], .ham-activity-track[data-activity-state="changes_requested"] { border-color: var(--amber); color: var(--amber); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
     .ham-seg.cap { flex: 0 0 4em; }
@@ -345,17 +330,12 @@
     /* The holder's offline / not-registered state is muted: a flag, not an alarm. */
     .ham-holder-presence { margin-right: 0; color: var(--text-faint); font-weight: normal; }
     .ham-holder-presence.ham-presence-offline { --ham-presence-color: var(--text-faint); }
-    /* A word with a holder ("PR in progress · @bob's clanker") stays on one
-       line: the stage word keeps its width and the name gives way with an
-       ellipsis before anything wraps (hivecommons/hive#15541). */
-    .ham-seg-t.ham-has-holder, .ham-detour.ham-has-holder { display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%; white-space: nowrap; }
-    .ham-has-holder > .ham-holder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.blank { visibility: hidden; }
-    .ham-sub { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
+    .ham-sub { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
     /* Only the two moving buckets animate (see stageTrackerMotion): the hive
        acting = gentle pulse; waiting on a person = slower amber→red breathe.
        A lit step with no data-motion (Open, Open · hold, Claimed, …) is a
@@ -365,6 +345,10 @@
        layerize pass of the page every vsync (#13764). ::after is the
        movement effects' (flash / ripple / wash). */
     .ham-seg.active { background: var(--amber); color: var(--surface-0); }
+    /* Position is independent of observed work: queued, held and unknown
+       tracks retain a steady current-phase outline, never a work pulse. */
+    .ham-activity-track.ham-current { border-color: var(--amber); opacity: 1; box-shadow: inset 0 0 0 var(--line-width) var(--amber); }
+    .ham-activity-track.ham-current:not(.active) { background: color-mix(in srgb, var(--amber) 12%, var(--panel)); }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
@@ -394,10 +378,18 @@
        after the word ("next sweep in 42s", "7m left") is muted. */
     .ham-gate-ico { display: inline-flex; align-items: center; margin-right: var(--sp-1); cursor: help; }
     .ham-gate-ico .ham-ico { width: 12px; height: 12px; }
-    /* The detail is a fixed short phrase; should a long one ever reach it
-       (hivecommons/docs#512 drew a raw GitHub URL across the column) it is
-       clipped with an ellipsis rather than overflowing the chip. */
-    .ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; display: inline-block; vertical-align: bottom; max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
+    .ham-gate-detail { font-weight: normal; opacity: 0.85; font-variant-numeric: tabular-nums; }
+    /* All physical chevrons share a two-line budget. The portal tooltip is
+       outside the clipped polygon; keyboard focus exposes the same full text. */
+    .ham-strip[aria-label="Pipeline progress"] { grid-auto-rows: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em + 2 * var(--sp-2) + 2 * var(--line-width)); }
+    .ham-strip[aria-label="Pipeline progress"] > .ham-seg { box-sizing: border-box; height: 100%; line-height: var(--ham-chevron-line-height); padding: var(--sp-2) calc(var(--ham-notch) + var(--sp-2)); }
+    .ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); width: 100%; height: 100%; min-width: 0; flex-shrink: 1; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; position: static; }
+    .ham-chevron-info.config-info:hover { background: transparent; border: 0; color: inherit; }
+    .ham-chevron-info:focus-visible, .ham-chevron-decision:focus-within { outline: var(--line-width) solid currentColor; outline-offset: var(--sp-1); }
+    .ham-chevron-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-height: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em); flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
+    .ham-chevron-copy :is(.ham-seg-t, .ham-detour, .ham-holder, .ham-gate-detail) { display: inline; white-space: normal; overflow-wrap: anywhere; }
+    .ham-chevron-copy > .ham-decision-trigger { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
+    .config-tooltip.ham-chevron-tip { overflow-wrap: anywhere; max-width: calc(100vw - var(--sp-8)); max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------
        Owner request: a viewer must always read where an item stands,
@@ -494,7 +486,7 @@
        page text: ≥ 15:1 in both themes, see the contrast test) above the
        stripes and the pulse overlay, on one line with an ellipsis. */
     .cue-acting > .ham-strip-row > .ham-strip > .ham-seg.active:not(.cap) > :not(.cue-acting-cap) { display: none; }
-    .ham-seg.active > .cue-acting-cap { display: inline-block; position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-seg.active > .cue-acting-cap { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: var(--ham-chevron-line-height); overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
     .ham-seg.active > .cue-acting-cap > .cue-acting-spin { vertical-align: -1px; margin-right: var(--sp-2); }
     .cue-event { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; padding-left: var(--sp-5); font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; animation: cue-event-in 0.4s ease-out; }
     .cue-event-who { font-weight: var(--fw-medium); color: var(--text); }
@@ -758,27 +750,28 @@
        a needs-human step keeps a steady red tint so it still stands out. */
     @media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none; box-shadow: inset 0 0 0 2px var(--surface-0); } .ham-seg.active[data-motion]::before { display: none; } .ham-seg.active[data-motion="needs-human"] { background: color-mix(in srgb, var(--amber) 45%, var(--red)); } }
     @media (max-width: 1100px) {
-      /* Keep the aligned progress strip compact; put its active step in a
-         wrapping caption instead of squeezing actionable words into a chevron. */
-      .ham-cols .ham-seg-t, .ham-row .ham-seg-t, .ham-row .ham-detour { display: none; }
+      /* Stack headers, but keep the same two-line progress text budget. */
+      .ham-cols .ham-seg-t { display: none; }
       .ham-cols .ham-track-head .ham-seg-t { display: inline; }
-      .ham-track-state { display: none; }
-      .ham-track-code-note, .ham-track-context { display: none; }
-      .ham-activity-track { align-items: center; }
       .ham-active-ico { display: block; }
       .ham-row .ham-actor-ico { display: none; }
       .ham-current-stage { display: block; }
       .ham-head-cols { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2) var(--sp-3); }
       .ham-head-cols > .ham-strip { display: contents; }
-      .ham-head-cols .ham-seg.ham-head-lead, .ham-head-cols .ham-seg.ham-head-pr { grid-column: 1 / -1; padding: 0; }
+      .ham-head-cols .ham-strip > .ham-seg { grid-column: 1 / -1; grid-row: auto; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
-      .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; min-width: 0; justify-content: flex-start; }
+      .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; min-width: 0; justify-content: flex-end; }
       .ham-head-cols > .ham-since { display: none; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
       .ham-since { width: 3em; }
       .ham-cols .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-cols .ham-seg.cap { flex-basis: 2em; }
+    }
+    @media (max-width: 640px) {
+      #activity-monitor-panel { --ham-compact-min-width: 60em; }
+      .ham-row > .ham-strip-row, .ham-sub > .ham-strip-row, .ham-cols > .ham-strip-row { overflow-x: auto; }
+      .ham-row > .ham-strip-row > .ham-strip, .ham-sub > .ham-strip-row > .ham-strip, .ham-cols > .ham-strip-row > .ham-strip { min-width: var(--ham-compact-min-width); }
     }
     /* Movement animation: when an item's lit chevron changes column between
        two refreshes, the chosen effect (settings gear → Movement animation)

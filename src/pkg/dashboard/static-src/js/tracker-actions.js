@@ -1027,6 +1027,7 @@
     function stageTrackerOpenDecisionPop(trigger, pin) {
       const key = trigger && trigger.dataset ? trigger.dataset.hamDecision : '';
       if (!key) return;
+      if (typeof hideConfigTooltip === 'function') hideConfigTooltip();
       if (_stageTrackerDecisionPop && _stageTrackerDecisionPop.key === key) {
         if (pin) _stageTrackerDecisionPop.pinned = true;
         clearTimeout(_stageTrackerDecisionPop.timer);
@@ -2324,7 +2325,7 @@
           n.classList.add('cue-acting');
           if (capEl && capEl.parentNode !== host) { capEl.remove(); capEl = null; }
           if (host && !capEl) { capEl = document.createElement('span'); capEl.className = 'cue-acting-cap'; capEl.setAttribute('role', 'status'); const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; capEl.appendChild(sp); capEl.appendChild(document.createTextNode('')); host.appendChild(capEl); }
-          if (capEl) capEl.lastChild.nodeValue = cap;
+          if (capEl) { capEl.lastChild.nodeValue = cap; capEl.title = cap; capEl.setAttribute('aria-label', cap); capEl.setAttribute('tabindex', '0'); }
         } else {
           n.classList.remove('cue-acting');
           if (capEl) capEl.remove();
