@@ -82,6 +82,44 @@ func TestWorkspaceObservationOutputBoundAndCancellation(t *testing.T) {
 	}
 }
 
+func TestWorkspaceObservationUnknownPathsAndNormalization(t *testing.T) {
+	t.Run("source outside a repository", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "source.go")
+		if err := os.WriteFile(path, []byte("unbound source\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := ObserveWorkspaceFile(context.Background(), path); got != nil || !errors.Is(err, errWorkspaceObservation) {
+			t.Fatalf("repository-free source was attributed: observation=%+v error=%v", got, err)
+		}
+	})
+	t.Run("unavailable new-file evidence", func(t *testing.T) {
+		dir, _ := workspaceObservationTestFile(t, "source.go")
+		path := filepath.Join(dir, "added.go")
+		if err := os.WriteFile(path, []byte("new source\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		queried := false
+		runner := workspaceObservationTestRunner(func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+			if slices.Contains(args, "ls-files") {
+				queried = true
+				return []byte("sensitive-output"), errors.New("sensitive-output")
+			}
+			return (workspaceObservationRunner{}).Run(ctx, dir, env, name, args...)
+		})
+		got, err := observeWorkspaceFile(context.Background(), path, runner)
+		if !queried || got != nil || !errors.Is(err, errWorkspaceObservation) || strings.Contains(err.Error(), "sensitive-output") {
+			t.Fatalf("missing new-file evidence was attributed or disclosed: observation=%+v error=%v queried=%v", got, err, queried)
+		}
+	})
+	t.Run("normalization cannot prove raw changes", func(t *testing.T) {
+		dir, path := workspaceObservationTestFile(t, "source.go")
+		runGit(t, dir, "config", "core.autocrlf", "true")
+		if got, err := ObserveWorkspaceFile(context.Background(), path); got != nil || !errors.Is(err, errWorkspaceObservation) {
+			t.Fatalf("unsupported normalized content was attributed: observation=%+v error=%v", got, err)
+		}
+	})
+}
+
 func TestWorkspaceObservationNormalizationPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		config string
