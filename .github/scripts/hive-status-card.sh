@@ -4,11 +4,13 @@
 # condition, and find/update the workflow's own marker comment in place.
 #
 # Usage:
-#   hive-status-card.sh has     REPO NUMBER SECTION_PREFIX   exit 0 if the card has a matching section
+#   hive-status-card.sh has     REPO NUMBER SECTION        exit 0 if the card has a matching section
 #   hive-status-card.sh upsert  REPO NUMBER MARKER BODY_FILE edit the comment carrying MARKER, else create it
 #
-# SECTION_PREFIX matches `<!-- hive:status:section=KEY -->` where KEY starts
-# with the prefix (e.g. `issue-close`, `issue-partial:`).
+# SECTION matches `<!-- hive:status:section=KEY -->` by exact KEY (e.g.
+# `issue-close`, `issue-partial:163`). Only when SECTION ends in `:` is it a
+# prefix (e.g. `issue-partial:` matches any `issue-partial:<pr>`), so
+# `issue-partial:163` never matches a card that only carries `issue-partial:1638`.
 set -euo pipefail
 
 GH_BIN="${GH_BIN:-gh}"
@@ -24,15 +26,21 @@ json.dump(out, sys.stdout)'
 cmd="${1:-}"; repo="${2:-}"; number="${3:-}"
 case "$cmd" in
   has)
-    prefix="${4:?section prefix required}"
-    comments "$repo" "$number" | python3 -c 'import json,sys
-prefix=sys.argv[1]
-needle="<!-- hive:status:section=" + prefix
+    section="${4:?section key required}"
+    comments "$repo" "$number" | python3 -c 'import json,re,sys
+want=sys.argv[1]
+section_re=re.compile(r"<!-- hive:status:section=(\S+) -->")
+def matches(key):
+    if want.endswith(":"):
+        return key.startswith(want)
+    return key == want
 for c in json.load(sys.stdin):
     body=c.get("body") or ""
-    if "<!-- hive:status -->" in body and needle in body:
+    if "<!-- hive:status -->" not in body:
+        continue
+    if any(matches(k) for k in section_re.findall(body)):
         sys.exit(0)
-sys.exit(1)' "$prefix"
+sys.exit(1)' "$section"
     ;;
   upsert)
     marker="${4:?marker required}"; body_file="${5:?body file required}"

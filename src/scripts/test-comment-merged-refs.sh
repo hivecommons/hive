@@ -150,6 +150,16 @@ JSON
 {"number":131,"merged_at":"2026-09-10T21:20:00Z","html_url":"https://github.com/hivecommons/hive/pull/131","body":"Closes #33 and #34"}
 JSON
     ;;
+  repos/hivecommons/hive/pulls/132)
+    cat <<'JSON'
+{"number":132,"merged_at":"2026-09-10T21:25:00Z","html_url":"https://github.com/hivecommons/hive/pull/132","body":"Refs #23"}
+JSON
+    ;;
+  repos/hivecommons/hive/pulls/13)
+    cat <<'JSON'
+{"number":13,"merged_at":"2026-09-10T21:30:00Z","html_url":"https://github.com/hivecommons/hive/pull/13","body":"Refs #23"}
+JSON
+    ;;
   repos/hivecommons/hive/issues/10)
     printf '{"number":10,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
     ;;
@@ -170,6 +180,9 @@ JSON
     ;;
   repos/hivecommons/hive/issues/22)
     printf '{"number":22,"state":"open","user":{"login":"reporter"},"labels":[{"name":"needs-reporter-confirmation"}]}\n'
+    ;;
+  repos/hivecommons/hive/issues/23)
+    printf '{"number":23,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
     ;;
   repos/hivecommons/hive/collaborators/maintainer/permission)
     printf 'write\n'
@@ -194,6 +207,9 @@ JSON
   repos/hivecommons/hive/issues/22/timeline*)
     printf '[[]]\n'
     ;;
+  repos/hivecommons/hive/issues/23/timeline*)
+    printf '[[]]\n'
+    ;;
   repos/hivecommons/hive/issues/10/comments*)
     printf '[[]]\n'
     ;;
@@ -207,6 +223,11 @@ JSON
     ;;
   repos/hivecommons/hive/issues/22/comments*)
     printf '[[]]\n'
+    ;;
+  repos/hivecommons/hive/issues/23/comments*)
+    cat <<'JSON'
+[[{"body":"<!-- hive:status -->\n**Hive status**\n\n<!-- hive:status:section=issue-partial:132 -->\nPartially addressed by #132.\n<!-- /hive:status:section -->"}]]
+JSON
     ;;
   *)
     echo "unexpected gh api path: $path" >&2
@@ -443,6 +464,35 @@ if [ "$dedup_rc" -eq 0 ] && [ "$patch_count" -eq 1 ]; then
 else
   bad "expected exactly one PATCH for parent #40, got ${patch_count}"
   echo "$dedup_output" | sed 's/^/      | /'
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+
+# --- hive:status card: an `issue-partial:<pr>` section for this PR skips the nudge
+: > "$CALL_LOG"
+set +e
+card_output=$(CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" bash "$CHECKER" --repo hivecommons/hive --pr 132 2>&1)
+card_rc=$?
+set -e
+if [ "$card_rc" -eq 0 ] && ! grep -q '^POST repos/hivecommons/hive/issues/23/comments' "$CALL_LOG" \
+  && echo "$card_output" | grep -q 'Skipping #23: hive:status card already carries the partial-merge note'; then
+  pass "hive:status card with issue-partial:<pr> for this PR suppresses the refs-sweep comment"
+else
+  bad "expected no POST on #23 when the card already carries issue-partial:132"
+  echo "$card_output" | sed 's/^/      | /'
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+
+# --- hive:status card: a section for a longer PR number (132) must not match PR 13
+: > "$CALL_LOG"
+set +e
+card_prefix_output=$(CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" bash "$CHECKER" --repo hivecommons/hive --pr 13 2>&1)
+card_prefix_rc=$?
+set -e
+if [ "$card_prefix_rc" -eq 0 ] && grep -q '^POST repos/hivecommons/hive/issues/23/comments' "$CALL_LOG"; then
+  pass "hive:status card with issue-partial:132 does not suppress the refs-sweep comment for PR 13"
+else
+  bad "expected a POST on #23 for PR 13 (card only carries issue-partial:132)"
+  echo "$card_prefix_output" | sed 's/^/      | /'
   cat "$CALL_LOG" | sed 's/^/      | /'
 fi
 
