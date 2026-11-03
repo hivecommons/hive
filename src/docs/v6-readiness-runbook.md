@@ -641,6 +641,23 @@ Prerequisites:
   contributor's GitHub login, and `standby_model_tiers` maps the contributor's
   backend/model/effort to `T2`, so step 2 fails to qualify
   ([Configuration schema](design/standby-contributors.md#configuration-schema)).
+- The target lane must have a mode that can create PRs; standby does not
+  bypass its mode ceiling (`standbyModeCeilingReason` in
+  `src/pkg/dashboard/contribute_standby_dispatch.go`). At ACMM L2 every pack
+  lane is `ADVISORY`, so an operator must deliberately set
+  `agents.<lane>.mode: ISSUES_AND_PRS` and
+  `agents.<lane>.mode_owner: operator` for this exercise. Without the owner
+  marker, pack reconciliation resets the mode on startup. `ADVISORY` and
+  `ISSUES_ONLY` lanes are refused with `mode_ceiling`.
+- For a private sandbox repository, explicitly opt in with
+  `hub.standby_allow_private_repos: true` (default `false`); otherwise dispatch
+  returns `private_repo: standby private repositories are not enabled`.
+  Approve only contributors trusted with read access to the private repositories
+  the hive serves; see [Private repos and approval](design/standby-contributors.md#3-private-repos-and-what-the-approval-screen-says--opt-in-default-off-and-the-screen-states-the-read-access-equivalence-verbatim).
+- Confirm the intended item appears in `GET /api/contribute/queue` with its
+  `lane` equal to the standby lane. Use this routing evidence rather than the
+  tile's lane counts, which can differ (see
+  [#16420](https://github.com/hivecommons/hive/issues/16420)).
 - An owner or read-write dashboard session for dispatch and clear
   (`POST /api/contribute/standby/dispatch`, `POST /api/contribute/standby/clear`).
   The chat equivalents are `!standby <lane> [owner/repo#number]` and
@@ -656,9 +673,21 @@ Run:
    the T2 configuration, confirm the tile reads `0 qualify` (`/api/status`
    `governor.qualified_standbys` has `0` for the lane), the lane stays paused,
    and no surface proposes lowering the floor.
-3. **(S5) Lower the floor deliberately and dispatch.** Set the lane's
-   `min_model_capability: T2` in `hive.yaml`. Confirm `1 qualifies`. Dispatch
-   one item by hand from the dashboard or with `!standby <lane> <owner/repo#n>`.
+3. **(S5) Lower the floor deliberately and dispatch.** Set
+   `agents.<lane>.standby.min_model_capability: T2` in the persisted config,
+   keeping the lane's PR-capable `mode`, `mode_owner: operator`, and (for a
+   private repo) `hub.standby_allow_private_repos: true` from the prerequisites.
+   On Kubernetes, scale the hive Deployment to `0` and wait for its pod to
+   terminate before editing the PVC through a temporary maintenance pod mounted
+   at `/data`. Back up and edit both `/data/hive.yaml.runtime` and
+   `/data/hive.yaml.dashboard`, preserving their other settings and file
+   ownership. The running hive rewrites the runtime file, and the dashboard
+   overlay is merged at boot, so an in-pod edit to the runtime file alone does
+   not reliably persist. Remove the maintenance pod, then scale the Deployment
+   back to `1`. Confirm the effective config after restart and `1 qualifies`;
+   recheck that the item is routed to this lane in `GET /api/contribute/queue`.
+   Dispatch one item by hand from the dashboard or with
+   `!standby <lane> <owner/repo#n>`.
    Confirm the `contribute_standby_dispatch` audit entry (`lane`, `task`), and
    that the PR arrives from the **contributor's** account, carries the `hold`
    label, and has `standby_lane` and `standby_tier` in its `— hive:` trailer
@@ -681,7 +710,10 @@ Evidence checklist:
       (suspended, then cleared).
 - [ ] `/api/status` excerpts showing `qualified_standbys` and
       `suspended_standbys` for the lane.
-- [ ] Redacted `hive.yaml` diff lowering the floor to `T2`.
+- [ ] Redacted persisted-config diff lowering the floor to `T2`, showing the
+      lane's `mode` and `mode_owner`, and the private-repo opt-in if applicable;
+      on Kubernetes, confirm the effective values survived the restart.
+- [ ] `GET /api/contribute/queue` excerpt showing the dispatched item's `lane`.
 - [ ] Donated PR URL showing the contributor author, the `hold` label, and the
       `— hive:` trailer with `standby_lane` / `standby_tier`, plus the reviewer
       minutes.
