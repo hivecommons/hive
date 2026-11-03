@@ -21,6 +21,9 @@ const (
 	// KeyIssuePartialPrefix + PR number is the partial-work/remainder note
 	// a non-closing merged PR leaves on the issue.
 	KeyIssuePartialPrefix = "issue-partial:"
+	// KeyIssueDecisionDowngrade is the note that a label change walked
+	// back an earlier maintainer decision on the issue.
+	KeyIssueDecisionDowngrade = "issue-decision-downgrade"
 	// KeyIssuePRLink is the stage note naming the PR that covers the issue.
 	KeyIssuePRLink = "issue-pr-link"
 	// KeyIssueAttentionPrefix + cause is a newly required action recorded
