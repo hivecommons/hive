@@ -1,0 +1,1 @@
+- Hive-maintained Actions workflows that duplicate runtime narration (refs sweep, closed-issue `/reopen` hint) skip or edit in place when the `hive:status` card already carries the condition (#16363)

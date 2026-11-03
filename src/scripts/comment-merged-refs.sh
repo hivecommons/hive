@@ -177,6 +177,15 @@ sys.exit(1)'
     continue
   fi
 
+  # The runtime's hive:status card carries the same condition as an
+  # `issue-partial:<pr>` section; a second notifying comment would duplicate it.
+  card_helper="$(dirname "${BASH_SOURCE[0]}")/../../.github/scripts/hive-status-card.sh"
+  if [ -x "$card_helper" ] && GH_BIN="$GH_BIN" "$card_helper" has "$REPO" "$issue" "issue-partial:${PR_NUMBER}" 2>/dev/null; then
+    echo "Skipping #${issue}: hive:status card already carries the partial-merge note."
+    skipped=$((skipped + 1))
+    continue
+  fi
+
   comment_body=$(printf '%s\nPR #%s has merged (%s) and referenced this issue with a non-closing `%s` rather than a closing keyword.\n\nThis issue remains open because the merged PR did not use `Closes` / `Fixes` / `Resolves`. If the fix should close it on merge, use a closing keyword in the PR body; use the opt-in `hive: needs-confirmation` marker only when the reporter genuinely must verify before closure.' \
     "$marker" "$PR_NUMBER" "$pr_url" "Refs #${issue}")
   if [ "$DRY_RUN" = "1" ]; then
