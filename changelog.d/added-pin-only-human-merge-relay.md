@@ -1,1 +1,1 @@
-- Enforce the configured trusted-author pin-only exception in the GitHub merge-request relay, requiring a complete diff and exact requested head while preserving all other merge gates.
+- Enforce the configured trusted-author pin-only exception in the GitHub merge-request relay with the same checks as the automerge sweep (complete pin-only diff, verified trusted-author commits, upstream-anchored action pins) plus an exact requested head before and after fetching files, while preserving all other merge gates.

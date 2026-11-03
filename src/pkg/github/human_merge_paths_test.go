@@ -22,6 +22,12 @@ type humanPathMergeFixture struct {
 	fileDetails []map[string]any
 	prPayload   map[string]any
 	movedHead   string
+	// commits is served for GET pulls/42/commits; nil serves one verified
+	// web-flow commit by alice at the head "abc" (what the pin-only exception
+	// needs). upstream maps "/repos/<owner>/<repo><suffix>" to a payload (or
+	// an int status) for the action-pin anchoring reads.
+	commits     []map[string]any
+	upstream    map[string]any
 	ci          *ciFixture
 	prStatus    int
 	filesStatus int
@@ -50,6 +56,13 @@ func newHumanPathMergeServer(t *testing.T, f *humanPathMergeFixture) *httptest.S
 				f.prPayload["head"] = map[string]any{"sha": f.movedHead}
 			}
 			_ = json.NewEncoder(w).Encode(f.prPayload)
+			return
+		case r.Method == http.MethodGet && p == "/repos/o/r/pulls/42/commits":
+			commits := f.commits
+			if commits == nil {
+				commits = []map[string]any{pinOnlyTestCommit("abc", "alice", "web-flow", true)}
+			}
+			_ = json.NewEncoder(w).Encode(commits)
 			return
 		case r.Method == http.MethodGet && p == "/repos/o/r/pulls/42/files":
 			f.filesHits++
@@ -87,6 +100,19 @@ func newHumanPathMergeServer(t *testing.T, f *humanPathMergeFixture) *httptest.S
 		}
 		if green.serveCI(w, r) {
 			return
+		}
+		if r.Method == http.MethodGet && f.upstream != nil {
+			for suffix, payload := range f.upstream {
+				if p != "/repos/upstream/action"+suffix {
+					continue
+				}
+				if status, ok := payload.(int); ok {
+					w.WriteHeader(status)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(payload)
+				return
+			}
 		}
 		if r.Method == http.MethodPut && strings.HasSuffix(p, "/merge") {
 			f.merges++
@@ -244,6 +270,32 @@ func TestHumanMergePathHelpersGuardNilInputs(t *testing.T) {
 	}
 }
 
+// pinOnlyTestCommit builds a pulls/N/commits entry with the author login,
+// committer login and GitHub signature verification the exception inspects.
+func pinOnlyTestCommit(sha, author, committer string, verified bool) map[string]any {
+	return map[string]any{
+		"sha":       sha,
+		"author":    map[string]any{"login": author},
+		"committer": map[string]any{"login": committer},
+		"commit":    map[string]any{"verification": map[string]any{"verified": verified}},
+	}
+}
+
+const (
+	pinOnlyTestOldSHA = "1111111111111111111111111111111111111111"
+	pinOnlyTestNewSHA = "2222222222222222222222222222222222222222"
+)
+
+// pinOnlyActionPatch is a single-line uses: SHA bump of upstream/action with a
+// # v5 version comment.
+func pinOnlyActionPatch(version string) string {
+	suffix := ""
+	if version != "" {
+		suffix = " # " + version
+	}
+	return "@@ -1 +1 @@\n-      - uses: upstream/action@" + pinOnlyTestOldSHA + suffix + "\n+      - uses: upstream/action@" + pinOnlyTestNewSHA + suffix
+}
+
 func pinOnlyRelayFixture() *humanPathMergeFixture {
 	return &humanPathMergeFixture{
 		prPayload:   map[string]any{"number": 42, "state": "open", "user": map[string]any{"login": "alice", "type": "User"}, "head": map[string]any{"sha": "abc", "repo": map[string]any{"full_name": "o/r"}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "o/r"}}, "changed_files": 1},
@@ -276,6 +328,42 @@ func TestMergeRequestPinOnlyException(t *testing.T) {
 		{name: "incomplete list", wantUnknown: true, change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { f.prPayload["changed_files"] = 2 }},
 		{name: "wrong head", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { f.prPayload["head"] = map[string]any{"sha": "other"} }},
 		{name: "head moves during file fetch", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) { f.movedHead = "other" }},
+		{name: "commit by untrusted author", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.commits = []map[string]any{pinOnlyTestCommit("abc", "mallory", "web-flow", true)}
+		}},
+		{name: "commit by untrusted committer", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.commits = []map[string]any{pinOnlyTestCommit("abc", "alice", "mallory", true)}
+		}},
+		{name: "unverified commit", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.commits = []map[string]any{pinOnlyTestCommit("abc", "alice", "web-flow", false)}
+		}},
+		{name: "later untrusted commit", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.commits = []map[string]any{pinOnlyTestCommit("aaa", "alice", "web-flow", true), pinOnlyTestCommit("abc", "mallory", "mallory", true)}
+		}},
+		{name: "commit list not at head", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.commits = []map[string]any{pinOnlyTestCommit("stale", "alice", "web-flow", true)}
+		}},
+		{name: "empty commit list", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.commits = []map[string]any{}
+		}},
+		{name: "trusted author signing locally", wantPass: true, change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			f.commits = []map[string]any{pinOnlyTestCommit("abc", "alice", "alice", true)}
+		}},
+		{name: "action pin anchored by upstream tag", wantPass: true, change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			pinOnlyActionCase(f, ex, "v5", map[string]any{"/git/ref/tags/v5": map[string]any{"object": map[string]any{"type": "commit", "sha": pinOnlyTestNewSHA}}})
+		}},
+		{name: "action pin tag points elsewhere", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			pinOnlyActionCase(f, ex, "v5", map[string]any{"/git/ref/tags/v5": map[string]any{"object": map[string]any{"type": "commit", "sha": pinOnlyTestOldSHA}}})
+		}},
+		{name: "action pin tag missing upstream", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			pinOnlyActionCase(f, ex, "v5", map[string]any{"/git/ref/tags/v5": http.StatusNotFound})
+		}},
+		{name: "action pin on upstream default branch", wantPass: true, change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			pinOnlyActionCase(f, ex, "", map[string]any{"": map[string]any{"default_branch": "main"}, "/compare/" + pinOnlyTestNewSHA + "...main": map[string]any{"status": "ahead"}})
+		}},
+		{name: "action pin off upstream default branch", change: func(f *humanPathMergeFixture, ex *PinOnlySpec) {
+			pinOnlyActionCase(f, ex, "", map[string]any{"": map[string]any{"default_branch": "main"}, "/compare/" + pinOnlyTestNewSHA + "...main": map[string]any{"status": "diverged"}})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := pinOnlyRelayFixture()
@@ -283,7 +371,7 @@ func TestMergeRequestPinOnlyException(t *testing.T) {
 			if tc.change != nil {
 				tc.change(f, &ex)
 			}
-			_, resp := runHumanPathMergeRequest(t, f, map[string][]string{"o/r": {"Containerfile"}}, map[string]PinOnlySpec{"O/R": ex})
+			_, resp := runHumanPathMergeRequest(t, f, map[string][]string{"o/r": {"Containerfile", ".github/workflows/*.yml"}}, map[string]PinOnlySpec{"O/R": ex})
 			if tc.wantPass {
 				if !resp.OK || f.merges != 1 || len(f.labels) != 0 || len(f.comments) != 0 {
 					t.Fatalf("result=%+v merges=%d labels=%v comments=%v; want merge without hold", resp, f.merges, f.labels, f.comments)
@@ -302,6 +390,15 @@ func TestMergeRequestPinOnlyException(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pinOnlyActionCase turns the fixture into a workflow action-sha bump of
+// upstream/action and serves upstream for the anchoring reads.
+func pinOnlyActionCase(f *humanPathMergeFixture, ex *PinOnlySpec, version string, upstream map[string]any) {
+	f.fileDetails = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 1, "patch": pinOnlyActionPatch(version)}}
+	f.upstream = upstream
+	ex.Paths = []string{".github/workflows/*.yml"}
+	ex.Kinds = []string{"action-sha"}
 }
 
 func TestMergeRequestPinOnlyStillRequiresGreenCI(t *testing.T) {

@@ -268,30 +268,16 @@ func (c *Client) mergeRequestHumanMergePathRefusal(ctx context.Context, req Merg
 	}
 	if ex := c.humanMergePinOnlyFor(req.Repo); ex.Enabled {
 		reason := "PR author is not trusted"
-		trusted := false
-		for _, author := range ex.TrustedAuthors {
-			if author != "" && strings.EqualFold(author, pr.GetUser().GetLogin()) {
-				trusted = true
-				break
-			}
-		}
-		if trusted {
+		if PinOnlyTrustedLogin(ex.TrustedAuthors, SafeGetLogin(pr.GetUser())) {
 			switch {
 			case req.ExpectSHA == "" || pr.GetHead().GetSHA() != req.ExpectSHA:
 				reason = "PR head does not match requested head"
 			case pr.ChangedFiles == nil || pr.GetChangedFiles() != len(files):
 				reason = "complete changed-file count is unavailable"
 			default:
-				var ok bool
-				ok, reason = intent.ClassifyPinOnly(files, matches, intent.PinOnlySpec{Paths: ex.Paths, Kinds: ex.Kinds})
-				if ok {
-					// The files endpoint is not SHA-addressable. Ensure the head did not
-					// move while paging; the eventual merge also uses req.ExpectSHA.
-					current, _, err := c.client.PullRequests.Get(ctx, owner, name, req.Number)
-					if err == nil && current.GetHead().GetSHA() == req.ExpectSHA {
-						return "", nil
-					}
-					reason = "PR head could not be confirmed after listing files"
+				reason = c.pinOnlyProvenance(ctx, owner, name, req, pr, files, matches, ex)
+				if reason == "" {
+					return "", nil
 				}
 			}
 		}
@@ -301,4 +287,31 @@ func (c *Client) mergeRequestHumanMergePathRefusal(ctx context.Context, req Merg
 		c.warn("merge-request watcher: human-merge-path hold failed", "repo", req.Repo, "pr", req.Number, "error", err)
 	}
 	return HumanMergePathReason(matches), nil
+}
+
+// pinOnlyProvenance applies the relay's share of the pin-only exception once
+// the author, requested head and file count have qualified: the whole diff
+// must classify as pin replacements, every commit must be a verified
+// trusted-author commit, every new action SHA must be anchored upstream
+// (#16399, the same checks the sweep applies), and the head must still be the
+// requested SHA after the file listing. It returns "" when the PR qualifies
+// and the refusal reason otherwise.
+func (c *Client) pinOnlyProvenance(ctx context.Context, owner, name string, req MergeRequest, pr *gh.PullRequest, files []intent.ChangedFile, matches []string, ex PinOnlySpec) string {
+	ok, reason, pins := intent.ClassifyPinOnlyActions(files, matches, intent.PinOnlySpec{Paths: ex.Paths, Kinds: ex.Kinds})
+	if !ok {
+		return reason
+	}
+	if why := PinOnlyCommitsTrusted(ctx, c.client, owner, name, pr, ex.TrustedAuthors); why != "" {
+		return why
+	}
+	if why := PinOnlyActionPinsUpstream(ctx, c.client, pins); why != "" {
+		return why
+	}
+	// The files endpoint is not SHA-addressable. Ensure the head did not
+	// move while paging; the eventual merge also uses req.ExpectSHA.
+	current, _, err := c.client.PullRequests.Get(ctx, owner, name, req.Number)
+	if err != nil || current.GetHead().GetSHA() != req.ExpectSHA {
+		return "PR head could not be confirmed after listing files"
+	}
+	return ""
 }
