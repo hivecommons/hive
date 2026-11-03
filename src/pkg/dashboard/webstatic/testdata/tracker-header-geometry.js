@@ -82,7 +82,11 @@
     if ([...row.querySelectorAll(':scope > .ham-current-stage, :scope > .ham-human-context')]
       .some(context => /superseded/i.test(context.textContent))) coverage.superseded++;
     if (row.matches('.ham-row') && row.querySelectorAll(':scope > .ham-sub').length > 1) coverage.multiIssue++;
-    const signature = columns.map(cell => ({ left: rect(cell).left - rect(strip).left, width: rect(cell).width, height: rect(cell).height }));
+    // Height is deliberately absent from the cross-row signature: a row is
+    // only as tall as its longest caption (one or two lines), so rows differ
+    // in height by design. Within-row uniformity and the content-driven
+    // height contract are asserted separately below.
+    const signature = columns.map(cell => ({ left: rect(cell).left - rect(strip).left, width: rect(cell).width }));
     const stripLeft = rect(strip.parentElement).left;
     // Recorded preparation roots retain the existing rail gutter. Compare
     // like gutters across rows; header-to-lane checks below remain exact.
@@ -92,7 +96,6 @@
     assert(near(stripLeft, reference.left), name + 'root/nested progress containers with the same rail gutter share one horizontal origin');
     for (const [lane, box] of signature.entries()) {
       assert(near(box.left, reference.signature[lane].left) && near(box.width, reference.signature[lane].width), name + 'physical lane ' + lane + ' aligns across issue, PR-only and multi-PR rows');
-      assert(near(box.height, reference.signature[lane].height), name + 'physical lane ' + lane + ' has the same compact height across rows');
     }
     const flow = [...row.children].filter(child => visible(child) && !['absolute', 'fixed'].includes(getComputedStyle(child).position));
     const rowGap = parseFloat(getComputedStyle(row).rowGap) || 0;
