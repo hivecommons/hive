@@ -1,0 +1,1 @@
+- The copilot transcript activity scan overrun warning is now debounced: it fires once after three consecutive passes longer than the scan interval and re-arms only after a pass under 80% of it, so a marginal overrun on a many-agent hive no longer logs a WARN every ~25s and trips the fleet report ([#16292](https://github.com/hivecommons/hive/issues/16292)).
