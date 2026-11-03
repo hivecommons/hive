@@ -88,7 +88,7 @@ func (c *Engine) PRApproveReply(ctx context.Context, displayRepo string, number 
 		// The same pin-only exception the sweep lanes apply (#16266), so the
 		// reply never contradicts what the lane will do on its next pass.
 		matches := intent.HumanMergePathMatches(files, patterns)
-		if exempt, _ := c.humanMergePinOnlyExempt(owner, repo, pr, files, matches); exempt {
+		if exempt, _ := c.humanMergePinOnlyExempt(ctx, owner, repo, pr, files, matches); exempt {
 			matches = nil
 		}
 		// The owner-approval release lifts only the workflow-path fence; a head

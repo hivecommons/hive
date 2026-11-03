@@ -581,7 +581,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostNoteOrFold` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
 | `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
-| `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
+| `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper shared by normal-mode stage notes and the quiet-mode status-comment forge under `prstatus.Write`; attributed to its caller |
 | `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
 | `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
@@ -767,3 +767,36 @@ github:
   attention:
     reminder_interval: 24h   # default 24h
 ```
+
+### Hive-maintained Actions workflows that defer to the card
+
+Some comments come from GitHub Actions workflows in this repository rather
+than from the runtime. When one of them says what a `hive:status` card
+section already says, it now defers (the check is
+`.github/scripts/hive-status-card.sh has <repo> <number> <section>`, which
+looks for `<!-- hive:status:section=<key> -->` inside the comment carrying
+`<!-- hive:status -->`, considering only comments by a Bot account so a
+human quoting the card's invisible markers cannot suppress a workflow; a
+caller that has already fetched the comments passes them via
+`HIVE_COMMENTS_FILE` instead of re-fetching). The companion
+`hive-status-card.sh upsert <repo> <number> <marker> <body-file>` edits the
+workflow's own earlier comment carrying `<marker>` in place, or creates it;
+it only edits comments authored by `HIVE_COMMENT_AUTHOR` (default
+`github-actions[bot]`, the identity `${{ github.token }}` posts as), never a
+third party's comment that happens to contain the marker:
+
+| Workflow / script | Comment it posts | Behaviour |
+| --- | --- | --- |
+| Refs sweep (`.github/workflows/refs-sweep.yml`, `src/scripts/comment-merged-refs.sh`) | "PR #N has merged and referenced this issue with a non-closing `Refs`" (`<!-- hive-post-merge-refs-sweep: issue=N -->`) | **Skips** when the card carries `issue-partial:<pr>` for that PR; otherwise unchanged (still once per issue). |
+| Issue Closed Hint (`.github/workflows/issue-closed-reopen-hint.yml`) | "@reporter this issue was closed by … comment `/reopen`" | **Pending** (tracked in #16363; the workflow edit must be landed by a maintainer). Once applied: **skips** when the card carries `issue-close`, which already says "Reply /reopen"; otherwise **edits** its earlier comment (`<!-- issue-closed-reopen-hint -->`) instead of adding one per closure. Until then it posts a new comment on every closure as before. |
+
+Editing a comment notifies nobody, so a workflow comment that is edited in
+place stops re-mentioning the reporter on every close/reopen cycle. Both
+paths apply only where a card exists; with
+`github.notifications.attention_pilot` off there is no issue card, and the
+workflows behave as before.
+
+**Outside Hive's control.** Comments from external bots, such as Prow, tide
+and kubestellar-prow, are posted by their own services and cannot be edited,
+folded or skipped from this repository. Hive does not try to suppress them;
+configure those bots in the project that runs them.

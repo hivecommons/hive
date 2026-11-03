@@ -1617,7 +1617,10 @@ func (c *Engine) postStageNoteWith(ctx context.Context, policy StageLabelPolicy,
 	if policy.QuietNotifications {
 		return c.writeStatusSectionWith(ctx, obs.Owner, obs.Repo, obs.Number, key, body, write)
 	}
-	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	// Share the quiet-mode creation adapter so both modes use the same
+	// transport primitive and fail closed when it is unavailable.
+	f := &engineStatusForge{e: c, owner: obs.Owner, repo: obs.Repo, number: obs.Number}
+	if err := f.CreateComment(ctx, body); err != nil {
 		return 0, err
 	}
 	return 1, nil
