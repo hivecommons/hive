@@ -49,6 +49,11 @@ func TestClassifyMergeFailureForOperator(t *testing.T) {
 			want: []string{"fork PR workflow runs are awaiting maintainer approval", "https://github.com/o/r/settings/actions", "Approve the runs manually"},
 		},
 		{
+			name: "merge queue required",
+			err:  "merging PR o/r#74 (squash): PUT https://api.github.test: 405 Repository rule violations found\n\nChanges must be made through the merge queue",
+			want: []string{"requires changes to be made through the merge queue", "Enqueue the PR", "https://github.com/o/r/settings/rules"},
+		},
+		{
 			name: "merge method",
 			err:  "Validation Failed: squash commits are not allowed for this repository",
 			want: []string{"requested merge method is not allowed", "Enable squash/merge"},
