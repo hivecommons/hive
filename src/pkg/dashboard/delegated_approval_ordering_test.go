@@ -93,6 +93,11 @@ func TestDelegatedNativeApprovalAndProjectionPrecedeHungProwWarning(t *testing.T
 		commentStarted: started, prLabels: []string{stagelabels.NeedsDecision.Label(), "needs-human"},
 	}
 	s := newDelegatedServer(t, mock)
+	// Isolate from the process-shared stage and operator-action stores:
+	// records another test left for testorg/testrepo#8 make the projection
+	// read as already landed in a whole-package run.
+	s.stageStore = stagelabels.NewStore("", time.Now)
+	s.operatorActionStore = newOperatorActionStore("")
 	delegatedDecisionRunAsync = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

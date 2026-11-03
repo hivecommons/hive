@@ -27,6 +27,8 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.(*repoForgeRouter).CreateIssueComment":  {Class: NotificationClassAttention, Passthrough: true},
 	"main.liveTriageCommenter.CreateIssueComment": {Class: NotificationClassAttention, Passthrough: true},
 	"github.(*Client).UpsertIssueMarkerComment":   {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*clientStatusForge).CreateComment":   {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).PostIssueNote":              {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.
 	"dashboard.(*ContributeWSHub).markAlreadyDoneIssue":       {Class: NotificationClassStatus},
@@ -72,6 +74,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"dashboard.(*Server).handleReviewPipelineSendToHuman": {Class: NotificationClassAttention},
 	"dashboard.(*Server).reroutePickupLapsed":             {Class: NotificationClassAttention},
 	"dashboard.(*Server).settleRebaseMergeLedger":         {Class: NotificationClassAttention},
+	"github.(*Client).PostIssueAttention":                 {Class: NotificationClassAttention},
 	"github.(*Client).NudgeTrackingIssueClosingRefs":      {Class: NotificationClassAttention},
 	"github.(*Client).appendFoldedFinding":                {Class: NotificationClassAttention},
 	"github.(*Client).bindProwLgtm":                       {Class: NotificationClassAttention},
@@ -81,6 +84,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).parkClankerRequestedPR":             {Class: NotificationClassAttention},
 	"github.(*Client).redirectToExistingPR":               {Class: NotificationClassAttention},
 	"github.(*Client).resolveDuplicateFixGroup":           {Class: NotificationClassAttention},
+	"github.attentionDelivery.Post":                       {Class: NotificationClassAttention},
 	"main.claimEscalationLookup":                          {Class: NotificationClassAttention},
 	"main.maintainHeldPRMergeability":                     {Class: NotificationClassAttention},
 	"main.rfcCoverageForge.CreateComment":                 {Class: NotificationClassAttention},

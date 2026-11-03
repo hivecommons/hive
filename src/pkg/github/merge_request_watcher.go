@@ -620,15 +620,15 @@ func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts 
 // re-request for the same head is refused quietly and the classified message
 // is logged once per head. It logs at INFO: the blocker is the target repo's
 // configuration, not a hive defect, and a WARN per head would surface as an
-// unclassified_error_repeated selfreport. It deliberately does not call
-// raiseMergeFailureAlert: classifyMergeFailureForOperator has no merge-queue
-// case, so no alert was ever raised for this error; add one there before
-// routing this path through the alert if that changes.
+// unclassified_error_repeated selfreport. It still raises the operator alert
+// (merge-queue-required) so the dashboard tells the operator to enqueue or
+// reconfigure.
 func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
 	now := nowFn()
 	reason := mergeQueueRequiredReason + ": " + errMsg
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
 	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
+	c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
 	_ = os.Rename(path, path+".exhausted")
 	c.logger.Info("merge-request watcher: "+mergeQueueRequiredReason,
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),

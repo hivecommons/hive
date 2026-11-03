@@ -18,6 +18,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -275,6 +276,8 @@ type Client struct {
 	// no-findings review, one hive review per head. nil (nothing wired)
 	// reads as normal, so unwired clients behave as before.
 	quietNotificationsFn func() bool
+	attentionConfig      func() attention.Config
+	attentionHiveID      string
 	// notifications counts comments created, edited and suppressed; logged
 	// hourly so the effect of quiet mode is measurable.
 	notifications notificationTally
@@ -283,6 +286,10 @@ type Client struct {
 	// recorded in notificationShadow. nil reads as off.
 	shadowNotificationsFn func() bool
 	notificationShadow    notificationShadow
+	// attentionPilotFn is github.notifications.attention_pilot, read live:
+	// when it returns true routine issue notes fold into the issue's
+	// hive:status card (issue_status_card.go). nil reads as off.
+	attentionPilotFn func() bool
 	// reviewRequireLabelsFn returns review.require_labels, read live so a
 	// Features-tab edit gates the next relay request without a rebuild. nil
 	// or empty means the gate is off.

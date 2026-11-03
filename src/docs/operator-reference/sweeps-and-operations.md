@@ -594,6 +594,12 @@ exported on `/metrics`. See [GitHub writes: inventory and shadow
 mode](../notifications.md#github-writes-inventory-and-shadow-mode-githubnotificationsshadow)
 for the write-site inventory and how to compare baseline windows.
 
+`github.notifications.attention_pilot: true` (default off) opts the hive in
+to the attention pilot: routine issue notes fold into the issue's single
+`hive:status` card, and a newly required action is still announced by
+exactly one notifying write. See [Attention pilot and the issue status
+card](../notifications.md#attention-pilot-and-the-issue-status-card-githubnotificationsattention_pilot).
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel evaluates open PRs in the watched repos — human, bot, or agent —
