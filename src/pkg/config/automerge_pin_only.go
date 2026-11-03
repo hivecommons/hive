@@ -7,9 +7,11 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 )
 
-// PinOnlyException is staged policy, not authorization to merge. The eventual
-// admission gates must supply authenticated identity, exact-head diff and review
-// evidence before consulting the purely syntactic classifier.
+// PinOnlyException is policy, not authorization to merge. The automerge sweep
+// lanes and /approve apply it via humanMergePinOnlyExempt (#16266), which
+// supplies trusted identity, exact-head diff and review evidence before
+// consulting the purely syntactic classifier; the hive-merge relay does not
+// yet (#16265).
 type PinOnlyException struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
 	Paths          []string `yaml:"paths" json:"paths"`

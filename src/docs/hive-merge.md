@@ -174,8 +174,9 @@ repo cannot be fetched completely, the merge is withheld (fail closed). See
 
 `auto_merge.human_merge_pin_only` provides the schema and conservative diff
 classifier for #16242 / #16262. **The automerge sweep lanes and `/approve`
-enforce it (#16266); the `hive-merge` relay and native-queue gates do not yet**
-(#16265) and still require the existing human-merge path policy. A sweep lane
+enforce it (#16266); the `hive-merge` relay does not yet** (#16265) and still
+requires the existing human-merge path policy. The native merge queue is entered
+only after a lane's human-merge-path gate, so queued PRs inherit the exception. A sweep lane
 does not hold a PR on its human-merge-path matches when the repo has an enabled
 entry, the PR author is in `trusted_authors` (case-insensitive login match),
 GitHub's reported changed-file count is present and equals the fetched list,

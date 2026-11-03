@@ -8340,8 +8340,9 @@ type AutoMergeConfig struct {
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
 
-	// HumanMergePinOnly stages opt-in pin-only policy. Admission wiring must
-	// independently prove trusted identity, exact-head evidence and upstream review.
+	// HumanMergePinOnly holds the opt-in pin-only exception, enforced by the
+	// automerge sweep lanes and /approve through humanMergePinOnlyExempt
+	// (#16266); the hive-merge relay does not apply it yet (#16265).
 	HumanMergePinOnly map[string]PinOnlyException `yaml:"human_merge_pin_only,omitempty" json:"human_merge_pin_only,omitempty"`
 	// HumanMergeTitlePrefixes lists title prefixes (matched after trimming
 	// the title) that mark a PR as one the owner merges by hand; no lane and
