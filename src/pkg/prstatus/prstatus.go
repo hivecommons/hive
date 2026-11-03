@@ -85,10 +85,12 @@ func Render(sections []Section) string {
 
 // Upsert returns existing with the section key set to text: replaced in
 // place when present, appended otherwise. An empty text removes the
-// section. existing may be "" (no status comment yet).
+// section. existing may be "" (no status comment yet). Section text that
+// carries the card's own markers (some notes quote issue-authored text)
+// is neutralised so it cannot close its section or open another.
 func Upsert(existing, key, text string) string {
 	sections := Parse(existing)
-	text = strings.TrimSpace(text)
+	text = neutraliseMarkers(strings.TrimSpace(text))
 	out := make([]Section, 0, len(sections)+1)
 	replaced := false
 	for _, s := range sections {
@@ -106,6 +108,20 @@ func Upsert(existing, key, text string) string {
 		out = append(out, Section{Key: key, Body: text})
 	}
 	return Render(out)
+}
+
+// markerNeutraliser defangs the card's own structural markers inside
+// section text by escaping the comment opener, so Parse never sees them
+// as section boundaries. Legacy `<!-- hive:… -->` markers that readers
+// grep for are left alone.
+var markerNeutraliser = strings.NewReplacer(
+	sectionOpenPrefix, "&lt;!--"+strings.TrimPrefix(sectionOpenPrefix, "<!--"),
+	sectionClose, "&lt;!--"+strings.TrimPrefix(sectionClose, "<!--"),
+	Marker, "&lt;!--"+strings.TrimPrefix(Marker, "<!--"),
+)
+
+func neutraliseMarkers(text string) string {
+	return markerNeutraliser.Replace(text)
 }
 
 // Get returns the body of section key and whether it exists.

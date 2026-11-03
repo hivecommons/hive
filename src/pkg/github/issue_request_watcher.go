@@ -741,7 +741,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			}
 		}
 		if err == nil && issueDecisionDowngrade.Active {
-			if c.notificationsQuiet() || c.attentionPilot() {
+			// Pilot only: quiet mode leaves issue notes as standalone
+			// comments (docs/notifications.md), so it keeps the raw note.
+			if c.attentionPilot() {
 				var created bool
 				created, err = c.UpsertPRStatusSection(ctx, req.Repo, req.Number, prstatus.KeyIssueDecisionDowngrade, issueDecisionDowngrade.Note)
 				if err == nil && !created {
