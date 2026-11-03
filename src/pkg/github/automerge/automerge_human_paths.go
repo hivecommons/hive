@@ -2,6 +2,7 @@ package automerge
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -9,6 +10,7 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Skip reasons reported by the human-merge-path gate (#11038).
@@ -76,16 +78,20 @@ func (c *Engine) currentHumanMergePinOnly(repo string) (config.PinOnlyException,
 }
 
 // humanMergePinOnlyExempt reports whether the opt-in pin-only exception
-// waives the human-merge-path matches of pr. It needs no API call: files is
-// the complete list the caller already fetched for the path check. It returns
-// (false, "") when the repo has no enabled exception, and (false, reason) when
-// the exception is configured but this PR does not qualify.
+// waives the human-merge-path matches of pr. files is the complete list the
+// caller already fetched for the path check, so a PR the classifier refuses
+// costs no further API call. It returns (false, "") when the repo has no
+// enabled exception, and (false, reason) when the exception is configured but
+// this PR does not qualify.
 //
 // The classifier receives the FULL changed-file list, so a pin bump that also
 // edits any other file (even an unguarded changelog or doc) is not pin-only
-// and stays held (#16326). The sweep lanes and /approve share this helper so
+// and stays held (#16326). Once the diff is accepted, every commit behind the
+// head must itself be provably the trusted author's: the PR author login only
+// says who opened the PR, and any principal with write access can push onto
+// that branch afterwards. The sweep lanes and /approve share this helper so
 // they never disagree.
-func (c *Engine) humanMergePinOnlyExempt(owner, repo string, pr *gh.PullRequest, files []intent.ChangedFile, matches []string) (bool, string) {
+func (c *Engine) humanMergePinOnlyExempt(ctx context.Context, owner, repo string, pr *gh.PullRequest, files []intent.ChangedFile, matches []string) (bool, string) {
 	if len(matches) == 0 || pr == nil {
 		return false, ""
 	}
@@ -94,14 +100,7 @@ func (c *Engine) humanMergePinOnlyExempt(owner, repo string, pr *gh.PullRequest,
 		return false, ""
 	}
 	author := strings.TrimSpace(hgithub.SafeGetLogin(pr.GetUser()))
-	trusted := false
-	for _, login := range policy.TrustedAuthors {
-		if author != "" && strings.EqualFold(strings.TrimSpace(login), author) {
-			trusted = true
-			break
-		}
-	}
-	if !trusted {
+	if !pinOnlyTrustedLogin(policy, author) {
 		return false, "PR author is not in trusted_authors"
 	}
 	// ListChangedFiles already refuses a list shorter than GitHub's count;
@@ -109,7 +108,79 @@ func (c *Engine) humanMergePinOnlyExempt(owner, repo string, pr *gh.PullRequest,
 	if reported := pr.GetChangedFiles(); reported <= 0 || reported != len(files) {
 		return false, "complete changed-file list not proven"
 	}
-	return intent.ClassifyPinOnly(files, matches, policy.Spec())
+	if ok, why := intent.ClassifyPinOnly(files, matches, policy.Spec()); !ok {
+		return false, why
+	}
+	if why := c.pinOnlyCommitsTrusted(ctx, owner, repo, pr, policy); why != "" {
+		return false, why
+	}
+	return true, "all changes are approved pin replacements by verified trusted-author commits"
+}
+
+func pinOnlyTrustedLogin(policy config.PinOnlyException, login string) bool {
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return false
+	}
+	for _, trusted := range policy.TrustedAuthors {
+		if strings.EqualFold(strings.TrimSpace(trusted), login) {
+			return true
+		}
+	}
+	return false
+}
+
+// pinOnlyCommitsMaxPages bounds the commit listing; GitHub serves at most 250
+// commits for a PR, and a pin bump has one or two.
+const pinOnlyCommitsMaxPages = 3
+
+// pinOnlyCommitsTrusted returns "" when every commit of pr is attributed to a
+// trusted author AND carries a signature GitHub verified, and the current
+// head is the newest listed commit. The signature is what makes the login
+// non-spoofable: a locally crafted commit can set a bot's author email, but
+// cannot carry GitHub's web-flow signature. Any listing error, an empty or
+// truncated list, or a head not in the list fails closed with a reason.
+func (c *Engine) pinOnlyCommitsTrusted(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy config.PinOnlyException) string {
+	head := pr.GetHead().GetSHA()
+	if head == "" {
+		return "PR head SHA unknown"
+	}
+	ctx = hgithub.WithRESTCaller(ctx, "hive:automerge_pin_only")
+	opts := &gh.ListOptions{PerPage: 100}
+	var all []*gh.RepositoryCommit
+	for page := 0; ; page++ {
+		if page == pinOnlyCommitsMaxPages {
+			return "PR commit list too long to verify"
+		}
+		commits, resp, err := c.gh.PullRequests.ListCommits(ctx, owner, repo, pr.GetNumber(), opts)
+		if err != nil {
+			return fmt.Sprintf("PR commits could not be listed: %v", err)
+		}
+		all = append(all, commits...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	if len(all) == 0 {
+		return "PR has no commits to verify"
+	}
+	if all[len(all)-1].GetSHA() != head {
+		return "PR commit list does not end at the current head"
+	}
+	for _, rc := range all {
+		sha := rc.GetSHA()
+		if sha == "" {
+			return "PR commit without a SHA"
+		}
+		if login := hgithub.SafeGetLogin(rc.GetAuthor()); !pinOnlyTrustedLogin(policy, login) {
+			return fmt.Sprintf("commit %s author %q is not in trusted_authors", stagelabels.ShortSHA(sha), login)
+		}
+		if !rc.GetCommit().GetVerification().GetVerified() {
+			return fmt.Sprintf("commit %s has no GitHub-verified signature", stagelabels.ShortSHA(sha))
+		}
+	}
+	return ""
 }
 
 // humanMergePathGate refuses a PR that touches a path a person must merge.
@@ -124,8 +195,8 @@ func (c *Engine) humanMergePinOnlyExempt(owner, repo string, pr *gh.PullRequest,
 // `hold`, posts the single marker-stamped comment (not reposted on later
 // ticks) and returns autoMergeReasonHumanMergePath, unless the repo's enabled
 // auto_merge.human_merge_pin_only exception qualifies the PR (trusted author,
-// complete list, every changed line a pin replacement), which needs no extra
-// API call and returns ("", nil).
+// complete list, every changed line a pin replacement, every commit a
+// verified trusted-author commit) and returns ("", nil).
 func (c *Engine) humanMergePathGate(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest) (string, error) {
 	patterns := c.currentHumanMergePaths(owner + "/" + repo)
 	if len(patterns) == 0 {
@@ -140,7 +211,7 @@ func (c *Engine) humanMergePathGate(ctx context.Context, displayRepo, owner, rep
 	if len(matches) == 0 {
 		return "", nil
 	}
-	exempt, why := c.humanMergePinOnlyExempt(owner, repo, pr, files, matches)
+	exempt, why := c.humanMergePinOnlyExempt(ctx, owner, repo, pr, files, matches)
 	if exempt {
 		c.info("automerge sweep admitted pin-only change on human-merge paths", "repo", displayRepo, "pr", number, "paths", matches, "config", humanMergePinOnlyConfigKey, "reason", why)
 		return "", nil

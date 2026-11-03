@@ -102,14 +102,22 @@ func TestPRApproveReply(t *testing.T) {
 // and anything the sweep would hold still is.
 func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
 	pin := "@@ -1 +1 @@\n-" + testPinOldLine + "\n+" + testPinNewLine
+	verifiedHead := []*gh.RepositoryCommit{{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}}}
 	for _, tc := range []struct {
 		name, patch string
 		trusted     []string
+		commits     []*gh.RepositoryCommit
 		want        string
 	}{
-		{name: "trusted pure pin", patch: pin, trusted: []string{testHiveAppBotLogin}, want: "does not consume it on a pull request"},
+		{name: "trusted pure pin", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: verifiedHead, want: "does not consume it on a pull request"},
 		{name: "untrusted author", patch: pin, trusted: []string{"someone-else"}, want: "requires a person to merge manually"},
 		{name: "missing patch", trusted: []string{testHiveAppBotLogin}, want: "requires a person to merge manually"},
+		{name: "head commit pushed by another login", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
+			verifiedHead[0], {SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr("mallory")}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}},
+		}, want: "requires a person to merge manually"},
+		{name: "head commit unverified", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
+			{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(false)}}},
+		}, want: "requires a person to merge manually"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +131,11 @@ func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
 					json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), ChangedFiles: gh.Ptr(1), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}})
 				case "/repos/acme/widget/pulls/7/files":
 					json.NewEncoder(w).Encode([]*gh.CommitFile{{Filename: gh.Ptr("sensitive/build.yml"), Status: gh.Ptr("modified"), Additions: gh.Ptr(1), Deletions: gh.Ptr(1), Patch: gh.Ptr(tc.patch)}})
+				case "/repos/acme/widget/pulls/7/commits":
+					if tc.commits == nil {
+						t.Errorf("commit list read for a diff the classifier refuses")
+					}
+					json.NewEncoder(w).Encode(tc.commits)
 				default:
 					t.Errorf("unexpected read: %s", r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
