@@ -884,6 +884,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 
 	if policy.AdoptInPlace && canPushInPlace && !dcoRehome {
 		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
+		c.recordContributorAbandon(ctx, obs, reason, 0, now)
 		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(fence)
 		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
@@ -1145,6 +1146,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	superseding := created.GetNumber()
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
 	store.NoteAdoptReason(key, reason)
+	c.recordContributorAbandon(ctx, obs, reason, superseding, now)
 	if admittedBy != "" {
 		c.carryAdmissionToCopy(obs, admittedBy, superseding, nonEmpty(created.GetHead().GetSHA(), nonEmpty(resignedTip, obs.HeadSHA)), now)
 	}
@@ -1311,6 +1313,17 @@ func (c *Engine) adoptionCopyRebaseExhausted(obs stageObservation, rec stagelabe
 // and the fixer's rebase-resolve episode on it is exhausted.
 func (c *Engine) adoptionCopyRebaseFailedTwice(obs stageObservation) bool {
 	if c.rebaseEpisode == nil || obs.Lane != stageLaneSelf || !strings.HasPrefix(obs.HeadRef, adoptBranchPrefix) || !supersedeHeadConflicts(obs) {
+		return false
+	}
+	ep, ok := c.rebaseEpisode(obs.Owner+"/"+obs.Repo, obs.Number)
+	return ok && ep.Exhausted
+}
+
+// inPlaceRebaseExhausted reports whether the fixer's rebase-resolve episode
+// on this in-place adoption used every attempt without the head reading
+// mergeable (hivecommons/hive#16023).
+func (c *Engine) inPlaceRebaseExhausted(obs stageObservation, rec stagelabels.Record) bool {
+	if c.rebaseEpisode == nil || !rec.AdoptedInPlace() {
 		return false
 	}
 	ep, ok := c.rebaseEpisode(obs.Owner+"/"+obs.Repo, obs.Number)
@@ -2131,8 +2144,11 @@ func adoptedHeadSignoffUnfixable(obs stageObservation, rec stagelabels.Record) b
 // supersession this sweep, or "" to stay in place. A DCO-red head is left to
 // settleAdoption's DCO re-home, which carries the repair instructions. A
 // squash-unsafe hive sign-off re-homes immediately; rebase work first gets
-// the normal fixer window on the contributor branch.
-func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) string {
+// the normal fixer window on the contributor branch, which ends at the 074
+// dwell or as soon as the fixer's rebase-resolve episode on the adopted PR
+// is exhausted (rebaseExhausted: every attempt pushed a dirty head or timed
+// out with no push; hivecommons/hive#16023).
+func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time, rebaseExhausted bool) string {
 	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead || adoptedHeadDCORed(obs, rec) || adoptionBlocked(obs.Labels) != "" || verdictNeedsHuman(obs.Detail) {
 		return ""
 	}
@@ -2140,7 +2156,7 @@ func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy St
 		return AdoptReasonSignoffRehome
 	}
 	if humanConflictReasons[obs.Reason] || humanConflictReasons[obs.LaneReason] || hasLabelFold(obs.Labels, "needs-rebase") {
-		if adoptionStale(obs, rec, policy, now) {
+		if rebaseExhausted || adoptionStale(obs, rec, policy, now) {
 			return AdoptReasonRebaseRehome
 		}
 	}
@@ -2205,7 +2221,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		c.info("stage labels: adopted head had no clock; starting the 074 dwell from this sweep", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "adopted_at", rec.AdoptedAt)
 		rec, _ = store.Get(key)
 	}
-	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now)
+	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now, c.inPlaceRebaseExhausted(obs, rec))
 	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && c.pushAccessLost(ctx, obs) {
 		rehomeReason = AdoptReasonPushRehome
 	}

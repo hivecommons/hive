@@ -279,7 +279,9 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
-    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
+    # Public PRs use the same free native ARM64 VM as the Podman arm64 lane.
+    # Explicit ARM64 overrides and all release/push runner selection stay intact.
+    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout repository
@@ -293,7 +295,7 @@ jobs:
           fetch-tags: true
 
       - name: Set up QEMU for arm64 emulation
-        if: matrix.qemu
+        if: matrix.qemu && runner.arch != 'ARM64'
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
@@ -439,6 +441,7 @@ jobs:
           else
             IMG=hive-freshness-probe:local
             docker buildx build --load \
+              --platform "${{ matrix.platform }}" \
               -f src/Dockerfile \
               --build-arg BASE_REGISTRY="$BASE_REGISTRY" \
               --build-arg GIT_HASH="$EXPECTED_SHA" \
@@ -681,7 +684,7 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
-    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
+    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout repository
@@ -690,7 +693,7 @@ jobs:
           ref: ${{ needs.gate.outputs.sha }}
 
       - name: Set up QEMU for arm64 emulation
-        if: matrix.qemu
+        if: matrix.qemu && runner.arch != 'ARM64'
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
@@ -890,7 +893,7 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
-    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
+    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout repository
@@ -904,7 +907,7 @@ jobs:
           fetch-tags: true
 
       - name: Set up QEMU for arm64 emulation
-        if: matrix.qemu
+        if: matrix.qemu && runner.arch != 'ARM64'
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64

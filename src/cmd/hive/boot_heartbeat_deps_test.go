@@ -180,9 +180,27 @@ func TestBootHeartbeatWith_PublishesIdentityBeforeTheLoopAndWiresEveryCallback(t
 	heartbeatCallback[spoke.GatewayConfigCallback](t, f)
 	heartbeatCallback[spoke.ClusterIDCallback](t, f)
 	heartbeatCallback[spoke.FreshStatusCollector](t, f)
-	if len(f.callbacks) != 14 {
-		t.Fatalf("registered %d callbacks, want 14 (one of each)", len(f.callbacks))
+	heartbeatCallback[spoke.UpgradeAnnounceCallback](t, f)
+	activity := heartbeatCallback[spoke.ActivitySource](t, f)
+	if len(f.callbacks) != 16 {
+		t.Fatalf("registered %d callbacks, want 16 (one of each)", len(f.callbacks))
 	}
+	// hub.activity is self-hosted opt-in: this config is not hosted, so the
+	// digest stays off until the operator enables it, and the options are
+	// read per build so a reload applies without restarting the loop.
+	if opts := activity.Options(); opts.Enabled {
+		t.Fatalf("self-hosted activity options = %+v, want disabled by default", opts)
+	}
+	on := true
+	cfg.Hub.Activity = config.HubActivityConfig{Enabled: &on, MaxItems: 40, SharePrivate: true}
+	if opts := activity.Options(); !opts.Enabled || opts.MaxItems != 40 || !opts.SharePrivate {
+		t.Fatalf("opted-in activity options = %+v, want enabled with the configured cap and share_private", opts)
+	}
+	if items, ok := activity.Items(context.Background()); ok || items != nil {
+		t.Fatalf("activity items before any status = %v, %v; want none", items, ok)
+	}
+	activity.Subscribe(func() {})
+	activity.Subscribe(nil)
 
 	// The collector honours a runtime hub.enabled=false without being torn
 	// down: it returns nil so StartHeartbeat skips the beat.
@@ -230,6 +248,12 @@ func TestBootHeartbeatWith_CallbacksReconcileRunningConfig(t *testing.T) {
 	banner(nil)
 	heartbeatCallback[spoke.UpgradePolicyCallback](t, f)(&spoke.HeartbeatUpgradePolicy{HubManaged: true})
 	heartbeatCallback[spoke.UpgradePolicyCallback](t, f)(nil)
+	// A hub roll announce (#15788) lands on the dashboard as an in-flight
+	// upgrade so the operator sees the animation before the kill.
+	heartbeatCallback[spoke.UpgradeAnnounceCallback](t, f)(&spoke.UpgradeAnnounce{Target: "0123456789abcdef", Source: spoke.UpgradeSourceHub})
+	if p := b.dashSrv.AnnounceRestart(time.Now()); p.Target != "0123456" || p.Source != spoke.UpgradeSourceHub {
+		t.Fatalf("announce did not reach the dashboard: %+v", p)
+	}
 
 	// Unknown agent: warn, never panic — the hub may name an agent this
 	// spoke's pack no longer has.

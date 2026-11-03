@@ -47,6 +47,14 @@ type ProjectContext struct {
 	// default-off; bob launch commands remain byte-identical unless it or a
 	// per-agent bob.session_label is configured.
 	BobSessionPrefix string
+	// InferenceDefaultModel returns the model an inference-routed agent on
+	// backend launches with when its own config names none — the
+	// default_model of whichever gateway / governor.litellm block supplies its
+	// endpoint (config.AgentRuntimeGovernorConfig.DefaultInferenceModel). A
+	// live function off the config pointer so a default saved in the dashboard
+	// reaches the next launch without a restart. Nil means no fallback: the
+	// launch omits --model and the backend's own default applies.
+	InferenceDefaultModel func(backend string) string
 	// RepoPaused reports whether a repo carries an operator pause (#6203). It is
 	// a live predicate rather than a snapshot list because ProjectContext is
 	// built once at boot and a pause is taken mid-run — a repo frozen for a

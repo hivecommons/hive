@@ -242,6 +242,125 @@ func TestInstallIoscanClassifier_FallbackYieldsToExplicitConfig(t *testing.T) {
 	}
 }
 
+// ioscanBootConfigWithAgentModels is ioscanBootConfigWithAgents with one
+// agent per backend:model pair.
+func ioscanBootConfigWithAgentModels(t *testing.T, level int, agents map[string]string) *config.Config {
+	t.Helper()
+	cfg := ioscanBootConfigWithAgents(t, level)
+	for name, bm := range agents {
+		backend, model, _ := strings.Cut(bm, ":")
+		cfg.Agents[name] = config.AgentConfig{Backend: backend, Model: model}
+	}
+	return cfg
+}
+
+// omp has no default model in the classifier's isolated profile. With
+// ioscan.classifier.model empty, boot passes the model most of the hive's
+// omp agents run with (ties by name); claude and copilot keep their own
+// CLI default and never borrow one.
+func TestIoscanClassifierAgentModel(t *testing.T) {
+	cases := map[string]struct {
+		agents map[string]string
+		want   string
+	}{
+		"no agents":                {nil, ""},
+		"omp agents without model": {map[string]string{"a": "omp", "b": "omp"}, ""},
+		"other backends ignored":   {map[string]string{"a": "claude:opus", "b": "copilot:gpt-5"}, ""},
+		"single omp model":         {map[string]string{"a": "omp:anthropic/claude-sonnet-5", "b": "claude:opus"}, "anthropic/claude-sonnet-5"},
+		"majority wins":            {map[string]string{"a": "omp:x/fast", "b": "omp:y/slow", "c": "omp:y/slow"}, "y/slow"},
+		"tie breaks by name":       {map[string]string{"a": "omp:y/slow", "b": "omp:x/fast"}, "x/fast"},
+		"case and space trim":      {map[string]string{"a": " Omp : x/fast "}, "x/fast"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := ioscanClassifierAgentModel(ioscanBootConfigWithAgentModels(t, 6, tc.agents), "omp"); got != tc.want {
+				t.Fatalf("agent model = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInstallIoscanClassifier_OmpTakesModelFromAgents(t *testing.T) {
+	// Explicit backend, model borrowed from the omp agents.
+	cfg := ioscanBootConfigWithAgentModels(t, 6, map[string]string{"a": "omp:anthropic/claude-sonnet-5"})
+	cfg.Ioscan.Classifier.Backend = "omp"
+	sink, alerts := &fakeClassifierSink{}, &fakeClassifierAlerts{}
+	logger, logs := ioscanBootLogger()
+	installIoscanClassifier(sink, alerts, cfg, logger, ioscanBootNow)
+	if _, ok := sink.classifier.(*ioscan.CachedClassifier); !ok || sink.sets != 1 {
+		t.Fatalf("installed %T (%d sets), want *ioscan.CachedClassifier once", sink.classifier, sink.sets)
+	}
+	for _, want := range []string{"backend=omp", "model=anthropic/claude-sonnet-5", "model_from_agents=true"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("boot log lacks %s:\n%s", want, logs.String())
+		}
+	}
+	if _, ok := alerts.blocked(); ok {
+		t.Fatal("running classifier raised the blocked-kick alert")
+	}
+
+	// Backend from the agents too (no endpoint, no backend set).
+	cfg = ioscanBootConfigWithAgentModels(t, 6, map[string]string{"a": "omp:x/fast", "b": "omp:x/fast", "c": "copilot:"})
+	sink = &fakeClassifierSink{}
+	logger, logs = ioscanBootLogger()
+	installIoscanClassifier(sink, nil, cfg, logger, ioscanBootNow)
+	for _, want := range []string{"backend=omp", "backend_from_agents=true", "model=x/fast", "model_from_agents=true"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("boot log lacks %s:\n%s", want, logs.String())
+		}
+	}
+
+	// An explicit classifier.model wins over the agents' model.
+	cfg = ioscanBootConfigWithAgentModels(t, 6, map[string]string{"a": "omp:x/fast"})
+	cfg.Ioscan.Classifier.Backend = "omp"
+	cfg.Ioscan.Classifier.Model = "y/slow"
+	logger, logs = ioscanBootLogger()
+	installIoscanClassifier(&fakeClassifierSink{}, nil, cfg, logger, ioscanBootNow)
+	if !strings.Contains(logs.String(), "model=y/slow") || !strings.Contains(logs.String(), "model_from_agents=false") {
+		t.Errorf("explicit model overridden:\n%s", logs.String())
+	}
+}
+
+// omp with no model anywhere is refused like a backend that cannot run
+// tool-less: one log line naming the fix, the unavailable classifier and
+// the blocked-kick alert at fail-closed, nothing installed at fail-open.
+func TestInstallIoscanClassifier_OmpWithoutModelIsRefused(t *testing.T) {
+	cfg := ioscanBootConfigWithAgentModels(t, 6, map[string]string{"a": "omp"})
+	cfg.Ioscan.Classifier.Backend = "omp"
+	sink, alerts := &fakeClassifierSink{}, &fakeClassifierAlerts{}
+	logger, logs := ioscanBootLogger()
+	installIoscanClassifier(sink, alerts, cfg, logger, ioscanBootNow)
+	if _, ok := sink.classifier.(ioscan.UnavailableClassifier); !ok || sink.sets != 1 || sink.budget != 0 {
+		t.Fatalf("installed %T (%d sets, budget %d), want UnavailableClassifier once with no budget", sink.classifier, sink.sets, sink.budget)
+	}
+	if n := strings.Count(logs.String(), "\n"); n != 1 {
+		t.Fatalf("want exactly one refusal line, got %d:\n%s", n, logs.String())
+	}
+	for _, want := range []string{"backend refused", "no default model", "backend=omp", "ioscan.classifier.model", "agents.*.model"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("refusal log lacks %q:\n%s", want, logs.String())
+		}
+	}
+	if msg, ok := alerts.blocked(); !ok || !strings.Contains(msg, "ioscan.classifier.model") {
+		t.Fatalf("blocked-kick alert missing or silent about the model: %v", alerts.alerts)
+	}
+
+	cfg.Ioscan.Classifier.FailMode = "open"
+	sink, alerts = &fakeClassifierSink{}, &fakeClassifierAlerts{}
+	alerts.AddSystemAlert(ioscanClassifierBlockedAlertID, "error", "stale")
+	logger, logs = ioscanBootLogger()
+	installIoscanClassifier(sink, alerts, cfg, logger, ioscanBootNow)
+	if sink.sets != 0 {
+		t.Fatalf("fail-open refusal installed %T", sink.classifier)
+	}
+	if _, ok := alerts.blocked(); ok {
+		t.Fatal("fail-open refusal kept the stale blocked-kick alert")
+	}
+	if !strings.Contains(logs.String(), "no default model") {
+		t.Fatalf("fail-open refusal not logged:\n%s", logs.String())
+	}
+}
+
 // A required classifier that cannot run raises one persistent dashboard
 // alert naming the fixes; a fail-open hive gets no alert.
 func TestInstallIoscanClassifier_RequiredButUnavailableRaisesAlert(t *testing.T) {

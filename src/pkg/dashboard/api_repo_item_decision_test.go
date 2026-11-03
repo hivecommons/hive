@@ -39,6 +39,7 @@ type repoItemDecisionMock struct {
 	prNoMaintainerEdits bool
 	workflowPath        string
 	prMergeState        string
+	prHeadSHA           string
 	updates             int
 	prRedCI             bool
 	prNoCI              bool
@@ -70,6 +71,15 @@ type repoItemDecisionMock struct {
 	fixedIssueClosedBy int
 	// issueTitle / issueBody shape issue #7 (empty = untitled, no body).
 	issueTitle, issueBody string
+	// issueState shapes GET /issues/7 (empty means open).
+	issueState string
+	// commentError / editError refuse POST /comments or PATCH /issues/N.
+	commentError, editError int
+	statusError             int
+	commentBlockText        string
+	commentStarted          chan struct{}
+	// editPaths records each PATCH path alongside edits.
+	editPaths []string
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -83,6 +93,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/collaborators/writer/permission") || strings.HasSuffix(path, "/collaborators/someone/permission")):
 			_, _ = io.WriteString(w, `{"permission":"write"}`)
 		case r.Method == http.MethodPost && strings.Contains(path, "/statuses/"):
+			if m.statusError != 0 {
+				w.WriteHeader(m.statusError)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+				return
+			}
 			_, _ = io.WriteString(w, `{}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/collaborators/reader/permission"):
 			_, _ = io.WriteString(w, `{"permission":"read"}`)
@@ -91,7 +106,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.issueLabels {
 				labels = append(labels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "title": m.issueTitle, "body": m.issueBody, "labels": labels, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+			state := m.issueState
+			if state == "" {
+				state = "open"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": state, "title": m.issueTitle, "body": m.issueBody, "labels": labels, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/issues/8") || strings.HasSuffix(path, "/issues/9")):
 			n := 8
 			if strings.HasSuffix(path, "/issues/9") {
@@ -141,8 +160,12 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			if m.prFork {
 				headRepo = "someone/testrepo"
 			}
+			headSHA := m.prHeadSHA
+			if headSHA == "" {
+				headSHA = "feedfacefeedfacefeedfacefeedfacefeedface"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "maintainer_can_modify": !m.prNoMaintainerEdits,
-				"head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface", "repo": map[string]any{"full_name": headRepo}},
+				"head": map[string]any{"sha": headSHA, "repo": map[string]any{"full_name": headRepo}},
 				"base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "testorg/testrepo"}}})
 		case r.Method == http.MethodGet && strings.Contains(path, "/compare/"):
 			files := []map[string]string{}
@@ -206,8 +229,17 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			}
 			_ = json.NewEncoder(w).Encode(prior)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/comments"):
+			if m.commentError != 0 {
+				http.Error(w, `{"message":"comment denied"}`, m.commentError)
+				return
+			}
 			var c map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&c)
+			if m.commentBlockText != "" && strings.Contains(c["body"], m.commentBlockText) {
+				close(m.commentStarted)
+				<-r.Context().Done()
+				return
+			}
 			m.comments = append(m.comments, c["body"])
 			_, _ = io.WriteString(w, `{"id":1}`)
 		case r.Method == http.MethodGet && strings.Contains(path, "/labels/"):
@@ -223,9 +255,14 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			m.removed = append(m.removed, path[strings.LastIndex(path, "/")+1:])
 			_, _ = io.WriteString(w, `{}`)
 		case r.Method == http.MethodPatch && strings.Contains(path, "/issues/"):
+			if m.editError != 0 {
+				http.Error(w, `{"message":"close denied"}`, m.editError)
+				return
+			}
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			m.edits = append(m.edits, body)
+			m.editPaths = append(m.editPaths, path)
 			_, _ = io.WriteString(w, `{}`)
 		default:
 			t.Logf("unexpected GitHub API request: %s %s", r.Method, path)

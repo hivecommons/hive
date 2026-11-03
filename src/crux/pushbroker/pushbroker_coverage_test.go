@@ -60,6 +60,10 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 		return nil, nil
 	case key == "merge-base --is-ancestor origin/main HEAD" || strings.HasPrefix(key, "merge-base --is-ancestor refs/remotes/"):
 		return nil, nil
+	case strings.HasPrefix(key, "ls-tree -r -z --name-only HEAD -- "):
+		// A fake workspace has no files on disk, so an empty HEAD tree keeps
+		// the normaliser out of these scenarios exactly as before.
+		return nil, nil
 	}
 	return nil, errors.New("unscripted git invocation: " + name + " " + key)
 }
@@ -123,10 +127,10 @@ func TestValidateRejectsUnusableConfigurations(t *testing.T) {
 func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
 	fixed := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	git := &scriptedGit{replies: map[string]string{
-		"rev-parse HEAD":                         "cafebabe\n",
-		"rev-parse --verify origin/main":         "deadbeef\n",
-		"diff --name-only -z origin/main...HEAD": "pkg/safe.go\x00",
-		"diff --no-ext-diff origin/main...HEAD":  "+// harmless\n",
+		"rev-parse HEAD":                                      "cafebabe\n",
+		"rev-parse --verify origin/main":                      "deadbeef\n",
+		"diff --no-renames --name-only -z origin/main...HEAD": "pkg/safe.go\x00",
+		"diff --no-ext-diff origin/main...HEAD":               "+// harmless\n",
 	}}
 	res, err := (&Broker{
 		Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main",
@@ -139,7 +143,7 @@ func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
 	if !res.Pushed || res.Commit != "cafebabe" {
 		t.Fatalf("res = %+v, want a push at cafebabe", res)
 	}
-	if slices.Contains(git.calls, "diff --name-only -z refs/remotes/origin/work...HEAD") {
+	if slices.Contains(git.calls, "diff --no-renames --name-only -z refs/remotes/origin/work...HEAD") {
 		t.Fatalf("broker diffed against the remote ref despite an explicit BaseRef: %v", git.calls)
 	}
 	if !res.StartedAt.Equal(fixed) || !res.FinishedAt.Equal(fixed) {
@@ -155,8 +159,8 @@ func TestRunFallsBackToHeadCommitWhenNoBaseExists(t *testing.T) {
 	git := &scriptedGit{
 		replies: map[string]string{
 			"rev-parse HEAD": "abc123\n",
-			"diff-tree --root --no-commit-id --name-only -r -z HEAD": "pkg/new.go\x00\x00",
-			"show --format= --no-ext-diff HEAD":                      "+// new file\n",
+			"diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": "pkg/new.go\x00\x00",
+			"show --format= --no-ext-diff HEAD":                                   "+// new file\n",
 		},
 		fails: map[string]error{"rev-parse --verify refs/remotes/origin/work": noBase},
 	}
@@ -179,9 +183,9 @@ func TestRunFallsBackToRemoteRefWhenBaseRefIsGone(t *testing.T) {
 	git := &scriptedGit{
 		replies: map[string]string{
 			"rev-parse HEAD": "abc123\n",
-			"rev-parse --verify refs/remotes/origin/work":         "999888\n",
-			"diff --name-only -z refs/remotes/origin/work...HEAD": "pkg/safe.go\x00",
-			"diff --no-ext-diff refs/remotes/origin/work...HEAD":  "+// harmless\n",
+			"rev-parse --verify refs/remotes/origin/work":                      "999888\n",
+			"diff --no-renames --name-only -z refs/remotes/origin/work...HEAD": "pkg/safe.go\x00",
+			"diff --no-ext-diff refs/remotes/origin/work...HEAD":               "+// harmless\n",
 		},
 		fails: map[string]error{"rev-parse --verify origin/deleted": errors.New("unknown revision")},
 	}
@@ -248,8 +252,8 @@ func TestRunSurfacesEachFailureStage(t *testing.T) {
 	head := map[string]string{"rev-parse HEAD": "abc123\n"}
 	clean := map[string]string{
 		"rev-parse HEAD": "abc123\n",
-		"diff-tree --root --no-commit-id --name-only -r -z HEAD": "pkg/safe.go\x00",
-		"show --format= --no-ext-diff HEAD":                      "+// harmless\n",
+		"diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": "pkg/safe.go\x00",
+		"show --format= --no-ext-diff HEAD":                                   "+// harmless\n",
 	}
 	noBase := map[string]error{"rev-parse --verify refs/remotes/origin/work": errors.New("unknown revision")}
 
@@ -267,14 +271,14 @@ func TestRunSurfacesEachFailureStage(t *testing.T) {
 		},
 		{
 			name:    "diff enumeration fails",
-			git:     &scriptedGit{replies: head, fails: mergeErrs(noBase, map[string]error{"diff-tree --root --no-commit-id --name-only -r -z HEAD": errors.New("broken index")})},
+			git:     &scriptedGit{replies: head, fails: mergeErrs(noBase, map[string]error{"diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": errors.New("broken index")})},
 			minter:  fakeMinter{"ghs_tok"},
 			wantErr: "broken index",
 		},
 		{
 			name: "nothing committed",
 			git: &scriptedGit{
-				replies: map[string]string{"rev-parse HEAD": "abc123\n", "diff-tree --root --no-commit-id --name-only -r -z HEAD": ""},
+				replies: map[string]string{"rev-parse HEAD": "abc123\n", "diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": ""},
 				fails:   noBase,
 			},
 			minter:  fakeMinter{"ghs_tok"},
@@ -283,7 +287,7 @@ func TestRunSurfacesEachFailureStage(t *testing.T) {
 		{
 			name: "diff read fails",
 			git: &scriptedGit{
-				replies: map[string]string{"rev-parse HEAD": "abc123\n", "diff-tree --root --no-commit-id --name-only -r -z HEAD": "pkg/safe.go\x00"},
+				replies: map[string]string{"rev-parse HEAD": "abc123\n", "diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": "pkg/safe.go\x00"},
 				fails:   mergeErrs(noBase, map[string]error{"show --format= --no-ext-diff HEAD": errors.New("bad object")}),
 			},
 			minter:  fakeMinter{"ghs_tok"},
@@ -340,7 +344,7 @@ func TestBrokerHonorsRemoteProtectedPathAndClockOverrides(t *testing.T) {
 	git := &scriptedGit{
 		replies: map[string]string{
 			"rev-parse HEAD": "abc123\n",
-			"diff-tree --root --no-commit-id --name-only -r -z HEAD": "docs/notes.md\x00",
+			"diff-tree --root --no-commit-id --no-renames --name-only -r -z HEAD": "docs/notes.md\x00",
 			// A clone whose push remote is "upstream": the default scripted
 			// reply names remote.origin, which the hostile-config gate would
 			// reject as a key outside the allowlist for this remote.
@@ -444,7 +448,8 @@ func TestGitHubAppMinterLeavesScopeOpenForAnUnqualifiedRepo(t *testing.T) {
 }
 
 // ExecRunner is the production runner; the interface contract it has to honor
-// is that a non-zero exit surfaces as an error with the combined output kept.
+// is that a non-zero exit surfaces as an error with both streams kept for the
+// error text, while a successful command yields stdout only.
 func TestExecRunnerReturnsCombinedOutputAndExitError(t *testing.T) {
 	out, err := ExecRunner{}.Run(context.Background(), t.TempDir(), []string{"PATH=" + os.Getenv("PATH")}, "sh", "-c", "echo hello; echo bad 1>&2; exit 3")
 	if err == nil {
@@ -452,6 +457,19 @@ func TestExecRunnerReturnsCombinedOutputAndExitError(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "hello") || !strings.Contains(string(out), "bad") {
 		t.Fatalf("output = %q, want both streams", out)
+	}
+}
+
+// Successful output is treated as data by callers (the normaliser commits
+// `git show HEAD:<path>` output as file content), so stderr written by an
+// exit-0 command must not leak into it.
+func TestExecRunnerDropsStderrOnSuccess(t *testing.T) {
+	out, err := ExecRunner{}.Run(context.Background(), t.TempDir(), []string{"PATH=" + os.Getenv("PATH")}, "sh", "-c", "echo 'warning: noise' 1>&2; echo hello")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if string(out) != "hello\n" {
+		t.Fatalf("output = %q, want stdout only", out)
 	}
 }
 

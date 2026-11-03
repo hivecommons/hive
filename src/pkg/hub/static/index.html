@@ -314,11 +314,10 @@
       font-size: clamp(1.8rem, 3vw, 2.8rem);
       line-height: 1;
     }
-    /* ── Works-with-your-stack band: three integration groups (source
-       control / work sources / sign-in) rendered as pill badges. Cards reuse
+    /* ── Works-with-your-stack integration groups rendered as pill badges. Cards reuse
        the proof-card gradient/border treatment for visual consistency. ── */
     .stack-groups {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: var(--sp-6);
       display: grid;
     }
@@ -810,6 +809,13 @@
             <span class="stack-badge">Google</span>
           </div>
           <p class="stack-note">Plus any other OIDC provider on request &mdash; bring the identity your org already trusts.</p>
+        </div>
+        <div class="stack-group">
+          <p class="stack-group-label">Local AI inference</p>
+          <div class="stack-badges">
+            <a class="stack-badge" href="/contribute#apple-mlx">Apple MLX</a>
+          </div>
+          <p class="stack-note">Optional ClankeR inference on Apple Silicon Macs (macOS 14+), using MLX-LM and the Pi coding agent. You choose the tool-capable model and RAM budget; no automatic weight downloads or cloud fallback. <a href="/contribute#apple-mlx">Install and use with just</a>. Not Apple sign-in or an Apple endorsement.</p>
         </div>
       </div>
     </section>

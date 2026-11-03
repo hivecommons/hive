@@ -538,8 +538,8 @@ func TestSelfAuthorizationLabelApproval(t *testing.T) {
 	}
 }
 
-// An `issues` labeled/unlabeled webhook marks the issue dirty for the un-park
-// sweep; other issue actions and PR-shaped payloads do not.
+// Opened and relabeled issues wake evaluation and feed the un-park sweep;
+// unrelated actions, PR-shaped payloads and unmanaged repos do not.
 func TestHandleWebhookEventIssuesLabelMarksDirty(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -549,7 +549,10 @@ func TestHandleWebhookEventIssuesLabelMarksDirty(t *testing.T) {
 	}{
 		{"labeled", "issues", `{"action":"labeled","issue":{"number":9},"label":{"name":"triage/accepted"},"repository":{"full_name":"org/repo"}}`, 1},
 		{"unlabeled", "issues", `{"action":"unlabeled","issue":{"number":9},"repository":{"full_name":"org/repo"}}`, 1},
-		{"opened", "issues", `{"action":"opened","issue":{"number":9},"repository":{"full_name":"org/repo"}}`, 0},
+		{"opened", "issues", `{"action":"opened","issue":{"number":9},"repository":{"full_name":"org/repo"}}`, 1},
+		{"edited", "issues", `{"action":"edited","issue":{"number":9},"repository":{"full_name":"org/repo"}}`, 0},
+		{"opened PR via issues", "issues", `{"action":"opened","issue":{"number":9,"pull_request":{"url":"x"}},"repository":{"full_name":"org/repo"}}`, 0},
+		{"opened unknown repo", "issues", `{"action":"opened","issue":{"number":9},"repository":{"full_name":"other/repo"}}`, 0},
 		{"labeled PR via issues", "issues", `{"action":"labeled","issue":{"number":9,"pull_request":{"url":"x"}},"repository":{"full_name":"org/repo"}}`, 0},
 		{"unknown repo", "issues", `{"action":"labeled","issue":{"number":9},"repository":{"full_name":"other/repo"}}`, 0},
 	}

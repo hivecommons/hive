@@ -103,6 +103,11 @@ func mentionableAuthor(author string) string {
 // The relay proves the same property structurally (WorkflowPermissionsTighteningOnly)
 // and suppresses the permissions classes; this text keeps the model's verdict
 // consistent with that code path instead of fighting it.
+// hiveSupersedingGuidance tells the reviewer how its verdict is routed on
+// the hive's own superseding copy of another PR (owner rule: those
+// auto-merge; a requires_human there becomes a fix request, not a park).
+const hiveSupersedingGuidance = "When a Hive-authored PR supersedes another PR (its body says `Supersedes #N`), it auto-merges once CI and review are clean and no operator decides on it: a requires_human you raise there — security-sensitive or not — is routed to the fixer as a concrete fix request, so state the remediation, not the question. Only the sentinel or an emergent problem with the head parks such a PR.\n"
+
 const permissionsTighteningGuidance = "Narrowing GitHub Actions permissions is not a security risk a human must own: a workflow diff that only removes `permissions:` scopes or lowers them (write to read or none, a block replaced by `permissions: {}`) with no new job, step, trigger such as pull_request_target or workflow_run, `uses:` change, `secrets.*`/token reference, or added `id-token: write` is a mechanical reduction — approve it with an advisory note. Any widened or newly granted scope, or a tightening mixed with any other change, stays requires_human.\n"
 
 // findingSchemaInstruction spells out the Finding object field by field. The

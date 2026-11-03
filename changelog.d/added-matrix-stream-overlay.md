@@ -1,0 +1,1 @@
+- Document Matrix's separate `hivecommonsmatrix` channel and add an inactive, silent streamer overlay with isolated deployment identity and zero replicas (#15937).

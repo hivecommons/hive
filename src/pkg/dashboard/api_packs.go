@@ -1223,6 +1223,16 @@ type agentBackendVote struct {
 
 // hiveAgentBackends snapshots the backend of every enabled agent, keyed by
 // name, for hiveGatewayBackend.
+//
+// An agent's backend is the one it actually runs on: a live BackendOverride
+// wins over its config backend, exactly as the dashboard's agent cards and
+// config dialog show it (#14678). The override is replayed from
+// /data/hive-state.json before the boot-time pack apply, so a hive whose
+// operator moved scanner/quality/guide onto LiteLLM through an override saw
+// LiteLLM on every card while this vote still read their pack-owned copilot
+// config backend, found no gateway, and left the reviewer on copilot. An
+// override differing from the config backend is an explicit placement, so it
+// counts as an operator pick.
 func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 	backends := map[string]agentBackendVote{}
 	for name, agent := range s.deps.Config.Agents {
@@ -1230,13 +1240,30 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 			continue
 		}
 		backend := strings.TrimSpace(agent.Backend)
-		backends[name] = agentBackendVote{
+		vote := agentBackendVote{
 			backend:       backend,
 			operatorOwned: agent.BackendIsOperatorOwned() || s.unownedGatewayBackend(agent),
 			packCLI:       agent.BackendIsPackOwned() && config.IsCLIBackend(backend),
 		}
+		if override := s.agentBackendOverride(name); override != "" && !strings.EqualFold(override, backend) {
+			vote = agentBackendVote{backend: override, operatorOwned: true}
+		}
+		backends[name] = vote
 	}
 	return backends
+}
+
+// agentBackendOverride is name's live BackendOverride, or "" when the agent
+// has none or is not in the manager's process table.
+func (s *Server) agentBackendOverride(name string) string {
+	if s.deps.AgentMgr == nil {
+		return ""
+	}
+	proc, err := s.deps.AgentMgr.GetStatus(name)
+	if err != nil || proc == nil {
+		return ""
+	}
+	return strings.TrimSpace(proc.BackendOverride)
 }
 
 // unownedGatewayBackend reports whether agent sits on an inference backend or

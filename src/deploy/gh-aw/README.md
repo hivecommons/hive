@@ -21,7 +21,7 @@ normal Actions failure semantics prevent the engine from starting.
 3. Install the compiler and generate the Actions lock file:
 
    ```bash
-   gh extension install github/gh-aw --pin v0.89.21
+   gh extension install github/gh-aw --pin v1.0.1
    gh aw compile hive
    ```
 
@@ -82,8 +82,13 @@ compiles without model credentials, and tests admission and the actual classifie
   Integrations -> Webhooks -> New Webhook, copy the webhook URL, then
   `gh secret set DISCORD_RELATED_RESEARCH_WEBHOOK -R hivecommons/hive`. Without
   the webhook secret the Discord job fails with a clear message and the GitHub
-  comment still lands. Recompile after edits with the pinned compiler:
-  `gh aw compile weekly-competitor-report`, and commit both files (#14612).
+  comment still lands. Recompile after edits with the pinned compiler
+  (`gh-aw` v1.0.1, the same pin as the on-ramp compile CI):
+  `gh aw compile weekly-competitor-report`, and commit the Markdown, the
+  `.lock.yml` and `.github/aw/actions-lock.json` together (#14612, #16226).
+  Bump the compiler and regenerate the lock file in one change; do not
+  hand-edit the generated action or container pins, because the next
+  compile overwrites them and the manifest header goes stale (#16190).
   The prompt names the current GitHub repository for each project (several
   moved: `OpenHands/OpenHands`, `SWE-agent/SWE-agent`, `aaif-goose/goose`,
   `anomalyco/opencode`) and tells the model to follow API redirects with
@@ -91,17 +96,6 @@ compiles without model credentials, and tests admission and the actual classifie
   field, which showed up as "n/a (API error)" in the 2026-10-27 report. Any
   engine in the Crux `CLIBackends` list is reported as "Hive runs it as a
   worker engine today" even when its vendor also sells orchestration.
-  Known cosmetic issue: the "Firewall blocked N domains" warning that gh-aw
-  appends to the comment is a false positive on gh-aw v0.89.21. Squid writes
-  two lines per successful HTTPS `CONNECT` (`200 NONE_NONE:HIER_NONE`, then
-  `200 TCP_TUNNEL:HIER_DIRECT`) and the footer parser counted the first as
-  a block, so every allowed domain showed equal allowed and denied counts
-  (run 40579499092: `api.github.com` 36/36, `news.google.com` 6/6). This is
-  upstream, not in the lock file: github/gh-aw#63221, fixed by
-  github/gh-aw#63246 (2026-09-24), first shipped in gh-aw v0.89.22. The
-  warning goes away when the compiler pin is bumped to v0.89.22 or later;
-  until then ignore it when the firewall log's Allowed column matches the
-  Denied column.
 
 ## Graduate to Hive without rewriting workflows
 

@@ -23,6 +23,10 @@ func (f *fakeDeltaDiffer) ReviewDeltaDiff(_ context.Context, repo, baseRef, prev
 	return out
 }
 
+func (f *fakeDeltaDiffer) ReviewHeadsSamePatch(context.Context, string, string, string, string) bool {
+	return false
+}
+
 func (f *fakeDeltaDiffer) ReviewPRChangedFiles(context.Context, string, int) ([]string, bool) {
 	return nil, false
 }

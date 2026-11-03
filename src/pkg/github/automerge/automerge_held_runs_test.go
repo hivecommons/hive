@@ -6,7 +6,9 @@ package automerge
 // and names a head whose runs were never created instead of polling it forever.
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -429,6 +431,8 @@ func TestTrySweepTrustedBotWorkflowApprovalMissingWorkflowAfterGrace(t *testing.
 	c := newAutoMergeSweepClient(api.URL)
 	c.trustedBotAuthors = func() map[string]bool { return map[string]bool{"dependabot[bot]": true} }
 	c.now = func() time.Time { return now }
+	var logs bytes.Buffer
+	c.logger = slog.New(slog.NewTextHandler(&logs, nil))
 
 	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
 	if err != nil {
@@ -447,6 +451,17 @@ func TestTrySweepTrustedBotWorkflowApprovalMissingWorkflowAfterGrace(t *testing.
 	}
 	if len(comments) != 1 || comments[0] != workflowApprovalCommandBody("sha23") {
 		t.Fatalf("comments = %q, want one %q command with the head marker", comments, workflowApprovalCommand)
+	}
+	if _, _, err = c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true); err != nil {
+		t.Fatalf("third tick returned error: %v", err)
+	}
+	if n := strings.Count(logs.String(), "still required after ok-to-test grace"); n != 1 {
+		t.Fatalf("grace warning logged %d times across repeat ticks, want once per head", n)
+	}
+	// The grace warning must not claim the hold reason's own dedupe key, or the
+	// sweep loop's once-per-head "automerge hold" line would never fire.
+	if !c.markTerminalHoldLogged("acme", "widget", 23, "sha23", reason) {
+		t.Fatalf("hold reason %q already marked logged by the grace warning; sweep loop would skip its automerge hold line", reason)
 	}
 }
 

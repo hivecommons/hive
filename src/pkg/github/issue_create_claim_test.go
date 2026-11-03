@@ -76,6 +76,99 @@ func TestIssueCreateClaim_FallsBackToExactTitle(t *testing.T) {
 	}
 }
 
+// #16065: sibling children of one decomposition ("<RFC>: child A/B")
+// canonicalise to the same stem and routinely cite the same file, so the
+// canonical key would make the second child's create a replay of the first.
+// A request that declares DAG placement keys on the exact title (minus the
+// filer tag) instead; a retried create of the same child is still a replay.
+func TestIssueCreateClaim_DAGPlacementKeysOnExactTitle(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	const body = "touches src/docs/streaming.md"
+	childA := issueCreateClaimFor("o/r", "[scanner] Streaming activity monitor wiring: Twitch broadcast", body, now, true)
+	childB := issueCreateClaimFor("o/r", "[scanner] Streaming activity monitor wiring: display mode", body, now, true)
+	if canonicalIssueSubject("[scanner] Streaming activity monitor wiring: Twitch broadcast") != canonicalIssueSubject("[scanner] Streaming activity monitor wiring: display mode") {
+		t.Fatal("fixture: the sibling titles must canonicalise alike for this test to mean anything")
+	}
+	if childA.Target == childB.Target || childA.Inputs["subject"] == childB.Inputs["subject"] {
+		t.Fatalf("same-stem DAG siblings over one file must be distinct operations:\n%v\n%v", childA, childB)
+	}
+	folded := issueCreateClaim("o/r", "[scanner] Streaming activity monitor wiring: display mode", body, now)
+	if folded.Target == childB.Target {
+		t.Error("the DAG key must differ from the canonical key for the same title: the canonical key is what collapses siblings")
+	}
+	retagged := issueCreateClaimFor("o/r", "Streaming activity monitor wiring: display mode", body, now, true)
+	if retagged.Target != childB.Target || retagged.Inputs["subject"] != childB.Inputs["subject"] {
+		t.Error("the DAG key ignores the [<agent>] tag, like the scan's exact-title gate")
+	}
+	if err := childB.Validate(); err != nil {
+		t.Fatalf("claim must validate: %v", err)
+	}
+}
+
+// End to end through the journal: two DAG children with the same title stem
+// and an identical file set, filed within one idempotency bucket, must each
+// POST; the second must not be handed its sibling's number as
+// already_existed. A retried create of one child still replays itself.
+func TestCreateIssue_DAGSiblingsSameStemAndFilesBothCreate(t *testing.T) {
+	var creates atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/labels/agent/scanner":
+			fmt.Fprint(w, `{"name":"agent/scanner"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+			n := 100 + creates.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintf(w, `{"number":%d,"id":%d,"html_url":"https://github.example/o/r/issues/%d"}`, n, 5000+n, n)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.SetMutationBoundary(replayTestBoundary(t))
+
+	const body = "Wire the monitor described in src/docs/streaming.md."
+	dag := func(title string) CreateIssueRequest {
+		return CreateIssueRequest{Repo: "o/r", Title: title, Body: body, Labels: []string{"agent/scanner"}, Origin: "scanner", SkipSharedPathFold: true}
+	}
+	first, err := c.CreateIssue(context.Background(), dag("[scanner] Streaming activity monitor wiring: Twitch broadcast"))
+	if err != nil || first.Number != 101 || first.AlreadyExisted {
+		t.Fatalf("first child = %+v, %v; want a fresh #101", first, err)
+	}
+	second, err := c.CreateIssue(context.Background(), dag("[scanner] Streaming activity monitor wiring: display mode"))
+	if err != nil {
+		t.Fatalf("second child: %v", err)
+	}
+	if got := creates.Load(); got != 2 || second.Number != 102 || second.AlreadyExisted {
+		t.Fatalf("POSTs=%d second child = %+v; want its own #102, not the sibling replayed as already_existed", got, second)
+	}
+	retry, err := c.CreateIssue(context.Background(), dag("[scanner] Streaming activity monitor wiring: display mode"))
+	if err != nil {
+		t.Fatalf("retried child: %v", err)
+	}
+	if got := creates.Load(); got != 2 || retry.Number != 102 || !retry.AlreadyExisted {
+		t.Fatalf("POSTs=%d retry = %+v; want the retried create replayed as #102 already_existed", got, retry)
+	}
+
+	// Without DAG placement the same pair is one finding reworded (#11579).
+	plain := func(title string) CreateIssueRequest {
+		return CreateIssueRequest{Repo: "o/r", Title: title, Body: body, Labels: []string{"agent/scanner"}, Origin: "scanner"}
+	}
+	if _, err := c.CreateIssue(context.Background(), plain("[scanner] Streaming activity monitor wiring: Twitch broadcast")); err != nil {
+		t.Fatalf("plain first: %v", err)
+	}
+	folded, err := c.CreateIssue(context.Background(), plain("[scanner] Streaming activity monitor wiring: display mode"))
+	if err != nil {
+		t.Fatalf("plain second: %v", err)
+	}
+	if got := creates.Load(); got != 3 || !folded.AlreadyExisted || folded.Number != 103 {
+		t.Fatalf("POSTs=%d plain second = %+v; want the canonical key to replay #103", got, folded)
+	}
+}
+
 func TestParseIssueNumberFromURL(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

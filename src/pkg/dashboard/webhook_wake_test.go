@@ -71,6 +71,25 @@ func TestWebhookWakeReasonNamesItems(t *testing.T) {
 	}
 }
 
+func TestGitHubIssueOpenedDeliveryWakesExistingEvaluation(t *testing.T) {
+	const secret = "issue-opened-fixture"
+	t.Setenv(githubWebhookSecretEnvVar, secret)
+	t.Cleanup(github.ResetWebhookTrackerForTest())
+	s := newGitHubWebhookTestServer(t)
+	var wakes []string
+	s.deps.WebhookWake = func(reason string) { wakes = append(wakes, reason) }
+	body := []byte(`{"action":"opened","issue":{"number":23,"state":"open"},"repository":{"full_name":"webhookorg/webhookrepo"}}`)
+
+	rec := postGitHubWebhook(s, "issues", "invalid-signature", body)
+	if rec.Code != http.StatusUnauthorized || len(wakes) != 0 {
+		t.Fatalf("unverified delivery woke evaluation: status=%d wakes=%v", rec.Code, wakes)
+	}
+	rec = postGitHubWebhook(s, "issues", signGitHubWebhookForTest(secret, body), body)
+	if rec.Code != http.StatusOK || len(wakes) != 1 || wakes[0] != "issues webhookorg/webhookrepo issue #23" {
+		t.Fatalf("verified issue opened: status=%d wakes=%v body=%s", rec.Code, wakes, rec.Body.String())
+	}
+}
+
 func TestStatusReportsEvalLoopPacing(t *testing.T) {
 	s := newTestServer()
 	at := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)

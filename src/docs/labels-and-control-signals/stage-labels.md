@@ -168,6 +168,8 @@ stateDiagram-v2
     s060 --> s080: CI green, author side done
     s080 --> s095: lane admits, soak window running
     s080 --> s100: lane admits, no soak / soak already complete
+    s080 --> s070: current head red, changes requested or being rebased by the train (hivecommons/hive#15825; backward hop)
+    s080 --> s050: new push: CI and verdicts owed again on the current head (hivecommons/hive#15825; backward hop)
     s095 --> s100: soak complete
     s100 --> s095: pre-095 record reclassified while still soaking (not a regression)
     s050 --> s070: hive PR red / changes requested
@@ -913,7 +915,13 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      adopted branch first reaches the normal fixer, which rebases onto the
      PR base and pushes to the actual fork with a head-bound lease,
      preserving authorship and sign-offs. If the head stays idle past the
-     074 dwell, supersede in that sweep rather than escalate to 085.
+     074 dwell, supersede in that sweep rather than escalate to 085. Each
+     fixer attempt is routed once and gets
+     `governor.labels.stage.adoption.rebase_attempt_timeout` (default 15m)
+     to push; one with no push counts as failed and the next attempt is
+     dispatched (the row reads "Rebasing · attempt 1/2 · waiting for
+     scanner 12m" meanwhile). Once both attempts are spent the adoption
+     supersedes at once instead of waiting out the dwell (#16023).
    - `reason=in-place-stalled` (always `mode=supersede`) — second takeover:
      an in-place-adopted head sat unchanged for the 074 dwell (3h) with CI
      idle (not pending) and the review swarm's latest verdict on it

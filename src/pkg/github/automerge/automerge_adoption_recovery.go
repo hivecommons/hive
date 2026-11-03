@@ -47,6 +47,9 @@ type adoptionRecovery struct {
 	// Attempted means an update-branch or re-run was issued: the escalation
 	// waits for CI on the result.
 	Attempted bool
+	// Deferred means preparation ownership withheld the request, so no
+	// recovery attempt or lifetime budget was consumed.
+	Deferred bool
 	// Reason is the structured outcome: update-branch, rerun-failed-jobs or
 	// skipped:<why>.
 	Reason string
@@ -213,14 +216,25 @@ func (c *Engine) recoverStaleRedAdoption(ctx context.Context, store *stagelabels
 		c.info("adopted PR recovery", logArgs("reason", out.Reason, "base_sha", baseSHA, "failing_check", failing)...)
 		return out
 	}
-	store.MarkAdoptionRecovery(key, obs.HeadSHA, baseSHA)
 	behind := cmp.GetBehindBy()
 	if behind > 0 {
+		if c.requireCurrentBaseFor(obs.Owner + "/" + obs.Repo) {
+			// Existing recovery evidence already proved that the new base
+			// clears this failure. This admits repair, never a merge: the
+			// normal current-head CI and review gates still run afterward.
+			if reason, err := c.admitBasePreparation(ctx, obs.Owner, obs.Repo, baseRef, obs.Number, obs.HeadSHA, obs.Lane, false); reason != "" || err != nil {
+				return adoptionRecoverySkipped(nonEmpty(reason, "base-refresh-state-unavailable"))
+			}
+		}
 		out, done := c.recoverByUpdateBranch(ctx, store, key, obs, logArgs("base_sha", baseSHA, "behind_by", behind, "failing_check", failing))
 		if done {
+			if !out.Deferred {
+				store.MarkAdoptionRecovery(key, obs.HeadSHA, baseSHA)
+			}
 			return out
 		}
 	}
+	store.MarkAdoptionRecovery(key, obs.HeadSHA, baseSHA)
 	return c.recoverByRerun(ctx, obs, logArgs("base_sha", baseSHA, "behind_by", behind, "failing_check", failing))
 }
 
@@ -230,6 +244,9 @@ func (c *Engine) recoverStaleRedAdoption(ctx context.Context, store *stagelabels
 func (c *Engine) recoverByUpdateBranch(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, logArgs []any) (adoptionRecovery, bool) {
 	fork := obs.HeadRepo != "" && !strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo)
 	if err := c.executeUpdateBranchEffect(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA, adoptionRecoveryClaimReason); err != nil {
+		if wait := preparationWaitReason(err); wait != "" {
+			return adoptionRecovery{Deferred: true, Reason: adoptionRecoverySkipPrefix + wait}, true
+		}
 		var out adoptionRecovery
 		switch classifyUpdateBranchError(err, fork) {
 		case updateBranchUpToDate:

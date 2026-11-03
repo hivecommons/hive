@@ -520,21 +520,36 @@ func (s *Server) publicRepos() publicRepoSet {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return pub
 	}
-	return registryPublicRepos(pub, s.deps.Config.Hub.IsPublic, s.deps.Config.Project.PrimaryRepo, s.deps.Config.Project.Repos)
+	cfg := s.deps.Config
+	return registryPublicRepos(pub, cfg.Hub.IsPublic, cfg.Project.Org, cfg.Project.PrimaryRepo, cfg.Project.Repos)
 }
 
-func registryPublicRepos(pub publicRepoSet, hiveIsPublic bool, primaryRepo string, repos []string) publicRepoSet {
+// registryPublicRepos adds a public hive's own project repos to pub. Config
+// loading strips the org off primary_repo and every repos entry, so a bare
+// name is qualified with org here; publicRepoSet.add only accepts owner/name
+// and would otherwise drop every one of them, marking the whole board private.
+func registryPublicRepos(pub publicRepoSet, hiveIsPublic bool, org, primaryRepo string, repos []string) publicRepoSet {
 	if pub == nil {
 		pub = publicRepoSet{}
 	}
 	if !hiveIsPublic {
 		return pub
 	}
-	pub.add(primaryRepo)
+	pub.add(qualifyProjectRepo(org, primaryRepo))
 	for _, repo := range repos {
-		pub.add(repo)
+		pub.add(qualifyProjectRepo(org, repo))
 	}
 	return pub
+}
+
+// qualifyProjectRepo returns org/repo for a bare repo name; a name that
+// already carries an owner, or an empty org, is returned as is.
+func qualifyProjectRepo(org, repo string) string {
+	org, repo = strings.TrimSpace(org), strings.TrimSpace(repo)
+	if repo == "" || org == "" || strings.Contains(repo, "/") {
+		return repo
+	}
+	return org + "/" + repo
 }
 
 func validGourceProject(project string) bool {

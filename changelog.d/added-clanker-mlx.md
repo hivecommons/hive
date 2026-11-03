@@ -1,0 +1,1 @@
+- ClankeR contributors can select Apple MLX on `/contribute` and use dedicated `just` setup/serve/launch recipes for user-managed MLX-LM inference through Pi on supported Apple Silicon Macs, with loopback-only configuration, explicit streaming tool-call verification, fail-closed checks, and public integration/setup documentation.

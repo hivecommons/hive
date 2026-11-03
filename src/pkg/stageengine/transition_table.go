@@ -35,6 +35,8 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.Reviewed, stagelabels.AwaitingMergeAdmission}:          true, // CI green, author side done
 	{stagelabels.AwaitingMergeAdmission, stagelabels.PreMergeSoak}:      true, // lane admits, soak window running
 	{stagelabels.AwaitingMergeAdmission, stagelabels.MergeQueue}:        true, // lane admits, no soak / soak already complete
+	{stagelabels.AwaitingMergeAdmission, stagelabels.Fixing}:            true, // current head red, changes requested or being rebased by the train (hivecommons/hive#15825; backward hop)
+	{stagelabels.AwaitingMergeAdmission, stagelabels.ReviewPending}:     true, // new push: CI and verdicts owed again on the current head (hivecommons/hive#15825; backward hop)
 	{stagelabels.PreMergeSoak, stagelabels.MergeQueue}:                  true, // soak complete
 	{stagelabels.MergeQueue, stagelabels.PreMergeSoak}:                  true, // pre-095 record reclassified while still soaking (not a regression)
 	{stagelabels.ReviewPending, stagelabels.Fixing}:                     true, // hive PR red / changes requested

@@ -17,6 +17,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ### First installation
 
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
+- [Hub Fleet activity page](hub-fleet-activity.md) — the read-only `/activity` board of open issues and PRs across the hives you can see: per-viewer scoping, hive chips, group-by-hive freshness headers, always-visible truncation and stale-source disclosures, 15-second ETag polling, and display mode (`?kiosk=1`, `?display=1`, `am.*` views and `hub-activity` playlists).
 - [Docker Compose quick start](quickstart-docker-compose.md) — default standalone installation, prerequisites, and verification.
 - [Podman quick start](quickstart-podman.md) — standalone Quadlet/systemd installation, with rootless/rootful prerequisites.
 - [Kubernetes deployment](kubernetes-deployment.md) — standalone cluster installation, storage, authentication, and dashboard access. Related: [health checks](health-checks.md).
@@ -105,6 +106,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
 - [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](notifications.md#discord-webhook-vs-discord-bot) and the [Slack Socket Mode / Telegram / Matrix / Teams bots](notifications.md#chat-bots-slack-socket-mode-telegram-matrix-teams).
+- [Attention episodes](attention-episodes.md) — single-admitter condition episodes, flap window, and the `github.attention` rollout controls.
 - [State-triggered hooks](hooks.md) — declarative `transition → action` rules, the transition catalog, the vetted action set, and the security model (RFC #4001).
 - [GitHub Actions trigger](github-actions-trigger.md) — call a hive from a workflow via the v6 comment-relay composite action, with examples for PR review and scheduled status kicks.
 - [CEL-based agent triggers](cel-triggers.md) — the `triggers:` config key: declarative CEL rules that kick an agent on a normalized source-control event, additive to built-in label/governor triggering, the `event.*` field reference, and the fail-closed compile/runtime contract.
@@ -225,7 +227,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Automatic repo ACMM onboarding reconciler](design/repo-acmm-onboarding.md) — proposed design for per-repo ACMM targets, gap-to-work reconciliation, human hand-off, waivers, and anti-gaming controls (RFC #6235).
 - [Hive federation design](../../docs/federation-design.md) — the multi-hive registry: live `/api/hives` endpoints, project onboarding, contributor flow across hubs, and what remains future design work.
 - [Public roadmap](roadmap.md) — available foundations, current/future direction, release-line status, completed work, and dated decision evidence. Not a delivery promise.
-- [Integrations](integrations.md) — one page of logos and status (Supported / Opt-in / Planned) for agent backends, work sources, forges, sandboxes and upstream projects.
+- [Integrations](integrations.md) — one page of logos and status (Supported / Opt-in / In progress / Planned) for agent backends, work sources, forges, sandboxes and upstream projects.
 - [Landscape and positioning](landscape.md) — how Hive's operations-plane design compares to nearby agentic orchestration tools, with public references per project. Explicitly time-sensitive; check the conducted date in its header before quoting product details.
 - [CNCF sandbox onboarding status](cncf-sandbox-onboarding.md) — repo-local map of the onboarding tracker and repository evidence (LICENSE, governance, security, OWNERS, DCO).
 - [CNCF reference architecture](cncf-reference-architecture.md) — CNCF submission/reference template.

@@ -203,6 +203,7 @@
           "AfterOffline": "",
           "AfterUnregistered": "",
           "OfflineGrace": "",
+          "RebaseAttemptTimeout": "",
           "InPlace": null,
           "StrictAttribution": null,
           "AutoMerge": null,
@@ -442,6 +443,8 @@
     "BaseURL": "",
     "AppAuthoredPRs": null,
     "AppSignedCommits": null,
+    "attention": {},
+    "notifications": {},
     "OAuthBaseURLOverride": "",
     "OAuthAPIURLOverride": ""
   },
@@ -476,6 +479,7 @@
       }
     },
     "issue_bands": {},
+    "matrix": {},
     "stage_tracker": {}
   },
   "Data": {
@@ -566,6 +570,7 @@
     "AutoUpgrade": false,
     "AutoUpgradeMode": "",
     "ContributeSuspended": false,
+    "activity": {},
     "ContributeWallEnabled": false,
     "ContributeWallRetentionDays": 0,
     "NPSEnabled": null,
@@ -758,7 +763,8 @@
     "contributor_lane": {},
     "contributor_tier": {},
     "merge_train": {},
-    "native_merge_queue": {}
+    "native_merge_queue": {},
+    "hive_superseding": {}
   },
   "decisions": {
     "delegate": {}
@@ -777,6 +783,31 @@
   "scanner": {},
   "upstream_watch": {},
   "convergence": {},
+  "integration_orchestration": {
+    "mode": "",
+    "scopes": null,
+    "lease_ttl": 0,
+    "window": 0,
+    "max_active": 0,
+    "max_runner_minutes": 0,
+    "max_jobs": 0,
+    "max_attempts": 0,
+    "max_observation_age": 0,
+    "admission_runner_minutes": 0,
+    "admission_jobs": 0,
+    "policies": null,
+    "execution": {
+      "mode": "",
+      "scopes": null,
+      "max_active": 0,
+      "max_runner_minutes": 0,
+      "max_jobs": 0,
+      "max_attempts": 0,
+      "observation_age": 0,
+      "window": 0,
+      "cooldown": 0
+    }
+  },
   "sla": {
     "targets": {}
   },

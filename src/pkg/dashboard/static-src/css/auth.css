@@ -141,6 +141,14 @@
     .gh-app-perm-details { font-size: 0.8rem; margin-top: var(--sp-3); color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
     .gh-app-perm-details .perm-missing { color: var(--red); font-weight: 600; }
+    /* Onboarding guide tip — appended under any onboarding-kind problem
+       (GitHub App, repo target, system alert) so a new operator is pointed at
+       the 🧭 Guide instead of asking Slack for the install URL. */
+    .onboarding-guide-tip { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-3); }
+    .onboarding-guide-tip .onboarding-guide-link { color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: underline; }
+    .onboarding-guide-tip .onboarding-guide-link:hover, .onboarding-guide-tip .onboarding-guide-link:focus-visible { text-decoration: none; }
+    .welcome-install-url { margin-top: var(--sp-3); font-size: var(--fs-sm); word-break: break-all; }
+    .welcome-install-url code { color: var(--text); }
     /* .gh-auth-overlay/.gh-auth-modal — modal overlay/panel recipes (end of style block).
        z-index encodes stacking intent — do not change. */
     .gh-auth-overlay { z-index: 9999; }

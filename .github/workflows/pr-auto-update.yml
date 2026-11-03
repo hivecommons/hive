@@ -27,4 +27,7 @@ jobs:
           # A PR's exact marker is the durable record that this issue was a
           # shared-CI incident; no new label taxonomy is required.
           SHARED_CI_INCIDENT: ${{ github.event_name == 'issues' && github.event.issue.number || '' }}
+          # Explicit repo#base allow-list; requires the matching Hive
+          # skip_current_base_gate opt-in. A live queue is also probed.
+          HIVE_NATIVE_QUEUE_FRESHNESS: ${{ vars.HIVE_NATIVE_QUEUE_FRESHNESS }}
         run: .github/scripts/pr-auto-update.sh

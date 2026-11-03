@@ -25,4 +25,12 @@ func TestAliasesAreTheCruxTypes(t *testing.T) {
 	if ErrDenied != cruxeffects.ErrDenied || KindBranchPush != cruxeffects.KindBranchPush {
 		t.Fatal("alias values differ from the Crux leaf")
 	}
+	var journaled JournaledBoundary = LoggingBoundary{}
+	var cruxJournaled cruxeffects.JournaledBoundary = journaled
+	if _, err := cruxJournaled.ExecuteJournaled(context.Background(), Claim{}, func(context.Context) (Result, error) {
+		t.Fatal("missing journal invoked an effect through the alias")
+		return Result{}, nil
+	}); !errors.Is(err, ErrDenied) {
+		t.Fatalf("journal-required alias lost the denial: %v", err)
+	}
 }

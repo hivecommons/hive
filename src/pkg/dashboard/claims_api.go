@@ -65,8 +65,24 @@ func (s *Server) InstallClaimHooks(base claims.Hooks) {
 	if l == nil {
 		return
 	}
+	l.SetCommitCheck(s.integrationClaimCommit)
 	prevTaken := base.OnTakenOver
+	prevClaimed, prevReleased := base.OnClaimed, base.OnReleased
+	base.OnClaimed = func(c claims.Claim, outcome claims.Outcome) {
+		s.integrationClaimObserved(c)
+		if prevClaimed != nil {
+			prevClaimed(c, outcome)
+		}
+	}
+	base.OnReleased = func(c claims.Claim, reason string) {
+		s.integrationRelease(c.Key(), c.Holder, uint64(c.ClaimedAt.UnixNano()), reason)
+		if prevReleased != nil {
+			prevReleased(c, reason)
+		}
+	}
 	base.OnTakenOver = func(now, previous claims.Claim) {
+		s.integrationRelease(previous.Key(), previous.Holder, uint64(previous.ClaimedAt.UnixNano()), "claim takeover")
+		s.integrationClaimObserved(now)
 		if prevTaken != nil {
 			prevTaken(now, previous)
 		}

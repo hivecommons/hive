@@ -53,6 +53,11 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/leaderboard` | Public | Leaderboard API | `pkg/dashboard/api_contribute.go:305` |
 | `GET` | `/api/leaderboard/teams` | Public | Team Leaderboards | `pkg/dashboard/api_contribute.go:306` |
 | `GET` | `/api/leaderboard/style` | Public | Leaderboard Style | `pkg/dashboard/api_contribute.go:307` |
+| `POST` | `/api/upgrade/announce` | Owner role | Announce a pod roll before it happens ([#15788](https://github.com/hivecommons/hive/issues/15788)): body `{"target": "<sha|tag>", "source": "hub"|"operator", "reason": "..."}` (`version` is an alias of `target`; all fields optional). Marks `/api/status`/`/api/version` `upgradeProgress` as `state: pulling, phase: announced` with the target and publishes an SSE `upgrading` event so every open dashboard shows the upgrade animation; a SIGTERM afterwards (or with no announce at all) publishes `phase: restarting` from the same record. The hub sends the same announce through the heartbeat response (`upgrade_announce`) for hub-managed hives; an announce with no kill expires after 15 minutes. Returns `{ok, upgradeProgress}` | `pkg/dashboard/api.go:68` |
+
+
+
+| `GET` | `/api/matrix/lines` | Dashboard auth/session | Matrix Lines: serve bounded backlog of pushed lines behind dashboard.matrix with repo allowlist filtering. `max` counts only lines the repo allowlist admits, so a page is never emptied by filtered-out lines. A client paging with `max` should use the last returned line's `seq` as its next `since`, not the top-level `seq`, which is the source's latest sequence number and would skip lines still past the page. | `pkg/dashboard/api.go:191` |
 | `GET` | `/api/leaderboard/battle-log` | Public | Scrubbed public Battle Log activity feed for leaderboard widgets. | `pkg/dashboard/battle_log.go:108` |
 | `GET` | `/api/leaderboard/hive-of-week` | Public | Featured weekly project metadata, configured render URLs (empty when none), gource source URL, and embed snippets. | `pkg/dashboard/battle_log.go:109` |
 | `GET` | `/api/leaderboard/gource-log` | Public | Gource custom log source for a project/week, derived from public hive event data. | `pkg/dashboard/battle_log.go:110` |

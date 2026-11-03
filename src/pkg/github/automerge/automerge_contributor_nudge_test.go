@@ -20,6 +20,11 @@ type fakeNudgeSink struct {
 	// presence overrides the default (a registered relay whose online state
 	// mirrors outcome.Online) returned by Presence.
 	presence *ContributorPresence
+	abandons []ContributorAbandon
+}
+
+func (f *fakeNudgeSink) Abandoned(_ context.Context, a ContributorAbandon) {
+	f.abandons = append(f.abandons, a)
 }
 
 func (f *fakeNudgeSink) Presence(_ context.Context, _ string) ContributorPresence {

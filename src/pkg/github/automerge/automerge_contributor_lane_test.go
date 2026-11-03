@@ -180,6 +180,10 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		if headStatus == "" {
 			headStatus = "success"
 		}
+		baseRef := fx.baseRef
+		if baseRef == "" {
+			baseRef = "main"
+		}
 		pull := func(sha string) map[string]any {
 			p := map[string]any{
 				"node_id":         fx.nodeID,
@@ -191,11 +195,12 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"mergeable":       state == "clean",
 				"user":            map[string]string{"login": author},
 				"head":            map[string]any{"sha": sha, "repo": map[string]string{"full_name": headRepo}},
-				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
+				"base":            map[string]any{"ref": "main", "sha": "base1", "repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          labels,
 			}
 			if fx.baseRef != "" {
 				p["base"].(map[string]any)["ref"] = fx.baseRef
+				p["base"].(map[string]any)["sha"] = "base1"
 			}
 			if !fx.omitAssociation {
 				p["author_association"] = association
@@ -263,7 +268,7 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				return
 			}
 			sha := "sha7"
-			if fetches > 1 && fx.recheckHeadSHA != "" {
+			if fetches > 2 && fx.recheckHeadSHA != "" {
 				sha = fx.recheckHeadSHA
 			}
 			json.NewEncoder(w).Encode(pull(sha))
@@ -361,9 +366,9 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"merged": !fx.mergeNotApplied, "sha": "merge7"})
-		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/"+fx.baseRef:
-			json.NewEncoder(w).Encode(map[string]any{"name": fx.baseRef, "commit": map[string]string{"sha": "base1"}})
-		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/"+fx.baseRef+"/protection/required_status_checks":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/"+baseRef:
+			json.NewEncoder(w).Encode(map[string]any{"name": baseRef, "commit": map[string]string{"sha": "base1"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/"+baseRef+"/protection/required_status_checks":
 			if len(fx.requiredContexts) > 0 {
 				json.NewEncoder(w).Encode(map[string]any{"strict": false, "contexts": fx.requiredContexts})
 				return
@@ -398,9 +403,9 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				return
 			}
 			json.NewEncoder(w).Encode([]any{})
-		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})
-		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/"+fx.baseRef+"...sha7":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/"+baseRef+"...sha7":
 			fx.compares++
 			json.NewEncoder(w).Encode(map[string]any{"behind_by": fx.behindBy, "ahead_by": 1})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
@@ -539,6 +544,9 @@ func newContributorLaneEngineRepos(apiURL string, repos []string, policy Contrib
 	client := hgithub.NewClient("token", "acme", repos, nil, apiURL)
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	opts.ContributorLanePolicy = func() ContributorLanePolicy { return policy }
+	if opts.BasePreparation == nil {
+		opts.BasePreparation = NewBasePreparationStore("")
+	}
 	if opts.ContributorLaneVerdict == nil {
 		opts.ContributorLaneVerdict = approvedVerdict
 	}

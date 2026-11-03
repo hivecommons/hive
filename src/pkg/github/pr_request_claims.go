@@ -114,6 +114,18 @@ func (c *Client) validatePRRequestBody(req PRRequest) string {
 	if len(req.IssueN) == 0 {
 		return ""
 	}
+	// GitHub numbers issues from 1, and ParseClaimedIssues/ParseReferencedIssues
+	// drop #0 for the same reason — so a declared 0 can never be satisfied by
+	// any body. It is the "--issues <N>" placeholder left unsubstituted, not
+	// lost content; say so, or the "re-run with the full body" remedy below
+	// sends the agent into a retry loop that cannot succeed (#16162).
+	for _, n := range req.IssueN {
+		if n <= 0 {
+			return fmt.Sprintf("request declares originating issue #%d, which is not a GitHub issue number (issues are numbered from 1) — "+
+				"the --issues value was a placeholder, not the issue this PR is for. "+
+				"Re-run hive-open-pr with the real issue number, or omit --issues when the work did not start from an issue", n)
+		}
+	}
 	owner, repo := c.prRequestRepo(req.Repo)
 	defaultRepo := owner + "/" + repo
 	text := req.Title + "\n" + req.Body

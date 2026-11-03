@@ -31,6 +31,7 @@ const src = [
   fn('stageTrackerOverlap'),
   fn('stageTrackerOverlapBadgeText'),
   fn('stageTrackerOverlapTip'),
+  fn('stageTrackerLeftTrainBadgeText'),
   fn('stageTrackerOverlapBadgeHtml'),
   fn('stageTrackerTrainLines'),
   fn('stageTrackerRowTrain'),
@@ -79,4 +80,30 @@ test('the hint yields to a train, a left-train note, and nothing', () => {
   const bareFront = { kind: 'pr', number: 7, stage: 50, overlap: { with: [2, 3], files: ['a.go'] } };
   assert.strictEqual(api.badgeText(bareFront), 'train · 1st once green');
   assert.strictEqual(api.tip(bareFront), 'overlaps #2, #3 (a.go) — no member of the train is merge-ready yet; provisionally 1st, merges ahead of them if it is green first');
+});
+
+// hive#15825: the rule "items that have not passed the review or CI is not
+// green should not be (a) ready for merge, (b) in a merge train". A member
+// the train ejected sits back in CI / Review with `left_train: {why, note,
+// reason, badge}` — the gray pill carries the lineage, the hover the why —
+// and an admitted candidate's chip takes the server's words.
+test('an ejected member shows the lineage pill, never a train', () => {
+  const ejected = { repo: 'hivecommons/hive', number: 15748, kind: 'pr', stage: 50, modifiers: [], caption: 'left the merge train — new push, CI re-running after push; review re-run owed',
+    left_train: { why: 'head-moved', note: 'left the merge train — new push, CI re-running after push; review re-run owed', reason: 'merge-train:ejected:head-moved', badge: 'left merge train · pushed 3m ago' } };
+  assert.strictEqual(api.trainKey(ejected), '');
+  assert.strictEqual(api.badgeText(ejected), '');
+  const badge = api.badgeHtml(ejected);
+  assert.match(badge, /class="ham-badge ham-badge-overlap"/);
+  assert.match(badge, />left merge train · pushed 3m ago</);
+  assert.match(badge, /title="Merge train: left the merge train — new push, CI re-running after push; review re-run owed"/);
+  assert.deepStrictEqual(api.lines(ejected), ['Merge train: left the merge train — new push, CI re-running after push; review re-run owed']);
+  // No lineage from the server (the older fixing note): no pill.
+  assert.strictEqual(api.badgeHtml(Object.assign({}, ejected, { left_train: { why: 'fixing', note: 'x' } })), '');
+});
+
+test('an admitted candidate chip takes the server words', () => {
+  const admitted = { repo: 'hivecommons/hive', number: 15816, kind: 'pr', stage: 80, modifiers: [],
+    overlap: { behind: 15804, files: ['hive-merge.md'], note: 'green and approved; takes a seat at the back of the merge train behind #15804 on the lane\'s next pass', badge: 'train · joins behind #15804 next pass' } };
+  assert.strictEqual(api.badgeText(admitted), 'train · joins behind #15804 next pass');
+  assert.ok(!/when green/.test(api.badgeHtml(admitted)));
 });

@@ -53,7 +53,7 @@ type MergeAttempts struct {
 	mu       sync.Mutex
 	items    map[string]MergeAttempt
 	now      func() time.Time
-	onChange func()
+	onChange func(MergeAttempt)
 }
 
 // NewMergeAttempts returns an empty registry reading the clock from now
@@ -69,10 +69,11 @@ func mergeAttemptKey(repo string, number int) string {
 	return strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number)
 }
 
-// SetOnChange registers fn to run (outside the lock) after every Begin and
-// End; the dashboard uses it to invalidate its tracker cache so the next
-// poll sees the attempt.
-func (m *MergeAttempts) SetOnChange(fn func()) {
+// SetOnChange registers fn to run (outside the lock) with the attempt as
+// recorded after every Begin and End; the dashboard uses it to patch its
+// tracker snapshot and nudge open tabs so the next poll sees the attempt
+// (hivecommons/hive#15808).
+func (m *MergeAttempts) SetOnChange(fn func(MergeAttempt)) {
 	if m == nil {
 		return
 	}
@@ -96,11 +97,12 @@ func (m *MergeAttempts) BeginOnHead(repo string, number int, path, head string) 
 	m.mu.Lock()
 	now := m.now()
 	m.purgeLocked(now)
-	m.items[mergeAttemptKey(repo, number)] = MergeAttempt{Repo: strings.TrimSpace(repo), Number: number, Path: path, StartedAt: now, Head: strings.TrimSpace(head)}
+	a := MergeAttempt{Repo: strings.TrimSpace(repo), Number: number, Path: path, StartedAt: now, Head: strings.TrimSpace(head)}
+	m.items[mergeAttemptKey(repo, number)] = a
 	fn := m.onChange
 	m.mu.Unlock()
 	if fn != nil {
-		fn()
+		fn(a)
 	}
 }
 
@@ -129,7 +131,7 @@ func (m *MergeAttempts) End(repo string, number int, merged bool, err error) {
 	fn := m.onChange
 	m.mu.Unlock()
 	if fn != nil {
-		fn()
+		fn(a)
 	}
 }
 

@@ -1028,6 +1028,7 @@ func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string
 		return removed, err
 	}
 	gone, _ := c.unparkStageLabelsLifted(ctx, owner, repo, number, stageLabels)
+	notifyItemRefresh(owner+"/"+repo, number, false)
 	return append(removed, gone...), nil
 }
 

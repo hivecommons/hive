@@ -607,6 +607,10 @@ type AutoMergeConfig struct {
 	// opt-in per repo: a hive that never sets it keeps the pre-queue
 	// behaviour, including the `merge-queue-required` park.
 	NativeMergeQueue NativeMergeQueueAutoMergeConfig `yaml:"native_merge_queue,omitempty" json:"native_merge_queue,omitempty"`
+	// HiveSuperseding is the owner's rule for the hive's own superseding
+	// copies of other PRs (@clubanderson: "if a pr is superseded by a pr
+	// that a hive agent creates, it should auto merge"). Default ON.
+	HiveSuperseding HiveSupersedingAutoMergeConfig `yaml:"hive_superseding,omitempty" json:"hive_superseding,omitempty"`
 }
 
 type MergeTrainAutoMergeConfig struct {
@@ -1398,6 +1402,10 @@ type NativeMergeQueueAutoMergeConfig struct {
 	// Repos restricts the hand-off to these repositories (owner/repo,
 	// case-insensitive). Empty means every watched repository once Enabled.
 	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// Bases further restricts hand-off to exact owner/repo#base pairs.
+	// Repository names are case-insensitive; branch names are case-sensitive.
+	// Empty preserves the original all-queue-bases behaviour for YAML users.
+	Bases []string `yaml:"bases,omitempty" json:"bases,omitempty"`
 	// SkipCurrentBaseGate lets a queue-enabled base bypass the
 	// auto_merge.require_current_base gate and the behind update-branch,
 	// because the merge group re-tests the merged result and a new head

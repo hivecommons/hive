@@ -93,6 +93,7 @@
     let _contributorFilters = new Set();
     // Cache the last fetched contributor list for re-rendering on filter change
     let _cachedContributors = [];
+    let _contributorFetchID = 0;
 
     const CONTRIBUTOR_FILTER_ALL = 'all';
     const CONTRIBUTOR_FILTER_ACTIVE = 'active';
@@ -154,14 +155,22 @@
     }
 
     async function fetchContributors() {
+      const requestID = ++_contributorFetchID;
       try {
         const res = await fetch('/api/contributors');
-        if (!res.ok) return;
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
-        _cachedContributors = data.contributors || [];
+        if (requestID !== _contributorFetchID) return;
+        if (!Array.isArray(data.contributors)) throw new Error('Invalid contributor roster');
+        _cachedContributors = data.contributors;
         renderContributorFilters(_cachedContributors);
         renderContributors(_cachedContributors);
-      } catch (e) { /* silently retry on next poll */ }
+        updateContributorBadge(data.contributorPool);
+      } catch (e) {
+        if (requestID !== _contributorFetchID) return;
+        console.warn('Failed to refresh contributors:', e);
+        updateContributorBadge(null);
+      }
     }
 
     const CONTRIB_TINT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -275,6 +284,15 @@
       });
     }
 
+    function contributorAbandonedBadge(c) {
+      const count = Number(c.abandoned) || 0;
+      if (count <= 0) return '';
+      const recent = (Array.isArray(c.abandoned_prs) ? c.abandoned_prs : []).slice()
+        .sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
+      const tooltip = recent.map(r => `${r.repo}#${r.pr} → ${r.adopted_into_pr ? '#' + r.adopted_into_pr : 'in-place'} · ${r.reason || 'unknown'} · ${r.at || 'unknown time'}`).join('\n') || 'PRs adopted by the hive';
+      return `<span class="contrib-abandoned" title="${esc(tooltip)}">Abandoned ${count}</span>`;
+    }
+
     function renderContributors(contributors) {
       refreshSectionCardShell('contributors-section');
       setSectionSummary('contributors-section', contributorsSectionSummary(contributors, null));
@@ -348,8 +366,9 @@
             </div>
             ${tierProv ? `<div class="fs-sm text-muted mb-3 contrib-tier-provenance">${esc(tierProv)}</div>` : ''}
             ${cliLine ? `<div class="fs-sm text-muted mb-3">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div class="fs-sm text-muted mb-3">${roleLine}</div>` : '')}
-            <div style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
+            <div style="display:flex;flex-wrap:wrap;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
               <span>Completed: <strong class="text-default">${c.total_tasks_completed || 0}</strong></span>
+              ${contributorAbandonedBadge(c)}
               <span>Failed: <strong style="color:${(c.total_tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--fg)'}">${c.total_tasks_failed || 0}</strong></span>
             </div>
             ${(c.active_tasks && c.active_tasks.length > 0) ? '<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current tasks</div>' + c.active_tasks.map(t => `<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-2);padding:6px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(t.kind)}</span> <a href="https://github.com/${esc(t.repo)}/issues/${t.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(t.repo)}#${t.number} ↗</a> — ${esc(t.title)}</div>`).join('') : (c.current_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current task</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:8px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(c.current_task.kind)}</span> <a href="https://github.com/${esc(c.current_task.repo)}/issues/${c.current_task.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(c.current_task.repo)}#${c.current_task.number} ↗</a> — ${esc(c.current_task.title)}</div>` : (c.last_completed_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Last completed</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:6px 10px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-success">${esc(c.last_completed_task.kind)}</span> <a href="https://github.com/${esc(c.last_completed_task.repo)}/issues/${c.last_completed_task.number}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:underline">${esc(c.last_completed_task.repo)}#${c.last_completed_task.number} ↗</a> — ${esc(c.last_completed_task.title)}</div>` : (c.active ? '<div style="font-size:var(--fs-sm);color:var(--green);margin-bottom:10px">Idle — waiting for task</div>' : '')))}
@@ -449,25 +468,27 @@
           ? linkedAvatar(e.github_username, CONTRIBUTOR_AVATAR_PX, `@${e.github_username}`, e.avatar_url)
           : `<span style="display:inline-block;width:${CONTRIBUTOR_AVATAR_PX}px;height:${CONTRIBUTOR_AVATAR_PX}px;border-radius:50%;background:var(--border)"></span>`;
         return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:var(--sp-4) var(--sp-5);font-weight:600;color:var(--muted)">${e.rank}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${avatarHtml}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">@${esc(e.github_username)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5)">${trustTierBadge(e.trust_tier)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right">${e.tasks_completed || 0}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right" title="Run stage completions credited to this contributor (#8349)">${leaderboardStagesText(e)}</td>
-          <td style="padding:var(--sp-4) var(--sp-5);text-align:right;color:${(e.tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--muted)'}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-rank">${e.rank}</td>
+          <td>${avatarHtml}</td>
+          <td>@${esc(e.github_username)}</td>
+          <td>${trustTierBadge(e.trust_tier)}</td>
+          <td class="contrib-lb-num">${e.tasks_completed || 0}</td>
+          <td class="contrib-lb-num" title="Run stage completions credited to this contributor (#8349)">${leaderboardStagesText(e)}</td>
+          <td class="contrib-lb-num contrib-lb-failed${(e.tasks_failed || 0) > 0 ? ' has-failures' : ''}">${e.tasks_failed || 0}</td>
+          <td class="contrib-lb-num">${e.abandoned || 0}</td>
         </tr>`;
       }).join('');
       setIfChanged(panel, `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+        <table class="contrib-lb-table" style="width:100%;border-collapse:collapse;font-size:0.8rem">
           <thead><tr style="background:var(--bg);border-bottom:1px solid var(--border)">
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">#</th>
-            <th style="padding:var(--sp-4) var(--sp-5)"></th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">User</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:left;color:var(--muted);font-weight:600">Tier</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Completed</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Stages</th>
-            <th style="padding:var(--sp-4) var(--sp-5);text-align:right;color:var(--muted);font-weight:600">Failed</th>
+            <th>#</th>
+            <th></th>
+            <th>User</th>
+            <th>Tier</th>
+            <th class="contrib-lb-num">Completed</th>
+            <th class="contrib-lb-num">Stages</th>
+            <th class="contrib-lb-num">Failed</th>
+            <th class="contrib-lb-num">Abandoned</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -501,12 +522,34 @@
       refreshSectionCardShell('contributors-section');
       const sidebarBadge = document.getElementById('contributors-sidebar-badge');
       const statusBadge = document.getElementById('contributors-status-badge');
-      if (!pool) return;
-      const onlineCount = Number(pool.online) || 0;
-      const totalCount = Number(pool.registered) || 0;
+      if (!pool || !Number.isSafeInteger(pool.online) || pool.online < 0 ||
+          !Number.isSafeInteger(pool.registered) || pool.registered < 0) {
+        navCountDelta(sidebarBadge, null, 'Contributor presence unavailable');
+        const tooltip = sidebarBadge && sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (tooltip) tooltip.textContent = 'Contributor presence unavailable; showing the last loaded roster';
+        if (tooltip && _configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
+        if (statusBadge) statusBadge.title = 'Contributor presence unavailable; showing the last loaded roster';
+        return;
+      }
+      const onlineCount = pool.online;
+      const totalCount = pool.registered;
       const tip = contributorsOnlineTitle(onlineCount, totalCount, pool.presence_window);
       // Same two-part pill as Governor / Overview: "online/total".
-      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount, tip);
+      if (sidebarBadge) setSidebarPairBadge(sidebarBadge, onlineCount, totalCount);
+      navCountDelta(sidebarBadge, onlineCount, 'Contributors: ' + tip);
+      if (sidebarBadge) {
+        // Reuse the tooltip node across refreshes so the pill does not grow
+        // one hidden span per poll.
+        let tooltip = sidebarBadge.querySelector('.contributor-online-tooltip');
+        if (!tooltip) {
+          tooltip = document.createElement('span');
+          tooltip.className = 'config-tooltip contributor-online-tooltip';
+          tooltip.hidden = true;
+          sidebarBadge.appendChild(tooltip);
+        }
+        tooltip.innerHTML = contributorsOnlineTooltip(pool);
+        if (_configTooltipTrigger === sidebarBadge) positionConfigTooltip(sidebarBadge);
+      }
       setSectionSummary('contributors-section', contributorsSectionSummary(_cachedContributors || [], pool));
       if (statusBadge) {
         statusBadge.textContent = `${onlineCount} online / ${totalCount} registered`;
@@ -515,7 +558,20 @@
       }
     }
 
-    // contributorsOnlineTitle is the pill tooltip: "3 online · 12 registered
+    function contributorsOnlineTooltip(pool) {
+      const online = Number(pool.online) || 0;
+      const summary = esc(contributorsOnlineTitle(online, pool.registered, pool.presence_window));
+      const logins = pool.online_logins;
+      if (!Array.isArray(logins) || logins.length > online || (online > 0 && !logins.length) ||
+          logins.some(login => typeof login !== 'string' || !login.trim())) {
+        return summary + '<div>Online contributor names unavailable</div>';
+      }
+      if (!logins.length) return summary + '<div>No contributors online</div>';
+      return summary + '<div>Online contributors</div><ul class="contributor-online-ids">' +
+        logins.map(login => '<li>@' + esc(login) + '</li>').join('') + '</ul>';
+    }
+
+    // contributorsOnlineTitle is the presence summary: "3 online · 12 registered
     // (heartbeat within 15m)". The window is the hub's presence_window, the
     // same one the tracker's "(offline 13m)" caption is judged against.
     function contributorsOnlineTitle(online, total, window) {
@@ -538,4 +594,3 @@
     }
 
     // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit
-

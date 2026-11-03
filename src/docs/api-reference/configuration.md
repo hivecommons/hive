@@ -113,3 +113,5 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `PUT` | `/api/config/governor/project-observability` | Owner only | Governor Project Observability Set | `pkg/dashboard/api.go:292` |
 | `GET` | `/api/config/governor/inference-auth` | Owner only | Governor Inference Auth Get | `pkg/dashboard/api.go:307` |
 | `PUT` | `/api/config/governor/inference-auth` | Owner only | Governor Inference Auth Set | `pkg/dashboard/api.go:308` |
+| `GET` | `/api/config/triggers` | Verified owner only | Ordered Event triggers, opaque `version`/ETag, existing agents and managed repository values/labels; applies on next evaluation without restart | `pkg/dashboard/api_event_triggers.go` |
+| `PUT` | `/api/config/triggers` | Verified owner only | Compile-to-bool and durably compare-and-save `{rules:[{name,agent,expr,priority}],preset?:{index,kind,repo}}`; exact `If-Match` required (428 missing, 412 stale), validation 400, persistence failure 500 leaves live rules unchanged. No enabled field or source/webhook installation | `pkg/dashboard/api_event_triggers.go` |

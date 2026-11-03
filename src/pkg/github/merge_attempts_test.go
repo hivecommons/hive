@@ -14,7 +14,7 @@ func TestMergeAttemptsLifecycle(t *testing.T) {
 	now := time.Date(2026, 10, 28, 21, 31, 0, 0, time.UTC)
 	m := NewMergeAttempts(func() time.Time { return now })
 	changes := 0
-	m.SetOnChange(func() { changes++ })
+	m.SetOnChange(func(MergeAttempt) { changes++ })
 
 	m.Begin("HiveCommons/Hive", 15207, PRAuditPathSweep)
 	a, ok := m.Get("hivecommons/hive", 15207)

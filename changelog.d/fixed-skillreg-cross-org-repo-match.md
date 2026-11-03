@@ -1,0 +1,1 @@
+- `skillreg.SpecServesRepo` no longer treats differently-owned org-qualified repo references as the same repo ([#16168](https://github.com/hivecommons/hive/issues/16168)): a spec scoped to `laredo/cuga-agent` now correctly refuses to serve `acme/cuga-agent`, while bare↔qualified matching remains (bare `cuga-agent` still matches qualified `laredo/cuga-agent`).

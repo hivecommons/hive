@@ -170,6 +170,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		jsFunc(t, "fleetQuadrantScopeLabel"),
 		jsFunc(t, "fleetQuadrantDrillAttrs"),
 		jsFunc(t, "fleetQuadrantEvidenceButtonHTML"),
+		jsFunc(t, "fleetActivityLinkHTML"),
 		jsFunc(t, "fleetQuadrantHintHTML"),
 		jsFunc(t, "fleetQuadrantHeaderHTML"),
 		"_isAdmin = true; var admin = fleetQuadrantHeaderHTML();",
@@ -196,6 +197,16 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		if !strings.Contains(got.Admin, want) {
 			t.Errorf("admin fleet card is missing %q:\n%s", want, got.Admin)
 		}
+	}
+	// The Fleet activity page (#16063) is linked next to Evidence for every
+	// signed-in viewer: GET /api/hub/activity scopes per hive, so members
+	// get the link too.
+	const activityLink = `<a class="fleet-activity-link" href="/activity" title="Open the Fleet activity board for the hives you can see" onclick="event.stopPropagation()">📡 Fleet activity</a>`
+	if !strings.Contains(got.Admin, activityLink) || !strings.Contains(got.Member, activityLink) {
+		t.Errorf("fleet card must link the Fleet activity page for admins and members:\nadmin: %s\nmember: %s", got.Admin, got.Member)
+	}
+	if strings.Index(got.Admin, activityLink) < strings.Index(got.Admin, "🔬 Evidence</button>") {
+		t.Errorf("Fleet activity belongs right after the Evidence button:\n%s", got.Admin)
 	}
 	if strings.Count(got.Admin, "openEvidenceModal()") != 3 {
 		t.Errorf("admin fleet card should wire the drill click, its keydown and the button, got:\n%s", got.Admin)
@@ -611,7 +622,7 @@ func TestEvidenceFleetPanelsRender(t *testing.T) {
 		`<tr><td>Review gate</td><td>would have passed</td><td>15</td><td>12</td><td>3</td><td class="evidence-rate"><span class="evidence-rate-main">0.0% of 12</span>`,
 		// Findings generated from the fleet fixture, one per panel with data.
 		"<li>AI agents wrote 32 PRs: 25 merged (78.1%) and 3 of those were reverted within 14 days. Humans wrote 12 PRs: 10 merged (83.3%) and 1 of those was reverted within 14 days.</li>",
-		`<p class="evidence-finding">Agents attempted 53 writes to GitHub through the guardrail proxy and 5 (9.4%) were blocked; a blocked write never reached GitHub.</p>`,
+		`<p class="evidence-finding">Enforcement demonstrated — 5 prohibited write(s) blocked; 53 observed agent write attempts through the guardrail proxy (9.4% blocked). Counts do not rule out bypasses or false positives.</p>`,
 		`class="evidence-bar merged"`, `class="evidence-bar reverted"`, `class="evidence-bar open"`,
 		"no merge was held or blocked anywhere in the fleet",
 	} {

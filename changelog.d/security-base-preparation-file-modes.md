@@ -1,0 +1,1 @@
+- Base-preparation state files and directory are no longer created group-writable (0o644/0o755, matching the stage store). (#15844)

@@ -18,6 +18,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -76,7 +77,8 @@ type Client struct {
 	// enumeration goroutine is deciding what work exists. Nil (the zero value,
 	// and what every test constructs) means nothing is paused, so the client
 	// behaves exactly as it did before.
-	repoPaused func(repo string) bool
+	repoPaused           func(repo string) bool
+	scheduledBaseRefresh func(repo string) bool
 	// writeback is the unsolicited write-back gate (writeback_gate.go);
 	// nil allows everything.
 	writeback *writeback.Gate
@@ -154,9 +156,10 @@ type Client struct {
 	autoMergeMinHeadAge       time.Duration
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
-	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
+	mergeAlertIDsByRepo       map[string]map[string]*mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	mergedClaimScanTransient  sync.Map        // repo -> true while its merged-PR scan is timing out
 	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState
 	appAuth                   *AppAuth // nil for token-authenticated clients
@@ -283,6 +286,21 @@ type Client struct {
 	// a negative value disables the backstop.
 	combinedPerspectivesFn func() bool
 	maxReviewsPerHeadFn    func() int
+	// quietNotificationsFn is github.notifications.mode != normal, read
+	// live: fold the hive's PR notes into one edited status comment, post no
+	// no-findings review, one hive review per head. nil (nothing wired)
+	// reads as normal, so unwired clients behave as before.
+	quietNotificationsFn func() bool
+	attentionConfig      func() attention.Config
+	attentionHiveID      string
+	// notifications counts comments created, edited and suppressed; logged
+	// hourly so the effect of quiet mode is measurable.
+	notifications notificationTally
+	// shadowNotificationsFn is github.notifications.shadow, read live: when
+	// it returns true every notification-capable write is classified and
+	// recorded in notificationShadow. nil reads as off.
+	shadowNotificationsFn func() bool
+	notificationShadow    notificationShadow
 	// reviewRequireLabelsFn returns review.require_labels, read live so a
 	// Features-tab edit gates the next relay request without a rebuild. nil
 	// or empty means the gate is off.
@@ -347,7 +365,13 @@ type Client struct {
 	// handoff summary included), used by PR follow-up resume (#9583).
 	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
-	prRepoPolicyGate       atomic.Pointer[PRRepoPolicyGate]
+	// prReviewObservedHook and prTerminalReviews: other people's reviews on
+	// terminal PRs, read once per PR by the settle scan (#16116). See
+	// prreviews_observed.go.
+	prReviewObservedHook atomic.Pointer[PRReviewObservedHook]
+	prTerminalReviews    prTerminalReviewCache
+	prTerminalEnrichment terminalEnrichmentState
+	prRepoPolicyGate     atomic.Pointer[PRRepoPolicyGate]
 	// agentStartHook is told when an agent's own relay request shows it
 	// working an issue (#10527). See agent_start_hook.go.
 	agentStartHook atomic.Pointer[AgentStartHook]
@@ -471,6 +495,11 @@ type Client struct {
 	mergeStatePath   string
 	mergeState       map[string]mergeRequestPRState
 	mergeStateLoaded bool
+	// mergeHeadFirstSeen is the in-memory first observation of each PR head
+	// the CI gate judged without an expect_sha (no persisted wait state), so
+	// the min_head_age skew fallback has a stable start (#16152). Guarded by
+	// mergeStateMu.
+	mergeHeadFirstSeen map[string]mergeRequestPRState
 	// attribution holds the invocation-attribution hooks (trailer gate,
 	// per-agent metadata resolver, audit sink) — see attribution.go. Guarded by
 	// attribMu because the hooks are installed in stages during startup while
@@ -713,6 +742,24 @@ func (c *Client) agentBaseName(agent string) string {
 func (c *Client) SetReviewCadenceLimits(combined func() bool, maxPerHead func() int) {
 	c.combinedPerspectivesFn = combined
 	c.maxReviewsPerHeadFn = maxPerHead
+}
+
+// SetNotificationsQuiet wires github.notifications.mode (quiet when fn
+// returns true). Read live so a config reload applies to the next write.
+func (c *Client) SetNotificationsQuiet(fn func() bool) {
+	if c == nil {
+		return
+	}
+	c.quietNotificationsFn = fn
+}
+
+// notificationsQuiet reports whether the hive is in quiet notification
+// mode: a new comment or review is an email to the author and every
+// watcher, and the Activity Monitor already carries what the comment would
+// say. The config default is quiet; a client nothing wired (tests) behaves
+// as before.
+func (c *Client) notificationsQuiet() bool {
+	return c != nil && c.quietNotificationsFn != nil && c.quietNotificationsFn()
 }
 
 func (c *Client) SetConfidenceScore(enabled func() bool) {
@@ -970,6 +1017,11 @@ type PullRequest struct {
 	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
+	// Supersedes is the PR this one declares it supersedes ("Supersedes
+	// #N" in the body: the hive's adoption / takeover / re-author copy of
+	// a contributor PR), read from the list payload; 0 when none.
+	// IsHiveSupersedingPR pairs it with AppAuthored.
+	Supersedes int `json:"supersedes,omitempty"`
 	// BaseDiffEmpty is true when the per-PR detail fetch reported zero
 	// changed files, additions and deletions against the base: the PR
 	// carries nothing the base does not already have (an adoption whose
@@ -1507,6 +1559,12 @@ type IssueCluster struct {
 var HoldLabels = []string{"hold", "on-hold", "hold/review"}
 
 var PermanentExemptLabels = []string{"do-not-merge"}
+
+// wipMirrorLabel is the label prow's `wip` plugin applies to every draft PR
+// as a mirror of the draft bit. It carries no information beyond "this is a
+// draft", so it must not shield a hive-authored draft from the stale-draft
+// rule the way a deliberate do-not-merge/hold does (#16246).
+const wipMirrorLabel = "do-not-merge/work-in-progress"
 
 // AutoMergeQueuedLabel is the fallback label a merger/owner queue action
 // applies when a hive has not configured `governor.labels.automerge`. Prefer
@@ -2324,7 +2382,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			continue
 		}
 
-		if c.isExempt(labels) {
+		if c.isExempt(labels) && !c.isDraftExemptOnlyByWIPMirror(pr.GetDraft(), labels) {
 			breakdown.Filtered++
 			sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRFiltered, "Exempt label"))
 			continue
@@ -2409,6 +2467,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			RequestedTeams:     reqTeams,
 			ReferencedIssues:   PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 			DependsOn:          ParseDependsOn(pr.GetBody(), repo),
+			Supersedes:         prSupersedesNumberOrZero(pr.GetBody()),
 		})
 	}
 
@@ -2987,6 +3046,27 @@ func (c *Client) IssueCommentsContain(ctx context.Context, repo string, number i
 	}
 }
 
+// issueCommentsContainAny reports whether any comment on repo#number
+// contains any of needles, in one pass.
+func (c *Client) issueCommentsContainAny(ctx context.Context, repo string, number int, needles ...string) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	comments, err := c.listIssueComments(ctx, owner, repoName, number)
+	if err != nil {
+		return false, err
+	}
+	for _, comment := range comments {
+		for _, needle := range needles {
+			if needle != "" && strings.Contains(comment.GetBody(), needle) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // CreateIssueComment posts a comment on an issue or PR. The signature mirrors
 // forge.Forge.CreateIssueComment so escalation callers can swap in a neutral
 // forge adapter on non-GitHub hives without changing call sites.
@@ -3026,6 +3106,10 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 		}
 		return effects.Result{Provenance: comment.GetHTMLURL()}, apiErr
 	})
+	if err == nil {
+		c.noteCommentCreated()
+	}
+	c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteComment, repo: owner + "/" + repoName, item: number, body: body, err: err})
 	return err
 }
 
@@ -3167,6 +3251,8 @@ func (c *Client) QueuePRAutoMergeWithNote(ctx context.Context, repo string, numb
 // operator's approval in the hive's own store so the self-authored lane
 // merges on it (hivecommons/hive#15666).
 type PRAutoMergeQueueResult struct {
+	// ReportingError is optional Prow bridge failure, not a lost approval.
+	ReportingError  string
 	HeadSHA         string
 	ReviewSubmitted bool
 	SelfAuthored    bool
@@ -3210,6 +3296,12 @@ func (c *Client) pullRequestSelfAuthored(pr *gh.PullRequest) bool {
 // applied. The same fallback runs when GitHub answers that 422 for an
 // author the hive did not recognise as itself.
 func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string, number int, queuedBy, note string) (PRAutoMergeQueueResult, error) {
+	return c.QueuePRAutoMergeWithNoteResultAtHead(ctx, repo, number, queuedBy, note, "")
+}
+
+// QueuePRAutoMergeWithNoteResultAtHead refuses a queue write if the head moved
+// after the operator's decision was validated.
+func (c *Client) QueuePRAutoMergeWithNoteResultAtHead(ctx context.Context, repo string, number int, queuedBy, note, expectedHead string) (PRAutoMergeQueueResult, error) {
 	if c == nil {
 		return PRAutoMergeQueueResult{}, ErrNoGitHubClient
 	}
@@ -3228,6 +3320,9 @@ func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string
 	}
 	if headSHA == "" {
 		return PRAutoMergeQueueResult{}, errors.New("PR head SHA is required for auto-merge approval")
+	}
+	if expectedHead != "" && headSHA != expectedHead {
+		return PRAutoMergeQueueResult{}, errors.New("PR head changed since approval; queue reporting deferred")
 	}
 	full := owner + "/" + repoName
 	res := PRAutoMergeQueueResult{HeadSHA: headSHA, SelfAuthored: c.pullRequestSelfAuthored(pr)}
@@ -3268,6 +3363,9 @@ func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string
 			}
 			return effects.Result{Provenance: provenance}, apiErr
 		})
+		if !refusedAsOwn {
+			c.recordNotificationWrite(ctx, notificationWrite{kind: notificationWriteReview, repo: full, item: number, body: body, class: NotificationClassRequiredReview, err: err})
+		}
 		if err != nil {
 			return res, fmt.Errorf("approving PR: %w", err)
 		}
@@ -3294,7 +3392,9 @@ func (c *Client) QueuePRAutoMergeWithNoteResult(ctx context.Context, repo string
 		return res, fmt.Errorf("adding %s label: %w", label, err)
 	}
 	if strings.EqualFold(label, prowLgtmLabel) {
-		c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy)
+		if err := c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy); err != nil {
+			res.ReportingError = err.Error()
+		}
 	}
 	return res, nil
 }
@@ -3352,7 +3452,7 @@ const (
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
 // the queue review approved. The label and review are already in place, so a
 // failure is logged and surfaced on the PR but never returned.
-func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, number int, headSHA, queuedBy string) {
+func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, number int, headSHA, queuedBy string) error {
 	sha7 := headSHA
 	if len(sha7) > 7 {
 		sha7 = sha7[:7]
@@ -3375,17 +3475,21 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 		return effects.Result{Provenance: owner + "/" + repoName + "@" + headSHA}, apiErr
 	})
 	if err == nil {
-		return
+		return nil
 	}
 	if c.logger != nil {
 		c.logger.Warn("could not set the prow/lgtm commit status; the GitHub App likely lacks the statuses: write permission",
 			"repo", owner+"/"+repoName, "number", number, "error", err)
 	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
-	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil && c.logger != nil {
-		c.logger.Warn("could not post the prow/lgtm status warning comment",
-			"repo", owner+"/"+repoName, "number", number, "error", cerr)
+	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil {
+		if c.logger != nil {
+			c.logger.Warn("could not post the prow/lgtm status warning comment",
+				"repo", owner+"/"+repoName, "number", number, "error", cerr)
+		}
+		return fmt.Errorf("Prow status reporting: %w; warning comment: %v", err, cerr)
 	}
+	return fmt.Errorf("Prow status reporting: %w", err)
 }
 
 func (c *Client) ensureLabel(ctx context.Context, owner, repo, name string) error {
@@ -3519,6 +3623,51 @@ func (c *Client) removeLabelObserved(ctx context.Context, repo string, number in
 		c.forgeWriteThrough(repo, number, forgestate.Mutation{Op: forgestate.OpLabelRemove, Labels: []string{label}})
 	}
 	return err
+}
+
+// reconcileLabelMutation resolves a label mutation the mutation journal holds
+// as unresolved — an earlier attempt at the SAME logical operation is still
+// Planned (a concurrent writer mid-call, or a process that died between
+// intent and acknowledgment) or ended Unknown (ambiguous API failure) — from
+// authoritative external state, then replays the mutation once. A label is
+// the easy case: it is either on the item or it is not, and one Issues.Get
+// says which. Before this the claimed-by label write simply failed with
+// "op:… is Planned" and the claim went un-labelled until the next renewal
+// (hivecommons/hive#13579). When the read itself fails a young operation
+// keeps the needs-reconciliation refusal, but one unresolved for longer than
+// effects.DefaultUnresolvedTTL is expired to not-applied and the mutation
+// replays: adding or removing a label is idempotent, so a replay cannot do
+// harm, whereas a read that keeps failing (item transferred or deleted,
+// persistent API error) would otherwise fence every retry forever
+// (hivecommons/hive#15944).
+func (c *Client) reconcileLabelMutation(ctx context.Context, owner, repoName string, number int, claim effects.Claim,
+	effect func(context.Context) (effects.Result, error), journalErr error, applied func(current []string) bool) (effects.Result, error) {
+	if c == nil || c.client == nil {
+		return effects.Result{}, journalErr
+	}
+	issue, _, lookupErr := c.client.Issues.Get(WithRESTCaller(ctx, "hive:reconcile_label_mutation"), owner, repoName, number)
+	if lookupErr != nil {
+		expired, expErr := effects.ExpireUnresolved(ctx, c.mutationBoundary(), claim, effects.DefaultUnresolvedTTL)
+		if expErr != nil {
+			return effects.Result{}, fmt.Errorf("%w (label read for reconciliation failed: %v; expiry failed: %v)", journalErr, lookupErr, expErr)
+		}
+		if !expired {
+			return effects.Result{}, fmt.Errorf("%w (label read for reconciliation failed: %v)", journalErr, lookupErr)
+		}
+		return effects.Execute(ctx, c.mutationBoundary(), claim, effect)
+	}
+	state := effects.ExternalState{Applied: applied(extractLabels(issue.Labels)), Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}
+	if recErr := effects.Reconcile(ctx, c.mutationBoundary(), claim, state); recErr != nil {
+		return effects.Result{}, fmt.Errorf("%w (reconciliation failed: %v)", journalErr, recErr)
+	}
+	if c.logger != nil {
+		c.logger.Info("label mutation: reconciled unresolved operation against the item's current labels",
+			slog.String("repo", owner+"/"+repoName), slog.Int("number", number), slog.Bool("applied", state.Applied))
+	}
+	if state.Applied {
+		return effects.Result{Provenance: state.Provenance}, nil
+	}
+	return effects.Execute(ctx, c.mutationBoundary(), claim, effect)
 }
 
 // labelsAllPresent reports whether every wanted label is in current
@@ -3892,6 +4041,23 @@ func (c *Client) AutoMergeLabel() string {
 
 func (c *Client) isExempt(labels []string) bool {
 	return HasExemptLabel(labels, c.exemptLabels)
+}
+
+// isDraftExemptOnlyByWIPMirror reports whether a draft PR's exemption comes
+// solely from prow's do-not-merge/work-in-progress mirror label. Such a draft
+// must fall through to the draft branch so the stale-draft rule can still
+// surface it; any other exempt label keeps the PR filtered (#16246).
+func (c *Client) isDraftExemptOnlyByWIPMirror(draft bool, labels []string) bool {
+	if !draft {
+		return false
+	}
+	rest := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if !strings.EqualFold(l, wipMirrorLabel) {
+			rest = append(rest, l)
+		}
+	}
+	return len(rest) != len(labels) && !c.isExempt(rest)
 }
 
 func HasExemptLabel(labels, exemptLabels []string) bool {
@@ -4743,9 +4909,9 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	// Every merge path ends here, so this is where the merged head's evidence
 	// bundle gains its merge event and the PR gets its evidence pointer.
 	c.recordReviewEvidenceMerge(repo, number, method, sha, path, credit.Logins())
-	// A successful App merge on any path proves the repo is mergeable, so
-	// retire its "merge blocked" alerts (#11924).
-	c.clearMergeFailureAlertsForRepo(repo)
+	// A merge resolves this PR's blockers and proven repository-level causes,
+	// not another PR's required checks or review/head-specific conditions.
+	c.clearMergeFailureAlertsAfterMerge(repo, number, method)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one

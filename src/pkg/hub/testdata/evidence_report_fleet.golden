@@ -79,7 +79,7 @@ At autonomy level L4, 1 hive merged 30 PRs and 3 (10.0%) were reverted or needed
 
 ### Boundary enforcement
 
-Agents attempted 53 writes to GitHub through the guardrail proxy and 5 (9.4%) were blocked; a blocked write never reached GitHub.
+Enforcement demonstrated — 5 prohibited write(s) blocked; 53 observed agent write attempts through the guardrail proxy (9.4% blocked). Counts do not rule out bypasses or false positives.
 
 Totals run since each hive's proxy started, not over the window.
 
@@ -145,7 +145,7 @@ The review gate would have held 10 PRs; 6 of those merged and stuck (false alarm
 | Reviewer confidence | Strong | Share of verdicts that went wrong in the most-confident range with enough verdicts (needs two measurable ranges); Strong at or below 10%, Fair at or below 25%, otherwise Weak. |
 | Outcome by author kind | Fair | Revert rate of PRs written by AI agents (humans if no agent PRs); Strong at or below 5%, Fair at or below 15%, otherwise Weak. |
 | Autonomy level × outcome | Fair | Revert rate at the highest autonomy level with enough merged PRs; Strong at or below 5%, Fair at or below 15%, otherwise Weak. |
-| Boundary enforcement | Not graded | There is no "good" block rate: zero blocks with many attempts means agents stayed inside their lane, many blocks means the guardrail did its job. |
+| Boundary enforcement | Not graded | Observed blocks demonstrate enforcement on those attempts; zero means not observed, not failure. Refusal frequency describes attempted-agent compliance, not enforcement quality. Counts do not rule out bypasses or false positives. |
 | Same- vs cross-family review | Fair | False-approve rate of the family mix with the most verdicts; Strong at or below 10%, Fair at or below 25%, otherwise Weak. |
 | Per-hive evidence | Fair | Share of selected hives reporting for the window (no minimum sample); Strong at or above 80%, Fair at or above 40%, otherwise Weak. |
 | Shadow gates | Weak | False-alarm rate (PRs a gate would have held that merged and stuck) of the gate with the most held PRs; Strong at or below 25%, Fair at or below 50%, otherwise Weak. |

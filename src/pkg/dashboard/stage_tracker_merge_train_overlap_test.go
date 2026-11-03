@@ -111,9 +111,10 @@ func TestStageTrackerMergeTrainCountsOnlyMergeQueueMembers(t *testing.T) {
 }
 
 // Two overlapping PRs, the planner's front still at 050 and the sibling
-// at 080: no train (one merge-queue member is no train), the 080 row
-// back to its own caption, the 050 row with the hint — naming the 080
-// row as the PR it joins behind: the lane merges the ready one first.
+// at 080: no train object (one merge-queue member is no train), but the
+// 080 row keeps its seat words — "behind #15577 (2nd of 2)" — rather than
+// "Ready for auto merge · checking now" (hivecommons/hive#15825), and the
+// 050 row's hint says it leads once green, naming the rider waiting on it.
 func TestStageTrackerMergeTrainPendingFrontLeavesLoneRider(t *testing.T) {
 	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 	s, store := stageTrackerFixture(t, now)
@@ -132,14 +133,17 @@ func TestStageTrackerMergeTrainPendingFrontLeavesLoneRider(t *testing.T) {
 	if front.MergeTrain != nil || rider.MergeTrain != nil {
 		t.Fatalf("no train of one: front=%+v rider=%+v", front.MergeTrain, rider.MergeTrain)
 	}
-	if front.Overlap == nil || front.Overlap.Behind != 15578 || len(front.Overlap.With) != 1 || front.Overlap.With[0] != 15578 {
+	if front.Overlap == nil || front.Overlap.Behind != 0 || len(front.Overlap.With) != 1 || front.Overlap.With[0] != 15578 || front.Overlap.Badge != "train · 1st once green" {
 		t.Errorf("front overlap = %+v", front.Overlap)
 	}
-	if want := "overlaps #15578 (tracker-words.js) — joins the merge train behind it when green"; front.Overlap.Note != want {
+	if want := "1st in the merge train; #15578 waits behind it until this head is green (tracker-words.js)"; front.Overlap.Note != want {
 		t.Errorf("front note = %q, want %q", front.Overlap.Note, want)
 	}
-	if rider.Overlap != nil || rider.Caption != stageTrackerAwaitingAdmissionCaption {
-		t.Errorf("080 rider: overlap=%+v caption=%q", rider.Overlap, rider.Caption)
+	if rider.MergeGate == nil || rider.MergeGate.State != MergeGateStateQueuedBehind || rider.MergeGate.SweepRunning || !strings.Contains(rider.MergeGate.Reason, "behind #15577 in merge train (2nd of 2") {
+		t.Errorf("080 rider gate = %+v", rider.MergeGate)
+	}
+	if rider.Caption == stageTrackerAwaitingAdmissionCaption || !strings.Contains(rider.Caption, "waiting its turn in the merge train — behind #15577") {
+		t.Errorf("080 rider caption = %q", rider.Caption)
 	}
 }
 

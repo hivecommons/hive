@@ -439,7 +439,7 @@ func TestContributeLandingHasWatsonxOption(t *testing.T) {
 		// CLIENTS metadata tile.
 		`watsonx:{name:'watsonx.ai',tag:'IBM'}`,
 		// Headless-capable: must be registered so Kubernetes mode does not warn.
-		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1}`,
+		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1,cline:1}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/contribute watsonx onboarding surface missing %q", want)
@@ -469,7 +469,7 @@ func TestContributeLitellmFlavorsMapToLitellmSetup(t *testing.T) {
 
 	for _, want := range []string{
 		// Flavor → real Justfile backend map, and its two consumers.
-		`var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm'};`,
+		`var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm',mlx:'pi'};`,
 		`function setupBackend(v){return SETUP_BACKEND[v]||v;}`,
 		`var backend=setupBackend(cli);`,
 		`'  4. just contribute-setup '+setupBackend(v)+'\n'+`,

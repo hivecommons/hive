@@ -8,6 +8,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/hubactivity"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -174,6 +175,7 @@ type LeaderboardEntry struct {
 	TrustTier      string `json:"trust_tier"`
 	TasksCompleted int    `json:"tasks_completed"`
 	TasksFailed    int    `json:"tasks_failed"`
+	Abandoned      int    `json:"abandoned"`
 	Active         bool   `json:"active"`
 	CurrentTask    string `json:"current_task,omitempty"`
 	HiveName       string `json:"hive_name,omitempty"`
@@ -369,6 +371,10 @@ type HeartbeatPayload struct {
 	Evidence                     *HeartbeatEvidence              `json:"evidence,omitempty"`
 	// SelfExperimentsOptIn is local consent; absent or false means opted out.
 	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
+	// Activity is the optional bounded activity digest (#15861/#15951).
+	// Absent from older or non-participating spokes; the hub re-sanitizes it
+	// and keeps it in memory only (activityStore).
+	Activity *hubactivity.Digest `json:"activity,omitempty"`
 }
 
 const (
@@ -473,12 +479,24 @@ type HeartbeatResponse struct {
 	PendingGateway      *HeartbeatGatewayConfig   `json:"pending_gateway,omitempty"`
 	ClusterID           string                    `json:"cluster_id,omitempty"`
 	UpgradePolicy       *HeartbeatUpgradePolicy   `json:"upgrade_policy,omitempty"`
-	SigHiveID           string                    `json:"sig_hive_id,omitempty"`
-	SigSeq              int64                     `json:"sig_seq,omitempty"`
-	SigSignedAt         int64                     `json:"sig_ts,omitempty"`
-	SigVersion          int                       `json:"sig_v,omitempty"`
+	// UpgradeAnnounce tells a hub-managed spoke its pod is about to be
+	// rolled (#15788); the spoke dashboard shows the upgrade animation
+	// before the kill. Decoded by spoke.HeartbeatResponse.UpgradeAnnounce.
+	UpgradeAnnounce *spoke.UpgradeAnnounce `json:"upgrade_announce,omitempty"`
+	SigHiveID       string                 `json:"sig_hive_id,omitempty"`
+	SigSeq          int64                  `json:"sig_seq,omitempty"`
+	SigSignedAt     int64                  `json:"sig_ts,omitempty"`
+	SigVersion      int                    `json:"sig_v,omitempty"`
 	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
 	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
+	// ActivityETag acknowledges the activity digest the hub now holds for
+	// this hive ("" = none). A spoke whose etag differs sends its full
+	// digest instead of an unchanged marker on the next beat.
+	ActivityETag string `json:"activity_etag,omitempty"`
+	// ActivityEventsAck is the highest activity event sequence number the
+	// hub holds for this hive (#15964); the spoke drops buffered events up
+	// to it. 0/absent = none. Decoded by spoke.HeartbeatResponse.
+	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

@@ -51,6 +51,9 @@ type StageTrackerMergeGate struct {
 	// SweepRunning is true while an automerge pass that evaluates this PR
 	// is in flight.
 	SweepRunning bool `json:"sweep_running,omitempty"`
+	// SweepingSince is when that pass started, so the SPA can say
+	// "waiting for GitHub…" once it has been on the PR a while (#15808).
+	SweepingSince *time.Time `json:"sweeping_since,omitempty"`
 	// LastSweepAt is when the lane last evaluated this PR (the stage
 	// record's LastSeen).
 	LastSweepAt *time.Time `json:"last_sweep_at,omitempty"`
@@ -164,6 +167,10 @@ func stageTrackerMergeGate(repo string, number int, stage stagelabels.Stage, rec
 	}
 	if sweep.OnPR(repo, number) {
 		mg.SweepRunning = true
+		if !sweep.StartedAt.IsZero() {
+			t := sweep.StartedAt
+			mg.SweepingSince = &t
+		}
 	} else if !sweep.NextFloorAt.IsZero() && sweep.NextFloorAt.After(now) {
 		t := sweep.NextFloorAt
 		mg.NextSweepAt = &t
@@ -218,6 +225,13 @@ func stageTrackerMergeAttemptStale(a github.MergeAttempt, head string, stage sta
 	}
 	if a.Head != "" && head != "" && !strings.EqualFold(a.Head, head) {
 		return true
+	}
+	if stage == stagelabels.ReviewPending || stage == stagelabels.Reviewed {
+		if kind, _, _ := stageTrackerMergeRefusal(a.Error); kind == MergeRefusalChecksPending {
+			// A refused early merge call is history, not queue admission
+			// or current CI proof while this head is still under review.
+			return true
+		}
 	}
 	if !hasRec || stage == stagelabels.None || stage.Number() >= stagelabels.AwaitingMergeAdmission.Number() {
 		return false

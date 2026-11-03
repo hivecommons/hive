@@ -188,7 +188,7 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 		who = "@" + author
 	}
 	if a.BlockedBy == stagelabels.AdoptBlockedAuthorPerson {
-		return who + " pushed this PR themselves — not adopted: the hive asks them, not adopts"
+		return "author-owned — " + who + " remains the owner; human availability is unknown"
 	}
 	if a.QueuedBy != "" {
 		return "Adopting… (queued by @" + a.QueuedBy + "; the hive opens its copy on the next stage pass)"
@@ -210,11 +210,11 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 	case a.BlockedBy == stagelabels.AdoptBlockedAuthorMaintainer && a.Policy == config.AdoptionMaintainerPolicyAsk:
 		text += " — adopt?"
 	case a.BlockedBy == stagelabels.AdoptBlockedAuthorMaintainer:
-		text += " — not adopted: maintainer_policy is never"
+		text += " — maintainer-owned: automatic adoption is disabled by maintainer_policy=never"
 	case a.BlockedBy == stagelabels.AdoptBlockedOperatorAdmission:
-		text += " — not adopted: a maintainer approved this head; the hive merges it as-is"
+		text += " — contributor-managed: operator approval recorded for this head; existing review/CI requirements still apply"
 	case a.BlockedBy != "":
-		text += " — not adopted: " + a.BlockedBy
+		text += " — adoption blocked: " + a.BlockedBy
 	case a.AutoDue:
 		text += " — hive adopts it on the next sweep" + stageTrackerAdoptionNeverHedge(a, " unless")
 	case a.AutoAdoptAt != nil && a.AutoAdoptAt.After(now):
@@ -224,16 +224,21 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 }
 
 // stageTrackerAdoptionNeverHedge qualifies the auto-adopt countdown under
-// maintainer_policy: never. The engine has not read the author's repository
+// maintainer_policy: never and ask. The engine has not read the author's repository
 // permission yet (it only does so once due), so a maintainer's head never
 // reaches the promised moment at all and the row cannot promise adoption for
 // every author the way it does under adopt (hivecommons/hive#15692). lead is
 // the conjunction that joins the clause to the text before it.
 func stageTrackerAdoptionNeverHedge(a StageTrackerAdoption, lead string) string {
-	if a.Policy != config.AdoptionMaintainerPolicyNever {
-		return ""
+	switch a.Policy {
+	case config.AdoptionMaintainerPolicyNever:
+		return lead + " the author maintains this repository"
+	case config.AdoptionMaintainerPolicyAsk:
+		// ask reads the permission at the same due moment and then asks
+		// the maintainer instead of adopting (hivecommons/hive#15742).
+		return lead + " the author maintains this repository, then it asks"
 	}
-	return lead + " the author maintains this repository"
+	return ""
 }
 
 // stageTrackerAdoptionOfflineFor renders " 26h" for the time the author's

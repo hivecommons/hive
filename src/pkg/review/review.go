@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/escalation"
@@ -130,8 +131,14 @@ type PerspectiveReport struct {
 	HeadSHA      string      `json:"head_sha,omitempty"`
 	BodyDigest   string      `json:"body_digest,omitempty"`
 	HiveAuthored bool        `json:"hive_authored,omitempty"`
-	AuthorModel  string      `json:"author_model,omitempty"`
-	ReviewModel  string      `json:"review_model,omitempty"`
+	// HiveSuperseding marks the hive App's own superseding copy of another
+	// PR ("Supersedes #N" in its body), stamped by the verdict relay from
+	// the PR, never from the reviewer's JSON. Its requires_human findings
+	// — security-sensitive included — route to the fixer instead of
+	// parking for an operator (hiveSupersedingFixRoute).
+	HiveSuperseding bool   `json:"hive_superseding,omitempty"`
+	AuthorModel     string `json:"author_model,omitempty"`
+	ReviewModel     string `json:"review_model,omitempty"`
 	// Head is the review head (agents.<name>.review_heads key, e.g.
 	// code-reviewer-sol) this report came from, set by the relay from the
 	// dispatch record. Empty for ordinary single-reviewer perspectives.
@@ -141,6 +148,9 @@ type PerspectiveReport struct {
 	// never from the reviewer's JSON. When a PR has review heads, only decided
 	// reports drive routing; the heads' raw reports are evidence.
 	Decided bool `json:"decided,omitempty"`
+	// ReporterAgent is the actual sender, overwritten by the relay. A sibling
+	// may answer a perspective without completing the assigned worker's kick.
+	ReporterAgent string `json:"reporter_agent,omitempty"`
 	// Dispositions is the decision step's call on each finding the heads
 	// raised for this perspective: confirmed, not_reproducible or
 	// out_of_scope, with a reason.
@@ -196,6 +206,13 @@ type AggregateOptions struct {
 	// a decision question that matches no DecisionRiskClass and carries no
 	// `hive-decision-risk: high` marker.
 	SelfAuthoredDecisionPolicy string
+	// HiveSupersedingAutoMergeOff is `auto_merge.hive_superseding.auto_merge:
+	// false`: the hive's superseding copy of another PR is then judged like
+	// any other hive-authored PR, so a risk / security-sensitive
+	// requires_human parks it for a person. Off (the zero value) is the
+	// owner's rule: such findings go to the fixer and the PR auto-merges
+	// once CI and review are clean.
+	HiveSupersedingAutoMergeOff bool
 	// SensitivePaths are the operator's extra `security.sensitive_paths`
 	// globs; a contributor-PR finding on one of them (or on a
 	// sentinel.DefaultSensitivePaths path) is a security finding that may
@@ -229,14 +246,17 @@ type AggregateOptions struct {
 }
 
 type Aggregate struct {
-	Repo              string  `json:"repo"`
-	Number            int     `json:"number"`
-	HeadSHA           string  `json:"head_sha,omitempty"`
-	BodyDigest        string  `json:"body_digest,omitempty"`
-	AuthorModel       string  `json:"author_model,omitempty"`
-	ReviewModel       string  `json:"review_model,omitempty"`
-	HiveAuthored      bool    `json:"hive_authored,omitempty"`
-	HiveAuthoredKnown bool    `json:"hive_authored_known,omitempty"`
+	Repo              string `json:"repo"`
+	Number            int    `json:"number"`
+	HeadSHA           string `json:"head_sha,omitempty"`
+	BodyDigest        string `json:"body_digest,omitempty"`
+	AuthorModel       string `json:"author_model,omitempty"`
+	ReviewModel       string `json:"review_model,omitempty"`
+	HiveAuthored      bool   `json:"hive_authored,omitempty"`
+	HiveAuthoredKnown bool   `json:"hive_authored_known,omitempty"`
+	// HiveSuperseding is true when any report marked the PR as the hive's
+	// superseding copy of another PR (PerspectiveReport.HiveSuperseding).
+	HiveSuperseding   bool    `json:"hive_superseding,omitempty"`
 	Verdict           Verdict `json:"verdict"`
 	MergeEligible     bool    `json:"merge_eligible"`
 	FixCycle          bool    `json:"fix_cycle"`
@@ -296,6 +316,9 @@ type Aggregate struct {
 	// on entries written before the field existed; FirstRecorded falls back
 	// to RecordedAt.
 	FirstRecordedAt time.Time `json:"first_recorded_at,omitzero"`
+	// ReportReceipts retain server-side file arrival times. Recollection must
+	// not make a report older than a dispatch appear to complete that dispatch.
+	ReportReceipts []ReportReceipt `json:"report_receipts,omitempty"`
 	// PermissionsTighteningOnly mirrors the reports' flag so Normalize judges
 	// risk escalation with the same carve-out AggregateReports did.
 	PermissionsTighteningOnly bool `json:"permissions_tightening_only,omitempty"`
@@ -330,9 +353,24 @@ type PerspectiveFinding struct {
 	Finding     outputschema.Finding `json:"finding"`
 }
 
+type ReportReceipt struct {
+	Perspective Perspective `json:"perspective"`
+	Agent       string      `json:"agent,omitempty"`
+	Head        string      `json:"head,omitempty"`
+	Decided     bool        `json:"decided,omitempty"`
+	ReceivedAt  time.Time   `json:"received_at"`
+}
+
+type CollectionStats struct {
+	FilesRead    int
+	NewReports   int
+	MaxReportLag time.Duration
+}
+
 type Artifact struct {
-	GeneratedAt time.Time   `json:"generated_at"`
-	Items       []Aggregate `json:"items"`
+	GeneratedAt time.Time       `json:"generated_at"`
+	Items       []Aggregate     `json:"items"`
+	Collection  CollectionStats `json:"-"`
 }
 
 // ValidateReport validates a verdict against the built-in perspective set. Use
@@ -435,6 +473,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	agg.HiveAuthoredKnown = true
 	agg.HiveAuthored = reportsHiveAuthored(reports)
+	agg.HiveSuperseding = reportsHiveSuperseding(reports)
 	agg.PermissionsTighteningOnly = reportsPermissionsTighteningOnly(reports)
 	seenVerdicts := map[Verdict]bool{}
 	var decisionRequested bool
@@ -517,6 +556,36 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	sortReasons(agg.Reasons)
 	sort.Strings(agg.HumanSummaries)
+
+	if hiveSupersedingFixRoute(agg, opts, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman) {
+		// Owner rule: a PR the hive created to supersede another PR auto-
+		// merges with no operator decision. A reviewer's requires_human —
+		// a risk-class question, a security-sensitive finding — is a
+		// finding the fixer addresses and the swarm re-reviews, exactly
+		// like a changes_requested; only an exhausted fix cycle hands the
+		// head to a person (the stage engine's hard-stops cover the
+		// sentinel, holds, red CI and conflicts).
+		if finding, backed := securityFindingAcross(reports, sensitivePaths); backed {
+			agg.DecisionFinding = finding
+		}
+		if opts.FixAttempts >= maxFix {
+			agg.Verdict = VerdictRequiresHuman
+			agg.RequiresHuman = true
+			agg.DecisionRequested = decisionRequested
+			agg.DecisionQuestion = decisionQuestion
+			agg.Reasons = []string{fmt.Sprintf("fix cycle cap reached (%d/%d)", opts.FixAttempts, maxFix)}
+			return agg
+		}
+		agg.Verdict = VerdictChangesRequested
+		agg.FixCycle = true
+		markRequiresHumanPerspectivesAsChangesRequested(&agg)
+		agg.RequiresHuman = false
+		agg.DecisionRequested = false
+		agg.DecisionQuestion = ""
+		agg.Reasons = append(append([]string{}, agg.Reasons...), HiveSupersedingFixRouteReason)
+		sortReasons(agg.Reasons)
+		return agg
+	}
 
 	if decisionRequested {
 		if finding, backed := securityFindingAcross(reports, sensitivePaths); !backed && contributorHandsFree(agg, opts) {
@@ -943,6 +1012,40 @@ func resolveSelfAuthoredDecisionQuestions(reports []PerspectiveReport, opts Aggr
 	return true
 }
 
+// HiveSupersedingFixRouteReason is the aggregate reason recorded when a
+// hive-authored superseding PR's requires_human was routed to the fixer
+// instead of an operator decision (owner rule, @clubanderson: "if a pr is
+// superseded by a pr that a hive agent creates, it should auto merge").
+const HiveSupersedingFixRouteReason = "hive-authored superseding PR: reviewer requires_human routed to the fixer; auto-merges once CI and review are clean"
+
+// hiveSupersedingFixRoute says whether this aggregate is one the owner's
+// superseder rule turns from a human park into a fix cycle: the PR is the
+// hive's superseding copy, the knob is on, no perspective rejected, and
+// the only thing holding it is a requires_human / decision question the
+// ordinary self-authored resolution would have escalated (a risk-class
+// question, a security-sensitive finding, an unresolvable summary). A
+// reject stays a reject: it is an emergent problem with the PR, not a
+// finding to fix. Everything the self-authored path already resolves on
+// its own (non-risk questions, concrete remediation) keeps that path.
+func hiveSupersedingFixRoute(agg Aggregate, opts AggregateOptions, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman bool) bool {
+	if !agg.HiveSuperseding || !agg.HiveAuthored || opts.HiveSupersedingAutoMergeOff || hasReject {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
+		return false
+	}
+	return unresolvedRequiresHuman || (decisionRequested && riskEscalation)
+}
+
+func reportsHiveSuperseding(reports []PerspectiveReport) bool {
+	for _, r := range reports {
+		if r.HiveSuperseding {
+			return true
+		}
+	}
+	return false
+}
+
 func reportsHiveAuthored(reports []PerspectiveReport) bool {
 	for _, r := range reports {
 		if r.HiveAuthored {
@@ -1231,18 +1334,64 @@ func InScopeFinding(f outputschema.Finding) bool {
 }
 
 func Collect(dir string, opts AggregateOptions) (Artifact, error) {
+	return collectForPRs(dir, opts, nil)
+}
+
+// ReportFilePrefix identifies the relay's files for one PR without opening
+// the historical reports belonging to every other PR on the volume.
+func ReportFilePrefix(repo string, number int) string {
+	return fmt.Sprintf("%s%s-%d-", ReviewReportFilePrefix, reportSlug(repo), number)
+}
+
+func reportSlug(value string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	if slug := strings.Trim(b.String(), "-"); slug != "" {
+		return slug
+	}
+	return "unknown"
+}
+
+func collectForPRs(dir string, opts AggregateOptions, prs []PullRequest) (Artifact, error) {
 	dir = ReportDir(dir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return Artifact{}, err
 	}
+	prefixes := map[string]bool{}
+	targets := map[string]bool{}
+	for _, pr := range prs {
+		prefixes[strings.ToLower(ReportFilePrefix(pr.Repo, pr.Number))] = true
+		targets[strings.ToLower(fmt.Sprintf("%s#%d", pr.Repo, pr.Number))] = true
+	}
 	groups := map[string][]PerspectiveReport{}
+	receipts := map[string][]ReportReceipt{}
+	stats := CollectionStats{}
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasPrefix(name, ReviewReportFilePrefix) || !strings.HasSuffix(name, ReviewReportFileSuffix) {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if prs != nil {
+			selected := false
+			for prefix := range prefixes {
+				if strings.HasPrefix(strings.ToLower(name), prefix) {
+					selected = true
+					break
+				}
+			}
+			if !selected {
+				continue
+			}
+		}
+		raw, receivedAt, err := readCollectedReport(filepath.Join(dir, name))
 		if err != nil {
 			return Artifact{}, err
 		}
@@ -1254,16 +1403,40 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		if err != nil {
 			return Artifact{}, fmt.Errorf("%s: %w", name, err)
 		}
+		if prs != nil && !targets[strings.ToLower(fmt.Sprintf("%s#%d", report.Repo, report.Number))] {
+			continue
+		}
 		opts.ModelStamps.apply(report)
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
+		receipts[key] = append(receipts[key], ReportReceipt{Perspective: report.Perspective, Agent: report.ReporterAgent,
+			Head: report.Head, Decided: report.Decided, ReceivedAt: receivedAt})
+		stats.FilesRead++
 	}
 	groups = foldDigestlessReports(groups)
-	artifact := Artifact{GeneratedAt: time.Now().UTC()}
+	artifact := Artifact{GeneratedAt: time.Now().UTC(), Collection: stats}
 	for _, key := range sortedKeys(groups) {
-		artifact.Items = append(artifact.Items, AggregateReports(groups[key], opts))
+		agg := AggregateReports(groups[key], opts)
+		agg.ReportReceipts = receipts[key]
+		artifact.Items = append(artifact.Items, agg)
 	}
 	return artifact, nil
+}
+
+func readCollectedReport(path string) ([]byte, time.Time, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	// The relay replaces reports atomically. Read bytes and metadata through
+	// the same descriptor so a replacement cannot stamp old bytes as new.
+	raw, err := io.ReadAll(file)
+	return raw, info.ModTime().UTC(), err
 }
 
 // foldDigestlessReports merges reports that carry no body digest into the
@@ -1363,6 +1536,27 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	if err != nil {
 		return Artifact{}, err
 	}
+	return mergeCollected(fresh, dir, path, now)
+}
+
+// CollectAndMergeForPRs collects only the open PRs in the governor snapshot.
+// Historical aggregates remain durable; incompatible bodies stay separate.
+func CollectAndMergeForPRs(dir, path string, prs []PullRequest, opts AggregateOptions, now time.Time) (Artifact, error) {
+	if prs == nil {
+		prs = []PullRequest{}
+	}
+	fresh, err := collectForPRs(dir, opts, prs)
+	if err != nil {
+		return Artifact{}, err
+	}
+	return mergeCollected(fresh, dir, path, now)
+}
+
+var artifactMergeMu sync.Mutex
+
+func mergeCollected(fresh Artifact, dir, path string, now time.Time) (Artifact, error) {
+	artifactMergeMu.Lock()
+	defer artifactMergeMu.Unlock()
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -1371,7 +1565,11 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	// first run, in which case the fresh collect is the whole truth.
 	merged := map[string]Aggregate{}
 	order := []string{}
+	generatedAt := now
 	if existing, loadErr := LoadArtifact(path); loadErr == nil {
+		if existing.GeneratedAt.After(generatedAt) {
+			generatedAt = existing.GeneratedAt
+		}
 		for _, item := range existing.Items {
 			if now.Sub(item.RecordedAt) > VerdictRetention && !item.RecordedAt.IsZero() {
 				continue
@@ -1388,6 +1586,10 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 		item.RecordedAt = now
 		item.FirstRecordedAt = now
 		key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
+		if prior, ok := merged[key]; ok && prior.RecordedAt.After(now) {
+			// A slow older collection must not roll back a newer result.
+			continue
+		}
 		prev, seen := merged[key]
 		if seen && retainsOverIncomplete(prev.Verdict) && item.Verdict == VerdictIncomplete {
 			// A re-review can arrive one perspective at a time. Missing
@@ -1404,10 +1606,26 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 		} else if first := prev.FirstRecorded(); !first.IsZero() && sameRecordedVerdict(prev, item) {
 			item.FirstRecordedAt = first
 		}
+		for _, receipt := range item.ReportReceipts {
+			seen := false
+			for _, prior := range merged[key].ReportReceipts {
+				if receipt.Perspective == prior.Perspective && receipt.Agent == prior.Agent && receipt.Head == prior.Head &&
+					receipt.Decided == prior.Decided && !receipt.ReceivedAt.After(prior.ReceivedAt) {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				fresh.Collection.NewReports++
+				if lag := time.Since(receipt.ReceivedAt); lag > fresh.Collection.MaxReportLag {
+					fresh.Collection.MaxReportLag = lag
+				}
+			}
+		}
 		merged[key] = item
 	}
 
-	artifact := Artifact{GeneratedAt: now, Items: make([]Aggregate, 0, len(order))}
+	artifact := Artifact{GeneratedAt: generatedAt, Items: make([]Aggregate, 0, len(order)), Collection: fresh.Collection}
 	for _, key := range order {
 		artifact.Items = append(artifact.Items, merged[key])
 	}

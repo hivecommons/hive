@@ -93,8 +93,8 @@ func baseRefreshKey(owner, repo string, number int, oldHead, newHead string) str
 // chain for at most baseRefreshMaxHops hops. Each commit is fetched exactly
 // once and must itself be a hive base refresh of its first parent
 // (App-authored merge, base parent on the base branch, diff unchanged); the
-// walk succeeds when a hop's non-base parent is oldHead. The first hop keeps
-// the single-refresh tolerance of oldHead in either parent position.
+// walk succeeds when a hop's non-base parent is oldHead. Each hop allows
+// oldHead in either parent position (per-hop tolerance).
 func headIsBaseRefreshChainOf(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef, oldHead, newHead, appBotLogin string) bool {
 	ctx = WithRESTCaller(ctx, "hive:decision_base_refresh")
 	cur := newHead

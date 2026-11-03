@@ -101,3 +101,23 @@ func TestDecisionForWaitingOnAuthorNeverLeadsWithClose(t *testing.T) {
 		t.Fatalf("closes in the menu = %d, want 2: %+v", closes, d.Options)
 	}
 }
+
+// hivecommons/hive#16021: once the author pushed and the new head's CI /
+// re-review are still running, the row asks nothing of a person — the
+// "waits on @author to push" question would ask for what already happened.
+func TestDecisionNeededDropsWaitingOnAuthorAfterPush(t *testing.T) {
+	now := time.Date(2026, 10, 31, 11, 5, 0, 0, time.UTC)
+	it := StageTrackerItem{Repo: "hivecommons/hive", Number: 15849, Kind: "pr", Stage: 71, Author: "clubanderson", AuthorKind: authorKindHuman, Reason: "required-check-failing:build-and-test"}
+	if d := stageTrackerDecisionNeededAt(it, nil, "", now); d == nil || !strings.Contains(d.Question, "waits on @clubanderson to push") {
+		t.Fatalf("waiting row must ask: %+v", d)
+	}
+	it.Push = &StageTrackerPush{State: pushStatePushed, Login: "clubanderson", Sha: "0ff4ed17e"}
+	if d := stageTrackerDecisionNeededAt(it, nil, "", now); d != nil {
+		t.Fatalf("pushed row must ask nothing: %+v", d)
+	}
+	// Held rows still derive from the underlying state: nothing either.
+	it.Modifiers = []string{modHold}
+	if d := stageTrackerDecisionNeededAt(it, nil, "", now); d != nil {
+		t.Fatalf("held pushed row must ask nothing: %+v", d)
+	}
+}

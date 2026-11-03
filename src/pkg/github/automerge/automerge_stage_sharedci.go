@@ -67,8 +67,21 @@ func baseBranchRedReason(checks []string) string { return stageengine.BaseBranch
 
 // stageReasonWaitsOnHive reports reasons that leave the PR waiting on the
 // hive rather than a person (no stall): a shared-CI incident being repaired,
-// a red base branch, and a branch update deferred to the next sweep tick.
+// a red base branch, a branch update deferred to the next sweep tick, a
+// merge-train slot behind the front (queued or being rebased by the hive)
+// and a base refresh the hive is running. None of those is anything the
+// author can act on, so none may read as stage/stalled.
 func stageReasonWaitsOnHive(reason string) bool {
-	return reason == autoMergeReasonBehindBudgetExhausted || strings.HasPrefix(reason, stageReasonSharedCIIncident) ||
-		strings.HasPrefix(reason, stageReasonBaseBranchRed)
+	if reason == autoMergeReasonBehindBudgetExhausted || strings.HasPrefix(reason, stageReasonSharedCIIncident) ||
+		strings.HasPrefix(reason, stageReasonBaseBranchRed) || strings.HasPrefix(reason, basePreparationPrefix) {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(strings.TrimSpace(reason), prstage.MergeTrainReasonPrefix); ok {
+		state, _, _ := strings.Cut(rest, "#")
+		switch strings.TrimSpace(state) {
+		case prstage.MergeTrainStateQueuedBehind, prstage.MergeTrainStateRebasing:
+			return true
+		}
+	}
+	return false
 }

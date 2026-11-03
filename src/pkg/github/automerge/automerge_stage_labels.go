@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -161,6 +162,13 @@ type StageLabelPolicy struct {
 	// nor an adoption can turn the check green (hivecommons/hive#14273).
 	// nil = unknown (no park).
 	ForkGuard func(repo string, number int, head string) []string
+	// QuietNotifications is github.notifications.mode != normal (default
+	// quiet): the stall note, the regression note and the trusted-human
+	// 071 note are folded into the PR's one hive status comment and edited
+	// in place instead of each being a fresh comment (an edit emails
+	// nobody; a new comment emails the author and every watcher), and the
+	// 071 note @-mentions its author once per cause, not once per head.
+	QuietNotifications bool
 }
 
 // ownershipRoutingPrefix is the lane routing label family. `agent/<lane>`
@@ -468,6 +476,7 @@ func (c *Engine) removeNonStageLabel(ctx context.Context, owner, repo string, nu
 // reason it settled on (""+merged for a merge). It is a no-op when the
 // policy is off so lanes never pay for it.
 func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullRequest, reason string, merged bool, err error) {
+	c.observeBasePreparation(lane, owner, repo, pr, reason, merged, err)
 	policy := c.stagePolicy()
 	if !policy.Enabled || pr == nil || pr.GetNumber() <= 0 {
 		return
@@ -982,6 +991,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
+		fixer, fixerKnown := c.fixDispatchStatusFor(obs, pass)
+		pass.FixerExcluded = fixerKnown && fixer.Excluded()
+		if replacement, ok := stageengine.PreserveStageOnStaleDecisionAnswer(prevRec, hadPrev, obs, verdict, pass.FixerExcluded); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+		}
 		if hasLabelFold(obs.Labels, "hold") && !verdict.Terminal {
 			// Who held it and why rides the row (hivecommons/hive#15020);
 			// a reporter-trust hold the hive put on its own PR is lifted
@@ -1228,6 +1243,27 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				obs.Reason = stagelabels.LaneReasonRebaseFailedTwice
 				pass.RebaseFailedTwice = true
 			}
+			if !verdict.Terminal && verdict.Stage == fixingStage(obs) && fixerKnown && fixer.Exhausted() {
+				// The hive's own PR whose fix dispatcher refuses another
+				// fix (re-engagement cap spent, hivecommons/hive#15744):
+				// a person decides (re-author / hand over / close as not
+				// planned) instead of the row reading "Fixing" with
+				// nobody on it for hours (#15308).
+				verdict.Stage = stagelabels.NeedsDecision
+				verdict.Rank = stageRankOwned
+				obs.Reason = stagelabels.FixerExhaustedReason(fixer.Attempts)
+				pass.FixerExhausted = fixer.Attempts
+				route := c.fixerExhaustedRoute(obs, fixer)
+				obs.Route = &route
+			}
+			if step := c.sharedCIRecoveryUnauthorized(ctx, obs); step != "" && verdict.Stage != stagelabels.None {
+				pass.RecoveryUnauthorized = step
+				verdict.Stage = stagelabels.NeedsDecision
+				verdict.Rank = stageRankOwned
+				obs.Reason = unauthorizedReason(step)
+				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+				obs.Route = &route
+			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.
@@ -1353,14 +1389,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if want.Stalled && want.Stage.StallNote() {
 			if rec, ok := store.Get(key); ok && !rec.StallCommented {
 				body := stagelabels.StallComment(want.Stage, stagelabels.Dwell(want.Stage, policy.Dwell), obs.Reason)
-				if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+				n, err := c.postStageNote(ctx, policy, obs, prstatus.KeyStageStalled, body)
+				if err != nil {
 					c.warn("stage labels: stall note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 					if firstErr == nil {
 						firstErr = err
 					}
 				} else {
 					store.MarkStallCommented(key)
-					result.Comments++
+					result.Comments += n
 				}
 			}
 		}
@@ -1480,7 +1517,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if want.Stage == stagelabels.NeedsAuthor && (role == stagelabels.RoleTrusted || reviewerAsked) && obs.AuthorKind != authorkind.Clanker && obs.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
 			// Silence is the worst outcome for a trusted person
 			// (hivecommons/hive#13636): always on, not gated on policy.
-			n, err := c.noteTrustedHuman071(ctx, store, key, obs, now)
+			n, err := c.noteTrustedHuman071(ctx, store, key, obs, policy, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err
@@ -1510,19 +1547,22 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		if tr.Regressed {
+		if tr.Regressed && regressionNotable(obs.Reason) {
 			// Keyed by head SHA: a gate flapping between two stages on one
 			// head (e.g. min_head_age) must not post every sweep (#12557).
+			// A pending check or a hive-controlled wait is not a
+			// regression at all (regressionNotable) and posts nothing.
 			if rec, ok := store.Get(key); ok && rec.RegressionCommentDue(obs.HeadSHA) {
 				body := stagelabels.RegressionComment(tr.Prev, tr.Next, obs.Reason)
-				if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+				n, err := c.postStageNote(ctx, policy, obs, prstatus.KeyStageRegressed, body)
+				if err != nil {
 					c.warn("stage labels: regression comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 					if firstErr == nil {
 						firstErr = err
 					}
 				} else {
 					store.MarkRegressionCommentedForHead(key, obs.HeadSHA)
-					result.Comments++
+					result.Comments += n
 				}
 			}
 		}
@@ -1545,6 +1585,88 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 	}
 	return result, firstErr
+}
+
+// regressionNotable reports whether a stage regression is worth telling the
+// PR about: something failed, or a person is being asked for something. A
+// check that went back to pending (CI restarted after a push) or a state
+// the hive itself controls (merge train, base refresh, shared-CI incident)
+// is not a regression anyone can act on, and posting it as one is noise.
+func regressionNotable(reason string) bool {
+	return classifyCIReason(reason) != ciReasonPending && !stageReasonWaitsOnHive(reason)
+}
+
+// postStageNote delivers one of the stage notes (stall, regression, 071) to
+// the PR. In normal mode it is a fresh comment. In quiet mode it is folded
+// into the PR's single hive status comment under key, edited in place: the
+// comment is created only the first time, and only that creation counts
+// as a comment posted. Returns the number of comments created.
+func (c *Engine) postStageNote(ctx context.Context, policy StageLabelPolicy, obs stageObservation, key, body string) (int, error) {
+	if policy.QuietNotifications {
+		return c.writeStatusSection(ctx, obs.Owner, obs.Repo, obs.Number, key, body)
+	}
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+// writeStatusSection rewrites section key of the PR's hive status comment
+// to text through prstatus.Write, the one status writer
+// the GitHub client shares: it is serialised per PR, the edit is retried
+// when the comment changed underneath, and the comment is created only when
+// the PR has none. Returns the number of comments created.
+func (c *Engine) writeStatusSection(ctx context.Context, owner, repo string, number int, key, text string) (int, error) {
+	f := &engineStatusForge{e: c, owner: owner, repo: repo, number: number}
+	res, err := prstatus.Write(ctx, f, prstatus.ItemKey(owner+"/"+repo, number), key, text)
+	if res.Created {
+		return 1, err
+	}
+	return 0, err
+}
+
+// engineStatusForge adapts the engine's comment calls on one PR to
+// prstatus.Forge.
+type engineStatusForge struct {
+	e      *Engine
+	owner  string
+	repo   string
+	number int
+}
+
+func (f *engineStatusForge) ListComments(ctx context.Context) ([]prstatus.Comment, error) {
+	comments, err := f.e.listIssueComments(ctx, f.owner, f.repo, f.number)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]prstatus.Comment, 0, len(comments))
+	for _, cm := range comments {
+		if cm == nil {
+			continue
+		}
+		own := strings.TrimSpace(cm.GetUser().GetLogin()) != "" && !f.e.isPersonLogin(cm.GetUser())
+		out = append(out, prstatus.Comment{ID: cm.GetID(), Body: cm.GetBody(), Own: own})
+	}
+	return out, nil
+}
+
+func (f *engineStatusForge) EditComment(ctx context.Context, id int64, body string) error {
+	if _, _, err := f.e.gh.Issues.EditComment(ctx, f.owner, f.repo, id, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		return fmt.Errorf("editing hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
+	}
+	return nil
+}
+
+func (f *engineStatusForge) CreateComment(ctx context.Context, body string) error {
+	_, _, err := f.e.gh.Issues.CreateComment(ctx, f.owner, f.repo, f.number, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
+}
+
+func (f *engineStatusForge) DeleteComment(ctx context.Context, id int64) error {
+	if _, err := f.e.gh.Issues.DeleteComment(ctx, f.owner, f.repo, id); err != nil {
+		return fmt.Errorf("deleting hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
+	}
+	return nil
 }
 
 // ensureStageLabels provisions (or recolours) the family's labels in a repo

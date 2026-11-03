@@ -18,6 +18,7 @@ function pick(re, what) {
 
 function load(env) {
   const src = [
+    fs.readFileSync(path.join(__dirname, 'static-src/js/nav-count-delta.js'), 'utf8'),
     'var toasts = [];',
     'var navigated = [];',
     'var filtered = [];',
@@ -40,7 +41,7 @@ function load(env) {
     pick(/function stageTrackerWaitingOnYou\(d\) \{[\s\S]*?\n    \}\n/, 'stageTrackerWaitingOnYou'),
     pick(/function stageTrackerWaitKindWords\(kind\) \{[^\n]*\n/, 'stageTrackerWaitKindWords'),
     pick(/function stageTrackerWaitingTitle\(w, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerWaitingTitle'),
-    pick(/function stageTrackerRenderWaiting\(d, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRenderWaiting'),
+    pick(/function stageTrackerRenderWaiting\(d, nowMs, live = true\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRenderWaiting'),
     pick(/function stageTrackerWaitingToast\(w, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerWaitingToast'),
     pick(/function stageTrackerWaitingToastText\(w\) \{[\s\S]*?\n    \}\n/, 'stageTrackerWaitingToastText'),
     pick(/function showWaitingOnYou\(\) \{[\s\S]*?\n    \}\n/, 'showWaitingOnYou'),

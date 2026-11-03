@@ -1,0 +1,1 @@
+- The built-in destructive-command check now also matches equivalent root and home removal spellings such as `rm -rf //`, `rm -rf /.`, `rm -rf "/"`, `rm -r -f /` and `rm -rf ${HOME}`, instead of relying solely on the host text scanner ([#15740](https://github.com/hivecommons/hive/issues/15740)).

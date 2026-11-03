@@ -134,7 +134,11 @@ func TestExpectedRules(t *testing.T) {
 		// 045 never regresses (IsRegression) and every backward hop among
 		// 010–040 is now drawn, so a park release is a non-regression hop.
 		{"park released to a held claim, not drawn", stagelabels.IssueItem, stagelabels.IssueNeedsDecision, stagelabels.Claimed, true},
-		{"undrawn regression (pr)", stagelabels.PRItem, stagelabels.AwaitingMergeAdmission, stagelabels.ReviewPending, false},
+		{"undrawn regression (pr)", stagelabels.PRItem, stagelabels.PreMergeSoak, stagelabels.Reviewed, false},
+		// hivecommons/hive#15825: a merge-queued head that is pushed or
+		// turns red / rebasing falls back to CI / Review, drawn.
+		{"merge-queued head pushed, drawn", stagelabels.PRItem, stagelabels.AwaitingMergeAdmission, stagelabels.ReviewPending, true},
+		{"merge-queued head rebased by the train, drawn", stagelabels.PRItem, stagelabels.AwaitingMergeAdmission, stagelabels.Fixing, true},
 		{"pr stage on an issue", stagelabels.IssueItem, stagelabels.Actionable, stagelabels.ReviewPending, false},
 		{"issue stage on a pr", stagelabels.PRItem, stagelabels.Claimed, stagelabels.ReviewPending, false},
 	}

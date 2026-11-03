@@ -51,6 +51,7 @@ func TestMergeTrainFeedsHotspotRecorder(t *testing.T) {
 	rec := &recordedHotspot{}
 	c.hotspotRecorder = rec
 	prs := []*gh.PullRequest{mtPR(20, t0, ""), mtPR(21, t0.Add(time.Minute), ""), mtPR(22, t0.Add(2*time.Minute), "")}
+	mtReady(c, "self", prs...)
 	plan := c.planMergeTrains(context.Background(), "self", "acme/widget", "acme", "widget", prs, func(*gh.PullRequest) string { return "" })
 	if !plan.isFront(20) {
 		t.Fatalf("front = %v", plan.groups)

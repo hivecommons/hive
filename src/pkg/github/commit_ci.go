@@ -74,6 +74,8 @@ func (c *requiredChecksForbiddenCache) put(key string) {
 // this package (the transport, the ignore lists) and the watcher lives here;
 // a core both can call has to sit below both.
 type CommitCIState struct {
+	// Reporting is a read-only consistency observation, not CI success.
+	Reporting []CIReportingObservation
 	// Green is true when every gating status/check run has succeeded (or is
 	// ignorable). Reason names the first blocker when false: "status-pending",
 	// "check-pending", "status-<state>" or "check-<conclusion>". Zero statuses
@@ -121,11 +123,20 @@ type CommitCIState struct {
 	// Every one of them postdates the push, so it is a safe lower bound on
 	// how long the head has existed.
 	EarliestActivity time.Time
+	// HeadTimeAheadBy is how far CommitCIOptions.HeadPushedAt was ahead of
+	// the host clock when min_head_age was evaluated (#16143). Non-zero means
+	// the head's age was not evaluable from GitHub's timestamp and the hold
+	// was measured from HeadFirstSeenAt instead; callers log it so a
+	// skew-handled head is distinguishable from a normally aged one.
+	HeadTimeAheadBy time.Duration
 }
 
 // CommitCIOptions carries policy facts that are known to callers before the
 // commit-status/check-run walk starts.
 type CommitCIOptions struct {
+	// PRNumber enables bounded, exact-current-head reporting reconciliation.
+	// Commit-only/base observations retain their existing behavior.
+	PRNumber                int
 	Required                map[string]bool
 	RequiredKnown           bool
 	RequiredKnownFromConfig bool
@@ -145,6 +156,13 @@ type CommitCIOptions struct {
 	SkippedByDesign map[string]bool
 	MinHeadAge      time.Duration
 	HeadPushedAt    time.Time
+	// HeadFirstSeenAt is the host-clock time the caller first observed this
+	// head. It is consulted only when HeadPushedAt is ahead of the host clock
+	// (GitHub's server-generated timestamps running ahead of this host,
+	// #16143): the hold is then measured from it instead of being skipped. A
+	// zero value is the first observation, so the head is held for one
+	// min_head_age window from now.
+	HeadFirstSeenAt time.Time
 	Now             func() time.Time
 	// RequireEvidence fails closed when no real successful CI check-run evidence
 	// exists. It is used when GitHub reports a known empty required-check set or
@@ -678,15 +696,44 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			now = time.Now
 		}
 		age := now().Sub(opts.HeadPushedAt)
-		if age < 0 {
+		// A head time ahead of the host clock is skew between GitHub's
+		// server-generated timestamps and this host (#16143), not a fresh
+		// push, and the host cannot measure age from it. The hold is not
+		// skipped: when the required set is unknown it is the only cover for
+		// slow check-runs that have not registered yet. Age is measured from
+		// the host-clock first observation instead, which can over-hold by at
+		// most one min_head_age window and never clamps to "pushed 0s ago"
+		// for the whole skew.
+		skewed := age < 0
+		if skewed {
+			st.HeadTimeAheadBy = -age
 			age = 0
+			if !opts.HeadFirstSeenAt.IsZero() {
+				age = max(now().Sub(opts.HeadFirstSeenAt), 0)
+			}
 		}
 		configRequiredAllGreen := opts.RequiredKnownFromConfig && len(required) > 0 && len(requiredSuccess) == len(required) && len(st.MissingRequired) == 0
 		if age < opts.MinHeadAge && !configRequiredAllGreen {
-			block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
+			if skewed {
+				block(fmt.Sprintf("pending: head time ahead of host clock; head first seen %s ago (< min_head_age)", age.Round(time.Second)))
+			} else {
+				block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
+			}
 		}
 	}
 	st.Green = st.Reason == ""
+	if !st.Green && strings.HasPrefix(st.Reason, "required-check-pending:") && opts.PRNumber > 0 {
+		var pending []*gh.CheckRun
+		for _, check := range latestCheckRunsByNameAndApp(allCheckRuns) {
+			if required[check.GetName()] && check.GetStatus() != "completed" {
+				pending = append(pending, check)
+			}
+		}
+		st.Reporting = sharedCIReportingCache.observe(ctx, client, owner, repo, sha, opts, pending)
+		if reason := ciReportingReason(st.Reporting); reason != "" {
+			st.Reason = reason
+		}
+	}
 	return st, nil
 }
 

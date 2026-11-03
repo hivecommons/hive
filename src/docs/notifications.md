@@ -78,7 +78,7 @@ The notifier accepts `http://` and `https://` URLs in the Go sender, but product
 
 | Field | Required | Notes |
 |---|---:|---|
-| `notifications.discord.webhook` | yes for webhook notifications | Discord webhook URL. The sender posts `{"content":"**title**\nmessage","flags":4}` — `flags: 4` is Discord's `SUPPRESS_EMBEDS`, so URLs in a notification render as plain links without a preview card. |
+| `notifications.discord.webhook` | yes for webhook notifications | Discord webhook URL. The sender posts `{"content":"**title**\nmessage","flags":4,"allowed_mentions":{"parse":[]}}` — `flags: 4` is Discord's `SUPPRESS_EMBEDS`, so URLs in a notification render as plain links without a preview card, and the empty `allowed_mentions.parse` stops untrusted text (issue titles, repo names) from pinging `@everyone`, `@here`, roles or users. |
 | `notifications.discord.factory_webhook` | yes for `notifications.github_activity.enabled` | Dedicated Discord webhook URL for org-wide GitHub issue/PR activity. The sender posts one-line `{"content":"🐝 [repo] ... <url>","flags":4}` messages; the `<url>` wrapping and `SUPPRESS_EMBEDS` flag keep the channel free of link preview cards. |
 
 Use a Discord **webhook URL**, not a bot token, for notification delivery.
@@ -132,6 +132,48 @@ Current v1 event coverage:
 | PR | CI red/green transition | Terminal combined-status changes (`success`, `failure`, `error`) on the head SHA. |
 | PR | merged | Includes the target branch (`merged into v6`) and merge/head SHA dedupe. |
 | PR | closed unmerged | Open → closed without merge. |
+
+### Per-recipient attention budget (opt-in, off by default)
+
+Per-condition reminder limits do not add up to an attention budget: ten
+conditions on ten items each reminding daily is still ten pings a day for one
+person. `pkg/attentionbudget` caps **non-urgent** attention writes (first
+pings and reminders) per responsible recipient per rolling 24 hours, across
+items, and never drops an ask that goes over the cap
+([#16271](https://github.com/hivecommons/hive/issues/16271), part of
+[#16075](https://github.com/hivecommons/hive/issues/16075)).
+
+| Field | Default | Notes |
+|---|---|---|
+| `github.attention.recipient_budget` | `0` (off) | Max non-urgent attention writes per recipient per rolling 24h. `0` keeps today's behaviour; maximum `1000`. |
+| `github.attention.digest_recipients` | empty | GitHub logins (case-insensitive, optional `@`) that opted into the digest. |
+
+These keys live in the `github.attention` block owned by the condition-episode
+ledger ([#16267](https://github.com/hivecommons/hive/issues/16267)); the budget
+takes effect once the ledger routes its non-urgent writes through it.
+
+- **Off (shadow mode).** With `recipient_budget: 0` every write is delivered
+  exactly as before. The budget still counts, per recipient, how many writes
+  would have overflowed a candidate cap of 5 (`ShadowBudget`) and reports
+  `delivered`, `exempt`, `overflowed` and `would_overflow` per login in the
+  `attention budget:` log line, so an operator can choose N from evidence
+  before enabling it.
+- **Enabled, recipient opted into the digest.** The (N+1)th non-urgent ping or
+  reminder in the window is not posted. It stays an open, overflowed ask: it is
+  listed in the item's status card (`attention-overflow` section), in the
+  repo's action queue, and in the recipient's digest.
+- **Enabled, recipient not opted in.** Per-episode delivery is kept: newly
+  actionable asks are always posted; only reminders over the cap are deferred
+  (and remain visible in the status card and action queue).
+- **Digest.** One comment per recipient per repo, identified by
+  `<!-- hive:attention-digest recipient=<login> -->`, created once through the
+  existing marker-comment upsert and edited in place afterwards (edits notify
+  nobody). It serves as the reminder for the asks it lists. No external
+  service is involved.
+- **Never budgeted.** Materially new security risk or imminent destructive
+  action, mandatory/required reviews, machine-consumed protocol commands, and
+  every security/merge hold notice always deliver immediately and do not
+  consume budget. Unclassified writes are treated as exempt.
 
 ## What triggers notifications
 
@@ -293,7 +335,7 @@ Set `notifications.discord.rfc_channel_id` (or the env var `HIVE_DISCORD_RFC_CHA
 - is closed: `RFC closed (completed): ...` or `RFC closed (not planned): ...`, from GitHub's close reason
 - is taken off hold so it can be implemented: `RFC ready to implement (hold removed): #N <title> - <url>`, when the `hold` label (Prow `/unhold`) comes off an open RFC, or a held RFC moves to `stage/010-actionable`. One notice per hold episode.
 
-An issue is an RFC when it carries the `rfc` label or its title starts with `RFC` after any leading emoji or `[tag]` (`RFC: ...`, `[RFC] ...`, `📝 RFC: [v6] ...`). A hive that manages several repos prefixes the number with the repo (`owner/repo#N`).
+An issue is an RFC when it carries the `rfc` label, its title starts with `RFC` after any leading emoji or `[tag]` (`RFC: ...`, `[RFC] ...`, `📝 RFC: [v6] ...`), or one of its leading `[tags]` contains the word `RFC` (`📝 [v5 RFC] ...`, `[RFC v6] ...`; `[RFC #N]` references an RFC and does not count). A hive that manages several repos prefixes the number with the repo (`owner/repo#N`).
 
 The default is empty, which turns the notices off. `channel_id` is not required: the notices only post with the bot token and never start the command bot. The hive polls GitHub every three minutes for issues updated since its last poll (one list call per repo) and keeps per-issue records in `/data/rfc-notify.json`, so a restart never re-announces a transition. The first poll after the key is set only records the current open RFCs; transitions announce from the next poll on. Each post is also written to the audit log as `rfc-notify`.
 
@@ -303,3 +345,241 @@ notifications:
     bot_token: ${DISCORD_BOT_TOKEN}
     rfc_channel_id: "1540404487099777136"
 ```
+
+### Rich mode, the designated announcer, and private repositories
+
+These keys sit next to `rfc_channel_id`. All of them default off, and with none of them set the notices are the one-line posts above, unchanged.
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `rfc_format` | `""` (= `line`) | `line` posts one line per transition. `card` posts the transition text (including a linked RFC for accepted documents) alongside a Discord summary card (embed; with `rfc_threads: true` the post is plain text and the embed renders only when threads are off) with target, status, scrubbed summary, open-decision count and colour by state (held grey, needs-decision amber, ready green, closed completed blue, closed not-planned dark); malformed bodies fall back to the line. Card posts share the bounded `429` retry of every Discord call (see *Rate limits and failures* under [Threads](#one-thread-per-rfc-rfc_threads)). Any other value is a config error. |
+| `rfc_threads` | `false` | Rich mode: one Discord thread per RFC in the existing text channel (see [Threads](#one-thread-per-rfc-rfc_threads)). Needs `rfc_announcer`. |
+| `rfc_announcer` | `false` | Marks this hive as the one designated announcer for `rfc_channel_id`. Rich mode posts only from the announcer. |
+| `rfc_backlink_comment` | `false` | With `rfc_threads`, comments `Discussion thread: <url>` on the RFC once, after the thread exists. |
+| `rfc_include_private` | `false` | Authorizes posting RFCs from private repositories to the channel. |
+
+- **Announcer rule.** Rich mode means `rfc_format: card` or `rfc_threads: true`. A hive in rich mode without `rfc_announcer: true` posts nothing and logs `rfc notify: rich mode requires rfc_announcer; not posting` once. It keeps recording transitions, so turning on the announcer later does not backfill old ones. Set `rfc_announcer: true` on exactly one hive per channel. Line mode ignores the key.
+- **RFC documents proposed as pull requests (rich mode only).** A pull request is an RFC document when its title starts with `📝 proposal:` or `📝 RFC`, or it adds or changes `docs/rfc-*.md` or `src/docs/rfc-*.md`. The announcer posts `RFC doc proposed: #N <title> - <url> (by @author)` when one opens, titled by the document's first heading when the hive read it, and `RFC doc accepted (RFC #M): ...` when it merges, attributed to the RFC issue its body links (`Closes`/`Refs #M` or an issue URL), or `RFC doc accepted: ...` when it links none the hive tracks. PRs already open when the hive takes its baseline are not announced, and a PR closed without merging posts nothing. Each poll lists pull requests updated since the last poll, plus the changed files of those whose title does not already mark them. Line mode stays issues-only.
+- **Lifecycle changes (rich mode only).** On the announcer the hive also posts one line per change to an open RFC: `RFC decisions: 2 → 1 open: ...` when the open count under *Decisions for maintainers* changes (at most one per RFC per 30 minutes; changes inside that window collapse into the next notice with the latest count), `RFC target: v5 → v6: ...` and `RFC status: <old> → <new>: ...` (values cut to 100 characters) when the RFC field table changes (a body that no longer parses is not a change), and `RFC needs a decision: ...` when `stage/045-needs-decision` or `needs-human` is added. A retitle posts nothing: with `rfc_threads` it edits the opened card in place and renames the thread. An RFC opened by the same author with the same title (lowercased, RFC prefix, leading bracketed tags such as `[v5 RFC]` or `[v6]` and emoji removed, leading/trailing punctuation stripped, whitespace collapsed) as an open RFC in the same repo opened up to an hour earlier gets no card: the hive posts `RFC duplicate filed as #M - <url>` once into the first RFC's thread, and closing the duplicate posts nothing. These lines are never cards. With `rfc_threads` they go into the RFC's thread; otherwise to the channel. The 30-minute and one-hour windows are fixed. Line mode posts none of them.
+- **Private rule (every mode, line mode included).** An RFC in a private or `internal` repository is not posted unless `rfc_include_private: true`. This keeps its title and link out of the channel. The hive resolves each repo's visibility once and caches it for an hour. A repo whose visibility cannot be resolved counts as private (fail closed). A withheld transition is still recorded, so it is never posted later.
+
+```yaml
+notifications:
+  discord:
+    bot_token: ${DISCORD_BOT_TOKEN}
+    rfc_channel_id: "1540404487099777136"
+    rfc_format: card
+    rfc_announcer: true          # only on the one announcing hive
+    rfc_include_private: false   # default: private-repo RFCs are not posted
+```
+
+#### One thread per RFC (`rfc_threads`)
+
+On the announcer, `rfc_threads: true` keeps the text channel (no Forum) and turns each RFC into a card plus a thread:
+
+- **Opened** posts the card, then starts a thread on it named `#N <title>` (cut to Discord's 100 characters). The card and the thread ID are stored per RFC in `/data/rfc-notify.json`, which is now state version 2; a version 1 file loads unchanged, and a file written by a newer hive is refused rather than downgraded.
+- **Closed, ready to implement, doc accepted and the lifecycle changes above** post into the RFC's thread. Closed and ready also echo one line to the channel. An RFC announced before threads were enabled has no thread and keeps getting the plain channel line; it is never back-filled.
+- **Idempotency.** Before the card is posted the hive saves a write-ahead intent with a deterministic nonce (a hash of `repo#number` plus `opened`, 25 characters) and sends it with Discord's `nonce` and `enforce_nonce`, so a retry inside Discord's dedup window returns the same message. Channel history is never treated as a claim between hives; the single announcer is the only writer.
+- **Reconciliation.** At startup, and whenever an RFC has an intent without a confirmed card or a card without a thread, the hive does one lookup of the channel's last 50 messages for a message of its own bot with the card's nonce or exact text. A match is adopted (no second card); with no match the card is re-posted once more with the same nonce. A failed lookup re-posts nothing. Card posts and thread starts are each tried at most 3 times across polls and restarts, then logged and left alone. Only RFCs this hive began announcing are reconciled, so there is no historical burst.
+- **Backlink (`rfc_backlink_comment: true`).** Once the thread is confirmed the hive comments `Discussion thread: <thread URL>` on the RFC, through the per-issue bot comment budget. The flag is saved after it succeeds, so restarts do not repeat it; a failure leaves the flag unset and is retried up to 3 times, then logged. Default off: the hive never comments on issues otherwise.
+- **Rate limits and failures.** Every Discord call honours a `429` `retry_after` with at most 3 bounded retries (each wait capped at 15 seconds). Failures count in the sweep's `errors`, are logged as warnings, and are written to the audit log as `rfc-notify` lines with `threads`, `reconciled`, `backlinks` and `errors`.
+
+```yaml
+notifications:
+  discord:
+    bot_token: ${DISCORD_BOT_TOKEN}
+    rfc_channel_id: "1540404487099777136"
+    rfc_threads: true
+    rfc_announcer: true            # only on the one announcing hive
+    rfc_backlink_comment: false    # opt in to comment the thread link on the RFC
+```
+
+The bot needs the `Create Public Threads` and `Send Messages in Threads` permissions, plus `Read Message History` for reconciliation.
+
+## GitHub writes: inventory and shadow mode (`github.notifications.shadow`)
+
+Every new issue/PR comment, review submission, review request and @-mention
+the hive makes on GitHub emails the people involved and everyone watching the
+repository. [`github.notifications.mode`](operator-reference/sweeps-and-operations.md#notification-mode-githubnotificationsmode)
+already folds the hive's own bookkeeping into one edited status comment;
+shadow mode measures what is left so a later change can be judged against a
+baseline ([#16075](https://github.com/hivecommons/hive/issues/16075)).
+
+```yaml
+github:
+  notifications:
+    shadow: true   # default false
+```
+
+Shadow mode is **instrumentation only**: nothing is suppressed, delayed or
+rerouted, and the GitHub writes are byte-for-byte the same with the flag on
+or off. With the flag on, each notification-capable write the Go client makes
+is attributed to its producer (the inventoried function below), classified,
+and given a *would-notify* decision:
+
+- **Record** — `{repo, item, producer, class, condition key, would_notify,
+  reason}` plus the logins the write mentions or requests. Comment bodies,
+  other recipients and inbox contents are never kept. The last 512 records
+  stay in memory (`Client.NotificationShadowRecords`).
+- **Condition key** (provisional) — `(repo, item, class, subject)`, where the
+  subject is what the writer supplies (the status-comment section key for
+  `PostNoteOrFold`) or the producer name. A later change defines the
+  authoritative, producer-independent key.
+- **Decision** — a write whose condition key was already written within 24
+  hours is `would_notify=false`, reason `repeat_condition`, **only** for the
+  `status` and `attention` classes. `protocol_command`, `required_review` and
+  `security_event` writes are always `would_notify=true` (a repeat gets reason
+  `exempt_class_repeat`). A failed write is `delivery_failed`.
+
+### Counters
+
+The hourly `github notifications` log line gains `shadow_would_suppress`,
+`shadow_reviews`, `shadow_review_requests`, `shadow_mentions`,
+`shadow_delivery_failures` and `shadow_active_items` while shadow mode is on
+(the line is unchanged while it is off). The opt-in Prometheus endpoint
+(`HIVE_METRICS_ENABLED` + `HIVE_METRICS_TOKEN`) exports:
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `hive_github_comments_total` | `op` = `created` / `edited` / `suppressed` | The always-on comment tally. |
+| `hive_github_notification_comments_created_total` | `producer`, `class` | New comments. |
+| `hive_github_notification_reviews_submitted_total` | `producer`, `class` | Review submissions. |
+| `hive_github_notification_review_requests_total` | `producer`, `class` | Review requests. |
+| `hive_github_notification_mentions_total` | `producer`, `class` | @-mentions in posted comments and reviews. |
+| `hive_github_notification_suppressed_repeats_total` | `producer`, `class` | Notes the hive actually did not post (folded or already present). |
+| `hive_github_notification_would_suppress_repeats_total` | `producer`, `class` | Writes shadow mode *would* suppress. |
+| `hive_github_notification_delivery_failures_total` | `producer`, `class` | Failed writes. |
+| `hive_github_notification_active_items` | — | Items with a notification-capable write in the last 24 hours. |
+
+All counts are API writes, a proxy for notifications — never "emails
+delivered". Counters are cumulative since process start.
+
+### Comparing baseline windows
+
+Compare **per active item**, over **matched windows**: the same length (a
+whole week, so weekday traffic is matched), similar open-item load, and no
+change to `github.notifications.mode` or the hive version inside either
+window. For each window compute
+
+```
+writes      = increase(hive_github_notification_comments_created_total[7d])
+            + increase(hive_github_notification_reviews_submitted_total[7d])
+            + increase(hive_github_notification_review_requests_total[7d])
+per_item    = writes / avg_over_time(hive_github_notification_active_items[7d])
+repeat_rate = increase(hive_github_notification_would_suppress_repeats_total[7d])
+            / avg_over_time(hive_github_notification_active_items[7d])
+```
+
+broken down by `class` and `producer`. The baseline is a shadow-on window
+before any suppression ships; the candidate is the same metrics after it. The
+80% reduction in repeat/non-actionable writes per active item named in #16075
+is an **acceptance target**, not a measured or claimed result: shadow mode
+only produces the baseline that target will be checked against.
+
+### Write-site inventory
+
+Every function under `src/pkg` and `src/cmd` that calls a notification-capable
+write primitive (`CreateIssueComment`, `CreateIssueCommentBudgeted`,
+`PostNoteOrFold`, `PostClaimNote`, `PullRequests.CreateReview`,
+`RequestReviewers`) or records a suppressed note is listed here and in
+`notificationWriteSites` (`src/pkg/github/notification_write_sites.go`).
+`TestNotificationWriteSitesInventory` fails when a new call site is added
+without a class. Review submissions and review requests are always counted as
+`required_review`, whichever producer made them.
+
+- `status` — bookkeeping readable on demand; repeats may be would-suppress.
+- `attention` — asks a person to look or act; repeats may be would-suppress.
+- `required_review` — a review or review request a merge depends on; never would-suppress.
+- `protocol_command` — machine-consumed (claim markers, `/lgtm`, `/approve`, `/ok-to-test`); never would-suppress.
+- `security_event` — trust or integrity signal; never would-suppress.
+
+| Producer | Class | Notes |
+|---|---|---|
+| `dashboard.(*ContributeWSHub).markAlreadyDoneIssue` | `status` |  |
+| `dashboard.(*ContributeWSHub).releaseGateParkLabel` | `status` |  |
+| `dashboard.(*ContributeWSHub).releaseToolingBlockedLabel` | `status` |  |
+| `dashboard.(*Server).armRebaseThenMerge` | `status` |  |
+| `dashboard.(*Server).executeDelegatedDecision` | `status` |  |
+| `dashboard.(*Server).handlePullRequestMergeDecision` | `status` |  |
+| `dashboard.(*Server).handleRepoItemAdoptNow` | `status` |  |
+| `dashboard.(*Server).handleRepoItemBlockerClosePartial` | `status` |  |
+| `dashboard.(*Server).handleRepoItemDecision` | `status` |  |
+| `dashboard.(*Server).handleReviewQueueSupersededClose` | `status` |  |
+| `dashboard.(*Server).mirrorPlanWith` | `status` |  |
+| `github.(*Client).CloseIssueForConfiguredLinePR` | `status` |  |
+| `github.(*Client).CreateIssueCommentBudgeted` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).PostFleetReportCleared` | `status` |  |
+| `github.(*Client).PostFleetReportRecovery` | `status` |  |
+| `github.(*Client).PostFleetReportRollup` | `status` |  |
+| `github.(*Client).PostNoteOrFold` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
+| `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
+| `github.(*Client).closeDecomposedParent` | `status` |  |
+| `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
+| `github.(*Client).closeSupersededPRDecision` | `status` |  |
+| `github.(*Client).fileReviewBacklog` | `status` |  |
+| `github.(*Client).joinFleetReportIssue` | `status` |  |
+| `github.(*Client).markInProgressStarted` | `status` |  |
+| `github.(*Client).postUnblockedNote` | `status` |  |
+| `github.(*Client).priorArtGateClose` | `status` |  |
+| `github.(*Client).reconcileBlockedTargets` | `status` |  |
+| `github.(*Client).recordReviewEvidenceMerge` | `status` |  |
+| `github.SyncIssueStageLabelsWith` | `status` |  |
+| `github.ensureIssueStagePRLink` | `status` |  |
+| `github.githubIssueBacklogSink.AppendToItem` | `status` |  |
+| `github.githubIssueBacklogSink.CloseItem` | `status` |  |
+| `github.githubIssueBacklogSink.LiftBlock` | `status` |  |
+| `github.handleMergedPRIssueStage` | `status` |  |
+| `github.runRecheckSoak` | `status` |  |
+| `main.postReviewAcknowledgements` | `status` |  |
+| `main.rfcNotifySource.Comment` | `status` |  |
+| `main.unparkEscalatedPR` | `status` |  |
+| `dashboard.(*ContributeWSHub).parkWrongBase` | `attention` |  |
+| `dashboard.(*Server).handleRepoItemReroute` | `attention` |  |
+| `dashboard.(*Server).handleReviewPipelineSendToHuman` | `attention` |  |
+| `dashboard.(*Server).reroutePickupLapsed` | `attention` |  |
+| `dashboard.(*Server).settleRebaseMergeLedger` | `attention` |  |
+| `github.(*Client).NudgeTrackingIssueClosingRefs` | `attention` |  |
+| `github.(*Client).appendFoldedFinding` | `attention` |  |
+| `github.(*Client).bindProwLgtm` | `attention` |  |
+| `github.(*Client).commentOnHumanFiledTwin` | `attention` |  |
+| `github.(*Client).createIssue` | `attention` |  |
+| `github.(*Client).handleOneIssueRequest` | `attention` |  |
+| `github.(*Client).parkClankerRequestedPR` | `attention` |  |
+| `github.(*Client).redirectToExistingPR` | `attention` |  |
+| `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
+| `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
+| `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
+| `main.claimEscalationLookup` | `attention` |  |
+| `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
+| `main.maintainHeldPRMergeability` | `attention` |  |
+| `main.rfcCoverageForge.CreateComment` | `attention` |  |
+| `main.runEscalationSweep` | `attention` |  |
+| `prfollowup.postStaleHeadPushNotes` | `attention` |  |
+| `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |
+| `scheduler.(*Scheduler).parkUnclearIssue` | `attention` |  |
+| `scheduler.(*Scheduler).postTriageClarifyComment` | `attention` |  |
+| `github.(*Client).QueuePRAutoMergeWithNoteResultAtHead` | `required_review` |  |
+| `github.(*Client).RequestReviewers` | `required_review` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).handleOneReviewRequest` | `required_review` |  |
+| `dashboard.postClaimComment` | `protocol_command` |  |
+| `github.(*Client).PostClaimNote` | `protocol_command` |  |
+| `github.(*Client).reportOperatorPullRequestApproval` | `protocol_command` |  |
+| `main.githubClaimHooks` | `protocol_command` |  |
+| `github.(*Client).handleOnePRRequest` | `security_event` |  |
+| `github.(*Client).markReporterTrustAwaiting` | `security_event` |  |
+| `github.(*Client).reconcileReporterTrustSignal` | `security_event` |  |
+| `main.enforceHoldGuard` | `security_event` |  |
+
+Hive-maintained GitHub Actions workflows that comment (not instrumented by the
+Go client; listed for completeness):
+
+| Workflow | Class | What it posts |
+|---|---|---|
+| `changelog-fragment-guard.yml`, `changelog-reminder.yml`, `docs-index-reminder.yml` | `status` | PR reminders about changelog fragments and the docs index. |
+| `issue-closed-reopen-hint.yml`, `issue-reopen-command.yml` | `status` | Reopen hint on closed issues; reply to a reopen command. |
+| `backend-smoke.yml`, `ci-runner-canary.yml`, `coverage-hourly.yml`, `dco-post-merge.yml`, `flue-smoke.yml`, `omp-smoke.yml`, `wavefront-smoke.yml`, `v2-ci.yml`, `v2-tests.yml` | `attention` | "Still failing" comments on an open failure-tracking issue. |
+| `promote-stable.yml` | `attention` | Emergency stable-promotion exception note. |
+| `weekly-competitor-report.md` (`.lock.yml`) | `status` | Weekly report comment on the tracking issue. |
+| `hive-ok-to-test.yml` | `protocol_command` | The `/ok-to-test` command that releases held workflow runs. |

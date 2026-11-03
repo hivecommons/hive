@@ -468,6 +468,8 @@ func TestWorkflowApprovalCommentActor(t *testing.T) {
 		{name: "quoted decision approve", comment: comment("clubanderson", "> /hive decision approve", after)},
 		{name: "plain hive approve", comment: comment("clubanderson", "/hive approve", after)},
 		{name: "decision with other text", comment: comment("clubanderson", "/hive decision approve the rename later", after)},
+		{name: "edited typed decision approve", comment: edited(comment("clubanderson", "/hive decision approve", after))},
+		{name: "edited dashboard approve", comment: edited(comment(testHiveAppBotLogin, dashboard("clubanderson", "sha7"), after))},
 		{name: "bot typed decision", comment: comment("someone[bot]", "/hive decision approve", after)},
 		{name: "typed decision approve edited after posting", comment: edited(comment("clubanderson", "/hive decision approve", after), after.Add(time.Minute))},
 		{name: "dashboard approve edited after posting", comment: edited(comment(testHiveAppBotLogin, dashboard("clubanderson", "sha7"), after), after.Add(time.Minute))},

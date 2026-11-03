@@ -83,6 +83,9 @@ func hostAllowedByHTTPList(host string, allowlist []string) bool {
 }
 
 func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
+	if err := c.IntegrationOrchestration.Validate(); err != nil {
+		return err
+	}
 	if c.Project.Org == "" {
 		return fmt.Errorf("project.org is required")
 	}
@@ -155,6 +158,12 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.GitHub.GraphQLPRBatchPageSize < 0 || c.GitHub.GraphQLPRBatchPageSize > 100 {
 		return fmt.Errorf("github.graphql_pr_batch_page_size must be between 1 and 100, or 0 for the default")
 	}
+	if !c.GitHub.Notifications.Valid() {
+		return fmt.Errorf("github.notifications.mode must be %q or %q", NotificationsModeQuiet, NotificationsModeNormal)
+	}
+	if c.Notifications.Discord != nil && !c.Notifications.Discord.RFCFormatValid() {
+		return fmt.Errorf("notifications.discord.rfc_format must be %q or %q", RFCFormatLine, RFCFormatCard)
+	}
 	if _, err := HeartbeatOmitClasses(c.Hub.HeartbeatOmit); err != nil {
 		return err
 	}
@@ -162,6 +171,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.Classifier.Validate(); err != nil {
+		return err
+	}
+	if err := c.GitHub.Attention.Validate(); err != nil {
 		return err
 	}
 	if err := c.Writeback.Validate(); err != nil {
@@ -275,6 +287,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		c.Dashboard.SnapshotFrameAncestors = normalized
 	}
 
+	if err := c.Dashboard.Matrix.Validate(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateDashboardPublicURL(c.Dashboard.PublicURL); err != nil {
 		return err
 	} else {

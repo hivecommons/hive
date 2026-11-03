@@ -44,6 +44,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/agents/{name}/kicks` | Dashboard auth/session | Agent Kick History Page (HTML) | `pkg/dashboard/api.go:144` |
 | `POST` | `/api/agents/{name}/login-code` | Owner only | Agent Login Code | `pkg/dashboard/api.go:166` |
 
+
 ### Kick is asynchronous
 
 `POST /api/kick/{agent}` queues the message and returns immediately with `202`; it is not a delivery confirmation.

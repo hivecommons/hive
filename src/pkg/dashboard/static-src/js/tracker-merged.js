@@ -4,10 +4,17 @@
     // Pure: PR key → merged? for one payload. Issues are not tracked. A
     // recently_merged repo given by its short name is resolved against the
     // owner/name of the items (any kind, any repo) when exactly one matches.
-    function stageTrackerMergeState(d) {
+    function stageTrackerMergeState(d, prev) {
       const out = {};
       if (!d || typeof d !== 'object') return out;
       const byShort = {};
+      // A dropped row (including one from before a reload) still teaches
+      // the short repo alias used by the audit side list.
+      for (const key of Object.keys(prev || {})) {
+        const repo = key.slice(0, key.lastIndexOf('/pr#'));
+        const slash = repo.lastIndexOf('/');
+        if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+      }
       for (const it of (Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         // Every item of every repo (issues too) teaches the short → full
@@ -15,6 +22,14 @@
         const repo = String(it.repo || '');
         const slash = repo.lastIndexOf('/');
         if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
+          if (!lp || !Number(lp.number)) continue;
+          const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(it, lp) : Object.assign({ repo: it.repo }, lp);
+          const prRepo = String(pr.repo || ''), at = prRepo.lastIndexOf('/');
+          if (at > 0) { const short = prRepo.slice(at + 1); byShort[short] = (short in byShort && byShort[short] !== prRepo) ? '' : prRepo; }
+          if (lp.state === 'closed' && Number(lp.stage) < STAGE_TRACKER_TERMINAL) continue;
+          out[stageTrackerPRKey(pr.repo, pr.number)] = (Number(pr.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+        }
         if (it.kind !== 'pr') continue;
         out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
       }
@@ -30,14 +45,17 @@
       return out;
     }
 
-    // Pure: next plus every PR prev listed open that next no longer lists at
-    // all, kept as open. A PR the snapshot dropped before the audit log
+    // Pure: merged facts are irreversible; dropped open observations remain
+    // comparable. A PR the snapshot dropped before the audit log
     // recorded its merge stays comparable until recently_merged settles it
     // (or, when it was closed unmerged, for the life of the tab — a few keys).
     function stageTrackerCarryOpen(prev, next) {
       const out = Object.assign({}, next || {});
       if (!prev) return out;
-      for (const k of Object.keys(prev)) if (prev[k] === false && !(k in out)) out[k] = false;
+      for (const k of Object.keys(prev)) {
+        if (prev[k] === true) out[k] = true;
+        else if (prev[k] === false && !(k in out)) out[k] = false;
+      }
       return out;
     }
 
@@ -47,59 +65,116 @@
       return Object.keys(next).filter(k => next[k] === true && prev[k] === false).sort();
     }
 
+    const STAGE_TRACKER_MERGE_SESSION_KEY = 'hive.tracker.merge-session.v1';
+    // Shape of a stageTrackerPRKey() key as stored in the session record.
+    const STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE = /^.+\/pr#[1-9][0-9]*$/;
+    var _stageTrackerMergeSessionLoaded = false;
+    // Persist both the last observation and the delivered keys: saving only
+    // delivered keys loses an open→merged transition across a reload. The
+    // first visit still seeds history silently rather than replaying it.
+    function stageTrackerReconcileMerges(d) {
+      if (!_stageTrackerMergeSessionLoaded) {
+        _stageTrackerMergeSessionLoaded = true;
+        try {
+          const saved = JSON.parse(sessionStorage.getItem(STAGE_TRACKER_MERGE_SESSION_KEY));
+          if (saved && saved.state && typeof saved.state === 'object' && !Array.isArray(saved.state)) {
+            const state = {}, delivered = {};
+            for (const key of Object.keys(saved.state)) {
+              if (!STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) || typeof saved.state[key] !== 'boolean') continue;
+              state[key] = saved.state[key];
+            }
+            for (const key of Object.keys(saved.delivered || {})) {
+              if (STAGE_TRACKER_MERGE_SESSION_PR_KEY_RE.test(key) && saved.delivered[key] === true) delivered[key] = true;
+            }
+            _stageTrackerMergeState = state;
+            _stageTrackerZapped = delivered;
+          }
+        } catch {} // Storage disabled/corrupt: keep the in-memory path.
+      }
+      stageTrackerNoteMerges(d);
+      try { sessionStorage.setItem(STAGE_TRACKER_MERGE_SESSION_KEY, JSON.stringify({ state: _stageTrackerMergeState, delivered: _stageTrackerZapped })); } catch {}
+    }
+
     function stageTrackerNoteMerges(d) {
       const nowMs = Date.now();
-      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d));
-      // The merge gate holds "Merging" for at least the merge toast's
-      // lifetime before the row advances to ✓ (hivecommons/hive#15245): a
-      // merge that lands inside the hold is masked as still open until it
-      // ends, then re-read as fresh.
-      _stageTrackerMergingHold = stageTrackerMergingHoldNext(_stageTrackerMergingHold, d, _stageTrackerMergeState, raw, _stageTrackerPRItems, nowMs);
-      const masked = stageTrackerMergingHoldMask(raw, _stageTrackerMergingHold, nowMs);
-      if (masked.until) stageTrackerMergingHoldSchedule(masked.until - nowMs);
-      // The Merged chip holds the masked merges back too: the server
-      // already counts them, their glyph has not even launched yet.
-      _stageTrackerMergedHeld = {};
-      masked.held.forEach(k => { _stageTrackerMergedHeld[k] = true; });
+      _stageTrackerMergingHoldMs = stageTrackerMergingHoldMsOf(d, _stageTrackerMergingHoldMs);
+      const raw = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d, _stageTrackerMergeState));
+      // The merge gate's hold (hivecommons/hive#15245, #15808) keeps a
+      // row the payload dropped mid-merge on the board at "Merging" until
+      // the merged fact arrives (then the merge is fresh at once) or the
+      // hold window passes.
+      _stageTrackerMergingHold = stageTrackerMergingHoldNext(_stageTrackerMergingHold, d, raw, nowMs);
+      const until = stageTrackerMergingHoldUntil(_stageTrackerMergingHold, nowMs);
+      if (until) stageTrackerMergingHoldSchedule(until - nowMs);
+      const prevItems = _stageTrackerPRItems;
       _stageTrackerPRItems = stageTrackerPRItemsOf(d);
-      const next = masked.state;
+      Object.assign(_stageTrackerPRLast, _stageTrackerPRItems);
+      const next = raw;
       const fresh = stageTrackerNewlyMerged(_stageTrackerMergeState, next).filter(k => !_stageTrackerZapped[k]);
+      // A PR that left the board closed, not merged (recently_closed, the
+      // closed twin of recently_merged): say so once, neutrally — no bee,
+      // no count — instead of letting the row vanish in silence.
+      const closed = stageTrackerNewlyClosed(d, _stageTrackerMergeState, next, _stageTrackerPRItems, _stageTrackerClosedNoted);
+      const closedItems = closed.map(k => prevItems[k] || _stageTrackerPRLast[k]);
+      closed.forEach(k => { _stageTrackerClosedNoted[k] = true; delete next[k]; delete _stageTrackerPRLast[k]; });
       _stageTrackerMergeState = next;
       // A merged PR is no longer in this payload, so its last host survives.
       if (typeof stageTrackerPRHosts === 'function') Object.assign(_stageTrackerPRHost, stageTrackerPRHosts(d));
+      if (typeof stageTrackerTerminalObserve === 'function') stageTrackerTerminalObserve(d, fresh, nowMs);
       // With the celebration on, each fresh merge is counted (and the zap
       // plays) when its token lands on the counter; off, both happen now.
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
       if (celebrate) fresh.forEach(k => { _stageTrackerCelebratePending[k] = true; });
       if (typeof stageTrackerMergedSync === 'function') stageTrackerMergedSync(d, fresh, Date.now());
-      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now());
+      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now(), d && d.base_preparation);
+      if (typeof stageTrackerClosedToast === 'function') closed.forEach((k, i) => stageTrackerClosedToast(k, closedItems[i]));
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
       if (celebrate) { stageTrackerCelebrateMerges(fresh); return; }
       if (stageTrackerSoundGate()) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
     }
 
-    /* ---- Merge gate: "Merging" held for the toast's lifetime (#15245) ----
-       Operator: "I have seen some items go straight to merge without
-       showing in the Merge gate column as 'merging' for at least as long
-       as the merge toast is open." The sweep merges inside one pass, so a
-       PR can go from 060/090/095 to merged between two polls and the
-       intermediate state is never on screen. The payload's merge_gate now
-       says merging (with merging_since) while the merge call is in flight;
-       the SPA keeps a hold per PR from the first moment it saw merging —
-       or, for a merge it never saw coming, from the poll that reported it
-       merged — and until STAGE_TRACKER_MERGING_HOLD_MS (the merge
-       banner's lifetime) has passed the row stays on the board at 100
-       "Merging" (its last item, synthesised when the payload dropped it)
-       and the merge is not counted as fresh. When the hold ends the merge
-       is re-read: the row advances to ✓, the banner opens, the chip bumps.
-       A refused merge (merge_gate.state merge-failed) drops the hold at
-       once and the pill says why. All pure except the schedule/release
-       pair; run under node by stage_tracker_merging_hold_test.go. */
+    /* ---- Merge gate: "Merging" bridged until the merged fact (#15245, #15808) ----
+       Operator (#15245): "I have seen some items go straight to merge
+       without showing in the Merge gate column as 'merging'." The sweep
+       merges inside one pass, so a PR can go from 060/090/095 to merged
+       between two polls. The payload's merge_gate says merging (with
+       merging_since) while the merge call is in flight; when the payload
+       then drops the PR before the merged fact (recently_merged / the
+       ledger) has landed, the SPA keeps a hold per PR — from the moment
+       it saw merging — and until the hold window has passed the row stays
+       on the board at 100 "Merging" (its last item, synthesised), the
+       gate saying it is waiting for GitHub to confirm.
+       Operator (#15808): the hold used to be a fixed 30 s mask over the
+       merged fact itself — "Merging · merge landed" sat there while the
+       bee waited — and a row that vanished without the SPA seeing merged
+       never celebrated. Now the hold only bridges the gap: the moment the
+       merged fact is in a payload the hold drops, the merge is fresh and
+       the celebration launches (bee, then the odometer on its landing,
+       #15763). The window is dashboard.stage_tracker.merged_hold_s
+       (payload merged_hold_ms; default 8 s, floor 3 s), a ceiling, not a
+       delay. A refused merge (merge-failed) drops the hold at once. All
+       pure except the schedule/release pair; run under node by
+       stage_tracker_merging_hold_test.go. */
     const STAGE_TRACKER_MERGE_QUEUE = 100;
+    const STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS = 8000;
+    const STAGE_TRACKER_MERGING_HOLD_MIN_MS = 3000;
+    var _stageTrackerMergingHoldMs = STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS;
     var _stageTrackerMergingHold = {};
     var _stageTrackerPRItems = {};
+    // PR key → the last item ever seen for it (survives the payload
+    // dropping it: the closed toast's reason, the hold's row).
+    var _stageTrackerPRLast = {};
+    var _stageTrackerClosedNoted = {};
     var _stageTrackerMergingHoldTimer = 0;
+    // Pure: the hold window from a payload's merged_hold_ms (clamped to the
+    // floor), else the value in force.
+    function stageTrackerMergingHoldMsOf(d, cur) {
+      const n = d && typeof d === 'object' ? Number(d.merged_hold_ms) : 0;
+      if (!(n > 0)) return cur || STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS;
+      return Math.max(STAGE_TRACKER_MERGING_HOLD_MIN_MS, n);
+    }
+    function stageTrackerMergingHoldMs() { return _stageTrackerMergingHoldMs || STAGE_TRACKER_MERGING_HOLD_DEFAULT_MS; }
     // Pure: PR key → item for one payload (the last open item a hold
     // synthesises its row from).
     function stageTrackerPRItemsOf(d) {
@@ -107,21 +182,19 @@
       for (const it of ((d && Array.isArray(d.items)) ? d.items : [])) if (it && it.kind === 'pr') out[stageTrackerPRKey(it.repo, it.number)] = it;
       return out;
     }
-    // Pure: whether a hold is still inside its minimum window at nowMs.
-    function stageTrackerMergingHoldLive(hold, nowMs) { return !!hold && nowMs < hold.since + STAGE_TRACKER_MERGING_HOLD_MS; }
-    // Pure: the holds after one payload. prevState / rawState are the
-    // merge-state maps (PR key → merged?) before and after it; prevItems the
-    // PR items of the previous payload.
+    // Pure: whether a hold is still inside its window at nowMs.
+    function stageTrackerMergingHoldLive(hold, nowMs) { return !!hold && nowMs < hold.since + stageTrackerMergingHoldMs(); }
+    // Pure: the holds after one payload. rawState is the merge-state map
+    // (PR key → merged?) after it.
     //   • a PR the payload shows at merge_gate.state 'merging' opens (or
     //     keeps) a hold from merging_since (else from now, else the one it had)
-    //   • a PR shown at 'merge-failed' — or open at any other state after a
-    //     hold the payload no longer backs — drops its hold at once
-    //   • a PR open before and merged now with no hold opens one from now,
-    //     from its last open item, so "Merging" shows before ✓
-    //   • a hold whose window has passed is dropped (its merge, if any, is
-    //     then read as fresh)
-    function stageTrackerMergingHoldNext(prev, d, prevState, rawState, prevItems, nowMs) {
-      prev = prev || {}; prevState = prevState || {}; rawState = rawState || {}; prevItems = prevItems || {};
+    //   • a PR shown at 'merge-failed' — or open at any other state — drops
+    //     its hold at once
+    //   • a held PR the payload dropped keeps its hold while the window is
+    //     live and the merged fact is still missing; the merged fact (or
+    //     the window's end) drops it — the merge is then read as fresh
+    function stageTrackerMergingHoldNext(prev, d, rawState, nowMs) {
+      prev = prev || {}; rawState = rawState || {};
       const out = {};
       const items = stageTrackerPRItemsOf(d);
       for (const key of Object.keys(items)) {
@@ -134,39 +207,29 @@
         // 'merge-failed' or any other open state: no hold.
       }
       for (const key of Object.keys(prev)) {
-        if (out[key] || items[key]) continue;
+        if (out[key] || items[key] || rawState[key] === true) continue;
         if (stageTrackerMergingHoldLive(prev[key], nowMs)) out[key] = prev[key];
-      }
-      for (const key of Object.keys(rawState)) {
-        // prev[key]: it was held and the window already passed — no second hold.
-        if (rawState[key] !== true || prevState[key] !== false || out[key] || prev[key] || items[key] || !prevItems[key]) continue;
-        out[key] = { since: nowMs, item: prevItems[key], path: '' };
       }
       return out;
     }
-    // Pure: rawState with every PR under a live hold read as still open;
-    // until is the earliest ms at which a masked hold ends (0 when none).
-    function stageTrackerMergingHoldMask(rawState, holds, nowMs) {
-      const state = Object.assign({}, rawState || {});
+    // Pure: the earliest ms at which a live hold ends (0 when none).
+    function stageTrackerMergingHoldUntil(holds, nowMs) {
       let until = 0;
-      const held = [];
       for (const key of Object.keys(holds || {})) {
         const h = holds[key];
-        if (state[key] !== true || !stageTrackerMergingHoldLive(h, nowMs)) continue;
-        state[key] = false;
-        held.push(key);
-        const end = h.since + STAGE_TRACKER_MERGING_HOLD_MS;
+        if (!stageTrackerMergingHoldLive(h, nowMs)) continue;
+        const end = h.since + stageTrackerMergingHoldMs();
         if (!until || end < until) until = end;
       }
-      return { state, held: held.sort(), until };
+      return until;
     }
     // Pure: the row a held PR shows while the payload no longer lists it —
-    // its last open item at 100 "Merging", the gate saying the merge landed.
+    // its last item at 100 "Merging", the gate waiting for GitHub's word.
     function stageTrackerMergingHoldItem(hold, key) {
       const base = hold && hold.item ? hold.item : { kind: 'pr' };
       const mg = Object.assign({}, base.merge_gate || {}, { state: 'merging', merging_since: new Date(hold.since).toISOString(), held: true, sweep_running: false, next_sweep_at: '', soak_until: '', soak_remaining_seconds: 0 });
       if (hold.path) mg.merge_path = hold.path;
-      return Object.assign({}, base, { stage: STAGE_TRACKER_MERGE_QUEUE, stage_slug: 'merge-queue', stage_label: 'stage/100-merge-queue', merge_gate: mg, caption: 'Merging now — the merge landed; ✓ follows', actor: 'hive', stage_actor: Object.assign({}, base.stage_actor || {}, { kind: 'hive', login: '', why: 'hive merged it; the row advances to ✓ in a moment' }), soak_remaining_seconds: 0, modifiers: (Array.isArray(base.modifiers) ? base.modifiers : []).filter(m => m !== 'stalled' && m !== 'blocked'), held_merging: true });
+      return Object.assign({}, base, { stage: STAGE_TRACKER_MERGE_QUEUE, stage_slug: 'merge-queue', stage_label: 'stage/100-merge-queue', merge_gate: mg, caption: 'Merging — waiting for GitHub to confirm; ✓ follows', actor: 'hive', stage_actor: Object.assign({}, base.stage_actor || {}, { kind: 'hive', login: '', why: 'hive issued the merge; the row advances to ✓ once GitHub confirms' }), soak_remaining_seconds: 0, modifiers: (Array.isArray(base.modifiers) ? base.modifiers : []).filter(m => m !== 'stalled' && m !== 'blocked'), held_merging: true });
     }
     // Pure: the payload as rendered — its items plus a synthesised row for
     // every live hold the payload dropped; d itself when there is none.
@@ -182,7 +245,7 @@
       return Object.assign({}, d, { items: d.items.concat(extra) });
     }
     // Stateful: when the earliest live hold ends, re-read the last payload so
-    // the held merges come through as fresh and the rows advance to ✓.
+    // the synthesised row leaves the board.
     function stageTrackerMergingHoldSchedule(inMs) {
       if (_stageTrackerMergingHoldTimer) return;
       _stageTrackerMergingHoldTimer = setTimeout(stageTrackerMergingHoldRelease, Math.max(50, inMs + 50));
@@ -190,8 +253,57 @@
     function stageTrackerMergingHoldRelease() {
       _stageTrackerMergingHoldTimer = 0;
       if (!_stageTracker || typeof _stageTracker !== 'object') return;
-      stageTrackerNoteMerges(_stageTracker);
-      renderStageTracker();
+      stageTrackerReconcileMerges(_stageTracker);
+      renderStageTracker(undefined, true);
+    }
+
+    /* ---- Closed, not merged: a neutral word on the way out (#15808) ----
+       Operator: #15793 "vanished" at 11:46:54 and read as a silent merge;
+       it had been closed as superseded by #15783. Items only list open
+       work, so the SPA learns of a close the same way it learns of a
+       merge: a side list (recently_closed) names the PRs that left closed.
+       Every PR this tab saw open that the list now says closed gets one
+       info toast — "#15793 closed · superseded by #15783", the reason read
+       from the row's last caption — with the standard countdown; no bee,
+       no odometer. */
+    const STAGE_TRACKER_CLOSED_REASON_MAX = 72;
+    // Pure: PR keys the tab saw open (prevState false, or carried open) that
+    // d.recently_closed lists, not merged, not listed open now, not yet noted.
+    function stageTrackerNewlyClosed(d, prevState, rawState, items, noted) {
+      const list = d && Array.isArray(d.recently_closed) ? d.recently_closed : [];
+      if (!list.length || !prevState) return [];
+      const out = [];
+      for (const c of list) {
+        if (!c || !c.repo || !c.number) continue;
+        const key = stageTrackerPRKey(c.repo, c.number);
+        if (prevState[key] !== false || rawState[key] === true || (items && items[key]) || (noted && noted[key]) || out.indexOf(key) >= 0) continue;
+        out.push(key);
+      }
+      return out.sort();
+    }
+    // Pure: why a closed PR left, from its last item — "superseded by
+    // #15783" when the row said so, else its caption's first clause.
+    function stageTrackerClosedReason(it) {
+      if (!it) return 'closed without merging';
+      const sup = Number(it.superseded_by) || Number(it.superseded && it.superseded.by) || 0;
+      const cap = String(it.caption || '');
+      const m = cap.match(/superseded by #(\d+)/i) || cap.match(/duplicate of #(\d+)/i);
+      if (sup > 0) return 'superseded by #' + sup;
+      if (m) return (m[0].toLowerCase().startsWith('dup') ? 'duplicate of #' : 'superseded by #') + m[1];
+      let clause = cap.split(/[;—]|\. /)[0].trim();
+      if (!clause) return 'closed without merging';
+      if (clause.length > STAGE_TRACKER_CLOSED_REASON_MAX) clause = clause.slice(0, STAGE_TRACKER_CLOSED_REASON_MAX - 1).trimEnd() + '…';
+      return clause;
+    }
+    // Pure: the toast's words.
+    function stageTrackerClosedToastText(key, it) {
+      const n = Number(String(key || '').slice(String(key || '').indexOf('/pr#') + 4)) || 0;
+      return (n ? '#' + n + ' ' : '') + 'closed · ' + stageTrackerClosedReason(it);
+    }
+    // Stateful: one neutral toast for a PR that left the board closed.
+    function stageTrackerClosedToast(key, it) {
+      if (typeof showToast !== 'function') return null;
+      return showToast(stageTrackerClosedToastText(key, it), 'info');
     }
 
     /* ---- tracker-cues: merged — pinned row, glyph flight, "Merged" chip ---
@@ -272,8 +384,6 @@
     const STAGE_TRACKER_MERGED_LIST_MAX = 20;
     const STAGE_TRACKER_MERGE_BANNER_MS = 30000;
     const STAGE_TRACKER_MERGE_BANNER_MAX = 5;
-    // The merge gate's minimum "Merging" dwell is the merge banner's lifetime (#15245).
-    const STAGE_TRACKER_MERGING_HOLD_MS = STAGE_TRACKER_MERGE_BANNER_MS;
     function stageTrackerCelebrateSetting() {
       try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_KEY) !== '0'; } catch { return true; }
     }
@@ -394,12 +504,6 @@
     // Merges whose glyph is still on its way: the count holds them back
     // until stageTrackerCelebrateTick lands them.
     var _stageTrackerCelebratePending = {};
-    // Merges the merge-gate hold (#15245) still masks as open: the server
-    // counts them already, the SPA has not read them as fresh yet, so no
-    // glyph is pending for them. Without this the drum rolled on the poll
-    // that brought the merge — a full banner-lifetime before the bee
-    // launched — and the landing found nothing left to roll.
-    var _stageTrackerMergedHeld = {};
     // Stateful: fold one payload into the state and redraw the chip. The
     // count only bumps (pop + zap) through stageTrackerCelebrateTick; a
     // plain reload draws the server's number without a flourish.
@@ -418,13 +522,12 @@
       return stageTrackerMergedChip.node;
     }
     // Pure: how many merges the server already counts whose bump the chip
-    // still owes the bee — a glyph pending or in the air, or a merge the
-    // merge-gate hold masks until its flight can launch — so the landing
+    // still owes the bee — a glyph pending or in the air — so the landing
     // is when it bumps.
-    function stageTrackerMergedHoldback(state, pending, held) {
+    function stageTrackerMergedHoldback(state, pending) {
       const known = {};
       for (const e of ((state && state.server && state.server.recent) || [])) known[stageTrackerMergedIdent(e.repo, e.number)] = true;
-      const keys = Object.assign({}, held || {}, pending || {});
+      const keys = Object.assign({}, pending || {});
       let n = 0;
       for (const key of Object.keys(keys)) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
       return n;
@@ -580,18 +683,17 @@
     }
     // Stateful: whether a celebration glyph is in the air or about to be
     // (stageTrackerCelebrateMerges staggers the launches; a merge is
-    // pending from the payload that brought it, or masked by the merge
-    // gate's hold until then). The drum and the zap wait on this; the
-    // flight's own end — its animationend, or stageTrackerAfter's timer
-    // at STAGE_TRACKER_CELEBRATE_FLY_MS when the event never fires — is
-    // what clears it.
-    // A merge the merge-gate hold still masks counts as a flight to come:
-    // its glyph launches when the hold ends and re-reads it as fresh.
-    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0 || Object.keys(_stageTrackerMergedHeld).length > 0; }
+    // pending from the payload that brought it). The drum and the zap
+    // wait on this; the flight's own end — its animationend, or
+    // stageTrackerAfter's timer at STAGE_TRACKER_CELEBRATE_FLY_MS when the
+    // event never fires — is what clears it. (The merge-gate hold no
+    // longer masks a known merge, #15808: the glyph is pending from the
+    // payload that brings the merged fact.)
+    function stageTrackerMergedInFlight() { return _stageTrackerFlights > 0 || Object.keys(_stageTrackerCelebratePending).length > 0; }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
       const now = Date.now();
-      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending, _stageTrackerMergedHeld));
+      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending));
       // Never backwards within a tab: a server that has not caught up yet
       // (or lost a merge) does not make the number drop.
       if (txt.count > _stageTrackerMergedShown || tick) _stageTrackerMergedShown = Math.max(_stageTrackerMergedShown, txt.count);
@@ -658,7 +760,7 @@
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
       const pop = document.getElementById('activity-monitor-merged-pop');
-      if (pop && !pop.hidden) { hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
+      if (pop && !pop.hidden) { e.preventDefault(); hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
     });
     // The glyph has landed (or left the screen, or faded): count the PR,
     // pop the chip, zap — once the last glyph is down; a landing while
@@ -675,6 +777,159 @@
       if (!stageTrackerMergedInFlight() && stageTrackerSoundGate()) stageTrackerPlayZap(1);
     }
     var _stageTrackerCelebrating = {};
+    var _stageTrackerTerminalRows = {};
+    var _stageTrackerTerminalFacts = {};
+    // Keep models, not stale HTML, for the existing short terminal/pin window.
+    // No queue/admission observation is required for a verified merged fact.
+    function stageTrackerTerminalObserve(d, fresh, nowMs) {
+      const previous = _stageTrackerTerminalRows, rows = Object.assign({}, previous);
+      const current = new Set();
+      for (const item of (d && Array.isArray(d.items) ? d.items : [])) if (item) {
+        const key = stageTrackerItemKey(item);
+        current.add(key);
+        rows[key] = { item, at: nowMs, visible_prs: (item.linked_prs || []).map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))) };
+      }
+      const el = document.getElementById('activity-monitor-panel');
+      for (const key of fresh) {
+        let rowKey = stageTrackerCelebrateRowKey(key, el) || _stageTrackerPRHost[key] || key;
+        if (!rows[rowKey] && rows[key]) rowKey = key;
+        if (!rows[rowKey]) continue;
+        const prior = _stageTrackerCelebrating[rowKey] || {};
+        _stageTrackerTerminalFacts[key] = Object.assign({}, _stageTrackerTerminalFacts[key], {
+          observed_at: nowMs, until: nowMs + STAGE_TRACKER_CELEBRATE_PIN_MS,
+        });
+        _stageTrackerCelebrating[rowKey] = Object.assign({}, prior, {
+          key, keys: Array.from(new Set((prior.keys || []).concat(key))), kind: 'merged',
+          until: Math.max(Number(prior.until) || 0, nowMs + STAGE_TRACKER_CELEBRATE_PIN_MS),
+        });
+        stageTrackerScheduleRelease(STAGE_TRACKER_CELEBRATE_PIN_MS);
+      }
+      const wanted = new Set();
+      const detached = [];
+      for (const rowKey of Object.keys(rows)) {
+        const pin = _stageTrackerCelebrating[rowKey], active = pin && pin.until > nowMs;
+        const item = rows[rowKey].item, old = previous[rowKey] && previous[rowKey].item;
+        if (item.kind === 'issue' && old && Array.isArray(old.linked_prs)) {
+          const linked = (item.linked_prs || []).slice(), keys = new Set(linked.map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))));
+          let unresolved = 0;
+          for (const lp of old.linked_prs) {
+            const key = stageTrackerItemKey(stageTrackerLinkedPRItem(old, lp));
+            const fact = _stageTrackerTerminalFacts[key];
+            if (keys.has(key)) continue;
+            if (fact && fact.until > nowMs) { linked.push(lp); keys.add(key); }
+            else if (_stageTrackerMergeState[key] === false && unresolved < STAGE_TRACKER_MERGED_LIST_MAX) {
+              linked.push(lp); keys.add(key); unresolved++;
+            }
+          }
+          rows[rowKey] = Object.assign({}, rows[rowKey], { item: Object.assign({}, item, { linked_prs: linked }) });
+        }
+        const source = rows[rowKey].item;
+        const prs = source.kind === 'pr' ? [source] : (source.linked_prs || []).map(lp => stageTrackerLinkedPRItem(source, lp));
+        if (!current.has(rowKey) && !active) {
+          if (!prs.some(pr => _stageTrackerMergeState[stageTrackerItemKey(pr)] === false)) { delete rows[rowKey]; continue; }
+          detached.push(rowKey);
+        }
+      }
+      // Missing-but-unsettled rows are bounded history, not visible holds.
+      // Keep them available when the canonical merge ledger lags eviction.
+      detached.sort((a, b) => rows[b].at - rows[a].at);
+      for (const key of detached.slice(STAGE_TRACKER_MERGED_LIST_MAX)) delete rows[key];
+      for (const row of Object.values(rows)) {
+        if (row.item.kind === 'pr') wanted.add(stageTrackerItemKey(row.item));
+        for (const lp of (row.item.linked_prs || [])) wanted.add(stageTrackerItemKey(stageTrackerLinkedPRItem(row.item, lp)));
+      }
+      _stageTrackerTerminalRows = rows;
+      // Reuse the canonical merge observer's alias resolution, without adding
+      // any item stages to this one-record observation.
+      const teaching = Object.values(rows).map(row => ({ repo: row.item.repo }));
+      const ledger = d && d.merged && Array.isArray(d.merged.recent) ? d.merged.recent : [];
+      for (const m of (d && Array.isArray(d.recently_merged) ? d.recently_merged : []).concat(ledger)) {
+        const facts = stageTrackerMergeState({ items: teaching, recently_merged: [m] }, _stageTrackerMergeState);
+        for (const key of Object.keys(facts)) {
+          if (!wanted.has(key)) continue;
+          const prior = _stageTrackerTerminalFacts[key] || {};
+          _stageTrackerTerminalFacts[key] = Object.assign({}, prior, {
+            merged_by: m.merged_by || prior.merged_by || '',
+          });
+        }
+      }
+      for (const key of Object.keys(_stageTrackerTerminalFacts)) if (!wanted.has(key)) delete _stageTrackerTerminalFacts[key];
+    }
+    function stageTrackerTerminalItem(item, key) {
+      const fact = _stageTrackerTerminalFacts[key] || {};
+      return Object.assign({}, item, {
+        stage: STAGE_TRACKER_TERMINAL, stage_slug: 'merged', state: 'closed', terminal_merge: true,
+        merged_by: fact.merged_by || item.merged_by || '', modifiers: [], deferred_modifiers: [],
+        caption: 'Merged', reason: '', preparation: null, merge_train: null, merge_gate: null,
+        decision_needed: null, human_attention: null, decided: null, hold: null, adoption: null,
+        manual_merge: false, human_merge_reason: '', human_merge_reason_text: '', human_approver: '',
+        superseded: null, superseded_by: 0, adopted_by: 0,
+        push: null, rework: null, presence: null, claimant: null,
+        stage_actor: { kind: 'none', why: 'merged' }, sentinel_alert: false,
+      });
+    }
+    function stageTrackerTerminalView(d, nowMs) {
+      if (!d || !Array.isArray(d.items)) return d;
+      const items = d.items.map(item => {
+        const rowKey = stageTrackerItemKey(item), pin = _stageTrackerCelebrating[rowKey];
+        const active = pin && pin.until > nowMs;
+        if (item.kind === 'pr' && _stageTrackerMergeState[rowKey] === true) {
+          const fact = _stageTrackerTerminalFacts[rowKey];
+          return (fact && fact.until > nowMs) || Number(item.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(item, rowKey) : null;
+        }
+        if (item.kind !== 'issue') return item;
+        const saved = _stageTrackerTerminalRows[rowKey];
+        const source = (item.linked_prs || []).slice();
+        const keys = new Set(source.map(lp => stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp))));
+        if (active && saved) for (const lp of (saved.item.linked_prs || [])) {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(saved.item, lp)), fact = _stageTrackerTerminalFacts[key];
+          if (fact && fact.until > nowMs && !keys.has(key)) { source.push(lp); keys.add(key); }
+        }
+        const linked = source.map(lp => {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp));
+          if (_stageTrackerMergeState[key] !== true) return lp;
+          const fact = _stageTrackerTerminalFacts[key];
+          return (fact && fact.until > nowMs) || Number(lp.stage) >= STAGE_TRACKER_TERMINAL ? stageTrackerTerminalItem(lp, key) : null;
+        }).filter(Boolean);
+        return Object.assign({}, item, { linked_prs: linked });
+      }).filter(Boolean);
+      return Object.assign({}, d, { items });
+    }
+    function stageTrackerTerminalPinnedItem(rowKey, nowMs) {
+      const saved = _stageTrackerTerminalRows[rowKey];
+      if (!saved) return null;
+      let item = saved.item;
+      if (item.kind === 'issue') {
+        const visible = new Set(saved.visible_prs || []);
+        item = Object.assign({}, item, { linked_prs: (item.linked_prs || []).filter(lp => {
+          const key = stageTrackerItemKey(stageTrackerLinkedPRItem(item, lp)), fact = _stageTrackerTerminalFacts[key];
+          return visible.has(key) || (fact && fact.until > nowMs);
+        }) });
+      }
+      return stageTrackerTerminalView({ items: [item] }, nowMs).items[0] || null;
+    }
+    function stageTrackerTerminalEvents(nowMs) {
+      let nextUntil = Infinity;
+      for (const rowKey of Object.keys(_stageTrackerCelebrating)) {
+        const pin = _stageTrackerCelebrating[rowKey];
+        if (pin.kind !== 'merged' || pin.until <= nowMs) continue;
+        for (const key of (pin.keys || [pin.key])) {
+          const fact = _stageTrackerTerminalFacts[key] || {};
+          if (!fact.observed_at || fact.until <= nowMs) continue;
+          nextUntil = Math.min(nextUntil, fact.until);
+          const by = stageTrackerMergedByText(fact.merged_by);
+          const number = Number(key.slice(key.lastIndexOf('/pr#') + 4));
+          const event = { who: 'merge', at: fact.observed_at, text: 'Merged PR #' + number + (by ? ' ' + by : '') };
+          _stageTrackerEvents[key] = Object.assign({}, _stageTrackerEvents[key], event);
+          if (key === pin.key) _stageTrackerEvents[rowKey] = Object.assign({}, _stageTrackerEvents[rowKey], event);
+        }
+      }
+      if (Number.isFinite(nextUntil)) stageTrackerScheduleRelease(nextUntil - nowMs);
+    }
+    function stageTrackerMergedPRKnown(item) {
+      return !!item && item.kind === 'pr' && typeof _stageTrackerMergeState !== 'undefined' &&
+        !!_stageTrackerMergeState && _stageTrackerMergeState[stageTrackerItemKey(item)] === true;
+    }
     var _stageTrackerFlights = 0;
     // Pure: the PR keys a row draws, space-separated — its own key for a
     // PR row, the covering PRs for an issue row (one inline, several as
@@ -683,7 +938,10 @@
     function stageTrackerRowPRKeys(item) {
       if (!item) return '';
       if (item.kind === 'pr') return stageTrackerPRKey(item.repo, item.number);
-      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0).map(lp => stageTrackerPRKey(lp.repo || item.repo, lp.number)).join(' ');
+      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0 && (!Number(lp.drawn_under) || Number(lp.drawn_under) === Number(item.number))).map(lp => {
+        const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : { repo: lp.repo || item.repo, number: lp.number };
+        return stageTrackerPRKey(pr.repo, pr.number);
+      }).join(' ');
     }
     // PR key → the row key it was last drawn on (from the previous payload's
     // nested_under / linked_prs), for a merge whose row left the DOM
@@ -694,7 +952,14 @@
       for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         if (it.kind === 'pr') out[stageTrackerPRKey(it.repo, it.number)] = Number(it.nested_under) > 0 ? stageTrackerItemKey({ repo: it.repo, kind: 'issue', number: it.nested_under }) : stageTrackerItemKey(it);
-        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) if (lp && Number(lp.number) > 0) out[stageTrackerPRKey(lp.repo || it.repo, lp.number)] = stageTrackerItemKey(it);
+      }
+      for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
+        if (!it || it.kind !== 'issue') continue;
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
+          if (!lp || !Number(lp.number) || (Number(lp.drawn_under) && Number(lp.drawn_under) !== Number(it.number))) continue;
+          const pr = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(it, lp) : { repo: lp.repo || it.repo, number: lp.number };
+          out[stageTrackerPRKey(pr.repo, pr.number)] = stageTrackerItemKey(it);
+        }
       }
       return out;
     }
@@ -722,20 +987,48 @@
       keys.forEach((key, i) => {
         const rowKey = stageTrackerCelebrateRowKey(key, el);
         const startAt = now + i * STAGE_TRACKER_CELEBRATE_STAGGER_MS;
-        if (rowKey) _stageTrackerCelebrating[rowKey] = { key, kind: 'merged', until: startAt + STAGE_TRACKER_CELEBRATE_PIN_MS };
+        const fact = typeof _stageTrackerTerminalFacts !== 'undefined' ? _stageTrackerTerminalFacts[key] : null;
+        if (fact && fact.observed_at) fact.until = Math.max(fact.until, startAt + STAGE_TRACKER_CELEBRATE_PIN_MS);
+        if (rowKey) _stageTrackerCelebrating[rowKey] = Object.assign({}, _stageTrackerCelebrating[rowKey], {
+          key, kind: 'merged', until: Math.max((_stageTrackerCelebrating[rowKey] || {}).until || 0, startAt + STAGE_TRACKER_CELEBRATE_PIN_MS),
+        });
         const number = Number(key.slice(key.indexOf('/pr#') + 4)) || 0;
-        stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
+        const banner = stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
         setTimeout(() => {
           const row = rowKey && el ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
-          if (row) celebrateRow(row, { kind: 'merged', key, number });
-          else stageTrackerCelebrateTick(key);
+          if (row) celebrateRow(row, { kind: 'merged', key, number, merged_by: fact && fact.merged_by });
+          else celebrateDetached(key, banner);
         }, i * STAGE_TRACKER_CELEBRATE_STAGGER_MS);
       });
+    }
+    // Pure: where a row-less glyph takes off — the banner's ✓ when it has
+    // a box, else the bottom centre of the panel (or the viewport). Null
+    // when nothing has a box (no layout, e.g. a hidden tab).
+    function stageTrackerDetachedOrigin(bannerRect, panelRect, vw, vh) {
+      const ok = r => !!r && r.width > 0 && r.height > 0;
+      if (ok(bannerRect)) return bannerRect;
+      if (ok(panelRect)) return { left: panelRect.left + panelRect.width / 2 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF, top: Math.min(panelRect.top + panelRect.height, vh) - 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, width: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, height: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF };
+      if (vw > 0 && vh > 0) return { left: vw / 2 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF, top: vh - 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, width: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF, height: 2 * STAGE_TRACKER_CELEBRATE_GLYPH_HALF };
+      return null;
+    }
+    // Stateful: celebrate a merge whose row is not on the board (below the
+    // fold, filtered, another page, already evicted — hivecommons/hive#15808:
+    // #15707's toast showed, but no bee and no count). The glyph flies from
+    // the toast's ✓ (else the panel's foot) to the chip; the count rolls
+    // when it lands, exactly as for a drawn row. The toast, the bee and the
+    // odometer are one pipeline: a merged fact that reaches here has all three.
+    function celebrateDetached(key, banner, preview) {
+      const rect = el => el && typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+      const ico = banner && typeof banner.querySelector === 'function' ? banner.querySelector('.merge-banner-ico') : null;
+      const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+      const from = stageTrackerDetachedOrigin(rect(ico) || rect(banner), rect(document.getElementById('activity-monitor-panel')), vw, vh);
+      if (!from) { stageTrackerCelebrateTick(key, preview); return { flew: false, lands: false }; }
+      return stageTrackerFlyGlyph(from, key, preview);
     }
     // Pure: the rows a render must keep although the payload dropped them —
     // every celebrating row still inside its pin window, as the node it
     // already has (its HTML is replayed so the reconcile keeps it).
-    function stageTrackerPinnedRows(el, rows, nowMs) {
+    function stageTrackerPinnedRows(el, rows, nowMs, renderItem) {
       const keys = Object.keys(_stageTrackerCelebrating);
       if (!keys.length || !el) return rows;
       const have = {};
@@ -744,7 +1037,13 @@
       for (const k of keys) {
         const c = _stageTrackerCelebrating[k];
         if (c.until <= nowMs) { delete _stageTrackerCelebrating[k]; continue; }
-        if (have[k]) continue;
+        if (have[k]) { stageTrackerScheduleRelease(c.until - nowMs); continue; }
+        const item = c.kind === 'merged' && typeof renderItem === 'function' && typeof stageTrackerTerminalPinnedItem === 'function' ? stageTrackerTerminalPinnedItem(k, nowMs) : null;
+        if (item) {
+          out.push({ key: k, html: renderItem(item), pinned: true });
+          stageTrackerScheduleRelease(c.until - nowMs);
+          continue;
+        }
         const node = el.querySelector(`[data-ham-key="${CSS.escape(k)}"]`);
         if (!node) { delete _stageTrackerCelebrating[k]; continue; }
         out.push({ key: k, html: stageTrackerRowSrcOf(node) || node.outerHTML, pinned: true });
@@ -785,20 +1084,27 @@
       rowEl.classList.add('cue-merged');
       if (preview) setTimeout(() => rowEl.classList.remove('cue-merged'), STAGE_TRACKER_CELEBRATE_PIN_MS);
       else {
-        const text = kind === 'merged' ? `merged${opts.number ? ' #' + opts.number : ''} · by hive` : `closed by merge${opts.number ? ' of #' + opts.number : ''}`;
+        const by = opts.merged_by ? (opts.merged_by === 'hive' ? 'by hive' : 'by @' + opts.merged_by) : '';
+        const text = kind === 'merged' ? `merged${opts.number ? ' #' + opts.number : ''}${by ? ' · ' + by : ''}` : `closed by merge${opts.number ? ' of #' + opts.number : ''}`;
         stageTrackerNoteOwnerEvent(rowEl.dataset.hamKey, text, Date.now());
-        _stageTrackerEvents[rowEl.dataset.hamKey].who = 'hive';
+        _stageTrackerEvents[rowEl.dataset.hamKey].who = kind === 'merged' ? 'merge' : 'hive';
         stageTrackerEventLineInject(rowEl, rowEl.dataset.hamKey, text);
       }
       if (kind !== 'merged') return { flew: false };
       const cap = rowEl.querySelector('.ham-seg.cap');
-      if (!cap || _stageTrackerFlights >= STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS || typeof cap.getBoundingClientRect !== 'function') {
+      if (!cap || typeof cap.getBoundingClientRect !== 'function') return celebrateDetached(key, null, preview);
+      return stageTrackerFlyGlyph(cap.getBoundingClientRect(), key, preview);
+    }
+    // Stateful: fly the glyph from a box to the chip (or fade it in place
+    // under reduced motion; count at once over the flight cap). Landing
+    // calls stageTrackerCelebrateTick, which rolls the odometer (#15763).
+    function stageTrackerFlyGlyph(from, key, preview) {
+      if (!from || _stageTrackerFlights >= STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS) {
         stageTrackerCelebrateTick(key, preview);
         return { flew: false, lands: false };
       }
       const reduced = stageTrackerReducedMotion();
       const chip = stageTrackerMergedChip();
-      const from = cap.getBoundingClientRect();
       const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
       const to = reduced ? { lands: false, dx: 0, dy: 0 } : stageTrackerFlightTarget(from, chip && typeof chip.getBoundingClientRect === 'function' ? chip.getBoundingClientRect() : null, vw, vh);
       const glyph = document.createElement('span');
@@ -831,6 +1137,17 @@
       const k = String(b.key || '').match(/\/pr#(\d+)$/);
       return k && Number(k[1]) > 0 ? k[1] : '';
     }
+    // Event identity only: never borrow the currently selected/primary repo.
+    // Keep an explicit short audit repo when no canonical identity is carried.
+    function stageTrackerMergeBannerRepo(b) {
+      if (!b) return '';
+      const repo = String(b.repo || (b.pr && b.pr.repo) || '');
+      if (repo.indexOf('/') > 0) return repo;
+      const key = String(b.key || '').match(/^(.+)\/pr#\d+$/);
+      if (key) return key[1];
+      const url = String(b.url || (b.pr && b.pr.url) || '').match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/);
+      return url ? url[1] : repo;
+    }
     function stageTrackerMergeBannerText(b, nowMs) {
       const d = new Date(b.at || nowMs);
       const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -842,14 +1159,19 @@
     // Stateful: a persistent banner, bottom right, for one merge — stays
     // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
     // duration, STAGE_TRACKER_MERGE_BANNER_MS at the default), stacked when
-    // several, with a "show row" link while the row is on the board.
+    // several, with a "show row" link while the row is on the board. The
+    // auto-dismiss goes through toastCountdownBar like every other timed
+    // toast, so the banner drains a .toast-bar along its bottom edge and
+    // hover / focus inside it holds both timer and bar together.
     function stageTrackerMergeBanner(b) {
       if (!document.body) return null;
       let box = document.getElementById('merge-banners');
       if (!box) { box = document.createElement('div'); box.id = 'merge-banners'; box.className = 'merge-banners'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
-      const recent = ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergedIdent(e.repo, e.number) === stageTrackerMergedIdent(b.repo, b.number));
-      const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b);
+      const repo = stageTrackerMergeBannerRepo(b);
+      const recent = repo ? ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergeBannerRepo(e).toLowerCase() === repo.toLowerCase() && stageTrackerMergeBannerNumber(e) === stageTrackerMergeBannerNumber(b)) : null;
+      const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b, { repo });
       const num = stageTrackerMergeBannerNumber(info);
+      const repoChip = stageTrackerRepoChipHtml(repo, { repoChips: { primary: stageTrackerPrimaryRepo(), active: _stageTrackerFilter.repo } });
       // A live merge the ledger has not listed yet still links: the key carries owner/name.
       if (!info.url && info.repo && info.repo.indexOf('/') > 0 && num && !info.preview) info.url = `https://github.com/${info.repo}/pull/${num}`;
       const t = stageTrackerMergeBannerText(info, Date.now());
@@ -857,15 +1179,15 @@
       el.className = 'merge-banner';
       el.setAttribute('role', 'status');
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
-      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
-      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), stageTrackerMergeBannerMs());
+      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
+      toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
       return el;
     }
     function stageTrackerMergeBannerDismiss(el) {
       if (!el || !el.parentNode) return;
-      if (el._timer) { clearTimeout(el._timer); el._timer = 0; }
+      toastCountdownCancel(el);
       if (stageTrackerReducedMotion()) { el.remove(); return; }
       el.classList.add('merge-banner-out');
       stageTrackerAfter(el, 'animationend', 180, () => el.remove());
@@ -901,4 +1223,3 @@
     // (items only ever list open work and the audit side list is pr_merged
     // only); when a recently_closed list lands, mark those issue keys true
     // in stageTrackerMergeState and they will zap through the same path.
-

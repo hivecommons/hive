@@ -1,0 +1,1 @@
+- The Hive activity monitor can now be popped out into its own browser window (⧉ on the card header, `?popout=1`, same sign-in, tracker-only layout for a second monitor, ⤶ Return to dashboard) or taken full screen (⛶ / the `f` key, Esc exits) ([#15829](https://github.com/hivecommons/hive/issues/15829)).

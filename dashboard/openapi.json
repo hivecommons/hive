@@ -1605,6 +1605,49 @@
                     "hiveId": {
                       "type": "string"
                     },
+                    "contributorPool": {
+                      "type": "object",
+                      "description": "Registered contributor pool; historical counts include offline and revoked profiles.",
+                      "properties": {
+                        "active": {
+                          "type": "integer"
+                        },
+                        "online": {
+                          "type": "integer"
+                        },
+                        "registered": {
+                          "type": "integer"
+                        },
+                        "presence_window": {
+                          "type": "string"
+                        },
+                        "by_role": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "abandoned": {
+                          "type": "integer",
+                          "description": "Sum of persisted per-profile abandoned PR counters, deduped per PR by the adoption recorder."
+                        },
+                        "abandoned_by_login": {
+                          "type": "object",
+                          "description": "Abandoned counts keyed by lowercase GitHub login, including zero counts; empty object for an empty registry.",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        }
+                      },
+                      "required": [
+                        "active",
+                        "online",
+                        "registered",
+                        "presence_window",
+                        "abandoned",
+                        "abandoned_by_login"
+                      ]
+                    },
                     "governor": {
                       "type": "object",
                       "description": "dashboard.FrontendGovernor (src/pkg/dashboard/server.go), built by buildGovernor (status_builder.go).",
@@ -37366,6 +37409,429 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/integration-orchestration": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Inspect integration coordination evidence and unknowns (owner only)",
+        "description": "Reports source/schema/runtime identity, configured mode, immutable candidates, canonical intents, live reservations, physical workflow jobs and cohort coverage. This ledger never authorizes merges or substitutes integration evidence for author review.",
+        "responses": {
+          "200": {
+            "description": "Configuration and ledger, or explicit unavailable/unknown state"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/integration-orchestration/execution-identity": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Prepare create-only local execution identity (owner only)",
+        "description": "Creates or reads the private local installation identity and durable execution journal. Returns a designated executor ID and explicit disabled status. This does not enroll an executor, grant permissions, change configuration, dispatch CI or enable promotion. Cloned identity and automatic failover are unsupported.",
+        "responses": {
+          "200": {
+            "description": "Local executor identity and explicit no-activation limits"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "503": {
+            "description": "Private durable identity or journal unavailable"
+          }
+        }
+      }
+    },
+    "/api/config/integration-orchestration": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Replace bounded integration orchestration configuration (owner only)",
+        "description": "Full off|advisory|enforce configuration with independent execution opt-in, exact repository/base scopes, static budgets, bounded lease/window/age/retries and pinned producer/actor/authority profiles. JSON durations use nanoseconds. Execution changes require expected_execution compare-and-swap. Enforced Hive authority must be verifiably revoked at its shared forge epoch before OFF/advisory or authority handover. Execution-only updates never release authoring reservations; rollback retains evidence and unknown mutation outcomes and never releases authoritative claims/native entries.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated effective configuration"
+          },
+          "400": {
+            "description": "Invalid mode, scope, contract or bounds"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "409": {
+            "description": "Old Hive authority epoch not verifiably revoked"
+          },
+          "412": {
+            "description": "Execution profile changed or expected_execution missing/stale"
+          },
+          "500": {
+            "description": "Configuration could not be persisted"
+          },
+          "503": {
+            "description": "Enforcement ledger unavailable; disable remains permitted"
+          }
+        }
+      }
+    },
+    "/api/integration-orchestration/intents": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Record a versioned canonical change intent (owner only)",
+        "description": "Requires canonical work identity, exact enrolled destination, monotonically increasing generation, plan/node/revision, anticipated scope and provenance. Enforceable prerequisites must match the complete bound approved plan DAG; semantic and same-file hints never grant authority.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Durably recorded intent"
+          },
+          "400": {
+            "description": "Malformed intent or unenrolled scope"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "409": {
+            "description": "Unapproved dependencies, generation conflict, cycle or unavailable journal"
+          }
+        }
+      }
+    },
+    "/api/integration-orchestration/reconcile": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reconcile a bounded workflow observation batch (owner only)",
+        "responses": {
+          "200": {
+            "description": "Batch observed or minimum interval not elapsed; inspect per-scope completeness"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "503": {
+            "description": "Authoritative workflow observations unavailable"
+          }
+        }
+      }
+    },
+    "/api/matrix/lines": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Serve Activity Monitor Matrix lines",
+        "description": "Serve bounded backlog of pushed lines behind dashboard.matrix. Returns 404 when matrix mode is disabled.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Return lines after this sequence number. since=0 returns the initial backlog up to 2000 lines."
+          },
+          {
+            "name": "max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "description": "Maximum number of lines to return (clamped between 1 and 500, defaults to 200 when since > 0)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matrix lines response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "pr": {
+                            "type": "integer"
+                          },
+                          "head": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "lang": {
+                            "type": "string"
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid dashboard authentication."
+          },
+          "403": {
+            "description": "Read access required."
+          },
+          "404": {
+            "description": "Matrix mode disabled."
+          }
+        }
+      }
+    },
+    "/api/upgrade/announce": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Announce a pod roll before it happens",
+        "description": "Marks this spoke's upgradeProgress as state=pulling/phase=announced with the given target and publishes an SSE `upgrading` event so every open dashboard shows the upgrade animation before the pod is killed (#15788). Used by the hub (also delivered via the heartbeat response) and by operator scripts ahead of `kubectl rollout restart`. A SIGTERM afterwards publishes phase=restarting from the same record; an announce with no kill expires after 15 minutes. Requires owner role.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "description": "Commit SHA or image tag the pod restarts onto; omit for a plain restart"
+                  },
+                  "version": {
+                    "type": "string",
+                    "description": "Alias of target"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "hub",
+                      "operator"
+                    ],
+                    "description": "Who is rolling the pod; anything else is recorded as operator"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Announce recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "upgradeProgress": {
+                      "type": "object",
+                      "description": "The spoke's upgradeProgress as now reported by /api/status and /api/version (state, phase, source, target, from, detail, startedAt)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON body"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
+    "/api/config/triggers": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Event triggers editor configuration",
+        "description": "Verified owner only. Returns ordered rules, an opaque quoted version/ETag, existing agent names, and managed repositories with configured event.repo values and qualified display labels. apply_mode is next_evaluation and requires_restart is false. No sources or webhooks are installed.",
+        "responses": {
+          "200": {
+            "description": "rules, version, agents, repositories, apply_mode and requires_restart"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Configuration unavailable"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Validate and persist Event triggers",
+        "description": "Verified owner only. Compare-and-save the full ordered trigger list without changing unrelated config. Compiles every CEL expression to bool before persistence; new or edited rules require a name and existing agent. Optional preset replaces only its indexed expression with a scoped first-seen event expression. Successful persistence is published for next evaluation without resetting first-seen history. No enabled field is supported; remove a rule from the list to stop its routing.",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "description": "Exact opaque version/ETag from GET; stale revisions are rejected, never retried automatically.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "rules"
+                ],
+                "properties": {
+                  "rules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "name",
+                        "agent",
+                        "expr"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "agent": {
+                          "type": "string"
+                        },
+                        "expr": {
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "integer",
+                          "format": "int64",
+                          "default": 0
+                        }
+                      }
+                    }
+                  },
+                  "preset": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "index",
+                      "kind",
+                      "repo"
+                    ],
+                    "properties": {
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "issue.opened",
+                          "pr.opened"
+                        ]
+                      },
+                      "repo": {
+                        "type": "string",
+                        "description": "One exact configured managed repository value; not its qualified display label or a wildcard."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated rules and editor metadata, with current version/ETag"
+          },
+          "400": {
+            "description": "Invalid schema, target, preset scope, or non-boolean/malformed CEL"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "412": {
+            "description": "Trigger revision changed; reload before saving"
+          },
+          "428": {
+            "description": "Missing If-Match revision"
+          },
+          "500": {
+            "description": "Persistence failed; live rules unchanged"
+          },
+          "503": {
+            "description": "Configuration unavailable"
           }
         }
       }

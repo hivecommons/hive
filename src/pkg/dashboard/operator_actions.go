@@ -37,6 +37,7 @@ const (
 	operatorActionCloseSuperseded = "close-superseded"
 	operatorActionWontFix         = "wontfix"
 	operatorActionCloseRead       = "close-read"
+	operatorActionCloseIssue      = "close-issue"
 	operatorActionLetHiveDecide   = "let-hive-decide"
 	operatorActionHold            = "hold"
 	operatorActionRelease         = "release"
@@ -222,7 +223,7 @@ func (st *operatorActionStore) Settle(repo string, number int, action, outcome, 
 
 // SettleDecision is Settle with the delegate's structured verdict and
 // rule kept on the record.
-func (st *operatorActionStore) SettleDecision(repo string, number int, action, outcome, detail, verdict, rule string) (bool, error) {
+func (st *operatorActionStore) SettleDecision(repo string, number int, action, outcome, detail, verdict, rule string, appliedHead ...string) (bool, error) {
 	if st == nil {
 		return false, nil
 	}
@@ -236,6 +237,9 @@ func (st *operatorActionStore) SettleDecision(repo string, number int, action, o
 			list[i].Detail = detail
 			list[i].Verdict = verdict
 			list[i].Rule = rule
+			if len(appliedHead) > 0 && appliedHead[0] != "" {
+				list[i].HeadSHA = appliedHead[0]
+			}
 			return true, st.persist()
 		}
 	}
@@ -338,6 +342,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Action = operatorActionWontFix
 		case repoItemDecisionCloseRead:
 			out.Action = operatorActionCloseRead
+		case repoItemDecisionCloseIssue:
+			out.Action = operatorActionCloseIssue
 		case repoItemDecisionMergeNow:
 			out.Action = operatorActionMergeNow
 		case repoItemDecisionQueueMerge:
@@ -561,7 +567,7 @@ func (s *Server) settleOperatorAction(repoFull string, number int, job *delegate
 	if job.Decision != nil {
 		verdict, rule = string(job.Decision.Verdict), job.Decision.Rule
 	}
-	if _, err := s.operatorActions().SettleDecision(repoFull, number, operatorActionLetHiveDecide, outcome, detail, verdict, rule); err != nil && s.logger != nil {
+	if _, err := s.operatorActions().SettleDecision(repoFull, number, operatorActionLetHiveDecide, outcome, detail, verdict, rule, job.ApprovalHeadSHA); err != nil && s.logger != nil {
 		s.logger.Warn("operator action ledger write failed", "path", operatorActionsPath, "error", err)
 	}
 	s.invalidateStageTrackerCache()
@@ -908,7 +914,7 @@ func operatorActionClosedGrace() time.Duration {
 
 // operatorClosedActions are the row actions whose applied outcome is a
 // closed issue or PR.
-var operatorClosedActions = []string{operatorActionCloseSuperseded, operatorActionWontFix, operatorActionCloseRead}
+var operatorClosedActions = []string{operatorActionCloseSuperseded, operatorActionWontFix, operatorActionCloseRead, operatorActionCloseIssue}
 
 // operatorActionClosedItem reports whether the item's newest recorded
 // action closed it from the dashboard within grace of now: GitHub's list

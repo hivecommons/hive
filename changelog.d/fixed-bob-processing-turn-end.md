@@ -1,0 +1,1 @@
+- bob 2.x's busy indicator ("⠇ Processing… (Enter to steer, Tab to queue)") is now recognised as an in-progress turn. Previously a kicked bob turn was classified as ended ~30s after delivery while bob was still working, so the kick outcome settled early and the turn-end kick log archive under 🕘 past kicks was a mid-run snapshot rather than the full run.

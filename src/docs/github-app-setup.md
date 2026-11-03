@@ -101,6 +101,27 @@ Organization permission:
 | --- | --- | --- |
 | Members | Read-only | Identify contributors and owners where configured. |
 
+### Optional shared-CI recovery
+
+The shared-CI rerun sweep (`shared_ci_rerun.enabled`, default on) can inspect
+failed runs with Actions read, but `rerun-failed-jobs` requires **Actions: Read
+and write** on the repository's recovery identity. This is optional, not a new
+baseline permission for every Hive App. A refusal is an operator handoff, not
+a source-code defect: Hive records `unauthorized:rerun-shared-ci`, posts one
+head-scoped actionable note using the existing unauthorized mechanism, and
+retries no more than once per repository per permission cooldown (one hour).
+An unchanged PR remains eligible after the cooldown; a successful rerun or
+observing no failed runs clears the recovery block.
+
+A maintainer may re-run the named workflow with their already-authorized
+identity. That manual recovery does **not** change the App's permissions. For
+automatic recovery, the App owner must explicitly request Actions read and
+write for the intended recovery installation, and its installation owner must
+accept the update in **Settings → GitHub Apps → Configure**. Do not broaden
+unrelated Apps or repositories or silently substitute a PAT. Leaving the grant
+at read is supported; an operator may disable the optional sweep instead.
+Neither action grants merge approval or bypasses required checks.
+
 ### The optional Visual Hive App (#4030)
 
 Visual Hive needs two grants the Hive App does not otherwise require — Actions
@@ -199,7 +220,7 @@ What it does not do, and falls back on (the PR still opens on the agent's own co
 - a head branch that moved (the agent pushed again) between reading the diff and updating the ref — nothing is replaced that the signed commit does not carry;
 - a head branch that already has an open PR — that PR is reused untouched at open time, and the follow-up pass below signs it instead.
 
-**Follow-up commits.** An agent's later pushes to its open PR (a CI fix, review follow-ups, a rebase) are plain git and unsigned, and so is a PR that opened on a `signed_skipped` fallback. With `app_signed_commits` on, the PR-request watcher also runs a reconcile pass, at most once a minute (#9364). A PR needs signing when *any* of its commits is not **Verified**, not only its head: a person can sign their own commit on top of an agent's unsigned one, which leaves the head Verified while the PR is still blocked (#9531). For every open PR authored by the App bot, the pass finds the first unverified commit (oldest to newest) and re-authors everything from there through the head as one GitHub-signed commit on top of the commit right before it. The tree is the same, and the message carries the range's messages and DCO trailers, re-addressed as above. When the PR's first commit is the unverified one, it signs against the PR's base branch, as at open time. A fully Verified PR is left alone. The open path's guards all still apply. A head that moves mid-rewrite is retried on the next pass. A PR whose head hasn't changed since the last pass costs no calls beyond the open-PR list.
+**Follow-up commits.** An agent's later pushes to its open PR (a CI fix, review follow-ups, a rebase) are plain git and unsigned, and so is a PR that opened on a `signed_skipped` fallback. With `app_signed_commits` on, the PR-request watcher also runs a reconcile pass, at most once a minute (#9364). A PR needs signing when *any* of its commits is not **Verified**, not only its head: a person can sign their own commit on top of an agent's unsigned one, which leaves the head Verified while the PR is still blocked (#9531). For every open PR authored by the App bot, the pass finds the first unverified commit (oldest to newest) and re-authors everything from there through the head as one GitHub-signed commit on top of the commit right before it. The tree is the same, and the message carries the range's messages and DCO trailers, re-addressed as above. When the PR's first commit is the unverified one, it signs against the PR's base branch, as at open time. A fully Verified PR is left alone. The open path's guards all still apply. A head that moves mid-rewrite is retried on the next pass, and so is a head GitHub could not be reached for (a 5xx or network error). A head GitHub *refuses* to sign (a 4xx answer, such as the 422 on the scratch ref in #16193) is retried on three consecutive passes and then settled, with the `hive:signed-commits-blocked` comment quoting the error; there is no person's commit to squash in that case, so the remedy is to push a new head (which restarts signing) or fix the repository-side cause the error names. A PR whose head hasn't changed since the last pass costs no calls beyond the open-PR list.
 
 The pass re-signs only the hive's own work. Every commit in that range, Verified or not, must have an author and committer that are the App bot or an address in the pane identity domain (`HIVE_GIT_BOT_EMAIL_DOMAIN`, default `hive.kubestellar.io`). Verified App-bot commits in the range are folded in. A person's commit (even a Verified one on top), or a merge commit, leaves the branch as pushed. So does any change the mutation can't express. The PR then gets one comment (marked `<!-- hive:signed-commits-blocked -->`, posted once per PR) naming the unsigned commit and the commit that blocks the rewrite, so it can't merge under `required_signatures` until someone acts. The manual fix is to squash the unsigned commit into a commit the person signs, or to drop the person's commit so the hive can re-sign the range and then push it again, signed, on top.
 

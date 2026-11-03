@@ -41,8 +41,8 @@ type WebhookEventResult struct {
 	Repo        string `json:"repo"`
 	KnownRepo   bool   `json:"known_repo"`
 	Invalidated []int  `json:"invalidated"`
-	// DirtyIssues lists the issues an `issues` labeled/unlabeled event marked
-	// for the next un-park sweep (hivecommons/hive#11313).
+	// DirtyIssues lists issues opened or relabeled by an `issues` event.
+	// They wake evaluation and feed the next un-park sweep (#11313).
 	DirtyIssues []int `json:"dirty_issues,omitempty"`
 	// ReopenedIssue is the issue an `issues` reopened event named, if any.
 	ReopenedIssue int `json:"reopened_issue,omitempty"`
@@ -471,6 +471,10 @@ type webhookEventPayload struct {
 		HTMLURL      string         `json:"html_url"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
 	} `json:"check_run"`
+	WorkflowRun *struct {
+		HeadSHA      string         `json:"head_sha"`
+		PullRequests []webhookPRRef `json:"pull_requests"`
+	} `json:"workflow_run"`
 	SHA       string `json:"sha"`
 	State     string `json:"state"`
 	Context   string `json:"context"`
@@ -535,7 +539,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		res.WokeReviewWatcher = true
 	}
 
-	if n, ok := webhookIssueLabelTarget(event, p); ok {
+	if n, ok := webhookIssueDirtyTarget(event, p); ok {
 		sharedWebhookTracker.markIssueDirty(aliases, n)
 		res.DirtyIssues = []int{n}
 	}
@@ -562,6 +566,9 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		c.RecordReviewEvidenceRevert(merged)
 	}
 	res.HeadSHA = webhookHeadSHA(event, p)
+	if res.HeadSHA != "" {
+		sharedCIReportingCache.invalidate(p.Repository.FullName, res.HeadSHA)
+	}
 	numbers := webhookInvalidationTargets(event, p, aliases)
 	// Capture the failed-check identity and the PRs it resolved to BEFORE
 	// invalidation drops their cache entries: the receiver reacts to a red
@@ -597,15 +604,15 @@ func webhookRepoAliases(configured, fullName string) []string {
 	return []string{a, b}
 }
 
-// webhookIssueLabelTarget returns the issue number of an `issues` event whose
-// action changed a label on a non-PR issue. Everything else is not an un-park
-// trigger.
-func webhookIssueLabelTarget(event string, p webhookEventPayload) (int, bool) {
+// webhookIssueDirtyTarget returns an opened or relabeled non-PR issue.
+// Opened issues must wake evaluation too: a tracker refresh alone does not
+// run the CEL rules against the newly patched actionable snapshot.
+func webhookIssueDirtyTarget(event string, p webhookEventPayload) (int, bool) {
 	if event != "issues" || p.Issue == nil || p.Issue.PullRequest != nil || p.Issue.Number <= 0 {
 		return 0, false
 	}
 	switch p.Action {
-	case "labeled", "unlabeled":
+	case "opened", "labeled", "unlabeled":
 		return p.Issue.Number, true
 	}
 	return 0, false
@@ -712,6 +719,10 @@ func webhookHeadSHA(event string, p webhookEventPayload) string {
 		}
 	case "status":
 		return strings.TrimSpace(p.SHA)
+	case "workflow_run":
+		if p.WorkflowRun != nil {
+			return strings.TrimSpace(p.WorkflowRun.HeadSHA)
+		}
 	}
 	return ""
 }
@@ -764,6 +775,11 @@ func webhookInvalidationTargets(event string, p webhookEventPayload, aliases []s
 		}
 	case "status":
 		bySHA(p.SHA)
+	case "workflow_run":
+		if p.WorkflowRun != nil {
+			addRefs(p.WorkflowRun.PullRequests)
+			bySHA(p.WorkflowRun.HeadSHA)
+		}
 	case "push":
 		if ref, ok := strings.CutPrefix(p.Ref, "refs/heads/"); ok && ref != "" {
 			addMatching(func(_, headRef, baseRef string) bool { return headRef == ref || baseRef == ref })

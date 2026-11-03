@@ -33,6 +33,8 @@
     }
     const STAGE_TRACKER_SHORT_SHA = 7;
     var _stageTracker = null;
+    // The item rows the last stage-tracker render drew (tracker-filter-render.js).
+    var _stageTrackerRows = null;
     var _stageTrackerSig = '';
     var _stageTrackerEtag = '';
     // Last poll outcome: '' while polls succeed, else a short reason ('HTTP

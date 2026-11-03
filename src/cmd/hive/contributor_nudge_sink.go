@@ -44,3 +44,15 @@ func (s lateContributorNudgeSink) Resolve(ctx context.Context, owner, repo strin
 		h.Resolve(ctx, owner, repo, number)
 	}
 }
+
+// Abandoned implements automerge.ContributorAbandonSink so every adoption
+// the sweep performs lands on the author's contributor profile
+// (hivecommons/hive#15782); without the forwarder the engine's type
+// assertion fails on the wrapper, as it once did for Presence.
+func (s lateContributorNudgeSink) Abandoned(ctx context.Context, a automerge.ContributorAbandon) {
+	if h := s.hub(); h != nil {
+		h.Abandoned(ctx, a)
+	}
+}
+
+var _ automerge.ContributorAbandonSink = lateContributorNudgeSink{}

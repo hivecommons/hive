@@ -469,6 +469,18 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	}
 
 	opts := &gh.PullRequestOptions{MergeMethod: mergeMethod}
+	if fetched == nil {
+		var err error
+		fetched, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_destination"), owner, repo, number)
+		if err != nil {
+			return MergePRResult{}, err
+		}
+	}
+	ctx, releaseDestination, err := AcquireDestinationMerge(ctx, DestinationMergeDirectory(), owner+"/"+repo, fetched.GetBase().GetRef())
+	if err != nil {
+		return MergePRResult{}, err
+	}
+	defer releaseDestination()
 	if expectSHA = strings.TrimSpace(expectSHA); expectSHA != "" {
 		opts.SHA = expectSHA
 	}
@@ -495,6 +507,9 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 		Inputs: map[string]string{"method": mergeMethod, "expect_sha": expectSHA},
 	}
 	merge := func(ctx context.Context) (effects.Result, error) {
+		if err := VerifyDestinationMerge(ctx, c.client, owner, repo, number, expectSHA); err != nil {
+			return effects.Result{}, effects.NotApplied(err)
+		}
 		var apiErr error
 		res, _, apiErr = c.client.PullRequests.Merge(ctx, owner, repo, number, commitMessage, opts)
 		if apiErr != nil {
@@ -652,6 +667,9 @@ func (c *Client) updateBranch(ctx context.Context, repo string, number int, expe
 		owner, repo = parts[0], parts[1]
 	}
 	var inputs map[string]string
+	if c.baseRefreshScheduled(owner + "/" + repo) {
+		return fmt.Errorf("base-refresh:awaiting-admission: %s/%s#%d is refreshed only by the automerge preparation front", owner, repo, number)
+	}
 	if expectedHeadSHA != "" || observedBaseSHA != "" {
 		inputs = map[string]string{"expected_head_sha": expectedHeadSHA, "observed_base_sha": observedBaseSHA}
 	}

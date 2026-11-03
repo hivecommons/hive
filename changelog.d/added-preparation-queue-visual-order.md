@@ -1,0 +1,1 @@
+- Show preparation owners and FIFO waiting positions in a visible train-style Activity Monitor rail, removing redundant preparation pills and the zero-train header summary while preserving real ready trains, PR stages, row sorting, pagination, and issue trees.

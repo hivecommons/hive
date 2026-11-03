@@ -1,0 +1,1 @@
+- Add a Matrix tab to the Activity Monitor header, shown only when `dashboard.matrix.enabled` is set; the status payload gains an additive `matrixEnabled` boolean (#16042, RFC #15862).

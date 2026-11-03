@@ -1,5 +1,39 @@
 # Spoke dashboard
 
+## Base preparation visibility
+
+The Activity Monitor shows a compact **Preparation train** pill directly above
+the actual tracker items and the original train's thin gold side rail through
+their rows. Existing train styling and theme tokens supply its spacing, border,
+markers and font. A white marker identifies an exact-current preparation owner;
+an outlined marker identifies unverified observations. Neither changes CI /
+Review chevrons or creates a ready or native queue seat.
+
+Subdued comments inside the corresponding PR row retain the current pipeline
+caption and add base-refresh context, known ticket age, and the hosting issue
+when nested. Redundant preparation-owner and waiting-behind badges are suppressed
+only where that inline context is actually rendered. Other review, CI, hold and
+ready-train signals remain unchanged. The gold ready-queue popover does not
+duplicate preparation information; native observations stay separate.
+
+Preparation FIFO follows first qualifying admission, not PR creation time or
+number. Sorts, filters, pagination, collapsed repositories and linked issue trees
+are unchanged: a rail ends before unrelated or backwards-ordered items, with a
+continuation pill when the group resumes. A dashed rail marks missing FIFO
+members or linked-child order that differs from FIFO. Mixed issue trees mark
+only the actual preparation children, without moving or copying them.
+
+Keyboard-focusable and hoverable node/header help provides exact identities,
+snapshot time when known, admission versus current heads, unverified positions,
+and off-page/filtered members. Unknown predecessors prevent confirmed waiting
+ordinals. Unreadable snapshots explicitly say unavailable, not zero work.
+Omitted preparation policy adds no train; inactive tickets are excluded.
+
+These are read-only lifecycle observations, not review approval, green exact-head
+CI or guaranteed merge order. Refreshed heads receive no old-head proof. The
+existing tracker cache and refresh paths update comments and rail membership;
+the view adds no polling, animation, admission, expiration or promotion.
+
 The spoke dashboard is the operator UI served from
 `src/pkg/dashboard/static/index.html`. That file is **generated**: edit the
 per-area sources under `src/pkg/dashboard/static-src/` and run `make
@@ -156,6 +190,36 @@ precise buckets:
 - `unknown`: terminal observations with no recorded actor/path. Unknown counts
   are kept in the actor matrix as unrecorded evidence but are excluded from the
   trend share math so missing attribution is never mislabeled as automation.
+
+Where each row's counts come from:
+
+- **Created** counts only what the hive opened (`agent_pr_created`,
+  `agent_issue_created`, `hive_issue_created`), so its human and other columns
+  stay `0`. PRs and issues people open are not counted.
+- **Reviewed** — PRs: the hive's own reviews (`agent_pr_reviewed`) fill the
+  hive column. The human, other and unknown columns come from
+  `pr_review_observed`: when the merged-PR settle scan first sees a PR merged
+  or closed inside its window, it reads that PR's reviews (one extra GitHub
+  read per newly terminal PR) and records every submitted review the hive did
+  not write — approved, changes requested, commented or dismissed — at the
+  review's `submitted_at`, classed like merges (`human`, `other` for `*[bot]`
+  logins, or `unknown` for a review whose account has since been deleted and
+  has no login). The list is cached for later scans of the window and read
+  again only when the PR's `updated_at` has moved since — GitHub bumps it on
+  review submission, so a review that lands after the first read is picked
+  up on the next scan and only the not-yet-seen reviews are recorded. The
+  hive's own reviews are
+  skipped there so they are never counted twice, pending reviews are ignored,
+  and each review counts once by its GitHub review ID across rescans and
+  restarts. Issues: the hive's issue comments and claims.
+- **Merged·Closed** counts the hive's audited merge/close paths plus the
+  settle scan's forge-observed terminal PRs, attributed by `merged_by`.
+
+A person's review is therefore counted once its PR merges or closes, not when
+it is submitted: a review on a PR that is still open appears later, in the
+bucket of its own `submitted_at`. The settle scan is used rather than the
+`pull_request_review` webhook because deliveries can be missed and have no
+per-delivery record to reconcile against.
 
 The merged-PR and closed-issue totals that feed the Cost section's
 cost-per-merged-PR and cost-per-closed-issue figures (`/api/cost`
@@ -981,7 +1045,7 @@ The **Hive activity monitor** section (sidebar, Dashboard group; expanded by def
 
 **Sounds (opt-in).** The speaker chip at the right end of the toolbar (🔇 off / 🔊 on; default off, remembered per browser under the `localStorage` key `hive.tracker.sound`) enables two short sounds, both synthesised in the browser with the Web Audio API (no audio file, no network request). The **merge zap** — just under half a second of bug-zapper arc: a ~4 ms high-voltage "snap", then a sputtering electric sizzle (bright noise and a 240 Hz square chopped by a 120 Hz mains pulse train, dropping out and re-striking at random) that holds ~80 ms and dies away, high-passed at 700 Hz — plays when a pull request the tab was already showing merges while the page is open. The trigger compares tracker payloads: a PR counts as merged when its stage reaches the ✓ cap or when its key appears in the payload's `recently_merged` list (the hive's `pr_merged` audit entries of the last 30 minutes — sweep, queue, relay and human merges the PR poller observed alike — which is how a PR that simply dropped out of the open list is told apart from one closed unmerged). Entries that name the repo by its configured short name are qualified to the `owner/name` the rows carry, and a PR that drops off the list a poll before its audit entry lands is still remembered as open until `recently_merged` settles it, so the two never have to arrive in the same payload. It never fires on the first load, for rows that were already merged, for issues, or for a PR it has already zapped; several merges in one refresh play at most two zaps. The **new-item buzz** — a quieter 0.18 s sawtooth near 120 Hz with a ~30 Hz tremolo through a lowpass — plays when an issue or pull request appears on the list that the previous payload did not have; it never fires on the first populated payload, buzzes once per item, and plays at most two buzzes per refresh. Nothing plays while the tab is hidden. Turning the chip on plays one zap then one buzz so you can hear both. The audio context is created on a user gesture and resumed if the browser suspended it; if the autoplay policy still holds it suspended when a sound is due, that sound is skipped and the next click or key press re-arms it. Detection runs over the union of every configured repo's rows, keyed `owner/name/kind#number`, so the sounds fire for each repo the hive governs. Either sound can be replaced from the card's ⚙ settings modal with a user-supplied file (WAV or anything `decodeAudioData` accepts, capped at 4 MB) stored in the browser's IndexedDB (`hive-tracker-sounds`); a stored file that fails to decode falls back to the built-in voice. The modal also carries the **Play sounds** master toggle and a 0–100 **Volume** slider (`localStorage` key `hive.tracker.sound.volume`) that scales the master gain of both built-in and uploaded sounds. Closed issues are not an event the tracker payload carries, so nothing plays for them.
 
-The endpoint returns `stages` (the stage table with `short`, `branch_from`, configured dwell and `falls_to` — the lower same-kind stages a move to which is a regression per the stage engine, so the event line says "fell back to" only for those; 015 → 010 triage accepted, 085 → 080 decision made and 072 → 070 author resuming read "moved to"), `items` (one per open issue/PR represented by the status snapshot, including actionable and held items plus display-only non-actionable issues, drafts, and exempt PRs: `labels`, `created_at`, `updated_at`, `bucket`, `bucket_reason`, stage, `stage_since`, humanised `reason`/`caption`, `actor`, `modifiers`, `author_kind` + `author_kind_source`, `lane`, `tier`, `linked_pr`, `linked_prs` (number, title, url, author, author kind, stage, `stage_since`, `caption` and `modifiers` of each open covering PR — enough to draw the nested sub-row without a second lookup), `nested_under` (on a PR: the issue it is listed under), nudge info and the last eight `history` hops from the stage store) and `author_kind_labels`. It answers `{"status":"initializing"}` until the first scan.
+The endpoint returns `stages` (the stage table with `short`, `branch_from`, configured dwell and `falls_to` — the lower same-kind stages a move to which is a regression per the stage engine, so the event line says "fell back to" only for those; 015 → 010 triage accepted, 085 → 080 decision made and 072 → 070 author resuming read "moved to"), `items` (one per open issue/PR represented by the status snapshot, including actionable and held items plus display-only non-actionable issues, drafts, and exempt PRs: `labels`, `created_at`, `updated_at`, `bucket`, `bucket_reason`, stage, `stage_since`, humanised `reason`/`caption`, `actor`, `modifiers`, `author_kind` + `author_kind_source` (`label`, `inferred`, or `registry` — the author has a contributor-hub profile on this hive, so their clanker pushed it; the row icon, tooltip and claimant all read this one value), `lane`, `tier`, `linked_pr`, `linked_prs` (number, title, url, author, author kind, stage, `stage_since`, `caption` and `modifiers` of each open covering PR — enough to draw the nested sub-row without a second lookup), `nested_under` (on a PR: the issue it is listed under), nudge info and the last eight `history` hops from the stage store) and `author_kind_labels`. It answers `{"status":"initializing"}` until the first scan.
 
 ## PR review and link signals
 

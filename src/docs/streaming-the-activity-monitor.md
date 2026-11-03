@@ -38,6 +38,55 @@ monitor. Two knobs:
 Nothing here touches Twitch or the cluster until **you** create the Secrets and
 apply the overlay — the steps below are all yours to run.
 
+### Call-to-action overlay
+
+Every kiosk view — this stream's Activity Monitor, the [Matrix](#matrix-mode-separate-channel)
+and the hub's [public fleet page](#the-hivecommonsfleet-broadcast) — carries a
+small pill bottom-right: "🐝 Want this for your repos?", the URL
+`hive.hivecommons.dev/get-started` in 24px amber, and a 110px QR code of it, so
+a viewer on a phone or a 720p transcode can get to **Request a Hive** without
+typing. It appears only with `?kiosk=1` (never in the operator dashboard,
+pop-out or display mode) and `&cta=off` in `DASHBOARD_PATH` removes it. On a
+spoke the destination and the copy are `dashboard.kiosk_cta_url` and
+`dashboard.kiosk_cta_text` in `hive.yaml` (read at start-up); on the hub they
+are `HIVE_HUB_KIOSK_CTA_URL` and `HIVE_HUB_KIOSK_CTA_TEXT`. The QR code is
+rendered server-side (`src/pkg/webassets/kioskcta`) as an inline `data:` PNG, so
+nothing external is loaded and the pages' Content-Security-Policy is unchanged.
+In Matrix mode the pill sits above the canvas at 85 % opacity so it does not
+fight the effect.
+
+### Channel title, category, tags
+
+[`src/scripts/twitch-channel-cta.sh`](../scripts/twitch-channel-cta.sh) sets
+the title, category and tags of `hivecommons`, `hivecommonsfleet` and
+`hivecommonsmatrix` through Helix `PATCH /channels` so each channel page
+carries the same call to action as the overlay; `--dry-run` shows the diff
+without writing, and a channel that already matches is skipped. Twitch needs a
+**user** access token per channel with the `channel:manage:broadcast` scope —
+an app token cannot edit channel info — obtained once with the
+[device-code grant](https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/#device-code-grant-flow):
+
+1. In the [Twitch developer console](https://dev.twitch.tv/console/apps) register
+   an application (category "Broadcasting Suite", OAuth redirect
+   `http://localhost`) and note its **Client ID** (`TWITCH_CLIENT_ID`).
+2. For each channel, while logged in to Twitch as that channel: request a device
+   code — `curl -sX POST https://id.twitch.tv/oauth2/device -d client_id=$TWITCH_CLIENT_ID -d scopes=channel:manage:broadcast` —
+   open the returned `verification_uri`, enter the `user_code`, then exchange it:
+   `curl -sX POST https://id.twitch.tv/oauth2/token -d client_id=$TWITCH_CLIENT_ID -d device_code=<device_code> -d grant_type=urn:ietf:params:oauth:grant-type:device_code`.
+   Keep the `access_token` (and `refresh_token`) out of the shell history, for
+   example in a password manager.
+3. Export the tokens as `TWITCH_TOKEN_HIVECOMMONS`, `TWITCH_TOKEN_HIVECOMMONSFLEET`
+   and `TWITCH_TOKEN_HIVECOMMONSMATRIX`, then run
+   `src/scripts/twitch-channel-cta.sh --dry-run` and, when the diff is right,
+   without the flag. The script verifies that category id `1469308723` is
+   "Software and Game Development" against `/search/categories` before it writes
+   and never prints a token.
+
+Panels (the About tab under the player) have no API: upload the three images
+produced for #16236 — "Request a Hive" → `hive.hivecommons.dev/get-started`,
+"What is Hive?" → the docs, "Discord" → the invite — by hand on each channel's
+**About → Edit panels**.
+
 ## 1. Twitch side (once)
 
 Open the Creator Dashboard at `dashboard.twitch.tv` while logged in as
@@ -85,7 +134,9 @@ The shared token works because the streamer reaches the dashboard over the
 in-cluster Service and hive's hive is `hub_proxied: true`, so the spoke still
 honours `Authorization: Bearer <dashboard.auth_token>`. The token is injected
 by a loopback proxy inside the pod; it never appears in the URL, in Chromium's
-history, in logs, or on screen.
+history, in logs, or on screen. The proxy forwards only `GET`/`HEAD`: the shared
+token is an unscoped owner credential, and a display never mutates, so a
+misbehaving page in the kiosk cannot pause agents or change settings with it.
 
 **Alternative — the public route.** To stream a hive you cannot reach
 in-cluster (or from a laptop with `docker compose`), set `DASHBOARD_URL` to the
@@ -149,10 +200,26 @@ dashboard build is picked up without restarting the pod.
 | Pod **CrashLoopBackOff** on start | `DASHBOARD_URL` unset, or ffmpeg cannot reach `live.twitch.tv:1935` — check the NetworkPolicy allows egress to public IPs and that the cluster permits outbound RTMP. |
 | Stream drops every few minutes | Twitch rejected the key (reset in Creator Dashboard?). ffmpeg restarts with 2→60 s backoff; the logs show the masked `***` key, never the real one. |
 | Old UI after a dashboard roll | Wait for the next `RELOAD_EVERY` tick or `kubectl rollout restart deploy/hive-stream`. |
+| **OOMKilled** / `Killed Xvfb` then `a supervised process left the loop` | The pod ran out of memory, almost always the x11grab frame queue after the encoder stalled (see [Resources and memory](#resources-and-memory)). Check `ipcs -m` in the pod: hundreds of 8 MiB segments means ffmpeg is hoarding frames — lower `VIDEO_QUEUE_FRAMES` or give the encoder CPU. |
 | Pod is `Running` but Twitch is offline | `healthcheck.sh` in the pod; if `frames` is not increasing, the ffmpeg sink is failing — look for `rtmp` errors in the logs. |
 
-Pure CPU budget: software x264 at 1080p30 `veryfast` uses roughly 1.5 cores;
-the Deployment requests 1 CPU / 2 Gi and limits 2 CPU / 3 Gi.
+## Resources and memory
+
+The Deployment requests 1 CPU / 3 Gi and limits 3 CPU / 6 Gi. Where it goes:
+
+| Consumer | Typical | Notes |
+|---|---|---|
+| Chromium (all processes) | ~1.0–1.3 Gi | `--renderer-process-limit=1`, `--js-flags=--max-old-space-size=1024`, `--disable-dev-shm-usage`; the supervisor reloads the tab when the sum of Chromium RSS passes `CHROMIUM_RSS_RELOAD_MIB` (3584) instead of waiting for the OOM killer. |
+| ffmpeg + Xvfb shared frames | ≤ `VIDEO_QUEUE_FRAMES` × 8.3 MiB (16 → ~130 Mi) | x11grab hands ffmpeg one MIT-SHM segment per raw 1080p frame, attached to both processes and charged to the cgroup once. If x264 falls behind, the input thread queues frames up to `-thread_queue_size`; the old 1024-deep queue could pin 8.5 Gi and OOMKilled the pod in a loop. Frames are skipped when the bounded queue is full. |
+| `/dev/shm` memory emptyDir | ≤ 512 Mi | Memory-backed emptyDirs count against the container limit. |
+| ffmpeg private, PulseAudio, Xvfb framebuffer | ~150 Mi | PulseAudio runs with only the null sink loaded; the pulse input queue holds tiny packets. |
+
+CPU: software x264 at 1080p30 `veryfast` needs about two cores on arm64 plus
+Chromium's software rasteriser (`--disable-gpu`). x264 threads are sized from
+the cgroup CPU quota (`ENC_THREADS`), not `nproc`, so the encoder does not
+oversubscribe a throttled pod. If `ffmpeg-progress.txt` shows `speed=` below
+`1.0x` or `drop_frames` climbing, drop `X264_PRESET` to `superfast` before
+raising the CPU limit.
 
 ## Privacy
 
@@ -163,8 +230,311 @@ does **not** render tokens, secrets, settings, webhooks, chat, or the
 operator's agent terminals; `?kiosk=1` additionally hides the sidebar, topbar,
 avatar/settings menus, notices, the Welcome and NPS dialogs, and every other
 dashboard section, and renders dark regardless of any stored theme
-(append `&theme=light` for a light stream). Do not point the streamer at a hive tracking private
+(append `&theme=light` for a light stream). Because the sidebar is hidden, the
+monitor's header carries its own live item count pill (the sidebar badge's twin,
+with the same ↑/↓ delta cue), enlarged in kiosk, pop-out, display and full-screen
+views so it reads at 1920×1080. Do not point the streamer at a hive tracking private
 repositories without reviewing what the tracker would show.
+
+The main `twitch.tv/hivecommons` stream never shows Matrix; it remains the
+full-screen Activity Monitor.
+
+## Matrix mode (separate channel)
+
+When `dashboard.matrix.enabled` is set, the Activity Monitor header also shows a **Matrix** tab that opens `?kiosk=1&view=matrix` in the same window.
+
+Matrix is an experimental, default-off code display for a separate channel,
+[`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).
+It depends on the Matrix display renderer (`/?kiosk=1&view=matrix`,
+[#15936](https://github.com/hivecommons/hive/issues/15936)); without that
+renderer the dashboard ignores `view=matrix` and the kiosk serves the ordinary
+Activity Monitor. When active it shows pushed added lines only, from positively
+identified hive identities, on public repositories explicitly allowlisted in
+`dashboard.matrix.repos`.
+Private patches, unverified authors and excluded paths are never shown. Lines
+touched by scrubbing are dropped entirely rather than displayed with redactions;
+the built-in secret/path filters and `dashboard.matrix.exclude_paths` apply.
+Dashboard authentication alone does not make a code stream safe for public
+Twitch broadcasting: the public allowlist, author restriction and scrub/drop
+rules are required.
+
+The display's look is chosen with `mx.*` URL parameters; each value is also
+remembered in the browser (`hive.matrix.*` in local storage) for later visits.
+Every effect renders only lines already delivered by `/api/matrix/lines`.
+
+| `mx.effect` | Display |
+|---|---|
+| `rain` (default) | Falling columns built from the characters of the latest lines. Unknown values fall back to `rain`. |
+| `cascade` | Whole lines drift down the screen, each with its `repo#PR · path` caption. |
+| `ghost` | Ghost coder: a fake editor with one tab per PR (`repo#PR`), titled with the file path; at most six tabs, the oldest closes first. Lines are typed character by character behind a blinking cursor, with light keyword/string/comment/number colouring by file extension. |
+| `terminal` | An endless `git log -p`-style scroll: each line printed as a green `+ <line>`, with a `repo#PR · path` header whenever the PR or file changes. |
+
+`mx.speed` (0.1–5, default 1) and `mx.fps` (1–60, default 30) set the
+animation and typing speed, `mx.palette` is `green` (default), `amber` or
+`gold`, and `mx.captions=off` hides the `repo#PR · path` captions and headers
+on the canvas. `p` or Space pauses; a hidden tab pauses too. With the
+operating system's *reduce motion* setting on, every effect is replaced by
+static pages of the latest lines with their captions.
+
+[`overlays/hive-hosted-matrix/`](../deploy/stream/overlays/hive-hosted-matrix/kustomization.yaml)
+reuses the streamer image and base as a separate instance. It renders Deployment,
+ConfigMap and NetworkPolicy `matrix-hive-stream` in namespace `hive-stream-matrix`,
+with separate pod selectors and secret references scoped to that namespace.
+It opens `/?kiosk=1&view=matrix&sound=off` and sets `STREAM_AUDIO=silent`.
+Its independent process and deployment isolate restarts and failures from the
+existing stream. The `hive-hosted` overlay and `twitch.tv/hivecommons` are
+unaffected.
+
+**Keep this broadcast OFF until the owner authorizes it and provisions the
+channel.** The overlay has `replicas: 0`; applying it starts no streamer.
+Channel availability alone does not authorize activation. The owner must:
+
+1. Confirm the deployed dashboard build serves the Matrix display for
+   `view=matrix` (#15936). A build without it broadcasts the ordinary kiosk
+   Activity Monitor on the Matrix channel, not code lines.
+2. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
+   and verify the Matrix display and its author restriction and scrub/drop rules
+   before any broadcast. An empty allowlist captures nothing.
+3. Provision `hivecommonsmatrix` independently, create namespace
+   `hive-stream-matrix`, and create the out-of-band
+   `twitch-stream-matrix` Secret there with its
+   `TWITCH_STREAM_KEY`. Provision a separate `dashboard-token` Secret there
+   for the dashboard source. Never reuse the main channel's `twitch-stream`
+   Secret, or put key values in source, issues or documentation.
+4. Apply the Matrix overlay and deliberately scale `matrix-hive-stream` above
+   zero only after authorization and readiness checks. Applying the overlay,
+   creating the Twitch Secret and scaling up are all owner-only actions;
+   this configuration does not authorize deployment or activation.
+
+Review the manifests without applying them:
+
+```sh
+kubectl kustomize src/deploy/stream/overlays/hive-hosted-matrix
+```
+
+## The hivecommonsfleet broadcast
+
+The hub-wide monitor (RFC [#15861](https://github.com/hivecommons/hive/issues/15861),
+proposed by @hanthor) gets its **own** channel,
+[`twitch.tv/hivecommonsfleet`](https://www.twitch.tv/hivecommonsfleet), and
+its own deployment in
+[`src/deploy/stream/fleet/`](../deploy/stream/fleet/kustomization.yaml)
+([#15966](https://github.com/hivecommons/hive/issues/15966)). Everything above
+— the `hive-stream` namespace, `k8s/`, `overlays/hive-hosted/` and the
+`twitch.tv/hivecommons` full-screen Activity Monitor — is untouched by it; a
+CI test (`src/internal/streamdeploy`) pins those files byte for byte.
+
+| | `twitch.tv/hivecommons` | `twitch.tv/hivecommonsfleet` |
+| --- | --- | --- |
+| Manifests | `k8s/` + `overlays/hive-hosted/` | `fleet/` (standalone, shares no resource) |
+| Namespace / Deployment | `hive-stream` / `hive-stream` | `hive-stream-fleet` / `hive-stream-fleet` |
+| Source | hive's spoke dashboard, in-cluster, shared dashboard token | the hub's **public** origin, anonymous — no dashboard credential exists or is accepted |
+| Stream key Secret | `twitch-stream` | `twitch-stream-hivecommonsfleet` |
+| Egress | DNS, spoke Service, public 443/1935 | DNS, public 443/1935 only (no in-cluster rule) |
+| Default | running | **disabled** |
+
+It reuses the same `hive-stream` image. Its ConfigMap sets
+`STREAM_PROFILE=public-safe`, which turns on two guards in the image:
+
+- **`public-safe-gate.sh`** runs before any process starts and exits the
+  container unless *all* of the following hold: `STREAM_ENABLED` is exactly
+  `true`; `PUBLIC_SAFE_POLICY_ACK` equals the current policy version
+  (`hivecommonsfleet-public-safe-v1`); `DASHBOARD_TOKEN` is **unset**;
+  `DASHBOARD_URL` is an `https://` origin and neither it nor `DASHBOARD_PATH`
+  holds the `CHANGE-ME` placeholder; and `TWITCH_STREAM_KEY` is installed (a
+  local dry run with `STREAM_OUTPUT=null` or an absolute local `*.flv` path
+  needs no key; a URL such as `rtmp://…/x.flv` or any other raw
+  `STREAM_OUTPUT` is refused). Shipped defaults fail the enable,
+  acknowledgement and stream-key checks, and the Deployment is at
+  `replicas: 0` on top.
+- **The auth proxy runs anonymous.** It refuses to start with a token, strips
+  any `Authorization` or `Cookie` header the browser sends and drops
+  `Set-Cookie` from responses, so no session can form. The kiosk sees exactly
+  what an anonymous visitor of the hub sees, and nothing else.
+
+### The public-safe hub view
+
+The source is the hub's anonymous public-safe Fleet activity view,
+`/activity/public?kiosk=1` (`DASHBOARD_PATH` in `fleet/configmap.yaml`). It is
+a separate route from the signed-in `/activity` page and polls its own
+endpoint, `GET /api/hub/activity/public`, which needs no login and ignores any
+cookie or token it is sent. The hub filters the data before it builds the
+view, so private rows never reach the page:
+
+- **Shown:** open issues and pull requests in public repositories of hives the
+  registry lists as public on github.com — number, title, stage, modifiers,
+  author kind — plus their public stage hops, opens and merges, each hive's
+  name and report freshness.
+- **Omitted:** private-repository items and events (and items whose
+  visibility the spoke does not know), hives not listed as public or on a
+  GitHub Enterprise host, per-hive totals, truncation and dropped-event counts
+  (they can count private items), hive owners, and any per-user access grant.
+
+A hub test (`TestActivityPublic_OmitsPrivateRowsByConstruction`) checks that a
+private row is absent from this view whether the request is anonymous or
+carries an admin's session. See also
+[Hub Fleet activity page](hub-fleet-activity.md#public-safe-view).
+
+### Dashboard authentication does not protect Twitch output
+
+A Twitch stream is public. Anything painted in the kiosk is visible to anyone,
+recordable and clippable, whatever login the dashboard or hub requires and
+whoever was allowed to open the page. A user's private, per-user Fleet
+activity view (what *they* may see on the hub) therefore never authorizes a
+broadcast of its rows, identities or repository data. That is why this
+deployment carries no dashboard credential at all instead of a "viewer"
+token: there is no account whose visibility could leak onto the stream.
+
+### Public-safe content policy
+
+Policy version **`hivecommonsfleet-public-safe-v1`**. A view may be streamed
+on `hivecommonsfleet` only when every row and every value it renders is:
+
+1. from a **public** repository (no private-repository rows, titles, numbers,
+   labels or counts broken out per private repository);
+2. information **GitHub already shows publicly** for that item: number,
+   title, state, labels, public author login, CI and merge state;
+3. served to an **anonymous** request — no per-user or per-hive access
+   decision may widen what the page shows;
+4. free of tokens, settings, operator or agent terminal output, chat,
+   e-mail addresses, and any identity beyond public GitHub logins.
+
+Aggregate totals that include private items are allowed only as a single
+fleet-wide number that cannot be attributed to a repository.
+
+Bump the version (here, in `public-safe-gate.sh` and in
+`src/internal/streamdeploy`) whenever this text changes, so an old
+acknowledgement cannot cover new content.
+
+### Enabling it (owner only)
+
+Nothing below is done by this repository or by the hive; it is the owner's
+decision on #15861. Status as of this change: the channel is provisioned and
+the [public-safe hub view](#the-public-safe-hub-view) exists; the stream key
+is **not** installed and the broadcast is **not** enabled.
+
+1. **Source.** `DASHBOARD_PATH` already points at
+   `/activity/public?kiosk=1`. Open `https://hive.hivecommons.dev/activity/public`
+   in a private browser window and confirm it meets the policy above: what
+   you see there is what Twitch will show.
+2. **Stream key.** In the `hivecommonsfleet` Creator Dashboard, copy the
+   Primary Stream key and install it without echoing it or writing it to a
+   file, a commit or an issue comment:
+
+   ```sh
+   kubectl --context hive-oke apply -k src/deploy/stream/fleet   # namespace, config, NetworkPolicy; replicas 0
+   kubectl --context hive-oke -n hive-stream-fleet create secret generic twitch-stream-hivecommonsfleet \
+     --from-literal=TWITCH_STREAM_KEY="$(read -rs k; printf %s "$k")"
+   ```
+
+3. **Enable.** Set `STREAM_ENABLED: "true"` and
+   `PUBLIC_SAFE_POLICY_ACK: "hivecommonsfleet-public-safe-v1"` in the
+   ConfigMap, re-apply, then
+   `kubectl --context hive-oke -n hive-stream-fleet scale deploy/hive-stream-fleet --replicas=1`.
+   The logs must show `public-safe gate: enabled` and
+   `authproxy: … (public-safe: anonymous, no credential, no cookies)`.
+
+To stop it, scale back to `0` or set `STREAM_ENABLED: "false"`; the
+`hivecommons` stream is unaffected either way. A gate refusal reads
+`stream: public-safe gate: refusing to start: <reason>` in the pod log and
+names the missing condition without printing any value.
+
+## Display mode and URL views
+
+For an attended screen (a wall monitor or TV someone can walk up to), use
+**display mode** instead of kiosk: press **📺** on the Activity Monitor header,
+or open `/?display=1`. It uses the same tracker-only layout but keeps the
+cursor and your sound setting, hides every row action, and is left with
+**Esc** or **d**. Entering it never requests full screen or a wake lock.
+`?kiosk=1` is unchanged and wins when both flags are present.
+
+Moving the pointer, tapping, or tabbing to it reveals a small control overlay
+(top right) that hides again after 3 seconds idle. Each control is separate
+and acts only when clicked:
+
+| Control | What it does |
+|---|---|
+| **✕ Exit display** | Leaves display mode, the same as **Esc**. |
+| **🔗 Copy link** | Copies a link to this display: `display=1`, the current `am.*` view (or the playlist's `am.view` + `interval`), `theme`, and the `density=tv` / `shift=1` display options when set, and nothing else — never a token or cookie. If the clipboard is unavailable or refused, the link is shown in a selectable field instead. |
+| **⛶ Full screen** | The same full screen as the header's ⛶ button. Disabled with a "not supported" tooltip where the browser has no Fullscreen API. |
+| **☀ Keep awake** | Asks the browser to keep the screen awake (Screen Wake Lock). Shows *on*, *off*, *denied* (with the browser's reason; it is not retried automatically) or is disabled where unsupported. While on, it is re-requested when the tab becomes visible again; it is released on exit and is not remembered after a reload. |
+
+None of these controls writes anything to local storage. Kiosk mode never
+shows the overlay.
+
+### Playlists
+
+A display can rotate between several views. Spell each view out as a
+URL-encoded `am.*` query string in a repeated `am.view` parameter, and set the
+time per view with `interval`:
+
+```text
+/?display=1&am.view=am.needsHuman%3D1&am.view=am.kind%3Dpr%26am.repo%3Dhivecommons%2Fhive&am.view=am.kind%3Dissue%26am.group%3Drepo&interval=2m
+```
+
+- `interval` is `Ns` or `Nm`, clamped to 10 seconds – 1 hour; the default is
+  60 seconds.
+- A view with no recognised `am.*` key is skipped. With fewer than two valid
+  views the display does not rotate.
+- The current view follows the wall clock, so a reload or a dropped
+  connection resumes on the same view. Rotation happens in memory only: it
+  does not navigate, refetch or write to local storage.
+- A thin bar at the top shows the time until the next view; with reduced
+  motion it is a static *next in Ns* label instead.
+- Playlists exist only in the URL. There are no named presets in `hive.yaml`,
+  and playlists apply only in display mode, never to `?kiosk=1`.
+
+A display says honestly when its data is old. Its header shows the hive id,
+a clock and a live dot. When the event stream has been silent for more than
+two poll intervals (about a minute), or the tracker payload is older than two
+server cache TTLs, the dot turns amber, the board dims and a banner reads
+*Stale: last update N ago*. It recovers by itself when updates resume. If
+the stream fails to reconnect five times in a row, the display reloads
+itself after 30 s, doubling on each further reload up to 10 minutes; it also
+reloads once after a hive upgrade finishes. A reload keeps the URL, so the
+view survives. The ordinary Activity Monitor and `?kiosk=1` do not dim, and
+the "updated … ago" chip behaves as before everywhere.
+
+Two wall-screen options apply only together with `display=1` and are ignored
+otherwise:
+
+| Parameter | Effect |
+|---|---|
+| `density=tv` | Larger type and only the stage, title and actor of each row. No filters, row chips or pager: the rows that fit the screen, then a "+N more" footer. Recomputed when the window is resized. `tv` is the only value; anything else is ignored. |
+| `shift=1` | OLED burn-in protection: the board moves 1–2 px to a new spot every 4 minutes. Off by default. |
+
+With the operating system's *reduce motion* setting on, a display plays no
+row movement, no burn-in shift and no dim transition.
+
+Example: `/?display=1&density=tv&shift=1#section-activity-monitor-section`.
+
+Any Activity Monitor filter can be described in the URL with `am.*`
+parameters, so a display link reproduces the view in a fresh browser profile:
+
+| Parameter | Values |
+|---|---|
+| `am.kind` | `pr`, `issue` (default all) |
+| `am.repo` | `owner/name` |
+| `am.q` | free text |
+| `am.labels` | comma-separated label names |
+| `am.needsHuman`, `am.onHold`, `am.attention` | `1` |
+| `am.age` | `1h`, `1d`, `1w`, `stale` |
+| `am.author` | `human`, `clanker`, `hive` |
+| `am.acted` | `awaiting`, `acted`, `stuck` |
+| `am.sort` | `furthest`, `waiting`, `newest`, `number` |
+| `am.dir` | `asc` (default `desc`) |
+| `am.group` | `repo` (default `none`) |
+
+Example: `/?display=1&am.kind=pr&am.repo=hivecommons/hive&am.group=repo#section-activity-monitor-section`.
+Unknown values fall back to the default. When any `am.*` parameter is present
+it wins over the browser's saved filter, and that tab never writes its filter
+or grouping back to local storage. Waiting on you is per user and stays on
+`?filter=waiting-on-you`.
+
+A link describes a view; it does not grant access. The viewer still signs in
+with their own access, and display mode grants no extra privileges. Do not
+put a display that tracks private repositories where people without access
+can see it without reviewing what the tracker would show.
 
 ## Quick manual test with OBS (no cluster)
 

@@ -10,6 +10,7 @@ import (
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
@@ -112,7 +113,11 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// one process-wide write-back gate (pkg/writeback); a rebuilt client
 	// must inherit it or the sweeps regress to ungated.
 	client.SetWritebackGate(b.writebackGate())
+	client.SetAttention(b.cfg.HiveID, func() attention.Config { return b.cfg.GitHub.Attention })
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
+	// Evaluated heads persist so a restart or rebuild neither re-diffs every
+	// open PR nor blanks the Matrix feed until the next sweep (#16276).
+	client.SetSentinelHeadsPath(sentinelHeadsStatePath)
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// Per-repo pause (#6203). A live predicate over the shared config, so a
 	// pause taken in the dashboard narrows the very next enumeration and
@@ -122,6 +127,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetRedMainThresholdFunc(b.cfg.RepoRedMainThreshold)
 	// Open-held-PR cap (#13645), live per repo.
 	client.SetMaxOpenHeldPRsFunc(b.cfg.RepoMaxOpenHeldPRs)
+	client.SetScheduledBaseRefresh(func(repo string) bool { return b.cfg.AutoMerge.RequireCurrentBaseFor(repo) })
 	// Per-repo custom agents (#6204). A live predicate over the shared
 	// config, so the hive-open-pr / hive-merge / hive-open-issue relays
 	// refuse an out-of-scope request without a restart.
@@ -464,6 +470,12 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		}
 		recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path, reworkCommits, reworkObserved)
 	})
+	// #16116: the reviews people and other bots submitted on the PRs the same
+	// settle scan saw merge or close feed the throughput card's Reviewed row.
+	client.SetPRReviewObservedHook(func(obs github.PRReviewObservation) {
+		recordObservedReview(b.dashSrv, obs)
+	})
+	client.StartPRTerminalEnrichment(b.ctx)
 	client.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 		b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
 		// Same typed hook feeds the lifecycle timeline: the watcher fires

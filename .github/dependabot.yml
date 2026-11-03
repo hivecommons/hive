@@ -9,6 +9,8 @@ updates:
       - "dependencies"
       - "no-changelog"
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "🌱 build(deps)"
     ignore:
       # Module path moved upstream to cel.dev/cel-go (v0.26.0+); dependabot
       # reports go_module_path_mismatch and fails the whole gomod job.
@@ -27,6 +29,8 @@ updates:
       - "dependencies"
       - "no-changelog"
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "🌱 build(deps)"
 
   - package-ecosystem: "docker"
     directory: "/src"
@@ -37,6 +41,8 @@ updates:
       - "dependencies"
       - "no-changelog"
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: "🌱 build(deps)"
 
   # v4 is feature-frozen since 2026-09-21 (#6346); npm bumps must follow the default branch.
   - package-ecosystem: "npm"
@@ -48,3 +54,20 @@ updates:
       - "dependencies"
       - "no-changelog"
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "🌱 build(deps)"
+
+  # dashboard/ ships in the v2 image (/opt/hive/dashboard, build-snapshot.mjs)
+  # and its lockfile pins express's transitive deps (qs, proxy-addr,
+  # body-parser) that have each needed a hand bump; let Dependabot own them.
+  - package-ecosystem: "npm"
+    directory: "/dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "no-changelog"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "🌱 build(deps)"

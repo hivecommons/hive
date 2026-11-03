@@ -50,6 +50,8 @@ func TestStageTrackerPushFor(t *testing.T) {
 		{name: "pushed, re-staged to 050, checks running", it: it, stage: stagelabels.ReviewPending, rec: stagelabels.Record{Stage: stagelabels.ReviewPending, Reason: "ci-pending", ActivityHead: "bbb2222", LastPushAt: pushedAt, LastPushSha: "bbb2222", WaitingOnHive: true}, hasRec: true, state: "pushed", since: pushedAt, sha: "bbb2222", url: "https://github.com/hivecommons/hive/commit/bbb2222", next: "re-review"},
 		{name: "pushed on an adopted row, hive working it", it: it, stage: stagelabels.AdoptedByHive, rec: stagelabels.Record{Stage: stagelabels.AdoptedByHive, Reason: "adopted:ci-red", ActivityHead: "bbb2222", LastPushAt: pushedAt, LastPushSha: "bbb2222"}, hasRec: true, state: "pushed", since: pushedAt, sha: "bbb2222", url: "https://github.com/hivecommons/hive/commit/bbb2222", next: "ci"},
 		{name: "pushed, enumerate has not seen the head yet", it: it, stage: stagelabels.Reviewed, rec: stagelabels.Record{Stage: stagelabels.Reviewed, Reason: "approved:ci-pending", ActivityHead: "aaa1111", LastPushAt: pushedAt, LastPushSha: "bbb2222"}, hasRec: true, state: "pushed", since: pushedAt, sha: "bbb2222", url: "https://github.com/hivecommons/hive/commit/bbb2222", next: "ci"},
+		{name: "pushed, then the head moved on: the pill goes", it: StageTrackerItem{Kind: "pr", Repo: "hivecommons/hive", Number: 42, Author: "zoe", Head: "ccc3333", URL: "https://github.com/hivecommons/hive/pull/42"}, stage: stagelabels.ReviewPending, rec: stagelabels.Record{Stage: stagelabels.ReviewPending, Reason: "ci-pending", ActivityHead: "bbb2222", LastPushAt: pushedAt, LastPushSha: "bbb2222", WaitingOnHive: true}, hasRec: true, wantNil: true},
+		{name: "pushed, the list still shows the head pushed over", it: StageTrackerItem{Kind: "pr", Repo: "hivecommons/hive", Number: 42, Author: "zoe", Head: "aaa1111", URL: "https://github.com/hivecommons/hive/pull/42"}, stage: stagelabels.NeedsAuthor, rec: pushed, hasRec: true, state: "pushed", since: pushedAt, sha: "bbb2222", url: "https://github.com/hivecommons/hive/commit/bbb2222", next: "re-review"},
 		{name: "pushed head settled: the pill goes", it: it, stage: stagelabels.Reviewed, rec: stagelabels.Record{Stage: stagelabels.Reviewed, Reason: "approved", ActivityHead: "bbb2222", LastPushAt: pushedAt, LastPushSha: "bbb2222"}, hasRec: true, wantNil: true},
 		{name: "push before the wait began is history", it: it, stage: stagelabels.NeedsAuthor, rec: stagelabels.Record{Stage: stagelabels.NeedsAuthor, WaitingPushSince: now.Add(-10 * time.Minute), LastPushAt: now.Add(-20 * time.Minute), LastPushSha: "aaa1111"}, hasRec: true, stale: 4 * time.Hour, state: "waiting", since: now.Add(-10 * time.Minute)},
 		{name: "no commit link without a PR URL", it: StageTrackerItem{Kind: "pr", Number: 42, Author: "zoe", Head: "bbb2222"}, stage: stagelabels.NeedsAuthor, rec: pushed, hasRec: true, state: "pushed", since: pushedAt, sha: "bbb2222", next: "re-review"},
@@ -277,6 +279,7 @@ assert.strictEqual(stageTrackerPushChipText(pushed, NOW), '@zoe pushed abc1234 �
 const pchip = stageTrackerPushChipHtml(pushed, NOW);
 assert.match(pchip, /^<a class="ham-badge ham-badge-waiting ham-badge-push" title="@zoe pushed abc1234 2m ago \([^)]*\) · CI running" aria-label="@zoe pushed abc1234 2m ago \([^)]*\) · CI running" href="https:\/\/github\.com\/hivecommons\/hive\/commit\/abc1234def" target="_blank" rel="noopener">@zoe pushed abc1234 · 2m<\/a>$/);
 assert.match(stageTrackerPushTip(rereview, NOW), / · re-review queued$/);
+assert.match(stageTrackerPushChipText(rereview, NOW), / · re-review pending · 2m$/);
 assert.strictEqual(stageTrackerPushWaitHtml(pushed, NOW), '');
 // No URL: a span, same words.
 assert.strictEqual(stageTrackerPushChipHtml(w({ state: 'pushed', since: iso(NOW - 2 * MIN), sha: 'abc1234' }), NOW).replace(/ title="[^"]*" aria-label="[^"]*"/, ''), '<span class="ham-badge ham-badge-waiting ham-badge-push">pushed abc1234 · 2m</span>');
@@ -317,6 +320,33 @@ assert.ok(pushed.includes('Push: @zoe pushed abc1234 2m ago'), 'hover line');
 // 072 the same.
 const back = row({ stage: 72, caption: 'Returned to contributor', push: { state: 'pushed', login: 'zoe', since: new Date(now - 120000).toISOString(), sha: 'abc1234', next: 're-review' } });
 assert.ok(/^CI \/ Review\b/.test(litWord(back)), litWord(back));
+assert.ok(back.includes('pushed abc1234 · re-review pending · 2m'), back);
+// The nudge names the old head, but no webhook booked a push time.
+// The canonical backend projection still releases the author wait.
+const reconciled = row({ stage_actor: { kind: 'hive', why: '@zoe pushed abc1234 — the re-review is queued for the new head' },
+  head: 'abc1234', caption: 'new head observed → re-review pending',
+  presence: null, rework: null, push: { state: 'pushed', login: 'zoe', sha: 'abc1234', next: 're-review' } });
+assert.ok(/^CI \/ Review\b/.test(litWord(reconciled)), litWord(reconciled));
+assert.ok(reconciled.includes('pushed abc1234 · re-review pending'), reconciled);
+assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(reconciled), reconciled);
+// A retry on the same head is not a fabricated push.
+const retry = row({ head: 'abc1234', stage_actor: { kind: 'hive', why: 'checks pending again — no new push requested' },
+  caption: 'checks pending again on the current head — no new push requested', presence: null, rework: null,
+  push: { state: 'checking', sha: 'abc1234', next: 'ci' } });
+assert.ok(/^CI \/ Review\b/.test(litWord(retry)), litWord(retry));
+assert.ok(retry.includes('checks pending · no new push requested'), retry);
+assert.ok(!/waiting on @zoe to push|Needs @zoe|pushed abc1234/.test(retry), retry);
+// A single covering PR keeps the issue's row identity. Its via_pr view
+// must use the exact same push state rather than asking for another push.
+const covered = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 9, kind: 'issue', stage: 40,
+  title: 'Covered issue', url: 'https://x/issues/9',
+  linked_prs: [{ number: 8, stage: 71, head: 'abc1234', title: 'Fix', url: 'https://x/pull/8',
+    author: 'zoe', author_kind: 'human', state: 'open', caption: 'new head observed → re-review pending',
+    stage_actor: { kind: 'hive', why: 're-review queued for the new head' },
+    push: { state: 'pushed', login: 'zoe', sha: 'abc1234', next: 're-review' } }] }, stages, ctx);
+assert.ok(/^CI \/ Review\b/.test(litWord(covered)), litWord(covered));
+assert.ok(covered.includes('pushed abc1234 · re-review pending'), covered);
+assert.ok(!/waiting on @zoe to push|Needs @zoe/.test(covered), covered);
 console.log('push chevron ok');
 `)
 }

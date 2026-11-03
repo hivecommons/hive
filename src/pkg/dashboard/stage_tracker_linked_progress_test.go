@@ -42,7 +42,9 @@ func TestStageTrackerLinkedPRProgressPayload(t *testing.T) {
 					if got.Stage != stage.Number() {
 						t.Fatalf("narration must not mutate the issue's recorded stage: %d", got.Stage)
 					}
-					if got.StageActor == nil || cover.StageActor == nil || *got.StageActor != *cover.StageActor {
+					// The riding issue names the PR in its human_reason ("#15223 …");
+					// who moves and why are the PR's.
+					if got.StageActor == nil || cover.StageActor == nil || got.StageActor.Kind != cover.StageActor.Kind || got.StageActor.Login != cover.StageActor.Login || got.StageActor.Why != cover.StageActor.Why {
 						t.Fatalf("issue actor %+v, want covering PR actor %+v", got.StageActor, cover.StageActor)
 					}
 					if fresh := trackerItem(t, resp, "issue", 15219); fresh.New == nil || !strings.Contains(fresh.Caption, "then the scanner") {

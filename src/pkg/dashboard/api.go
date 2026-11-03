@@ -53,6 +53,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/export.json", s.handleConfigExport)
 	s.mux.HandleFunc("GET /api/config/provenance", s.handleConfigProvenance)
 	s.mux.HandleFunc("GET /api/config/variables", s.handleVariablesList)
+	s.mux.HandleFunc("GET /api/config/triggers", s.handleEventTriggersGet)
+	s.mux.HandleFunc("PUT /api/config/triggers", s.handleEventTriggersPut)
 	s.mux.HandleFunc("GET /api/config/authorized-users", s.handleAuthorizedUsersList)
 	s.mux.HandleFunc("GET /api/config/dashboard/theme", s.handleDashboardThemeGet)
 	s.mux.HandleFunc("PUT /api/config/dashboard/theme", s.handleDashboardThemePut)
@@ -70,6 +72,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/presence", s.handlePresence)
 	s.mux.HandleFunc("GET /api/prompt-history", s.handlePromptHistory)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
+	s.mux.HandleFunc("POST /api/upgrade/announce", s.handleUpgradeAnnounce)
 	s.mux.HandleFunc("POST /api/release-channel", s.handleReleaseChannelSwitch)
 	// Self-service, owner-only spoke backup (encrypted; includes the bead
 	// ledger the fleet-wide hub backup excludes — see issue #2318).
@@ -198,6 +201,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerCopilotAuthRoutes()
 	s.mux.HandleFunc("GET /api/summaries", s.handleSummaries)
 	s.mux.HandleFunc("GET /api/stage-tracker", s.handleStageTracker)
+	s.mux.HandleFunc("GET /api/matrix/lines", s.handleMatrixLines)
 	s.mux.HandleFunc("POST /api/prs/{owner}/{repo}/{number}/queue-automerge", s.handleQueuePRAutoMerge)
 
 	s.mux.HandleFunc("GET /api/config/agent/{name}", s.handleAgentConfigGet)
@@ -267,6 +271,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// (#4263 off/shadow/enforce rollout). The soak endpoint is the
 	// fixed-commit telemetry read path (convergence_soak.go).
 	s.mux.HandleFunc("GET /api/config/convergence", s.handleConvergenceConfigGet)
+	s.registerIntegrationRoutes()
 	s.mux.HandleFunc("PUT /api/config/convergence", s.handleConvergenceConfigPut)
 	s.mux.HandleFunc("GET /api/config/sla", s.handleSLAConfigGet)
 	s.mux.HandleFunc("PUT /api/config/sla", s.handleSLAConfigPut)
@@ -914,6 +919,15 @@ func (s *Server) sentinelLabel() string {
 		return config.DefaultSentinelLabel
 	}
 	return s.deps.Config.Sentinel.LabelOrDefault()
+}
+
+// hiveSupersedingAutoMerge is the live hive-superseding auto-merge switch
+// (config.HiveSupersedingAutoMergeConfig; nil config = on).
+func (s *Server) hiveSupersedingAutoMerge() bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return true
+	}
+	return s.deps.Config.AutoMerge.HiveSuperseding.AutoMergeEnabled()
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

@@ -126,13 +126,12 @@ func TestInferenceRoutesPushAndClear(t *testing.T) {
 			waitFor(t, "push acknowledged", func() bool { n, err := r.Pending(); return n == 0 && err == nil })
 			r.Clear("a")
 			waitFor(t, "route cleared", func() bool { _, ok := h.route("a"); return !ok })
-			waitFor(t, "clear acknowledged", func() bool { n, _ := r.Pending(); return n == 0 })
-			r.mu.Lock()
-			_, kept := r.desired["a"]
-			r.mu.Unlock()
-			if kept {
-				t.Fatal("acknowledged clear should drop the desired entry")
-			}
+			waitFor(t, "desired entry dropped", func() bool {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				_, kept := r.desired["a"]
+				return !kept
+			})
 			cancel()
 			<-done
 		})

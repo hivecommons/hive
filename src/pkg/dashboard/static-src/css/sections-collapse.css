@@ -223,6 +223,12 @@
     .gh-api-budget-fill.debug-quota-ok { fill: var(--green); }
     .gh-api-budget-fill.debug-quota-warn { fill: var(--yellow); }
     .gh-api-budget-fill.debug-quota-bad { fill: var(--red); }
+    /* Settings → Diagnostics "Hive process" tile (#15788): same tile look as the
+       inline-styled siblings, in tokens, so the style ratchet stays flat. */
+    .debug-process-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); min-width: 0; }
+    .debug-process-label { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: var(--sp-4); font-weight: 600; }
+    .debug-process-note { color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
+    .debug-process-actions { margin-top: var(--sp-3); }
     .gh-api-budget-table-wrap { overflow-x: auto; overscroll-behavior-x: contain; max-width: 100%; margin-top: var(--sp-4); }
     .gh-api-budget-table { width: 100%; min-width: 36rem; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-xs); }
     .gh-api-budget-table th, .gh-api-budget-table td { text-align: left; padding: var(--sp-1) var(--sp-3) var(--sp-1) 0; white-space: normal; overflow-wrap: anywhere; }

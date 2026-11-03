@@ -1,0 +1,1 @@
+- Review backlog issue bodies now put the `Finding:` line before `Evidence:` and place the code permalink, without parentheses, on its own line ([#15955](https://github.com/hivecommons/hive/issues/15955)).

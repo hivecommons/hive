@@ -25,6 +25,8 @@ func TestParseAddress(t *testing.T) {
 		{"../x/crux.sock", Address{Network: "unix", Path: "../x/crux.sock", BaseURL: unixBaseURL}},
 		{" http://127.0.0.1:7777/ ", Address{Network: "tcp", Host: "127.0.0.1:7777", BaseURL: "http://127.0.0.1:7777"}},
 		{"https://crux.example:7777", Address{Network: "tcp", Host: "crux.example:7777", BaseURL: "https://crux.example:7777"}},
+		{"https://ops.example/crux", Address{Network: "tcp", Host: "ops.example", BaseURL: "https://ops.example/crux"}},
+		{"https://ops.example/crux/", Address{Network: "tcp", Host: "ops.example", BaseURL: "https://ops.example/crux"}},
 		{"127.0.0.1:7777", Address{Network: "tcp", Host: "127.0.0.1:7777", BaseURL: "http://127.0.0.1:7777"}},
 		{"[::1]:7777", Address{Network: "tcp", Host: "[::1]:7777", BaseURL: "http://[::1]:7777"}},
 	}
@@ -39,7 +41,7 @@ func TestParseAddress(t *testing.T) {
 		}
 	}
 
-	bad := []string{"", "   ", "unix://", "http://", "ftp://x:1", "localhost", "host:", "host:abc", "[::1:80", "http://%zz"}
+	bad := []string{"", "   ", "unix://", "http://", "ftp://x:1", "localhost", "host:", "host:abc", "[::1:80", "http://%zz", "https://ops.example/crux?x=1", "https://user:pw@ops.example/crux"}
 	for _, in := range bad {
 		if _, err := ParseAddress(in); err == nil {
 			t.Errorf("%q should not parse", in)

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -106,12 +107,118 @@ func (s *Server) handleRepoItemDecideDelegatedPlan(w http.ResponseWriter, r *htt
 	if s.deps.Ctx != nil {
 		ctx = s.deps.Ctx
 	}
-	plan, err := s.planDelegatedDecision(ctx, repoFull, number, itemType, mergerRole, body)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadGateway)
-		return
+	// The plan gathers the item live from GitHub (2–6 s for a PR). A
+	// prefetch fired when the row's decision options are revealed and the
+	// click that follows share one answer for delegatedPlanCacheTTL
+	// (hivecommons/hive#15773).
+	start := time.Now()
+	key := delegatedPlanCacheKey(repoFull, number, itemType, mergerRole, body)
+	cache := "hit"
+	plan, ok := s.delegatedJobs.plans.get(key, start)
+	if !ok {
+		cache = "miss"
+		var err error
+		plan, err = s.planDelegatedDecision(ctx, repoFull, number, itemType, mergerRole, body)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		s.delegatedJobs.plans.put(key, plan, time.Now())
+	}
+	dur := time.Since(start)
+	w.Header().Add("Server-Timing", delegatedPlanServerTiming(cache, dur))
+	if s.logger != nil {
+		s.logger.Debug("decide-delegated plan", "repo", repoFull, "number", number, "type", itemType, "cache", cache, "prefetch", r.Header.Get(delegatedPlanPrefetchHeader) == "1", "duration_ms", dur.Milliseconds())
 	}
 	jsonResponse(w, plan)
+}
+
+const (
+	// delegatedPlanCacheTTL bounds how stale a served preview can be; the
+	// key carries the PR head, and recording a decision drops the entry.
+	delegatedPlanCacheTTL = 45 * time.Second
+	// delegatedPlanCacheMax caps the entries kept; the oldest goes first.
+	delegatedPlanCacheMax = 256
+	// delegatedPlanPrefetchHeader marks the SPA's prefetch (log only).
+	delegatedPlanPrefetchHeader = "X-Hive-Prefetch"
+)
+
+// delegatedPlanServerTiming is the plan's Server-Timing metric: its
+// duration in milliseconds and whether the cache answered.
+func delegatedPlanServerTiming(cache string, d time.Duration) string {
+	return fmt.Sprintf("decide_plan;desc=%q;dur=%.1f", cache, float64(d.Microseconds())/1000)
+}
+
+// delegatedPlanCacheKey is (repo, number, type, head, request): every
+// input planDelegatedDecision reads from the request, plus the caller's
+// merge role (it decides the merge alternatives). Chosen and Force never
+// reach a plan.
+func delegatedPlanCacheKey(repo string, number int, itemType string, mergerRole bool, req delegatedDecisionRequest) string {
+	parts := []string{delegatedJobKey(repo, number), itemType, strings.TrimSpace(req.Head), strconv.FormatBool(mergerRole), req.Reason, req.Caption, req.SentinelReason}
+	for _, n := range req.PRs {
+		parts = append(parts, strconv.Itoa(n))
+	}
+	return strings.Join(parts, "\x00")
+}
+
+type delegatedPlanCacheEntry struct {
+	plan *delegatedDecisionPlan
+	at   time.Time
+}
+
+// delegatedPlanCache is the bounded, short-TTL cache of previews.
+type delegatedPlanCache struct {
+	mu      sync.Mutex
+	entries map[string]delegatedPlanCacheEntry
+}
+
+func (c *delegatedPlanCache) get(key string, now time.Time) (*delegatedDecisionPlan, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok {
+		return nil, false
+	}
+	if now.Sub(e.at) >= delegatedPlanCacheTTL {
+		delete(c.entries, key)
+		return nil, false
+	}
+	return e.plan, true
+}
+
+func (c *delegatedPlanCache) put(key string, plan *delegatedDecisionPlan, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[string]delegatedPlanCacheEntry)
+	}
+	for k, e := range c.entries {
+		if now.Sub(e.at) >= delegatedPlanCacheTTL {
+			delete(c.entries, k)
+		}
+	}
+	for len(c.entries) >= delegatedPlanCacheMax {
+		oldest, at := "", now
+		for k, e := range c.entries {
+			if oldest == "" || e.at.Before(at) {
+				oldest, at = k, e.at
+			}
+		}
+		delete(c.entries, oldest)
+	}
+	c.entries[key] = delegatedPlanCacheEntry{plan: plan, at: now}
+}
+
+// forget drops every cached preview of repo#number.
+func (c *delegatedPlanCache) forget(repo string, number int) {
+	prefix := delegatedJobKey(repo, number) + "\x00"
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.entries {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.entries, k)
+		}
+	}
 }
 
 // planDelegatedDecision runs the same gather + decide as

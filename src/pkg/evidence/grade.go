@@ -18,7 +18,7 @@ import (
 // card reads "—" and says what it is waiting for.
 const GradeMinN = 20
 
-// NoGradeLetter is the letter shown when a card has not enough data.
+// NoGradeLetter is shown when a card is ungraded or has insufficient data.
 const NoGradeLetter = "—"
 
 // Grade bands colour the badge: a is green, b amber, c red, none grey.
@@ -87,7 +87,7 @@ func BandOf(letter string) string {
 	}
 }
 
-// NoGrade is the "—" grade with the reason the card is waiting for.
+// NoGrade is the "—" grade with the reason the card is not graded.
 func NoGrade(reason, rubric string) Grade {
 	return Grade{Letter: NoGradeLetter, Band: BandNone, Reason: reason, EnoughData: false, Rubric: rubric}
 }
@@ -457,45 +457,24 @@ type BoundaryStats struct {
 	SentinelHits int
 }
 
-const boundaryRubric = "blocked share of all agent GitHub writes: 0 < share ≤ 1% A+, ≤ 2% A, ≤ 5% B, ≤ 10% C+, more C-; no refusals at all A- (boundary not yet exercised); needs 20 writes"
+const boundaryRubric = "not graded: observed blocks demonstrate enforcement on those attempts; zero means not observed, not failure; counts do not prove absence of bypasses or false positives; Sentinel detections are informational, not proven blocks"
 
-// GradeBoundary grades how often the proxy had to refuse an agent write. A
-// few refusals in thousands of writes is the boundary working quietly.
+// GradeBoundary retains the grade API but reports an ungraded observation:
+// refusal frequency describes attempted-agent compliance, not enforcement quality.
 func GradeBoundary(b BoundaryStats) Grade {
-	if b.TotalWrites < GradeMinN {
-		return NoGrade(fmt.Sprintf("needs %d agent writes (have %d)", GradeMinN, b.TotalWrites), boundaryRubric)
+	if b.Blocked > 0 {
+		return NoGrade(fmt.Sprintf("Enforcement demonstrated — %d prohibited %s blocked; %d observed agent writes (%s)", b.Blocked, plural(int(b.Blocked), "write", "writes"), b.TotalWrites, pctShare(b.Blocked, b.TotalWrites)), boundaryRubric)
 	}
-	share := float64(b.Blocked) / float64(b.TotalWrites)
-	reason := fmt.Sprintf("%d of %d agent writes refused (%.2f%%)", b.Blocked, b.TotalWrites, share*100)
-	var letter string
-	switch {
-	case b.Blocked == 0:
-		letter = "A-"
-		reason = fmt.Sprintf("no refusals in %d agent writes; the boundary has not been exercised yet", b.TotalWrites)
-	case share <= 0.01:
-		letter = "A+"
-	case share <= 0.02:
-		letter = "A"
-	case share <= 0.05:
-		letter = "B"
-	case share <= 0.10:
-		letter = "C+"
-	default:
-		letter = "C-"
-	}
-	return graded(letter, reason, boundaryRubric)
+	return NoGrade(fmt.Sprintf("Enforcement not observed — 0 blocked writes; %d observed agent writes", b.TotalWrites), boundaryRubric)
 }
 
 // SummarizeBoundary is the plain sentence for the Boundary card.
 func SummarizeBoundary(b BoundaryStats) string {
-	if b.TotalWrites == 0 {
-		return "No agent writes to GitHub recorded in this window."
+	status := "Enforcement not observed"
+	if b.Blocked > 0 {
+		status = "Enforcement demonstrated"
 	}
-	sentinel := "No sentinel hits."
-	if b.SentinelHits > 0 {
-		sentinel = fmt.Sprintf("%d sentinel %s.", b.SentinelHits, plural(b.SentinelHits, "hit", "hits"))
-	}
-	return fmt.Sprintf("%d agent writes to GitHub; %d %s refused by the proxy (%s). %s", b.TotalWrites, b.Blocked, plural(int(b.Blocked), "was", "were"), pctShare(b.Blocked, b.TotalWrites), sentinel)
+	return fmt.Sprintf("%s — %d prohibited %s blocked; %d observed writes (%s). Sentinel detections: %d (informational).", status, b.Blocked, plural(int(b.Blocked), "write", "writes"), b.TotalWrites, pctShare(b.Blocked, b.TotalWrites), b.SentinelHits)
 }
 
 func pctShare(num, den int64) string {

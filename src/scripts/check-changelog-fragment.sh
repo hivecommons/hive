@@ -11,6 +11,7 @@ if [ -z "$base_ref" ]; then
   exit 2
 fi
 has_no_changelog_label="${HAS_NO_CHANGELOG_LABEL:-false}"
+diff_base="${BASE_SHA:-origin/${base_ref}}"
 
 # Forward-merge sync PRs (v5-topup.yml / v6-topup.yml and the hand-rolled ones
 # opened when those conflict) carry the source line's whole history, so the
@@ -33,8 +34,8 @@ esac
 # Two views of the diff: ALL changed paths (deletions included — a PR that only
 # removes code is still a code change an operator can see), and paths still
 # present at HEAD (a deleted fragment can be neither validated nor counted).
-git diff --name-only "origin/${base_ref}...HEAD" > "$work_dir"/changed-files.txt
-git diff --name-only --diff-filter=d "origin/${base_ref}...HEAD" > "$work_dir"/present-files.txt
+git diff --name-only "${diff_base}...HEAD" > "$work_dir"/changed-files.txt
+git diff --name-only --diff-filter=d "${diff_base}...HEAD" > "$work_dir"/present-files.txt
 echo "Changed files vs merge base with origin/${base_ref}:"
 sed 's/^/  /' "$work_dir"/changed-files.txt
 

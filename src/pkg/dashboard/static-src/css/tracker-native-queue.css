@@ -1,0 +1,8 @@
+    .nq-rail { margin: var(--sp-5) 0; padding: var(--sp-5); border: 1px solid var(--border-color); border-radius: var(--r); overflow-wrap: anywhere; }
+    .nq-rail h3, .nq-rail h4, .nq-rail h5 { margin: var(--sp-4) 0; }
+    .nq-muted { color: var(--text-secondary); font-size: var(--fs-sm); }
+    .nq-scope { margin-top: var(--sp-5); border-top: 1px solid var(--border-color); }
+    .nq-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--sp-5); }
+    .nq-candidate { padding: var(--sp-5); border: 1px solid var(--border-color); border-radius: var(--r-sm); min-width: 0; }
+    .nq-entries, .nq-candidate ul { padding-left: var(--sp-8); }
+    .nq-rail li { margin: var(--sp-3) 0; }

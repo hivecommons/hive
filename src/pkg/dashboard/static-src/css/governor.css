@@ -17,17 +17,14 @@
        the "N Issues" / on-hold indicators. */
     .gov-stat .val.planning-alert { color: var(--yellow); }
     /* RUNNING tile cost rotor (#15614): the four window phrases share one
-       grid cell, so the tile is always as wide as its widest phrase and the
-       amount + window crossfades in place while the agent count stays put.
-       The host is a flex row — count fixed, rotor shrinks — so the host
-       itself never overflows: a text-overflow ellipsis on the host would be
-       painted at the rotor's left edge, showing up as a stray dot between
-       "$" and the digits ("$.1,010"). Only the phrase ellipsizes. */
-    .fleet-run-stat .val, .fleet-run-stat .gm-val { display: flex; align-items: baseline; white-space: nowrap; overflow: hidden; min-width: 0; }
-    /* pre keeps the trailing space of "N · " that flex would otherwise trim. */
-    .fleet-run-count { flex: none; white-space: pre; color: var(--text); }
-    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text); }
-    .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
+       grid cell to reserve the tallest wrapped phrase while the amount +
+       window crossfades. Cost lives below the count and may wrap at narrow
+       widths or zoom levels; neither the amount nor its period is clipped. */
+    .fleet-run-stat { min-width: 0; }
+    .fleet-run-stat .val, .fleet-run-stat .gm-val { display: flex; flex-direction: column; align-items: stretch; gap: var(--sp-1); white-space: normal; overflow: visible; min-width: 0; }
+    .fleet-run-count { flex: none; overflow-wrap: anywhere; color: var(--text); }
+    .fleet-cost-rotor { display: inline-grid; grid-template-areas: 'phrase'; grid-template-columns: minmax(0, 1fr); min-width: 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.4; }
+    .fleet-cost-rotor .fcr-phrase { grid-area: phrase; white-space: normal; overflow-wrap: anywhere; min-width: 0; opacity: 0; transform: translateY(0.5em); transition: opacity 360ms ease, transform 360ms ease; pointer-events: none; }
     .fleet-cost-rotor .fcr-phrase.is-cur { opacity: 1; transform: translateY(0); }
     .fleet-cost-rotor .fcr-phrase.is-out { opacity: 0; transform: translateY(-0.5em); }
     .fleet-cost-rotor .fcr-window { color: var(--amber); font-weight: 600; }
@@ -134,4 +131,3 @@
         display: none;
       }
     }
-

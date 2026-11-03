@@ -12,7 +12,9 @@ import "strings"
 // ReasonIsPending reports whether a commit-CI skip reason means the checks
 // are still running or not yet reported, as opposed to failing.
 func ReasonIsPending(reason string) bool {
-	return strings.HasSuffix(reason, "-pending") ||
+	return strings.HasPrefix(reason, "ci-reporting-stalled:") ||
+		strings.HasPrefix(reason, "ci-reporting-unverified:") ||
+		strings.HasSuffix(reason, "-pending") ||
 		strings.HasPrefix(reason, "pending: ") ||
 		strings.HasPrefix(reason, "required-check-missing:")
 }

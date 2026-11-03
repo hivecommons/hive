@@ -667,6 +667,143 @@ func TestGitHubUpstreamUnavailableLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #15785, #15786: fail-closed gates hitting a GitHub 500 on the status read
+// are expected and retried, so they are not reported as unclassified.
+func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
+	const statusErr = "GET https://api.github.com/repos/o/r/commits/abc/status?per_page=100: 500  []"
+	cases := []struct {
+		msg  string
+		args []any
+	}{
+		{"merge-eligible lane gate could not evaluate PR; leaving it listed", []any{"repo", "o/r", "number", 3929, "error", "o/r#3929 lane evidence unavailable (status-check; fail closed): " + statusErr}},
+		{"trusted-author automerge sweep skipped PR", []any{"repo", "hive", "pr", 15763, "reason", "release-hold-check", "error", statusErr}},
+	}
+	for _, tc := range cases {
+		logger, seen, out := newFeed(t)
+		for i := 0; i < 8; i++ {
+			logger.Warn(tc.msg, tc.args...)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("%q: produced observations: %+v", tc.msg, *seen)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 8 {
+			t.Errorf("%q: wrapped handler saw %d records, want 8", tc.msg, n)
+		}
+	}
+
+	logger, seen, _ := newFeed(t)
+	logger.Warn("trusted-author automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1: 404 Not Found")
+	logger.Warn("merge-eligible lane gate could not evaluate PR; leaving it listed", "error", "boom")
+	if len(*seen) != 2 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
+// #15789: a hub that is restarting answers the heartbeat 5xx and the spoke
+// retries on the next beat; auth rejections stay reportable.
+func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
+	body := `{"ok":false,"error":"hive unavailable"}`
+	for _, status := range []int{502, 503, 504} {
+		logger, seen, out := newFeed(t)
+		for i := 0; i < 8; i++ {
+			logger.Warn("hub heartbeat rejected", "status", status, "body", body)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("status %d: produced observations: %+v", status, *seen)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 8 {
+			t.Errorf("status %d: wrapped handler saw %d records, want 8", status, n)
+		}
+	}
+
+	for _, status := range []int{401, 403} {
+		logger, seen, _ := newFeed(t)
+		logger.Warn("hub heartbeat rejected", "status", status, "body", "unauthorized")
+		if len(*seen) != 1 {
+			t.Errorf("status %d must remain reportable: %+v", status, *seen)
+		}
+	}
+}
+
+// #16100: branch drift is an expected safety refusal, even when an own-only
+// write-back gate leaves the snapshot in place and it repeats every poll.
+func TestHoldGuardDriftLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "hold guard: branch moved while hold-gated — blocking auto-merge, requiring fresh review"
+	for i := 0; i < 20; i++ {
+		logger.Warn(msg, "repo", "o/r", "pr", 509,
+			"recorded_head", "49cef2e430cdd0b83fabe235c84fce35a6a7c35e",
+			"current_head", "2e709797e6a28d874e0b94413a9b3f712304fb9b",
+			"new_commits", 1, "new_authors", "contributor")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected safety refusal produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 20 {
+		t.Errorf("wrapped handler saw %d records, want 20", n)
+	}
+	if !strings.Contains(out.String(), msg) {
+		t.Error("hold guard warning missing from local logs")
+	}
+
+	// Do not blanket-suppress the guard: failures to verify provenance or
+	// explain/reapply the hold still need fleet visibility.
+	for _, failure := range []string{
+		"hold guard: could not read gate-lift provenance; treating moved head as drift",
+		"hold guard: drift comment failed; will retry next pass",
+		"hold guard: re-applying hold label failed; will retry next pass",
+	} {
+		logger.Warn(failure, "error", "unexpected failure")
+	}
+	if len(*seen) != 3 {
+		t.Fatalf("hold guard failures must remain reportable: %+v", *seen)
+	}
+}
+
+// #16112: a sentinel finding on a PR is the sweep working as designed (it
+// flags the PR for a human), not a hive runtime defect, even when several
+// PRs or sweeps cross the repeat threshold in one window.
+func TestSentinelAlertLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 10; i++ {
+		logger.Warn("sentinel alert", "repo", "server", "pr", 583+i,
+			"author", "contributor", "rules", "sensitive_path,security_policy_edit")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("sentinel findings produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Errorf("wrapped handler saw %d records, want 10", n)
+	}
+	if !strings.Contains(out.String(), "sentinel alert") {
+		t.Error("sentinel alert warning missing from local logs")
+	}
+
+	// Do not blanket-suppress the sentinel: a failing sweep or a PR it could
+	// not evaluate still needs fleet visibility.
+	logger.Warn("sentinel sweep failed", "error", "unexpected failure")
+	logger.Warn("sentinel sweep: PR skipped", "detail", "o/r#1: unexpected failure")
+	if len(*seen) != 2 {
+		t.Fatalf("sentinel sweep failures must remain reportable: %+v", *seen)
+	}
+}
+
+// #15906: the per-head review cap suppressing a duplicate comment is expected.
+func TestReviewCommentCappedLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 8; i++ {
+		logger.Warn("review-request watcher: comment suppressed by per-head cap, verdict recorded",
+			"agent", "reviewer", "repo", "hivecommons/hive", "number", 15895,
+			"reason", "head 20854a8 already carries 1 hive review(s) (limit 1)")
+	}
+	if len(*seen) != 0 {
+		t.Errorf("produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 8 {
+		t.Errorf("wrapped handler saw %d records, want 8", n)
+	}
+}
+
 // #15333: keep repeated translator identity refusals visible under their own
 // gateway class, without treating them as backend credential failures.
 func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
@@ -712,5 +849,27 @@ func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
 	logger2.Warn("inference no route", "agent", "scanner")
 	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassInferenceUpstreamError || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
 		t.Fatalf("unrelated inference failures = %+v", *seen)
+	}
+}
+
+// #15986: a watchdog stall caused by a provider inference block (429
+// budget_exceeded) is upstream backpressure, not an unclassified defect.
+func TestInferenceBlockedStallLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 10; i++ {
+		logger.Warn("watchdog: agent not producing", "agent", "dedupe",
+			"detail", `blocked: inference (rate_limit): API Error: Request rejected (429) {"error":{"type":"budget_exceeded"}}`)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Errorf("wrapped handler saw %d records, want 10", n)
+	}
+
+	logger, seen, _ = newFeed(t)
+	logger.Warn("watchdog: agent not producing", "agent", "dedupe", "detail", "no production evidence for 2h0m0s")
+	if len(*seen) != 1 {
+		t.Fatalf("other stalls must remain reportable: %+v", *seen)
 	}
 }

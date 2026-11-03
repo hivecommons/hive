@@ -231,7 +231,9 @@ output=$(CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" DRY_RUN=1 \
   CONFIRM_ISSUE_AUTHOR=reporter CONFIRM_COMMENTER=reporter CONFIRM_COMMENT_BODY="/fixed" \
   bash "$SCRIPT" 2>&1)
 rc=$?
-if [ "$rc" -eq 0 ] && ! grep -qv '^GET ' "$CALL_LOG" && printf '%s\n' "$output" | grep -q 'DRY-RUN'; then
+# grep -q exits on first match, so a printf pipe would race SIGPIPE under
+# pipefail; use a here-string instead.
+if [ "$rc" -eq 0 ] && ! grep -qv '^GET ' "$CALL_LOG" && grep -q 'DRY-RUN' <<<"$output"; then
   pass "DRY_RUN=1 performs no writes"
 else
   bad "DRY_RUN=1 performed writes"

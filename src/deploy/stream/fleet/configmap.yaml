@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-stream-fleet
+  namespace: hive-stream-fleet
+data:
+  # Fail-closed switches (see ../public-safe-gate.sh). Only the owner flips
+  # STREAM_ENABLED to "true" and sets PUBLIC_SAFE_POLICY_ACK to the policy
+  # version, after provisioning the stream key and checking the public-safe
+  # hub view in a private browser window.
+  STREAM_PROFILE: "public-safe"
+  STREAM_ENABLED: "false"
+  PUBLIC_SAFE_POLICY_ACK: ""
+  # The hub's public origin. The kiosk reaches it anonymously: no dashboard
+  # credential exists in this namespace and the auth proxy refuses one, so the
+  # stream shows only what the hub serves to the public.
+  DASHBOARD_URL: "https://hive.hivecommons.dev"
+  # The hub's anonymous public-safe Fleet activity view (#15966): public
+  # repositories of registry-public hives only, never per-user visibility.
+  # ?kiosk=1 hides the page chrome for the unattended stream.
+  DASHBOARD_PATH: "/activity/public?kiosk=1"
+  TWITCH_INGEST: "rtmp://live.twitch.tv/app"
+  VIDEO_SIZE: "1920x1080"
+  FPS: "30"
+  BITRATE: "4500k"
+  X264_PRESET: "veryfast"
+  RELOAD_EVERY: "30m"
+  STREAM_AUDIO: "pulse"

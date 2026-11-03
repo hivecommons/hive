@@ -49,7 +49,13 @@ const (
 	// claimant, Position the issue. Unlike DuplicateOf the queue picked
 	// nobody: the PR parks at 085 until a person or the delegate decides.
 	MergeTrainStateClaimConflict = "claim-conflict"
-	MergeTrainReasonMaxFiles     = 4
+	// MergeTrainStateAdmitted: the PR shares files with a train and the
+	// lane just found it ready (green, approved, mergeable); it is held
+	// for a seat at the back of the train on the next pass rather than
+	// merged ahead of the front (hivecommons/hive#15825). Position is 0;
+	// Size is the train's current size.
+	MergeTrainStateAdmitted  = "admitted"
+	MergeTrainReasonMaxFiles = 4
 )
 
 // MergeTrain is the decoded form of a merge-train reason.
@@ -203,6 +209,8 @@ func (m MergeTrain) Sentence() string {
 		return "1st in the merge queue, still conflicting after " + strconv.Itoa(m.MaxAttempts) + " rebase attempts; a person decides (" + slot + files + ")"
 	case MergeTrainStateFront:
 		return "1st in the merge queue; merges next (" + slot + files + ")"
+	case MergeTrainStateAdmitted:
+		return "green and approved; joins the merge train behind #" + strconv.Itoa(m.Front) + " on the next pass (" + strconv.Itoa(m.Size) + " ahead" + files + ")"
 	case MergeTrainStateDuplicateOf:
 		issue := ""
 		if m.Position > 0 {

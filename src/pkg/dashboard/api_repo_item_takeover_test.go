@@ -338,7 +338,7 @@ func TestStageTrackerTakeoverQueuedAfterAdoptNow(t *testing.T) {
 	store.NoteAdmission(key, "feed", stagelabels.OperatorApprovalAdmission("andan02"), now.Add(-10*time.Minute))
 	store.NoteAdoptionBlocked(key, "feed", stagelabels.AdoptBlockedOperatorAdmission, now.Add(-9*time.Minute))
 	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
-	if it.Adoption == nil || it.Adoption.BlockedBy != stagelabels.AdoptBlockedOperatorAdmission || !strings.Contains(it.Adoption.Text, "a maintainer approved this head") || it.Takeover == nil || !it.Takeover.AdoptNow {
+	if it.Adoption == nil || it.Adoption.BlockedBy != stagelabels.AdoptBlockedOperatorAdmission || !strings.Contains(it.Adoption.Text, "operator approval recorded for this head; existing review/CI requirements still apply") || it.Takeover == nil || !it.Takeover.AdoptNow {
 		t.Fatalf("precondition (approved, blocked, Adopt now offered): adoption=%+v takeover=%+v", it.Adoption, it.Takeover)
 	}
 
@@ -354,8 +354,8 @@ func TestStageTrackerTakeoverQueuedAfterAdoptNow(t *testing.T) {
 	if it.DecisionNeeded != nil {
 		t.Fatalf("queued adoption still asks a person: %+v", it.DecisionNeeded)
 	}
-	if strings.Contains(it.Caption, "not adopted") {
-		t.Fatalf("caption still says not adopted: %q", it.Caption)
+	if strings.Contains(it.Caption, "not adopted") || strings.Contains(it.Caption, "contributor-managed") {
+		t.Fatalf("explicit queued adoption still shows the prior ownership-only state: %q", it.Caption)
 	}
 	for _, o := range takeoverDecisionOptions(tk, false) {
 		if o.Action == decisionActionAdoptNow {

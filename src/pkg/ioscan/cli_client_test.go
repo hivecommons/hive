@@ -65,13 +65,13 @@ func completeCLI(c *CLIChatClient, text string) (string, error) {
 }
 
 func TestSupportsToolless(t *testing.T) {
-	for _, backend := range []string{"claude", "copilot"} {
+	for _, backend := range []string{"claude", "copilot", "omp"} {
 		if !SupportsToolless(backend) {
 			t.Errorf("%s can be launched tool-less", backend)
 		}
 	}
-	if got := ToollessBackends(); len(got) != 2 || got[0] != "claude" || got[1] != "copilot" {
-		t.Errorf("ToollessBackends() = %q, want [claude copilot]", got)
+	if got := ToollessBackends(); strings.Join(got, ",") != "claude,copilot,omp" {
+		t.Errorf("ToollessBackends() = %q, want [claude copilot omp]", got)
 	}
 	for _, backend := range []string{"codex", "gemini", "goose", "", "nope"} {
 		if SupportsToolless(backend) {
@@ -79,6 +79,12 @@ func TestSupportsToolless(t *testing.T) {
 		}
 		if _, err := NewCLIChatClient(backend, "", time.Second); err == nil {
 			t.Errorf("NewCLIChatClient(%q) accepted a backend that cannot run tool-less", backend)
+		}
+	}
+	// Only omp runs in an isolated profile with no default model of its own.
+	for backend, want := range map[string]bool{"claude": false, "copilot": false, "omp": true, " omp ": true, "codex": false, "": false} {
+		if got := RequiresModel(backend); got != want {
+			t.Errorf("RequiresModel(%q) = %v, want %v", backend, got, want)
 		}
 	}
 }
@@ -219,6 +225,57 @@ func TestCLIChatClientLaunchIsToolless(t *testing.T) {
 	}
 }
 
+// omp reads the prompt from stdin and runs with every tool, LSP, extension,
+// skill and rule source off, in a dedicated empty profile with a replaced
+// system prompt. It authenticates through the auth broker, so the broker
+// variables (and only those beyond the base set) reach it.
+func TestCLIChatClientOmpLaunchIsToolless(t *testing.T) {
+	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN", "HIVE_GITHUB_TOKEN", "HIVE_DASHBOARD_TOKEN", "OPENAI_API_KEY"} {
+		t.Setenv(key, "secret-"+strings.ToLower(key))
+	}
+	t.Setenv("OMP_AUTH_BROKER_URL", "http://broker.invalid:8765")
+	t.Setenv("OMP_AUTH_BROKER_TOKEN", "broker-bearer")
+	c, rec := fakeCLIFor(t, "omp", "printf '%s\\n' '"+cliGoodVerdict+"'")
+	if _, err := completeCLI(c, "classify me"); err != nil {
+		t.Fatal(err)
+	}
+
+	argv := strings.Split(strings.TrimSuffix(readRec(t, rec, "argv"), "\n"), "\n")
+	joined := strings.Join(argv, "\x00") + "\x00"
+	for _, want := range []string{"-p", "--no-tools", "--no-lsp", "--no-extensions", "--no-skills", "--no-rules", "--no-session", "--no-title", "--no-context-files"} {
+		if !strings.Contains(joined, "\x00"+want+"\x00") {
+			t.Errorf("omp launch argv %q lacks %s", argv, want)
+		}
+	}
+	if !strings.Contains(joined, "\x00--profile\x00"+cliOmpProfile+"\x00") {
+		t.Errorf("omp launch argv %q does not use the isolated %s profile", argv, cliOmpProfile)
+	}
+	if !strings.Contains(joined, "\x00--system-prompt\x00") {
+		t.Errorf("omp launch argv %q keeps the coding-assistant system prompt", argv)
+	}
+	if !strings.Contains(joined, "\x00--model\x00haiku\x00") {
+		t.Errorf("omp launch argv %q does not pass the configured model", argv)
+	}
+	for _, arg := range argv {
+		if arg == "--auto-approve" || strings.Contains(arg, "classify me") {
+			t.Errorf("omp launch argv %q carries %q", argv, arg)
+		}
+	}
+	if !strings.Contains(readRec(t, rec, "stdin"), "classify me") {
+		t.Error("omp did not receive the prompt on stdin")
+	}
+
+	env := readRec(t, rec, "env")
+	if strings.Contains(env, "secret-") {
+		t.Errorf("omp classifier env leaked a hive secret:\n%s", env)
+	}
+	for _, want := range []string{"OMP_AUTH_BROKER_URL=http://broker.invalid:8765", "OMP_AUTH_BROKER_TOKEN=broker-bearer"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("omp classifier env lacks %s", want)
+		}
+	}
+}
+
 // copilot ignores stdin in prompt mode, so the prompt travels as the value of
 // -p; the launch must still carry no tool-enabling flag, an allowlist that
 // names no real tool, and no hive token in the environment (#14499).
@@ -342,4 +399,35 @@ func TestExtractSingleJSONObject(t *testing.T) {
 			t.Errorf("extract(%q) = %q, want error", s, got)
 		}
 	}
+}
+
+// An empty or whitespace model must omit --model from argv entirely; a bare
+// `--model` would make the CLI consume the next argument as its value.
+func TestCLIChatClientArgvOmitsEmptyModel(t *testing.T) {
+	for _, model := range []string{"", "  "} {
+		c, err := NewCLIChatClient("claude", model, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		argv := c.argv("classify this")
+		for i, arg := range argv {
+			if arg == "--model" {
+				t.Fatalf("model %q: argv %v carries --model at %d", model, argv, i)
+			}
+		}
+	}
+	c, err := NewCLIChatClient("claude", " haiku ", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := c.argv("classify this")
+	for i, arg := range argv {
+		if arg == "--model" {
+			if i+1 >= len(argv) || argv[i+1] != "haiku" {
+				t.Fatalf("argv %v: --model must be followed by the trimmed model", argv)
+			}
+			return
+		}
+	}
+	t.Fatalf("argv %v: configured model missing", argv)
 }

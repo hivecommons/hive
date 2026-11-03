@@ -136,6 +136,7 @@ func TestPlanMergeTrainsHoldsSameIssueDuplicate(t *testing.T) {
 		withBody(mtPR(15407, t0.Add(time.Hour), ""), "Fixes #15396"),
 		withBody(mtPR(15410, t0.Add(2*time.Hour), ""), "Fixes #15399"),
 	}
+	mtReady(c, "self", prs...)
 	plan := c.planMergeTrains(context.Background(), "self", "acme/widget", "acme", "widget", prs, func(*gh.PullRequest) string { return "" })
 	h, held := plan.duplicateOf(15407)
 	if !held || h.Winner != 15402 || h.Issue != 15396 {

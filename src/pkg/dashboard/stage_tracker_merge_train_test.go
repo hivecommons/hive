@@ -28,13 +28,18 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 	}
 	store.Observe(stagelabels.Key("acme/console", 15074), stagelabels.AwaitingMergeAdmission, "")
 	store.Observe(stagelabels.Key("acme/console", 15085), stagelabels.AwaitingMergeAdmission, queued(2))
-	store.Observe(stagelabels.Key("acme/console", 15087), stagelabels.AwaitingMergeAdmission, prstage.MergeTrain{State: prstage.MergeTrainStateRebasing, Front: 15074, Position: 3, Size: 4, Attempt: 1, MaxAttempts: 2, OverlapFiles: overlap}.Reason())
+	// hivecommons/hive#15825: the stage engine files a member the train is
+	// rebasing at 070 — its pushed head has no CI or verdicts yet.
+	store.Observe(stagelabels.Key("acme/console", 15087), stagelabels.Fixing, prstage.MergeTrain{State: prstage.MergeTrainStateRebasing, Front: 15074, Position: 3, Size: 4, Attempt: 1, MaxAttempts: 2, OverlapFiles: overlap}.Reason())
 	store.Observe(stagelabels.Key("acme/console", 15097), stagelabels.NeedsDecision, prstage.MergeTrain{State: prstage.MergeTrainStateRebaseExhausted, Front: 15074, Position: 4, Size: 4, Attempt: 2, MaxAttempts: 2, OverlapFiles: overlap}.Reason())
 	s.statusMu.Lock()
 	for _, n := range []int{15074, 15085, 15087, 15097} {
 		stage := "stage/080-awaiting-merge-admission"
 		if n == 15097 {
 			stage = "stage/085-needs-decision"
+		}
+		if n == 15087 {
+			stage = "stage/070-fixing"
 		}
 		labels := []string{stage, "author/hive"}
 		if n != 15074 {
@@ -47,10 +52,10 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 	resp := s.buildStageTracker(s.status, store, now)
 
 	front := trackerItem(t, resp, "pr", 15074)
-	if front.MergeTrain == nil || front.MergeTrain.State != MergeGateStateTrainFront || front.MergeTrain.Position != 1 || front.MergeTrain.Size != 4 || front.MergeTrain.ID != "v5#15074" {
+	if front.MergeTrain == nil || front.MergeTrain.State != MergeGateStateTrainFront || front.MergeTrain.Position != 1 || front.MergeTrain.Size != 3 || front.MergeTrain.ID != "v5#15074" {
 		t.Fatalf("front merge_train = %+v", front.MergeTrain)
 	}
-	if front.MergeGate == nil || front.MergeGate.State != MergeGateStateTrainFront || !strings.Contains(front.Caption, "1st in a merge queue of 4 PRs") {
+	if front.MergeGate == nil || front.MergeGate.State != MergeGateStateTrainFront || !strings.Contains(front.Caption, "1st in a merge queue of 3 PRs") {
 		t.Fatalf("front gate %+v caption %q", front.MergeGate, front.Caption)
 	}
 	if hasMod(front, modNeedsRebase) || len(front.MergeTrain.Ahead) != 0 {
@@ -61,7 +66,7 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 	if sib.Stage != 80 || sib.MergeTrain == nil || sib.MergeTrain.State != MergeGateStateQueuedBehind || sib.MergeTrain.Position != 2 || sib.MergeTrain.Front != 15074 {
 		t.Fatalf("sibling = stage %d train %+v", sib.Stage, sib.MergeTrain)
 	}
-	if sib.MergeGate == nil || sib.MergeGate.State != "queued-behind" || sib.MergeGate.Reason != "behind #15074 in merge train (2nd of 4, overlapping files: stage_tracker.go, index.html)" {
+	if sib.MergeGate == nil || sib.MergeGate.State != "queued-behind" || sib.MergeGate.Reason != "behind #15074 in merge train (2nd of 3, overlapping files: stage_tracker.go, index.html)" {
 		t.Fatalf("sibling merge_gate = %+v", sib.MergeGate)
 	}
 	if hasMod(sib, modNeedsRebase) || hasMod(sib, modNeedsHuman) || !hasStale(sib, modNeedsRebase) {
@@ -77,17 +82,19 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 		t.Fatalf("a queued sibling owes no decision: %+v", sib.DecisionNeeded)
 	}
 
+	// The member being rebased rides no train and sits in the CI / Review
+	// column with the rebase pill as its chevron word (hivecommons/hive#15825).
 	rebasing := trackerItem(t, resp, "pr", 15087)
-	if rebasing.MergeTrain.State != MergeGateStateRebasing || rebasing.MergeTrain.Attempt != 1 || rebasing.MergeTrain.MaxAttempts != 2 || !strings.Contains(rebasing.Caption, "rebasing this PR (attempt 1 of 2)") {
-		t.Fatalf("rebasing = %+v caption %q", rebasing.MergeTrain, rebasing.Caption)
+	if rebasing.Stage != 70 || rebasing.MergeTrain != nil || !strings.Contains(rebasing.Caption, "rebasing this PR (attempt 1 of 2)") {
+		t.Fatalf("rebasing = stage %d train %+v caption %q", rebasing.Stage, rebasing.MergeTrain, rebasing.Caption)
 	}
-	if got := rebasing.MergeTrain.Ahead; len(got) != 2 || got[0] != 15074 || got[1] != 15085 {
-		t.Fatalf("rebasing ahead = %v", got)
+	if rebasing.Rebase == nil || rebasing.Rebase.Text != "Rebasing · attempt 1/2" || rebasing.LeftTrain == nil || rebasing.LeftTrain.Why != "rebasing" || rebasing.LeftTrain.Reason != "merge-train:ejected:rebasing" {
+		t.Fatalf("rebasing pill %+v left %+v", rebasing.Rebase, rebasing.LeftTrain)
 	}
 	// Every member carries the whole roster in merge order, so a view that
 	// draws only some of them can name the rest in the train header.
-	for _, it := range []StageTrackerItem{front, sib, rebasing} {
-		if got := it.MergeTrain.Members; fmt.Sprint(got) != fmt.Sprint([]int{15074, 15085, 15087, 15097}) {
+	for _, it := range []StageTrackerItem{front, sib} {
+		if got := it.MergeTrain.Members; fmt.Sprint(got) != fmt.Sprint([]int{15074, 15085, 15097}) {
 			t.Fatalf("#%d members = %v", it.Number, got)
 		}
 	}
@@ -114,8 +121,8 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"merge_gate":{"state":"queued-behind","reason":"behind #15074 in merge train (2nd of 4, overlapping files: stage_tracker.go, index.html)"`,
-		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":4,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074],"members":[15074,15085,15087,15097],"length":4,"head_number":15074,"head_state":"ready","head_reason":"approved and green; merges on hive's next pass","head_since":"2026-10-27T14:00:00Z","eta_s":300,"eta_at":"2026-10-27T14:05:00Z","eta_basis":"1 ahead"}`} {
+	for _, want := range []string{`"merge_gate":{"state":"queued-behind","reason":"behind #15074 in merge train (2nd of 3, overlapping files: stage_tracker.go, index.html)"`,
+		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":3,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074],"members":[15074,15085,15097],"length":3,"head_number":15074,"head_state":"ready","head_reason":"approved and green; merges on hive's next pass","head_since":"2026-10-27T14:00:00Z","eta_s":300,"eta_at":"2026-10-27T14:05:00Z","eta_basis":"1 ahead"}`} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("payload lacks %s:\n%s", want, raw)
 		}
@@ -124,12 +131,23 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 	if plain := trackerItem(t, resp, "pr", 102); plain.MergeTrain != nil {
 		t.Fatalf("PR 102 is not in a train: %+v", plain.MergeTrain)
 	}
-	// A dirty front the train is rebasing carries its own reason and is not
-	// re-marked.
-	store.Observe(stagelabels.Key("acme/console", 15074), stagelabels.AwaitingMergeAdmission, prstage.MergeTrain{State: prstage.MergeTrainStateRebasing, Front: 15074, Position: 1, Size: 4, Attempt: 1, MaxAttempts: 2, OverlapFiles: overlap}.Reason())
+	// A dirty front the train is rebasing (filed at 070 by the stage
+	// engine) leaves the train too; the rest close ranks behind #15085.
+	store.Observe(stagelabels.Key("acme/console", 15074), stagelabels.Fixing, prstage.MergeTrain{State: prstage.MergeTrainStateRebasing, Front: 15074, Position: 1, Size: 4, Attempt: 1, MaxAttempts: 2, OverlapFiles: overlap}.Reason())
+	s.statusMu.Lock()
+	for i, raw := range s.status.Repos[0].OpenPrs {
+		if fp, ok := raw.(FrontendPR); ok && fp.Number == 15074 {
+			fp.Labels = []string{"stage/070-fixing", "author/hive"}
+			s.status.Repos[0].OpenPrs[i] = fp
+		}
+	}
+	s.statusMu.Unlock()
 	resp = s.buildStageTracker(s.status, store, now)
-	if f := trackerItem(t, resp, "pr", 15074); f.MergeTrain.State != MergeGateStateRebasing || f.MergeTrain.Position != 1 {
-		t.Fatalf("rebasing front = %+v", f.MergeTrain)
+	if f := trackerItem(t, resp, "pr", 15074); f.Stage != 70 || f.MergeTrain != nil || f.Rebase == nil || f.Rebase.Text != "Rebasing · attempt 1/2" {
+		t.Fatalf("rebasing front = stage %d train %+v rebase %+v", f.Stage, f.MergeTrain, f.Rebase)
+	}
+	if n := trackerItem(t, resp, "pr", 15085); n.MergeTrain == nil || n.MergeTrain.State != MergeGateStateTrainFront || n.MergeTrain.Size != 2 {
+		t.Fatalf("new front = %+v", n.MergeTrain)
 	}
 }
 

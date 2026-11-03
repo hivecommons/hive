@@ -190,7 +190,7 @@ assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'o
 assert.ok(tooltip(row).includes('Covering PR: #102'), tooltip(row));
 assert.deepStrictEqual(prCol(row).length, 1, 'the covering PR sits in the PR column of the title line');
 assert.strictEqual(subs(row).length, 0, 'no sub-rows for a single covering PR');
-const prCell = (html) => (html.slice(0, html.indexOf('aria-label="Pipeline progress"')).match(/<li class="ham-seg ham-head-pr">([\s\S]*?)<\/li>/) || [])[1] || '';
+const prCell = (html) => (html.slice(0, html.indexOf('aria-label="Pipeline progress"')).match(/<li class="ham-seg ham-head-pr"[^>]*>([\s\S]*?)<\/li>/) || [])[1] || '';
 assert.ok(prCell(row).startsWith(STAGE_TRACKER_LINKED_GLYPH + '<a class="ham-pr-ref"'), 'an in-row PR is led by the linked glyph: ' + prCell(row));
 assert.ok(prCell(row).includes('title="Author: hive · ' + esc(STAGE_TRACKER_LINKED_TIP) + '"'), 'the PR link tooltip explains the shared row: ' + prCell(row));
 // A PR listed by two open issues shows on both rows; every row but the
@@ -356,6 +356,11 @@ assert.strictEqual(stageTrackerTrailText({ history: [] }), '');
 assert.strictEqual(stageTrackerTrailText({}), '');
 assert.strictEqual(stageTrackerTrailText({ history: [{ number: 0 }, { number: 10 }] }), 'Open → Actionable', '000 reads as Open');
 assert.ok(!stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, history: [{ number: 999 }, { number: 998 }] }, now).includes('Trail:'), 'no Trail clause when nothing can be named');
+// hivecommons/hive#16015: a registered contributor's PR reads as their clanker,
+// and the tooltip says the registry decided it; an inferred kind still says so.
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 15998, stage: 74, author: 'Karibhou', author_kind: 'clanker', author_kind_source: 'registry' }, now).includes('Author: @Karibhou (agent, registered contributor)'), 'registry source named in the tooltip');
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, author: 'pat', author_kind: 'human', author_kind_source: 'inferred' }, now).includes('Author: @pat (person, inferred)'), 'inferred source still named');
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, author: 'pat', author_kind: 'human', author_kind_source: 'label' }, now).includes('Author: @pat (person)'), 'label source says nothing');
 const savedStages = _stageTracker;
 _stageTracker = null;
 assert.strictEqual(stageTrackerTrailText(live14787), 'review-pending → needs-author → review-pending → needs-decision', 'the slug stands in before the stage table loads');
@@ -484,7 +489,7 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', titl
 sr = subs(row);
 {
   const head = sr[0].slice(0, sr[0].indexOf('aria-label="Pipeline progress"'));
-  const cell = (head.match(/<li class="ham-seg ham-head-pr">([\s\S]*?)<\/li>/) || [])[1] || '';
+  const cell = (head.match(/<li class="ham-seg ham-head-pr"[^>]*>([\s\S]*?)<\/li>/) || [])[1] || '';
   assert.ok(cell, 'sub-row header has one PR cell: ' + head);
   assert.ok(!/<br|<div|<p\b/.test(cell), 'no block-level element inside the PR cell: ' + cell);
   const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"'), cell.lastIndexOf('<span class="ham-badge">v5</span>')];

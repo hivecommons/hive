@@ -16,11 +16,9 @@ permissions:
 jobs:
   verify:
     name: verify PR contents
-    if: github.actor != 'dependabot[bot]'
-    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
-    # outage does not make otherwise-mergeable PRs impossible to merge.
-    # Fork PRs still fall back to GitHub-hosted for pull_request_target safety.
-    runs-on: ${{ (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    # This pinned v0.4.3 mirror is linux/arm64 only. Reuse the native ARM64
+    # override, never the general amd64 pool; forks stay on GitHub-hosted VMs.
+    runs-on: ${{ github.event.pull_request.head.repo.full_name == github.repository && fromJSON(vars.HIVE_ARM64_RUNNER || '["ubuntu-24.04-arm"]') || 'ubuntu-24.04-arm' }}
     timeout-minutes: 10
     env:
       PR_VERIFIER_IMAGE: ghcr.io/hivecommons/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
@@ -45,11 +43,21 @@ jobs:
       - name: Pull verifier image
         id: pull
         continue-on-error: true
-        run: docker pull "$PR_VERIFIER_IMAGE"
+        run: |
+          if [ "$RUNNER_ARCH" != "ARM64" ]; then
+            echo "::error::The pinned PR Verifier requires native ARM64; HIVE_ARM64_RUNNER must not select $RUNNER_ARCH."
+            exit 1
+          fi
+          docker pull "$PR_VERIFIER_IMAGE"
+          image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$PR_VERIFIER_IMAGE")"
+          if [ "$image_platform" != "linux/arm64" ]; then
+            echo "::error::PR Verifier platform $image_platform does not match the required linux/arm64."
+            exit 1
+          fi
       - name: Report unreachable verifier image
         if: steps.pull.outcome != 'success'
         run: |
-          echo "::warning::PR Verifier image $PR_VERIFIER_IMAGE could not be pulled — verification was SKIPPED, not passed. This is a registry/image problem, not a PR problem (#6085)."
+          echo "::warning::PR Verifier image $PR_VERIFIER_IMAGE was unavailable or incompatible — verification was SKIPPED, not passed. Inspect the pull/platform error; this is a runner/registry/image problem, not a PR problem (#6085)."
       - name: Verifier action
         if: steps.pull.outcome == 'success'
         id: verifier
@@ -68,3 +76,7 @@ jobs:
             -v "$GITHUB_EVENT_PATH:/github/event.json:ro" \
             -v "$GITHUB_WORKSPACE:/github/workspace:ro" \
             "$PR_VERIFIER_IMAGE"
+      - name: Report verifier failure
+        if: steps.verifier.outcome == 'failure'
+        run: |
+          echo "::warning::PR Verifier returned a failure. This wrapper is advisory: inspect the individual PR checks and verifier log; a green wrapper does not prove those checks passed."
