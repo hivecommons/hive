@@ -423,3 +423,24 @@ func TestNoStatusWriterOutsideWrite(t *testing.T) {
 		t.Fatalf("hive:status comments must be written through prstatus.Write only:\n%s", strings.Join(offenders, "\n"))
 	}
 }
+
+func TestWriteNeutralisesIncidentalMentions(t *testing.T) {
+	f := &fakeForge{}
+	text := "Title: fix for @someuser's bug, contact bob@example.com"
+	if _, err := Write(context.Background(), f, "o/r#1", "k", text); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.comments) != 1 {
+		t.Fatalf("comments = %d, want 1", len(f.comments))
+	}
+	body := f.comments[0].Body
+	if strings.Contains(body, "@someuser") {
+		t.Fatalf("live mention survived: %q", body)
+	}
+	if !strings.Contains(body, "`someuser`") {
+		t.Fatalf("login not preserved readably: %q", body)
+	}
+	if !strings.Contains(body, "bob@example.com") {
+		t.Fatalf("email address was altered: %q", body)
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/hivecommons/hive/pkg/advisory"
 )
 
 // Comment is one issue/PR comment as the status writer sees it.
@@ -69,6 +71,7 @@ var (
 // hive-authored comment and the other hive-authored copies deleted. A
 // comment the hive did not author is never edited or deleted.
 func Write(ctx context.Context, f Forge, item, key, text string) (WriteResult, error) {
+	text = advisory.NeutralizeMentions(text)
 	unlock := lockItem(item)
 	defer unlock()
 	var res WriteResult
