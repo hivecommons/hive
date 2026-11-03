@@ -568,7 +568,7 @@ test('unknown tracks show only the canonical column glyph, preserving full focus
     });
     const rendered = track(item, kind, { state: 'active' }, false, now);
     const content = rendered.match(/aria-describedby="[^"]+">([^]*?)<span id="[^"]+" class="config-tooltip/)[1];
-    assert.match(content, /<svg [^]*data-icon="50"/);
+    assert.match(content, kind === 'ci' ? /<svg [^]*data-icon="ci"/ : /<svg [^]*data-icon="50"/, 'CI and Review wear distinct glyphs');
     assert.equal(content.replace(/<[^>]*>/g, '').trim(), '', 'no CI/Review/unknown/reason/question-mark panel text');
     assert.match(content, /aria-label="Open current-head/);
     assert.match(rendered, /class="ham-chevron-info config-info" tabindex="0"/);
