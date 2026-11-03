@@ -118,7 +118,9 @@
             });
             // Keep the cost table's "running agents" column live as agents
             // switch models or pause/resume between cost polls.
-            if (_lastCost) renderCost(_lastCost);
+            if (_lastCost) dashboardRenderSection('cost', ['cost-panel'], () => {
+              if (_lastCost) renderCost(_lastCost);
+            });
           }
           ocUpdateFocusedState();
           const _lvl = (lastData.acmmLevel != null) ? lastData.acmmLevel : 0;

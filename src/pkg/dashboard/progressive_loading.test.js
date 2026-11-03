@@ -271,6 +271,33 @@ test('a queued worker redraw survives newer status snapshots with unchanged work
   assert.deepEqual(rendered, ['working', 'newest']);
 });
 
+test('agent-status bursts do not rebuild hidden cost and agent tables', async () => {
+  const e = environment({ hidden: true });
+  e.window._lastStatus = { agents: [] };
+  const begin = html.indexOf("      source.addEventListener('agent-status',");
+  const end = html.indexOf('      // The pod announces', begin);
+  assert.ok(begin > 0 && end > begin);
+  let handler, costs = 0, agents = 0;
+  const noop = () => {};
+  const source = { addEventListener(event, fn) { assert.equal(event, 'agent-status'); handler = fn; } };
+  new Function('window', 'source', 'noteSSEFrame', 'noteAgentNowUpdate', 'ocUpdateSidebarAgents',
+    '_ocSelectedAgent', 'ocRenderAgentDetail', 'applyPinOverrides', 'dashboardRenderSection',
+    '_dropdownOpen', '_configModalOpen', 'renderAgents', '_lastCost', 'renderCost',
+    'ocUpdateFocusedState', 'applyACMMVisibility', 'refreshWelcomeAutoChecks',
+    html.slice(begin, end),
+  )(e.window, source, noop, noop, noop, null, noop, noop, e.api.dashboardRenderSection,
+    false, false, () => agents++, {}, () => costs++, noop, noop, noop);
+  for (let i = 0; i < 10; i++) handler({ data: JSON.stringify({ agents: [{ name: 'worker-' + i }] }) });
+  assert.equal(agents, 0);
+  assert.equal(costs, 0);
+  e.visibility(false);
+  await e.turn();
+  await e.turn();
+  assert.equal(agents, 1);
+  assert.equal(costs, 1);
+  assert.equal(e.window._lastStatus.agents[0].name, 'worker-9');
+});
+
 test('browsers without requestIdleCallback still yield with bounded work', async () => {
   const e = environment({ idle: false });
   let ran = false;
