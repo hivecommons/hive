@@ -79,7 +79,7 @@
       const regs = ((window._lastStatus || {}).config || {}).gate_regressions || [];
       if (!regs.length) return '';
       const items = regs.map(g => `<li><code>${esc(g.gate || '')}</code> was <code>${esc(g.previous || '')}</code>, now ${esc(g.effective || '')}${g.source ? ` <span class="text-muted">(from ${esc(g.source)})</span>` : ''}</li>`).join('');
-      return `<div class="cmp-banner" id="gate-regression-banner" role="alert"><strong>Safety gate dropped at boot.</strong> This hive booted without ${regs.length === 1 ? 'a gate' : regs.length + ' gates'} its previous runtime config enforced; agents may now act on items it used to leave alone. Restore the setting here and save, or set <code>config.refuse_gate_regression: true</code> to make this fatal.<ul class="cmp-banner-detail" style="margin:var(--sp-2) 0 0 var(--sp-5)">${items}</ul></div>`;
+      return `<div class="cmp-banner" id="gate-regression-banner" role="alert"><strong>Safety gate dropped at boot.</strong> This hive booted without ${regs.length === 1 ? 'a gate' : regs.length + ' gates'} its previous runtime config enforced; agents may now act on items it used to leave alone. Restore the setting here and save, or set <code>config.refuse_gate_regression: true</code> to make this fatal.<ul class="cmp-banner-detail">${items}</ul></div>`;
     }
 
     function renderAgentImport() {

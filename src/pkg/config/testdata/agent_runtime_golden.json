@@ -784,5 +784,6 @@
   "forgestate": {},
   "classification": {
     "review_bots": {}
-  }
+  },
+  "config": {}
 }
