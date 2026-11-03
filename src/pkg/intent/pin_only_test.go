@@ -17,6 +17,10 @@ func TestClassifyPinOnly(t *testing.T) {
 		want   bool
 	}{
 		{"pure action SHA", func(_ *ChangedFile, _ *PinOnlySpec) {}, true},
+		{"blank context lines", func(f *ChangedFile, _ *PinOnlySpec) {
+			f.Patch = "@@ -1,4 +1,4 @@\n\n-" + old + "\n+" + next + "\n\n context"
+		}, true},
+		{"blank line before hunk", func(f *ChangedFile, _ *PinOnlySpec) { f.Patch = "\n" + f.Patch }, false},
 		{"image digest", func(f *ChangedFile, _ *PinOnlySpec) {
 			f.Filename = "Containerfile"
 			f.Patch = patch("FROM ghcr.io/org/image@sha256:"+strings.Repeat("a", 64), "FROM ghcr.io/org/image@sha256:"+strings.Repeat("b", 64))

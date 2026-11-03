@@ -114,8 +114,12 @@ func classifyPinPatch(file ChangedFile, kinds map[string]bool) error {
 			hunks++
 			continue
 		}
-		if hunks == 0 || line == "" {
+		if hunks == 0 {
 			return fmt.Errorf("invalid patch line %d", i+1)
+		}
+		if line == "" {
+			// GitHub renders blank context lines as "" rather than " ".
+			line = " "
 		}
 		switch line[0] {
 		case ' ':
