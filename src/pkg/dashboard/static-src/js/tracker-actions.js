@@ -1031,6 +1031,10 @@
       if (_stageTrackerDecisionPop && _stageTrackerDecisionPop.key === key) {
         if (pin) _stageTrackerDecisionPop.pinned = true;
         clearTimeout(_stageTrackerDecisionPop.timer);
+        if (pin && pin.focus) {
+          const first = _stageTrackerDecisionPop.el.querySelector('.ham-decision-act:not([aria-disabled="true"])');
+          (first || _stageTrackerDecisionPop.el).focus();
+        }
         return;
       }
       stageTrackerCloseDecisionPop(false);

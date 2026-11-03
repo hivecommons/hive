@@ -35,8 +35,39 @@ full-width, far-right-anchored toolbar line, rather than overflowing the history
 cap into a title or ending in an issue-side column. At narrow widths the header
 slots stack and wrap; small-screen progress strips scroll horizontally without
 moving header controls offscreen. `stage_tracker_header_spans.test.js`
-checks rendered markup and track arithmetic in CI; actual clipping and overlap
-still require browser geometry checks on a dedicated published-preview tab. Invoke
+checks rendered markup and track arithmetic in CI; these are not visual proof.
+The existing Dashboard Mobile Shots workflow additionally runs the generated
+SPA in real Chrome against `scripts/fixtures/dashboard-activity-density.mjs`,
+preserving the preparation-rail suite. It adds activity-only desktop widths
+2400, 1440, 1110 and 1024 to the existing mobile/tablet viewports (including
+768 and 390), in both themes. Canonical lane boundaries are carried in
+`data-ham-pr-start` and bound to the CSS custom property by the production
+row materializer, including nested rows; no parallel hardcoded span is used.
+Browser fixture evidence is explicitly mocked and rebased to the browser clock;
+permissions are mocked only in this isolated file-page, restored on cleanup.
+This does not validate private authenticated live projection or production rollout.
+The existing `dashboard-mobile-shots` artifact contains `activity-layout.json`,
+per-viewport/theme `*-activity-probes.json` and `*-activity-density.png`, with
+PR head, checkout SHA and generated-asset SHA256 provenance. Activity probe
+violations fail capture after saving the results/screenshots for every viewport;
+the existing reporting-only workflow policy and permissions are unchanged.
+In addition to the DOM-handler probes, real CDP mouse movement and
+ArrowDown/Enter/Space key dispatch check tooltip takeover and entry into an
+already-open decision dialog. `*-activity-decision-pointer.png` and
+`*-activity-decision-keyboard.png` capture those actual browser interactions;
+no decision action is activated. Fixture/probe failures remain failures, not
+skipped or string-assertion substitutes for browser proof.
+The 12:36 screenshot shapes additionally exercise nested #16450 and root
+#16451 recorded/unverified preparation fronts, #16446 awaiting a superseding
+human decision, pluk #436 assigned review after passing CI, #16437 approved
+review with unknown CI, and Hotshot #344 queued CI with approved review.
+These identities/relationships are acceptance inputs, not live stage claims.
+Every rendered progress strip must own a visible current location or delegate
+to drawn PR children; closed adopted-original notes intentionally own no strip.
+The existing preparation-root rail gutter is retained: cross-row comparison
+uses like gutters, while every header is measured against its own lane edges.
+The same probes can be invoked on a dedicated published-preview fixture tab:
+invoke
 `webstatic/testdata/tracker-header-geometry.js` as
 `(<file contents>)({ dedicatedPreview: true })` there at desktop and narrow
 widths with issue-only, linked, and PR-only rows present, including long titles
@@ -84,6 +115,11 @@ observations show only the existing 050 column glyph, with their full source,
 reason, owner and head metadata available in the keyboard-accessible tooltip.
 Unknown does not mean running, passed or approved. Known track captions use the
 same two-line budget; fixer/diagnostic detail belongs in the tooltip.
+PR source repair after failed CI or review findings is labelled **Remediating**
+when current-head verified work is observed. Native `fixing` state identifiers
+and `stage/070-fixing` remain unchanged; waiting for an author/fixer, stale
+evidence and re-review do not become active remediation. General Fix actions,
+PR titles and recorded historical text are not renamed.
 
 The sources sit in a sibling directory (`static-src/`, not `static/src/`) on
 purpose: `//go:embed static` embeds everything under `static/` recursively, so

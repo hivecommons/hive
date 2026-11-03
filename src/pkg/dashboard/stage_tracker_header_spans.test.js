@@ -57,7 +57,7 @@ for (const [name, item] of [
 ]) test(name + ': full metadata stays in the correct header slots', () => {
   const ctx = load();
   const rendered = ctx.stageTrackerRowHtml(item, [], { nowMs: 1, repoChips: {} });
-  const start = Number(rendered.match(/--ham-pr-start: (\d+)/)[1]);
+  const start = Number(rendered.match(/data-ham-pr-start="(\d+)"/)[1]);
   assert.equal(start, 4, 'PR metadata starts at PR in progress, not Actionable');
   const lead = rendered.match(/<li class="ham-seg ham-head-lead[^"]*">([\s\S]*?)<\/li>/)[1];
   if (name === 'PR-only') {
@@ -79,10 +79,29 @@ for (const [name, item] of [
 });
 
 function rule(selector) {
-  const found = html.match(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\{([^}]+)\\}'));
+  // Match the whole selector, not its suffix in ".ham-cols .ham-strip".
+  const found = html.match(new RegExp('(?:^|[\\r\\n])[\\t ]*' + selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\{([^}]+)\\}'));
   assert.ok(found, selector);
   return found[1];
 }
+
+test('row materialization binds canonical header boundaries for root and nested rows', () => {
+  const headers = ['4', '5'].map(hamPrStart => ({
+    dataset: { hamPrStart }, properties: {},
+    style: { setProperty(name, value) { this.owner.properties[name] = value; } },
+  }));
+  for (const header of headers) header.style.owner = header;
+  const node = { dataset: {}, querySelectorAll(selector) {
+    assert.equal(selector, '.ham-head-cols[data-ham-pr-start]');
+    return headers;
+  } };
+  const ctx = vm.createContext({ _stageTrackerRowSrc: null,
+    document: { createElement: () => ({ content: { firstElementChild: node } }) } });
+  vm.runInContext(fn('stageTrackerRowNode'), ctx);
+  assert.equal(ctx.stageTrackerRowNode('issue:1', '<fixture>'), node);
+  assert.equal(node.dataset.hamKey, 'issue:1');
+  assert.deepEqual(headers.map(header => header.properties['--ham-pr-start']), ['4', '5']);
+});
 
 test('spans share the physical lane grid, including independent concurrent CI/Review', () => {
   const ctx = load();
@@ -102,7 +121,7 @@ test('spans share the physical lane grid, including independent concurrent CI/Re
   assert.match(rule('.ham-head-cols .ham-seg.cap'), /justify-content: flex-end/);
   // Resolve the declared grid lines using the actual header's track count.
   // Content cannot alter minmax(0,1fr) track widths; covered gaps belong to spans.
-  const start = Number(ctx.stageTrackerHeadColsHtml(['PR'], 'issue', chips).match(/--ham-pr-start: (\d+)/)[1]);
+  const start = Number(ctx.stageTrackerHeadColsHtml(['PR'], 'issue', chips).match(/data-ham-pr-start="(\d+)"/)[1]);
   const gap = 4, cap = 48;
   for (const width of [2400, 1440, 1110]) {
     const lane = (width - cap - laneCount * gap) / laneCount;
@@ -114,7 +133,7 @@ test('spans share the physical lane grid, including independent concurrent CI/Re
     assert.ok(prRight < width - cap, 'PR span excludes the history cap');
   }
   vm.runInContext('STAGE_TRACKER_PATH.splice(2, 0, 15)', ctx);
-  assert.match(ctx.stageTrackerHeadColsHtml(['PR']), /--ham-pr-start: 5/, 'boundary derives from canonical stages, not a second hard-coded span');
+  assert.match(ctx.stageTrackerHeadColsHtml(['PR']), /data-ham-pr-start="5"/, 'boundary derives from canonical stages, not a second hard-coded span');
 });
 
 test('long metadata wraps in bounded slots and the narrow layout resets both grid axes', () => {
@@ -183,7 +202,7 @@ test('12:01 screenshot density: real multi-PR/sub-row structure preserves distin
     assert.equal((rendered.match(/<div class="ham-sub(?:[" ])/g) || []).length, children.length, 'actual sub-row renderer is exercised, not a flattened replacement');
     assert.equal((rendered.match(/class="ham-strip-row ham-head-cols"/g) || []).length, 1 + children.length);
     for (const header of rendered.matchAll(/<div class="ham-strip-row ham-head-cols"([^]*?)<\/ol>/g)) {
-      assert.match(header[1], /--ham-pr-start: 4/);
+      assert.match(header[1], /data-ham-pr-start="4"/);
       assert.equal((header[1].match(/class="ham-seg cap"/g) || []).length, 1, 'one separate far-right toolbar per identity');
       const lead = header[1].match(/ham-head-lead[^"]*">([^]*?)<\/li>/)[1];
       assert.doesNotMatch(lead, /ham-badge-waiting|ham-lead-act|ham-acted/, 'activity/action/history controls never overprint the issue title slot');

@@ -21,13 +21,16 @@
 //   clipped-by-strip: a topbar chip whose box pokes outside an overflow-clipping
 //   ancestor strip (how the ≡ drawer toggle lost its left edge on phones, #15476).
 //
-// This is a reporting tool, not a gate: it exits 0 even when findings exist and
-// exits 1 only when the harness itself errors. Chrome missing prints SKIP and exits 0.
+// General overflow findings remain reporting-only. Preparation/activity acceptance
+// violations exit 1; the existing workflow remains non-required/reporting-only.
+// Chrome missing is a local SKIP but a canonical CI failure.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { preparationRailLayoutFixture } from './fixtures/dashboard-preparation-rail.mjs';
+import { activityDensityFixture } from './fixtures/dashboard-activity-density.mjs';
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
@@ -45,6 +48,8 @@ const PROFILE_DIR = path.join(process.cwd(), '.chrome-dashboard-mobile-shots');
 const IOS_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
 const IPAD_UA = 'Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
 const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+const DESKTOP_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36';
+const ACTIVITY_DESKTOP_WIDTHS = [2400, 1440, 1110, 1024];
 
 const VIEWPORTS = [
   { name: '390x844@3', width: 390, height: 844, dpr: 3, mobile: true, ua: IOS_UA },
@@ -56,6 +61,8 @@ const VIEWPORTS = [
   { name: '932x430@3', width: 932, height: 430, dpr: 3, mobile: true, ua: IOS_UA },
   { name: '667x375@2', width: 667, height: 375, dpr: 2, mobile: true, ua: IOS_UA },
   { name: '740x360@3', width: 740, height: 360, dpr: 3, mobile: true, ua: ANDROID_UA },
+  ...ACTIVITY_DESKTOP_WIDTHS.map(width => ({ name: width + 'x1200@1', width, height: 1200,
+    dpr: 1, mobile: false, ua: DESKTOP_UA, activityOnly: true })),
 ];
 const THEMES = ['light', 'dark'];
 
@@ -220,6 +227,7 @@ async function main() {
   const themes = opts.theme ? [opts.theme] : THEMES;
   const bin = chromePath();
   if (!bin) {
+    if (process.env.CI) throw new Error('Canonical browser proof requires Chrome/Chromium; none found');
     console.log('SKIP: Chrome/Chromium not found (set CHROME_BIN or install google-chrome/chromium)');
     return;
   }
@@ -254,6 +262,18 @@ async function main() {
 
   const report = [];
   const preparationRailReport = [];
+  const activityReport = [];
+  const activityFailures = [];
+  const fixtureRoot = path.join(process.cwd(), 'src/pkg/dashboard/webstatic/testdata');
+  const density = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'tracker-activity-density.json'), 'utf8'));
+  const probes = ['tracker-header-geometry', 'tracker-decision-interaction'].map(name => ({
+    name, source: fs.readFileSync(path.join(fixtureRoot, name + '.js'), 'utf8'),
+  }));
+  const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
+  const provenance = { head: event.pull_request?.head?.sha || process.env.GITHUB_SHA || 'unpublished-local',
+    checkoutSHA: process.env.GITHUB_SHA || 'unpublished-local',
+    generatedAssetSHA256: createHash('sha256').update(fs.readFileSync('src/pkg/dashboard/static/index.html')).digest('hex'),
+    mockEvidence: true, fixtureSource: density.source };
   let socket;
   try {
     const tabs = await waitForTabs();
@@ -280,6 +300,63 @@ async function main() {
       if (result.result.exceptionDetails) throw new Error(result.result.exceptionDetails.exception?.description || 'evaluate failed');
       return result.result.result.value;
     };
+    const screenshot = async file => {
+      const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+      if (shot.error) throw new Error(shot.error.message);
+      fs.writeFileSync(path.join(opts.out, file), Buffer.from(shot.result.data, 'base64'));
+    };
+    const nativeDecisionInput = async prefix => {
+      const failures = [];
+      const point = await evaluate(`(async () => {
+        const trigger = [...document.querySelectorAll('.ham-chevron-decision .ham-decision-trigger')]
+          .find(button => Number(button.closest('[data-ham-stage]')?.dataset.hamStage) === 80);
+        if (!trigger) throw new Error('Missing native stage-80 decision trigger');
+        trigger.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        await new Promise(requestAnimationFrame);
+        const help = document.querySelector('.ham-chevron-info.config-info');
+        help.focus({ preventScroll: true });
+        const box = trigger.getBoundingClientRect();
+        const portal = document.getElementById('config-tooltip-portal');
+        return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2,
+          tooltipWasOpen: !!portal && !portal.hidden && getComputedStyle(portal).display !== 'none' };
+      })()`);
+      if (!point.tooltipWasOpen) failures.push('Native pointer precondition: ordinary tooltip was not open');
+      const moved = await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, pointerType: 'mouse' });
+      if (moved.error) throw new Error(moved.error.message);
+      await sleep(STATE_SETTLE_MS);
+      const inspect = async mode => {
+        const result = await evaluate(`(() => {
+          const dialogs = [...document.querySelectorAll('.ham-decision-pop')];
+          const portal = document.getElementById('config-tooltip-portal');
+          return { dialogs: dialogs.length,
+            tooltipOpen: !!portal && !portal.hidden && getComputedStyle(portal).display !== 'none',
+            focusInside: !!dialogs[0]?.contains(document.activeElement) };
+        })()`);
+        if (result.dialogs !== 1 || result.tooltipOpen) failures.push(mode + ': one unobscured decision dialog required');
+        if (mode !== 'native pointer' && !result.focusInside) failures.push(mode + ': keyboard must enter the existing dialog');
+        return { mode, ...result };
+      };
+      const observations = [await inspect('native pointer')];
+      await screenshot(prefix + '-decision-pointer.png');
+      const keys = [{ key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+        { key: 'Enter', code: 'Enter', keyCode: 13 }, { key: ' ', code: 'Space', keyCode: 32 }];
+      for (const { key, code, keyCode } of keys) {
+        await evaluate(`(() => {
+          const trigger = [...document.querySelectorAll('.ham-chevron-decision .ham-decision-trigger')]
+            .find(button => Number(button.closest('[data-ham-stage]')?.dataset.hamStage) === 80);
+          trigger.focus({ preventScroll: true });
+          return true;
+        })()`);
+        for (const type of ['keyDown', 'keyUp']) {
+          const pressed = await send('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: keyCode });
+          if (pressed.error) throw new Error(pressed.error.message);
+        }
+        observations.push(await inspect('native keyboard ' + JSON.stringify(key)));
+      }
+      await screenshot(prefix + '-decision-keyboard.png');
+      await evaluate('stageTrackerCloseDecisionPop(false); true');
+      return { observations, failures };
+    };
 
     await send('Page.enable');
     await send('Runtime.enable');
@@ -287,6 +364,7 @@ async function main() {
     // Each state callback is best-effort: a missing helper yields a skipped shot, not a harness error.
     const setThemeJS = (theme) => `document.body.classList.toggle('light-mode', ${theme === 'light'}); document.documentElement.style.colorScheme = '${theme}'; true`;
     const resetJS = `(() => {
+      window.__activityDensityCleanup?.();
       document.getElementById('preparation-rail-layout-fixture')?.remove();
       document.querySelectorAll('.config-overlay, .modal-overlay').forEach((el) => { el.classList.add('hidden'); });
       document.documentElement.classList.remove('modal-open'); document.body.classList.remove('modal-open');
@@ -319,7 +397,7 @@ async function main() {
         screenOrientation: { type: landscape ? 'landscapePrimary' : 'portraitPrimary', angle: landscape ? 90 : 0 },
       });
       await send('Emulation.setUserAgentOverride', { userAgent: vp.ua });
-      await send('Emulation.setTouchEmulationEnabled', { enabled: true });
+      await send('Emulation.setTouchEmulationEnabled', { enabled: vp.mobile });
       for (const theme of themes) {
         await send('Page.navigate', { url: `file://${process.cwd()}/src/pkg/dashboard/static/index.html` });
         await sleep(PAGE_SETTLE_MS);
@@ -352,10 +430,48 @@ async function main() {
           if (result.failures.length) throw new Error('Preparation rail layout: ' + result.failures.join('; '));
           return true;
         } });
+        if (vp.activityOnly) states.length = 0;
+        states.push({ name: 'activity-density', run: async () => {
+          await evaluate(collapseAllJS);
+          if (!await evaluate(expandOneJS('activity-monitor-section'))) throw new Error('Cannot expand actual Activity Monitor');
+          const fixture = await evaluate('(' + activityDensityFixture.toString() + ')(' + JSON.stringify(density) + ')');
+          const results = [];
+          for (const probe of probes) {
+            const result = await evaluate(`(async () => {
+              try { return { ok: true, result: await (${probe.source})({ dedicatedPreview: true }) }; }
+              catch (error) {
+                let result;
+                try { result = JSON.parse(error.message); } catch (_) { result = { failures: [String(error.stack || error)] }; }
+                return { ok: false, result };
+              }
+            })()`);
+            results.push({ probe: probe.name, ...result });
+            if (!result.ok) activityFailures.push(vp.name + ' ' + theme + ' ' + probe.name);
+          }
+          let native;
+          try { native = await nativeDecisionInput(`${vp.name}-${theme}-activity`); }
+          catch (error) { native = { failures: [String(error.stack || error)] }; }
+          const nativeOK = native.failures.length === 0;
+          results.push({ probe: 'native-CDP-pointer-keyboard', ok: nativeOK, result: native });
+          if (!nativeOK) activityFailures.push(vp.name + ' ' + theme + ' native input');
+          const result = { viewport: vp.name, theme, provenance, fixture, results };
+          activityReport.push(result);
+          fs.writeFileSync(path.join(opts.out, `${vp.name}-${theme}-activity-probes.json`), JSON.stringify(result, null, 2) + '\n');
+          return true;
+        } });
 
         for (const state of states) {
           await evaluate(resetJS);
-          const ok = await state.run();
+          let ok;
+          try { ok = await state.run(); }
+          catch (error) {
+            if (state.name !== 'activity-density') throw error;
+            activityFailures.push(vp.name + ' ' + theme + ' fixture/harness');
+            const result = { viewport: vp.name, theme, provenance, failures: [String(error.stack || error)] };
+            activityReport.push(result);
+            fs.writeFileSync(path.join(opts.out, `${vp.name}-${theme}-activity-probes.json`), JSON.stringify(result, null, 2) + '\n');
+            ok = true; // Capture the broken fixture too; fail after all viewports.
+          }
           if (!ok) {
             console.log(`skip ${vp.name} ${theme} ${state.name}: not available`);
             continue;
@@ -363,21 +479,22 @@ async function main() {
           await sleep(STATE_SETTLE_MS);
           const findings = await evaluate(SCAN_EXPRESSION);
           for (const f of findings) report.push({ viewport: vp.name, theme, state: state.name, ...f });
-          const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
-          if (shot.error) throw new Error(shot.error.message);
           const file = `${vp.name}-${theme}-${state.name}.png`.replace(/[^A-Za-z0-9._@-]/g, '_');
-          fs.writeFileSync(path.join(opts.out, file), Buffer.from(shot.result.data, 'base64'));
+          await screenshot(file);
           console.log(`shot ${file}: ${findings.length} finding(s)`);
         }
+        await evaluate(resetJS);
       }
     }
   } finally {
     if (socket) socket.close();
     fs.writeFileSync(path.join(opts.out, 'overflow-report.json'), JSON.stringify(report, null, 2) + '\n');
     fs.writeFileSync(path.join(opts.out, 'preparation-rail-layout.json'), JSON.stringify(preparationRailReport, null, 2) + '\n');
+    fs.writeFileSync(path.join(opts.out, 'activity-layout.json'), JSON.stringify({ provenance, runs: activityReport }, null, 2) + '\n');
     await cleanup();
   }
   console.log(`wrote ${report.length} finding(s) to ${path.join(opts.out, 'overflow-report.json')}`);
+  if (activityFailures.length) throw new Error('Activity browser acceptance failed: ' + activityFailures.join('; '));
 }
 
 main().catch((err) => {

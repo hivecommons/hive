@@ -141,7 +141,8 @@ func TestStageTrackerActivitySourceRepairAndWaits(t *testing.T) {
 	}
 	dispatch.Fixes = []review.PendingFix{{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: "fixer", Dispatched: now}}
 	stageTrackerApplyCodeActivity(&it, dispatch, status, now)
-	if it.Stage != trackerNumberFixing || it.DisplayColumn != trackerNumberPRInProgress || !it.CodeActivity.Active || it.CodeActivity.Actor != "fixer" {
+	if it.Stage != trackerNumberFixing || it.DisplayColumn != trackerNumberPRInProgress || !it.CodeActivity.Active || it.CodeActivity.Actor != "fixer" ||
+		it.CodeActivity.State != "fixing" || it.CodeActivity.Caption != "Remediating · fixer" {
 		t.Fatalf("repair failed to return visually: %+v", it)
 	}
 	if !stageTrackerReviewActivity(pr, nil, nil, dispatch, status, now).Active {
@@ -248,6 +249,19 @@ func TestStageTrackerActivityApprovalRequiresConsistentBundle(t *testing.T) {
 	agg.HeadSHA = "old-head"
 	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != "changes_requested" {
 		t.Fatalf("old aggregate hid current bundle findings: %+v", got)
+	}
+}
+
+func TestStageTrackerRemediationPausedWordingPreservesEvidence(t *testing.T) {
+	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
+	for _, prefix := range []string{"Remediation paused", "Fixing paused"} {
+		it := StageTrackerItem{Kind: "pr", Repo: "org/repo", Number: 7, Head: "head", Stage: trackerNumberFixing,
+			Caption: prefix + " — attempts exhausted; historical stage Fixing"}
+		stageTrackerApplyCodeActivity(&it, review.DispatchState{}, nil, now)
+		if it.CodeActivity == nil || it.CodeActivity.Active || it.CodeActivity.State != "waiting_fixer" ||
+			it.DisplayColumn != trackerNumberReviewPending || it.CodeActivity.Blocker != "Fix task blocked — attempts exhausted; historical stage Fixing" {
+			t.Fatalf("paused remediation or legacy caption invented work or rewrote history: %+v", it)
+		}
 	}
 }
 

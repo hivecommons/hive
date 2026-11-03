@@ -657,6 +657,12 @@
       tpl.innerHTML = html;
       const node = tpl.content.firstElementChild;
       node.dataset.hamKey = key;
+      // Bind canonical lane geometry when materializing root and nested rows.
+      if (typeof node.querySelectorAll === 'function') {
+        for (const header of node.querySelectorAll('.ham-head-cols[data-ham-pr-start]')) {
+          header.style.setProperty('--ham-pr-start', header.dataset.hamPrStart);
+        }
+      }
       if (_stageTrackerRowSrc) _stageTrackerRowSrc.set(node, stageTrackerRowSrcKey(html));
       return node;
     }

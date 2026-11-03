@@ -5,7 +5,7 @@
   if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
   const tolerance = 1;
   const failures = [];
-  const coverage = { issueOnly: 0, linked: 0, prOnly: 0, nested: 0, multiIssue: 0, unknown: 0, queuedApproved: 0, wrapped: 0, controls: 0, controlTargets: 0, hitTested: 0 };
+  const coverage = { issueOnly: 0, linked: 0, prOnly: 0, nested: 0, multiIssue: 0, unknown: 0, queuedApproved: 0, wrapped: 0, controls: 0, controlTargets: 0, hitTested: 0, currentRows: 0, preparation: 0, superseded: 0, states: {} };
   const near = (a, b) => Math.abs(a - b) <= tolerance;
   const visible = el => el && el.getClientRects().length && getComputedStyle(el).display !== 'none';
   const rect = el => el.getBoundingClientRect();
@@ -41,7 +41,7 @@
     }
   };
   const rows = [...document.querySelectorAll('#activity-monitor-section .ham-row, #activity-monitor-section .ham-sub')];
-  let reference = null;
+  const references = new Map();
   for (const [index, row] of rows.entries()) {
     const header = row.querySelector(':scope > .ham-row-head > .ham-head-cols');
     const strip = row.querySelector(':scope > .ham-strip-row > ol[aria-label="Pipeline progress"]');
@@ -58,11 +58,18 @@
     else if (row.dataset.hamKind === 'pr') coverage.prOnly++;
     else if (pr) coverage.linked++;
     else coverage.issueOnly++;
+    if (row.matches('.ham-preparation-member')) coverage.preparation++;
+    if ([...row.querySelectorAll(':scope > .ham-current-stage, :scope > .ham-human-context')]
+      .some(context => /superseded/i.test(context.textContent))) coverage.superseded++;
     if (row.matches('.ham-row') && row.querySelectorAll(':scope > .ham-sub').length > 1) coverage.multiIssue++;
     const signature = columns.map(cell => ({ left: rect(cell).left - rect(strip).left, width: rect(cell).width, height: rect(cell).height }));
     const stripLeft = rect(strip.parentElement).left;
-    if (!reference) reference = { signature, left: stripLeft };
-    assert(near(stripLeft, reference.left), name + 'root/nested progress containers share one horizontal origin');
+    // Recorded preparation roots retain the existing rail gutter. Compare
+    // like gutters across rows; header-to-lane checks below remain exact.
+    const gutter = row.closest('.ham-row.ham-train') ? 'train' : 'ordinary';
+    if (!references.has(gutter)) references.set(gutter, { signature, left: stripLeft });
+    const reference = references.get(gutter);
+    assert(near(stripLeft, reference.left), name + 'root/nested progress containers with the same rail gutter share one horizontal origin');
     for (const [lane, box] of signature.entries()) {
       assert(near(box.left, reference.signature[lane].left) && near(box.width, reference.signature[lane].width), name + 'physical lane ' + lane + ' aligns across issue, PR-only and multi-PR rows');
       assert(near(box.height, reference.signature[lane].height), name + 'physical lane ' + lane + ' has the same compact height across rows');
@@ -124,10 +131,18 @@
     assert(Math.max(...heights) - Math.min(...heights) <= tolerance, name + 'all physical chevrons have uniform height');
     const ci = strip.querySelector('[data-track="ci"]');
     const review = strip.querySelector('[data-track="review"]');
+    const current = columns.filter(cell => !cell.classList.contains('cap') &&
+      (cell.classList.contains('active') || cell.classList.contains('ham-current')));
+    const delegated = row.matches('.ham-row') && row.querySelector(':scope > .ham-sub ol[aria-label="Pipeline progress"]');
+    assert(current.length > 0 || !!delegated, name + 'every actionable row owns a visible current-phase location or delegates to drawn PR children');
+    if (current.length) coverage.currentRows++;
     if (ci?.dataset.activityState === 'queued' && review?.dataset.activityState === 'approved') coverage.queuedApproved++;
     for (const cell of columns) {
+      if (cell.dataset.activityState) coverage.states[cell.dataset.activityState] = (coverage.states[cell.dataset.activityState] || 0) + 1;
       if (cell.dataset.routeState?.split(' ').includes('active')) {
         assert(cell.classList.contains('ham-current'), name + 'current phase remains highlighted independently of work');
+        const style = getComputedStyle(cell);
+        assert(Number(style.opacity) >= 0.9 && style.boxShadow !== 'none', name + 'queued/unknown/assigned/completed current tracks retain a visible steady outline');
       }
       if (cell.dataset.displayState === 'unknown') {
         coverage.unknown++;
@@ -170,6 +185,10 @@
   }
   assert(coverage.issueOnly > 0 && coverage.linked > 0 && coverage.prOnly > 0, 'preview must contain issue-only, linked, and PR-only fixtures');
   assert(coverage.multiIssue > 0 && coverage.nested >= 2, 'preview must contain a real multi-PR issue with independent nested rows');
+  assert(coverage.preparation >= 2 && coverage.superseded > 0, 'preview must contain recorded/unverified preparation fronts and an actionable superseded-human-decision row');
+  for (const state of ['queued', 'unknown', 'assigned', 'approved', 'waiting', 'failing', 'passing', 'running']) {
+    assert(coverage.states[state] > 0, 'preview must exercise current-head activity state ' + state);
+  }
   assert(coverage.unknown > 0 && coverage.queuedApproved > 0 && coverage.wrapped > 0 && coverage.controls > 0, 'preview must include unknown, queued-CI/approved-review, long wrapped text and action/history controls');
   assert(coverage.controlTargets > 0 && coverage.controlTargets === coverage.hitTested, 'every relevant header control must be hit-tested, never skipped as offscreen');
   if (failures.length) throw new Error(JSON.stringify({ viewport: innerWidth, coverage, failures }));

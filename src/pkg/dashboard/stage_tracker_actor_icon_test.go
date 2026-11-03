@@ -34,14 +34,14 @@ const fixing = (n, extra, actor) => pr(n, Object.assign({head:'head', display_co
 let row = stageTrackerRowHtml(fixing(501, { author: 'hive-bot', author_kind: 'hive', stage_actor: { kind: 'hive', login: 'fixer', why: 'fixer commented · 3m ago' } }, 'fixer'), stages, ctx);
 assert.strictEqual(actorSvg(row)[1], 'Next move: hive', row);
 assert.ok(actorSvg(row)[2].includes(STAGE_TRACKER_ICONS.hive), 'hive draws the honeycomb');
-assert.strictEqual(detour(row), 'Fixing · fixer', 'an observed assigned fixer is named');
+assert.strictEqual(detour(row), 'Remediating · fixer', 'an observed assigned fixer is named; legacy source state/caption remains accepted');
 assert.ok(litTitle(row).includes('fix-dispatch+successful-edit+verified-git-worktree'), litTitle(row));
 
 // clanker → robot head.
 row = stageTrackerRowHtml(fixing(502, { author_kind: 'clanker', stage_actor: { kind: 'clanker', login: 'acme-agent', why: '@acme-agent must push a fix' } }, 'acme-agent'), stages, ctx);
 assert.strictEqual(actorSvg(row)[1], 'Next move: clanker');
 assert.ok(actorSvg(row)[2].includes(STAGE_TRACKER_ICONS.clanker));
-assert.strictEqual(detour(row), 'Fixing · acme-agent');
+assert.strictEqual(detour(row), 'Remediating · acme-agent');
 
 // human → the person glyph "Needs human decision" uses.
 row = stageTrackerRowHtml(fixing(503, { stage_actor: { kind: 'human', login: 'alice', why: '@alice must push a fix' } }, 'alice'), stages, ctx);
@@ -99,7 +99,7 @@ row = stageTrackerRowHtml({ repo: 'hivecommons/docs', number: 497, kind: 'issue'
 ] }, stages, ctx);
 const subRows = subs(row);
 assert.strictEqual(subRows.length, 2);
-assert.ok(subRows[0].includes('aria-label="Next move: hive"') && subRows[0].includes('<span class="ham-detour">Fixing · fixer</span>'), subRows[0]);
+assert.ok(subRows[0].includes('aria-label="Next move: hive"') && subRows[0].includes('<span class="ham-detour">Remediating · fixer</span>'), subRows[0]);
 assert.ok(!subRows[1].includes('ham-actor-ico') && subRows[1].includes('Waiting for fixer'), subRows[1]);
 const externalLP={...lp,author:'clubanderson',author_kind:'',modifiers:[],stage_actor:{kind:'none',why:'author kind unknown'}};
 row=stageTrackerRowHtml({repo:'hivecommons/docs',number:600,kind:'issue',stage:40,author:'issue-filer',linked_prs:[externalLP]},stages,ctx);
@@ -147,7 +147,7 @@ let row = stageTrackerRowHtml(issue(14910, [lp(14921, 14910)]), stages, ctx);
 assert.deepStrictEqual(prCol(row).length, 1, 'owner: the PR sits in the PR column: ' + row);
 assert.ok(prCol(row)[0].includes('#14921'));
 assert.strictEqual(strips(row).length, 1);
-assert.ok(row.includes('<span class="ham-detour">Fixing · fixer</span>') && row.includes('aria-label="Next move: hive"'), row);
+assert.ok(row.includes('<span class="ham-detour">Remediating · fixer</span>') && row.includes('aria-label="Next move: hive"'), row);
 assert.deepStrictEqual(elsewhere(row), [], 'owner carries no elsewhere chip');
 
 // The other issue does not redraw the PR: its own strip (040 Covered by PR) and a chip pointing at the owner row.
@@ -157,7 +157,7 @@ assert.strictEqual(subs(row).length, 0);
 assert.strictEqual(strips(row).length, 1);
 assert.ok(strip(row).includes('<span class="ham-seg-t">PR in progress</span>') && strip(row).includes('title="Covered by PR'), 'the issue draws its own 040 stage (lit at the PR column): ' + strip(row));
 assert.deepStrictEqual(elsewhere(row), [{ title: 'PR #14921 covers this issue too; its row is drawn under #14910', text: '↳ #14921 · under #14910' }]);
-assert.ok(!strip(row).includes('<span class="ham-detour">Fixing</span>'), 'no second lit Fixing pill');
+assert.ok(!/<span class="ham-detour">(?:Fixing|Remediating)<\/span>/.test(strip(row)), 'no second lit remediation pill');
 assert.ok(tooltip(row).includes('Covering PR: #14921'), 'the row tooltip still names the covering PR');
 
 // Several PRs: the ones drawn here are sorted and drawn, the rest become chips.

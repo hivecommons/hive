@@ -129,6 +129,24 @@ const livePR = extra => ({ kind: 'pr', head: 'head', stage: 50, modifiers: [], .
 
 const actions = fs.readFileSync(path.join(root, 'tracker-actions.js'), 'utf8');
 
+test('remediation wording preserves native identifiers, source names and waiting semantics', () => {
+  for (const caption of ['Fixing · FixingBot', 'Remediating · FixingBot']) {
+    const code = activity('fixing', caption, true);
+    const item = livePR({ stage: 70, display_column: 30, title: 'Fixing a widget — public PR title', code_activity: code });
+    const current = physicalTracks(item).cells[3];
+    assert.match(current, /Remediating · FixingBot/);
+    assert.match(current, /data-motion="active"/);
+    assert.equal(code.state, 'fixing', 'internal state stays stable');
+    assert.equal(code.caption, caption, 'rendering does not rewrite recorded source evidence');
+    assert.equal(item.title, 'Fixing a widget — public PR title');
+    code.observed_at = new Date(now - 300000).toISOString();
+    const stale = physicalTracks(item).cells[3];
+    assert.doesNotMatch(stale, /data-motion="active"/);
+    assert.match(stale, /Fix task assigned · activity unknown/);
+    assert.doesNotMatch(stale, /ham-detour[^>]*>Remediating/);
+  }
+});
+
 test('12:01 screenshot density preserves physical tracks for issue-only, one-to-one, multi-PR and PR-only rows', () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'webstatic/testdata/tracker-activity-density.json'), 'utf8'));
   const clock = Date.parse(fixture.clock);
@@ -223,10 +241,40 @@ test('decision pointer, focus and keyboard delegation retain the same accessible
   listeners.click(event());
   assert.deepEqual(opened.pop(), { button, pin: { focus: true } }, 'pointer activation preserves the native decision action path');
   let hidden = 0;
-  const openExisting = new Function('hideConfigTooltip', 'let _stageTrackerDecisionPop = { key: "hivecommons/hive/pr#7", timer: 0 };\n' + fn(actions, 'stageTrackerOpenDecisionPop') + ';return stageTrackerOpenDecisionPop;')(() => { hidden++; });
+  let actionFocused = 0;
+  const action = { focus() { actionFocused++; } };
+  const dialog = { querySelector() { return action; } };
+  const openExisting = new Function('hideConfigTooltip', 'dialog', 'let _stageTrackerDecisionPop = { key: "hivecommons/hive/pr#7", timer: 0, el: dialog };\n' + fn(actions, 'stageTrackerOpenDecisionPop') + ';return stageTrackerOpenDecisionPop;')(() => { hidden++; }, dialog);
   openExisting(button, false);
   openExisting(button, true);
   assert.equal(hidden, 2, 'opening or focusing even an existing decision cancels stale/pending shared tooltips');
+  for (const key of ['ArrowDown', 'Enter', ' ']) {
+    openExisting(button, { focus: true });
+    assert.ok(actionFocused > 0, key + ' enters an already-open hover/focus dialog');
+  }
+  assert.equal(actionFocused, 3, 'existing-dialog fast path honors each keyboard focus request');
+});
+
+test('canonical activity browser wiring is retained (not browser/visual proof)', () => {
+  const harness = fs.readFileSync(path.join(__dirname, '../../scripts/dashboard-mobile-shots.mjs'), 'utf8');
+  const fixture = fs.readFileSync(path.join(__dirname, '../../scripts/fixtures/dashboard-activity-density.mjs'), 'utf8');
+  assert.match(harness, /ACTIVITY_DESKTOP_WIDTHS = \[2400, 1440, 1110, 1024\]/);
+  for (const name of ['tracker-header-geometry', 'tracker-decision-interaction', 'native-CDP-pointer-keyboard']) {
+    assert.ok(harness.includes(name), name + ' stays wired into the existing canonical browser run');
+  }
+  assert.match(harness, /Input\.dispatchMouseEvent/);
+  assert.match(harness, /Input\.dispatchKeyEvent/);
+  assert.match(harness, /preparationRailLayoutFixture\.toString/);
+  assert.match(harness, /if \(activityFailures\.length\) throw new Error/);
+  assert.match(harness, /activity-probes\.json/);
+  assert.match(harness, /generatedAssetSHA256/);
+  assert.match(fixture, /stageTrackerRowHtml\(item, stages, ctx\)/);
+  assert.match(fixture, /stageTrackerRowNode\(row\.key, row\.html\)/);
+  assert.match(fixture, /stageTrackerPreparationVisualSync/);
+  assert.match(fixture, /stageTrackerPreparationInlineRows/);
+  assert.match(fixture, /stageTrackerWireRowActions\(panel\)/);
+  assert.match(fixture, /fix-dispatch\+successful-edit\+verified-git-worktree/);
+  assert.match(fixture, /__activityDensityCleanup/);
 });
 
 test('browser probes require a dedicated preview and cannot count offscreen header controls as success', async () => {
@@ -291,7 +339,7 @@ test('Hive #16268 shape: held native Fixing waits for a fixer in the CI/Review p
   assert.match(cells.review, /done ham-current/);
   assert.match(cells.review, /Waiting for fixer · no code work observed/);
   assert.match(cells.review, /Held by @hanthor · Maintainer hold/);
-  assert.doesNotMatch(cells.rendered, /data-motion=|>Fixing ·/);
+  assert.doesNotMatch(cells.rendered, /data-motion=|>(?:Fixing|Remediating) ·/);
   assert.equal(item.stage, 70);
   assert.deepEqual(item.modifiers, ['hold']);
 });
@@ -335,7 +383,7 @@ test('genuine current-head source work still lights PR in progress; fix assignme
   const code = activity('fixing', 'Fixing · observed-fixer', true);
   const coding = physicalTracks(livePR({ stage: 70, display_column: 30, code_activity: code }));
   assert.match(coding.cells[3], /class="ham-seg active detoured"[^]*data-motion="active"/);
-  assert.match(coding.cells[3], /Fixing · observed-fixer/);
+  assert.match(coding.cells[3], /Remediating · observed-fixer/);
   assert.doesNotMatch(coding.ci + coding.review, /ham-current|aria-current/);
   const assigned = physicalTracks(livePR({
     stage: 70, display_column: 50,
@@ -418,7 +466,7 @@ function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
   const html = render(item, [{ number: 30, short: 'PR in progress' }, { number: 50, short: 'CI / Review' }, { number: 70, short: 'Fixing', branch_from: 50 }], null, now, {});
   assert.equal((html.match(/<li /g) || []).length, 8, 'one PR strip, seven visible columns plus history');
   assert.equal((html.match(/data-motion="active"/g) || []).length, 3);
-  assert.match(html, /ham-detour[^>]*>Fixing · fixer/);
+  assert.match(html, /ham-detour[^>]*>Remediating · fixer/);
   assert.match(html, /data-track="review"[^]*Review working · reviewer/);
   item.code_activity.observed_at = new Date(now - 300000).toISOString();
   const stale = render(item, stages, null, now, {});
