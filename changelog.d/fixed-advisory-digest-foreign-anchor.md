@@ -1,0 +1,1 @@
+- Advisory digest: when the newest digest comment on the advisory issue is not App-authored, re-pin to the App's own digest comment (or create one) and persist that anchor; log the foreign-comment warning once per issue per process (Debug thereafter) with the action taken, and skip the edit when the digest's material content is unchanged for the anchor.
