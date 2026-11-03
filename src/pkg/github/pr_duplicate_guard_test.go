@@ -162,7 +162,7 @@ func (g *guardServer) start(t *testing.T) *httptest.Server {
 		case r.Method == "GET" && strings.HasSuffix(path, "/comments"):
 			out := []map[string]any{}
 			for i, body := range g.existingComments {
-				out = append(out, map[string]any{"id": i + 1, "body": body})
+				out = append(out, map[string]any{"id": i + 1, "body": body, "user": map[string]any{"login": "hive-app[bot]", "type": "Bot"}})
 			}
 			enc(w, out)
 		case r.Method == "GET" && strings.Contains(path, "/issues/"):

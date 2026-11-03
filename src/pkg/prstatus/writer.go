@@ -65,8 +65,9 @@ var (
 // computed from the section is recomputed on the fresh body, so a section
 // another writer (or another hive) added in between survives. After a
 // create, and whenever more than one status comment is found, the
-// duplicates are reconciled: their sections are merged into the oldest and
-// the newer hive-authored copies deleted.
+// duplicates are reconciled: their sections are merged into the oldest
+// hive-authored comment and the other hive-authored copies deleted. A
+// comment the hive did not author is never edited or deleted.
 func Write(ctx context.Context, f Forge, item, key, text string) (WriteResult, error) {
 	unlock := lockItem(item)
 	defer unlock()
@@ -75,11 +76,17 @@ func Write(ctx context.Context, f Forge, item, key, text string) (WriteResult, e
 	if err != nil {
 		return res, err
 	}
-	if len(status) == 0 {
+	if len(ownStatus(status)) == 0 {
 		if strings.TrimSpace(text) == "" {
 			return res, nil
 		}
-		if err := f.CreateComment(ctx, Upsert("", key, text)); err != nil {
+		// Foreign status comments are merged from but never edited, so a
+		// hive-owned comment is created to carry the merged sections.
+		bodies := make([]string, 0, len(status))
+		for _, c := range status {
+			bodies = append(bodies, c.Body)
+		}
+		if err := f.CreateComment(ctx, Upsert(Merge(bodies...), key, text)); err != nil {
 			return res, err
 		}
 		res.Created = true
@@ -93,11 +100,12 @@ func Write(ctx context.Context, f Forge, item, key, text string) (WriteResult, e
 		if status, err = listStatusComments(ctx, f); err != nil {
 			return res, err
 		}
-		if len(status) == 0 {
-			return res, ErrStatusCommentGone
-		}
 	}
-	target := status[0]
+	own := ownStatus(status)
+	if len(own) == 0 {
+		return res, ErrStatusCommentGone
+	}
+	target := own[0]
 	edited, err := editCompareAndRetry(ctx, f, target.ID, target.Body, func(cur string) string {
 		return Upsert(cur, key, text)
 	})
@@ -105,8 +113,8 @@ func Write(ctx context.Context, f Forge, item, key, text string) (WriteResult, e
 	return res, err
 }
 
-// Reconcile merges every status comment on the item into the oldest and
-// deletes the newer hive-authored copies, under the same per-item lock as
+// Reconcile merges every status comment on the item into the oldest
+// hive-authored one and deletes the other hive-authored copies, under the same per-item lock as
 // Write. It is a no-op when the item has at most one status comment.
 func Reconcile(ctx context.Context, f Forge, item string) (WriteResult, error) {
 	unlock := lockItem(item)
@@ -121,9 +129,18 @@ func reconcile(ctx context.Context, f Forge, res *WriteResult) error {
 	if err != nil || len(status) < 2 {
 		return err
 	}
-	oldest, newer := status[0], status[1:]
-	others := make([]string, 0, len(newer))
-	for _, c := range newer {
+	own := ownStatus(status)
+	if len(own) == 0 {
+		return nil
+	}
+	oldest := own[0]
+	var newer []Comment
+	others := make([]string, 0, len(status)-1)
+	for _, c := range status {
+		if c.ID == oldest.ID {
+			continue
+		}
+		newer = append(newer, c)
 		others = append(others, c.Body)
 	}
 	edited, err := editCompareAndRetry(ctx, f, oldest.ID, oldest.Body, func(cur string) string {
@@ -143,6 +160,17 @@ func reconcile(ctx context.Context, f Forge, res *WriteResult) error {
 		res.Deleted++
 	}
 	return nil
+}
+
+// ownStatus returns the hive-authored comments of status, keeping order.
+func ownStatus(status []Comment) []Comment {
+	var out []Comment
+	for _, c := range status {
+		if c.Own {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // editCompareAndRetry edits comment id to compute(body), where body is the

@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -3595,6 +3596,8 @@ type GitHubConfig struct {
 	// the author and every watcher; editing an existing comment does not.
 	// See GitHubNotificationsConfig.
 	Notifications GitHubNotificationsConfig `yaml:"notifications,omitempty" json:"notifications,omitempty"`
+	// Attention is an opt-in, single-admitter condition episode ledger.
+	Attention attention.Config `yaml:"attention,omitempty" json:"attention,omitempty"`
 	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
 	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
 	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be
@@ -8336,6 +8339,10 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+
+	// HumanMergePinOnly stages opt-in pin-only policy. Admission wiring must
+	// independently prove trusted identity, exact-head evidence and upstream review.
+	HumanMergePinOnly map[string]PinOnlyException `yaml:"human_merge_pin_only,omitempty" json:"human_merge_pin_only,omitempty"`
 	// HumanMergeTitlePrefixes lists title prefixes (matched after trimming
 	// the title) that mark a PR as one the owner merges by hand; no lane and
 	// no merge train merges it (hivecommons/hive#15442). Unset means the

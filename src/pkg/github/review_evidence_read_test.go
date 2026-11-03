@@ -255,7 +255,7 @@ func newEvidenceMergeServer(t *testing.T, f *evidenceMergeFixture) *httptest.Ser
 			}
 			out := []map[string]any{}
 			for i, c := range f.comments {
-				out = append(out, map[string]any{"id": i + 1, "body": c})
+				out = append(out, map[string]any{"id": i + 1, "body": c, "user": map[string]any{"login": "hive-app[bot]", "type": "Bot"}})
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/comments/"):

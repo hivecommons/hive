@@ -312,6 +312,50 @@ func TestWriteNeverDeletesForeignStatusComment(t *testing.T) {
 	}
 }
 
+// A status marker a person pasted is never the edit target, even when it is
+// the oldest status comment: the oldest hive-owned one is edited instead.
+func TestWriteEditsOldestOwnedNotForeignStatusComment(t *testing.T) {
+	f := &fakeForge{}
+	foreignBody := Upsert("", "pasted", "by a person")
+	foreign := f.add(foreignBody, false)
+	own := f.add(Upsert("", "a", "a"), true)
+	res, err := Write(context.Background(), f, ItemKey("o/r", 9), "b", "b")
+	if err != nil || res.Created || !res.Edited || res.Deleted != 0 {
+		t.Fatalf("Write = %+v, %v", res, err)
+	}
+	for _, c := range f.comments {
+		switch c.ID {
+		case foreign:
+			if c.Body != foreignBody {
+				t.Fatalf("foreign comment was rewritten:\n%s", c.Body)
+			}
+		case own:
+			if sectionCount(c.Body, "b") != 1 || sectionCount(c.Body, "a") != 1 {
+				t.Fatalf("owned comment not updated:\n%s", c.Body)
+			}
+		}
+	}
+}
+
+// With only a foreign status comment the writer creates its own, merging
+// from the foreign one and leaving it in place.
+func TestWriteCreatesOwnedCommentWhenOnlyForeignStatusExists(t *testing.T) {
+	f := &fakeForge{}
+	foreignBody := Upsert("", "pasted", "by a person")
+	f.add(foreignBody, false)
+	res, err := Write(context.Background(), f, ItemKey("o/r", 10), "b", "b")
+	if err != nil || !res.Created || res.Edited || res.Deleted != 0 {
+		t.Fatalf("Write = %+v, %v", res, err)
+	}
+	if len(f.comments) != 2 || f.comments[0].Body != foreignBody {
+		t.Fatalf("foreign comment must be left untouched: %+v", f.comments)
+	}
+	got := f.comments[1].Body
+	if !f.comments[1].Own || sectionCount(got, "b") != 1 || sectionCount(got, "pasted") != 1 {
+		t.Fatalf("new owned comment wrong: %+v", f.comments[1])
+	}
+}
+
 func TestWriteEmptyTextWithoutCommentWritesNothing(t *testing.T) {
 	f := &fakeForge{}
 	res, err := Write(context.Background(), f, ItemKey("o/r", 8), "a", "  ")
