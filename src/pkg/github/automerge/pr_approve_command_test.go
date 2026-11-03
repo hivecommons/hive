@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -89,6 +90,56 @@ func TestPRApproveReply(t *testing.T) {
 				}
 				return
 			}
+			if err != nil || !strings.Contains(reply, tc.want) {
+				t.Fatalf("reply=%q err=%v, want %q", reply, err, tc.want)
+			}
+		})
+	}
+}
+
+// /approve applies the same pin-only exception as the sweep gate (#16266):
+// a qualifying pin bump by a trusted author is not reported as manual-only,
+// and anything the sweep would hold still is.
+func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
+	pin := "@@ -1 +1 @@\n-" + testPinOldLine + "\n+" + testPinNewLine
+	for _, tc := range []struct {
+		name, patch string
+		trusted     []string
+		want        string
+	}{
+		{name: "trusted pure pin", patch: pin, trusted: []string{testHiveAppBotLogin}, want: "does not consume it on a pull request"},
+		{name: "untrusted author", patch: pin, trusted: []string{"someone-else"}, want: "requires a person to merge manually"},
+		{name: "missing patch", trusted: []string{testHiveAppBotLogin}, want: "requires a person to merge manually"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("feedback must not mutate: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				switch r.URL.Path {
+				case "/repos/acme/widget/pulls/7":
+					json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), ChangedFiles: gh.Ptr(1), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}})
+				case "/repos/acme/widget/pulls/7/files":
+					json.NewEncoder(w).Encode([]*gh.CommitFile{{Filename: gh.Ptr("sensitive/build.yml"), Status: gh.Ptr("modified"), Additions: gh.Ptr(1), Deletions: gh.Ptr(1), Patch: gh.Ptr(tc.patch)}})
+				default:
+					t.Errorf("unexpected read: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer api.Close()
+			client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			client.SetAppBotLogin(testHiveAppBotLogin)
+			e := New(client, Options{
+				MergerAuthorizer:     func(login string) bool { return login == "owner" },
+				HumanMergePaths:      func(string) []string { return []string{"sensitive/**"} },
+				RepoAutoMergeEnabled: func(string) bool { return true },
+				HumanMergePinOnly: pinOnlyFor("acme/widget", config.PinOnlyException{
+					Enabled: true, Paths: []string{"sensitive/*.yml"}, Kinds: []string{"action-sha"}, TrustedAuthors: tc.trusted,
+				}),
+			})
+			reply, err := e.PRApproveReply(context.Background(), "acme/widget", 7, &gh.IssueComment{Body: gh.Ptr("/hive approve"), User: &gh.User{Login: gh.Ptr("owner"), Type: gh.Ptr("User")}})
 			if err != nil || !strings.Contains(reply, tc.want) {
 				t.Fatalf("reply=%q err=%v, want %q", reply, err, tc.want)
 			}
