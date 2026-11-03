@@ -409,7 +409,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 // exit status 243. "Skip until next version" persists in each agent's
 // CODEX_HOME, so the prompt is answered once per agent and does not recur.
 // Updating the CLI belongs to the image build, not to a running agent.
-const codexUpdatePromptLabel = "codex update prompt"
+const codexUpdatePromptLabel = panesignal.CodexUpdatePromptLabel
 
 // watchForTrustPromptForAgent monitors a tmux session for startup-blocking
 // modal prompts using the agent's tmux socket, and answers each with the
