@@ -1,0 +1,1 @@
+- Activity monitor: stage chevrons are again only as tall as their caption (one line of text → a one-line chevron, two lines → two, never more) with the caption centred instead of flush-left in a fixed two-line box, and the CI / Review lanes are notched chevrons like the other stages (state shown by fill and text colour) rather than bordered boxes.

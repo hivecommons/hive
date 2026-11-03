@@ -145,6 +145,21 @@ test('spans share the physical lane grid, including independent concurrent CI/Re
   assert.match(ctx.stageTrackerHeadColsHtml(['PR']), /data-ham-pr-start="5"/, 'boundary derives from canonical stages, not a second hard-coded span');
 });
 
+test('chevron height is content-driven (one-line floor, two-line clamp) and the caption stays centred', () => {
+  const strip = rule('.ham-strip[aria-label="Pipeline progress"]');
+  const seg = rule('.ham-strip[aria-label="Pipeline progress"] > .ham-seg');
+  const copy = rule('.ham-chevron-copy');
+  assert.match(strip, /grid-auto-rows: minmax\(calc\(var\(--ham-chevron-line-height\) \* 1em \+ 2 \* var\(--sp-2\) \+ 2 \* var\(--line-width\)\), auto\)/,
+    'rows size to their tallest caption above a one-line floor');
+  assert.doesNotMatch(strip, /grid-auto-rows: calc\(var\(--ham-chevron-text-lines\)/, 'no fixed two-line row height around one line of text');
+  assert.match(seg, /align-self: stretch/);
+  assert.doesNotMatch(seg, /height: 100%/, 'siblings follow the row, the row follows its content');
+  assert.match(copy, /max-height: calc\(var\(--ham-chevron-text-lines\) \* var\(--ham-chevron-line-height\) \* 1em\)/, 'the two-line clamp stays');
+  assert.match(copy, /flex: 0 1 auto/, 'the copy shrink-wraps its text so justify-content: center centres it');
+  assert.match(copy, /text-align: center/, 'a wrapped second line is centred under the first');
+  assert.match(rule('.ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision'), /align-items: center; justify-content: center/);
+});
+
 test('long metadata wraps in bounded slots and the narrow layout resets both grid axes', () => {
   assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr'), /flex-wrap: wrap/);
   assert.match(rule('.ham-head-cols .ham-seg.cap .ham-badges'), /flex-wrap: wrap/);

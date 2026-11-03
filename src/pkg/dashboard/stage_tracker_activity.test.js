@@ -545,8 +545,15 @@ test('genuine current-head source work still lights PR in progress; fix assignme
 
 test('current-phase styling is steady and undimmed, including compact/reduced-motion layouts', () => {
   const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
-  assert.match(css, /\.ham-activity-track\.ham-current \{[^}]*opacity: 1;[^}]*box-shadow:/);
+  assert.match(css, /\.ham-activity-track\.ham-current \{[^}]*opacity: 1;[^}]*box-shadow: none/);
   assert.match(css, /\.ham-activity-track\.ham-current:not\(\.active\) \{ background: color-mix/);
+  // Lanes are chevrons like every other stage (#16384's boxed card is
+  // gone): no clip-path opt-out, no border/ring; state is fill and colour.
+  assert.doesNotMatch(css, /\.ham-activity-track \{/, 'no activity-track rule overrides the .ham-seg chevron shape');
+  for (const block of css.match(/\.ham-(?:seg\.)?ham-activity-track[^{]*\{[^}]*\}/g)) {
+    assert.doesNotMatch(block, /clip-path|border(?!-radius)|box-shadow: inset/, block);
+  }
+  assert.match(css, /\.ham-seg\.ham-activity-track\[data-activity-state="failing"\], \.ham-seg\.ham-activity-track\[data-activity-state="changes_requested"\] \{ background: color-mix\(in srgb, var\(--amber\) \d+%, var\(--panel\)\); color: var\(--amber\);/);
   const current = css.match(/\.ham-activity-track\.ham-current \{([^}]*)\}/)[1];
   assert.doesNotMatch(current, /animation|data-motion/);
   assert.ok(css.indexOf('.ham-activity-track.ham-current {') > css.indexOf('.ham-seg.todo {'), 'current occupancy overrides generic upcoming-track dimming');
