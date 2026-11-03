@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -16,6 +17,11 @@ import (
 // been re-checked for several beats means the hub stopped asking — the
 // upgrade was cancelled or superseded — and kicks must not stay withheld.
 const selfUpgradeDrainStaleAfter = 3 * heartbeatSendInterval
+
+// restartAnnounceSettle is how long the SIGTERM hook lets the SSE handler
+// goroutines flush the "upgrading" frame before the next hook runs
+// (#15788). One write on already-open sockets; well inside the grace period.
+const restartAnnounceSettle = 100 * time.Millisecond
 
 // selfUpgradeDrainNow is the drain clock, a seam for tests.
 var selfUpgradeDrainNow = time.Now
@@ -271,7 +277,8 @@ func agentKicksInFlight(statuses map[string]*crux.Process, processStart, now tim
 }
 
 // wedgedKickNotices remembers which wedged kicks were already logged, so the
-// per-heartbeat upgrade check warns once per kick instead of every beat.
+// per-heartbeat upgrade check only mentions a kick in the single per-pass
+// warning the first time it is seen, instead of repeating it every beat.
 type wedgedKickNotices struct {
 	mu     sync.Mutex
 	logged map[string]time.Time
@@ -318,4 +325,18 @@ func upgradeDrainUntilForHeartbeat(now time.Time) string {
 		return deadline.UTC().Format(time.RFC3339)
 	}
 	return ""
+}
+
+// wedgedKickSummaries describes each kick in wedged as one string, for log
+// attributes.
+func wedgedKickSummaries(wedged []wedgedKick) []string {
+	if len(wedged) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(wedged))
+	for _, w := range wedged {
+		out = append(out, fmt.Sprintf("%s kick_at=%s age=%s ceiling=%s",
+			w.Agent, w.KickAt.UTC().Format(time.RFC3339), w.Age.Round(time.Second), w.Ceiling))
+	}
+	return out
 }

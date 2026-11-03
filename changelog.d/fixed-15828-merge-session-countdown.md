@@ -1,0 +1,1 @@
+- Activity monitor merge notifications survive reloads without replaying delivered merges, resolve audit events for vanished rows, and cancel their countdown when evicted from the banner stack.

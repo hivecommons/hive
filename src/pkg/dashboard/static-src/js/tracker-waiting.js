@@ -27,8 +27,9 @@
     // older spoke sends items without the header block.
     function stageTrackerWaitingOnYou(d) {
       const w = d && d.waiting_on_human;
-      if (w && Array.isArray(w.items)) return { count: Number(w.count) || w.items.length, items: w.items };
-      const items = (Array.isArray(d?.items) ? d.items : []).filter(it => it && it.waiting_on_you && !it.nested_under)
+      if (w) return { count: Array.isArray(w.items) && Number.isSafeInteger(w.count) && w.count >= 0 ? w.count : null, items: Array.isArray(w.items) ? w.items : [] };
+      if (!Array.isArray(d?.items)) return { count: null, items: [] };
+      const items = d.items.filter(it => it && it.waiting_on_you && !it.nested_under)
         .map(it => ({ repo: it.repo, number: it.number, type: it.kind, kind: it.wait_kind || 'other-human-wait', since: it.stage_since, who: 'operator' }));
       return { count: items.length, items };
     }
@@ -50,15 +51,21 @@
 
     // Sidebar badge + topbar pill. Called from renderStageTracker on every
     // payload; the pill hides at zero, the badge keeps data-zero.
-    function stageTrackerRenderWaiting(d, nowMs) {
+    function stageTrackerRenderWaiting(d, nowMs, live = true) {
       const w = stageTrackerWaitingOnYou(d);
-      const title = stageTrackerWaitingTitle(w, nowMs);
       const badge = document.getElementById('activity-monitor-waiting-badge');
+      if (w.count === null) {
+        navCountDelta(badge, null);
+        _stageTrackerWaitingPrevCount = null;
+        return;
+      }
+      const title = stageTrackerWaitingTitle(w, nowMs);
       if (badge) {
         badge.textContent = String(w.count);
         badge.title = title;
         badge.setAttribute('aria-label', w.count + ' waiting on you');
         if (w.count) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', '');
+        navCountDelta(badge, w.count, w.count + ' waiting on you', live);
       }
       const pill = document.getElementById('oc-waiting-on-you');
       if (pill) {

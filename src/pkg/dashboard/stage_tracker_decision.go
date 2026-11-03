@@ -237,6 +237,12 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 		// person's to end (Adopt now / Reroute) — hivecommons/hive#15038.
 		return decisionForWaitingOnContributor(it, held, now)
 	case it.Kind == "pr" && it.AuthorKind == authorKindHuman && slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage):
+		if stageTrackerPushPending(it) {
+			// The author pushed and CI / the re-review for the new head
+			// still run: nothing to decide until the hive has looked
+			// (hivecommons/hive#16021).
+			return nil
+		}
 		return decisionForWaitingOnAuthor(it, held)
 	case stageTrackerNeedsHuman(it) || (held && stageTrackerNeedsHuman(stageTrackerWithoutHold(it))):
 		// Flagged for a person by a stage/kind pairing none of the cases

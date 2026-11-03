@@ -1,0 +1,1 @@
+- Discord notifications and RFC notices no longer ping @everyone or roles from untrusted text such as issue titles

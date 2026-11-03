@@ -99,7 +99,7 @@ text**, by two independent mechanisms:
 **The readiness gate before the next kick.**
 `waitForInputPromptForAgent` (`src/crux/agent/manager_tmux.go:496`) polls
 `captureTmuxPaneForAgent` and returns once `paneShowsInputPrompt`
-(`src/crux/agent/manager_pane_signals.go:413`) matches a per-backend marker string. `SendKick`
+(`src/crux/agent/panesignal/panesignal.go:193`) matches a per-backend marker string. `SendKick`
 calls it at `src/crux/agent/manager_kick.go:203`. This gate is the only thing that
 stops hive typing a new prompt on top of an in-flight response.
 

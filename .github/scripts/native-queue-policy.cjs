@@ -22,6 +22,8 @@ const SHA = /^[a-f0-9]{40}$/;
 const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.*)?)$/i;
 const MAX_QUEUE_PAGES = 10;
 
+const closedNoop = (pr) => `PR #${pr.number} is closed; nothing to evaluate`;
+
 class PendingEvidence extends Error {}
 
 // A provider's inability to evaluate is not a negative sign-off verdict. It
@@ -189,14 +191,36 @@ function snapshot(members) {
   return JSON.stringify(members);
 }
 
-async function evaluate({ github, context }) {
+// A 5xx from GitHub is the API failing, not the evidence failing: three v5
+// PRs saw `GET .../check-runs - 500` in the same second (#16258) and the
+// bounded wait above threw on the first attempt. Retry it like pending
+// evidence; the loop still fails closed when it never clears. 4xx stays a
+// hard failure (missing refs and permissions do not fix themselves).
+function isTransientAPIError(error) {
+  const status = Number(error?.status);
+  return Number.isInteger(status) && status >= 500 && status <= 599;
+}
+
+async function evaluate(args) {
+  try {
+    return await evaluateOnce(args);
+  } catch (error) {
+    if (!isTransientAPIError(error)) throw error;
+    throw new PendingEvidence(`GitHub API ${error.status} (${error.message}); retrying`, { cause: error });
+  }
+}
+
+async function evaluateOnce({ github, context }) {
   const repo = context.repo;
   if (context.eventName === 'pull_request_target') {
     const event = context.payload.pull_request;
     const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
+    // Post-merge label/comment edits re-fire this event; a closed PR has nothing to gate.
+    if (pr.state === 'closed') return closedNoop(pr);
     assertEligible(pr, event.head.sha, event.base.ref);
     await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS);
     const { data: current } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
+    if (current.state === 'closed') return closedNoop(current);
     assertEligible(current, event.head.sha, event.base.ref);
     return `PR #${pr.number}: five existing policy providers succeeded on ${pr.head.sha}`;
   }
@@ -238,6 +262,7 @@ async function evaluate({ github, context }) {
 
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
-  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, evaluate,
+  PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
+  isTransientAPIError,
   ProviderUnavailable,
 };

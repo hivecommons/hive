@@ -284,6 +284,32 @@ func (s *Server) RefreshSelfEditedItem(repo string, number int, isPR bool) {
 	s.trackerRefresher().enqueue([]trackerRefreshKey{{repo: repo, number: number, pr: isPR}}, selfEditDeliveryID)
 }
 
+// selfMergeDeliveryID tags the snapshot patch a hive-performed merge
+// applies the moment the merge call returns (hivecommons/hive#15808).
+const selfMergeDeliveryID = "self:merge"
+
+// noteMergeAttempt is the merge-attempt registry's change hook
+// (github.MergeAttempts.SetOnChange). Every change nudges open tabs so the
+// row reads "Merging" within one SPA poll instead of waiting for the next
+// enumerate; a merge that landed also patches the cached snapshot the way
+// a webhook `closed` read would — the row leaves as merged and the merged
+// ledger records it — so the celebration does not depend on the webhook
+// arriving, whichever lane (self-authored, trusted-author, contributor,
+// relay, dashboard) performed the merge (hivecommons/hive#15808).
+func (s *Server) noteMergeAttempt(a github.MergeAttempt) {
+	if s == nil {
+		return
+	}
+	if a.Merged && !a.EndedAt.IsZero() {
+		snap := github.WebhookItemSnapshot{Repo: a.Repo, Number: a.Number, IsPR: true, State: "closed", Merged: true,
+			MergedByHive: true, MergedAt: a.EndedAt, UpdatedAt: a.EndedAt, HeadSHA: a.Head, FetchedAt: a.EndedAt, DeliveryID: selfMergeDeliveryID}
+		if s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{snap}) > 0 {
+			return
+		}
+	}
+	s.invalidateStageTrackerForWebhook()
+}
+
 // evictClosedWebhookItem applies the one payload fact the tracker trusts
 // without a confirming read: the item the delivery embeds is closed or
 // merged. Every `issues`, `issue_comment` and `pull_request*` payload carries
@@ -353,6 +379,7 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) i
 		return 0
 	}
 	s.recordMergedSnapshots(snaps)
+	s.noteClosedSnapshots(snaps)
 	s.notePushedSnapshots(snaps)
 	if s.deps != nil && s.deps.ApplyWebhookItems != nil {
 		s.deps.ApplyWebhookItems(snaps)

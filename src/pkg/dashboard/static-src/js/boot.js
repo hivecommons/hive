@@ -14,15 +14,64 @@
 // The class is set here, before first paint, so the chrome never flashes.
 // Tracker sounds are on by default in kiosk mode (the streamer captures them
 // through a PulseAudio null sink); `&sound=off` keeps the display silent.
+// Pop-out mode (#15829): `?popout=1` is the same chrome-less, tracker-only
+// layout for an operator's second monitor — opened by the ⧉ button in the
+// activity monitor header via window.open. Unlike kiosk it is attended: the
+// cursor stays, the settings gear works, preferences persist as usual, and a
+// "Return to dashboard" link focuses the opener. Reloading keeps the layout
+// because the flag lives in the URL.
+// Display mode (#15925): `?display=1` is the same chrome-less layout for an
+// attended wall screen, entered from the 📺 header button. It is
+// presentation only: the cursor stays, sound keeps the user's setting, it
+// never writes layout or theme to localStorage, and it hides the row action
+// affordances. Kiosk wins when both flags are present.
+// Display options (#15931), honoured only together with display=1:
+// `density=tv` (the only value; anything else is ignored) sets
+// body.display-density-tv, a larger three-column wall layout, and `shift=1`
+// sets body.display-shift, an OLED burn-in shift. Without display=1 both are
+// ignored, so the ordinary dashboard and kiosk render exactly as before.
+// Pop-out and display mode also set body.ham-chromeless, the one class the
+// shared chrome-less layout in css/popout.css keys on (full screen adds it at
+// runtime); popout-mode and display-mode keep their view-specific rules.
 (function(){
-  var kiosk=false, sound=true;
-  try { kiosk=new URL(window.location.href).searchParams.get('kiosk')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  var kiosk=false, popout=false, display=false, view='', sound=true, density='', shift=false;
+  try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; view=u.searchParams.get('view'); popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
+  window.HIVE_MATRIX = kiosk && view === 'matrix';
+  if(window.HIVE_MATRIX){
+    document.body.classList.add('matrix-mode');
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
+  }
   window.HIVE_KIOSK=kiosk;
+  window.HIVE_POPOUT=popout&&!kiosk;
+  window.HIVE_DISPLAY=display&&!kiosk;
+  window.HIVE_DISPLAY_DENSITY=window.HIVE_DISPLAY?density:'';
+  window.HIVE_DISPLAY_SHIFT=window.HIVE_DISPLAY&&shift;
   window.HIVE_KIOSK_SOUND=kiosk&&sound;
+  // Kiosk call-to-action badge (#16236): shown in every kiosk view unless
+  // the URL says `cta=off`; never in the operator dashboard, pop-out or
+  // display mode. Pure so pkg/dashboard/kiosk_cta.test.js can run it.
+  window.hiveKioskCTAOn=function(href){
+    try { var q=new URL(href).searchParams; return q.get('kiosk')==='1' && q.get('cta')!=='off'; } catch(e) { return false; }
+  };
+  if(window.hiveKioskCTAOn(window.location.href)) document.body.classList.add('kiosk-cta-on');
   window.hiveKioskMode=function(){ return !!window.HIVE_KIOSK; };
+  window.hivePopoutMode=function(){ return !!window.HIVE_POPOUT; };
+  window.hiveDisplayMode=function(){ return !!window.HIVE_DISPLAY; };
   window.hiveKioskSoundOn=function(){ return !!window.HIVE_KIOSK_SOUND; };
   if(kiosk){
     document.body.classList.add('kiosk-mode');
+  }else if(window.HIVE_POPOUT){
+    document.body.classList.add('popout-mode');
+    document.body.classList.add('ham-chromeless');
+  }
+  if(kiosk||window.HIVE_POPOUT){
+    if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
+  }
+  if(window.HIVE_DISPLAY){
+    document.body.classList.add('display-mode');
+    document.body.classList.add('ham-chromeless');
+    if(window.HIVE_DISPLAY_DENSITY==='tv') document.body.classList.add('display-density-tv');
+    if(window.HIVE_DISPLAY_SHIFT) document.body.classList.add('display-shift');
     if(!location.hash) history.replaceState(null,'',location.pathname+location.search+'#section-activity-monitor-section');
   }
 })();

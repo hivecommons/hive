@@ -15,6 +15,35 @@ what `gh` command) lives in the
 
 ## Format
 
+### Historical PR observations and dispatch
+
+The closed-PR settle scan still lists current claims and records claim/churn
+history synchronously. A listing failure remains non-authoritative; deferred
+accounting never means a claim is clear. Only historical merge actor lookup,
+terminal audit/timeline observations, and terminal review reads run in the
+client's single lifecycle-bound accounting worker.
+
+The worker coalesces pending work by repository/PR and attempts at most eight
+observations per batch, with a ten-second cancellable API budget and a
+ten-second wake cadence. Failed work retains exponential retry backoff rather
+than being silently discarded. These are accounting bounds, not a promise
+that an uninterruptible filesystem sink finishes within ten seconds. A slow
+sink occupies the accounting worker, not the claim evaluation call stack.
+The `historical PR enrichment batch` log reports processed, failed, deferred,
+duration, budget, and limit.
+
+Pending accounting is in memory; after a restart or client credential rebuild
+the existing 72-hour terminal settle scan replays recent observations.
+This does not extend that historical
+recovery window or make the accounting queue an ownership authority.
+Timeline first sightings and corrected precious metadata still wait for atomic
+persistence. Identical replay does not increment counts or rewrite the file;
+dirty state after a failed save is retried. Atomic writers are serialized, but
+disk I/O no longer holds the journey reader mutex, and an older snapshot cannot
+acknowledge a concurrent unsaved update. New precious writers may still wait
+for an earlier disk writer, preserving their durability rather than reporting
+false completion.
+
 One JSON object per line (JSONL), append-only. Written by
 `pkg/dashboard/audit.go`.
 

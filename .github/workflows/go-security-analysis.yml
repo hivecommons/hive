@@ -46,6 +46,14 @@ name: Go Security Analysis
 # Same shape as dashboard/openapi.json in v2-tests.yml: guarded by a job whose
 # filter excluded it.
 on:
+  workflow_call:
+    inputs:
+      integration_candidate:
+        description: Run an installed immutable Integration-aware candidate with isolated read-only technical jobs.
+        type: boolean
+        default: false
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [v4, v5, v6]
     # release PRs touch only these; the required contexts must report — #10795
@@ -73,8 +81,8 @@ permissions:
 # Same discipline as v2-ci.yml: cancel superseded PR runs, never cancel a
 # push-to-branch run (keyed on run_id so each gets its own group).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ inputs.integration_candidate && 'integration-security' || github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ !inputs.integration_candidate && github.event_name == 'pull_request' }}
 
 # Build-cache isolation for the self-hosted pool (see
 # .github/scripts/go-cache-guard.sh). `job` gives each job its own GOCACHE
@@ -87,7 +95,7 @@ env:
 jobs:
   required-context-scope:
     name: required context scope
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
       run-go-security: ${{ steps.scope.outputs.run-go-security }}
@@ -99,6 +107,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          if [ "${{ inputs.integration_candidate }}" = true ] &&
+             { [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [[ "$GITHUB_REF" != refs/tags/hive-integration/* ]]; }; then
+            echo "::error::Integration candidates require an explicitly dispatched immutable candidate tag"
+            exit 1
+          fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "run-go-security=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -146,10 +159,12 @@ jobs:
     name: govulncheck (known vulnerabilities)
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -185,10 +200,12 @@ jobs:
     name: gosec (insecure patterns)
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # cache: false — the hive runners mount a persistent GOCACHE/GOMODCACHE;
       # setup-go's post-step would otherwise tar that multi-GB shared cache
@@ -215,7 +232,16 @@ jobs:
       # v0.25.0, which does not COMPILE under Go 1.25 ("invalid array length").
       # The failure looks like a scan failure but is a build failure in the
       # tool itself — do not downgrade to "fix" a finding.
+      - name: Restore pinned gosec binary
+        id: gosec-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/hive-ci-tools/gosec
+          key: hive-gosec-${{ runner.os }}-${{ runner.arch }}-v2.29.0-${{ hashFiles('src/go.mod') }}
       - name: Install gosec
+        if: steps.gosec-cache.outputs.cache-hit != 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/hive-ci-tools
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
 
       # -exclude-generated: generated files are not hand-maintained, so a
@@ -235,10 +261,28 @@ jobs:
       # of the triage issue #4903; do not flip it before the
       # HIGH-severity findings are resolved, and do not delete the step to make
       # the summary look clean.
+      #
+      # -concurrency 4: gosec defaults to runtime.NumCPU(), which in a runner
+      # pod is the NODE's 32 vCPUs, not the pod's 6-CPU limit
+      # (src/deploy/ci-runners/lke/hive-runners-lke-values.yaml). Each worker
+      # type-checks and builds SSA for its own package, so 32 at once can
+      # create memory pressure. This bounds a plausible contributor to the
+      # "runner lost communication" failures of #16040, not a proven OOM
+      # diagnosis. Keep this at or below the runner CPU limit
+      # (test-native-queue-workflows.py enforces it).
       - name: Scan
         working-directory: src
         continue-on-error: true
-        run: gosec -exclude-generated ./... ./crux/...
+        # The nested src/crux module is not loaded from here; it has its own
+        # "Scan crux module" step below.
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+
+      # src/crux is a nested Go module: the src/ scan above does not load it
+      # (0 "Checking file: .../src/crux/" lines), so scan it from its own root.
+      - name: Scan crux module
+        working-directory: src/crux
+        continue-on-error: true
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
 
   golangci-lint:
     needs: required-context-scope
@@ -247,10 +291,12 @@ jobs:
     name: golangci-lint
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -285,10 +331,12 @@ jobs:
     name: action pins resolve
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       # A fabricated 40-hex SHA looks exactly like a correct pin and is only
       # caught when the workflow RUNS. tagged-release.yml shipped one (#4908), so every
@@ -305,7 +353,7 @@ jobs:
     name: NOTICE matches the module graph
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     # WHY THIS JOB EXISTS: a CNCF General Technical Review asks how the
     # project ensures third-party attribution stays correct and complete. A
@@ -335,6 +383,8 @@ jobs:
     # exactly as it is on every run after.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       - name: Exercise NOTICE drift diagnostics
         run: src/scripts/test-check-notice-drift.sh

@@ -36,7 +36,7 @@ type KickDispatch struct {
 	QueuedAt time.Time `json:"queuedAt"`
 	// SettledAt is when the dispatch reached a terminal phase. Zero while
 	// pending.
-	SettledAt time.Time `json:"settledAt,omitempty"`
+	SettledAt time.Time `json:"settledAt,omitzero"`
 }
 
 // Pending reports whether this dispatch is still in flight — the state in

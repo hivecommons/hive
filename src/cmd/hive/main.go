@@ -57,6 +57,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/hubactivity"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
@@ -998,21 +999,7 @@ func (b *boot) wireBootClosures() {
 	}
 
 	b.leaderboardForHeartbeat = func() []spoke.LeaderboardEntry {
-		lb := b.dashSrv.LeaderboardForHub()
-		out := make([]spoke.LeaderboardEntry, len(lb))
-		for i, e := range lb {
-			out[i] = spoke.LeaderboardEntry{
-				GitHubUsername:  e.GitHubUsername,
-				AvatarURL:       e.AvatarURL,
-				TrustTier:       e.TrustTier,
-				TasksCompleted:  e.TasksCompleted,
-				TasksFailed:     e.TasksFailed,
-				Active:          e.Active,
-				CurrentTask:     e.CurrentTask,
-				StagesCompleted: e.StagesCompleted,
-			}
-		}
-		return out
+		return leaderboardForSpoke(b.dashSrv.LeaderboardForHub())
 	}
 
 	var ownerHeartbeatTokenPath string
@@ -1098,6 +1085,7 @@ func (b *boot) wireBootClosures() {
 			ReviewEvents:            b.reviewEvents,
 			WebhookWake:             b.webhookWakeFunc(),
 			SweepNudge:              b.sweepNudgeFunc(),
+			BasePreparation:         b.basePreparationReader(),
 			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
 			WebhookDelivery:         b.webhookDeliveryFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),
@@ -1794,6 +1782,9 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		TaskMCPLaunchToken: b.taskMCPLaunchTokenForAgents,
 		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
 		ExperimentEnv:      experimentAgentEnv(b.cfg, os.Getenv),
+		InferenceDefaultModel: func(backend string) string {
+			return b.cfg.Governor.DefaultInferenceModel(backend)
+		},
 	}
 	return true
 }
@@ -2214,21 +2205,22 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// its open-PR set and run on webhook events instead of listing /pulls.
 	forgeOpenPRs := b.forgeStateOpenPRs()
 	autoMergeOpts := automerge.Options{
-		Logger:                  b.logger,
-		MergerAuthorizer:        trustedMergerFunc(b.cfg),
-		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
-		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
-		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
-		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
-		ContributorRegistryTier: contributorRegistryTierFunc(),
-		ReviewVerdictHold:       reviewVerdictHoldFunc(b.logger),
-		RecordReviewHoldRelease: reviewHoldReleaseRecorder(b.logger),
-		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
-		StageEngine:             stageEngineOptions(b.cfg, b.logger),
-		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
-		SweepTrigger:            b.sweepTrigger,
-		MergeQueueBases:         hiveMergeQueueBases,
+		Logger:                   b.logger,
+		MergerAuthorizer:         trustedMergerFunc(b.cfg),
+		HumanChangeRequests:      review.DefaultHumanChangeRequests(),
+		TrustedAuthorizer:        trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:      trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:    contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict:   contributorLaneVerdictFunc(b.cfg, b.logger),
+		ContributorRegistryTier:  contributorRegistryTierFunc(),
+		ReviewVerdictHold:        reviewVerdictHoldFunc(b.logger),
+		RecordReviewHoldRelease:  reviewHoldReleaseRecorder(b.logger),
+		StageLabelPolicy:         stageLabelPolicyFunc(b.cfg),
+		StageEngine:              stageEngineOptions(b.cfg, b.logger),
+		SentinelLabel:            func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		SweepTrigger:             b.sweepTrigger,
+		MergeQueueBases:          hiveMergeQueueBases,
+		HiveSupersedingAutoMerge: func() bool { return b.cfg.AutoMerge.HiveSuperseding.AutoMergeEnabled() },
 	}
 	if forgeOpenPRs != nil {
 		autoMergeOpts.OpenPRs = forgeOpenPRs
@@ -2236,6 +2228,37 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
 	// here (see lateContributorNudgeSink).
 	autoMergeOpts.ContributorNudge = lateContributorNudgeSink{hub: func() *dashboard.ContributeWSHub { return b.dashSrv.ContributeHub() }}
+	autoMergeOpts.IntegrationExecution = func(ctx context.Context, repo string, pr *gh.PullRequest, gate automerge.IntegrationEligibilityGate) (automerge.IntegrationExecutionDecision, error) {
+		if b.dashSrv != nil {
+			return b.dashSrv.IntegrationExecutionRoute(ctx, repo, pr, gate)
+		}
+		execution := b.cfg.IntegrationOrchestration.Execution.Effective()
+		if execution.Mode == config.IntegrationEnforce {
+			if _, enrolled := execution.Scope(repo, pr.GetBase().GetRef()); enrolled {
+				return automerge.IntegrationExecutionDecision{Authority: "hold", Reason: "integration execution initializes before any selected-destination writer"}, nil
+			}
+		}
+		return automerge.IntegrationExecutionDecision{}, nil
+	}
+	autoMergeOpts.IntegrationAdmission = func(ctx context.Context, repo string, pr *gh.PullRequest) (string, error) {
+		if b.dashSrv != nil {
+			return b.dashSrv.IntegrationNativeAdmission(ctx, repo, pr)
+		}
+		return "", nil
+	}
+	autoMergeOpts.IntegrationFilesObserved = func(repo, head string, files []string) {
+		if b.dashSrv != nil {
+			b.dashSrv.IntegrationObserveFiles(repo, head, files)
+		}
+	}
+	autoMergeOpts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
+		q := b.cfg.AutoMerge.NativeMergeQueue
+		return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), Bases: q.BaseSet(),
+			SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
+	}
+	autoMergeOpts.IntegrationSelfAllowed = func() bool {
+		return b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(b.cfg.ACMMLevel)
+	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
 	// automerge_sweep.go): install the operator-declared
@@ -2341,6 +2364,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
+	autoMergeOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	// Commit messages on a merge-ready head are read for closing keywords
@@ -2375,6 +2399,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		}
 		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
 	}
+	autoMergeOpts.FixDispatchStatus = fixDispatchStatusReader()
 	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
 		if b.cfg == nil {
 			return automerge.DefaultMergeTrainPolicy
@@ -2415,6 +2440,20 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		return joinDone(relaysDone, sweepDone)
 	}, b.logger)
 	b.armRequestRelays(b.ghClient)
+	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
+		client := b.currentGitHubClient()
+		if client == nil {
+			return nil, "live normal-policy GitHub client unavailable", github.ErrNoGitHubClient
+		}
+		return automerge.New(client, autoMergeOpts).IntegrationEligibility(ctx, repo, base, number, head)
+	}
+	b.integrationPreparationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
+		client := b.currentGitHubClient()
+		if client == nil {
+			return nil, "live normal-policy GitHub client unavailable", github.ErrNoGitHubClient
+		}
+		return automerge.New(client, autoMergeOpts).IntegrationPreparationEligibility(ctx, repo, base, number, head)
+	}
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config
 	// (signing key + issuer + TTL) and attach it so each per-agent token refresh
@@ -2575,6 +2614,11 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
+	// The Matrix backlog survives a restart so the kiosk never blanks
+	// (#16276); the paired sentinel head map is set in
+	// applyGitHubClientConfigHooks.
+	b.dashSrv.SetMatrixPersistPath(matrixLinesStatePath)
+	b.dashSrv.SetIntegrationExecutionEvaluators(b.integrationPreparationEligibility, b.integrationEligibility)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
 	b.dashSrv.SetHotspotSource(hotspotDashSource{store: hotspotStore()})
@@ -2601,6 +2645,18 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// hub is not constructed until registerContributeRoutes runs, below.
 	b.preShutdownHooks.addUrgent("drain-contributor-websockets", func() {
 		b.dashSrv.DrainContributorsForShutdown()
+	})
+	// Tell the dashboard the pod is going down BEFORE the stream drops
+	// (#15788): an SSE "upgrading" event with phase=restarting and the
+	// target the hub armed (when known), so the operator sees the upgrade
+	// animation instead of a bare "reconnecting". Registered after the
+	// contributor drain with addUrgent so it runs first — the frame is one
+	// write on sockets that are already open, and the drain is what takes
+	// the time. restartAnnounceSettle gives the SSE handler goroutines a
+	// moment to flush before the hooks that follow race the grace period.
+	b.preShutdownHooks.addUrgent("announce-restart", func() {
+		b.dashSrv.AnnounceRestart(time.Now())
+		<-time.After(restartAnnounceSettle)
 	})
 	// Stop the contributor hub's background cleanup loop on the way out
 	// (#6272). On v4 this is a `defer dashSrv.CloseContributeHub()` in main();
@@ -2872,6 +2928,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
+	b.tokenCollector.SetClineHomesRoot("/data/home")
 	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
@@ -3592,7 +3649,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	b.dashSrv.InstallClaimHooks(gfiClaimHooks(b.ctx, b.cfg, b.gfiState(), ghClientFn, b.dashSrv, b.logger,
 		githubClaimHooks(b.ctx, b.cfg, ghClientFn, b.logger)))
 	b.dashSrv.SetGoodFirstIssueStats(func() any { return b.gfiState().sweeper.Stats() })
-	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
+	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient }, b.dashSrv.IntegrationClaimBlockReason)
 	releaseClaimsOnAgentRelaunch(b.agentMgr, b.dashSrv.IssueClaims, b.logger)
 	installContributorClaimGuard(b.cfg, b.dashSrv, b.logger)
 	// Forge App tab inventory: the resolved active key path and the per-app-id
@@ -3872,6 +3929,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		prevACMMLevel := b.cfg.ACMMLevelOrZero()
 		nextACMMLevel := prevACMMLevel
 		defer func() {
+			b.publishSweepConfig()
 			b.cfgReloadMu.Unlock()
 			if prevACMMLevel != nextACMMLevel {
 				b.onACMMLevelChanged(prevACMMLevel, nextACMMLevel)
@@ -4112,6 +4170,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// firing, so a later config reload that arms or disarms hooks is picked up
 	// without re-registering.
 	installGovernorModeChangeEmitter(b.gov)
+	b.installLaneParticipant()
 	installAgentPauseEmitter(b.agentMgr)
 
 	// Register custom GHE hostnames with the proxy allowlist so mode
@@ -5295,12 +5354,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						}
 						return 0
 					})
-					for _, w := range selfUpgradeWedgedKicks.fresh(wedged) {
-						b.logger.Warn("self-upgrade drain: ignoring wedged agent kick that never reported a turn end",
-							"agent", w.Agent,
-							"kick_at", w.KickAt.UTC().Format(time.RFC3339),
-							"age", w.Age.Round(time.Second),
-							"ceiling", w.Ceiling,
+					// One line per pass, not per agent: the fleet self-report
+					// slogfeed keys WARNs on the message alone, so a fleet-wide
+					// wedge must not count N times (#16079).
+					if fresh := selfUpgradeWedgedKicks.fresh(wedged); len(fresh) > 0 {
+						b.logger.Warn("self-upgrade drain: ignoring wedged agent kicks that never reported a turn end",
+							"agents", wedgedKickAgents(fresh),
+							"kicks", wedgedKickSummaries(fresh),
+							"count", len(fresh),
 						)
 					}
 					ignoredWedged := wedgedKickAgents(wedged)
@@ -5780,6 +5841,11 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// the hub will actually roll us to and renders the hub's schedule.
 				b.dashSrv.SetHubUpgradePolicy(p)
 			}),
+			spoke.UpgradeAnnounceCallback(func(a *spoke.UpgradeAnnounce) {
+				// The hub is about to roll (or has rolled) this pod itself
+				// (#15788): show the upgrade animation before the kill.
+				b.dashSrv.AnnounceUpgrade(*a, time.Now())
+			}),
 			spoke.VisibilityCallback(func(isPublic bool) {
 				if b.cfg.Hub.IsPublic != isPublic {
 					b.logger.Info("hub overrode visibility via heartbeat",
@@ -6081,25 +6147,43 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					RepoTargetMisconfigured: b.repoTargetMisconfigured(),
 					RepoTargetIssue:         b.repoTargetIssueMessage(),
 				}
-			}))
+			}),
+			// Hub-wide activity digest (#15963): built from the dashboard's
+			// memoised stage tracker; tracker publishes trigger coalesced
+			// activity-only updates. hub.activity is read per build.
+			spoke.ActivitySource{
+				Options: func() spoke.ActivityOptions {
+					return spoke.ActivityOptions{
+						Enabled:      b.cfg.Hub.Enabled && b.cfg.Hub.ActivityEnabled(),
+						MaxItems:     b.cfg.Hub.Activity.MaxItems,
+						SharePrivate: b.cfg.Hub.Activity.SharePrivate,
+					}
+				},
+				Items: func(ctx context.Context) ([]hubactivity.Item, bool) {
+					if b.dashSrv == nil {
+						return nil, false
+					}
+					return b.dashSrv.HubActivityItems(ctx)
+				},
+				// Snapshot supersedes Items and adds recent merges, from
+				// which the publisher derives merge events (#15964).
+				Snapshot: func(ctx context.Context) (hubactivity.Snapshot, bool) {
+					if b.dashSrv == nil {
+						return hubactivity.Snapshot{}, false
+					}
+					return b.dashSrv.HubActivitySnapshot(ctx)
+				},
+				Subscribe: func(notify func()) {
+					if b.dashSrv != nil {
+						b.dashSrv.OnStageTrackerPublish(notify)
+					}
+				},
+			})
 
 		if b.cfg.Hub.TaskStatusPushEnabled() {
 			deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
 				reg, active := b.dashSrv.ContributorSummary()
-				lb := b.dashSrv.LeaderboardForHub()
-				out := make([]spoke.LeaderboardEntry, len(lb))
-				for i, e := range lb {
-					out[i] = spoke.LeaderboardEntry{
-						GitHubUsername:  e.GitHubUsername,
-						AvatarURL:       e.AvatarURL,
-						TrustTier:       e.TrustTier,
-						TasksCompleted:  e.TasksCompleted,
-						TasksFailed:     e.TasksFailed,
-						Active:          e.Active,
-						CurrentTask:     e.CurrentTask,
-						StagesCompleted: e.StagesCompleted,
-					}
-				}
+				out := leaderboardForSpoke(b.dashSrv.LeaderboardForHub())
 				return &spoke.TaskStatusPayload{
 					HiveID:       b.cfg.HiveID,
 					Leaderboard:  out,
@@ -6236,6 +6320,7 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
+	b.noteBootPhase(bootPhaseFirstEval)
 	initialEvalInterval, initialMode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()), "eval_mode", initialMode)
 	lastEvalInterval := initialEvalInterval
@@ -6348,14 +6433,44 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	if err := waitForgeStateReady(b.ctx, b.forgeState.Load(), b.logger, forgeStateReadyLogInterval); err != nil {
 		return
 	}
+	loopNow := deps.now
+	if loopNow == nil {
+		loopNow = time.Now
+	}
+	b.cfgReloadMu.Lock()
+	b.publishSweepConfig()
+	b.cfgReloadMu.Unlock()
+	if deps.startSweeps != nil {
+		defer deps.startSweeps(b)()
+	}
+	// Cadence is measured from the start, including the first (often slow)
+	// enumerate pass, not from completion of startup evaluation.
+	lastEnumerateAt := loopNow()
+	b.cfgReloadMu.Lock()
+	initialTickStarted := time.Now()
 	b.evalCycles++
 	deps.runEval(b, nil, evalSourceEnumerate)
+	initialEvalDuration := time.Since(initialTickStarted)
+	// lastEnumerateAt is when the last reconcile pass started. Wake-driven
+	// cycles plan from the cached snapshot, and a busy spoke can be woken
+	// every few minutes for hours; the reconcile cadence must not depend on
+	// the ticker tick winning the select against those wakes
+	// (hivecommons/hive#15779). reconcileOverdue is the one check both the
+	// wake paths and the loop top consult.
+	reconcileOverdue := func(now time.Time) bool {
+		return lastEvalInterval > 0 && now.Sub(lastEnumerateAt) >= lastEvalInterval
+	}
+	initialRotationStarted := time.Now()
 	deps.runRotation(b)
+	initialRotationDuration := time.Since(initialRotationStarted)
 	if b.wd != nil {
 		b.wd.Tick(b.ctx)
 	}
-	deps.runSweeps(b)
 	deps.persist(b)
+	b.cfgReloadMu.Unlock()
+	b.logger.Info("governor tick complete", "tick_wall_s", time.Since(initialTickStarted).Seconds(),
+		"eval_s", initialEvalDuration.Seconds(), "rotation_s", initialRotationDuration.Seconds(), "sweeps_s", 0,
+		"source", evalSourceEnumerate.String(), "startup", true)
 
 	// tick is one governor pass. The cadence ticker runs it with
 	// evalSourceEnumerate (the reconcile pass that re-lists every repo). The
@@ -6364,7 +6479,18 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// gates, planning from the stored snapshot — already patched by the
 	// delivery's targeted re-read — so a wake costs no listing.
 	tick := func(source evalCycleSource) {
+		tickStarted := time.Now()
+		if now := loopNow(); source == evalSourceCached && reconcileOverdue(now) {
+			b.logger.Info("cached snapshot older than eval interval; enumerating",
+				"snapshot_age", now.Sub(lastEnumerateAt).Round(time.Second).String(),
+				"eval_interval_s", int(lastEvalInterval.Seconds()))
+			source = evalSourceEnumerate
+		}
+		if source == evalSourceEnumerate {
+			lastEnumerateAt = loopNow()
+		}
 		b.cfgReloadMu.Lock()
+		b.publishSweepConfig()
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
 			b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
@@ -6423,9 +6549,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		b.evalCycles++
+		evalStarted := time.Now()
 		deps.runEval(b, restarted, source)
+		evalDuration := time.Since(evalStarted)
+		rotationStarted := time.Now()
 		deps.runRotation(b)
-		deps.runSweeps(b)
+		rotationDuration := time.Since(rotationStarted)
 		// Trajectory review runs after the eval cycle (so kicks/intents are
 		// current) on its own cadence, gated by Due().
 		if b.trajLane != nil && b.trajLane.Due(time.Now()) {
@@ -6458,8 +6587,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			b.evalLoop.setInterval(effectiveEvalInterval, mode)
 		}
 		b.cfgReloadMu.Unlock()
+		b.logger.Info("governor tick complete", "tick_wall_s", time.Since(tickStarted).Seconds(),
+			"eval_s", evalDuration.Seconds(), "rotation_s", rotationDuration.Seconds(), "sweeps_s", 0,
+			"source", source.String())
 	}
 	b.startReviewEvents()
+	b.startMatrixIngest()
 
 	// Webhook health re-check: in webhook mode the base tick (900s) is longer
 	// than the health window (2 × eval_interval_s), so without this a lapse
@@ -6565,12 +6698,18 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
 				"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
 			lastWake = now
-			// Keep this cycle lean: planning and delivery without sweeps.
-			b.cfgReloadMu.Lock()
-			b.evalCycles++
-			deps.runEval(b, nil, evalSourceCached)
-			deps.persist(b)
-			b.cfgReloadMu.Unlock()
+			if reconcileOverdue(now) {
+				// The reconcile pass is owed; run the full tick instead of
+				// the lean cached cycle so it is not starved by re-kicks.
+				tick(evalSourceCached)
+			} else {
+				// Keep this cycle lean: planning and delivery without sweeps.
+				b.cfgReloadMu.Lock()
+				b.evalCycles++
+				deps.runEval(b, nil, evalSourceCached)
+				deps.persist(b)
+				b.cfgReloadMu.Unlock()
+			}
 			after, afterWho := b.gov.NextContinuousKickAt()
 			if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
 				b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
@@ -6582,6 +6721,23 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	for {
 		// Serve due kicks between cycles even when other channels stay ready.
 		serveContinuousWake()
+		// A reconcile pass owed for a full interval runs here regardless of
+		// which channel woke the loop, so a ticker tick that was consumed,
+		// dropped or outraced by wake channels cannot starve enumeration.
+		if now := loopNow(); b.ctx.Err() == nil && reconcileOverdue(now) {
+			b.logger.Info("eval interval elapsed without a reconcile pass; enumerating",
+				"since_last_enumerate", now.Sub(lastEnumerateAt).Round(time.Second).String(),
+				"eval_interval_s", int(lastEvalInterval.Seconds()))
+			tick(evalSourceEnumerate)
+			armContinuousWake()
+			armWebhookHealthRecheck()
+			// The cadence tick for this interval, if it is already pending,
+			// would only repeat the pass that just ran.
+			select {
+			case <-ticker.Chan():
+			default:
+			}
+		}
 		select {
 		case <-b.ctx.Done():
 			b.logger.Info("shutting down, persisting state")
@@ -7516,6 +7672,8 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
+	case "cline-turn":
+		return true, cruxruntime.RunClineTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.

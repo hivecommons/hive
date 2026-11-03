@@ -64,7 +64,7 @@ fi
 # not greps -- because `continue-on-error: true` and an `if:` expression are
 # structure, and a substring check cannot tell which step owns them.
 verdict="$(python3 - "$WORKFLOW" <<'PY'
-import sys, yaml
+import os, re, subprocess, sys, yaml
 
 doc = yaml.safe_load(open(sys.argv[1]))
 jobs = doc.get("jobs") or {}
@@ -84,6 +84,15 @@ for job_id, job in jobs.items():
         continue
     verifier = verifier[0]
     verifier_advisory = bool(verifier.get("continue-on-error"))
+
+    # Keep the known single-platform digest on a native runner, without
+    # letting an untrusted fork opt into the repository's self-hosted override.
+    selector = "${{ github.event.pull_request.head.repo.full_name == github.repository && fromJSON(vars.HIVE_ARM64_RUNNER || '[\"ubuntu-24.04-arm\"]') || 'ubuntu-24.04-arm' }}"
+    if re.sub(r"\s+", "", str(job.get("runs-on", ""))) != re.sub(r"\s+", "", selector):
+        problems.append(f"{job_id}: verifier must select native ARM64 and keep forks off the self-hosted override")
+    image = str((job.get("env") or {}).get("PR_VERIFIER_IMAGE", ""))
+    if not re.fullmatch(r"ghcr\.io/hivecommons/pr-verifier@sha256:[0-9a-f]{64}", image):
+        problems.append(f"{job_id}: verifier must retain an immutable canonical image digest")
 
     # Registry-touching steps: the GHCR login, and the pull.
     registry = find(lambda s:
@@ -124,6 +133,57 @@ for job_id, job in jobs.items():
             problems.append(
                 f"{job_id}: a skipped verification is silent -- no step warns when the image "
                 f"could not be pulled, so 'nothing ran' reads as 'it passed'")
+
+        # Exercise the actual pull/preflight script, with no registry or
+        # engine access. A bad override must stop before even pulling.
+        mock_docker = r'''
+docker() {
+    if [ "$1" = "pull" ]; then
+        echo MOCK_PULL
+        return "$MOCK_PULL_EXIT"
+    elif [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+        printf '%s\n' "$MOCK_IMAGE_PLATFORM"
+    else
+        echo "unexpected docker command" >&2
+        return 90
+    fi
+}
+'''
+        cases = [
+            ("ARM64", "linux/arm64", "0", True, True),
+            ("X64", "linux/arm64", "0", False, False),
+            ("ARM", "linux/arm64", "0", False, False),
+            ("ARM64", "linux/amd64", "0", False, True),
+            ("ARM64", "windows/arm64", "0", False, True),
+            ("ARM64", "", "0", False, True),
+            ("ARM64", "linux/arm64", "1", False, True),
+        ]
+        for arch, platform, pull_exit, want_ok, want_pull in cases:
+            result = subprocess.run(
+                ["bash", "-e", "-c", mock_docker + "\n" + str(pull[0].get("run", ""))],
+                env={
+                    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                    "RUNNER_ARCH": arch,
+                    "PR_VERIFIER_IMAGE": image,
+                    "MOCK_IMAGE_PLATFORM": platform,
+                    "MOCK_PULL_EXIT": pull_exit,
+                },
+                capture_output=True, text=True, timeout=10,
+            )
+            if (result.returncode == 0) != want_ok or ("MOCK_PULL" in result.stdout) != want_pull:
+                problems.append(
+                    f"{job_id}: platform preflight accepted/rejected the wrong case "
+                    f"runner={arch}, image={platform!r}, pull_exit={pull_exit}: {result.stdout} {result.stderr}")
+        notes.append(f"{job_id}: native runner/image preflight exercised in {len(cases)} mocked cases")
+
+    failed_verifier_announced = [
+        s for s in steps
+        if "steps.verifier.outcome" in str(s.get("if", ""))
+        and "failure" in str(s.get("if", ""))
+        and "::warning" in str(s.get("run", ""))
+    ]
+    if not failed_verifier_announced:
+        problems.append(f"{job_id}: a failed verifier must not silently look like successful verification")
 
 for n in notes:
     print("NOTE " + n)

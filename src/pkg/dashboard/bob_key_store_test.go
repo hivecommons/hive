@@ -27,6 +27,9 @@ func pointBobKeyAtTempDir(t *testing.T) string {
 	p := filepath.Join(t.TempDir(), "secrets", "bob_api_key")
 	writableBobKeyFile = p
 	t.Cleanup(func() { writableBobKeyFile = orig })
+	// The resolver only reads files under the managed secrets dirs, so the
+	// temp dir must be allow-listed for ResolveAPIKey to find the key.
+	t.Cleanup(config.AllowSecretFileRoot(filepath.Dir(p)))
 	return p
 }
 

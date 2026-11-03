@@ -1,0 +1,1 @@
+- Hive-authored draft PRs carrying only prow's `do-not-merge/work-in-progress` mirror label are no longer filtered as "Exempt label" before the stale-draft rule runs, so deferred drafts surface in the scanner's "YOUR STALE DRAFT PRs" section instead of deadlocking with their `covered_by_open_pr` issue (#16246).

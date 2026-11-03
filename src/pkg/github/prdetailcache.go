@@ -101,7 +101,7 @@ func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, al
 		return nil, false
 	}
 	now := c.now()
-	expired := now.Sub(e.fetchedAt) >= ttl && !sharedWebhookTracker.cleanAndHealthy(repo, number)
+	expired := now.Sub(e.fetchedAt) >= ttl && !sharedWebhookTracker().cleanAndHealthy(repo, number)
 	if expired || !match(e) || (!allowUnknownMergeable && strings.EqualFold(strings.TrimSpace(e.pr.GetMergeableState()), "unknown")) {
 		c.misses.Add(1)
 		return nil, false

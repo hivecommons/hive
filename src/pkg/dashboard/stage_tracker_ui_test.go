@@ -26,7 +26,7 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`id="oc-waiting-on-you" data-action="showWaitingOnYou"`,
 		`id="activity-monitor-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle"`,
 		`if (f.waitingOnYou && !item.waiting_on_you) return false;`,
-		`function stageTrackerRenderWaiting(d, nowMs)`,
+		`function stageTrackerRenderWaiting(d, nowMs, live = true)`,
 		`function stageTrackerWaitingToast(w, nowMs)`,
 		`if (typeof window.hiveKioskMode === 'function' && window.hiveKioskMode()) return;`,
 		`const STAGE_TRACKER_WAITING_FILTER_PARAM = 'waiting-on-you';`,

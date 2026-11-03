@@ -78,7 +78,7 @@ func healthyAgentInfo(t *testing.T, path string) os.FileInfo {
 	if err != nil {
 		t.Fatalf("lstat %s: %v", path, err)
 	}
-	return fakeOwnerInfo{FileInfo: fi, sys: &syscall.Stat_t{Uid: 2001, Gid: uint32(NodeGID)}}
+	return fakeOwnerInfo{FileInfo: fi, sys: syntheticStat(t, path, 2001, uint32(NodeGID))}
 }
 
 // unfixableEntry creates a regular file whose real ownership makes fixEntry
@@ -122,7 +122,10 @@ func unfixableEntry(t *testing.T, dir string) (string, os.FileInfo) {
 
 // TestFixEntryUnfixableChownWarnsOnce is the core #4488 regression test: the
 // same unfixable entry seen on successive ticks produces exactly one WARN,
-// with the repeats demoted to DEBUG.
+// with the repeats demoted to DEBUG. A descriptor is held open after each tick
+// so the next tick pins the entry on a different fd number, as it does in a
+// live process with other files open: the WARN must not re-fire just because
+// the descriptor changed.
 func TestFixEntryUnfixableChownWarnsOnce(t *testing.T) {
 	resetPermWarnDedupe()
 	t.Cleanup(resetPermWarnDedupe)
@@ -132,8 +135,13 @@ func TestFixEntryUnfixableChownWarnsOnce(t *testing.T) {
 	logger := slog.New(h)
 
 	const ticks = 3
-	for i := 0; i < ticks; i++ {
+	for range ticks {
 		fixEntry(path, fi, logger)
+		held, err := os.Open(path)
+		if err != nil {
+			t.Fatalf("open %s: %v", path, err)
+		}
+		t.Cleanup(func() { _ = held.Close() })
 	}
 
 	if got := h.count(slog.LevelWarn, "permissions watcher: chown failed", path); got != 1 {

@@ -1,0 +1,1 @@
+- The `request_review` relay no longer re-requests reviewers or teams whose review request on the pull request is still pending, so they are not pinged again for the same ask ([#16075](https://github.com/hivecommons/hive/issues/16075)).

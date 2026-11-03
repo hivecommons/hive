@@ -97,7 +97,13 @@ func (c *Engine) warnCurrentBaseFallbackOnce(displayRepo string, number int, rea
 //
 // stop is false when the merge may proceed; otherwise the caller returns the
 // event, reason and error as-is.
-func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo string, number int, baseBranch, headSHA string, branchUpdateAllowed bool, holdReason string, fork bool) (AutoMergeSweepEvent, string, bool, error) {
+func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo string, number int, baseBranch, headSHA string, branchUpdateAllowed bool, holdReason string, fork bool, admissionLane ...string) (AutoMergeSweepEvent, string, bool, error) {
+	if combined, err := integrationCombinedBaseCheck(ctx, owner+"/"+repo, baseBranch, number, headSHA); combined {
+		if err != nil {
+			return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, err
+		}
+		return AutoMergeSweepEvent{}, "", false, nil
+	}
 	if !c.requireCurrentBaseFor(owner+"/"+repo) || c.gh == nil {
 		return AutoMergeSweepEvent{}, "", false, nil
 	}
@@ -110,6 +116,8 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 		return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, err
 	}
 	if cmp.GetBehindBy() <= 0 {
+		// Ownership serializes REFRESHES, never already-current ready work.
+		// A fully gated successor may land while another head prepares.
 		return AutoMergeSweepEvent{}, "", false, nil
 	}
 	if c.mergeQueueBaseHoldsRefresh(owner, repo, baseBranch) {
@@ -118,6 +126,13 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 	}
 	if !branchUpdateAllowed {
 		return AutoMergeSweepEvent{}, holdReason, true, nil
+	}
+	lane := stageLaneSelf
+	if len(admissionLane) > 0 {
+		lane = admissionLane[0]
+	}
+	if reason, err := c.admitBasePreparation(ctx, owner, repo, baseBranch, number, headSHA, lane, false); reason != "" || err != nil {
+		return AutoMergeSweepEvent{}, nonEmpty(reason, basePreparationPrefix+"state-unavailable"), true, err
 	}
 	baseSHA := cmp.GetBaseCommit().GetSHA()
 	if !c.branchUpdateWorkflowRefused(owner, repo, number, headSHA, baseSHA) {

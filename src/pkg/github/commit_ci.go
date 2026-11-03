@@ -74,6 +74,8 @@ func (c *requiredChecksForbiddenCache) put(key string) {
 // this package (the transport, the ignore lists) and the watcher lives here;
 // a core both can call has to sit below both.
 type CommitCIState struct {
+	// Reporting is a read-only consistency observation, not CI success.
+	Reporting []CIReportingObservation
 	// Green is true when every gating status/check run has succeeded (or is
 	// ignorable). Reason names the first blocker when false: "status-pending",
 	// "check-pending", "status-<state>" or "check-<conclusion>". Zero statuses
@@ -121,11 +123,20 @@ type CommitCIState struct {
 	// Every one of them postdates the push, so it is a safe lower bound on
 	// how long the head has existed.
 	EarliestActivity time.Time
+	// HeadTimeAheadBy is how far CommitCIOptions.HeadPushedAt was ahead of
+	// the host clock when min_head_age was evaluated (#16143). Non-zero means
+	// the head's age was not evaluable from GitHub's timestamp and the hold
+	// was measured from HeadFirstSeenAt instead; callers log it so a
+	// skew-handled head is distinguishable from a normally aged one.
+	HeadTimeAheadBy time.Duration
 }
 
 // CommitCIOptions carries policy facts that are known to callers before the
 // commit-status/check-run walk starts.
 type CommitCIOptions struct {
+	// PRNumber enables bounded, exact-current-head reporting reconciliation.
+	// Commit-only/base observations retain their existing behavior.
+	PRNumber                int
 	Required                map[string]bool
 	RequiredKnown           bool
 	RequiredKnownFromConfig bool
@@ -145,6 +156,13 @@ type CommitCIOptions struct {
 	SkippedByDesign map[string]bool
 	MinHeadAge      time.Duration
 	HeadPushedAt    time.Time
+	// HeadFirstSeenAt is the host-clock time the caller first observed this
+	// head. It is consulted only when HeadPushedAt is ahead of the host clock
+	// (GitHub's server-generated timestamps running ahead of this host,
+	// #16143): the hold is then measured from it instead of being skipped. A
+	// zero value is the first observation, so the head is held for one
+	// min_head_age window from now.
+	HeadFirstSeenAt time.Time
 	Now             func() time.Time
 	// RequireEvidence fails closed when no real successful CI check-run evidence
 	// exists. It is used when GitHub reports a known empty required-check set or
@@ -177,53 +195,57 @@ func RequiredStatusCheckContextsDetailed(ctx context.Context, client *gh.Client,
 }
 
 func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool, source string) {
+	required, known, fromConfig, fallback, source, _ = RequiredStatusCheckPolicy(ctx, client, owner, repo, branch, configSet, configKnown)
+	return
+}
+
+// RequiredStatusCheckPolicy preserves producer bindings from the very same
+// authoritative read as the compatibility name-set APIs. Config fallback is
+// deliberately distinguished from observed forge policy.
+func RequiredStatusCheckPolicy(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool, source string, bindings []PRRequiredCheck) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		if configKnown {
-			return configSet, true, true, true, "config"
+			return configSet, true, true, true, "config", nil
 		}
-		return nil, false, false, false, "none"
+		return nil, false, false, false, "none", nil
 	}
 	cacheKey := requiredChecksForbiddenCacheKey(client, owner, repo, branch)
 	if !sharedRequiredChecksForbiddenCache.get(cacheKey) {
-		rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
+		names, checks, err := requiredStatusChecksFromProtectionEndpoint(ctx, client, owner, repo, branch)
 		if err == nil {
-			if rsc != nil {
-				required = requiredContextsFromRequiredStatusChecks(rsc.Contexts, rsc.Checks)
-			}
-			if len(required) == 0 {
-				if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
-					return rules, true, false, false, "rules"
+			if len(names) == 0 {
+				if rules, ok, bindings := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+					return rules, true, false, false, "rules", bindings
 				}
-				return map[string]bool{}, true, false, false, "protection"
 			}
-			return required, true, false, false, "protection"
+			return names, true, false, false, "protection", checks
 		}
 		if errors.Is(err, gh.ErrBranchNotProtected) {
-			if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
-				return rules, true, false, false, "rules"
+			if rules, ok, bindings := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+				return rules, true, false, false, "rules", bindings
 			}
-			return map[string]bool{}, true, false, false, "protection-unprotected"
+			return map[string]bool{}, true, false, false, "protection-unprotected", nil
 		}
 		if isRequiredChecksForbiddenCacheable(err) {
 			sharedRequiredChecksForbiddenCache.put(cacheKey)
 		}
 	}
 
-	if branchRequired, branchKnown, err := requiredStatusChecksFromBranchEndpoint(ctx, client, owner, repo, branch); err == nil && branchKnown {
+	if branchRequired, branchKnown, err, checks := requiredStatusChecksFromBranchEndpointWithBindings(ctx, client, owner, repo, branch); err == nil && branchKnown {
 		if len(branchRequired) == 0 {
-			if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
-				return rules, true, false, false, "rules"
+			if rules, ok, bindings := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+				return rules, true, false, false, "rules", bindings
 			}
 		}
-		return branchRequired, true, false, false, "branch"
+		return branchRequired, true, false, false, "branch", checks
 	}
-	if rulesRequired, rulesKnown, err := requiredStatusChecksFromRulesEndpoint(ctx, client, owner, repo, branch); err == nil && rulesKnown {
-		return rulesRequired, true, false, false, "rules"
+	if rulesRequired, rulesKnown, err, checks := requiredStatusChecksFromRulesEndpointWithBindings(ctx, client, owner, repo, branch); err == nil && rulesKnown {
+		return rulesRequired, true, false, false, "rules", checks
 	}
 	if configKnown {
-		return configSet, true, true, true, "config"
+		return configSet, true, true, true, "config", nil
 	}
-	return nil, false, false, false, "none"
+	return nil, false, false, false, "none", nil
 }
 
 // rulesetRequiredWhenClassicEmpty reads the ruleset required checks for a
@@ -235,12 +257,12 @@ func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *
 // bluefin-bling read as known-empty and their held fork runs were never
 // approved). It reports false when the rules endpoint fails or lists no
 // required check, leaving the classic answer standing.
-func rulesetRequiredWhenClassicEmpty(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool) {
-	rules, known, err := requiredStatusChecksFromRulesEndpoint(ctx, client, owner, repo, branch)
+func rulesetRequiredWhenClassicEmpty(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, []PRRequiredCheck) {
+	rules, known, err, bindings := requiredStatusChecksFromRulesEndpointWithBindings(ctx, client, owner, repo, branch)
 	if err != nil || !known || len(rules) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
-	return rules, true
+	return rules, true, bindings
 }
 
 func requiredContextsFromRequiredStatusChecks(contexts *[]string, checks *[]*gh.RequiredStatusCheck) map[string]bool {
@@ -263,34 +285,32 @@ func requiredContextsFromRequiredStatusChecks(contexts *[]string, checks *[]*gh.
 	return required
 }
 
-func requiredStatusChecksFromBranchEndpoint(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error) {
+func requiredStatusChecksFromBranchEndpointWithBindings(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error, []PRRequiredCheck) {
 	if client == nil || strings.TrimSpace(branch) == "" {
-		return nil, false, nil
+		return nil, false, nil, nil
 	}
 	path := fmt.Sprintf("repos/%s/%s/branches/%s", owner, repo, url.PathEscape(branch))
 	req, err := client.NewRequest("GET", path, nil)
 	if err != nil {
-		return nil, false, err
+		return nil, false, err, nil
 	}
 	var resp struct {
 		Protected  bool `json:"protected"`
 		Protection *struct {
 			RequiredStatusChecks *struct {
-				Contexts []string `json:"contexts"`
-				Checks   []struct {
-					Context string `json:"context"`
-				} `json:"checks"`
+				Contexts []string            `json:"contexts"`
+				Checks   []requiredCheckWire `json:"checks"`
 			} `json:"required_status_checks"`
 		} `json:"protection"`
 	}
 	if _, err := client.Do(ctx, req, &resp); err != nil {
-		return nil, false, err
+		return nil, false, err, nil
 	}
 	if !resp.Protected {
-		return map[string]bool{}, true, nil
+		return map[string]bool{}, true, nil, nil
 	}
 	if resp.Protection == nil || resp.Protection.RequiredStatusChecks == nil {
-		return nil, false, nil
+		return nil, false, nil, nil
 	}
 	required := make(map[string]bool)
 	for _, name := range resp.Protection.RequiredStatusChecks.Contexts {
@@ -303,28 +323,29 @@ func requiredStatusChecksFromBranchEndpoint(ctx context.Context, client *gh.Clie
 			required[check.Context] = true
 		}
 	}
-	return required, true, nil
+	contexts := resp.Protection.RequiredStatusChecks.Contexts
+	return required, true, nil, bindingsFromWire(contexts, resp.Protection.RequiredStatusChecks.Checks)
 }
 
-func requiredStatusChecksFromRulesEndpoint(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error) {
+func requiredStatusChecksFromRulesEndpointWithBindings(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error, []PRRequiredCheck) {
 	if client == nil || strings.TrimSpace(branch) == "" {
-		return nil, false, nil
+		return nil, false, nil, nil
 	}
 	path := fmt.Sprintf("repos/%s/%s/rules/branches/%s", owner, repo, url.PathEscape(branch))
 	req, err := client.NewRequest("GET", path, nil)
 	if err != nil {
-		return nil, false, err
+		return nil, false, err, nil
 	}
 	var payload any
 	if _, err := client.Do(ctx, req, &payload); err != nil {
-		return nil, false, err
+		return nil, false, err, nil
 	}
 	required := make(map[string]bool)
 	known := collectRequiredStatusCheckRules(payload, required)
 	if !known {
-		return nil, false, nil
+		return nil, false, nil, nil
 	}
-	return required, true, nil
+	return required, true, nil, requiredBindingsFromRules(payload)
 }
 
 func collectRequiredStatusCheckRules(v any, required map[string]bool) bool {
@@ -525,6 +546,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		checkOpts.Page = resp.NextPage
 	}
 
+	allCheckRuns = checkRunsOnHead(allCheckRuns, sha)
 	dcoSatisfied := dcoContextSucceeded(allStatuses, allCheckRuns)
 
 	noteActivity := func(at time.Time) {
@@ -678,15 +700,44 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			now = time.Now
 		}
 		age := now().Sub(opts.HeadPushedAt)
-		if age < 0 {
+		// A head time ahead of the host clock is skew between GitHub's
+		// server-generated timestamps and this host (#16143), not a fresh
+		// push, and the host cannot measure age from it. The hold is not
+		// skipped: when the required set is unknown it is the only cover for
+		// slow check-runs that have not registered yet. Age is measured from
+		// the host-clock first observation instead, which can over-hold by at
+		// most one min_head_age window and never clamps to "pushed 0s ago"
+		// for the whole skew.
+		skewed := age < 0
+		if skewed {
+			st.HeadTimeAheadBy = -age
 			age = 0
+			if !opts.HeadFirstSeenAt.IsZero() {
+				age = max(now().Sub(opts.HeadFirstSeenAt), 0)
+			}
 		}
 		configRequiredAllGreen := opts.RequiredKnownFromConfig && len(required) > 0 && len(requiredSuccess) == len(required) && len(st.MissingRequired) == 0
 		if age < opts.MinHeadAge && !configRequiredAllGreen {
-			block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
+			if skewed {
+				block(fmt.Sprintf("pending: head time ahead of host clock; head first seen %s ago (< min_head_age)", age.Round(time.Second)))
+			} else {
+				block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
+			}
 		}
 	}
 	st.Green = st.Reason == ""
+	if !st.Green && strings.HasPrefix(st.Reason, "required-check-pending:") && opts.PRNumber > 0 {
+		var pending []*gh.CheckRun
+		for _, check := range latestCheckRunsByNameAndApp(allCheckRuns) {
+			if required[check.GetName()] && check.GetStatus() != "completed" {
+				pending = append(pending, check)
+			}
+		}
+		st.Reporting = sharedCIReportingCache.observe(ctx, client, owner, repo, sha, opts, pending)
+		if reason := ciReportingReason(st.Reporting); reason != "" {
+			st.Reason = reason
+		}
+	}
 	return st, nil
 }
 
@@ -1019,29 +1070,83 @@ func LatestMergedPRHead(ctx context.Context, client *gh.Client, owner, repo, bas
 type checkRunIdentity struct {
 	name  string
 	appID int64
+	head  string
 }
 
 func latestCheckRunsByNameAndApp(checks []*gh.CheckRun) []*gh.CheckRun {
-	if len(checks) == 0 {
-		return nil
+	groups := groupedCheckRuns(checks)
+	var out []*gh.CheckRun
+	for _, group := range groups {
+		knownIDs := true
+		for _, check := range group {
+			knownIDs = knownIDs && check.GetID() > 0
+		}
+		best := group[0]
+		for _, candidate := range group[1:] {
+			// Without real IDs, do not let an unordered success erase an
+			// observed blocker. Display ambiguity is handled separately.
+			if !knownIDs && checkRunBlockerRank(candidate) != checkRunBlockerRank(best) {
+				if checkRunBlockerRank(candidate) > checkRunBlockerRank(best) {
+					best = candidate
+				}
+				continue
+			}
+			if checkRunIsNewer(candidate, best) {
+				best = candidate
+			}
+		}
+		out = append(out, best)
 	}
-	latest := make(map[checkRunIdentity]*gh.CheckRun, len(checks))
-	for _, cr := range checks {
-		if cr == nil {
+	return sortedCheckRuns(out)
+}
+
+func groupedCheckRuns(checks []*gh.CheckRun) map[checkRunIdentity][]*gh.CheckRun {
+	groups := map[checkRunIdentity][]*gh.CheckRun{}
+	for _, check := range checks {
+		if check != nil {
+			key := checkRunIdentity{name: check.GetName(), appID: check.GetApp().GetID(), head: check.GetHeadSHA()}
+			groups[key] = append(groups[key], check)
+		}
+	}
+	return groups
+}
+
+func checkRunsOnHead(checks []*gh.CheckRun, head string) []*gh.CheckRun {
+	var out []*gh.CheckRun
+	for _, check := range checks {
+		if check != nil && (check.GetHeadSHA() == "" || strings.EqualFold(check.GetHeadSHA(), head)) {
+			out = append(out, check)
+		}
+	}
+	return out
+}
+
+// Activity keeps ambiguous producer/run observations; it must not change the
+// canonical merge/DCO selector's one-observation-per-identity contract.
+func activityCheckRunsByNameAndApp(checks []*gh.CheckRun) []*gh.CheckRun {
+	var out []*gh.CheckRun
+	for key, group := range groupedCheckRuns(checks) {
+		ambiguous := key.appID == 0
+		for _, check := range group {
+			ambiguous = ambiguous || check.GetID() <= 0
+		}
+		if ambiguous {
+			out = append(out, group...)
 			continue
 		}
-		key := checkRunIdentity{name: cr.GetName()}
-		if app := cr.GetApp(); app != nil {
-			key.appID = app.GetID()
-		}
-		if prev := latest[key]; prev == nil || checkRunIsNewer(cr, prev) {
-			latest[key] = cr
+		best := latestCheckRunsByNameAndApp(group)[0]
+		out = append(out, best)
+		for _, check := range group {
+			if check.GetID() == best.GetID() && check.GetStartedAt().Time.Equal(best.GetStartedAt().Time) &&
+				(check.GetStatus() != best.GetStatus() || check.GetConclusion() != best.GetConclusion()) {
+				out = append(out, check)
+			}
 		}
 	}
-	out := make([]*gh.CheckRun, 0, len(latest))
-	for _, cr := range latest {
-		out = append(out, cr)
-	}
+	return sortedCheckRuns(out)
+}
+
+func sortedCheckRuns(out []*gh.CheckRun) []*gh.CheckRun {
 	// Map iteration order is randomized, so callers that build a failure
 	// excerpt from the first few entries (fetchFailureExcerpt) would see a
 	// different, arbitrary subset of failing checks on every call. Sort by
@@ -1059,12 +1164,38 @@ func latestCheckRunsByNameAndApp(checks []*gh.CheckRun) []*gh.CheckRun {
 		if app := out[j].GetApp(); app != nil {
 			aj = app.GetID()
 		}
-		return ai < aj
+		if ai != aj {
+			return ai < aj
+		}
+		if out[i].GetHeadSHA() != out[j].GetHeadSHA() {
+			return out[i].GetHeadSHA() < out[j].GetHeadSHA()
+		}
+		if !out[i].GetStartedAt().Time.Equal(out[j].GetStartedAt().Time) {
+			return out[i].GetStartedAt().Before(out[j].GetStartedAt().Time)
+		}
+		if out[i].GetID() != out[j].GetID() {
+			return out[i].GetID() < out[j].GetID()
+		}
+		if out[i].GetConclusion() != out[j].GetConclusion() {
+			return out[i].GetConclusion() < out[j].GetConclusion()
+		}
+		if out[i].GetStatus() != out[j].GetStatus() {
+			return out[i].GetStatus() < out[j].GetStatus()
+		}
+		if out[i].GetNodeID() != out[j].GetNodeID() {
+			return out[i].GetNodeID() < out[j].GetNodeID()
+		}
+		return out[i].GetDetailsURL() < out[j].GetDetailsURL()
 	})
 	return out
 }
 
 func checkRunIsNewer(candidate, current *gh.CheckRun) bool {
+	// A single lexicographic ordering is essential: switching between IDs and
+	// start times depending on the pair makes selection nontransitive.
+	if candidate.GetID() != current.GetID() {
+		return candidate.GetID() > current.GetID()
+	}
 	candidateStarted := candidate.GetStartedAt().Time
 	currentStarted := current.GetStartedAt().Time
 	switch {
@@ -1073,6 +1204,35 @@ func checkRunIsNewer(candidate, current *gh.CheckRun) bool {
 	case currentStarted.After(candidateStarted):
 		return false
 	default:
-		return candidate.GetID() > current.GetID()
+		if checkRunBlockerRank(candidate) != checkRunBlockerRank(current) {
+			return checkRunBlockerRank(candidate) > checkRunBlockerRank(current)
+		}
+		if candidate.GetStatus() != current.GetStatus() {
+			return candidate.GetStatus() > current.GetStatus()
+		}
+		if candidate.GetConclusion() != current.GetConclusion() {
+			return candidate.GetConclusion() > current.GetConclusion()
+		}
+		if candidate.GetNodeID() != current.GetNodeID() {
+			return candidate.GetNodeID() > current.GetNodeID()
+		}
+		return candidate.GetDetailsURL() > current.GetDetailsURL()
+	}
+}
+
+func checkRunBlockerRank(check *gh.CheckRun) int {
+	const (
+		success = iota
+		pending
+		failing
+	)
+	if check.GetStatus() != "completed" {
+		return pending
+	}
+	switch check.GetConclusion() {
+	case "success", "neutral", "skipped":
+		return success
+	default:
+		return failing
 	}
 }

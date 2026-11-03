@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
+	"github.com/hivecommons/hive/pkg/hubactivity"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/nous"
 	spokesig "github.com/hivecommons/hive/pkg/spoke"
@@ -567,6 +568,7 @@ type LeaderboardEntry struct {
 	TrustTier      string `json:"trust_tier"`
 	TasksCompleted int    `json:"tasks_completed"`
 	TasksFailed    int    `json:"tasks_failed"`
+	Abandoned      int    `json:"abandoned"`
 	Active         bool   `json:"active"`
 	CurrentTask    string `json:"current_task,omitempty"`
 	HiveName       string `json:"hive_name,omitempty"`
@@ -1177,6 +1179,11 @@ type HeartbeatPayload struct {
 	FreshAgentStats bool `json:"fresh_agent_stats,omitempty"`
 	// SelfExperimentsOptIn is local consent; absent or false means opted out.
 	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
+	// Activity is the optional bounded activity digest for the hub-wide
+	// Activity Monitor (#15861/#15951), attached by the activity publisher
+	// (#15963) at send time; nil when hub.activity is off or the tracker has
+	// nothing yet, an etag-only marker when the hub holds it already.
+	Activity *hubactivity.Digest `json:"activity,omitempty"`
 }
 
 const (
@@ -1395,6 +1402,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onBreaker BreakerCallback
 	var freshCollect FreshStatusCollector
 	var onUpgradePolicy UpgradePolicyCallback
+	var onUpgradeAnnounce UpgradeAnnounceCallback
+	var activitySrc *ActivitySource
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -1425,12 +1434,26 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			freshCollect = fn
 		case UpgradePolicyCallback:
 			onUpgradePolicy = fn
+		case UpgradeAnnounceCallback:
+			onUpgradeAnnounce = fn
+		case ActivitySource:
+			activitySrc = &fn
 		}
 	}
 
 	logger.Info("hub heartbeat enabled", "url", hubURL, "interval", interval)
 
 	waitForReady(ctx, logger)
+
+	if activitySrc != nil {
+		pub := newActivityPublisher(*activitySrc, hubURL, logger)
+		activityPub.Store(pub)
+		defer activityPub.CompareAndSwap(pub, nil)
+		go pub.run(ctx)
+		if activitySrc.Subscribe != nil {
+			activitySrc.Subscribe(pub.notify)
+		}
+	}
 
 	processHeartbeatResponse := func(resp *HeartbeatResponse) {
 		if resp == nil {
@@ -1480,6 +1503,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		}
 		// Descriptive only (#7262): the hub's upgrade posture for this spoke,
 		// rendered by the dashboard. nil means the hub does not manage us.
+		if resp.UpgradeAnnounce != nil && onUpgradeAnnounce != nil {
+			onUpgradeAnnounce(resp.UpgradeAnnounce)
+		}
 		if resp.UpgradePolicy != nil && onUpgradePolicy != nil {
 			onUpgradePolicy(resp.UpgradePolicy)
 		}
@@ -1782,6 +1808,15 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 	if !payload.SelfExperimentsOptIn {
 		nous.SelfExperiments.Apply(false, nil)
 	}
+	// The activity digest is built at send time and its acknowledgement
+	// applied under the publisher's lock, so an out-of-band update cannot
+	// interleave between this beat and its response.
+	pub := activityPub.Load()
+	if pub != nil {
+		pub.mu.Lock()
+		defer pub.mu.Unlock()
+		payload.Activity = pub.heartbeatDigestLocked(ctx)
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
@@ -1854,6 +1889,10 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 				"app_id", hbResp.GitHubAppConfig.AppID,
 				"installation_id", hbResp.GitHubAppConfig.InstallationID,
 			)
+		}
+		if pub != nil {
+			pub.acknowledgeLocked(hbResp.ActivityETag)
+			pub.acknowledgeEventsLocked(hbResp.ActivityEventsAck)
 		}
 		return &hbResp
 	}
@@ -2850,6 +2889,12 @@ type HeartbeatResponse struct {
 	// on every beat for any hive the hub has an upgrade opinion about; nil
 	// means "the hub does not manage this hive's upgrades".
 	UpgradePolicy *HeartbeatUpgradePolicy `json:"upgrade_policy,omitempty"`
+	// UpgradeAnnounce rides on every beat while the hub holds an open
+	// upgrade latch for a hub-managed hive it is about to roll (or has
+	// rolled) itself, so the spoke dashboard shows the upgrade animation
+	// before the kill instead of a bare "reconnecting" (#15788). Absent on
+	// the self-upgrade path, where UpgradeTo already says it.
+	UpgradeAnnounce *UpgradeAnnounce `json:"upgrade_announce,omitempty"`
 	// SigHiveID / SigSeq / SigSignedAt are authenticated by the detached
 	// hub->spoke heartbeat response signature. They bind the response to this
 	// hive and a monotonic sequence so signed responses cannot be replayed
@@ -2860,6 +2905,12 @@ type HeartbeatResponse struct {
 	SigVersion  int    `json:"sig_v,omitempty"`
 	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
 	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
+	// ActivityETag is the activity digest etag the hub acknowledged ("" =
+	// it holds none), decoded from hub.HeartbeatResponse.ActivityETag.
+	ActivityETag string `json:"activity_etag,omitempty"`
+	// ActivityEventsAck is the highest activity event sequence number the
+	// hub acknowledged, decoded from hub.HeartbeatResponse.ActivityEventsAck.
+	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
@@ -2968,6 +3019,10 @@ const (
 // UpgradePolicyCallback is called on every beat whose response carries an
 // UpgradePolicy. nil is never delivered.
 type UpgradePolicyCallback func(p *HeartbeatUpgradePolicy)
+
+// UpgradeAnnounceCallback is called on every beat whose response carries an
+// UpgradeAnnounce (#15788). nil is never delivered.
+type UpgradeAnnounceCallback func(a *UpgradeAnnounce)
 
 // taskPushInterval is how often the spoke pushes task status to the hub. A var
 // (not a const) so tests can drive a single push quickly; production keeps the

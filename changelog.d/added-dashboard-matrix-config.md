@@ -1,0 +1,1 @@
+- Add opt-in, default-off `dashboard.matrix` config block with an explicit `owner/name` repo allowlist (#15928, part of #15862)

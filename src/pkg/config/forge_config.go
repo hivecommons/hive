@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/attention"
 )
 
 // AppSignedCommitsEnabled reports whether the PR-request watcher re-authors
@@ -146,6 +148,13 @@ type GitHubConfig struct {
 	// reporterTrustHoldEnvOverride is set by HIVE_REPORTER_TRUST_HOLD and never
 	// serialized; process env remains the effective override at runtime.
 	reporterTrustHoldEnvOverride *bool `yaml:"-" json:"-"`
+	// Notifications governs how loudly the hive's own PR bookkeeping reaches
+	// people. Every new issue comment and every review submission emails
+	// the author and every watcher; editing an existing comment does not.
+	// See GitHubNotificationsConfig.
+	Notifications GitHubNotificationsConfig `yaml:"notifications,omitempty" json:"notifications,omitempty"`
+	// Attention is an opt-in, single-admitter condition episode ledger.
+	Attention attention.Config `yaml:"attention,omitempty" json:"attention,omitempty"`
 	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
 	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
 	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be

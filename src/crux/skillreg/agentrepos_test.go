@@ -110,3 +110,21 @@ func TestSpecDataImplementsBothContracts(t *testing.T) {
 		t.Errorf("Repos() = %v, want [console]", got)
 	}
 }
+
+// Cross-org repos with the same name must not match: a spec scoped to
+// "laredo/cuga-agent" serves that org's repo, not "acme/cuga-agent" (#16168).
+func TestSpecServesRepo_CrossOrgDifferentOwners(t *testing.T) {
+	spec := &SpecData{Name: "n", BackendID: "b", ModelID: "m", RepoScope: []string{"laredo/cuga-agent"}}
+	// Must NOT serve a different org's repo of the same name.
+	if SpecServesRepo(spec, "acme/cuga-agent") {
+		t.Error("spec scoped to laredo/cuga-agent incorrectly served acme/cuga-agent")
+	}
+	// Must serve its bare name (backwards compat: bare matches qualified).
+	if !SpecServesRepo(spec, "cuga-agent") {
+		t.Error("spec did not serve the bare name cuga-agent")
+	}
+	// Must serve its fully-qualified name.
+	if !SpecServesRepo(spec, "laredo/cuga-agent") {
+		t.Error("spec did not serve its scoped org/repo")
+	}
+}

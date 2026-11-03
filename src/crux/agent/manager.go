@@ -222,6 +222,7 @@ type AgentProcess struct {
 	// LastTranscriptActivity is the newest events.jsonl mtime seen under this
 	// agent's own Copilot session-state tree.
 	LastTranscriptActivity time.Time
+	CodeWork               *crux.CodeWork
 	BusyCondition          string
 	BusyConditionMessage   string
 	Paused                 bool
@@ -316,6 +317,11 @@ type AgentProcess struct {
 	// alongside LastError on every (re)launch so a corrected model re-arms
 	// detection.
 	copilotModelFallbackRequested string
+	// inferenceDefaultModelWarned gates the "agent has no model; using the
+	// inference default" WARN to once per agent per distinct fallback, so a
+	// fleet whose agents[].model are all "" logs it per agent, not per
+	// relaunch.
+	inferenceDefaultModelWarned string
 	// copilotModelFallbackWarned is the "requested\x00running" tuple already
 	// logged at Warn; unlike the field above it survives relaunches.
 	copilotModelFallbackWarned string
@@ -1252,6 +1258,13 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 	ticker := time.NewTicker(inputPromptPollInterval)
 	defer ticker.Stop()
 	menuEscapes := 0
+	dialogAnswers := 0
+	// Inference-routed agents run Claude Code too, so a permission dialog in
+	// their pane is answered on the same terms as a plain claude agent's.
+	dialogBackend := backend
+	if m.routableBackend(backend) {
+		dialogBackend = "claude"
+	}
 
 	for {
 		if abort != nil && abort() {
@@ -1263,16 +1276,21 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				"agent", agent.Name,
 				"session", agent.tmuxSession)
 			output := m.captureTmuxPaneForAgent(agent)
+			dialogTitle, hasDialog := claudePermissionDialog(output)
 			m.logger.Warn("pane content at timeout",
 				"agent", agent.Name,
 				"len", len(output),
 				"has_goose_ready", strings.Contains(output, "goose is ready"),
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
-				"has_question_form", paneShowsCopilotQuestionForm(output),
+				"has_question_form", paneShowsQuestionForm(output),
+				"permission_dialog", dialogTitle,
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
+			if hasDialog {
+				return false, claudePermissionDialogNotReadyReason(dialogTitle)
+			}
 			return false, kickPromptNotReadyReason
 		case <-ticker.C:
 			// A consent/selection screen also contains "❯" but is NOT a
@@ -1282,6 +1300,12 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 			visible := m.captureVisiblePaneForAgent(agent)
 			if paneShowsCopilotQuestionForm(visible) {
 				m.dismissCopilotQuestionFormForKick(agent)
+				continue
+			}
+			if title, ok := claudePermissionDialog(visible); ok {
+				if reason := m.handleClaudePermissionDialogForKick(agent, dialogBackend, title, &dialogAnswers); reason != "" {
+					return false, reason
+				}
 				continue
 			}
 			// A Codex menu keeps a "›" selection caret that passes
@@ -1587,49 +1611,6 @@ func (m *Manager) AuthorizeReviewRequest(agentName string, fileUID int) error {
 			agentName, m.agentMode(agent).String())
 	}
 	return nil
-}
-
-// GetBufferOutput returns output from the ring buffer directly, bypassing
-// the tmux pane capture. The ring buffer accumulates all output over time
-// (up to 500 lines) while the pane capture only has visible lines.
-func (m *Manager) GetBufferOutput(name string, lines int) ([]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	agent, ok := m.agents[name]
-	if !ok {
-		return nil, fmt.Errorf("agent %s not found", name)
-	}
-
-	if agent.OutputBuffer != nil && agent.OutputBuffer.Count() > 0 {
-		return agent.OutputBuffer.Last(lines), nil
-	}
-
-	if pane := agent.FilteredPaneLines(lines); len(pane) > 0 {
-		return pane, nil
-	}
-
-	return nil, nil
-}
-
-func (m *Manager) GetOutput(name string, lines int) ([]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	agent, ok := m.agents[name]
-	if !ok {
-		return nil, fmt.Errorf("agent %s not found", name)
-	}
-
-	if pane := agent.FilteredPaneLines(lines); len(pane) > 0 {
-		return pane, nil
-	}
-
-	if agent.OutputBuffer != nil {
-		return agent.OutputBuffer.Last(lines), nil
-	}
-
-	return nil, nil
 }
 
 func (m *Manager) bobPreflightUnlocked(agent *AgentProcess) {

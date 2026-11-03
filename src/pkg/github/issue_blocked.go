@@ -30,6 +30,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -498,9 +499,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 						continue
 					}
 					note := blockedUnblockedMarker + fmt.Sprintf("\nUnblocked: %s#%d (superseding #%d) is no longer open. This issue is actionable again.", prRepo, supersededBy, prNumber)
-					if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
-						logger.Warn("blocked sweep: unblock note not posted", "repo", t.repo, "issue", t.number, "error", err)
-					}
+					c.postUnblockedNote(ctx, t.repo, t.number, note, logger)
 					res.Unblocked++
 					logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(supersededBy), "superseded", prNumber)
 					continue
@@ -523,6 +522,11 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 						continue
 					}
 				}
+				// Stays a standalone comment even under the attention pilot:
+				// blockedSweepComments finds the current blocker from the
+				// newest comment carrying the marker, and a status-card
+				// section keeps the card's original position and would
+				// hide this marker from that ordering.
 				note := fmt.Sprintf("%s\nRe-targeted: blocker #%d was superseded by #%d.", BlockedOnMarker(prRepo, supersededBy), prNumber, supersededBy)
 				if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
 					logger.Warn("blocked sweep: re-target note not posted", "repo", t.repo, "issue", t.number, "error", err)
@@ -539,9 +543,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 				continue
 			}
 			note := blockedPRSettledNote(prRepo + "#" + strconv.Itoa(prNumber))
-			if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
-				logger.Warn("blocked sweep: unblock note not posted", "repo", t.repo, "issue", t.number, "error", err)
-			}
+			c.postUnblockedNote(ctx, t.repo, t.number, note, logger)
 			res.Unblocked++
 			logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(prNumber))
 			continue
@@ -606,9 +608,7 @@ func liftBlockedMarkerless(ctx context.Context, client *Client, t blockedIssueTa
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return false
 	}
-	if err := client.CreateIssueCommentBudgeted(ctx, t.repo, t.number, blockedMarkerlessNote); err != nil {
-		logger.Warn("blocked sweep: unblock note not posted", "repo", t.repo, "issue", t.number, "error", err)
-	}
+	client.postUnblockedNote(ctx, t.repo, t.number, blockedMarkerlessNote, logger)
 	res.Unblocked++
 	logger.Info("blocked sweep: hive-applied marker-less block lifted", "repo", t.repo, "issue", t.number, "actor", actor)
 	return true
@@ -685,11 +685,51 @@ func liftBlockedDeadline(ctx context.Context, client *Client, t blockedIssueTarg
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return
 	}
-	if err := client.CreateIssueCommentBudgeted(ctx, t.repo, t.number, blockedDeadlineNote(deadline)); err != nil {
-		logger.Warn("blocked sweep: unblock note not posted", "repo", t.repo, "issue", t.number, "error", err)
-	}
+	client.postUnblockedNote(ctx, t.repo, t.number, blockedDeadlineNote(deadline), logger)
 	res.Unblocked++
 	logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "recheck_after", deadline)
+}
+
+// postUnblockedNote leaves note on the issue once per cause: a comment
+// already carrying this exact note — the sweep saw the issue again before
+// the label removal was visible, or a second sweep path lifted the same
+// block (hivecommons/hive#15536 ×2 within a minute) — means nothing is
+// posted. An issue the hive is closing for the same merge (a close-on-merge
+// or issue-stage closing note is present) gets no unblocked note either:
+// it is done, not actionable again. In quiet notification mode the note is
+// a section of the issue's status comment, so only the first note on an
+// issue ever creates a comment.
+func (c *Client) postUnblockedNote(ctx context.Context, repo string, number int, note string, logger *slog.Logger) {
+	owner, name := c.splitRepo(repo)
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		logger.Warn("blocked sweep: comment lookup before unblock note failed; posting anyway", "repo", repo, "issue", number, "error", err)
+	}
+	for _, cm := range comments {
+		body := cm.GetBody()
+		switch {
+		case strings.Contains(body, note):
+			c.noteCommentSuppressed()
+			return
+		case strings.Contains(body, CloseOnMergeMarker), strings.Contains(body, mergedPRClosedStageMarker):
+			logger.Info("blocked sweep: issue is being closed by its merged PR; unblock note not posted", "repo", repo, "issue", number)
+			c.noteCommentSuppressed()
+			return
+		}
+	}
+	// The attention pilot folds dependency progress into the issue's
+	// status card whatever github.notifications.mode says.
+	if c.notificationsQuiet() || c.attentionPilot() {
+		if created, err := c.UpsertPRStatusSection(ctx, repo, number, prstatus.KeyUnblocked, note); err != nil {
+			logger.Warn("blocked sweep: unblock note not recorded on status comment", "repo", repo, "issue", number, "error", err)
+		} else if !created {
+			c.noteCommentSuppressed()
+		}
+		return
+	}
+	if err := c.CreateIssueCommentBudgeted(ctx, repo, number, note); err != nil {
+		logger.Warn("blocked sweep: unblock note not posted", "repo", repo, "issue", number, "error", err)
+	}
 }
 
 // blockedDeadlineNote is the note posted when a recheck-after deadline

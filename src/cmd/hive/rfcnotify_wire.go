@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -18,20 +21,45 @@ import (
 // records so a restart does not re-announce a transition.
 const rfcNotifyStatePath = "/data/rfc-notify.json"
 
+// rfcRepoVisibilityTTL bounds how long a resolved repo visibility is
+// trusted before it is looked up again.
+const rfcRepoVisibilityTTL = time.Hour
+
+// rfcNotPRCacheMax bounds the negative PR classification cache; it is
+// cleared when it grows past this many entries.
+const rfcNotPRCacheMax = 512
+
 // rfcNotifyState is the process-lifetime half of the RFC lifecycle notices
 // (notifications.discord.rfc_channel_id): the sweeper and the Discord
 // poster, built once from the config that enabled them.
 type rfcNotifyState struct {
 	sweeper *rfcnotify.Sweeper
-	post    rfcnotify.Poster
+	pub     rfcnotify.Publisher
 	// channel the poster was built for; a config change rebuilds it.
 	channel string
+	// gates the sweeper was built with; a config change rebuilds it.
+	gates rfcNotifyGates
+	// visibility caches each repo's resolved privacy, refreshed at most
+	// every rfcRepoVisibilityTTL. Failed lookups are not cached.
+	visibility map[string]rfcRepoVisibility
+	// notRFCPRs remembers, per "owner/name#number", the head SHA at which a
+	// PR was classified as not an RFC, so its files are not listed again on
+	// every poll. A new head SHA is classified afresh. In memory only.
+	notRFCPRs map[string]string
+	// lookupPrivate overrides the GitHub visibility lookup in tests.
+	lookupPrivate func(ctx context.Context, repo string) (bool, error)
+	// now is the clock for the visibility cache; nil means time.Now.
+	now func() time.Time
 	// statePath is rfcNotifyStatePath in production; tests point it at a
 	// temp dir.
 	statePath string
-	// newPoster builds the Discord poster; nil means discordRFCPoster.
-	// Tests inject a recorder.
-	newPoster func(token, channel string) rfcnotify.Poster
+	// newPublisher builds the Discord publisher; nil builds botPublisher.
+	// Tests inject a recorder (rfcnotify.Poster satisfies Publisher).
+	newPublisher func(token, channel string) rfcnotify.Publisher
+	// threads is the Discord surface of threads mode, built for channel;
+	// newThreads builds it (nil means discordRFCThreads). Tests inject a fake.
+	threads    rfcnotify.Threads
+	newThreads func(token, channel string) rfcnotify.Threads
 }
 
 // rfcNotifyState lazily builds the boot's notice state.
@@ -53,58 +81,355 @@ func rfcNotifySettings(cfg *config.Config) (token, channel string, ok bool) {
 	return token, channel, token != "" && channel != ""
 }
 
+// rfcNotifyGates is the comparable part of rfcnotify.Options taken from
+// the config (notifications.discord.rfc_*).
+type rfcNotifyGates struct {
+	includeRepo    bool
+	format         string
+	threads        bool
+	announcer      bool
+	backlink       bool
+	includePrivate bool
+}
+
+func rfcNotifyGatesFor(cfg *config.Config, repos int) rfcNotifyGates {
+	g := rfcNotifyGates{includeRepo: repos > 1, format: rfcnotify.FormatLine}
+	if cfg == nil || cfg.Notifications.Discord == nil {
+		return g
+	}
+	d := cfg.Notifications.Discord
+	if d.RFCFormatMode() == config.RFCFormatCard {
+		g.format = rfcnotify.FormatCard
+	}
+	g.threads, g.announcer, g.backlink, g.includePrivate = d.RFCThreads, d.RFCAnnouncer, d.RFCBacklinkComment, d.RFCIncludePrivate
+	return g
+}
+
 // ensure (re)builds the sweeper and poster for the configured channel.
 func (s *rfcNotifyState) ensure(cfg *config.Config, repos int, logger *slog.Logger) bool {
 	token, channel, ok := rfcNotifySettings(cfg)
 	if !ok {
 		return false
 	}
-	newPoster := s.newPoster
-	if newPoster == nil {
-		newPoster = discordRFCPoster(logger)
-	}
-	if s.sweeper == nil {
+	gates := rfcNotifyGatesFor(cfg, repos)
+	if s.sweeper == nil || s.gates != gates {
 		s.sweeper = rfcnotify.NewSweeper(rfcnotify.Options{
-			StatePath:   s.statePath,
-			IncludeRepo: repos > 1,
-			Logger:      logger,
+			StatePath:      s.statePath,
+			IncludeRepo:    gates.includeRepo,
+			Format:         gates.format,
+			Threads:        gates.threads,
+			Announcer:      gates.announcer,
+			Backlink:       gates.backlink,
+			IncludePrivate: gates.includePrivate,
+			Logger:         logger,
 		})
+		s.gates = gates
 	}
-	if s.post == nil || s.channel != channel {
-		s.post = newPoster(token, channel)
+	if s.pub == nil || s.channel != channel {
+		if s.newPublisher != nil {
+			s.pub = s.newPublisher(token, channel)
+		} else {
+			bot := discord.NewBot(discord.Config{Token: token}, logger)
+			s.pub = botPublisher{bot: bot, channel: channel}
+		}
 		s.channel = channel
+		s.threads = nil
+	}
+	if gates.threads {
+		if s.threads == nil {
+			newThreads := s.newThreads
+			if newThreads == nil {
+				newThreads = discordRFCThreads(logger)
+			}
+			s.threads = newThreads(token, channel)
+		}
+		s.sweeper.SetThreads(s.threads)
 	}
 	return true
 }
 
-// discordRFCPoster posts through the bot token to the RFC channel without
+// botPublisher adapts discord.Bot to rfcnotify.Publisher.
+type botPublisher struct {
+	bot     *discord.Bot
+	channel string
+}
+
+func (p botPublisher) Post(content string) error {
+	return p.bot.SendMessageTo(p.channel, content)
+}
+
+func (p botPublisher) PostCard(content string, embed rfcnotify.Embed) (string, error) {
+	return p.bot.SendEmbedTo(p.channel, content, embed)
+}
+
+// discordRFCThreads builds the threads-mode Discord surface for the RFC
+// channel. It posts through the bot token like botPublisher, without
 // starting the command bot.
-func discordRFCPoster(logger *slog.Logger) func(token, channel string) rfcnotify.Poster {
-	return func(token, channel string) rfcnotify.Poster {
-		bot := discord.NewBot(discord.Config{Token: token}, logger)
-		return func(content string) error { return bot.SendMessageTo(channel, content) }
+func discordRFCThreads(logger *slog.Logger) func(token, channel string) rfcnotify.Threads {
+	return func(token, channel string) rfcnotify.Threads {
+		return rfcDiscordThreads{bot: discord.NewBot(discord.Config{Token: token}, logger), channel: channel}
+	}
+}
+
+// rfcDiscordThreads adapts a discord.Bot to rfcnotify.Threads for one channel.
+type rfcDiscordThreads struct {
+	bot     *discord.Bot
+	channel string
+}
+
+func (d rfcDiscordThreads) Post(content, nonce string) (string, error) {
+	return d.bot.PostMessageNonce(d.channel, content, nonce)
+}
+
+func (d rfcDiscordThreads) StartThread(messageID, name string) (string, error) {
+	return d.bot.StartThreadFromMessage(d.channel, messageID, name)
+}
+
+func (d rfcDiscordThreads) Send(threadID, content string) error {
+	return d.bot.SendMessageTo(threadID, content)
+}
+
+func (d rfcDiscordThreads) Echo(content string) error {
+	return d.bot.SendMessageTo(d.channel, content)
+}
+
+// rfcDiscordThreads edits cards and renames threads when an RFC is retitled.
+var _ rfcnotify.Editor = rfcDiscordThreads{}
+
+func (d rfcDiscordThreads) EditMessage(messageID, content string) error {
+	return d.bot.EditMessage(d.channel, messageID, content)
+}
+
+func (d rfcDiscordThreads) RenameThread(threadID, name string) error {
+	return d.bot.RenameChannel(threadID, name)
+}
+
+func (d rfcDiscordThreads) ThreadURL(threadID string) (string, error) {
+	return d.bot.ThreadURL(threadID)
+}
+
+func (d rfcDiscordThreads) Recent(limit int) ([]rfcnotify.Message, error) {
+	msgs, err := d.bot.RecentMessages(d.channel, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]rfcnotify.Message, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, rfcnotify.Message{ID: m.ID, Content: m.Content, Nonce: m.Nonce, Self: m.Self})
+	}
+	return out, nil
+}
+
+type rfcRepoVisibility struct {
+	private bool
+	at      time.Time
+}
+
+// repoPrivate reports whether repo is private, from the cache when the
+// entry is younger than rfcRepoVisibilityTTL. A failed lookup counts as
+// private (fail closed) with a non-nil error, and is retried on the next
+// call.
+func (s *rfcNotifyState) repoPrivate(ctx context.Context, c *github.Client, repo string) (bool, error) {
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	if v, ok := s.visibility[repo]; ok && now().Sub(v.at) < rfcRepoVisibilityTTL {
+		return v.private, nil
+	}
+	lookup := s.lookupPrivate
+	if lookup == nil {
+		lookup = githubRepoPrivate(c)
+	}
+	private, err := lookup(ctx, repo)
+	if err != nil {
+		return true, err
+	}
+	if s.visibility == nil {
+		s.visibility = map[string]rfcRepoVisibility{}
+	}
+	s.visibility[repo] = rfcRepoVisibility{private: private, at: now()}
+	return private, nil
+}
+
+// notRFCPR reports whether key was classified as not an RFC at sha.
+func (s *rfcNotifyState) notRFCPR(key, sha string) bool {
+	return s != nil && sha != "" && s.notRFCPRs[key] == sha
+}
+
+// rememberNotRFCPR records a negative classification of key at sha.
+func (s *rfcNotifyState) rememberNotRFCPR(key, sha string) {
+	if s == nil || sha == "" {
+		return
+	}
+	if s.notRFCPRs == nil || (len(s.notRFCPRs) >= rfcNotPRCacheMax && s.notRFCPRs[key] == "") {
+		s.notRFCPRs = map[string]string{}
+	}
+	s.notRFCPRs[key] = sha
+}
+
+// githubRepoPrivate resolves an "owner/name" repo's visibility. Anything
+// but a public repository counts as private.
+func githubRepoPrivate(c *github.Client) func(ctx context.Context, repo string) (bool, error) {
+	return func(ctx context.Context, repo string) (bool, error) {
+		owner, name, ok := strings.Cut(repo, "/")
+		if c == nil || !ok || owner == "" || name == "" {
+			return true, fmt.Errorf("rfc notify: cannot resolve visibility of %q", repo)
+		}
+		r, _, err := c.GetRepo(ctx, owner, name)
+		if err != nil {
+			return true, err
+		}
+		if r == nil {
+			return true, errors.New("rfc notify: empty repository response")
+		}
+		vis := strings.ToLower(strings.TrimSpace(r.GetVisibility()))
+		return r.GetPrivate() || (vis != "" && vis != "public"), nil
 	}
 }
 
 // rfcNotifySource adapts the GitHub client to rfcnotify.Source.
-type rfcNotifySource struct{ c *github.Client }
+type rfcNotifySource struct {
+	c     *github.Client
+	state *rfcNotifyState
+}
 
 // newRFCNotifySource returns nil without a client, which turns the pass off.
-func newRFCNotifySource(c *github.Client) rfcnotify.Source {
+// state caches repo visibility; nil marks every RFC private (fail closed).
+func newRFCNotifySource(c *github.Client, state *rfcNotifyState) rfcnotify.Source {
 	if c == nil {
 		return nil
 	}
-	return rfcNotifySource{c: c}
+	return rfcNotifySource{c: c, state: state}
+}
+
+// Comment implements rfcnotify.Commenter for the opt-in thread backlink. It
+// goes through the per-issue bot comment budget, so a backlink can never
+// flood an issue.
+func (s rfcNotifySource) Comment(ctx context.Context, repo string, number int, body string) error {
+	return s.c.CreateIssueCommentBudgeted(ctx, repo, number, body)
 }
 
 func (s rfcNotifySource) ListOpen(ctx context.Context) ([]rfcnotify.Issue, error) {
 	snaps, err := s.c.ListIssueSnapshots(ctx, github.IssueSnapshotOptions{State: "open"})
-	return rfcNotifyIssues(snaps), err
+	return s.markPrivate(ctx, rfcNotifyIssues(snaps)), err
 }
 
 func (s rfcNotifySource) ListUpdatedSince(ctx context.Context, since time.Time) ([]rfcnotify.Issue, error) {
 	snaps, err := s.c.ListIssueSnapshots(ctx, github.IssueSnapshotOptions{State: "all", Since: since})
-	return rfcNotifyIssues(snaps), err
+	return s.markPrivate(ctx, rfcNotifyIssues(snaps)), err
+}
+
+// ListPRsUpdatedSince implements rfcnotify.PRSource. Per repo it pages the
+// pulls list newest-updated first and stops at the first PR updated before
+// since. A PR whose title does not mark it as an RFC has its files listed,
+// so the lookup is bounded to PRs updated since the watermark, and a PR found not to be an RFC is not looked up again until its head SHA changes; a new open
+// one that proposes an RFC doc also has the doc read for its first heading.
+func (s rfcNotifySource) ListPRsUpdatedSince(ctx context.Context, since time.Time) ([]rfcnotify.Issue, error) {
+	api := s.c.GoGitHub()
+	if api == nil {
+		return nil, github.ErrNoGitHubClient
+	}
+	var out []rfcnotify.Issue
+	for _, repo := range s.c.Repositories() {
+		owner, name := s.c.SplitRepo(repo)
+		opts := &gh.PullRequestListOptions{State: "all", Sort: "updated", Direction: "desc", ListOptions: gh.ListOptions{PerPage: 100}}
+	pages:
+		for {
+			prs, resp, err := api.PullRequests.List(ctx, owner, name, opts)
+			if err != nil {
+				return nil, err
+			}
+			for _, pr := range prs {
+				if pr == nil {
+					continue
+				}
+				if pr.GetUpdatedAt().Before(since) {
+					break pages
+				}
+				is, err := s.rfcNotifyPR(ctx, api, owner, name, since, pr)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, is)
+			}
+			if resp == nil || resp.NextPage == 0 {
+				break
+			}
+			opts.ListOptions.Page = resp.NextPage
+		}
+	}
+	return s.markPrivate(ctx, out), nil
+}
+
+func (s rfcNotifySource) rfcNotifyPR(ctx context.Context, api *gh.Client, owner, name string, since time.Time, pr *gh.PullRequest) (rfcnotify.Issue, error) {
+	is := rfcnotify.Issue{
+		Repo: owner + "/" + name, Number: pr.GetNumber(), Title: pr.GetTitle(), URL: pr.GetHTMLURL(),
+		Author: pr.GetUser().GetLogin(), State: strings.ToLower(pr.GetState()), CreatedAt: pr.GetCreatedAt().Time,
+		MergedAt: pr.GetMergedAt().Time, Body: pr.GetBody(), IsPR: true,
+	}
+	for _, l := range pr.Labels {
+		is.Labels = append(is.Labels, l.GetName())
+	}
+	if rfcnotify.IsRFCPR(is.Title, nil) {
+		return is, nil
+	}
+	cacheKey, sha := fmt.Sprintf("%s/%s#%d", owner, name, is.Number), pr.GetHead().GetSHA()
+	if s.state.notRFCPR(cacheKey, sha) {
+		return is, nil
+	}
+	fopts := &gh.ListOptions{PerPage: 100}
+	for {
+		files, resp, err := api.PullRequests.ListFiles(ctx, owner, name, is.Number, fopts)
+		if err != nil {
+			return is, fmt.Errorf("list files of %s: %w", is.Key(), err)
+		}
+		for _, f := range files {
+			if f.GetStatus() != "removed" {
+				is.Files = append(is.Files, f.GetFilename())
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		fopts.Page = resp.NextPage
+	}
+	if !rfcnotify.IsRFCPR(is.Title, is.Files) {
+		s.state.rememberNotRFCPR(cacheKey, sha)
+	}
+	if !is.Open() || !is.CreatedAt.After(since) {
+		return is, nil
+	}
+	for _, f := range is.Files {
+		if !rfcnotify.IsRFCDoc(f) {
+			continue
+		}
+		// The heading is cosmetic: on any failure the PR title is used.
+		if doc, err := s.c.GetFileContentRef(ctx, owner, name, f, pr.GetHead().GetSHA()); err == nil {
+			is.DocTitle = rfcnotify.FirstHeading(doc)
+		}
+		break
+	}
+	return is, nil
+}
+
+// markPrivate sets Issue.Private on RFC issues and PRs from their repo's
+// visibility; non-RFC items are ignored by the detector and need no
+// lookup.
+func (s rfcNotifySource) markPrivate(ctx context.Context, issues []rfcnotify.Issue) []rfcnotify.Issue {
+	for i := range issues {
+		if !issues[i].RFC() {
+			continue
+		}
+		if s.state == nil {
+			issues[i].Private = true
+			continue
+		}
+		private, err := s.state.repoPrivate(ctx, s.c, issues[i].Repo)
+		issues[i].Private = private
+		issues[i].VisibilityUnknown = err != nil
+	}
+	return issues
 }
 
 func rfcNotifyIssues(snaps []github.IssueSnapshot) []rfcnotify.Issue {
@@ -113,6 +438,7 @@ func rfcNotifyIssues(snaps []github.IssueSnapshot) []rfcnotify.Issue {
 		out = append(out, rfcnotify.Issue{
 			Repo: s.Repo, Number: s.Number, Title: s.Title, URL: s.URL, Author: s.Author,
 			State: s.State, StateReason: s.StateReason, Labels: s.Labels, CreatedAt: s.CreatedAt,
+			Body: s.Body,
 		})
 	}
 	return out
@@ -129,7 +455,7 @@ func runRFCNotifySweep(ctx context.Context, src rfcnotify.Source, repos int, cfg
 	if src == nil || state == nil || !state.ensure(cfg, repos, logger) {
 		return rfcnotify.Result{}
 	}
-	res, err := state.sweeper.Run(ctx, src, state.post)
+	res, err := state.sweeper.Run(ctx, src, state.pub)
 	if err != nil {
 		logger.Warn("rfc notify sweep failed", "error", err)
 		return res
@@ -142,8 +468,11 @@ func runRFCNotifySweep(ctx context.Context, src rfcnotify.Source, repos int, cfg
 			dashSrv.AuditLogRecord("system", "rfc-notify", fmt.Sprintf("channel=%s %s", state.channel, res.Posted[i]), "", ev.Issue.Repo, ev.Issue.Number)
 		}
 	}
-	if len(res.Posted) > 0 || res.Errors > 0 {
-		logger.Info("rfc notify sweep", "posted", len(res.Posted), "errors", res.Errors)
+	if dashSrv != nil && (res.Threads > 0 || res.Reconciled > 0 || res.Backlinks > 0 || res.Errors > 0) {
+		dashSrv.AuditLogRecord("system", "rfc-notify", fmt.Sprintf("channel=%s threads=%d reconciled=%d backlinks=%d errors=%d", state.channel, res.Threads, res.Reconciled, res.Backlinks, res.Errors), "", "", 0)
+	}
+	if len(res.Posted) > 0 || res.Errors > 0 || res.Withheld > 0 || res.Unresolved > 0 || res.Threads > 0 || res.Reconciled > 0 || res.Backlinks > 0 {
+		logger.Info("rfc notify sweep", "posted", len(res.Posted), "errors", res.Errors, "withheld", res.Withheld, "unresolved", res.Unresolved, "threads", res.Threads, "reconciled", res.Reconciled, "backlinks", res.Backlinks)
 	}
 	return res
 }

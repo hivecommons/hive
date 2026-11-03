@@ -209,5 +209,12 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 			out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
 		}
 	}
+	if in.Kind == delegatedecision.KindPR && d.Verdict == delegatedecision.VerdictApprove && note("native approval durably recorded") {
+		out.Outcome = "Native approval recorded for head `" + shortHead(in.HeadSHA) + "`" + ruleTag + "."
+		out.Next = "Current CI, review, hold, sentinel and queue requirements still apply; approval is not merge readiness."
+		if note("incomplete") {
+			out.Next = "GitHub/Prow reporting is incomplete and audited. Native approval stands; current merge gates still apply, without another model decision."
+		}
+	}
 	return out
 }

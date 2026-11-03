@@ -17,7 +17,7 @@ repository touches it.
 | Pool `arc-system` | 3 × `g8-dedicated-8-4` (4 vCPU / 8 GB), label+taint `hive-role=system` |
 | Pool `runners` | 4 × `g8-dedicated-64-32` (initial) (32 vCPU / 64 GB / 655 GB NVMe), label `hive-ci-runner=true` (set on the **pool**, not per node), autoscaler 4–12 |
 | ARC | `gha-runner-scale-set-controller` 0.14.2 in `arc-systems`; scale set `hive-runners-lke` in `arc-hive` |
-| Runner budget | `minRunners: 4`, `maxRunners: 100` (≈9 runners per node by request → 11–12 nodes at peak; 4 nodes ≈ 36) |
+| Runner budget | `minRunners: 4`, `maxRunners: 140` (peak assumes 12 worker nodes; each runner requests 1.75 CPU and 3.5 GiB across runner and DinD containers) |
 | Cost | ≈ $3.5k/mo at 4 runner nodes, ≈ $9.6k/mo if pegged at 12 |
 
 ## Design

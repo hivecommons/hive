@@ -45,6 +45,8 @@ type NativeMergeQueuePolicy struct {
 	// Repos is the lower-cased owner/repo allow-list; empty means every
 	// watched repository once Enabled.
 	Repos map[string]bool
+	// Bases is an optional exact repo#base allow-list, preserving branch case.
+	Bases map[string]bool
 	// SkipCurrentBaseGate lets a queue-enabled base bypass the
 	// require_current_base gate and the behind update-branch. Off keeps
 	// both gates in force exactly as on any other base.
@@ -69,6 +71,10 @@ func (p NativeMergeQueuePolicy) probeTTL() time.Duration {
 		return DefaultNativeMergeQueueProbeTTL
 	}
 	return p.ProbeTTL
+}
+
+func (p NativeMergeQueuePolicy) baseAllowed(repo, base string) bool {
+	return p.repoAllowed(repo) && (p.Bases == nil || p.Bases[strings.ToLower(strings.TrimSpace(repo))+"#"+base])
 }
 
 // nativeQueueProbe is one cached isMergeQueueEnabled answer for a base.
@@ -139,8 +145,8 @@ func ownNativeQueueEntry(e *hgithub.NativeMergeQueueEntry, slug string) bool {
 
 // nativeQueueWithdrawReason reports whether a lane's rejection reason means
 // the PR lost merge eligibility (#15198): a hold, a withdrawn or stale
-// approval, changes requested, a paused or disabled repo, or a draft or
-// closed PR. Anything else — pending or red checks, behind, a moved head, an
+// approval, changes requested, a paused or disabled repo, a draft or closed
+// PR, a release in progress, or a human-merge path. Anything else — pending or red checks, behind, a moved head, an
 // API error, a routing observation — keeps the App's queue entry.
 func nativeQueueWithdrawReason(reason string) bool {
 	switch reason {
@@ -149,7 +155,7 @@ func nativeQueueWithdrawReason(reason string) bool {
 		"queue-approval-missing-head", "queue-approval-head-changed", "self-merge-ban", autoMergeReasonUntrustedMerger,
 		"changes-requested", autoMergeReasonHumanChangesRequested, contributorLaneReasonChangesRequested,
 		nativeQueueReasonPaused, "repo-auto-merge-disabled", relayLaneReasonDisabled,
-		"draft", "closed":
+		"draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath:
 		return true
 	}
 	return strings.HasPrefix(reason, "label:do-not-merge") || strings.HasPrefix(reason, "excluded-label:") ||
@@ -164,7 +170,7 @@ func nativeQueueWithdrawReason(reason string) bool {
 // behaviour.
 func (c *Engine) nativeQueueEnabled(ctx context.Context, repo string, pr *gh.PullRequest) bool {
 	t := c.nativeQueue(repo)
-	if t == nil || pr.GetNodeID() == "" {
+	if t == nil || pr.GetNodeID() == "" || !c.nativeQueuePolicy().baseAllowed(repo, pr.GetBase().GetRef()) {
 		return false
 	}
 	key := nativeQueueProbeKey(repo, pr)
@@ -219,16 +225,66 @@ func (c *Engine) nativeQueue(repo string) nativeQueueTransport {
 	return c.nativeQueueTransport()
 }
 
+// routeIntegrationMerge applies the exact-member capture and execution
+// authority before either serialized or direct merge execution.
+func (c *Engine) routeIntegrationMerge(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (bool, string, error) {
+	if capture, ok := ctx.Value(integrationEligibilityContextKey{}).(*integrationEligibilityCapture); ok {
+		if capture == nil {
+			return false, "integration exact member capture unavailable", nil
+		}
+		if pr.GetNumber() != capture.number || pr.GetHead().GetSHA() != capture.head || pr.GetBase().GetRef() != capture.base ||
+			pr.GetBase().GetRepo().GetFullName() != capture.repo {
+			return false, "integration exact member identity changed", nil
+		}
+		capture.pr = pr
+		return false, integrationEligibilityCaptured, nil
+	}
+	requiredNative := false
+	if c.integrationExecution != nil {
+		decision, err := c.integrationExecution(ctx, claim.Repo, pr, c.IntegrationEligibility)
+		if err != nil {
+			return false, decision.Reason, err
+		}
+		switch decision.Authority {
+		case "hive", "hold":
+			if decision.Reason == "" {
+				decision.Reason = "integration execution owns destination; no direct fallback"
+			}
+			return false, decision.Reason, nil
+		case "native":
+			requiredNative = true
+		case "":
+		default:
+			return false, "integration execution authority unknown; no fallback", nil
+		}
+	}
+	return requiredNative, "", nil
+}
+
 // tryNativeQueue runs only after the lane's existing merge gates passed. A
 // queued PR is not a merged PR: no merged audit, issue closure or merge event.
 func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (string, error) {
-	t := c.nativeQueue(claim.Repo)
-	if t == nil || pr.GetNodeID() == "" {
+	requiredNative, reason, err := c.routeIntegrationMerge(ctx, pr, claim)
+	if reason != "" || err != nil {
+		return reason, err
+	}
+	return c.tryNativeQueueAfterRouting(ctx, pr, claim, requiredNative)
+}
+
+func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequest, claim effects.Claim, requiredNative bool) (string, error) {
+	direct := func() (string, error) {
+		if requiredNative {
+			return "integration native authority unavailable; no direct fallback", nil
+		}
 		return "", nil
+	}
+	t := c.nativeQueue(claim.Repo)
+	if t == nil || pr.GetNodeID() == "" || !c.nativeQueuePolicy().baseAllowed(claim.Repo, pr.GetBase().GetRef()) {
+		return direct()
 	}
 	key := nativeQueueProbeKey(claim.Repo, pr)
 	if enabled, ok := c.cachedNativeQueueProbe(key); ok && !enabled {
-		return "", nil
+		return direct()
 	}
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
 	if err != nil {
@@ -236,7 +292,7 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 	}
 	c.recordNativeQueueProbe(key, state.IsMergeQueueEnabled)
 	if !state.IsMergeQueueEnabled && !state.IsInMergeQueue {
-		return "", nil
+		return direct()
 	}
 	if state.HeadRefOid != claim.Inputs["expect_sha"] {
 		return "head-changed-since-eval", nil
@@ -259,6 +315,12 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 		}
 	}
 	if !state.IsInMergeQueue {
+		if c.integrationAdmission != nil {
+			reason, err := c.integrationAdmission(ctx, claim.Repo, pr)
+			if reason != "" || err != nil {
+				return "integration-admission: " + reason, err
+			}
+		}
 		// Each removal starts a new queue attempt, even at the same head.
 		// The previous applied journal entry must never suppress re-enqueue.
 		cycle := ""

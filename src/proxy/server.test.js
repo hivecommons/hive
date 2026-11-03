@@ -25,6 +25,23 @@ const CONTRIBUTOR_HTML = `<!doctype html><html><head>
   <script>(function(){try{var k='hive-layout-mode',t=localStorage.getItem(k)||'auto';var light=t==='light'||(t==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches);document.documentElement.classList.toggle('light-mode',!!light);}catch(e){}})();</script>
 </head><body><button type="button" id="cc-theme-toggle" data-action="cycle-theme" data-theme-mode="auto">Auto</button><main id="tab-ops">contributor operations</main><script>var CC_THEME_KEY='hive-layout-mode';function ccApplyTheme(mode){var light=mode==='light';document.body.classList.toggle('light-mode',!!light);}window.matchMedia('(prefers-color-scheme: light)').addEventListener('change',function(){});</script></body></html>`;
 
+// Ambient keys/modes a live hive host exports; they override the keys the C3
+// tests derive from HIVE_HUB_SECRET/HIVE_ID, so strip them for hermetic runs.
+const AMBIENT_AUTH_ENV = [
+  'HIVE_SESSION_KEY',
+  'HIVE_SESSION_PUBLIC_KEY',
+  'HIVE_SESSION_PUBLIC_KEY_PREV',
+  'HIVE_TERMINAL_KEY',
+  'HIVE_INGRESS_AUTHZ',
+  'HIVE_AUTHORIZED_USERS',
+  'HIVE_ID_FILE',
+];
+function hermeticEnv() {
+  const env = { ...process.env };
+  for (const k of AMBIENT_AUTH_ENV) delete env[k];
+  return env;
+}
+
 let goServer, ttydServer, proxyProcess;
 let mockSnapshotFrameAncestors = [];
 
@@ -120,7 +137,7 @@ function startProxy(extraEnv = {}) {
     const proc = spawn('node', ['server.js'], {
       cwd: __dirname,
       env: {
-        ...process.env,
+        ...hermeticEnv(),
         HIVE_PROXY_PORT: String(PROXY_PORT),
         HIVE_API_PORT: String(GO_PORT),
         HIVE_TTYD_PORT: String(TTYD_PORT),
@@ -455,7 +472,7 @@ function startHiveBProxy() {
     const proc = spawn('node', ['server.js'], {
       cwd: __dirname,
       env: {
-        ...process.env,
+        ...hermeticEnv(),
         HIVE_PROXY_PORT: String(HIVE_B_PROXY_PORT),
         HIVE_API_PORT: String(HIVE_B_GO_PORT),
         HIVE_TTYD_PORT: String(HIVE_B_TTYD_PORT),
@@ -965,7 +982,7 @@ const EMPTY_HOST = `${EMPTY_HIVE_ID}.hive.kubestellar.io`;
 // given ports; ingressAuthz toggles HIVE_INGRESS_AUTHZ (nginx vs OpenShift lane).
 function startEmptyAllowlistProxy(proxyPort, apiPort, ttydPort, ingressAuthz) {
   const env = {
-    ...process.env,
+    ...hermeticEnv(),
     HIVE_PROXY_PORT: String(proxyPort),
     HIVE_API_PORT: String(apiPort),
     HIVE_TTYD_PORT: String(ttydPort),

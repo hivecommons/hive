@@ -20,9 +20,9 @@ githubConfigSecret: hive-github-token
 
 runnerScaleSetName: hive-runners-lke
 minRunners: 4
-# 100 by request (3.25 CPU each) needs ~11 g8-dedicated-64-32 nodes; the pool
-# autoscaler tops out at 12 so this ceiling is reachable, not aspirational.
-maxRunners: 100
+# Each runner requests 1.75 CPU and 3.5 GiB across runner and DinD containers.
+# This ceiling fits the 12-node pool; retain headroom for bursty build jobs.
+maxRunners: 140
 
 controllerServiceAccount:
   namespace: arc-systems

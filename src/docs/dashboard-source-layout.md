@@ -62,7 +62,7 @@ split.
 
 CSS (`css/`): `base` (tokens, reset, shared primitives), `sidebar`, `topbar`,
 `agent-detail`, `agent-cards`, `auth`, `agent-state`, `tracker` (Hive activity
-monitor), `agent-fields`, `governor`, `advisory-lifecycle`, `evidence`,
+monitor), `tracker-native-queue`, `agent-fields`, `governor`, `advisory-lifecycle`, `evidence`,
 `throughput`, `repos`, `label-filter`, `overview`, `sparklines-indicators`,
 `governor-matrix`, `cost`, `alerts-toasts`, `feedback-faq`, `config-dialog`,
 `chat`, `nous`, `knowledge`, `sections-collapse`, `design-system`,
@@ -75,10 +75,15 @@ Body HTML (`html/`): `auth`, `root-notices`, `chat`, `dialogs`, `sidebar`,
 
 JS (`js/`): `boot`, `core`, `feedback`, `sections`, `layout`, `agent-detail`,
 `sidebar`, `history-sparklines`, `cost-trend`, `stats`, `agent-now`,
-`tracker-words`, `tracker-row`, `tracker-row-strip`, `tracker-row-acted`,
-`tracker-row-layout`, `tracker-motion`, `tracker-filter`,
-`tracker-filter-state`, `tracker-filter-render`, `tracker-filter-fetch`,
-`tracker-actions`, `tracker-merged`, `tracker-sound`, `agent-cards`, `banners`,
+`tracker-words-core`, `tracker-words-stage`, `tracker-words-gate`,
+`tracker-words`, `tracker-row-anchor`, `tracker-row`, `tracker-row-strip`,
+`tracker-row-acted`, `tracker-human-attention`, `tracker-row-layout`,
+`tracker-row-title`,
+`tracker-row-render`, `tracker-motion`, `tracker-filter`,
+`tracker-filter-state`, `nav-count-delta`, `tracker-preparation`,
+`tracker-native-queue`, `tracker-filter-render`,
+`tracker-filter-fetch`, `tracker-actions`, `tracker-merged`, `tracker-queue`,
+`tracker-sound`, `tracker-waiting`, `tracker-popout`, `agent-cards`, `banners`,
 `governor-view`, `repos`, `overview`, `label-filter`, `pinned-filters`,
 `repos-render`, `budget`, `backends-tokens`, `cost`, `acmm-lifecycle`,
 `throughput`, `evidence`, `approvals`, `nous`, `knowledge`, `vault-audit`,
@@ -94,6 +99,31 @@ blank line before a top-level function, never inside one. When a function
 clearly belongs to another area than the file it sits in, move it — the
 generator does not care about order inside a region as long as the manifest
 order still yields a document where every definition precedes its first use.
+
+### Shared with the hub
+
+`js/tracker-row-anchor.js` (which strip column a stage lights) and
+`js/tracker-row-title.js` (the escaped, text-only row title) are also embedded
+by `src/pkg/webassets/trackerrow`, so the hub can draw rows with the same
+code without importing `pkg/dashboard`. The generator only reads
+`static-src/`, so the two copies are kept byte-identical by hand:
+`TestTrackerRowSharedAssetCompat` fails when they drift or when
+`index.html` stops carrying them verbatim, and
+`TestTrackerRowSharedAssetRendersSpokeFixtures` renders the same fixtures
+through both. Edit both copies in the same PR.
+
+The same rule applies to the Activity Monitor URL-view and display-playlist
+helpers: `stageTrackerDefaultFilter` (`js/tracker-words-stage.js`),
+`stageTrackerNormalizeFilter` (`js/tracker-filter.js`) and the
+`tracker url view helpers` and `tracker display playlist helpers` blocks of
+`js/tracker-filter-state.js`. `src/pkg/webassets/trackerview/tracker-view.js`
+carries a verbatim copy so the hub Fleet activity page reads `am.*`, `am.view`
+and `interval` as a spoke display does
+([#16064](https://github.com/hivecommons/hive/issues/16064)).
+`TestTrackerViewSharedAssetCompat` (in `pkg/dashboard`) compares that copy
+with the declarations in the committed `static/index.html` and fails when they
+drift: after editing one of these spoke helpers, run `make dashboard-gen` and
+re-copy them into `tracker-view.js` in the same PR.
 
 ## Working with it
 

@@ -289,7 +289,23 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 		stageRetries:    stageRetries,
 	}
 	// #5681: a lease the hub issued must outlive the process that issued it.
+	if h.server != nil {
+		if err := h.server.integrationLease(key, repo, identity, gen, now.Add(leaseTTL), now, false); err != nil {
+			if prev != nil {
+				h.leases[k] = prev
+			} else {
+				delete(h.leases, k)
+			}
+			for admissionKey, l := range removedAdmissions {
+				h.leases[admissionKey] = l
+			}
+			return err
+		}
+	}
 	if err := h.saveLeasesLocked(); err != nil {
+		if h.server != nil {
+			h.server.integrationRelease(key, "contributor/"+identity, gen, "authoritative lease persistence failed")
+		}
 		if prev != nil {
 			h.leases[k] = prev
 		} else {
@@ -865,7 +881,8 @@ func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) err
 	var saveErr error
 	if l := h.leaseForLocked(identity, taskID); l != nil {
 		l.expiresAt = now.Add(leaseTTL)
-		renewed = l
+		copyLease := *l
+		renewed = &copyLease
 		// #5681: persist the EXTENDED window. Without this a restart would restore
 		// the window as it stood at assignment, so a task that had been progressing
 		// for longer than leaseTTL — the exact case #4260 fixed in memory — would
@@ -875,6 +892,11 @@ func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) err
 		}
 	}
 	h.leaseMu.Unlock()
+	if renewed != nil && h.server != nil {
+		if err := h.server.integrationLease(renewed.key, renewed.repo, identity, renewed.gen, renewed.expiresAt, now, true); err != nil {
+			h.logger.Warn("integration reservation renewal failed; existing lease retained", "task", taskID, "error", err)
+		}
+	}
 	// #8380: the worker claim travels with the lease — renew it too, outside
 	// leaseMu, so a task that outlives the 30m claim TTL stays visibly held.
 	if renewed != nil && renewed.number > 0 {
@@ -922,10 +944,12 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 	revoked := false
 	// #8380: remember which items went so their worker claims go with them.
 	var releasedKeys []string
+	var releasedLeases []taskLease
 	if taskID != "" {
 		if l, ok := h.leases[leaseKey(identity, taskID)]; ok {
 			if l != nil {
 				releasedKeys = append(releasedKeys, leaseClaimKey(l))
+				releasedLeases = append(releasedLeases, *l)
 			}
 			delete(h.leases, leaseKey(identity, taskID))
 			revoked = true
@@ -934,6 +958,7 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 		for k, l := range h.leases {
 			if l != nil && l.identity == identity {
 				releasedKeys = append(releasedKeys, leaseClaimKey(l))
+				releasedLeases = append(releasedLeases, *l)
 				delete(h.leases, k)
 				revoked = true
 			}
@@ -953,6 +978,11 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 		}
 	}
 	h.leaseMu.Unlock()
+	for _, l := range releasedLeases {
+		if h.server != nil {
+			h.server.integrationRelease(leaseClaimKey(&l), "contributor/"+identity, l.gen, "lease revoked")
+		}
+	}
 	for _, key := range releasedKeys {
 		h.releaseClaimForLease(identity, key, "lease revoked")
 	}

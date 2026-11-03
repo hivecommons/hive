@@ -31,13 +31,14 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
         commits(last: 1) {
           nodes {
             commit {
+              oid
               statusCheckRollup {
                 state
                 contexts(first: 50) {
                   nodes {
                     __typename
-                    ... on CheckRun { databaseId name conclusion status detailsUrl }
-                    ... on StatusContext { context state targetUrl }
+                    ... on CheckRun { id databaseId name conclusion status detailsUrl startedAt completedAt checkSuite { app { databaseId } commit { oid } } }
+                    ... on StatusContext { id context state targetUrl createdAt }
                   }
                 }
               }
@@ -97,6 +98,7 @@ type graphQLPRBatchNode struct {
 	Commits     struct {
 		Nodes []struct {
 			Commit struct {
+				OID               string `json:"oid"`
 				StatusCheckRollup *struct {
 					State    string `json:"state"`
 					Contexts struct {
@@ -121,18 +123,27 @@ type graphQLPRBatchNode struct {
 }
 
 type graphQLPRBatchContext struct {
-	TypeName string `json:"__typename"`
-	// DatabaseID is the check run's REST id (CheckRun only). The external-CI
-	// marker pins a triage to it (hivecommons/hive#11609), and annotation
-	// lookups need the real id rather than a positional stand-in.
-	DatabaseID int64  `json:"databaseId"`
-	Name       string `json:"name"`
-	Conclusion string `json:"conclusion"`
-	Status     string `json:"status"`
-	DetailsURL string `json:"detailsUrl"`
-	Context    string `json:"context"`
-	State      string `json:"state"`
-	TargetURL  string `json:"targetUrl"`
+	TypeName    string     `json:"__typename"`
+	Name        string     `json:"name"`
+	Conclusion  string     `json:"conclusion"`
+	Status      string     `json:"status"`
+	DetailsURL  string     `json:"detailsUrl"`
+	Context     string     `json:"context"`
+	State       string     `json:"state"`
+	TargetURL   string     `json:"targetUrl"`
+	ID          string     `json:"id"`
+	DatabaseID  *int64     `json:"databaseId"`
+	StartedAt   *time.Time `json:"startedAt"`
+	CompletedAt *time.Time `json:"completedAt"`
+	CreatedAt   *time.Time `json:"createdAt"`
+	CheckSuite  *struct {
+		App *struct {
+			DatabaseID *int64 `json:"databaseId"`
+		} `json:"app"`
+		Commit *struct {
+			OID string `json:"oid"`
+		} `json:"commit"`
+	} `json:"checkSuite"`
 }
 
 func (c *Client) graphQLPRBatchEnabledEffective() bool {
@@ -159,11 +170,11 @@ func (c *Client) prefetchOpenPRDetailsGraphQL(ctx context.Context, owner, repoNa
 	}
 	// With healthy webhooks and nothing marked dirty since the last batch,
 	// the cached batch still describes every open PR (#11177).
-	if sharedWebhookTracker.repoCleanAndHealthy(fullRepo) && c.hasGraphQLPRBatchRepo(fullRepo) {
+	if sharedWebhookTracker().repoCleanAndHealthy(fullRepo) && c.hasGraphQLPRBatchRepo(fullRepo) {
 		c.recordGraphQLPRBatchWebhookSkip()
 		return
 	}
-	started := sharedWebhookTracker.now()
+	started := sharedWebhookTracker().now()
 	c.clearGraphQLPRBatchRepo(fullRepo)
 	pageSize := c.graphQLPRBatchPageSizeEffective()
 	var cursor string
@@ -197,7 +208,7 @@ func (c *Client) prefetchOpenPRDetailsGraphQL(ctx context.Context, owner, repoNa
 		}
 	}
 	c.recordGraphQLPRBatchSuccess(repoPRs, pages)
-	sharedWebhookTracker.clearDirtyRepoBefore(fullRepo, started)
+	sharedWebhookTracker().clearDirtyRepoBefore(fullRepo, started)
 }
 
 func (c *Client) hasGraphQLPRBatchRepo(repo string) bool {
@@ -220,6 +231,7 @@ func (c *Client) invalidateGraphQLPRBatchPR(repo string, number int) {
 	for k := range c.prBatchCheckRuns {
 		if k.repo == key && k.number == number {
 			delete(c.prBatchCheckRuns, k)
+			delete(c.prBatchCheckObservedAt, k)
 		}
 	}
 }
@@ -235,6 +247,7 @@ func (c *Client) clearGraphQLPRBatchRepo(repo string) {
 		for k := range c.prBatchCheckRuns {
 			if k.repo == key {
 				delete(c.prBatchCheckRuns, k)
+				delete(c.prBatchCheckObservedAt, k)
 			}
 		}
 	}
@@ -268,6 +281,10 @@ func (c *Client) storeGraphQLPRBatchNode(repo string, n graphQLPRBatchNode) {
 		}
 		key := prBatchCheckRunKey{repo: canonicalPRDetailRepo(repo), number: n.Number, headSHA: n.HeadRefOID}
 		c.prBatchCheckRuns[key] = cloneCheckRuns(checks)
+		if c.prBatchCheckObservedAt == nil {
+			c.prBatchCheckObservedAt = map[prBatchCheckRunKey]time.Time{}
+		}
+		c.prBatchCheckObservedAt[key] = time.Now().UTC()
 		c.prBatchMu.Unlock()
 	}
 	c.storeGraphQLPRBatchReview(repo, n)
@@ -292,7 +309,7 @@ func graphQLCheckRuns(n graphQLPRBatchNode) ([]*gh.CheckRun, bool) {
 		return nil, false
 	}
 	var out []*gh.CheckRun
-	for i, ctx := range n.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes {
+	for _, ctx := range n.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes {
 		name, status, conclusion, url := "", "", "", ""
 		switch ctx.TypeName {
 		case "CheckRun":
@@ -302,17 +319,39 @@ func graphQLCheckRuns(n graphQLPRBatchNode) ([]*gh.CheckRun, bool) {
 		default:
 			continue
 		}
-		id := int64(i + 1)
-		if ctx.TypeName == "CheckRun" && ctx.DatabaseID > 0 {
-			id = ctx.DatabaseID
-		}
-		out = append(out, &gh.CheckRun{
-			ID:         gh.Ptr(id),
+		run := &gh.CheckRun{
+			ID:         clonePtr(ctx.DatabaseID),
+			NodeID:     gh.Ptr(ctx.ID),
+			HeadSHA:    gh.Ptr(n.HeadRefOID),
 			Name:       gh.Ptr(name),
 			Status:     gh.Ptr(status),
 			Conclusion: gh.Ptr(conclusion),
 			DetailsURL: gh.Ptr(url),
-		})
+		}
+		if oid := n.Commits.Nodes[0].Commit.OID; oid != "" {
+			run.HeadSHA = gh.Ptr(oid)
+		}
+		if ctx.TypeName == "CheckRun" {
+			if ctx.CheckSuite != nil && ctx.CheckSuite.Commit != nil && ctx.CheckSuite.Commit.OID != "" {
+				run.HeadSHA = gh.Ptr(ctx.CheckSuite.Commit.OID)
+			}
+			if ctx.CheckSuite != nil && ctx.CheckSuite.App != nil {
+				run.App = &gh.App{ID: clonePtr(ctx.CheckSuite.App.DatabaseID)}
+			}
+			if ctx.StartedAt != nil {
+				run.StartedAt = &gh.Timestamp{Time: *ctx.StartedAt}
+			}
+			if ctx.CompletedAt != nil {
+				run.CompletedAt = &gh.Timestamp{Time: *ctx.CompletedAt}
+			}
+		} else {
+			// Legacy statuses have a real node ID and creation time, but no
+			// numeric check-run or producer App identity.
+			if ctx.CreatedAt != nil {
+				run.StartedAt = &gh.Timestamp{Time: *ctx.CreatedAt}
+			}
+		}
+		out = append(out, run)
 	}
 	return out, true
 }
@@ -338,17 +377,32 @@ func conclusionFromStatusContext(state string) string {
 }
 
 func (c *Client) graphQLBatchCheckRuns(repo string, number int, headSHA string) ([]*gh.CheckRun, bool) {
+	checks, _, ok := c.graphQLBatchCheckRunsObservation(repo, number, headSHA)
+	return checks, ok
+}
+
+func (c *Client) graphQLBatchCheckRunsObservation(repo string, number int, headSHA string) ([]*gh.CheckRun, *time.Time, bool) {
 	if c == nil || strings.TrimSpace(headSHA) == "" {
-		return nil, false
+		return nil, nil, false
 	}
+
 	key := prBatchCheckRunKey{repo: canonicalPRDetailRepo(repo), number: number, headSHA: headSHA}
 	c.prBatchMu.Lock()
 	defer c.prBatchMu.Unlock()
 	checks, ok := c.prBatchCheckRuns[key]
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
-	return cloneCheckRuns(checks), true
+	at := c.prBatchCheckObservedAt[key]
+	if at.IsZero() {
+		return cloneCheckRuns(checks), nil, true
+	}
+	return cloneCheckRuns(checks), &at, true
+}
+
+func (c *Client) graphQLBatchCheckObservedAt(repo string, number int, headSHA string) *time.Time {
+	_, at, _ := c.graphQLBatchCheckRunsObservation(repo, number, headSHA)
+	return at
 }
 
 func (c *Client) storeGraphQLPRBatchReview(repo string, n graphQLPRBatchNode) {
@@ -409,14 +463,21 @@ func cloneCheckRuns(in []*gh.CheckRun) []*gh.CheckRun {
 			continue
 		}
 		out = append(out, &gh.CheckRun{
-			ID:         clonePtr(cr.ID),
-			Name:       clonePtr(cr.Name),
-			Status:     clonePtr(cr.Status),
-			Conclusion: clonePtr(cr.Conclusion),
-			DetailsURL: clonePtr(cr.DetailsURL),
-			StartedAt:  cloneTimestamp(cr.StartedAt),
-			App:        cr.App,
+			ID:          clonePtr(cr.ID),
+			NodeID:      clonePtr(cr.NodeID),
+			HeadSHA:     clonePtr(cr.HeadSHA),
+			Name:        clonePtr(cr.Name),
+			Status:      clonePtr(cr.Status),
+			Conclusion:  clonePtr(cr.Conclusion),
+			DetailsURL:  clonePtr(cr.DetailsURL),
+			StartedAt:   cloneTimestamp(cr.StartedAt),
+			CompletedAt: cloneTimestamp(cr.CompletedAt),
 		})
+		if cr.App != nil {
+			app := *cr.App
+			app.ID = clonePtr(cr.App.ID)
+			out[len(out)-1].App = &app
+		}
 	}
 	return out
 }

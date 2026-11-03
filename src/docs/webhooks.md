@@ -122,6 +122,7 @@ These are the acceptance criteria of #13373 and the tests that hold them.
 | `dashboard.stage_tracker.webhook_refresh_replay_window_s` | `1800` | how long a re-read is remembered and re-applied to every status snapshot the governor publishes, so a cycle that enumerated before the close cannot re-list the item |
 | `dashboard.stage_tracker.closed_sweep_interval_s` | `300` | how often (driven by status publishes) each repo's items closed since the last look are listed (one call per repo) and rows still shown are evicted; negative disables |
 | `dashboard.stage_tracker.waiting_push_stale_h` | `4` | hours a CI / Review row may go without a push (booked from the `pull_request` synchronize / `push` re-read, enumerate as fallback) before its pill's age takes the muted-amber tone; negative disables |
+| `dashboard.stage_tracker.merged_hold_s` | `8` | ceiling (seconds, floor `3`) on how long a row stays at "Merging · merge landed" after the payload dropped it before the merged fact arrives; the celebration (toast, bee, odometer) launches as soon as the merge is confirmed, not at the end of the hold (hivecommons/hive#15808) |
 | health window | `2 × governor.eval_interval_s` (10 min at the defaults) | how recent the newest verified delivery must be for webhooks to count as healthy |
 | recovery hysteresis | `WebhookRecoveryHealthyWindows` = `2` | consecutive healthy windows required before the cadence returns to webhook mode after a degradation |
 

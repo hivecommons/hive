@@ -49,6 +49,11 @@ func TestClassifyMergeFailureForOperator(t *testing.T) {
 			want: []string{"fork PR workflow runs are awaiting maintainer approval", "https://github.com/o/r/settings/actions", "Approve the runs manually"},
 		},
 		{
+			name: "merge queue required",
+			err:  "merging PR o/r#74 (squash): PUT https://api.github.test: 405 Repository rule violations found\n\nChanges must be made through the merge queue",
+			want: []string{"requires changes to be made through the merge queue", "Enqueue the PR", "https://github.com/o/r/settings/rules"},
+		},
+		{
 			name: "merge method",
 			err:  "Validation Failed: squash commits are not allowed for this repository",
 			want: []string{"requested merge method is not allowed", "Enable squash/merge"},
@@ -98,11 +103,11 @@ func TestMergeFailureAlertsDedupeAndClearOnSuccess(t *testing.T) {
 		t.Fatalf("severity = %q, want error", sink.adds[0].severity)
 	}
 
-	c.clearMergeFailureAlertsForRepo("o/r")
+	c.clearMergeFailureAlertsAfterMerge("o/r", 7, "squash")
 	if len(sink.clears) != 1 || sink.clears[0] != sink.adds[0].id {
 		t.Fatalf("clear on success = %+v, want %q", sink.clears, sink.adds[0].id)
 	}
-	c.clearMergeFailureAlertsForRepo("o/r")
+	c.clearMergeFailureAlertsAfterMerge("o/r", 7, "squash")
 	if len(sink.clears) != 1 {
 		t.Fatalf("second clear should be no-op, got %+v", sink.clears)
 	}
@@ -141,7 +146,7 @@ func TestClassifyMergeFailureMergePUT403StillAppPermission(t *testing.T) {
 }
 
 // Every App merge path records its merge through RecordPRMergedAudit, so the
-// self-authored sweep and the queue retire the repo's alerts too (#11924).
+// self-authored sweep and the queue retire proven repository-permission alerts.
 func TestRecordPRMergedAuditClearsMergeFailureAlerts(t *testing.T) {
 	c := NewClientForTest("http://127.0.0.1:0", "o", []string{"r"}, nil)
 	sink := &recordingMergeAlertSink{}

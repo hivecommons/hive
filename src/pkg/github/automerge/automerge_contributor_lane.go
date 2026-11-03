@@ -56,6 +56,7 @@ package automerge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -471,7 +472,9 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 				continue
 			}
 			result.Candidates++
-			event, reason, err := c.trySweepContributorLanePR(mergeDecisionPriority(ctx), displayRepo, owner, repoName, number, policy)
+			c.sweepClock.evaluating(displayRepo, number)
+			event, reason, err := c.trySweepContributorLanePR(withMergeTrainCandidateHold(mergeDecisionPriority(ctx), c.mergeTrainCandidateReason(train, number)), displayRepo, owner, repoName, number, policy)
+			c.sweepClock.evaluated()
 			if err == nil {
 				c.noteMergeTrainOutcome(stageLaneContributor, owner, repoName, number, pr.GetHead().GetSHA(), reason)
 			}
@@ -1492,7 +1495,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	queueSkipsBase := sync.OnceValue(func() bool {
 		return !serialized && !relay && c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr)
 	})
-	if mergeableState == "behind" && (!serialized || relay) && !queueSkipsBase() {
+	if mergeableState == "behind" && (!serialized || relay) && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) && !integrationCombinedBaseProvided(ctx) {
 		if relay {
 			return eval, "behind", nil
 		}
@@ -1573,7 +1576,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// The serialized lane alone updates its front PR. Relay/authorization
 	// evaluations remain read-only and still require the current base.
 	if (!serialized || relay) && c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
-		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr)); stop {
+		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr), stageLaneContributor); stop {
 			return eval, reason, err
 		}
 	}
@@ -1595,6 +1598,18 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 
 func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {
 	serialized, laneGate := c.serializedLane(displayRepo)
+	ctx, unlock, err := c.acquireDestinationMerge(ctx, owner, repo, number)
+	if err != nil {
+		if isGitHubStatus(err, http.StatusNotFound) {
+			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		var response *gh.ErrorResponse
+		if errors.As(err, &response) {
+			return AutoMergeSweepEvent{}, "fetch-pr", err
+		}
+		return AutoMergeSweepEvent{}, basePreparationPrefix + "merge-guard", err
+	}
+	defer unlock()
 	eval, reason, err := c.evaluateContributorLanePR(ctx, displayRepo, owner, repo, number, policy, false)
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
@@ -1602,7 +1617,20 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if reason != "" {
 		return c.rejectBeforeLane(ctx, serialized, laneGate, owner, repo, number, eval.pr, hgithub.PRAuditPathSweep, reason)
 	}
+	if !hgithub.DestinationMergeHeld(ctx, destinationDirectory(c), owner+"/"+repo, eval.pr.GetBase().GetRef()) {
+		return AutoMergeSweepEvent{}, basePreparationPrefix + "snapshot-changed", nil
+	}
+	if hold := mergeTrainCandidateHold(ctx); hold != "" {
+		return AutoMergeSweepEvent{}, hold, nil
+	}
+	requiredNative, integrationReason, integrationErr := c.routeIntegrationMerge(ctx, eval.pr, eval.mergeClaim)
+	if integrationReason != "" || integrationErr != nil {
+		return AutoMergeSweepEvent{}, integrationReason, integrationErr
+	}
 	if serialized {
+		if requiredNative {
+			return AutoMergeSweepEvent{}, "integration native authority cannot use serialized REST lane; no direct fallback", nil
+		}
 		event := AutoMergeSweepEvent{Repo: displayRepo, Number: number, Author: eval.author, HeadSHA: eval.headSHA, Tier: contributorLaneTier}
 		// The lane retains the front on merge API failures. Preserve the
 		// workflow fence's human-action parking when that failure is a
@@ -1640,7 +1668,10 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	author, headSHA, claim, verdict, method, mergeClaim := eval.author, eval.headSHA, eval.claim, eval.verdict, eval.method, eval.mergeClaim
 	fullRepo := owner + "/" + repo
-	if reason, err := c.tryNativeQueue(ctx, eval.pr, mergeClaim); reason != "" || err != nil {
+	if hold := mergeTrainCandidateHold(ctx); hold != "" {
+		return AutoMergeSweepEvent{}, hold, nil
+	}
+	if reason, err := c.tryNativeQueueAfterRouting(ctx, eval.pr, mergeClaim, requiredNative); reason != "" || err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}
 

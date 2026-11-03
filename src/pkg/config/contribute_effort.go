@@ -16,7 +16,7 @@ import (
 // effort vocabularies differ per backend: an allow-list would force operators
 // to enumerate every backend's spelling, while a single floor on a shared
 // ladder expresses "at least this much reasoning" once for all backends.
-var ReasoningEffortLadder = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
+var ReasoningEffortLadder = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 // ReasoningEffortRank returns effort's position on ReasoningEffortLadder
 // (case-insensitive, whitespace-trimmed), or -1 when effort is empty or not a

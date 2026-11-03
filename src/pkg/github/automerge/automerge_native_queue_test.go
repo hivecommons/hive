@@ -137,7 +137,7 @@ func (denyNativeQueueBoundary) Execute(context.Context, effects.Claim, func(cont
 }
 
 func TestNativeQueueGateWithdrawsOnlyHiveEntries(t *testing.T) {
-	for _, reason := range []string{"held", "label:hold", "label:do-not-merge", "changes-requested", autoMergeReasonHumanChangesRequested, autoMergeReasonReviewGatePrefix + ReviewGateOutcomeChangesRequested, autoMergeReasonNoHiveQueueApproval, "queue-approval-head-changed", "label-removed", nativeQueueReasonPaused, "draft", "closed"} {
+	for _, reason := range []string{"held", "label:hold", "label:do-not-merge", "changes-requested", autoMergeReasonHumanChangesRequested, autoMergeReasonReviewGatePrefix + ReviewGateOutcomeChangesRequested, autoMergeReasonNoHiveQueueApproval, "queue-approval-head-changed", "label-removed", nativeQueueReasonPaused, "draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath} {
 		// A user account named like the App's slug is not the App.
 		for _, actor := range []string{testHiveAppBotLogin, "maintainer", "another-app[bot]", "", botSlug(testHiveAppBotLogin)} {
 			t.Run(reason+"/"+actor, func(t *testing.T) {
@@ -467,14 +467,27 @@ func TestNativeQueueCurrentBaseGateIsExplicit(t *testing.T) {
 						author = "alice"
 					}
 					updates := 0
-					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
+					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, baseRef: "main", baseSHA: "base1", mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
 						switch {
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+							_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
+							_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+							w.WriteHeader(http.StatusNotFound)
+							_ = json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/main":
+							_ = json.NewEncoder(w).Encode([]any{})
 						case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
 							updates++
 							w.WriteHeader(http.StatusAccepted)
 							_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
 						case strings.Contains(r.URL.Path, "/compare/"):
-							_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
+							behind := 0
+							if state == "behind" {
+								behind = 2
+							}
+							_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": behind, "ahead_by": 1})
 						default:
 							t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 							w.WriteHeader(http.StatusNotFound)
@@ -496,14 +509,11 @@ func TestNativeQueueCurrentBaseGateIsExplicit(t *testing.T) {
 						c.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"} }
 						_, err = c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{})
 					}
-					// The fixture has no base ref, so a clean head with the
-					// gate kept parks at current-base-check instead of
-					// updating; either way it is not enqueued.
 					wantUpdates, wantEnqueues := 0, 0
 					if !skip && state == "behind" {
 						wantUpdates = 1
 					}
-					if skip {
+					if skip || state == "clean" {
 						wantEnqueues = 1
 					}
 					if err != nil || updates != wantUpdates || f.enqueues != wantEnqueues || len(merged) != 0 {
@@ -536,6 +546,7 @@ func TestNativeQueueIsOptInPerRepo(t *testing.T) {
 			case "listed-repo":
 				enableNativeQueue(c, NativeMergeQueuePolicy{Enabled: true, Repos: map[string]bool{"acme/widget": true}})
 			}
+
 			reason, err := c.tryNativeQueue(context.Background(), pr, claim)
 			c.reconcileNativeQueueGate(context.Background(), stageLaneSelf, "acme", "widget", pr, "held")
 			enabled := c.nativeQueueEnabled(context.Background(), "acme/widget", pr)
@@ -547,6 +558,28 @@ func TestNativeQueueIsOptInPerRepo(t *testing.T) {
 			}
 			if reason != "" || err != nil || f.enqueues != 0 || f.dequeues != 0 || enabled || counter.reads != 0 {
 				t.Fatalf("%s: reason=%q error=%v enqueues=%d dequeues=%d enabled=%v reads=%d, want no queue traffic", mode, reason, err, f.enqueues, f.dequeues, enabled, counter.reads)
+			}
+		})
+	}
+}
+
+func TestNativeQueueBaseScopeControlsEnqueueAndFreshness(t *testing.T) {
+	for _, base := range []string{"v5", "v6", "V5"} {
+		t.Run(base, func(t *testing.T) {
+			c, f, pr, claim := nativeQueueEngine()
+			pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr(base)}
+			enableNativeQueue(c, NativeMergeQueuePolicy{
+				Enabled: true, Repos: map[string]bool{"acme/widget": true},
+				Bases: map[string]bool{"acme/widget#v5": true}, SkipCurrentBaseGate: true,
+			})
+			reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+			freshness := c.nativeQueueSkipsCurrentBase(context.Background(), claim.Repo, pr)
+			if base == "v5" {
+				if err != nil || reason == "" || f.enqueues != 1 || !freshness {
+					t.Fatalf("pilot base not admitted: %q %v enqueues=%d freshness=%v", reason, err, f.enqueues, freshness)
+				}
+			} else if err != nil || reason != "" || f.enqueues != 0 || freshness {
+				t.Fatalf("unlisted base admitted: %q %v enqueues=%d freshness=%v", reason, err, f.enqueues, freshness)
 			}
 		})
 	}

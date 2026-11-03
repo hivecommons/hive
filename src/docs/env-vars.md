@@ -18,6 +18,7 @@ process restart. Never print token or private-key values while diagnosing them.
 | Rotate dashboard access (deployment admin and affected clients) | [Token generation/rotation](#generating-and-rotating-hive_dashboard_token) and [precedence](#precedence-dashboardauth_token-dashboard_auth_token-hive_dashboard_token) |
 | Change container/proxy behavior (deployment admin) | [Entrypoint/proxy knobs](#deployment-entrypoint-and-proxy-knobs); read the [credential-injection refusal](#proxy-credential-injection) before enabling it |
 | Configure inference or CLI launch (operator/deployment admin) | [Inference/backends](#inference-cli-backends-and-agents), [launch controls](#backend-launch-controls), [Linear integration](#linear-agent-integration) |
+| Configure Crux durable lanes or Hive's optional participant | [Crux durable lanes](#crux-durable-lanes): separate Crux server and Hive launch environments |
 | Understand a value already present in an agent terminal | [Inside an agent session](#inside-an-agent-session): **Hive-injected metadata, not operator knobs** |
 | Configure a local contributor/client command | [Contributor relay/helper scripts](#contributor-relay-and-top-level-helper-scripts) |
 | Understand platform-provided metadata (cluster admin) | [Kubernetes/platform variables](#kubernetes-downward-api-and-platform-variables): normally injected by the platform |
@@ -77,6 +78,8 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_HUB_TASK_STATUS_PUSH` | No | `hub.task_status_push`, default `true` | Enable the separate spoke task-status push loop. Accepts `1/true/yes/on` or `0/false/no/off` (case-insensitive); empty/invalid values fall back to config. Read at startup; restart after changing. Core heartbeat and hub-managed upgrade/config delivery remain enabled. |
 | `HIVE_HUB_PUBLIC_URL` | No | compiled fallback `https://hive.hivecommons.dev` (`defaultHubPublicURL`, `src/pkg/hub/saas_auth.go`) | Hub canonical public origin used to derive OAuth/OIDC callback URLs, hub Open Graph/notification links, same-origin checks, and the registrable-domain scope for hub SSO cookies. Public hub operators should set this to `https://hive.hivecommons.dev` for the cutover; leave the legacy value only while deliberately serving the redirect hostname. **Changing the registrable domain here signs users out of every first-party sibling product left on the old one** — the `hive_hub_user` cookie is scoped to this URL's registrable domain and a browser will not send it anywhere else. See [Moving a public hostname](hivecommons-migration.md#moving-a-public-hostname). |
 | `HIVE_HUB_SPOKE_DOMAIN` | No | compiled fallback `hive.hivecommons.dev` (`defaultHubSpokeDomain`, `src/pkg/hub/saas_auth.go`) | Parent domain used for hub-provisioned spoke ingress hostnames (for example `<hive-id>.<domain>`). Kept separate from `HIVE_HUB_PUBLIC_URL` because the wildcard spoke domain may differ from the hub's own hostname. |
+| `HIVE_HUB_KIOSK_CTA_URL` | No | `https://hive.hivecommons.dev/get-started` (`kioskcta.DefaultURL`, `src/pkg/webassets/kioskcta`) | Destination of the call-to-action badge the hub Fleet activity page shows bottom-right when loaded with `?kiosk=1` (the fleet Twitch stream). Rendered as text and as a QR code. |
+| `HIVE_HUB_KIOSK_CTA_TEXT` | No | `🐝 Want this for your repos?` (`kioskcta.DefaultText`) | Copy line above the URL on that badge. |
 | `HIVE_HUB_LEGACY_COOKIE_DOMAIN` | No | none | Optional transition-only hub SSO cookie domain to expire alongside the active cookie domain while accepting any carried `hive_hub_user` cookie value during a host migration. Writes still target the domain derived from `HIVE_HUB_PUBLIC_URL`; unset disables the extra legacy-domain cleanup. |
 | `HIVE_HUB_SECRET` | Required for spokes registered to a protected hub; optional for a standalone hub with `/data/saas/hub-secret.key` | `/data/saas/hub-secret.key` on the hub when present; no fallback for spoke heartbeat auth | Bearer secret for spoke heartbeats and hub/spoke SaaS APIs. |
 | `HIVE_HUB_AGENT_RESTART_PROBLEM_THRESHOLD` | No | `5` | Hosted hub threshold for surfacing agent restart storms on `/fleet`. When an agent reports at least this many restarts in the last 24 hours (or since the hub-side reset marker), the hive gets a restart problem chip and drift signal. |
@@ -114,6 +117,24 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_DOSSIER_CACHE_MAX_ENTRIES` | No | `512` | Caps each public dossier cache. Bounds username-spray memory while keeping normal contributor reuse hot. |
 | `HIVE_CONTRIBUTOR_KNOWLEDGE_EXPORT_MAX_FACTS` | No | `80` | Caps the number of facts returned by the contributor knowledge export API. Unset, non-numeric, or non-positive values fall back to the default. |
 | `HIVE_PUBLIC_REPOS` | No | none | Comma-separated, case-insensitive allowlist of additional Gource project names the dashboard's public war-room view may render, beyond the always-allowed default (`hive`). |
+
+## Crux durable lanes
+
+The `HIVE_LANES_*` variables belong to the **Hive process** and are read at boot.
+`CRUX_LANES_CONFIG` belongs to **`crux serve`**, not to Hive or an agent session.
+The Hive participant uses the Crux HTTP API as an ordinary project principal;
+it does not connect directly to NATS or inherit broker, agent-control or forge
+permissions. See [Crux durable lanes](crux-lanes.md) for registry configuration,
+project capabilities, deployment requirements and recovery.
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `CRUX_LANES_CONFIG` | No | none (durable lanes disabled) | Crux server's lane configuration file, used when `crux serve --lanes-config` is absent. An explicit flag takes precedence. Broker credentials and project tokens are referenced by environment variable name in that file, not embedded as secret values. |
+| `HIVE_LANES_ADDRESS` | No | none (participant disabled) | Opts the Hive process into a Crux API endpoint. This is the Crux server address, not the NATS broker URL. |
+| `HIVE_LANES_LANE` | Yes when `HIVE_LANES_ADDRESS` is set | none | Registered lane ID for the Hive participant. Missing lane, group or token logs an explicit configuration error and leaves participation disabled. |
+| `HIVE_LANES_GROUP` | Yes when `HIVE_LANES_ADDRESS` is set | none | Registered delivery-group ID for Hive's claim loop; the configured project must have that group's work capability. |
+| `HIVE_LANES_TOKEN` | Yes when `HIVE_LANES_ADDRESS` is set | none | Secret bearer token bound to Hive's ordinary project principal in the Crux registry. Supply it through Hive's launch environment/secret configuration; never print it or use the agent-control/admin token as an implicit lane grant. |
+| `HIVE_LANES_SNAPSHOT_PROJECTS` | No | none (no snapshot handler registered) | Comma-separated explicit publisher-project allowlist for read-only `hive-governor-snapshot-request-v1` work. Use subject-safe IDs without surrounding whitespace. Requests must contain `{}`; this does not mirror events, execute prompts/tools or grant forge writes. |
 
 ## Generating and rotating `HIVE_DASHBOARD_TOKEN`
 
@@ -510,6 +531,10 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_COMMONS_NEEDIEST_REFRESH_MS` | No | `60000` | In `neediest`, milliseconds between `/api/contribute/status` refreshes per subscribed hub. `0` disables the interval. |
 | `AGENT_BACKEND` | No | `claude` | Contributor/agent CLI backend selector. |
 | `AGENT_MODEL` | No | backend default, or `GOOSE_MODEL` for Goose fallback | Contributor/agent model override. |
+| `HIVE_MLX_PYTHON` | For optional MLX when `python3` is not its native environment | `python3` | Native Apple Silicon Python 3.10+ virtualenv executable containing MLX/MLX-LM; metadata-only preflight never initializes the GPU. [MLX setup](contributor-relay.md#apple-mlx-local-inference). |
+| `HIVE_MLX_ENDPOINT` | No | `http://127.0.0.1:8080/v1` | Optional MLX setup/serve endpoint. Only literal loopback HTTP `/v1` URLs; no credentials, redirects or public hosts. Setup persists it in Pi's `mlx` provider. Docker Desktop host networking connects the relay container to the Mac. |
+| `HIVE_MLX_CONTEXT_WINDOW` | No | `8192` | Pi model context metadata at explicit MLX setup; positive integer. Not a host-RAM limit. |
+| `HIVE_MLX_MAX_TOKENS` | No | `2048` | Pi output metadata at explicit MLX setup; positive integer smaller than context. Not a host-RAM limit. |
 | `CONTRIBUTOR_MODE` | No | `interactive` | Contributor relay mode: `interactive` uses tmux; `headless` uses one-shot CLI execution for supported backends. |
 | `HIVE_SESSION` | No | backend name (`AGENT_BACKEND`) | Optional session label for running multiple relays concurrently under one GitHub account. The hub keys task leases, assignment cooldowns, failure streaks, and ownership fences on `ContributorID#session`, so distinctly labeled relays hold independent task slots; auth, trust tier, model admission, and rate-limit accounting stay per-account. Sanitized to `[A-Za-z0-9._-]`, max 32 bytes. Set to the empty string to opt out (bare per-account identity, the historical single-session behavior). See `src/docs/contributor-relay.md`, "Running multiple backends under one account". |
 | `HIVE_AGENT_ROLE` | No | empty string | Optional contributor role claim sent during relay authentication (for example `scanner`, `quality`, or `outreach`) so the hub can apply role-aware policy. Whitespace is trimmed. |

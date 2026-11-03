@@ -12,7 +12,10 @@ The current redaction pattern replaces matches with `[REDACTED]` in:
 
 - log messages,
 - string-valued attributes,
-- string attributes inside slog groups, and
+- `encoding.TextAppender` and `encoding.TextMarshaler` attributes (including scrubbed marshal errors), checked in the order `slog.TextHandler` uses on Go 1.27+ (TextAppender first; Go 1.26 slog ignores TextAppender and renders MarshalText) so the scrubbed text matches what would otherwise have been rendered,
+- `error` and `fmt.Stringer` attributes rendered to text,
+- resolved `slog.LogValuer` attributes, recursively scrubbed by their resolved kind,
+- attributes nested inside slog groups, and
 - attributes attached with `logger.With(...)`.
 
 Recognized patterns are:
@@ -108,7 +111,8 @@ way *out*, to a sink; never on the way *in*, to a reasoner.
 
 - Scrubbing is pattern-based, not a general secret scanner. A secret with another shape can still appear if code logs it directly.
 - A redaction that lands in text an agent reads is a correctness hazard, not just a lossy log. See the section above; `pkg/logscrub` cannot tell whether its caller is writing to a sink or to a model.
-- Non-string slog values are passed through unchanged unless they are inside a group containing string attributes.
+- Non-text slog values (such as ints, bools, slices, maps, and structs without the text interfaces above) are passed through unchanged. Strings inside arbitrary containers are not recursively scrubbed; a `slog.LogValuer` resolving to such a container has the same limitation.
+- Errors, Stringers, TextAppenders, and TextMarshalers are forwarded as scrubbed strings, even if they also implement `json.Marshaler`. JSON log consumers may therefore see a string where they previously saw a number or object.
 - `pkg/logscrub` redaction happens in the Hive logging path. Data written by external tools, agent CLIs, or third-party proxies is not automatically covered unless it flows through Hive's scrubbed logger. Agent terminal output forwarded by the contributor relay is a partial exception — it is redacted, but by the relay's own narrower pattern list, not by `pkg/logscrub`.
 - The two layers can drift. They are separate implementations with no shared source of truth, so a pattern added to one does not appear in the other; the table above is accurate as of writing and worth re-checking against both implementations before relying on it.
 - False positives are replaced with `[REDACTED]`; there is no runtime allow-list or custom pattern configuration today.

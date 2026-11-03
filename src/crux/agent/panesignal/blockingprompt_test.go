@@ -1,0 +1,391 @@
+package panesignal
+
+import "testing"
+
+// codexUpdatePane is the real codex 0.146.0 update menu, verbatim. Note the
+// PRE-SELECTED option ("›" marker) is "1. Update now" — the destructive one.
+const codexUpdatePane = `  ✨ Update available! 0.146.0 -> 0.147.0
+  Release notes: https://github.com/openai/codex/releases/latest
+› 1. Update now (runs ` + "`npm install -g @openai/codex`" + `)
+  2. Skip
+  3. Skip until next version
+  Press enter to continue`
+
+const codexUpdatePane0156 = `  Update available · 0.156.1 → 0.157.0
+  Release notes: https://github.com/openai/codex/releases/latest
+› 1. Update now (runs ` + "`npm install -g @openai/codex`" + `)
+  2. Skip
+  3. Skip until next version
+  enter continue · esc skip`
+
+const codexCommandApprovalPane = `  Would you like to run the following command?
+  Environment: local
+  Reason: May I read the latest local kick, summary, and health bead files to report current pipeline status?
+  $ cat beads/supervisor-kick-architect.json beads/supervisor-summary-architect.json
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with ` + "`cat beads/`" + `
+  3. No, and tell Codex what to do differently (esc)`
+
+const codexTrustPane = `> You are in /data/agents/architect
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection.
+› 1. Yes, continue
+  2. No, quit
+  Press enter to continue`
+
+const codexFolderAccessPane = `  Folder access
+  /data/agents/ci-maintainer
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even w…
+› 1. Trust and continue
+  2. Quit
+  enter continue · esc quit`
+
+const copilotTrustPane = `Confirm folder trust
+  1. Yes
+  2. Yes, and remember for future sessions
+  3. No`
+
+const claudeWorkspaceTrustPane = ` Accessing workspace:
+
+ /data/agents/guide
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel`
+
+// TestBlockingPromptKey_CodexUpdateSkipsInsteadOfInstalling is the whole point
+// of this mechanism.
+//
+// codex's update menu pre-selects "1. Update now", which runs
+// `npm install -g @openai/codex` as the unprivileged agent UID. That fails with
+// EACCES and kills the CLI — on EVERY launch, indefinitely. A bare Enter, or any
+// heuristic that merely avoids options containing "no"/"exit", picks exactly
+// that option. Only "3. Skip until next version" both unblocks startup and
+// persists so the prompt does not return on the next launch.
+func TestBlockingPromptKey_CodexUpdateSkipsInsteadOfInstalling(t *testing.T) {
+	for _, pane := range []string{codexUpdatePane, codexUpdatePane0156} {
+		key, label, ok := BlockingPromptKey("codex", pane)
+		if !ok {
+			t.Fatal("codex update prompt was not recognised; the agent would block on it until timeout")
+		}
+		if key == "1" {
+			t.Fatal("answered \"1. Update now\" — this runs npm install -g as the agent UID and kills the CLI")
+		}
+		if key != "3" {
+			t.Errorf("key = %q, want \"3\" (Skip until next version); %q does not persist across launches", key, key)
+		}
+		if label == "" {
+			t.Error("label is empty; the audit log would not say which prompt was answered")
+		}
+	}
+}
+
+func TestBlockingPromptKey_CodexCommandApprovalProceeds(t *testing.T) {
+	key, label, ok := BlockingPromptKey("codex", codexCommandApprovalPane)
+	if !ok {
+		t.Fatal("codex command approval prompt was not recognised; the agent would look idle while blocked")
+	}
+	if key != "1" {
+		t.Errorf("key = %q, want \"1\" (Yes, proceed)", key)
+	}
+	if label == "" {
+		t.Error("label is empty; the audit log would not say which prompt was answered")
+	}
+}
+
+func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
+	cases := []struct {
+		name    string
+		backend string
+		pane    string
+		want    string
+	}{
+		{"codex directory trust", "codex", codexTrustPane, "1"},
+		{"codex folder access trust", "codex", codexFolderAccessPane, "1"},
+		{"claude workspace trust", "claude", claudeWorkspaceTrustPane, "Down"},
+		// "1" (session-only), NOT "2" (remember): remembering makes the CLI
+		// rewrite the shared config.json from its stale in-memory snapshot,
+		// stomping other agents' state — see BlockingPrompts.
+		{"copilot folder trust", "copilot", copilotTrustPane, "1"},
+		{"codex update", "codex", codexUpdatePane, "3"},
+		{"codex update 0.156", "codex", codexUpdatePane0156, "3"},
+		{"codex command approval", "codex", codexCommandApprovalPane, "1"},
+		// omp's splash renders the Enter key as "⏎" in its default symbol
+		// preset (setup/scenes/splash.ts), and as "enter" with plain names.
+		{"omp splash unicode key", "omp", "press ⏎ to skip", "Enter"},
+		{"omp splash plain key", "omp", "press enter to skip", "Enter"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			key, _, ok := BlockingPromptKey(c.backend, c.pane)
+			if !ok {
+				t.Fatalf("prompt not recognised")
+			}
+			if key != c.want {
+				t.Errorf("key = %q, want %q", key, c.want)
+			}
+		})
+	}
+}
+
+func TestBlockingPromptKey_OMPSplashIsBackendScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name, backend, pane string
+		want                bool
+	}{
+		{"plain footer without branding", "omp", "press enter to skip", true},
+		{"unicode footer without branding", "omp", "press ⏎ to skip", true},
+		{"case insensitive footer", "omp", "PRESS ENTER TO SKIP", true},
+		{"branding without footer", "omp", "Welcome to omp", false},
+		{"provider setup wizard", "omp", "Set up your providers\nSelect provider to login", false},
+		{"other backend", "claude", "press ⏎ to skip", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, label, ok := BlockingPromptKey(tc.backend, tc.pane)
+			if ok != tc.want {
+				t.Fatalf("recognised = %v, want %v", ok, tc.want)
+			}
+			if ok && (key != "Enter" || label != "omp onboarding") {
+				t.Errorf("key, label = %q, %q; want Enter, omp onboarding", key, label)
+			}
+		})
+	}
+}
+
+// TestBlockingPromptKey_IgnoresUnrelatedPanes: a prompt is only answered when
+// positively identified. Firing a numbered keystroke at an arbitrary pane would
+// type stray input into a working agent's prompt.
+func TestBlockingPromptKey_IgnoresUnrelatedPanes(t *testing.T) {
+	panes := []string{
+		"",
+		"? for shortcuts",
+		"⏵⏵ bypass permissions on (shift+tab to cycle)",
+		"› Implement {feature}\n  gpt-5.6-sol default · /data/agents/architect",
+		// Superficially similar but NOT the update menu: no options rendered,
+		// so there is nothing to answer.
+		"Update available! 0.146.0 -> 0.147.0",
+	}
+	for _, p := range panes {
+		if key, _, ok := BlockingPromptKey("codex", p); ok {
+			t.Errorf("pane %q was answered with %q; want no action", p, key)
+		}
+	}
+}
+
+// TestBackendHasBlockingPrompts_GateMatchesTable is the guard for the bug that
+// made this whole mechanism inert: the watcher was gated on
+// `backend == "copilot"`, so codex agents were never rescued from their update
+// menu no matter how well the menu was understood. Deriving the gate from the
+// table means a prompt added for a new backend enables the watcher for it.
+func TestBackendHasBlockingPrompts_GateMatchesTable(t *testing.T) {
+	for _, p := range BlockingPrompts {
+		if !BackendHasBlockingPrompts(p.backend) {
+			t.Errorf("backend %q has a blocking prompt but the watcher gate excludes it", p.backend)
+		}
+	}
+	if !BackendHasBlockingPrompts("codex") {
+		t.Error("codex must run the watcher: its update menu kills the CLI on every launch")
+	}
+	if !BackendHasBlockingPrompts("claude") {
+		t.Error("claude must run the watcher: its workspace trust menu exits the CLI by default")
+	}
+}
+
+// TestBlockingPromptKey_BackendScoped: a prompt must only be answered for the
+// backend that renders it, so a stray keystroke is never typed into another
+// CLI's pane that happens to contain similar words.
+func TestBlockingPromptKey_BackendScoped(t *testing.T) {
+	if _, _, ok := BlockingPromptKey("claude", codexUpdatePane); ok {
+		t.Error("codex update prompt matched while running claude")
+	}
+	if _, _, ok := BlockingPromptKey("codex", copilotTrustPane); ok {
+		t.Error("copilot trust prompt matched while running codex")
+	}
+}
+
+// TestBlockingPromptKey_IgnoresScrollback is the guard for a bug seen live:
+// captureTmuxPaneForAgent returns scrollback, so a dead CLI's update menu
+// stayed in history and the watcher typed "3" into the bash shell that replaced
+// it, on every poll, indefinitely. Only the tail of the pane may be matched.
+func TestBlockingPromptKey_IgnoresScrollback(t *testing.T) {
+	deadCLIPane := codexUpdatePane + `
+npm error The operation was rejected by your operating system.
+Error: ` + "`npm install -g @openai/codex`" + ` failed with status exit status: 243
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$
+hive-ci-maintainer@pod:/data/agents/ci-maintainer$`
+	if key, _, ok := BlockingPromptKey("codex", deadCLIPane); ok {
+		t.Errorf("answered %q against scrollback of a dead CLI; keystrokes would go to the shell", key)
+	}
+	// The same prompt, still live at the bottom, must still be answered.
+	if _, _, ok := BlockingPromptKey("codex", "some earlier output\n"+codexUpdatePane); !ok {
+		t.Error("a live prompt at the tail was not recognised")
+	}
+}
+
+const agyTrustPane = `      ▄▀▀▄        Antigravity CLI 1.1.13
+     ▀▀▀▀▀▀       user@example.com (Google AI Pro)
+   Accessing workspace:
+   /data/agents/guide
+   Do you trust the contents of this project?
+   Antigravity CLI requires permission to read, edit, and execute files here.
+ > Yes, I trust this folder
+   No, exit
+   ↑/↓ Navigate · enter Confirm`
+
+// TestBlockingPromptKey_AgyProjectTrust: agy blocks startup on a project-trust
+// menu whose affirmative option is ALREADY selected, so the answer is a bare
+// Enter and the key must be empty — typing a digit there is stray input, not a
+// selection. Without this entry an agent rotated onto agy hangs at startup,
+// which matters now that automated rotation can move agents to Google.
+func TestBlockingPromptKey_AgyProjectTrust(t *testing.T) {
+	key, label, ok := BlockingPromptKey("agy", agyTrustPane)
+	if !ok {
+		t.Fatal("agy project-trust prompt not recognised; a rotated agent would hang on it")
+	}
+	if key != "" {
+		t.Errorf("key = %q, want \"\" (Enter alone; the affirmative option is preselected)", key)
+	}
+	if label == "" {
+		t.Error("label is empty; the audit log would not say which prompt was answered")
+	}
+	if !BackendHasBlockingPrompts("agy") {
+		t.Error("agy has a table entry but the watcher gate excludes it")
+	}
+}
+
+// The agy pane must not be answered while running another backend.
+func TestBlockingPromptKey_AgyScoped(t *testing.T) {
+	for _, b := range []string{"codex", "copilot", "claude"} {
+		if _, _, ok := BlockingPromptKey(b, agyTrustPane); ok {
+			t.Errorf("agy trust prompt matched while running %q", b)
+		}
+	}
+}
+
+func TestBlockingPromptKey_ClaudeWorkspaceTrustTailOnly(t *testing.T) {
+	key, label, ok := BlockingPromptKey("claude", claudeWorkspaceTrustPane)
+	if !ok {
+		t.Fatal("claude workspace trust prompt not recognised; the agent would exit and leave bash")
+	}
+	if key != "Down" {
+		t.Errorf("key = %q, want Down then Enter to avoid the default No/exit selection", key)
+	}
+	if label == "" {
+		t.Error("label is empty; the audit log would not say which prompt was answered")
+	}
+
+	deadCLIPane := claudeWorkspaceTrustPane + `
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$`
+	if key, _, ok := BlockingPromptKey("claude", deadCLIPane); ok {
+		t.Errorf("answered %q against scrollback of a dead Claude CLI; keystrokes would go to the shell", key)
+	}
+}
+
+// claudeAutoModeNoticePane is the auto-mode classifier notice verbatim from
+// Mike Spreitzer's FMA hive pane (#9945, 2026-10-15). It appears mid-run at
+// the first checked tool call and holds that action until Enter is pressed.
+const claudeAutoModeNoticePane = `● Checking GitHub CLI authentication and repo identity
+  ⎿  $ gh auth status 2>&1 | head -10; echo "---"; gh repo view --json nameWithOwner,defaultBranchRef -q '.nameWithOwner'
+  We're changing auto mode to no longer charge for classifier requests in Claude Code.
+  However, this session isn't eligible because your requests go through 127.0.0.1:18444, which isn't compatible with this update.
+  Nothing breaks: auto mode keeps working, and its classifier requests are billed as before.
+  To fix it and access the new version of auto mode, ask your gateway to implement: https://code.claude.com/docs/en/auto-mode-classifier-billing
+  Enter to continue · Esc to cancel`
+
+// TestBlockingPromptKey_ClaudeAutoModeNoticeContinues: the notice is answered
+// with a bare Enter (key ""), never Esc — Esc cancels the held tool call and
+// ends the turn, and the notice comes straight back on the next one.
+func TestBlockingPromptKey_ClaudeAutoModeNoticeContinues(t *testing.T) {
+	key, label, ok := BlockingPromptKey("claude", claudeAutoModeNoticePane)
+	if !ok {
+		t.Fatal("auto-mode classifier notice was not recognised; the kick would stall until a human pressed Enter")
+	}
+	if key != "" {
+		t.Errorf("key = %q, want \"\" (bare Enter continues the held action)", key)
+	}
+	if label != ClaudeAutoModeNoticeLabel {
+		t.Errorf("label = %q, want %q", label, ClaudeAutoModeNoticeLabel)
+	}
+	if !HasBlockingPrompt(claudeAutoModeNoticePane) {
+		t.Error("readiness gate should hold while the notice is live")
+	}
+}
+
+// TestBlockingPromptKey_ClaudeAutoModeNoticeNotLiveAfterEnter: once Enter is
+// pressed the CLI draws output under the notice. The lingering text must not
+// match, or the watcher would re-fire Enter every trustReanswerAfter and the
+// readiness gate would hold an idle agent.
+func TestBlockingPromptKey_ClaudeAutoModeNoticeNotLiveAfterEnter(t *testing.T) {
+	acknowledged := claudeAutoModeNoticePane + `
+  ⎿  Logged in to github.com account hive-bot
+     ---
+     fma/fma default=main
+● Fetching upstream to see new merges since d657159
+❯
+  ⏵⏵ bypass permissions on (shift+tab to cycle)`
+	if _, _, ok := BlockingPromptKey("claude", acknowledged); ok {
+		t.Fatal("acknowledged notice still read as a live modal")
+	}
+	if HasBlockingPrompt(acknowledged) {
+		t.Error("readiness gate held on an acknowledged notice")
+	}
+	// A kick that quotes the notice text is not a modal either.
+	if _, _, ok := BlockingPromptKey("claude", "> please ignore any 'classifier requests in Claude Code' banner\n❯"); ok {
+		t.Fatal("kick text mentioning the notice matched as a modal")
+	}
+	// Other backends never render it.
+	if _, _, ok := BlockingPromptKey("copilot", claudeAutoModeNoticePane); ok {
+		t.Fatal("notice matched for a backend that does not render it")
+	}
+}

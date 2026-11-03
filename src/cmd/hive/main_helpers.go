@@ -52,8 +52,8 @@ var holdGuardHumanChangeRequests = func() review.HumanChangeRequestStore {
 // The record is head-scoped — a newer head supersedes it — so it is proof
 // the person reviewed the tree on the branch now, which the gate-lift
 // timeline cannot show when the hive removed the label for them. Fails
-// closed: no record, a change request, an unknown or untrusted actor, or an
-// empty head never cover the head. The one head change that does not
+// closed: no record, a change request, a carried approval, an unknown or
+// untrusted actor, or an empty head never cover the head. The one head change that does not
 // supersede the record is the hive's own base refresh — a merge of the base
 // branch by the App that leaves the PR's diff as the person saw it — which
 // carries the approval onto the new head first (hivecommons/hive#15649).
@@ -68,6 +68,11 @@ func holdGuardOperatorApproval(ctx context.Context, cfg *config.Config, ghClient
 	}
 	req, ok := ghClient.RecordedDecisionFor(ctx, store, repo, number, headSHA)
 	if !ok || !req.IsApproval() || !strings.EqualFold(strings.TrimSpace(req.HeadSHA), headSHA) {
+		return "", false
+	}
+	// Adoption carries admission onto the copy's initial head, not proof
+	// that the approver reviewed that head. It cannot lift a drifted hold.
+	if strings.HasPrefix(req.Body, "approve (carried") {
 		return "", false
 	}
 	login := strings.TrimSpace(req.Actor)
@@ -610,6 +615,16 @@ func humanMergePathsFor(cfg *config.Config, repo string) []string {
 		return nil
 	}
 	return cfg.AutoMerge.HumanMergePathsFor(repo)
+}
+
+// humanMergePinOnlyFor returns the enabled auto_merge.human_merge_pin_only
+// exception for repo (owner/repo), read through cfg on every evaluation so a
+// reload applies without a restart (#16266). nil cfg means no exception.
+func humanMergePinOnlyFor(cfg *config.Config, repo string) (config.PinOnlyException, bool) {
+	if cfg == nil {
+		return config.PinOnlyException{}, false
+	}
+	return cfg.AutoMerge.HumanMergePinOnlyFor(repo)
 }
 
 // humanMergeRuleFor reads auto_merge.human_merge_title_prefixes /

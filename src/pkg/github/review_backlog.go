@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -516,7 +517,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 		return filedIssues[i].key < filedIssues[j].key
 	})
 	if !ledger.SummaryCommented[prKey] {
-		if err := c.CreateIssueComment(ctx, req.Repo, req.Number, reviewBacklogSummaryComment(filedIssues, dailyCap)); err != nil {
+		if _, err := c.PostNoteOrFold(ctx, req.Repo, req.Number, prstatus.KeyReviewBacklog, reviewBacklogSummaryComment(filedIssues, dailyCap)); err != nil {
 			return err
 		}
 		c.recordWriteAudit(AuditActionReviewBacklogSummaryPosted, hiveWriteMeta(),

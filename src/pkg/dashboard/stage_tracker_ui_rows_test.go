@@ -35,7 +35,7 @@ assert.ok(/aria-label="Pipeline progress">[\s\S]*?<\/ol>\s*<span class="ham-sinc
 assert.ok(/<li class="ham-seg cap"><span class="ham-badges">[\s\S]*?<\/span><\/li><\/ol><span class="ham-since"><\/span><\/div>\s*<\/div>\s*<div class="ham-strip-row">/.test(row), 'the chip cell closes the title line, directly above its own strip row');
 assert.ok(row.indexOf('<div class="ham-row-head">') < row.indexOf('ham-badges') && row.indexOf('ham-badges') < row.indexOf('aria-label="Pipeline progress"'), 'chip and strip share one row container');
 assert.ok(row.includes('ham-kind-ico'), 'kind icon');
-assert.strictEqual((strip(row).match(/<svg class="ham-ico( ham-history-ico)?"/g) || []).length, 6, 'icons on every drawn non-active chevron');
+assert.strictEqual((strip(row).match(/<svg class="ham-ico( ham-history-ico)?"/g) || []).length, 5, 'native icons remain; CI and Review have their own evidence text');
 assert.ok(/<li class="ham-seg todo cap"><svg class="ham-ico ham-history-ico"/.test(strip(row)), 'the unmerged cap wears the history mark, not the ✓');
 assert.ok(!strip(row).includes('✓'), 'no ✓ in the strip before the PR merges');
 assert.ok(tooltip(row).includes('Claimed by scanner') && tooltip(row).includes('@alice') && tooltip(row).includes('30 min ago'), tooltip(row));
@@ -190,7 +190,7 @@ assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'o
 assert.ok(tooltip(row).includes('Covering PR: #102'), tooltip(row));
 assert.deepStrictEqual(prCol(row).length, 1, 'the covering PR sits in the PR column of the title line');
 assert.strictEqual(subs(row).length, 0, 'no sub-rows for a single covering PR');
-const prCell = (html) => (html.slice(0, html.indexOf('aria-label="Pipeline progress"')).match(/<li class="ham-seg ham-head-pr">([\s\S]*?)<\/li>/) || [])[1] || '';
+const prCell = (html) => (html.slice(0, html.indexOf('aria-label="Pipeline progress"')).match(/<li class="ham-seg ham-head-pr"[^>]*>([\s\S]*?)<\/li>/) || [])[1] || '';
 assert.ok(prCell(row).startsWith(STAGE_TRACKER_LINKED_GLYPH + '<a class="ham-pr-ref"'), 'an in-row PR is led by the linked glyph: ' + prCell(row));
 assert.ok(prCell(row).includes('title="Author: hive · ' + esc(STAGE_TRACKER_LINKED_TIP) + '"'), 'the PR link tooltip explains the shared row: ' + prCell(row));
 // A PR listed by two open issues shows on both rows; every row but the
@@ -225,7 +225,7 @@ assert.ok(tooltip(row).includes('acme/console'), 'repo lives in the tooltip');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', stage: 100, author: 'hive-bot', author_kind: 'hive' }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
 assert.ok(strip(row).includes('title="Merge queue — admitted, merging · Next move: hive"'), 'chevron tooltip carries 100: ' + row);
-assert.ok(text(row).includes('#102 Merging'), text(row));
+assert.ok(text(row).includes('#102') && text(row).includes('Merging'), text(row));
 // Full PR row for 095: Merge gate lit as Soaking (not a detour), hive actor,
 // chevron tooltip names the real stage and the time left; headline carries it too.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 13020, kind: 'pr', stage: 95, author: 'hive-bot', author_kind: 'hive', soak_remaining_seconds: 17 * 60 + 1 }, stages, ctx);
@@ -239,7 +239,7 @@ assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COL
 
 // PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{number:50,slug:'review-pending'},{number:60,slug:'reviewed'},{number:72,slug:'returned-to-contributor',from:60}] }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
+assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured', T, T, 'todo cap']);
 // hivecommons/hive#15159: the chevron names the routing — the contributor's clanker, for a clanker's PR.
 assert.ok(row.includes('<span class="ham-detour">Returned to @karibhou&#39;s clanker</span>'), row);
 // Invariant: a PR never occupies the issue slot. A PR with no linked issue
@@ -327,14 +327,13 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage
 assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') && tooltip(row).includes('Flags: needs human decision'), row);
 // Whose move it is, as an ink-coloured icon after the word: Review = hive,
 // PR in progress = the PR author, Claimed = the claimant; Open/Actionable carry none.
-assert.ok(row.includes('<svg class="ham-ico ham-actor-ico" viewBox="0 0 16 16"') && row.includes('aria-label="Next move: hive"') && row.includes('<span class="ham-seg-t">CI / Review</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(row.includes('data-track="ci"') && row.includes('data-track="review"') && !row.includes('ham-actor-ico'), 'a native stage cannot identify the actual reviewer: ' + row);
 assert.ok(!row.includes('ham-author-ico ham-actor') && !row.includes('ham-actor-ico ham-author-'), 'actor icon must not carry the author colour classes: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 72, author_kind: 'clanker' }, stages, ctx);
-assert.ok(row.includes('aria-label="Next move: clanker"') && row.includes('<span class="ham-detour">Returned to contributor</span><svg class="ham-ico ham-actor-ico"'), row);
-// 071 needs-author: a human's red PR rides the Review column as its own
-// detour, the person as the mover.
+assert.ok(row.includes('Review unknown') && row.includes('CI unknown'), 'legacy author waits do not fabricate observed activity: ' + row);
+// 071 needs-author: the owner wait returns to PR in progress without pretending coding.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{number:50,slug:'review-pending'},{number:71,slug:'needs-author',from:50}] }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
+assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured', T, T, 'todo cap']);
 assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Needs @sam</span><svg class="ham-ico ham-actor-ico"'), row);
 assert.ok(tooltip(row).includes('Trail: CI / Review → Needs author'), tooltip(row));
 // The trail names hops from the payload's {number, slug} entries (#14787
@@ -356,6 +355,11 @@ assert.strictEqual(stageTrackerTrailText({ history: [] }), '');
 assert.strictEqual(stageTrackerTrailText({}), '');
 assert.strictEqual(stageTrackerTrailText({ history: [{ number: 0 }, { number: 10 }] }), 'Open → Actionable', '000 reads as Open');
 assert.ok(!stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, history: [{ number: 999 }, { number: 998 }] }, now).includes('Trail:'), 'no Trail clause when nothing can be named');
+// hivecommons/hive#16015: a registered contributor's PR reads as their clanker,
+// and the tooltip says the registry decided it; an inferred kind still says so.
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 15998, stage: 74, author: 'Karibhou', author_kind: 'clanker', author_kind_source: 'registry' }, now).includes('Author: @Karibhou (agent, registered contributor)'), 'registry source named in the tooltip');
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, author: 'pat', author_kind: 'human', author_kind_source: 'inferred' }, now).includes('Author: @pat (person, inferred)'), 'inferred source still named');
+assert.ok(stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, author: 'pat', author_kind: 'human', author_kind_source: 'label' }, now).includes('Author: @pat (person)'), 'label source says nothing');
 const savedStages = _stageTracker;
 _stageTracker = null;
 assert.strictEqual(stageTrackerTrailText(live14787), 'review-pending → needs-author → review-pending → needs-decision', 'the slug stands in before the stage table loads');
@@ -468,7 +472,7 @@ let sr = subs(row);
 assert.strictEqual(sr.length, 2, 'one sub-row per covering PR');
 assert.ok(prCol(sr[0])[0].includes('ham-author-human') && prCol(sr[0])[0].includes('#102') && prCol(sr[0])[0].includes('<span class="ham-pr-title">Fix it</span>'), prCol(sr[0])[0]);
 assert.deepStrictEqual(segStates(sr[0]), [B, B, B, D, 'active detoured', T, 'todo cap'], 'PR strip starts at PR in progress');
-assert.ok(sr[0].includes('<span class="ham-detour">Fixing</span><svg class="ham-ico ham-actor-ico"') && sr[0].includes('aria-label="Next move: human"') && sr[0].indexOf('<span class="ham-since">1h</span>') > sr[0].indexOf('aria-label="Pipeline progress"') && sr[0].includes('ham-mod-needs-rebase">needs rebase</span>'), 'Fixing is the author\'s move; the chip says what is being fixed: ' + sr[0]);
+assert.ok(sr[0].includes('Waiting for fixer') && !sr[0].includes('ham-actor-ico') && sr[0].indexOf('<span class="ham-since">1h</span>') > sr[0].indexOf('aria-label="Pipeline progress"') && sr[0].includes('ham-mod-needs-rebase">needs rebase</span>'), 'a rebase label and next mover cannot manufacture observed coding: ' + sr[0]);
 assert.ok(/^ data-ham-kind="pr" data-ham-stage="70" data-ham-sub-key="acme\/console\/pr#102">/.test(sr[0]) && /<a class="ham-pr-ref"[^>]*title="Fix it · Fixing review findings Rebasing onto main/.test(sr[0]), 'sub-row tooltip rides the PR link, not the container: ' + sr[0].slice(0, 400));
 assert.ok(prCol(sr[1])[0].includes('ham-author-clanker') && prCol(sr[1])[0].includes('#103'));
 assert.deepStrictEqual(segStates(sr[1]), [B, B, B, 'active', T, T, 'todo cap'], 'a PR at 030 lights PR in progress on its own sub-row');
@@ -484,7 +488,7 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', titl
 sr = subs(row);
 {
   const head = sr[0].slice(0, sr[0].indexOf('aria-label="Pipeline progress"'));
-  const cell = (head.match(/<li class="ham-seg ham-head-pr">([\s\S]*?)<\/li>/) || [])[1] || '';
+  const cell = (head.match(/<li class="ham-seg ham-head-pr"[^>]*>([\s\S]*?)<\/li>/) || [])[1] || '';
   assert.ok(cell, 'sub-row header has one PR cell: ' + head);
   assert.ok(!/<br|<div|<p\b/.test(cell), 'no block-level element inside the PR cell: ' + cell);
   const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"'), cell.lastIndexOf('<span class="ham-badge">v5</span>')];
@@ -529,7 +533,7 @@ assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 72 }, stages).anchor
 
 // Header: names once, aligned with the chevrons, plus the since column.
 const head = stageTrackerHeaderHtml(stages);
-assert.deepStrictEqual(Array.from(head.matchAll(/<span class="ham-seg-t">(?:<svg[\s\S]*?<\/svg>)?([^<]*)<\/span>/g)).map(m => m[1]), ['Open', 'Actionable', 'Claimed', 'PR in progress', 'CI / Review', 'Merge queue']);
+assert.deepStrictEqual(Array.from(head.matchAll(/<span class="ham-seg-t">(?:<svg[\s\S]*?<\/svg>)?([^<]*)<\/span>/g)).map(m => m[1]), ['Open', 'Actionable', 'Claimed', 'PR in progress', 'CI', 'Review', 'Merge queue']);
 // The Merge queue column wears the train icon (hover "Merge queue"), the
 // same railcar as the train header chip and the 080 chevron (#15395).
 assert.ok(head.includes('<span class="ham-seg-t">' + stageTrackerTrainIconHtml('ham-ico ham-train-icon ham-col-ico') + 'Merge queue</span>'), head);
@@ -546,6 +550,11 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 const prWords = {};
 for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
+  if ([50, 60, 70, 71, 72, 74].includes(st)) {
+    assert.ok(r.includes('data-track="ci"') && r.includes('data-track="review"'), 'pre-gate tracks remain separate at ' + st);
+    assert.ok(r.includes('CI unknown') && r.includes('Review unknown'), 'legacy labels alone cannot supply activity at ' + st);
+    continue;
+  }
   const m = /aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);
   assert.deepStrictEqual([m[1], m[2]], [word, actor === 'author' ? 'clanker' : actor], 'stage ' + st);
@@ -554,8 +563,8 @@ for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passe
 // The responsive caption names the column, the detour word when there is one,
 // and the next mover for the strip's active segment; it stays empty when no
 // active segment is in range.
-assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages), '<p class="ham-current-stage">CI / Review · Fixing · Next move: clanker</p>');
-assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Review passed · Next move: hive</p>', 'no detour → column word only');
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages), '<p class="ham-current-stage">CI + Review · Waiting for fixer · activity unknown</p>');
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">CI + Review</p>', 'a reviewed label is not current-head independent approval evidence');
 assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages, { from: 500 }), '', 'no caption when the active segment is out of range');
 assert.strictEqual(STAGE_TRACKER_ACTOR[70], 'author', '070 fixing is the author\'s move');
 // Filters.
@@ -601,13 +610,14 @@ assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'pr', repo: '' }).map(it =
 // sub-row container, kind / author / actor icons, chips, since cells and
 // every non-active chevron carry none; icons expose their label via aria-label.
 const tags = (html) => Array.from(html.matchAll(/<(\w+)\b([^>]*)>/g)).map(m => ({ tag: m[1], attrs: m[2] }));
-const titled = (html) => tags(html).filter(t => / title="/.test(t.attrs));
+const titled = (html) => tags(html).filter(t => / title="/.test(t.attrs) && !t.attrs.includes('data-track='));
 const expectTitles = (html, want, what) => assert.deepStrictEqual(titled(html).map(t => t.tag + '.' + ((/class="([^" ]+)/.exec(t.attrs) || [])[1] || '')), want, what + ': ' + html);
 assert.ok(!/<svg[^>]*>\s*<title>/.test(golden), 'no svg <title> tooltips anywhere in the tracker');
 assert.ok(!/<(div|span)[^>]*class="ham-(row|sub|since|badge|kind-ico)[^>]*title="/.test(golden), 'containers, since cells, chips and kind icons carry no title');
 for (const r of golden.split('<div class="ham-row"').slice(1)) {
   const seg = Array.from(r.matchAll(/<li class="ham-seg ([^"]*)"([^>]*)>/g));
   for (const m of seg) {
+    if (m[2].includes('data-track=')) continue; // Independent evidence tooltips are pinned in the activity-track tests.
     const isActive = /\bactive\b/.test(m[1]);
     assert.strictEqual(/ title="/.test(m[2]), isActive, (isActive ? 'active chevron needs a title' : 'inactive chevron must have no title') + ': ' + m[0]);
   }
@@ -619,13 +629,13 @@ assert.ok(/<li class="ham-seg active" title="Claimed" aria-current="step">/.test
 assert.ok(/<a class="ham-ref"[^>]*title="[^"]*@ann[^"]*"/.test(row), 'the #N link carries the full row tooltip');
 // Issue with one PR: #N link, issue title, PR link (its title + author), active chevron.
 row = stageTrackerRowHtml(g[1], stages, ctx);
-expectTitles(row, ['a.ham-ref', 'span.ham-title', 'a.ham-pr-ref', 'li.ham-seg'], 'issue with one PR');
+expectTitles(row, ['a.ham-ref', 'span.ham-title', 'a.ham-pr-ref'], 'issue with one PR; independent track tooltips are separate');
 assert.ok(/<a class="ham-pr-ref"[^>]*title="The one PR Author: hive · @hive-bot · linked PR, shown on its issue&#39;s row"/.test(row), 'the PR link also explains the shared row: ' + row);
 // tracker-cues: with no agent on the item the chevron is static (waiting);
 // the pulse and the "Working now" lead need a worker in ctx.workers.
-assert.ok(/<li class="ham-seg active" title="Review pending · Next move: hive" aria-current="step">/.test(row), 'active chevron: stage + whose move (nobody working: static): ' + row);
+assert.ok(row.includes('CI unknown') && row.includes('Review unknown') && !strip(row).includes('data-motion='), 'a stage label alone supplies no activity: ' + row);
 row = stageTrackerRowHtml(g[1], stages, Object.assign({}, ctx, { workers: { 'g/r#21': { agent: 'scout', action: 'agent_comment_created', at: new Date(now - 120000).toISOString() } } }));
-assert.ok(/<li class="ham-seg active" data-motion="active" title="Working now: scout commented · 2m ago — Review pending · Next move: hive" aria-current="step">/.test(row), 'active chevron: working lead + pulse when an agent is on the nested PR: ' + row);
+assert.ok(row.includes('Review unknown') && !strip(row).includes('data-motion='), 'a generic commenter is not a current-head reviewer: ' + row);
 assert.ok(/class="ham-row cue-working"/.test(row), 'the row carries the working cue: ' + row);
 assert.ok(!/<li class="ham-seg active" data-motion=[^>]*title="Claimed"/.test(stageTrackerRowHtml(g[0], stages, ctx)), 'Claimed is static: no data-motion');
 // Issue with two PRs: #N link + title on the issue line, nothing lit there;

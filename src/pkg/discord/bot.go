@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux/logscrub"
@@ -35,10 +36,25 @@ const (
 	// fraction so a fleet of bots hitting the same outage doesn't retry in
 	// lockstep.
 	pollBackoffJitterFrac = 0.2
+	msgQueueIntervalMS    = 1200
+	heartbeatInterval     = 15 * time.Minute
+	topicDebounceMS       = 5000
+	discordMsgLimit       = 1900
+	sseReconnectBase      = 5 * time.Second
+	sseReconnectMax       = 60 * time.Second
+	nonceLimit            = 25
+	threadNameLimit       = 100
+	historyLimit          = 50
+	maxRateLimitRetries   = 3
+	maxRetryAfter         = 15 * time.Second
+	threadExistsCode      = "160004"
+	maxResponseBytes      = 1 << 20
 )
 
 type AgentIdentity = chat.AgentIdentity
 type CommandHandler = chat.CommandHandler
+
+var rateLimitSleep = time.Sleep
 
 type Config struct {
 	Token          string
@@ -61,6 +77,9 @@ type Config struct {
 type Bot struct {
 	*discordBackend
 	service *chat.Service
+	mu      sync.RWMutex
+	self    string
+	guilds  map[string]string
 }
 
 type discordBackend struct {
@@ -164,6 +183,38 @@ func (b *discordBackend) Send(content string) error {
 	return b.sendTo(b.channelID, content)
 }
 
+// Embed represents a Discord embed object.
+type Embed struct {
+	Title       string       `json:"title,omitempty"`
+	Description string       `json:"description,omitempty"`
+	URL         string       `json:"url,omitempty"`
+	Color       int          `json:"color,omitempty"`
+	Author      *EmbedAuthor `json:"author,omitempty"`
+	Fields      []EmbedField `json:"fields,omitempty"`
+	Footer      *EmbedFooter `json:"footer,omitempty"`
+	Timestamp   string       `json:"timestamp,omitempty"`
+}
+
+// EmbedAuthor is the author field of a Discord embed.
+type EmbedAuthor struct {
+	Name    string `json:"name,omitempty"`
+	URL     string `json:"url,omitempty"`
+	IconURL string `json:"icon_url,omitempty"`
+}
+
+// EmbedField is a name/value field within a Discord embed.
+type EmbedField struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Inline bool   `json:"inline,omitempty"`
+}
+
+// EmbedFooter is the footer field of a Discord embed.
+type EmbedFooter struct {
+	Text    string `json:"text"`
+	IconURL string `json:"icon_url,omitempty"`
+}
+
 // SendMessageTo posts content to an arbitrary channel the bot token can
 // write to, bypassing the status channel and the drain queue. It works on a
 // Bot that was never started, so a feature that only needs to post (RFC
@@ -173,41 +224,289 @@ func (b *Bot) SendMessageTo(channelID, content string) error {
 	if strings.TrimSpace(channelID) == "" {
 		return fmt.Errorf("discord send: channel id not configured")
 	}
-	return b.discordBackend.sendTo(channelID, content)
+	return b.do(http.MethodPost, fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID), messagePayload(content), nil)
 }
 
-func (b *discordBackend) sendTo(channelID, content string) error {
-	content = logscrub.ScrubString(content)
-	payload := map[string]any{
-		"content":          content,
+// messagePayload is a plain-text message that cannot ping anyone.
+func messagePayload(content string) map[string]any {
+	return map[string]any{
+		"content":          logscrub.ScrubString(content),
 		"allowed_mentions": map[string]any{"parse": []string{}},
 		"flags":            discordSuppressEmbeds,
 	}
-	data, err := json.Marshal(payload)
+}
+
+// SendEmbedTo posts an embed (and optional content) to an arbitrary channel
+// the bot token can write to. Like SendMessageTo it never pings anyone, and
+// it returns the created message ID.
+func (b *Bot) SendEmbedTo(channelID, content string, embed Embed) (string, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return "", fmt.Errorf("discord send: channel id not configured")
+	}
+	payload := messagePayload(content)
+	if content == "" {
+		delete(payload, "content")
+	}
+	payload["embeds"] = []Embed{embed}
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := b.do(http.MethodPost, fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID), payload, &msg); err != nil {
+		return "", err
+	}
+	return msg.ID, nil
+}
+
+// PostMessageNonce posts content to channelID with a Discord nonce and
+// enforce_nonce, so a retry inside Discord's dedup window returns the
+// message the first attempt created instead of a second one. It returns the
+// message ID. The nonce is at most 25 characters.
+func (b *Bot) PostMessageNonce(channelID, content, nonce string) (string, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return "", fmt.Errorf("discord send: channel id not configured")
+	}
+	if len(nonce) > nonceLimit {
+		return "", fmt.Errorf("discord send: nonce is %d characters, the limit is %d", len(nonce), nonceLimit)
+	}
+	payload := messagePayload(content)
+	if nonce != "" {
+		payload["nonce"] = nonce
+		payload["enforce_nonce"] = true
+	}
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := b.do(http.MethodPost, fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID), payload, &msg); err != nil {
+		return "", err
+	}
+	if msg.ID == "" {
+		return "", fmt.Errorf("discord send: response carried no message id")
+	}
+	return msg.ID, nil
+}
+
+// StartThreadFromMessage opens a public thread on an existing message and
+// returns the thread ID. Threads are channels, so SendMessageTo works on it.
+// The name is truncated to Discord's 100 characters.
+func (b *Bot) StartThreadFromMessage(channelID, messageID, name string) (string, error) {
+	name = truncateRunes(strings.TrimSpace(name), threadNameLimit)
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(messageID) == "" || name == "" {
+		return "", fmt.Errorf("discord thread: channel id, message id and name are required")
+	}
+	var th struct {
+		ID      string `json:"id"`
+		GuildID string `json:"guild_id"`
+	}
+	url := fmt.Sprintf("%s/channels/%s/messages/%s/threads", discordAPIBase, channelID, messageID)
+	if err := b.do(http.MethodPost, url, map[string]any{"name": name}, &th); err != nil {
+		// 160004: a thread already exists on this message (an earlier call
+		// created it but its answer was lost). A thread started from a
+		// message shares that message's ID, so the retry is already done.
+		if strings.Contains(err.Error(), threadExistsCode) {
+			return messageID, nil
+		}
+		return "", err
+	}
+	if th.ID == "" {
+		return "", fmt.Errorf("discord thread: response carried no thread id")
+	}
+	b.rememberGuild(th.ID, th.GuildID)
+	return th.ID, nil
+}
+
+// EditMessage replaces the content of a message the bot posted in
+// channelID (PATCH /channels/{c}/messages/{m}). Like SendMessageTo it never
+// pings anyone. A 429 is retried within the same bound as every call.
+func (b *Bot) EditMessage(channelID, messageID, content string) error {
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(messageID) == "" {
+		return fmt.Errorf("discord edit: channel id and message id are required")
+	}
+	url := fmt.Sprintf("%s/channels/%s/messages/%s", discordAPIBase, channelID, messageID)
+	return b.do(http.MethodPatch, url, messagePayload(content), nil)
+}
+
+// RenameChannel renames a channel or thread (PATCH /channels/{c}). The name
+// is truncated to Discord's 100 characters. A 429 is retried within the
+// same bound as every call.
+func (b *Bot) RenameChannel(channelID, name string) error {
+	name = truncateRunes(strings.TrimSpace(name), threadNameLimit)
+	if strings.TrimSpace(channelID) == "" || name == "" {
+		return fmt.Errorf("discord rename: channel id and name are required")
+	}
+	return b.do(http.MethodPatch, fmt.Sprintf("%s/channels/%s", discordAPIBase, channelID), map[string]any{"name": name}, nil)
+}
+
+// ChannelMessage is one message from a channel's history.
+type ChannelMessage struct {
+	ID      string
+	Content string
+	// Nonce is the nonce the sender attached, when Discord returned it.
+	Nonce string
+	// Self is true when this bot authored the message.
+	Self bool
+}
+
+// RecentMessages returns up to limit (at most 50) of the newest messages in
+// channelID. It exists for crash recovery (finding a card this bot already
+// posted), not for scanning history.
+func (b *Bot) RecentMessages(channelID string, limit int) ([]ChannelMessage, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return nil, fmt.Errorf("discord history: channel id not configured")
+	}
+	if limit <= 0 || limit > historyLimit {
+		limit = historyLimit
+	}
+	self, err := b.selfID()
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
-	if err != nil {
-		return err
+	var raw []struct {
+		ID      string `json:"id"`
+		Content string `json:"content"`
+		Nonce   any    `json:"nonce"`
+		Author  struct {
+			ID string `json:"id"`
+		} `json:"author"`
 	}
-
-	req.Header.Set("Authorization", "Bot "+b.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("discord send: %w", err)
+	if err := b.do(http.MethodGet, fmt.Sprintf("%s/channels/%s/messages?limit=%d", discordAPIBase, channelID, limit), nil, &raw); err != nil {
+		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if err := b.responseError(resp); err != nil {
-		return err
+	out := make([]ChannelMessage, 0, len(raw))
+	for _, m := range raw {
+		nonce, _ := m.Nonce.(string)
+		out = append(out, ChannelMessage{
+			ID: m.ID, Content: m.Content, Nonce: nonce,
+			Self: m.Author.ID == self,
+		})
 	}
+	return out, nil
+}
 
-	return nil
+// selfID resolves, once, the bot's own user ID.
+func (b *Bot) selfID() (string, error) {
+	b.mu.RLock()
+	id := b.self
+	b.mu.RUnlock()
+	if id != "" {
+		return id, nil
+	}
+	var me struct {
+		ID string `json:"id"`
+	}
+	if err := b.do(http.MethodGet, discordAPIBase+"/users/@me", nil, &me); err != nil {
+		return "", fmt.Errorf("discord identity: %w", err)
+	}
+	if me.ID == "" {
+		return "", fmt.Errorf("discord identity: response carried no user id")
+	}
+	b.mu.Lock()
+	b.self = me.ID
+	b.mu.Unlock()
+	return me.ID, nil
+}
+
+// ThreadURL is the link to a thread, built from the guild the thread lives
+// in. The guild is learned when the thread is created or, failing that,
+// looked up once.
+func (b *Bot) ThreadURL(threadID string) (string, error) {
+	if strings.TrimSpace(threadID) == "" {
+		return "", fmt.Errorf("discord thread url: thread id is required")
+	}
+	b.mu.RLock()
+	guild := b.guilds[threadID]
+	b.mu.RUnlock()
+	if guild == "" {
+		var ch struct {
+			GuildID string `json:"guild_id"`
+		}
+		if err := b.do(http.MethodGet, fmt.Sprintf("%s/channels/%s", discordAPIBase, threadID), nil, &ch); err != nil {
+			return "", err
+		}
+		if ch.GuildID == "" {
+			return "", fmt.Errorf("discord thread url: thread %s has no guild", threadID)
+		}
+		guild = ch.GuildID
+		b.rememberGuild(threadID, guild)
+	}
+	return fmt.Sprintf("https://discord.com/channels/%s/%s", guild, threadID), nil
+}
+
+func (b *Bot) rememberGuild(threadID, guildID string) {
+	if guildID == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.guilds == nil {
+		b.guilds = map[string]string{}
+	}
+	b.guilds[threadID] = guildID
+}
+
+// do sends one Discord REST call with the bot token. A 429 waits out the
+// advertised retry_after (each wait capped at maxRetryAfter) and retries at
+// most maxRateLimitRetries times; any other status >= 400 is an error. out,
+// when non-nil, receives the decoded JSON body.
+func (b *Bot) do(method, url string, payload, out any) error {
+	var data []byte
+	if payload != nil {
+		var err error
+		if data, err = json.Marshal(payload); err != nil {
+			return err
+		}
+	}
+	for attempt := 0; ; attempt++ {
+		var body io.Reader
+		if data != nil {
+			body = bytes.NewReader(data)
+		}
+		req, err := http.NewRequest(method, url, body)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bot "+b.token)
+		if data != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := b.client.Do(req)
+		if err != nil {
+			return fmt.Errorf("discord send: %w", err)
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+		_ = resp.Body.Close()
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRateLimitRetries {
+			rateLimitSleep(retryAfter(resp, raw))
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("discord API %d: %s", resp.StatusCode, string(raw))
+		}
+		if out != nil && len(bytes.TrimSpace(raw)) > 0 {
+			if err := json.Unmarshal(raw, out); err != nil {
+				return fmt.Errorf("discord response: %w", err)
+			}
+		}
+		return nil
+	}
+}
+
+// retryAfter reads Discord's 429 wait from the JSON body, then the
+// Retry-After header, defaulting to one second, capped at maxRetryAfter.
+func retryAfter(resp *http.Response, body []byte) time.Duration {
+	wait := time.Second
+	var rl struct {
+		RetryAfter float64 `json:"retry_after"`
+	}
+	if json.Unmarshal(body, &rl) == nil && rl.RetryAfter > 0 {
+		wait = time.Duration(rl.RetryAfter * float64(time.Second))
+	} else if secs, err := strconv.ParseFloat(strings.TrimSpace(resp.Header.Get("Retry-After")), 64); err == nil && secs > 0 {
+		wait = time.Duration(secs * float64(time.Second))
+	}
+	if wait > maxRetryAfter {
+		wait = maxRetryAfter
+	}
+	return wait
 }
 
 func (b *discordBackend) SetTopic(topic string) error {

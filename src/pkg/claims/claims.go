@@ -370,13 +370,14 @@ type Ledger struct {
 	// on it, so one run is escalated once however often it is observed.
 	escalated map[string]time.Time
 	// listed holds the kick listings (#10527) by issue key.
-	listed map[string]Listing
-	path   string
-	policy Policy
-	hooks  Hooks
-	now    func() time.Time
-	hive   string
-	admit  func(Request) (string, error)
+	listed      map[string]Listing
+	path        string
+	policy      Policy
+	hooks       Hooks
+	now         func() time.Time
+	hive        string
+	admit       func(Request) (string, error)
+	commitCheck func(Claim) (string, error)
 }
 
 // ErrInvalid is returned for requests missing a repo, issue, holder or kind.
@@ -443,6 +444,15 @@ func (l *Ledger) SetAdmissionCheck(check func(Request) (string, error)) {
 	l.mu.Unlock()
 }
 
+// SetCommitCheck installs a local-only, atomic admission reservation. It runs
+// under the claim mutex for a new automated holder, after all remote admission
+// reads. It must not call this ledger or perform remote I/O.
+func (l *Ledger) SetCommitCheck(check func(Claim) (string, error)) {
+	l.mu.Lock()
+	l.commitCheck = check
+	l.mu.Unlock()
+}
+
 // SetNow overrides the clock. Intended for tests.
 func (l *Ledger) SetNow(fn func() time.Time) {
 	l.mu.Lock()
@@ -483,6 +493,22 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		ClaimedAt: now, ExpiresAt: now.Add(ttl),
 	}
 	prev, held := l.claims[key]
+	newHolder := !held || (!sameHolder(prev, req) &&
+		(req.Kind.Outranks(prev.Kind) || req.Kind.rank() == prev.Kind.rank() && req.Force))
+	if newHolder && req.Kind != KindHuman && l.commitCheck != nil {
+		reason, err := l.commitCheck(next)
+		if err != nil || reason != "" {
+			if len(expired) > 0 {
+				if saveErr := l.saveLocked(); saveErr != nil && err == nil {
+					err = saveErr
+				}
+			}
+			hooks := l.hooks
+			l.mu.Unlock()
+			fireExpired(hooks, expired)
+			return Result{Outcome: OutcomeRefused, Reason: reason}, err
+		}
+	}
 	var res Result
 	switch {
 	case !held:

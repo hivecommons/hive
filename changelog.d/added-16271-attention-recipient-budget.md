@@ -1,0 +1,1 @@
+- Per-recipient attention budget (`github.attention.recipient_budget`, `0` = off) with shadow would-overflow counting and an opt-in, edited-in-place digest (`github.attention.digest_recipients`); security, required-review, protocol-command and hold notices are never budgeted ([#16271](https://github.com/hivecommons/hive/issues/16271)).

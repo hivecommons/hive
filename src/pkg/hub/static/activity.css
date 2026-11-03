@@ -1,0 +1,132 @@
+/* Fleet activity page (#16063). Served from /static/ under the page's
+   style-src 'self'; no inline styles. Hive chip colours come from the
+   --hive-hue custom property, set through the CSSOM by activity.js. */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--surface-1);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+}
+a { color: inherit; }
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: var(--sp-5) clamp(1rem, 4vw, 4.5rem);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-0);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.activity-brand { font-weight: 800; text-decoration: none; }
+.activity-nav { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
+.activity-nav a { color: var(--text-muted); text-decoration: none; }
+.activity-nav a.active, .activity-nav a:hover { color: var(--text); }
+.activity-main { padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem) var(--sp-9); }
+.activity-titlebar h1 { margin: 0 0 var(--sp-2); font-size: 1.4rem; }
+.activity-sub { margin: 0 0 var(--sp-5); color: var(--text-muted); }
+.activity-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-5); }
+.activity-toggle { display: inline-flex; align-items: center; gap: var(--sp-3); cursor: pointer; }
+.activity-status { color: var(--text-muted); font-size: var(--fs-sm); }
+.activity-status-bad { color: var(--status-error); }
+.activity-disclosures {
+  list-style: none;
+  margin: 0 0 var(--sp-6);
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--status-warn);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: var(--fs-base);
+}
+.activity-disclosures li + li { margin-top: var(--sp-2); }
+.activity-board { width: 100%; border-collapse: collapse; font-size: var(--fs-base); }
+.activity-board th, .activity-board td { text-align: left; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line-subtle); vertical-align: top; }
+.activity-board thead th { color: var(--text-muted); font-weight: 600; font-size: var(--fs-sm); }
+.activity-group th { background: var(--surface-2); font-weight: 600; }
+.activity-group th > * + * { margin-left: var(--sp-5); }
+.activity-group-count { color: var(--text); }
+.activity-group-note { color: var(--text-muted); font-weight: 400; }
+.activity-chip {
+  --hive-hue: 210;
+  display: inline-block;
+  padding: var(--sp-0) var(--sp-4);
+  border-radius: var(--r-pill);
+  border: 1px solid hsl(var(--hive-hue) 60% 55% / .6);
+  background: hsl(var(--hive-hue) 60% 50% / .18);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.activity-chip:hover, a.activity-chip:focus-visible { background: hsl(var(--hive-hue) 60% 50% / .32); }
+.activity-fresh { padding: var(--sp-0) var(--sp-3); border-radius: var(--r-pill); font-size: var(--fs-xs); border: 1px solid currentColor; }
+.activity-fresh-fresh { color: var(--status-ok); }
+.activity-fresh-stale { color: var(--status-warn); }
+.activity-fresh-not-reporting { color: var(--status-neutral); }
+.activity-fresh-missing { color: var(--status-error); }
+.activity-number { white-space: nowrap; }
+.activity-kind, .activity-stage, .activity-tag {
+  margin-left: var(--sp-3);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.activity-tag {
+  margin: 0 var(--sp-3) 0 0;
+  padding: var(--sp-0) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+.activity-title { overflow-wrap: anywhere; }
+.activity-column { font-weight: 600; }
+.activity-empty { color: var(--text-muted); }
+@media (max-width: 720px) {
+  .activity-board thead { display: none; }
+  .activity-board tr { display: block; padding: var(--sp-3) 0; }
+  .activity-board td, .activity-board th { display: block; border: 0; padding: var(--sp-1) var(--sp-4); }
+}
+
+/* Display mode (#16064), the spoke's #15860 Part A on this page.
+   ?kiosk=1: an unattended stream, no chrome and no cursor; it never rotates.
+   ?display=1: an attended wall screen, no chrome (Esc or d leaves it). The
+   status line and the coverage list stay visible in both. */
+body.kiosk-mode { cursor: none; }
+body.kiosk-mode .activity-header, body.display-mode .activity-header,
+body.kiosk-mode .activity-sub, body.display-mode .activity-sub,
+body.kiosk-mode .activity-toggle, body.display-mode .activity-toggle { display: none !important; }
+body.kiosk-mode .activity-playlist { display: none !important; }
+.activity-playlist[hidden] { display: none; }
+.activity-playlist { position: fixed; top: 0; left: 0; right: 0; z-index: 20; pointer-events: none; }
+.activity-playlist-track { height: 3px; background: var(--line-subtle); }
+.activity-playlist-bar { --activity-playlist-left: 1; display: block; height: 100%; width: calc(var(--activity-playlist-left) * 100%); background: var(--accent); transition: width 1s linear; }
+.activity-playlist-next { display: none; position: absolute; top: var(--sp-2); right: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+  .activity-playlist-track { display: none; }
+  .activity-playlist-next { display: inline-block; }
+}
+
+/* Kiosk call-to-action badge (#16236), the same pkg/webassets/kioskcta
+   markup the spoke shows: hidden unless activity.js set body.kiosk-cta-on
+   (kiosk=1 and not cta=off). Bottom-right, sized to read off a 720p Twitch
+   transcode of a 1920x1080 capture. */
+#kiosk-cta { display: none; }
+body.kiosk-cta-on #kiosk-cta {
+  display: flex; align-items: center; gap: var(--sp-4);
+  position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 30;
+  padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-0); color: var(--text);
+  border: 1px solid var(--brand);
+  box-shadow: var(--shadow-modal);
+  line-height: 1.2; pointer-events: none; user-select: none;
+}
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-qr { width: 110px; height: 110px; border-radius: var(--r-sm); display: block; }
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-copy { display: flex; flex-direction: column; gap: var(--sp-2); }
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-text { font-size: var(--fs-xl); font-weight: 600; color: var(--text-muted); }
+body.kiosk-cta-on #kiosk-cta .kiosk-cta-url { font-size: var(--fs-2xl); font-weight: 800; letter-spacing: .01em; color: var(--brand); }

@@ -74,6 +74,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_NOBODY_LEAD"),
 		jsFunc(t, html, "stageTrackerStageActor"),
 		jsFunc(t, html, "stageTrackerActorKind"),
+		jsFunc(t, html, "stageTrackerExternalPRWork"),
 		jsFunc(t, html, "stageTrackerActorTip"),
 		jsConstLine(t, html, "STAGE_TRACKER_HIVE_PREFIXES"),
 		jsConstLine(t, html, "STAGE_TRACKER_CLAIMANT_SOURCE"),
@@ -96,6 +97,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTrainIconHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
+		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
 		jsFunc(t, html, "stageTrackerStageWord"),
@@ -119,6 +121,8 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSupersededOriginalClause"),
 		jsFunc(t, html, "stageTrackerLineageTip"),
 		jsFunc(t, html, "stageTrackerLineageChipHtml"),
+		jsFunc(t, html, "stageTrackerAlsoClosesChipHtml"),
+		jsFunc(t, html, "stageTrackerLinkedChipsHtml"),
 		jsFunc(t, html, "stageTrackerLinkedPRItem"),
 		jsFunc(t, html, "stageTrackerLinkedPROpen"),
 		jsFunc(t, html, "stageTrackerNestedOpenPRs"),
@@ -199,7 +203,11 @@ stageTrackerRowHtml = (item, stages, ctx) => { rebaseCoherent(item); return rawR
 const strips = (row) => row.split('aria-label="Pipeline progress"').slice(1);
 const strip = (row) => strips(row)[0].split('<div class="ham-sub"')[0];
 const subs = (row) => row.split('<div class="ham-sub"').slice(1);
-const segStates = (html) => Array.from(strip(html).matchAll(/<li class="ham-seg ([^"]*)"/g)).map(m => m[1]);
+// These route fixtures pin the native aggregate stage geometry. Track-specific
+// physical columns and simultaneous activity are covered by stage_tracker_activity.test.js.
+const segStates = (html) => Array.from(strip(html).matchAll(/<li class="ham-seg ([^"]*)"([^>]*)/g))
+  .filter(m => !m[2].includes('data-track="review"'))
+  .map(m => m[2].includes('data-track="ci"') ? (/data-route-state="([^"]*)"/.exec(m[2]) || [])[1] : m[1]);
 // Visible title occurrences (element text only; title="" attrs excluded).
 const titles = (html, t) => (html.match(new RegExp('>' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<', 'g')) || []).length;
 const prCol = (html) => Array.from(html.slice(0, html.indexOf('aria-label="Pipeline progress"')).matchAll(/<a class="ham-pr-ref"[^>]*>(.*?)<\/a>/g)).map(m => m[1]);

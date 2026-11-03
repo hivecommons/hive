@@ -1,7 +1,7 @@
 # Integrations
 
 What Hive works with today, and what is planned. One row per integration.
-Each row links the doc that explains it. Planned rows link the tracking issue.
+Each row links the doc that explains it. Planned and In progress rows link the tracking issue, or the page that leads to it.
 
 Status key:
 
@@ -10,6 +10,7 @@ Status key:
 | **Supported** | Wired into a running code path and covered by tests. |
 | **Opt-in** | Works, but an operator must turn it on, or it needs a per-backend escape hatch. |
 | **Planned** | Not usable today. The linked issue tracks the work. |
+| **In progress** | Started, not finished. The linked tracker lists what is left. |
 
 ## Agent backends
 
@@ -40,6 +41,18 @@ container mode by default; local mode needs an explicit opt-in.
 <tr><td><img src="assets/logos/openai-agents-badge.svg" height="40" alt="OpenAI Agents"></td><td>OpenAI Agents API</td><td>Planned</td><td>—</td><td><a href="https://github.com/hivecommons/hive/issues/14093">#14093</a></td></tr>
 <tr><td><img src="assets/logos/omnigent-badge.svg" height="40" alt="Omnigent"></td><td>Omnigent</td><td>Opt-in</td><td>T3</td><td><a href="backend-support-tiers.md#the-three-tiers">backend-support-tiers.md</a></td></tr>
 </table>
+
+## Local contributor inference
+
+| Integration | Status | Execution and limitations | Docs |
+| --- | --- | --- | --- |
+| Apple MLX / MLX-LM through Pi | **Opt-in** | ClankeR on Apple Silicon macOS 14+, native Python 3.10+, Pi 1.4.0+; user-managed tool-capable models. MLX-LM runs on the Mac; Pi executes tools inside the contributor container with Docker Desktop host networking. No cloud fallback. Live Apple GPU inference remains unverified. | [Install and use with just](contributor-relay.md#apple-mlx-local-inference) |
+
+Apple MLX is a first-class inference-engine choice on `/contribute`, mapped to
+the actual `pi` coding backend and `mlx/<model>` provider selection. It is not
+a standalone coding CLI, hosted gateway, identity provider, or Apple endorsement.
+`KNOWN_BACKENDS` correctly continues to list coding executors, not inference
+frameworks.
 
 ## Work sources and trackers
 
@@ -88,7 +101,7 @@ per-backend confinement matrix.
 
 <table>
 <tr><th>Logo</th><th>Integration</th><th>Status</th><th>Docs</th></tr>
-<tr><td><img src="assets/logos/cncf.svg" height="40" alt="CNCF logo"></td><td>CNCF sandbox onboarding</td><td>Planned</td><td><a href="cncf-sandbox-onboarding.md">cncf-sandbox-onboarding.md</a></td></tr>
+<tr><td><img src="assets/logos/cncf.svg" height="40" alt="CNCF logo"></td><td>CNCF sandbox onboarding</td><td>In progress</td><td><a href="cncf-sandbox-onboarding.md">cncf-sandbox-onboarding.md</a>, <a href="https://github.com/hivecommons/hive/issues/9846">#9846</a></td></tr>
 <tr><td><img src="assets/logos/gh-aw-badge.svg" height="40" alt="gh-aw"></td><td>GitHub Agentic Workflows (gh-aw) report-only sample</td><td>Supported (sample)</td><td><a href="../deploy/gh-aw/README.md">deploy/gh-aw</a>, <a href="backend-support-tiers.md#github-agentic-workflows-on-ramp-not-a-cli-backend">tiers note</a></td></tr>
 <tr><td><img src="assets/logos/goose-badge.svg" height="40" alt="Goose"></td><td>Goose-at-scale guide upstreamed to AAIF</td><td>Planned</td><td><a href="../../docs/goose-at-scale.md">goose-at-scale.md</a>, <a href="https://github.com/hivecommons/hive/issues/14095">#14095</a></td></tr>
 </table>

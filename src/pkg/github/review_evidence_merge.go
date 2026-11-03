@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"log/slog"
 	"os"
 	"sort"
@@ -99,6 +100,18 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 		return
 	}
 	body := ReviewEvidenceComment(full, number, b.ID, b.Hash)
+	if c.notificationsQuiet() {
+		// The bundle is stored server-side and linked from the Activity
+		// Monitor; the pointer is a line of the status comment, not an
+		// email to every watcher of a PR that just merged.
+		if created, err := c.UpsertPRStatusSection(ctx, full, number, prstatus.KeyEvidence, body); err != nil {
+			c.logger.Warn("review evidence: could not record merge pointer on status comment",
+				slog.String("repo", full), slog.Int("number", number), slog.String("error", err.Error()))
+		} else if !created {
+			c.noteCommentSuppressed()
+		}
+		return
+	}
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, name, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.logger.Warn("review evidence: could not post merge comment",
 			slog.String("repo", full), slog.Int("number", number), slog.String("error", err.Error()))

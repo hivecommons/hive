@@ -159,6 +159,27 @@ func TestConfigLeavesRealRepo(t *testing.T) {
 	}
 }
 
+// github.attention is typed attention.Config (pkg/attention); its sub-keys
+// must be enumerated rather than collapsing into one opaque leaf.
+func TestConfigLeavesRealRepoEnumeratesAttention(t *testing.T) {
+	leaves, err := ConfigLeaves(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatalf("ConfigLeaves on the real repo: %v", err)
+	}
+	got := map[string]bool{}
+	for _, leaf := range leaves {
+		got[leaf.Path] = true
+	}
+	for _, want := range []string{"github.attention.admitter.<key>", "github.attention.flap_window", "github.attention.recipient_budget", "github.attention.digest_recipients[]"} {
+		if !got[want] {
+			t.Errorf("leaf %q must be enumerated", want)
+		}
+	}
+	if got["github.attention"] {
+		t.Error("github.attention must not be an opaque leaf")
+	}
+}
+
 func TestAllowlist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "allow.txt")
 	writeFile(t, path, "# header comment\n\n  a.b  \nc.d # why it is allowed\n")

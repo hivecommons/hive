@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "express": "^5.3.0",
-    "http-proxy-middleware": "^4.0.0"
+    "http-proxy-middleware": "^4.2.1"
   },
   "devDependencies": {
     "ws": "^8.21.3"

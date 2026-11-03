@@ -1,6 +1,6 @@
 // The RUNNING tile's cost rotor (#15614): "$X this hour" → "$Y today" →
 // "$Z this week" → "$W this month", ~4s each, pausing while hovered or
-// hidden, instant under prefers-reduced-motion, never a second line. The
+// hidden, instant under prefers-reduced-motion, below the running count. The
 // rotor block is lifted straight out of index.html so this runs against the
 // shipped source.
 const test = require('node:test');
@@ -150,7 +150,7 @@ test('prefers-reduced-motion swaps instantly with no outgoing phrase', () => {
 test('markup: fixed agent count, four phrases in one rotor, tooltip lists all four', () => {
   const env = makeEnv();
   const r = env.rendered;
-  assert.match(r, /<span class="fleet-run-count">3 · <\/span><span class="fleet-cost-rotor" data-fleet-cost-rotor/);
+  assert.match(r, /<span class="fleet-run-count">3<\/span><span class="fleet-cost-rotor" data-fleet-cost-rotor/);
   assert.strictEqual((r.match(/class="fcr-phrase/g) || []).length, 4);
   assert.strictEqual((r.match(/data-fleet-cost-rotor/g) || []).length, 1, 'all phrases share one rotor cell');
   // Hour keeps cents; today / week / month are whole dollars (#15614 follow-up).
@@ -182,24 +182,45 @@ test('whole-dollar windows: nearest dollar, comma-grouped, never a decimal point
   for (const p of phrases.slice(1)) assert.doesNotMatch(p.amount, /\./, p.key + ' window must not carry cents');
 });
 
-test('never a second line, and no host ellipsis: the host is a flex row whose rotor shrinks', () => {
+test('cost is below the count and wraps without clipping at narrow widths or zoom', () => {
   const css = html.match(/<style\b[^>]*>([\s\S]*?)<\/style>/)[1];
-  // A text-overflow ellipsis on the host was painted at the rotor's left
-  // edge when count + rotor overflowed the tile, surfacing as a stray dot
-  // between "$" and the digits ("$.1,010"). Only the phrase may ellipsize.
   const hostRule = css.match(/\.fleet-run-stat \.val, \.fleet-run-stat \.gm-val \{([^}]*)\}/);
   assert.ok(hostRule, 'host rule present');
   assert.match(hostRule[1], /display: flex;/);
-  assert.match(hostRule[1], /white-space: nowrap;/);
+  assert.match(hostRule[1], /flex-direction: column;/);
+  assert.match(hostRule[1], /align-items: stretch;/);
+  assert.match(hostRule[1], /white-space: normal;/);
+  assert.match(hostRule[1], /overflow: visible;/);
   assert.match(hostRule[1], /min-width: 0;/);
   assert.doesNotMatch(hostRule[1], /text-overflow/);
+  assert.match(css, /\.fleet-run-stat \{ min-width: 0; \}/);
   assert.match(css, /\.fleet-run-count \{ flex: none;/);
-  assert.match(css, /\.fleet-cost-rotor \{ display: inline-grid; grid-template-areas: 'phrase'; flex: 0 1 auto; min-width: 0;/);
-  assert.match(css, /\.fleet-cost-rotor \.fcr-phrase \{ grid-area: phrase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/);
+  assert.match(css, /\.fleet-cost-rotor \{ display: inline-grid; grid-template-areas: 'phrase'; grid-template-columns: minmax\(0, 1fr\); min-width: 0;/);
+  assert.match(css, /\.fleet-cost-rotor \.fcr-phrase \{ grid-area: phrase; white-space: normal; overflow-wrap: anywhere;/);
+  const phraseRule = css.match(/\.fleet-cost-rotor \.fcr-phrase \{([^}]*)\}/)[1];
+  assert.doesNotMatch(phraseRule, /text-overflow|overflow: hidden|height:|max-height:/);
   // Amber/text tokens only in the rotor rules — no raw colours.
   const rotorCss = css.match(/\.fleet-run-stat[\s\S]*?prefers-reduced-motion: reduce\) \{[\s\S]*?\}\s*\}/)[0];
   assert.doesNotMatch(rotorCss, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
   assert.match(rotorCss, /var\(--amber\)/);
   assert.match(rotorCss, /var\(--text\)/);
   assert.doesNotMatch(makeEnv().rendered, /<br/);
+});
+
+test('both running tiles preserve large costs and all periods separately from the count', () => {
+  const env = makeEnv();
+  Object.assign(env.window._lastStatus.fleetRun, {
+    running: 4, hourUSD: 11675.25, dayUSD: 1234567, weekUSD: 9876543, monthUSD: 123456789,
+  });
+  for (const rendered of [env.api.fleetRunStatHtml(), env.api.fleetRunStripHtml()]) {
+    assert.match(rendered, /<span class="fleet-run-count">4<\/span><span class="fleet-cost-rotor"/);
+    for (const phrase of env.api.fleetCostPhrases(env.window._lastStatus.fleetRun)) {
+      assert.ok(rendered.includes(`<span class="fcr-amount">${phrase.amount}</span> <span class="fcr-window">${phrase.label}</span>`));
+    }
+    assert.match(rendered, /aria-live="off"/);
+    assert.strictEqual((rendered.match(/aria-hidden="true"/g) || []).length, 3);
+  }
+  env.window._lastStatus.fleetRun = null;
+  assert.strictEqual(env.api.fleetRunStatHtml(), '');
+  assert.strictEqual(env.api.fleetRunStripHtml(), '');
 });

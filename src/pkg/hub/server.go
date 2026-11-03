@@ -1009,6 +1009,8 @@ type HubServer struct {
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger
+	activity             activityStore       // per-hive activity digests, memory only (#15951); leaf lock
+	publicActivity       publicActivityCache // short-TTL anonymous activity body (#16111)
 	saveCh               chan struct{}
 	githubActivityFeed   *GitHubActivityFeed
 	githubActivityMu     sync.Mutex
@@ -1732,6 +1734,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
 	s.mux.HandleFunc("GET "+complianceRollupPath, s.requireAdmin(s.handleComplianceRollup))
 	s.mux.HandleFunc("GET "+evidencePath, s.requireAdmin(s.handleEvidence))
+	// Hub-wide activity (#15951): any signed-in user, scoped per hive inside
+	// the handler; read-only.
+	s.mux.HandleFunc("GET "+activityPath, s.requireAuth(s.handleHubActivity))
 	s.mux.HandleFunc("GET "+evidenceReportPath, s.requireAdmin(s.handleEvidenceReport))
 	s.mux.HandleFunc("GET /api/gh-rate-limits", s.requireAdmin(s.handleGHRateLimits))
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
@@ -1796,6 +1801,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.registerOAuth()
 	s.registerSaaSRoutes()
 	s.registerOpenRouterRoutes()
+	// Fleet activity page (#16063): signed-in, read-only board over
+	// GET /api/hub/activity.
+	s.registerActivityPageRoutes()
 	go s.saveLoop()
 	go s.refreshActiveMyHivesSnapshotsLoop()
 
@@ -2743,6 +2751,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.registry.Hives = append(s.registry.Hives, entry)
 	}
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	// Activity digest (#15951): stored only once the beat is authenticated and
+	// accepted into the registry. Recorded while still holding s.mu so a
+	// concurrent delete (which forgets under s.mu) cannot leave a stale digest
+	// behind (#16010). activityStore.mu is a leaf lock, so taking it here is safe.
+	activityAck := s.activity.record(payload.HiveID, payload.Activity, time.Now().UTC())
 	s.mu.Unlock()
 
 	// Timeline: record whatever changed on this beat. Nothing is written when
@@ -2832,6 +2845,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		LatestSHA:  latestSHA,
 	}
 	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
+	resp.ActivityETag = activityAck
+	resp.ActivityEventsAck = s.activity.eventsAck(payload.HiveID)
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic
@@ -3287,6 +3302,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.RestartSpoke = true
 		s.logger.Info("heartbeat: delivering spoke restart", "hive_id", payload.HiveID, "reporter", payload.Reporter)
 	}
+	// Intent before the kill (#15788): a hub-managed hive learns here that
+	// its pod is being rolled, so its dashboard shows the upgrade animation
+	// with the target instead of a bare "reconnecting" once the pod dies.
+	resp.UpgradeAnnounce = heartbeatUpgradeAnnounce(heartbeatUpgradeAnnounceInput{
+		HubManaged:             saasHive != nil && !spokeManaged,
+		LatchOpen:              entry.Upgrading,
+		Target:                 entry.UpgradeTarget,
+		Current:                payload.GitHash,
+		SpokeReportedUpgrading: payload.Upgrading,
+		Restart:                resp.RestartSpoke,
+	})
 
 	if ghCfg := s.pendingAppIdentityForHeartbeat(&payload); ghCfg != nil {
 		resp.GitHubAppConfig = ghCfg
@@ -4290,6 +4316,10 @@ func (s *HubServer) removeRegistryEntry(id, by string) {
 			break
 		}
 	}
+	// Memory-only activity digests must not outlive the hive (#16002). Forgotten
+	// under s.mu so a heartbeat (which records under s.mu too) cannot slip a
+	// digest in between the removal and the purge (#16010).
+	s.activity.forget(id)
 	s.mu.Unlock()
 	if !removed {
 		return
@@ -4354,6 +4384,10 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 			break
 		}
 	}
+	// Memory-only activity digests must not outlive the hive (#16002). Forgotten
+	// under s.mu so a heartbeat (which records under s.mu too) cannot slip a
+	// digest in between the removal and the purge (#16010).
+	s.activity.forget(id)
 	s.mu.Unlock()
 	if removed {
 		// Synchronous flush for the same durability reason as removeRegistryEntry.
@@ -4506,6 +4540,7 @@ func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
 				existing.TasksCompleted += lb.TasksCompleted
 				existing.TasksFailed += lb.TasksFailed
 				existing.StagesCompleted = addStageCount(existing.StagesCompleted, lb.StagesCompleted)
+				existing.Abandoned += lb.Abandoned
 				if lb.Active {
 					existing.Active = true
 					existing.CurrentTask = lb.CurrentTask
@@ -4524,7 +4559,7 @@ func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
 		if v.StagesCompleted != nil {
 			stages = *v.StagesCompleted
 		}
-		if v.TasksCompleted == 0 && v.TasksFailed == 0 && stages == 0 && !v.Active {
+		if v.TasksCompleted == 0 && v.TasksFailed == 0 && stages == 0 && v.Abandoned == 0 && !v.Active {
 			continue
 		}
 		v.StageCredit = stageCreditFor(v.StagesCompleted)
@@ -4882,6 +4917,23 @@ func (s *HubServer) handleContributeLanding(w http.ResponseWriter, r *http.Reque
     <section aria-labelledby="hive-list-title">
       <h2 id="hive-list-title" style="margin:34px 0 0">Public hives accepting contributions</h2>
       %[2]s
+    </section>
+    <section class="card" id="apple-mlx" aria-labelledby="apple-mlx-title" style="margin-top:28px">
+      <h2 id="apple-mlx-title">Apple MLX: local ClankeR inference</h2>
+      <p>Apple Silicon only: macOS 14+, native arm64 Python 3.10+ and Node 22.19+. Intel Macs and Rosetta are unsupported. MLX-LM runs on your Mac; Pi 1.4.0+ supplies the coding tools in the contributor container. This is optional local inference, not Apple sign-in, a hosted Hive backend or an Apple endorsement.</p>
+      <p>Choose a hive above and select <strong>Apple MLX</strong> on its contributor page for OS-aware installation and copyable commands. Install just, gh, Pi and MLX-LM in a native Python virtualenv as described in the setup guide. Docker Desktop 4.34+ requires you to enable host networking. Podman machine and Kubernetes cannot use this loopback-only Mac route.</p>
+      <pre style="overflow-x:auto"><code># From your Hive source checkout, with HIVE_MLX_PYTHON pointing to your virtualenv:
+# Terminal 1: explicitly load your already-downloaded, tool-capable model:
+just contribute-mlx-serve /Users/YOU/models/tool-coder
+# Terminal 2: explicitly request two bounded tool-call verification turns:
+just contribute-mlx-setup /Users/YOU/models/tool-coder --verify-tools
+export AGENT_MODEL=mlx//Users/YOU/models/tool-coder
+export HIVE_HUB=https://YOUR-CHOSEN-HIVE
+just contribute-check pi
+just contribute-setup pi
+just contribute-mlx</code></pre>
+      <p>Download model weights yourself within your shared-RAM budget; the relay container limit does not cap host inference memory. No automatic weight downloads, public listener, cloud fallback or memory-setting changes. Not every model supports tools; the protocol probe is not a coding-quality benchmark. Live Mac inference is not certified by mock CI.</p>
+      <a href="%[1]s#apple-mlx-local-inference">Complete installation, model requirements and troubleshooting</a>
     </section>
   </main>
 </body>

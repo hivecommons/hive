@@ -27,6 +27,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { preparationRailLayoutFixture } from './fixtures/dashboard-preparation-rail.mjs';
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
@@ -241,11 +242,18 @@ async function main() {
   async function cleanup() {
     chrome.kill('SIGTERM');
     await new Promise((resolve) => chrome.once('exit', resolve));
-    // Chrome helpers can still finish profile writes after the browser exits.
-    fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // Chrome helpers can still finish profile writes after the browser exits,
+    // so removal can race (ENOTEMPTY on Default/). The profile is scratch:
+    // retry generously, then warn instead of failing an otherwise-good run.
+    try {
+      fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    } catch (err) {
+      console.warn(`WARN: could not remove ${PROFILE_DIR}: ${err.message}`);
+    }
   }
 
   const report = [];
+  const preparationRailReport = [];
   let socket;
   try {
     const tabs = await waitForTabs();
@@ -279,6 +287,7 @@ async function main() {
     // Each state callback is best-effort: a missing helper yields a skipped shot, not a harness error.
     const setThemeJS = (theme) => `document.body.classList.toggle('light-mode', ${theme === 'light'}); document.documentElement.style.colorScheme = '${theme}'; true`;
     const resetJS = `(() => {
+      document.getElementById('preparation-rail-layout-fixture')?.remove();
       document.querySelectorAll('.config-overlay, .modal-overlay').forEach((el) => { el.classList.add('hidden'); });
       document.documentElement.classList.remove('modal-open'); document.body.classList.remove('modal-open');
       return true;
@@ -314,6 +323,17 @@ async function main() {
       for (const theme of themes) {
         await send('Page.navigate', { url: `file://${process.cwd()}/src/pkg/dashboard/static/index.html` });
         await sleep(PAGE_SETTLE_MS);
+        // Absolute production URLs cannot load from file://. Use the same
+        // checked-in sidecars rather than silently testing without tokens.
+        await evaluate(`Promise.all(${JSON.stringify(['tokens.css', 'components.css'].map(name => ({
+          name, url: `file://${process.cwd()}/src/pkg/dashboard/static/${name}`,
+        })))}.map(({name, url}) => new Promise((resolve, reject) => {
+          const link = document.querySelector('link[href="/' + name + '"]');
+          if (!link) return reject(new Error('Missing production stylesheet ' + name));
+          link.onload = () => resolve(true);
+          link.onerror = () => reject(new Error('Cannot load production stylesheet ' + name));
+          link.href = url;
+        })))`);
         await evaluate(setThemeJS(theme));
 
         const sectionIDs = await evaluate(collapseAllJS);
@@ -324,6 +344,14 @@ async function main() {
         states.push({ name: 'settings', run: async () => { await evaluate(collapseAllJS); return evaluate(settingsJS); } });
         states.push({ name: 'knowledge-sources', run: async () => { await evaluate(collapseAllJS); return evaluate(knowledgeJS); } });
         states.push({ name: 'terminal', run: async () => { await evaluate(collapseAllJS); return evaluate(terminalJS); } });
+        states.push({ name: 'preparation-rail', run: async () => {
+          await evaluate(collapseAllJS);
+          if (!await evaluate(expandOneJS('activity-monitor-section'))) throw new Error('Cannot expand actual Activity Monitor');
+          const result = await evaluate('(' + preparationRailLayoutFixture.toString() + ')()');
+          preparationRailReport.push({ viewport: vp.name, theme, ...result });
+          if (result.failures.length) throw new Error('Preparation rail layout: ' + result.failures.join('; '));
+          return true;
+        } });
 
         for (const state of states) {
           await evaluate(resetJS);
@@ -345,8 +373,9 @@ async function main() {
     }
   } finally {
     if (socket) socket.close();
-    await cleanup();
     fs.writeFileSync(path.join(opts.out, 'overflow-report.json'), JSON.stringify(report, null, 2) + '\n');
+    fs.writeFileSync(path.join(opts.out, 'preparation-rail-layout.json'), JSON.stringify(preparationRailReport, null, 2) + '\n');
+    await cleanup();
   }
   console.log(`wrote ${report.length} finding(s) to ${path.join(opts.out, 'overflow-report.json')}`);
 }

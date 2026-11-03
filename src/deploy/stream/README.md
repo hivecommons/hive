@@ -8,11 +8,14 @@ Twitch stream. Operator guide, Twitch-side setup, and troubleshooting:
 | --- | --- |
 | `Dockerfile` | `debian:bookworm-slim` + Xvfb, Chromium, ffmpeg, xdotool, tini; builds `authproxy` in a `golang` stage. Build context is the **repo root**. Published as `ghcr.io/hivecommons/hive-stream:<sha>` / `:v5-latest` by `.github/workflows/stream-image.yml`. |
 | `entrypoint.sh` | Supervisor: Xvfb → authproxy → Chromium `--kiosk` (restart with backoff) → periodic reload (`RELOAD_EVERY`) → PulseAudio null sink `hive` → ffmpeg `x11grab` + `pulse hive.monitor` (or `anullsrc` with `STREAM_AUDIO=silent`) → libx264 CBR + AAC → RTMP. Masks the stream key in ffmpeg output. |
-| `authproxy/` | Loopback reverse proxy (stdlib Go) that adds `Authorization: Bearer $DASHBOARD_TOKEN` to every dashboard request so the token is never in a URL, in Chromium's history, or on screen. Logs when the upstream answers with a login redirect. |
+| `authproxy/` | Loopback reverse proxy (stdlib Go) that adds `Authorization: Bearer $DASHBOARD_TOKEN` to every dashboard request so the token is never in a URL, in Chromium's history, or on screen. Forwards only `GET`/`HEAD` (anything else is answered `405` locally, before the token is attached) because the shared token is an unscoped owner credential and a kiosk only reads. Logs when the upstream answers with a login redirect. |
 | `healthcheck.sh` | Chromium alive + ffmpeg progress file fresher than 20 s with `frame>0`. Used by the image `HEALTHCHECK` and the Deployment's probes. |
 | `docker-compose.yaml`, `.env.example` | Run the same image from a laptop. |
-| `k8s/` | Kustomize base: Namespace `hive-stream`, ConfigMap, Deployment (1 replica, non-root, 512 Mi `/dev/shm`, 1–2 CPU / 2–3 Gi), NetworkPolicy (DNS, dashboard Service, public RTMP/HTTPS only). `secret.yaml` is a **template** and is not in the kustomization. |
+| `k8s/` | Kustomize base: Namespace `hive-stream`, ConfigMap, Deployment (1 replica, non-root, 512 Mi `/dev/shm`, 1–3 CPU / 3–6 Gi), NetworkPolicy (DNS, dashboard Service, public RTMP/HTTPS only). `secret.yaml` is a **template** and is not in the kustomization. |
 | `overlays/hive-hosted/` | hive's own hosted spoke on `hive-oke`. |
+| `overlays/hive-hosted-matrix/` | Inactive, silent Matrix instance for `twitch.tv/hivecommonsmatrix`: separate namespace and identity, `twitch-stream-matrix` secret reference, zero replicas; owner-only activation. |
+| `fleet/` | Standalone, **disabled-by-default** Kustomize base for the hub-wide monitor on `twitch.tv/hivecommonsfleet` (#15966): namespace `hive-stream-fleet`, `replicas: 0`, `STREAM_PROFILE=public-safe`, stream-key Secret `twitch-stream-hivecommonsfleet` (name only; `secret.yaml` is a template), no dashboard credential, public egress only. Shares no resource with `k8s/` or `overlays/`. |
+| `public-safe-gate.sh` | Run by `entrypoint.sh` before any process. No-op unless `STREAM_PROFILE=public-safe`; then it exits unless the owner enabled the stream, acknowledged the public-safe policy, set a real `https://` source, left `DASHBOARD_TOKEN` unset and installed a stream key. |
 
 ## Environment
 
@@ -28,6 +31,8 @@ Twitch stream. Operator guide, Twitch-side setup, and troubleshooting:
 | `RELOAD_EVERY` | `30m` | Page reload cadence (picks up dashboard rolls). |
 | `STREAM_OUTPUT` | — | Dry run: `null` discards, `*.flv` writes a file, anything else is a raw ffmpeg output. |
 | `STREAM_SECONDS` | `0` | `>0` stops ffmpeg after N s and exits 0 (dry run); a non-zero ffmpeg exit fails the run. |
+| `STREAM_PROFILE` | — | `public-safe` (only `fleet/`) turns on `public-safe-gate.sh` and makes `authproxy` anonymous: no token, browser `Authorization`/`Cookie` stripped, `Set-Cookie` dropped. Unset keeps the behaviour above. |
+| `STREAM_ENABLED` / `PUBLIC_SAFE_POLICY_ACK` | `false` / — | Read only under `STREAM_PROFILE=public-safe`: the owner's enable and acknowledgement of policy `hivecommonsfleet-public-safe-v1` ([docs](../../docs/streaming-the-activity-monitor.md#public-safe-content-policy)). |
 
 ## Dry run (no Twitch, no cluster)
 

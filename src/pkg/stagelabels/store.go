@@ -58,6 +58,12 @@ type Record struct {
 	// read as a fresh note (hivecommons/hive#15729). Zero on records
 	// written before it existed; NoteChangedAt falls back to EnteredAt.
 	ReasonChangedAt time.Time `json:"reason_changed_at,omitempty"`
+	// UnblockedAt is when the blocked sweep last lifted the item's block
+	// (hivecommons/hive#15779). A blocked issue has no stage, so the lift
+	// leaves a stage-less record carrying only this time until the next
+	// stage-label pass stages the issue; the dashboard ages the row from
+	// StageSinceAt so "since" restarts at the lift, not at issue creation.
+	UnblockedAt time.Time `json:"unblocked_at,omitempty"`
 	// Author is the item's author login, lower-cased, as the lane saw it
 	// (hivecommons/hive#12502). It lets the dashboard answer "which of this
 	// contributor's PRs are returned to them" from the store alone, with no
@@ -118,6 +124,12 @@ type Record struct {
 	// "superseder merged but this PR has moved on" note was posted, so a
 	// diverged original is told once per head rather than every poll.
 	SupersederMergedNotedHead string `json:"superseder_merged_noted_head,omitempty"`
+	// MentionCause is the cause (ReasonClass) the author was last
+	// @-mentioned for in the hive status comment. In quiet notification
+	// mode a person is mentioned once per distinct cause, not once per
+	// head: a mention is an email, and the same cause on a new head is the
+	// same ask.
+	MentionCause string `json:"mention_cause,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
 	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
@@ -359,12 +371,34 @@ type Record struct {
 	// them too.
 	LastPushAt  time.Time `json:"last_push_at,omitempty"`
 	LastPushSha string    `json:"last_push_sha,omitempty"`
+	// ReworkAskedAt / ReworkPushedHead / ReworkPushedAt remember the
+	// author's answer to a 071 / 072 ask across the re-ask on the head
+	// they pushed (hivecommons/hive#16021): when the hive first asked them
+	// to push in this run of asks, and the latest head seen after it with
+	// when it landed. A new head red again re-enters 071 within one sweep,
+	// which restarts the waiting-on-push state and re-nudges for the new
+	// head — the two fields the dashboard's rework chip read — so the
+	// row said "no response" to an author who had just pushed. Cleared
+	// when the pushed head settles in the CI / Review column without a
+	// re-ask, and when the item leaves the column.
+	ReworkAskedAt    time.Time `json:"rework_asked_at,omitempty"`
+	ReworkPushedHead string    `json:"rework_pushed_head,omitempty"`
+	ReworkPushedAt   time.Time `json:"rework_pushed_at,omitempty"`
 	// LabelsSuppressed is set when the write-back gate kept the stage
 	// labels off the item on GitHub (a contributor PR without the opt-in
 	// label): the stage lives in this record only, so a label-less item
 	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
 	// "PR in progress" while the record said 085).
 	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
+	// TrainEjectedWhy / TrainEjectedHead / TrainEjectedAt record the merge
+	// train's last ejection of this PR (hivecommons/hive#15825): the head
+	// it was ejected at, why (head-moved, ci-pending, ci-red,
+	// verdict-owed, conflicting, …) and when. The tracker's gray pill
+	// carries the lineage ("left merge train · pushed 3m ago") while the
+	// row sits back in the CI / Review column; re-admission clears it.
+	TrainEjectedWhy  string    `json:"train_ejected_why,omitempty"`
+	TrainEjectedHead string    `json:"train_ejected_head,omitempty"`
+	TrainEjectedAt   time.Time `json:"train_ejected_at,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -670,8 +704,7 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 	tr := Transition{Prev: prev.Stage, Next: stage}
 	if stage == None {
 		if had {
-			delete(s.items, key)
-			s.dirty = true
+			s.forgetStageLocked(key, prev)
 			tr.Changed = prev.Stage != None
 		}
 		return tr
@@ -767,6 +800,33 @@ func (r Record) NoteChangedAt() time.Time {
 	return r.EnteredAt
 }
 
+// StageSinceAt is when the row's since-time starts: stage entry, or the
+// later block lift when the sweep unblocked the item after it entered the
+// stage (or before any stage was recorded).
+func (r Record) StageSinceAt() time.Time {
+	if r.UnblockedAt.After(r.EnteredAt) {
+		return r.UnblockedAt
+	}
+	return r.EnteredAt
+}
+
+// NoteUnblocked records that the blocked sweep lifted key's block at now.
+// A blocked issue carries no stage record (its stage is None), so a
+// stage-less record is created to hold the time; the next ObserveProgress
+// keeps UnblockedAt while it stages the issue, and a None observation
+// drops the record as usual.
+func (s *Store) NoteUnblocked(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[key]
+	r.UnblockedAt = now
+	if r.LastSeen.IsZero() {
+		r.LastSeen = now
+	}
+	s.items[key] = r
+	s.dirty = true
+}
+
 // NoteActivity folds this cycle's activity inputs into key's record and
 // reports whether anything a person could have done changed since the last
 // observation. The first observation of a record seeds LastActivityAt
@@ -802,14 +862,22 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 	if a.Head != "" && r.ActivityHead != "" && a.Head != r.ActivityHead {
 		// The enumerate fallback for a push no webhook announced
 		// (hivecommons/hive#15784). A head the sweep evaluated and still
-		// routed back to the author starts a fresh waiting-on-push state.
+		// routed back to the author starts a fresh waiting-on-push state
+		// — but it is still the author's answer to the standing ask
+		// (hivecommons/hive#16021).
 		switch {
 		case r.Stage.WaitsOnPush():
+			r.noteReworkPush(a.Head, at)
 			r.WaitingPushSince = at
 			r.LastPushAt, r.LastPushSha = time.Time{}, ""
 		case a.Head != r.LastPushSha:
 			r.LastPushAt, r.LastPushSha = at, a.Head
 		}
+	}
+	if a.Head != "" && !a.WaitingOnHive && r.Stage.TracksPush() && !r.Stage.WaitsOnPush() && r.Stage != Fixing && r.Stage != AdoptedByHive && strings.EqualFold(a.Head, r.ReworkPushedHead) {
+		// The hive evaluated the author's answer and is not waiting on
+		// itself any more: the exchange is over, a later ask is a new one.
+		r.clearRework()
 	}
 	if changed {
 		r.HiveHeldWarned = false
@@ -840,6 +908,13 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 func (r *Record) notePushStageChange(now time.Time) {
 	switch {
 	case r.Stage.WaitsOnPush():
+		if r.ReworkAskedAt.IsZero() {
+			r.ReworkAskedAt = now
+		} else if r.LastPushSha != "" && !r.LastPushAt.Before(r.ReworkAskedAt) {
+			// Back to the author on the head they pushed for the standing
+			// ask: the push is the answer, keep it (hivecommons/hive#16021).
+			r.noteReworkPush(r.LastPushSha, r.LastPushAt)
+		}
 		r.WaitingPushSince = now
 		r.LastPushAt, r.LastPushSha = time.Time{}, ""
 	case r.Stage.TracksPush():
@@ -847,7 +922,36 @@ func (r *Record) notePushStageChange(now time.Time) {
 	default:
 		r.WaitingPushSince = time.Time{}
 		r.LastPushAt, r.LastPushSha = time.Time{}, ""
+		r.clearRework()
 	}
+}
+
+// noteReworkPush books head as the author's latest answer to the standing
+// 071 / 072 ask (hivecommons/hive#16021). The same head twice keeps the
+// first instant; no standing ask, nothing to answer.
+func (r *Record) noteReworkPush(head string, at time.Time) {
+	head = strings.TrimSpace(head)
+	if head == "" || r.ReworkAskedAt.IsZero() || strings.EqualFold(head, r.ReworkPushedHead) {
+		return
+	}
+	if at.IsZero() || at.Before(r.ReworkAskedAt) {
+		at = r.ReworkAskedAt
+	}
+	r.ReworkPushedHead, r.ReworkPushedAt = head, at
+}
+
+// clearRework forgets the standing ask and the author's answer to it.
+func (r *Record) clearRework() {
+	r.ReworkAskedAt, r.ReworkPushedHead, r.ReworkPushedAt = time.Time{}, "", time.Time{}
+}
+
+// ReworkPushed reports the author's head pushed after the standing ask,
+// with when it landed; ok is false when none is on record.
+func (r Record) ReworkPushed() (head string, at time.Time, ok bool) {
+	if r.ReworkPushedHead == "" || r.ReworkAskedAt.IsZero() {
+		return "", time.Time{}, false
+	}
+	return r.ReworkPushedHead, r.ReworkPushedAt, true
 }
 
 // NotePush records that key's head moved to sha at the given instant, as a
@@ -883,6 +987,55 @@ func (s *Store) NotePush(key, sha string, at time.Time) bool {
 	s.items[key] = r
 	s.dirty = true
 	return true
+}
+
+// NoteTrainEjected records that the merge train ejected an existing
+// record's PR at head for why (hivecommons/hive#15825). A zero or future
+// instant reads as now.
+func (s *Store) NoteTrainEjected(key, head, why string, now time.Time) {
+	why = strings.TrimSpace(why)
+	if why == "" {
+		s.ClearTrainEjected(key)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	at := now
+	if clock := s.now(); at.IsZero() || at.After(clock) {
+		at = clock
+	}
+	if r.TrainEjectedWhy == why && r.TrainEjectedHead == head {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = why, strings.TrimSpace(head), at
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearTrainEjected forgets a record's merge-train ejection: the PR rides
+// a train again, or merged.
+func (s *Store) ClearTrainEjected(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.TrainEjectedWhy == "" && r.TrainEjectedHead == "" && r.TrainEjectedAt.IsZero()) {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = "", "", time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// TrainEjected reports the recorded merge-train ejection.
+func (r Record) TrainEjected() (why, head string, at time.Time, ok bool) {
+	if r.TrainEjectedWhy == "" {
+		return "", "", time.Time{}, false
+	}
+	return r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt, true
 }
 
 // PushedSinceWaiting reports whether a push landed after the current
@@ -1051,10 +1204,17 @@ func (s *Store) MarkEntryCommentedCause(key, head, cause string) {
 
 // EntryCause digests an entry comment's reasons (the bullet list, not the
 // evidence summary whose soak clock ticks) so two comments that would tell
-// the maintainer the same thing compare equal.
+// the maintainer the same thing compare equal. The lane-rule consequence
+// bullet is presentation, not cause: RouteHuman adds it only when the
+// observing lane handed off at 085, so a PR two lanes observe alternately
+// would otherwise digest the same decision twice on one head
+// (hivecommons/hive#16405). It still counts when it is the only bullet.
 func EntryCause(reasons []string) string {
 	if len(reasons) == 0 {
 		return ""
+	}
+	if kept := slices.DeleteFunc(slices.Clone(reasons), func(r string) bool { return r == decisionConsequenceReason }); len(kept) > 0 {
+		reasons = kept
 	}
 	sum := sha256.Sum256([]byte(strings.Join(reasons, "\n")))
 	return hex.EncodeToString(sum[:8])
@@ -1095,6 +1255,41 @@ func (r Record) EntryCommentExplains(head, cause string) bool {
 	return len(r.EntryCommentedCauses) == 0 || cause == "" || slices.Contains(r.EntryCommentedCauses, cause)
 }
 
+// MentionDue reports whether the author should be @-mentioned for cause:
+// never for an empty cause, otherwise only when it differs from the cause
+// of the last mention.
+func (r Record) MentionDue(cause string) bool {
+	cause = MentionCauseClass(cause)
+	return cause != "" && !strings.EqualFold(r.MentionCause, cause)
+}
+
+// MentionCauseClass collapses a stage reason to what the author would be
+// asked to do about it: "check-failing:unit" and "check-failing:lint" are
+// both "CI is red, fix it", so a second red check on a later head is the
+// same cause and earns no second @-mention; a conflict after a red check is
+// a new one. The class is the reason's kind (ReasonClass, then the part
+// before the first ':'), with the "required-" qualifier dropped.
+func MentionCauseClass(reason string) string {
+	class := ReasonClass(reason)
+	if i := strings.IndexByte(class, ':'); i >= 0 {
+		class = class[:i]
+	}
+	return strings.TrimPrefix(strings.TrimSpace(class), "required-")
+}
+
+// MarkMentioned records that the author was @-mentioned for cause.
+func (s *Store) MarkMentioned(key, cause string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.MentionCause = MentionCauseClass(cause)
+	s.items[key] = r
+	s.dirty = true
+}
+
 // MarkStallCommented records that the stall note for this stage visit was posted.
 func (s *Store) MarkStallCommented(key string) {
 	s.mu.Lock()
@@ -1118,7 +1313,19 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	if !ok {
 		return
 	}
+	if r.ReworkAskedAt.IsZero() {
+		// Records written before the field existed: the first nudge on
+		// record is the ask.
+		if r.ReworkAskedAt = r.NudgeStart(); r.ReworkAskedAt.IsZero() {
+			r.ReworkAskedAt = now
+		}
+	}
 	if r.NudgeHead != head {
+		if r.NudgeHead != "" {
+			// A nudge for another head: the author pushed since the last
+			// one (hivecommons/hive#16021).
+			r.noteReworkPush(head, now)
+		}
 		r.NudgeCount = 0
 		r.FirstNudgeAt = now
 		r.NudgeOnline = online
@@ -2097,7 +2304,7 @@ func (s *Store) SetCoveringPR(key, prKey string) {
 	s.dirty = true
 }
 
-// Forget drops key (closed/merged item).
+// Forget drops key (closed/merged item), lift record included.
 func (s *Store) Forget(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2105,6 +2312,29 @@ func (s *Store) Forget(key string) {
 		delete(s.items, key)
 		s.dirty = true
 	}
+}
+
+// ForgetStage drops key's stage for an item that is still open but has no
+// stage (a blocked issue, or one outside the hive's buckets). Unlike
+// Forget it keeps the blocked sweep's lift, so the stage-label pass that
+// runs right after an unblock does not reset the row's since-time back to
+// creation (hivecommons/hive#15779).
+func (s *Store) ForgetStage(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.items[key]; ok {
+		s.forgetStageLocked(key, r)
+	}
+}
+
+// forgetStageLocked is ForgetStage with s.mu held and the record in hand.
+func (s *Store) forgetStageLocked(key string, r Record) {
+	if r.UnblockedAt.IsZero() {
+		delete(s.items, key)
+	} else {
+		s.items[key] = Record{UnblockedAt: r.UnblockedAt, LastSeen: s.now()}
+	}
+	s.dirty = true
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped

@@ -865,12 +865,13 @@
           </select>
         </div>
         <div class="config-field" data-setting-key="ioscan.classifier.backend">
-          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude and copilot run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
+          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude, copilot and omp run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
           <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierBackend" data-arg-types="s,s,v">
             <option value="" ${classifierBackend === '' ? 'selected' : ''}>model endpoint (HTTP)</option>
             <option value="claude" ${classifierBackend === 'claude' ? 'selected' : ''}>claude — tool-less CLI</option>
             <option value="copilot" ${classifierBackend === 'copilot' ? 'selected' : ''}>copilot — tool-less CLI</option>
-            ${classifierBackend !== '' && classifierBackend !== 'claude' && classifierBackend !== 'copilot' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
+            <option value="omp" ${classifierBackend === 'omp' ? 'selected' : ''}>omp — tool-less CLI</option>
+            ${classifierBackend !== '' && classifierBackend !== 'claude' && classifierBackend !== 'copilot' && classifierBackend !== 'omp' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
           </select>
         </div>
         <div class="config-field-row">
@@ -984,31 +985,31 @@
       const snBehaviors = (sn.behaviors || []).map(b => `
         <div class="config-toggle">
           <div class="config-toggle-switch ${b.enabled ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelBehavior" data-rule="${esc(b.name)}"></div>
-          <span class="config-toggle-label"><code>${esc(b.name)}</code> ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', b.name, `${esc(b.description || '')}`)}</span>
+          <span class="config-toggle-label"><code>${esc(b.name)}</code> ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', b.name, `${esc(b.description || '')}`)}</span>
         </div>`).join('');
       const suspicious = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sn.enabled ? 'on' : ''}" data-action="toggleSentinelEnabled"></div>
-          <span class="config-toggle-label">Suspicious-activity alerts ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Suspicious-activity alerts', `Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets one explanatory comment per push; untrusted authors also get the blocking alert label, while trusted Hive authors default to informational notices that do not block merge.`)}</span>
+          <span class="config-toggle-label">Suspicious-activity alerts ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Suspicious-activity alerts', `Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets one explanatory comment per push; untrusted authors also get the blocking alert label, while trusted Hive authors default to informational notices that do not block merge.`)}</span>
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${sn.trustedAuthorsBlock ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelTrustedAuthorsBlock"></div>
-          <span class="config-toggle-label">Block trusted authors ${yamlHint('sentinel.trusted_authors_block')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
+          <span class="config-toggle-label">Block trusted authors ${yamlHint('sentinel.trusted_authors_block')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
         </div>
         <div class="config-field-row">
           <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
-          <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
         </div>
         <div class="config-field">
-          <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
           <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
         </div>
         <div class="config-field">
-          <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
+          <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
           ${snBehaviors}
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Exempt logins ${yamlHint('sentinel.exempt_logins[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Exempt logins ${yamlHint('sentinel.exempt_logins[]')} ${settingHelpMark('operator-reference/sweeps-and-operations', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
           <div class="config-field"><label>Repos (optional allow-list) ${yamlHint('sentinel.repos[]')}</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
         </div>`;
       setTimeout(loadSentinelFindings, 0);

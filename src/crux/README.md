@@ -11,6 +11,8 @@ and depends on nothing else in the Hive repository.
 The design, the boundary rules and the roadmap are in
 [`src/docs/design/crux.md`](../docs/design/crux.md); the operator pages are
 [`crux-cli.md`](../docs/crux-cli.md) and [`crux-serve.md`](../docs/crux-serve.md).
+Forge-neutral durable event/work lanes are described in
+[`crux-lanes.md`](../docs/crux-lanes.md).
 
 ## What is in the module
 
@@ -22,6 +24,7 @@ The design, the boundary rules and the roadmap are in
 | `crux/cli` | the `crux` command: `run`, `ps`, `logs`, `kick`, `stop`, `serve`, `agy-turn` (the pane-side agy subprocess), and `--server` remote mode |
 | `crux/api`, `crux/serve` | the wire contract of `crux serve` (stdlib-only client and types, `api.RuntimeRoutes`: every `crux.Runtime` method → route) and the server |
 | `crux/api/client` | `client.Runtime`: `crux.Runtime` over the API; what `crux/runtime.New` returns for `CRUX_MODE=sidecar` |
+| `crux/lanes` | opt-in JetStream durable lanes: neutral project ACLs, event replay, claimable delivery groups and fenced receipts; Hive is an ordinary participant |
 | `crux/api/callback`, `crux/hivecap` | the hive callback contract (capabilities hive serves the runtime: scoped tokens, agent mint, Bob credential, PRs, Linear, scanners, conditions, host policy, inference routes, effects, usage) and the runtime-side adapters `crux serve --hive-callback` installs; `api.HostSetters` is the table that accounts for every `crux.Host` setter (route / callback / config key / in-process-only) |
 | `crux/runtime` | `runtime.New` (mode selection: `CRUX_MODE=inprocess` default, `sidecar`) and `runtime.Supervisor`, the child supervisor hive uses for `crux serve` when `CRUX_SUPERVISE=child` |
 | `crux/defs` | the file-based agent-definition loader the module's binary uses |
@@ -76,7 +79,7 @@ export CRUX_DEFS=./defs            # or --defs ./defs on every command; a single
 crux run scout                     # start scout, stream its output, stop it on Ctrl-C
 crux run --detach scout            # start it and return
 crux ps                            # what is running
-crux logs scout -n 50              # its recent pane output (--buffer, --full, --json)
+crux logs -n 50 scout              # its recent pane output (--buffer, --full, --json)
 crux kick scout "look at issue 42" # send it work
 crux stop scout
 crux run ./defs/scout.yaml         # a definition file can be named directly

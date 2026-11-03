@@ -1,6 +1,14 @@
 name: v2 CI
 
 on:
+  workflow_call:
+    inputs:
+      integration_candidate:
+        description: Run an installed immutable Integration-aware candidate with isolated read-only technical jobs.
+        type: boolean
+        default: false
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [v4, v5, v6]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
@@ -15,7 +23,7 @@ on:
     # src/**, so this is the same rule applied to the docs outside src/.
     # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
     # release PRs touch only these; the required contexts must report — #10795
-    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/**', '.github/workflows/**']
+    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/**', '.github/workflows/**', '.github/integration-candidate.template.yml']
   pull_request:
     branches: [v4, v5, v6]
     # Required contexts from this workflow must appear on every PR head. Keep
@@ -38,8 +46,8 @@ permissions:
 # non-PR group on run_id gives every such run its own group, so they can
 # neither cancel each other nor queue behind one another.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ inputs.integration_candidate && 'integration-ci' || github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ !inputs.integration_candidate && github.event_name == 'pull_request' }}
 
 # A slow cache-segment download must never cost more than a recompile
 # (see v2-tests.yml — observed 16-minute restore steps on some nodes).
@@ -55,7 +63,7 @@ env:
 jobs:
   required-context-scope:
     name: required context scope
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
       run-ci: ${{ steps.scope.outputs.run-ci }}
@@ -67,6 +75,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          if [ "${{ inputs.integration_candidate }}" = true ] &&
+             { [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [[ "$GITHUB_REF" != refs/tags/hive-integration/* ]]; }; then
+            echo "::error::Integration candidates require an explicitly dispatched immutable candidate tag"
+            exit 1
+          fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "run-ci=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -95,7 +108,7 @@ jobs:
           run=false
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*)
+              CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*|.github/integration-candidate.template.yml)
                 run=true
                 ;;
             esac
@@ -107,19 +120,21 @@ jobs:
             echo "No v2 CI paths changed; build-and-test will be reported as skipped/success."
           fi
 
-  build-and-test:
+  build-go:
     needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
     # outage does not make otherwise-mergeable PRs impossible to merge.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 50
     defaults:
       run:
         working-directory: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
       - name: Ensure PyYAML on self-hosted runners
         working-directory: .
         run: |
@@ -130,6 +145,12 @@ jobs:
           # Noble (Python 3.12) refuses --user installs under PEP 668 without --break-system-packages.
           python3 -m pip install --user -q --break-system-packages pyyaml \
             || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
+
+      - name: Check readonly candidate CI generation
+        working-directory: .
+        run: |
+          python3 .github/scripts/generate-integration-ci.py --check
+          python3 .github/scripts/test-generate-integration-ci.py
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -176,6 +197,14 @@ jobs:
           go build -o /dev/null ./cmd/crux
           (cd crux && GOWORK=off go build -o /dev/null ./cmd/crux)
 
+      # Real embedded JetStream only: no live broker, cluster or deployment.
+      # Keep the standalone module boundary honest as well as the Hive adapter.
+      # Normal v2-tests shards also collect coverage for these packages.
+      - name: Durable Crux lane and Hive participant integration
+        run: |
+          (cd crux && GOWORK=off go test -race -timeout 3m ./lanes ./api ./serve)
+          GOWORK=off go test -race -timeout 3m ./pkg/laneparticipant
+
       # crux/scripts/smoke.sh (`make -C crux smoke` locally; the self-hosted
       # runners have no make) starts `crux serve` on a private unix socket
       # with an empty runtime, drives it with `crux --server … ps` and GET
@@ -221,6 +250,26 @@ jobs:
       # bot/price-table-refresh PR, or run `go run ./internal/tools/pricetable`.
       - name: Price table staleness guard
         run: go run ./internal/tools/pricetable --check-age 60
+
+  contract-tests:
+    needs: required-context-scope
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
+      - name: Ensure PyYAML on self-hosted runners
+        run: |
+          python3 -c "import yaml" 2>/dev/null && exit 0
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq python3-yaml && exit 0
+          python3 -m pip install --user -q --break-system-packages pyyaml \
+            || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
 
       # The entrypoint decides which file a hive boots its config from. The
       # hive.yaml.bak -> hive.yaml.runtime migration must keep reading the
@@ -863,6 +912,25 @@ jobs:
         working-directory: .
         run: bash bin/test_bin_suites_wired.sh
 
+  runtime-tests:
+    needs: required-context-scope
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
+      - name: Ensure PyYAML on self-hosted runners
+        run: |
+          python3 -c "import yaml" 2>/dev/null && exit 0
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq python3-yaml && exit 0
+          python3 -m pip install --user -q --break-system-packages pyyaml \
+            || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
@@ -901,6 +969,10 @@ jobs:
         working-directory: .
         run: node --test src/pkg/hivectl/commands/*.test.js
 
+      - name: Integration candidate materializer contracts
+        working-directory: .
+        run: node --test .github/scripts/integration-*.test.cjs
+
       # bin/contributor-relay.js used to carry the source under a misleading
       # .sh name (kubestellar/hive#6429), which needed a copy trick for
       # node --check. It is a real .js file now; check it and its lib/ module
@@ -917,6 +989,7 @@ jobs:
           node --check bin/lib/relay-audit-shim.js
           bash -n bin/contributor-relay.sh
           node bin/contributor-relay.test.js
+          node --test bin/mlx-backend.test.js
 
       # bin/vibe-kanban-mirror.js (#10641): report-only hive → vibe-kanban
       # mirror, exercised against a fake MCP stdio server.
@@ -1252,8 +1325,34 @@ jobs:
       - name: Runner labels are fork-portable (#6083)
         working-directory: .
         run: bash src/deploy/test_runner_labels_portable.sh
+
+      - name: Build aggregate preserves scope fallback and rejects skipped lanes
+        working-directory: .
+        run: bash src/deploy/test_ci_build_lane_aggregate.sh
+
+  # Preserve the protected check name: every original step still gates it.
+  build-and-test:
+    needs: [required-context-scope, build-go, contract-tests, runtime-tests]
+    if: ${{ always() && !cancelled() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - name: Require every build and contract lane
+        env:
+          SCOPE_RESULT: ${{ needs.required-context-scope.result }}
+          GO_RESULT: ${{ needs.build-go.result }}
+          CONTRACT_RESULT: ${{ needs.contract-tests.result }}
+          RUNTIME_RESULT: ${{ needs.runtime-tests.result }}
+        run: |
+          for result in "$GO_RESULT" "$CONTRACT_RESULT" "$RUNTIME_RESULT"; do
+            if [ "$result" != success ]; then
+              echo "::error::build-and-test requires successful Go, contract and runtime lanes (scope=$SCOPE_RESULT go=$GO_RESULT contracts=$CONTRACT_RESULT runtime=$RUNTIME_RESULT)"
+              exit 1
+            fi
+          done
+
   create-issue-on-failure:
-    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
+    if: "!inputs.integration_candidate && failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'"
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     needs: build-and-test
@@ -1321,7 +1420,7 @@ jobs:
     name: docker (${{ matrix.name }})
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ !inputs.integration_candidate && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -1339,12 +1438,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
           # Dockerfile.hub does `COPY .git` to stamp the build with a git
           # describe; a shallow clone makes that describe wrong, not absent.
           fetch-depth: ${{ matrix.name == 'hub' && 0 || 1 }}
 
       - name: Skip non-hive images on push
-        if: github.event_name != 'pull_request' && matrix.name != 'hive'
+        if: "!inputs.integration_candidate && github.event_name != 'pull_request' && matrix.name != 'hive'"
         run: echo "skip=true" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
@@ -1403,6 +1503,8 @@ jobs:
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: ${{ !inputs.integration_candidate }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -1526,7 +1628,7 @@ jobs:
           echo "OK: hive execs in-place under containerd/overlayfs (no copy, no NET_ADMIN) AND reports the current commit ($REPORTED_COMMIT)."
 
   nightly-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
+    if: "!inputs.integration_candidate && github.event_name == 'push' && github.ref == 'refs/heads/v2'"
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 60
     needs: [build-and-test, docker]

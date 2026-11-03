@@ -27,23 +27,22 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/hivecommons/hive/crux/internal/privatedir"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/lanes"
 )
 
 const (
 	// DefaultPollInterval is how often followed logs and the state watcher
 	// re-read the runtime.
 	DefaultPollInterval = time.Second
-	// followWindow is how many ring-buffer lines each follow poll asks for.
-	followWindow = 200
 	// maxRequestBody bounds a JSON request body; a definition is a few KB.
 	maxRequestBody = 1 << 20
 	// subscriberBuffer is how many events a slow subscriber can lag before
@@ -98,6 +97,11 @@ type Server struct {
 	// endpoint's reachability as `crux serve --hive-callback` sees it.
 	HiveCallback func() api.HiveCallback
 
+	// Lanes and LaneAuth enable the separate, project-authenticated durable
+	// lane surface. They confer no agent-control permissions.
+	Lanes    *lanes.Broker
+	LaneAuth *lanes.Authenticator
+
 	now     func() time.Time
 	started time.Time
 
@@ -151,7 +155,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/stop", s.handleStop)
 	mux.HandleFunc("GET "+api.PathEvents, s.handleEvents)
 	s.registerFamilies(mux)
-	return s.authenticate(mux)
+	return s.laneHandler(s.authenticate(mux))
 }
 
 // agentNamePattern is the CLI's definition-name gate (cmd/crux
@@ -166,6 +170,11 @@ var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		network, _ := r.Context().Value(networkKey).(string)
+		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
+		if _, projectToken := s.LaneAuth.Project(token); projectToken {
+			s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "project credentials cannot access agent RPCs")
+			return
+		}
 		if s.Token == "" {
 			if network != networkUnix {
 				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "this server has no bearer token; only unix-socket requests are accepted")
@@ -184,29 +193,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// ownedPrivateDir refuses a socket directory this user does not own
-// outright: MkdirAll is silent about a directory that already existed, and
-// on a shared temp dir another user could have created it first and could
-// then swap the socket. The directory must be a real directory (not a
-// symlink), owned by this uid, with no group or other permission bits.
+// ownedPrivateDir refuses a socket directory this user does not own outright.
 func ownedPrivateDir(dir string) error {
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return errors.New("is a symlink")
-	}
-	if !fi.IsDir() {
-		return errors.New("is not a directory")
-	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return fmt.Errorf("mode %04o is readable by others; want %04o", perm, config.ServeSocketDirMode)
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("owned by uid %d, not this user (uid %d)", st.Uid, os.Getuid())
-	}
-	return nil
+	return privatedir.Check(dir, config.ServeSocketDirMode)
 }
 
 // Listeners is what Listen opened: the unix socket and, when configured, the
@@ -462,92 +451,6 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, toWire(p))
-}
-
-func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	name := s.Runtime.ResolveAgent(r.PathValue("name"))
-	q := r.URL.Query()
-	lines := api.DefaultLogLines
-	if v := q.Get(api.QueryLines); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, api.QueryLines+" must be a non-negative integer")
-			return
-		}
-		lines = n
-	}
-	if isTrue(q.Get(api.QueryFollow)) {
-		s.followLogs(w, r, name)
-		return
-	}
-	source := q.Get(api.QuerySource)
-	if source == "" {
-		source = api.LogSourcePane
-	}
-	out := api.Logs{Agent: name, Source: source}
-	var err error
-	switch source {
-	case api.LogSourcePane:
-		out.Lines, err = s.Runtime.GetOutput(name, lines)
-	case api.LogSourceBuffer:
-		out.Lines, err = s.Runtime.GetBufferOutput(name, lines)
-	case api.LogSourceFull:
-		out.Header = s.Runtime.FullLogHeader(name)
-		out.Content, err = s.Runtime.CaptureFullLog(name)
-	default:
-		s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, fmt.Sprintf("%s must be %s, %s or %s", api.QuerySource, api.LogSourcePane, api.LogSourceBuffer, api.LogSourceFull))
-		return
-	}
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, fmt.Sprintf("logs %s: %v", name, err))
-		return
-	}
-	s.writeJSON(w, http.StatusOK, out)
-}
-
-// followLogs streams new ring-buffer lines as api.EventLog records until the
-// client goes away or the runtime stops answering.
-func (s *Server) followLogs(w http.ResponseWriter, r *http.Request, name string) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, "streaming is not supported on this connection")
-		return
-	}
-	prev, err := s.Runtime.GetBufferOutput(name, followWindow)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, fmt.Sprintf("logs %s: %v", name, err))
-		return
-	}
-	s.startStream(w)
-	flusher.Flush()
-	if len(prev) > 0 {
-		if api.WriteEvent(w, api.EventLog, api.LogChunk{Agent: name, Lines: prev}) != nil {
-			return
-		}
-		flusher.Flush()
-	}
-	ticker := time.NewTicker(s.PollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			cur, err := s.Runtime.GetBufferOutput(name, followWindow)
-			if err != nil {
-				_ = api.WriteEvent(w, api.EventState, api.Event{Time: s.now(), Type: api.EventState, Agent: name, Detail: err.Error()})
-				flusher.Flush()
-				return
-			}
-			if fresh := newTail(prev, cur); len(fresh) > 0 {
-				if api.WriteEvent(w, api.EventLog, api.LogChunk{Agent: name, Lines: fresh}) != nil {
-					return
-				}
-				flusher.Flush()
-			}
-			prev = cur
-		}
-	}
 }
 
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {

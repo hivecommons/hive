@@ -4,10 +4,13 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/review"
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -39,6 +42,10 @@ import (
 // StageTrackerDecided is the `decided` field of a row with a recorded
 // decision.
 type StageTrackerDecided struct {
+	// CurrentBlocker is a finished-snapshot blocker that outranks a recorded
+	// operator approval. Head binds that explanation to the displayed PR.
+	CurrentBlocker string `json:"current_blocker,omitempty"`
+	Head           string `json:"head,omitempty"`
 	// Action is the ledger action (let-hive-decide, approve, queue-merge,
 	// merge-now); Verdict the delegate's verdict for let-hive-decide
 	// (adopt-supersede, approve, …), else the action's own verb.
@@ -165,6 +172,23 @@ func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now ti
 		return d
 	}
 	d.Word, d.Text, d.Acting = verb.Word, verb.Text, verb.Acting
+	approval := verdict == string(delegatedecision.VerdictApprove) || verdict == operatorActionQueueMerge || verdict == operatorActionMergeNow
+	if approval && a.HeadSHA != "" && a.HeadSHA != it.Head {
+		d.Effect, d.Word, d.Acting = decidedEffectNone, "Earlier approval recorded", ""
+		d.Text = "Operator approval recorded on a previous head; current checks and reviews still apply"
+		if it.Head == "" {
+			d.Text = "Operator approval recorded; current head unavailable, so current approval cannot be established"
+		}
+		d.Title = d.Text
+		return d
+	}
+	if blocker := stageTrackerApprovalReviewBlocker(it); approval && blocker != "" {
+		d.Effect, d.Word, d.Acting = decidedEffectNone, "Review changes requested", ""
+		d.CurrentBlocker, d.Head = blocker, it.Head
+		d.Text = d.CurrentBlocker + " · operator approval recorded separately, not review approval or merge readiness"
+		d.Title = d.Text
+		return d
+	}
 	moved := a.StageAt != 0 && it.Stage != a.StageAt
 	switch {
 	case it.AdoptedBy > 0 && verdict == string(delegatedecision.VerdictAdoptSupersede):
@@ -179,11 +203,11 @@ func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now ti
 		d.Effect = decidedEffectPending
 		target := verb.Stage
 		// Decision wins over a stale park label: a row still wearing 085
-		// after a recorded direction sits where the hive really is — 070
-		// Fixing — not on the ask it already answered (hivecommons/hive#15096 N13).
+		// after a recorded direction becomes a native 070 repair request,
+		// not evidence of coding or an unanswered ask (hivecommons/hive#15096 N13).
 		if target == stagelabels.None && verdict == string(delegatedecision.VerdictDirection) && it.Stage == stagelabels.NeedsDecision.Number() {
 			target = stagelabels.Fixing
-			d.Text = "Fixing · hive is addressing " + stageTrackerReviewerPossessive(it) + " review"
+			d.Text = "Fix requested · awaiting repair of " + stageTrackerReviewerPossessive(it) + " review"
 		}
 		if target != stagelabels.None {
 			d.StageBefore, d.Stage, d.stage = it.Stage, target.Number(), target
@@ -203,6 +227,37 @@ func stageTrackerDecided(it StageTrackerItem, sweep automerge.SweepState, now ti
 	}
 	d.Title = stageTrackerDecidedTitle(d, verb.Plain, next, now)
 	return d
+}
+
+func stageTrackerApprovalReviewBlocker(it StageTrackerItem) string {
+	stage := stageByNumber(it.Stage)
+	if it.Kind != "pr" || (stage != stagelabels.Fixing && stage != stagelabels.NeedsAuthor && stage != stagelabels.ReturnedToContributor &&
+		stage != stagelabels.NeedsDecision && stage != stagelabels.ReadyForHumanMerge) {
+		return ""
+	}
+	if it.Push != nil && it.Push.State == pushStatePushed {
+		return ""
+	}
+	if !strings.Contains(it.Reason, stageengineprstage.ContributorLaneReasonChangesRequested) &&
+		!strings.Contains(it.Reason, stagelabels.LaneReasonChangesRequested) {
+		return ""
+	}
+	why := "Review changes requested on the current head"
+	if it.Head == "" {
+		why = "Review changes requested; evaluated head unavailable"
+	}
+	actor := it.Author
+	if it.Rework != nil && it.Rework.Actor != "" {
+		actor = it.Rework.Actor
+	}
+	if actor != "" {
+		why += " · waiting on @" + actor
+		if it.AuthorKind == authorKindClanker {
+			why += "'s contributor agent"
+		}
+		why += " to address the review"
+	}
+	return why
 }
 
 // stageTrackerDecidedTitle is the badge tooltip: "Hive decided 17:51 —
@@ -270,6 +325,8 @@ func stageTrackerProjectDecided(it *StageTrackerItem, d *StageTrackerDecided, sw
 		it.Reason = ""
 		if stage == stagelabels.Fixing {
 			it.MergeGate = nil
+			stageTrackerApplyCodeActivity(it, review.DispatchState{}, nil, now)
+			it.Caption = it.CodeActivity.Caption
 		} else {
 			it.MergeGate = stageTrackerMergeGate(it.Repo, it.Number, stage, stagelabels.Record{}, false, sweep, now)
 		}

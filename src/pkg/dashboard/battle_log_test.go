@@ -199,7 +199,7 @@ func TestRegistryPublicReposDerivedFromPublicHive(t *testing.T) {
 	t.Setenv("HIVE_PUBLIC_REPOS", "")
 	// A public hive's own project repos are public; the primary repo counts
 	// even when it is not repeated in repos.
-	pub := registryPublicRepos(publicReposFromEnv(), true, "HiveCommons/Hive", []string{"hivecommons/docs", "not-a-repo", ""})
+	pub := registryPublicRepos(publicReposFromEnv(), true, "hivecommons", "HiveCommons/Hive", []string{"hivecommons/docs", "not-a-repo", ""})
 	for repo, want := range map[string]bool{
 		"hivecommons/hive": true,
 		"hivecommons/docs": true,
@@ -210,13 +210,30 @@ func TestRegistryPublicReposDerivedFromPublicHive(t *testing.T) {
 			t.Fatalf("public hive allows(%q) = %v, want %v", repo, got, want)
 		}
 	}
+	// Config loading strips the org off primary_repo and repos, so the live
+	// values are bare names; they must be qualified with project.org, and a
+	// name that already carries an owner is left alone.
+	pub = registryPublicRepos(publicReposFromEnv(), true, "hivecommons", "", []string{"hive", "docs", "other-org/tool"})
+	for repo, want := range map[string]bool{
+		"hivecommons/hive": true,
+		"hivecommons/docs": true,
+		"other-org/tool":   true,
+		"hive":             false,
+	} {
+		if got := pub.allows(repo); got != want {
+			t.Fatalf("bare-name public hive allows(%q) = %v, want %v", repo, got, want)
+		}
+	}
+	if pub := registryPublicRepos(publicReposFromEnv(), true, "", "", []string{"hive"}); len(pub) != 0 {
+		t.Fatalf("a bare name without an org cannot be qualified: %v", pub)
+	}
 	// A hive the registry does not list as public contributes nothing.
-	if pub := registryPublicRepos(publicReposFromEnv(), false, "hivecommons/hive", []string{"hivecommons/hive"}); pub.allows("hivecommons/hive") {
+	if pub := registryPublicRepos(publicReposFromEnv(), false, "hivecommons", "hivecommons/hive", []string{"hivecommons/hive"}); pub.allows("hivecommons/hive") {
 		t.Fatalf("private hive must not publish its repos")
 	}
 	// HIVE_PUBLIC_REPOS remains an explicit union with the registry-derived set.
 	t.Setenv("HIVE_PUBLIC_REPOS", "acme/widgets")
-	pub = registryPublicRepos(publicReposFromEnv(), true, "hivecommons/hive", nil)
+	pub = registryPublicRepos(publicReposFromEnv(), true, "hivecommons", "hivecommons/hive", nil)
 	if !pub.allows("acme/widgets") || !pub.allows("hivecommons/hive") {
 		t.Fatalf("env allowlist and registry repos must union: %v", pub)
 	}

@@ -1,0 +1,1 @@
+- Serve Matrix lines via authorized `GET /api/matrix/lines` and a content-free `code-lines` SSE nudge on `/api/events` (experimental, default off; [#15935](https://github.com/hivecommons/hive/issues/15935)).

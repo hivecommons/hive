@@ -1,0 +1,263 @@
+package pushbroker
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// stripTrailingBlankLines removes any blank line(s) trailing the final
+// newline of each changed, still-present, textual file, leaving exactly one
+// trailing newline. It reports whether it amended HEAD.
+//
+// Scope is deliberately narrow: a file with no trailing newline at all is
+// left untouched (that is a different, less universally-enforced style rule,
+// not the "...\n\n" defect #5116 reports), a file already ending in exactly
+// one newline is untouched, and a file containing a NUL byte in its first 8KB
+// — the same binary heuristic git itself uses — is never rewritten as text.
+// Only files present both in HEAD and on disk are considered: files lists
+// every path the outgoing commits touch, so it includes paths those commits
+// deleted, and a deleted path has nothing to normalise even if the agent has
+// since re-created it uncommitted on disk.
+//
+// The content normalised is HEAD's blob (`git show HEAD:<path>`), never the
+// working-tree file, so uncommitted edits to a touched path cannot be folded
+// into the amended commit. The normalised blob is written over the
+// working-tree copy only for as long as `git add` and `git commit --amend
+// --only` need to record it: a file the agent had edited since HEAD is
+// snapshotted first and put back on disk — whether or not the amend
+// succeeds — so the edit's content is preserved. It is restored to the
+// working tree and, for a path the agent had a modified blob staged, the
+// index: `git add` of the normalised blob replaces the staged entry, so the
+// exact pre-operation stage-0 entry is put back with `git update-index
+// --cacheinfo`. A path the agent had staged for deletion (`git rm --cached`)
+// has no index entry to snapshot, so it is recorded separately and removed
+// from the index again with `git rm --cached` afterwards. An unmerged path
+// has only conflict stages and is not restored: the normalised blob is what
+// `git add` leaves staged for it. A file still identical to HEAD is simply
+// left normalised, keeping the workspace clean after the amend.
+func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (amended bool, err error) {
+	if len(files) == 0 {
+		return false, nil
+	}
+	inHead, err := b.headPaths(ctx, files)
+	if err != nil {
+		return false, err
+	}
+	root, err := filepath.EvalSymlinks(b.Workspace)
+	if err != nil {
+		return false, fmt.Errorf("resolving workspace: %w", err)
+	}
+	var touched []string
+	var edited []workingTreeSnapshot
+	var staged, deleted []string
+	defer func() {
+		for _, entry := range staged {
+			if _, uerr := b.git(ctx, "update-index", "--add", "--cacheinfo", entry); uerr != nil {
+				err = errors.Join(err, fmt.Errorf("restoring staged edit: %w", uerr))
+			}
+		}
+		if len(deleted) > 0 {
+			rmArgs := append([]string{"rm", "--cached", "--quiet", "--"}, deleted...)
+			if _, uerr := b.git(ctx, rmArgs...); uerr != nil {
+				err = errors.Join(err, fmt.Errorf("restoring staged deletion: %w", uerr))
+			}
+		}
+		for _, snap := range edited {
+			if werr := os.WriteFile(snap.abs, snap.data, snap.perm); werr != nil {
+				err = errors.Join(err, fmt.Errorf("restoring uncommitted edit to %s: %w", snap.rel, werr))
+			}
+		}
+	}()
+	for _, rel := range files {
+		if _, ok := inHead[rel]; !ok {
+			continue // deleted by the outgoing commits — nothing in HEAD to normalise
+		}
+		abs := filepath.Join(b.Workspace, rel)
+		// Lstat, not Stat: a committed symlink is a path the agent chose, and
+		// following it would read and rewrite whatever hive-owned file it
+		// points at. Only a regular file inside the tree is normalised.
+		info, err := os.Lstat(abs)
+		if err != nil || !info.Mode().IsRegular() {
+			continue // removed from disk, a directory entry from a rename, or a symlink — nothing to normalise
+		}
+		// Lstat only refuses a symlink at the leaf. A parent directory the
+		// agent has swapped for a symlink (uncommitted, so it is not in HEAD
+		// and git itself would refuse to add through it) still resolves, and
+		// the write below would put HEAD's blob — content the agent chose —
+		// into whatever hive-owned file the link points at. The sandbox has
+		// exited by the time the broker runs, so resolving the parent once
+		// here is not racing the agent.
+		if !insideRoot(root, abs) {
+			continue // escapes the workspace through a symlinked directory — nothing to normalise
+		}
+		data, err := b.git(ctx, "show", "HEAD:"+rel)
+		if err != nil {
+			return false, fmt.Errorf("reading %s from HEAD: %w", rel, err)
+		}
+		if looksBinary(data) {
+			continue
+		}
+		normalized, changed := trimTrailingBlankLines(data)
+		if !changed {
+			continue
+		}
+		onDisk, err := os.ReadFile(abs)
+		if err != nil {
+			return false, fmt.Errorf("reading %s: %w", rel, err)
+		}
+		if !bytes.Equal(onDisk, data) {
+			edited = append(edited, workingTreeSnapshot{rel: rel, abs: abs, data: onDisk, perm: info.Mode().Perm()})
+		}
+		if err := os.WriteFile(abs, normalized, info.Mode().Perm()); err != nil {
+			return false, fmt.Errorf("writing %s: %w", rel, err)
+		}
+		touched = append(touched, rel)
+	}
+	if len(touched) == 0 {
+		return false, nil
+	}
+	if staged, deleted, err = b.stagedEntries(ctx, touched); err != nil {
+		return false, err
+	}
+	addArgs := append([]string{"add", "--"}, touched...)
+	if _, err := b.git(ctx, addArgs...); err != nil {
+		return false, err
+	}
+	// --only keeps the agent's staged-but-uncommitted paths out of the amend.
+	amendArgs := append([]string{"commit", "--amend", "--no-edit", "--only", "--"}, touched...)
+	if _, err := b.git(ctx, amendArgs...); err != nil {
+		if isEmptyAmendError(err) {
+			return false, errors.New("pushbroker: refusing to push a commit made empty by broker normalisation; retrigger CI with gh run rerun --failed or workflow_dispatch instead of pushing to the PR branch")
+		}
+		return false, err
+	}
+	if b.Logger != nil {
+		b.Logger.Info("pushbroker normalised trailing blank lines", "repo", b.Repo, "branch", b.Branch, "files", touched)
+	}
+	return true, nil
+}
+
+// stagedEntries returns, as `--cacheinfo` arguments (mode,blob,path), the
+// stage-0 index entries of the files that have staged changes relative to
+// HEAD, so they can be restored exactly after `git add` overwrites them. It
+// also returns the staged deletions: paths that differ from HEAD in the index
+// but have no index entry at all, which --cacheinfo cannot express and which
+// must instead be removed from the index again. An unmerged path contributes
+// only conflict stages, which are skipped, and `git add` leaves the
+// normalised blob staged for it.
+func (b *Broker) stagedEntries(ctx context.Context, files []string) (entries, deleted []string, err error) {
+	diffArgs := append([]string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--"}, files...)
+	out, err := b.git(ctx, diffArgs...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing staged paths: %w", err)
+	}
+	paths := splitNUL(out)
+	if len(paths) == 0 {
+		return nil, nil, nil
+	}
+	lsArgs := append([]string{"ls-files", "-s", "-z", "--"}, paths...)
+	out, err = b.git(ctx, lsArgs...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading staged entries: %w", err)
+	}
+	indexed := make(map[string]struct{})
+	for _, rec := range splitNUL(out) {
+		meta, path, ok := strings.Cut(rec, "\t")
+		if ok {
+			indexed[path] = struct{}{}
+		}
+		fields := strings.Fields(meta)
+		if !ok || len(fields) != 3 || fields[2] != "0" {
+			continue
+		}
+		entries = append(entries, fields[0]+","+fields[1]+","+path)
+	}
+	for _, p := range paths {
+		if _, ok := indexed[p]; !ok {
+			deleted = append(deleted, p)
+		}
+	}
+	return entries, deleted, nil
+}
+
+// headPaths returns the subset of files that HEAD's tree contains, so the
+// normaliser can tell a path the outgoing commits deleted from one they
+// changed without relying on a `git show` failure to detect the deletion.
+// ls-tree is scoped to files so the cost tracks the change, not the tree;
+// -z keeps exact bytes, matching changedFiles.
+func (b *Broker) headPaths(ctx context.Context, files []string) (map[string]struct{}, error) {
+	args := append([]string{"ls-tree", "-r", "-z", "--name-only", "HEAD", "--"}, files...)
+	out, err := b.git(ctx, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing HEAD tree: %w", err)
+	}
+	paths := splitNUL(out)
+	set := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		set[p] = struct{}{}
+	}
+	return set, nil
+}
+
+// workingTreeSnapshot is an agent's uncommitted edit to a file that
+// stripTrailingBlankLines temporarily overwrites with HEAD's normalised blob,
+// kept so the edit can be put back on disk once the amend has run.
+type workingTreeSnapshot struct {
+	rel  string
+	abs  string
+	data []byte
+	perm os.FileMode
+}
+
+// insideRoot reports whether the directory holding abs, with every symlink
+// in it resolved, is root or lies beneath it. root must already be resolved.
+func insideRoot(root, abs string) bool {
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return false
+	}
+	return dir == root || strings.HasPrefix(dir, root+string(filepath.Separator))
+}
+
+func isEmptyAmendError(err error) bool {
+	msg := strings.ReplaceAll(err.Error(), "\n", " ")
+	return strings.Contains(msg, "would make") && strings.Contains(msg, "it empty")
+}
+
+// looksBinary reports whether data appears to be non-text, using the same
+// "NUL byte in a leading sample" heuristic git itself applies (see git's
+// buffer_is_binary), so this classifies files the same way `git diff` would
+// without shelling out to ask it.
+func looksBinary(data []byte) bool {
+	const sample = 8000
+	if len(data) > sample {
+		data = data[:sample]
+	}
+	return bytes.IndexByte(data, 0) != -1
+}
+
+// trimTrailingBlankLines collapses one-or-more blank lines at end-of-file
+// down to a single trailing newline. It leaves data with no trailing newline
+// untouched entirely — that is not the defect being fixed here.
+func trimTrailingBlankLines(data []byte) ([]byte, bool) {
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		return data, false
+	}
+	trimmed := bytes.TrimRight(data, "\n")
+	// TrimRight on an all-newline file would strip everything; that is not a
+	// realistic agent-authored source file, but guard it anyway rather than
+	// emit an empty file.
+	want := append(append([]byte(nil), trimmed...), '\n')
+	if len(trimmed) == 0 {
+		want = []byte("\n")
+	}
+	if bytes.Equal(want, data) {
+		return data, false
+	}
+	return want, true
+}

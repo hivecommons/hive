@@ -1,0 +1,1 @@
+- native-queue-policy workflow checks out the base branch head instead of the PR's stale recorded base sha, so the policy test file is always present.

@@ -363,6 +363,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
 		{class: ClassKickFreshnessWithheld, message: "kick withheld: every ref failed the freshness check"},
+		{class: ClassModelsEndpointEmpty, message: "no models found from any endpoint"},
 		{class: ClassAgentLoginRequired, message: "login required detected"},
 		{class: ClassPRRequestHeadUnpushed, message: "pr-request watcher: head branch is not on the remote — the agent's push did not land (never pushed, or push authentication failed)"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan classifier failed closed; text withheld"},
@@ -756,7 +757,7 @@ func TestMatchesExplicitClass(t *testing.T) {
 }
 
 func TestIsBenignMessage(t *testing.T) {
-	for _, m := range []string{"read tcp 1.2.3.4: i/o timeout", "keepalive ping: i/o timeout", "fetch: context canceled", "permissions watcher: fixed file permissions path=/x old_mode=-rw-r----- new_mode=-rw-rw-----", "permissions watcher: fixed ownership path=/x uid=1000", "shadow fence would have denied external mutation"} {
+	for _, m := range []string{"read tcp 1.2.3.4: i/o timeout", "keepalive ping: i/o timeout", "fetch: context canceled", "permissions watcher: fixed file permissions path=/x old_mode=-rw-r----- new_mode=-rw-rw-----", "permissions watcher: fixed ownership path=/x uid=1000", "shadow fence would have denied external mutation", "inference backend refused on a spending limit", "inference provider error detected, backing off kicks instead of sending action nudge"} {
 		if !IsBenignMessage(m) {
 			t.Fatalf("%q not benign", m)
 		}
@@ -840,6 +841,24 @@ func TestIsBenignMessageReviewPendingExpiry(t *testing.T) {
 	}
 }
 
+// #16112: a sentinel finding is the sweep working as designed; sweep failures
+// stay reportable.
+func TestIsBenignMessageSentinelAlert(t *testing.T) {
+	for _, msg := range []string{"sentinel alert", "  Sentinel Alert  "} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("sentinel finding %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"sentinel sweep failed",
+		"sentinel sweep: PR skipped",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
 func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	const msg = "policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default"
 	if !IsBenignMessage(msg) {
@@ -907,6 +926,18 @@ func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
 		if IsBenignMessage(m) {
 			t.Errorf("failure %q wrongly benign", m)
 		}
+	}
+}
+
+// hivecommons/hive#16170: an agent with no inference model configured is an
+// operator configuration condition; real translate failures stay classified.
+func TestIsBenignMessageInferenceModelNotConfigured(t *testing.T) {
+	const msg = "inference model not configured; request refused"
+	if !IsBenignMessage(msg) || LogFedClass(msg) != "" {
+		t.Errorf("missing-model notice %q reportable", msg)
+	}
+	if IsBenignMessage("inference translate request failed") || LogFedClass("inference translate request failed") != ClassInferenceUpstreamError {
+		t.Error("translate failure no longer reported as inference_upstream_error")
 	}
 }
 
@@ -1043,6 +1074,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"shared-ci rerun forbidden: the App installation lacks Actions write permission":               ClassSharedCIRerunForbidden,
 		"SHA poll: commit message fetch non-200":                                                       ClassSHAPollCommitMsgUnavail,
 		"kick withheld: every ref failed the freshness check":                                          ClassKickFreshnessWithheld,
+		"no models found from any endpoint":                                                            ClassModelsEndpointEmpty,
 		"login required detected":                                                                      ClassAgentLoginRequired,
 		"pr-request watcher: head branch is not on the remote — the agent's push did not authenticate": ClassPRRequestHeadUnpushed,
 		"ioscan classifier failed closed; text withheld":                                               ClassIOScanClassifierUnavail,
@@ -1071,6 +1103,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"kick undeliverable; busy-no-activity restart":                                                 ClassAgentPaneTimeout,
 		"agent GitHub API hourly cap reached":                                                          ClassAgentGitHubCapReached,
 		"proxy: plain HTTP forward refused — destination is not globally routable":                     ClassProxyPlainForwardRefused,
+		"inference translate request failed":                                                           ClassInferenceUpstreamError,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {

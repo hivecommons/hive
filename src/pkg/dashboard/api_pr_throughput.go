@@ -623,6 +623,12 @@ type prThroughputTerminalPicks map[string]int
 func newPRThroughputTerminalPicks(sorted []AuditEntry) prThroughputTerminalPicks {
 	picks := prThroughputTerminalPicks{}
 	for i, e := range sorted {
+		if key := prThroughputDedupKey(e); strings.HasPrefix(key, "review:") {
+			if _, seen := picks[key]; !seen {
+				picks[key] = i
+			}
+			continue
+		}
 		if !prThroughputTerminalAction(e.Action) {
 			continue
 		}
@@ -644,6 +650,10 @@ func newPRThroughputTerminalPicks(sorted []AuditEntry) prThroughputTerminalPicks
 // counts reports whether sorted[i] is counted: every entry that is not a
 // terminal state of a known PR, and the picked terminal entry of each PR.
 func (p prThroughputTerminalPicks) counts(i int, e AuditEntry, key string) bool {
+	if reviewKey := prThroughputDedupKey(e); strings.HasPrefix(reviewKey, "review:") {
+		j, ok := p[reviewKey]
+		return !ok || j == i
+	}
 	if !prThroughputTerminalAction(e.Action) || key == "" {
 		return true
 	}

@@ -87,6 +87,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		cliBackendEntry("gemini", "Gemini", geminiCLI),
 		cliBackendEntry("goose", "Goose", gooseCLI),
 		cliBackendEntry("codex", "OpenAI Codex", codexCLI),
+		cliBackendEntry("cline", "Cline (provider/model)", cliModelResult{fallback: true, discoveryErr: "Cline has no CLI model-catalog command; enter an authenticated provider/model explicitly"}),
 		cliBackendEntry(agyBackendID, "Google Antigravity (agy)", agyCLI),
 		cliBackendEntry(ompBackendID, "Oh My Pi (omp)", ompCLI),
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
@@ -110,13 +111,15 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 	models, complete := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
 	fallback := false
 	if len(models) == 0 {
-		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
+		warnNoModelsOnce(s.logger, backend, len(endpoints))
 		// Discovery is authoritative (a LiteLLM gateway entitlement-filters
 		// /v1/models per API key); only when it fails do we fall back to
 		// the common static aliases, flagged so the UI can mark them as
 		// unverified against the configured endpoint/key.
 		models = inferenceStaticModelAliases
 		fallback = true
+	} else {
+		noModelsWarned.clear(backend)
 	}
 
 	resp := map[string]interface{}{

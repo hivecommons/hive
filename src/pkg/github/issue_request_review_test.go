@@ -211,3 +211,112 @@ func TestRequestReviewersNoop(t *testing.T) {
 		t.Errorf("empty request should be a no-op, got %v", err)
 	}
 }
+
+// newPendingReviewMockServer is newReviewRequestMockServer whose GET of the
+// PR's requested reviewers reports pendingJSON.
+func newPendingReviewMockServer(t *testing.T, pendingJSON string, calls *int, reviewers, teams *[]string) *httptest.Server {
+	t.Helper()
+	post := newReviewRequestMockServer(t, calls, reviewers, teams)
+	t.Cleanup(post.Close)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/requested_reviewers") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, pendingJSON)
+			return
+		}
+		post.Config.Handler.ServeHTTP(w, r)
+	}))
+}
+
+// Asking a reviewer whose request is still pending would only re-ping them
+// for the same unresolved ask (#16075 §4): they are skipped and reported, and
+// only the new reviewers are requested.
+func TestIssueRequestWatcher_RequestReviewSkipsPendingReviewers(t *testing.T) {
+	var calls int
+	var reviewers, teams []string
+	srv := newPendingReviewMockServer(t, `{"users":[{"login":"Alice"}],"teams":[{"slug":"core"}]}`, &calls, &reviewers, &teams)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	recs := captureAudit(c)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "request_review", Repo: "o/r", Number: 42, Agent: "scanner",
+		Reviewers:     []string{"alice", "bob"},
+		TeamReviewers: []string{"o/core", "docs"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if calls != 1 {
+		t.Fatalf("reviewer API calls = %d, want 1", calls)
+	}
+	if got := strings.Join(reviewers, ","); got != "bob" {
+		t.Errorf("reviewers requested = %q, want %q (pending alice skipped)", got, "bob")
+	}
+	if got := strings.Join(teams, ","); got != "docs" {
+		t.Errorf("teams requested = %q, want %q (pending core skipped)", got, "docs")
+	}
+	resp := readIssueResultFile(t, reqPath)
+	if !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+	if strings.Join(resp.ReviewersAlreadyPending, ",") != "alice" || strings.Join(resp.TeamReviewersAlreadyPending, ",") != "core" {
+		t.Errorf("result does not report who was already pending: %+v", resp)
+	}
+	if strings.Join(resp.ReviewersRequested, ",") != "bob" || strings.Join(resp.TeamReviewersRequested, ",") != "docs" {
+		t.Errorf("result does not report who was asked: %+v", resp)
+	}
+	rec, ok := findAudit(*recs, AuditActionAgentReviewRequested)
+	if !ok {
+		t.Fatalf("review request was not audited; records: %+v", *recs)
+	}
+	if !strings.Contains(rec.Detail, "already_pending=alice core") {
+		t.Errorf("audit detail = %q, want the skipped pending reviewers", rec.Detail)
+	}
+}
+
+// When every named reviewer is already pending, no request is sent at all and
+// the relay still succeeds.
+func TestIssueRequestWatcher_RequestReviewAllPendingIsNoop(t *testing.T) {
+	var calls int
+	srv := newPendingReviewMockServer(t, `{"users":[{"login":"alice"}],"teams":[]}`, &calls, nil, nil)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "request_review", Repo: "o/r", Number: 42, Agent: "scanner", Reviewers: []string{"@alice"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if calls != 0 {
+		t.Fatalf("reviewer API calls = %d, want 0 (alice is already pending)", calls)
+	}
+	resp := readIssueResultFile(t, reqPath)
+	if !resp.OK || len(resp.ReviewersRequested) != 0 || strings.Join(resp.ReviewersAlreadyPending, ",") != "alice" {
+		t.Errorf("result = %+v, want ok with alice reported as already pending", resp)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Error("a fulfilled request_review request should be consumed")
+	}
+}
+
+// A failed pending-reviewer lookup never drops a review request: everyone
+// named is still asked.
+func TestDropPendingReviewersFailsOpen(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	users, teams, pu, pt := c.dropPendingReviewers(context.Background(), "o/r", 42, []string{"alice"}, []string{"core"})
+	if strings.Join(users, ",") != "alice" || strings.Join(teams, ",") != "core" || pu != nil || pt != nil {
+		t.Errorf("dropPendingReviewers on error = %v %v %v %v, want everyone kept", users, teams, pu, pt)
+	}
+}

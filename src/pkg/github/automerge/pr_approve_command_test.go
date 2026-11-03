@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -111,6 +112,73 @@ func TestPRApproveReply(t *testing.T) {
 			}
 			if strings.Contains(reply, "does not consume it") {
 				t.Fatalf("reply still says the lane ignores /hive approve: %q", reply)
+			}
+		})
+	}
+}
+
+// /approve applies the same pin-only exception as the sweep gate (#16266):
+// a qualifying pin bump by a trusted author is not reported as manual-only,
+// and anything the sweep would hold still is.
+func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
+	pin := "@@ -1 +1 @@\n-" + testPinOldLine + "\n+" + testPinNewLine
+	webFlow := &gh.User{Login: gh.Ptr("web-flow")}
+	verifiedHead := []*gh.RepositoryCommit{{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Committer: webFlow, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}}}
+	for _, tc := range []struct {
+		name, patch string
+		trusted     []string
+		commits     []*gh.RepositoryCommit
+		want        string
+	}{
+		{name: "trusted pure pin", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: verifiedHead, want: "releases that hold on the current head"},
+		{name: "untrusted author", patch: pin, trusted: []string{"someone-else"}, want: "requires a person to merge manually"},
+		{name: "missing patch", trusted: []string{testHiveAppBotLogin}, want: "requires a person to merge manually"},
+		{name: "head commit pushed by another login", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
+			verifiedHead[0], {SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr("mallory")}, Committer: webFlow, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}},
+		}, want: "requires a person to merge manually"},
+		{name: "head commit trusted author but foreign committer, verified", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
+			{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Committer: &gh.User{Login: gh.Ptr("mallory")}, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}},
+		}, want: "requires a person to merge manually"},
+		{name: "head commit unverified", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
+			{SHA: gh.Ptr("sha7"), Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Committer: webFlow, Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(false)}}},
+		}, want: "requires a person to merge manually"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("feedback must not mutate: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				switch r.URL.Path {
+				case "/repos/acme/widget/pulls/7":
+					json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), ChangedFiles: gh.Ptr(1), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}})
+				case "/repos/acme/widget/pulls/7/files":
+					json.NewEncoder(w).Encode([]*gh.CommitFile{{Filename: gh.Ptr("sensitive/build.yml"), Status: gh.Ptr("modified"), Additions: gh.Ptr(1), Deletions: gh.Ptr(1), Patch: gh.Ptr(tc.patch)}})
+				case "/repos/acme/widget/pulls/7/commits":
+					if tc.commits == nil {
+						t.Errorf("commit list read for a diff the classifier refuses")
+					}
+					json.NewEncoder(w).Encode(tc.commits)
+				default:
+					t.Errorf("unexpected read: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer api.Close()
+			client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			client.SetAppBotLogin(testHiveAppBotLogin)
+			e := New(client, Options{
+				MergerAuthorizer:     func(login string) bool { return login == "owner" },
+				HumanMergePaths:      func(string) []string { return []string{"sensitive/**"} },
+				RepoAutoMergeEnabled: func(string) bool { return true },
+				HumanMergePinOnly: pinOnlyFor("acme/widget", config.PinOnlyException{
+					Enabled: true, Paths: []string{"sensitive/*.yml"}, Kinds: []string{"action-sha"}, TrustedAuthors: tc.trusted,
+				}),
+			})
+			reply, err := e.PRApproveReply(context.Background(), "acme/widget", 7, &gh.IssueComment{Body: gh.Ptr("/hive approve"), User: &gh.User{Login: gh.Ptr("owner"), Type: gh.Ptr("User")}})
+			if err != nil || !strings.Contains(reply, tc.want) {
+				t.Fatalf("reply=%q err=%v, want %q", reply, err, tc.want)
 			}
 		})
 	}

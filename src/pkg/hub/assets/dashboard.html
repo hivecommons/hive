@@ -476,6 +476,8 @@
     .fleet-quadrant-head { display: flex; align-items: center; gap: var(--sp-3); }
     .fleet-quadrant-evidence-btn { border: 1px solid var(--hub-dashboard-accent); background: color-mix(in srgb, var(--hub-dashboard-accent) 12%, transparent); color: var(--hub-dashboard-accent); border-radius: var(--r-pill); padding: var(--sp-0) var(--sp-3); font: inherit; font-size: var(--fs-2xs); font-weight: 600; cursor: pointer; white-space: nowrap; }
     .fleet-quadrant-evidence-btn:hover, .fleet-quadrant-evidence-btn:focus-visible { background: color-mix(in srgb, var(--hub-dashboard-accent) 25%, transparent); outline: none; }
+    .fleet-activity-link { border: 1px solid var(--line); border-radius: var(--r-pill); padding: var(--sp-0) var(--sp-3); font-size: var(--fs-2xs); font-weight: 600; color: var(--text); text-decoration: none; white-space: nowrap; }
+    .fleet-activity-link:hover, .fleet-activity-link:focus-visible { border-color: var(--hub-dashboard-accent); color: var(--hub-dashboard-accent); outline: none; }
     .fleet-quadrant-hint { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); }
     .evidence-section { margin-bottom: var(--sp-8); }
     .evidence-title { font-size: var(--fs-base); color: var(--text); margin: 0 0 var(--sp-2); }
@@ -1408,7 +1410,7 @@
           quadrantSVG(q, null, 78, false) +
           '<div>' +
             '<div class="fleet-quadrant-head" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-2)">' +
-              '<span>Fleet quadrant · ' + esc(scope) + ' <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
+              '<span>Fleet quadrant · ' + esc(scope) + ' <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + fleetActivityLinkHTML() + '</div>' +
             '<div class="quadrant-axes">' + axes + '</div>' +
             quadrantSummaryHTML(q, true) +
             fleetQuadrantHintHTML() +
@@ -1437,6 +1439,16 @@
       if (!_isAdmin) return '';
       return '<button type="button" class="fleet-quadrant-evidence-btn" aria-haspopup="dialog" aria-controls="evidence-modal"' +
         ' title="Open the fleet evidence details" onclick="event.stopPropagation();openEvidenceModal()">\uD83D\uDD2C Evidence</button>';
+    }
+
+    /* fleetActivityLinkHTML links the read-only Fleet activity board
+       (/activity, #16063) next to Evidence. Unlike Evidence it is not
+       admin-only: GET /api/hub/activity scopes every hive to the viewer, so
+       every signed-in user gets the link. It stops propagation so an admin's
+       click does not also open the evidence modal from the card. */
+    function fleetActivityLinkHTML() {
+      return '<a class="fleet-activity-link" href="/activity" title="Open the Fleet activity board for the hives you can see"' +
+        ' onclick="event.stopPropagation()">\uD83D\uDCE1 Fleet activity</a>';
     }
 
     function fleetQuadrantHintHTML() {
@@ -1699,14 +1711,14 @@
           var att = 0, blk = 0, wh = 0;
           wrows.forEach(function(r) { att += Number(r.attempted) || 0; blk += Number(r.blocked) || 0; wh = Math.max(wh, Number(r.hives) || 0); });
           if (wrows.length) {
-            ours = 'Across ' + wh + ' reporting hive' + (wh === 1 ? '' : 's') + ': ' + att + ' agent write attempts, ' + blk + ' blocked (' + (att ? evidencePct(blk / att) : EVIDENCE_NULL) + ') over ' + wrows.length + ' tier' + (wrows.length === 1 ? '' : 's') + '. Not graded: there is no \u201Cgood\u201D block rate \u2014 it depends on what agents attempt. Zero blocks with many attempts means agents stayed inside their lane; many blocks means the guardrail did its job.';
+            ours = (blk > 0 ? 'Enforcement demonstrated' : 'Enforcement not observed') + ' \u2014 ' + blk + ' prohibited write(s) blocked. Across ' + wh + ' reporting hive' + (wh === 1 ? '' : 's') + ': ' + att + ' observed agent write attempts (' + (att ? evidencePct(blk / att) : EVIDENCE_NULL) + ' blocked) over ' + wrows.length + ' tier' + (wrows.length === 1 ? '' : 's') + '. Not graded: refusal frequency describes attempted-agent compliance, not enforcement quality. Zero means not observed, not failure; counts do not rule out bypasses or false positives.';
             grade = 'none';
           } else {
             ours = EVIDENCE_UPGRADE_NOTE + ' Technically: the heartbeat block write_counters is absent (the proxy write counters feed it).';
           }
           return {
             measured: 'Every write (push, comment, label, merge\u2026) an agent tried to make through the proxy, per intent tier, and how many the proxy refused.',
-            why: 'These are the guardrails working. A blocked write is a change an agent tried to make outside what its tier allows \u2014 it never reached GitHub.',
+            why: 'A recorded block demonstrates enforcement on that attempt: the refused write never reached GitHub. More prohibited attempts are not a goal. Sentinel detections alone are informational, not proof of a blocked write.',
             how: 'Running counters since each spoke\u2019s proxy started (not a time window). Block rate = blocked \u00F7 attempted. A blocked write says nothing about whether the PR could merge. ' + EVIDENCE_CI_NOTE,
             ours: ours, grade: grade
           };
@@ -2271,8 +2283,7 @@
       if (Array.isArray(v.write_counters)) {
         var att = 0, blk = 0;
         v.write_counters.forEach(function(t) { att += Number(t.attempted) || 0; blk += Number(t.blocked) || 0; });
-        out.writes = att === 0 ? 'No agent write attempts have been recorded by the guardrail proxy yet.' :
-          'Agents attempted ' + att + ' writes to GitHub through the guardrail proxy and ' + blk + ' (' + evidencePct(blk / att) + ') ' + evidencePlural(blk, 'was', 'were') + ' blocked; a blocked write never reached GitHub.';
+        out.writes = (blk > 0 ? 'Enforcement demonstrated' : 'Enforcement not observed') + ' \u2014 ' + blk + ' prohibited write(s) blocked; ' + att + ' observed agent write attempts through the guardrail proxy (' + (att ? evidencePct(blk / att) : EVIDENCE_NULL) + ' blocked). Counts do not rule out bypasses or false positives.';
       } else out.writes = '';
 
       var fam = v.family_false_approve_rate || {}, fparts = [];
@@ -14599,10 +14610,17 @@
           var actor = ev.actor
             ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:var(--sp-3)">by ' + esc(ev.actorName || ev.actor) + '</span>'
             : '';
+          /* Onboarding problems (GitHub App not installed / permissions /
+             install pending) get a pointer to the hive's own Getting Started
+             guide — the hive dashboard's 🧭 Guide chip — so a new operator
+             reading this timeline is not left asking for the install URL. */
+          var guideTip = (ev.kind === 'github_app_changed' && !/cleared|completed/i.test(ev.detail || ''))
+            ? '<div class="fs-xs text-muted mt-1">New hive? Open your hive dashboard → 🧭 Guide (top navbar) → step ‘Install the Forge App (GitHub App)’ for the install URL and permissions checklist.</div>'
+            : '';
           return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">' +
             '<div style="flex-shrink:0;width:84px"><span style="display:inline-block;padding:2px 7px;border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;white-space:nowrap;background:' + kind.color + '22;color:' + kind.color + ';border:1px solid ' + kind.color + '55">' + esc(kind.label) + '</span></div>' +
             '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:var(--fs-base);color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + '</div>' +
+              '<div style="font-size:var(--fs-base);color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + guideTip + '</div>' +
               '<div class="fs-xs text-muted mt-1" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
             '</div></div>';
         }).join('');

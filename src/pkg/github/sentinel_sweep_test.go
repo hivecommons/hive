@@ -46,6 +46,9 @@ type sentinelFixture struct {
 	filesHits   int
 	listHits    int
 	getHits     []int
+	// repoPrivate is what GET /repos/o/r reports; repoStatus overrides the status code.
+	repoPrivate bool
+	repoStatus  int
 }
 
 // prByNumber returns the fixture PR with that number, or nil.
@@ -153,6 +156,12 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 			}
 		}
 		switch {
+		case r.Method == http.MethodGet && p == "/repos/o/r":
+			if f.repoStatus != 0 {
+				w.WriteHeader(f.repoStatus)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"private": f.repoPrivate})
 		case r.Method == http.MethodGet && p == "/repos/o/r/pulls":
 			f.listHits++
 			_ = json.NewEncoder(w).Encode(f.prs)

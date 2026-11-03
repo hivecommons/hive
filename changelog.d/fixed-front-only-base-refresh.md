@@ -1,0 +1,1 @@
+- Serialize automatic final base refreshes per repository/base across merge lanes, preserve pending preparation outside ready train seats, and allow already-current, CI-green, reviewed successors to merge without waiting for a preparing front.

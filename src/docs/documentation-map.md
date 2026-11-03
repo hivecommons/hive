@@ -17,6 +17,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ### First installation
 
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
+- [Hub Fleet activity page](hub-fleet-activity.md) — the read-only `/activity` board of open issues and PRs across the hives you can see: per-viewer scoping, hive chips, group-by-hive freshness headers, always-visible truncation and stale-source disclosures, 15-second ETag polling, and display mode (`?kiosk=1`, `?display=1`, `am.*` views and `hub-activity` playlists).
 - [Docker Compose quick start](quickstart-docker-compose.md) — default standalone installation, prerequisites, and verification.
 - [Podman quick start](quickstart-podman.md) — standalone Quadlet/systemd installation, with rootless/rootful prerequisites.
 - [Kubernetes deployment](kubernetes-deployment.md) — standalone cluster installation, storage, authentication, and dashboard access. Related: [health checks](health-checks.md).
@@ -105,6 +106,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
 - [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](notifications.md#discord-webhook-vs-discord-bot) and the [Slack Socket Mode / Telegram / Matrix / Teams bots](notifications.md#chat-bots-slack-socket-mode-telegram-matrix-teams).
+- [Attention episodes](attention-episodes.md) — single-admitter condition episodes, flap window, and the `github.attention` rollout controls.
 - [State-triggered hooks](hooks.md) — declarative `transition → action` rules, the transition catalog, the vetted action set, and the security model (RFC #4001).
 - [GitHub Actions trigger](github-actions-trigger.md) — call a hive from a workflow via the v6 comment-relay composite action, with examples for PR review and scheduled status kicks.
 - [CEL-based agent triggers](cel-triggers.md) — the `triggers:` config key: declarative CEL rules that kick an agent on a normalized source-control event, additive to built-in label/governor triggering, the `event.*` field reference, and the fail-closed compile/runtime contract.
@@ -124,6 +126,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [`bd` beads CLI](beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
 - [`crux` CLI](crux-cli.md) — run, list, tail, kick and stop agents through `crux.Runtime` with no governor or dashboard; definition formats, the control socket served by `crux run`, and why the runtime being in-process shapes it.
 - [`crux serve`: the runtime over a local API](crux-serve.md) — **Developer:** operate the runtime server through its authenticated API, event stream, CLI, or Go client.
+- [Crux durable lanes](crux-lanes.md) — **Developer/operator; opt-in:** configure forge-neutral JetStream-backed events and work, project capabilities, replay, leases and explicit recovery through the Crux API; connect Hive as an ordinary participant.
 - [Publishing Crux](crux-publish.md) — how `hivecommons/crux` is produced from `src/crux` (plain copy, module path rewritten, fast-forward commits), what is preserved there, the `CRUX_SYNC_TOKEN` credential, manual sync and how a `crux/vX.Y.Z` tag becomes a release.
 ### Backup and API reference
 
@@ -225,7 +228,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Automatic repo ACMM onboarding reconciler](design/repo-acmm-onboarding.md) — proposed design for per-repo ACMM targets, gap-to-work reconciliation, human hand-off, waivers, and anti-gaming controls (RFC #6235).
 - [Hive federation design](../../docs/federation-design.md) — the multi-hive registry: live `/api/hives` endpoints, project onboarding, contributor flow across hubs, and what remains future design work.
 - [Public roadmap](roadmap.md) — available foundations, current/future direction, release-line status, completed work, and dated decision evidence. Not a delivery promise.
-- [Integrations](integrations.md) — one page of logos and status (Supported / Opt-in / Planned) for agent backends, work sources, forges, sandboxes and upstream projects.
+- [Integrations](integrations.md) — one page of logos and status (Supported / Opt-in / In progress / Planned) for agent backends, work sources, forges, sandboxes and upstream projects.
 - [Landscape and positioning](landscape.md) — how Hive's operations-plane design compares to nearby agentic orchestration tools, with public references per project. Explicitly time-sensitive; check the conducted date in its header before quoting product details.
 - [CNCF sandbox onboarding status](cncf-sandbox-onboarding.md) — repo-local map of the onboarding tracker and repository evidence (LICENSE, governance, security, OWNERS, DCO).
 - [CNCF reference architecture](cncf-reference-architecture.md) — CNCF submission/reference template.

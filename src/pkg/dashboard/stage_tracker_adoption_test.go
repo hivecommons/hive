@@ -102,7 +102,7 @@ func TestStageTrackerAdoptionNeverSaysSo(t *testing.T) {
 	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyNever, offlinePresence(time.Time{}))
 	store.NoteAdoptionBlocked(stagelabels.Key("hivecommons/hive", 14524), "feed", stagelabels.AdoptBlockedAuthorMaintainer, now.Add(-25*time.Hour))
 	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
-	if a := it.Adoption; a == nil || a.Action != "" || a.Text != "waiting on @hanthor (maintainer, offline 26h) — not adopted: maintainer_policy is never" {
+	if a := it.Adoption; a == nil || a.Action != "" || a.Text != "waiting on @hanthor (maintainer, offline 26h) — maintainer-owned: automatic adoption is disabled by maintainer_policy=never" {
 		t.Fatalf("adoption = %+v", a)
 	}
 	if it.DecisionNeeded != nil {
@@ -139,6 +139,42 @@ func TestStageTrackerAdoptionNeverHedgesBeforeDue(t *testing.T) {
 	s.presenceLookup = offlinePresence(now.Add(-13 * time.Minute))
 	if a = trackerItem(t, s.buildStageTracker(status, store2, now), "pr", 14524).Adoption; a == nil || a.AutoDue || a.AutoAdoptAt == nil || !a.AutoAdoptAt.Equal(now.Add(2*time.Minute)) || a.Text != "waiting on @hanthor (offline 13m, 1 nudge) — hive adopts it in 2m unless a new head lands or the author maintains this repository" {
 		t.Fatalf("pending text = %+v", a)
+	}
+}
+
+// hivecommons/hive#15742: ask reads the author's permission at the same due
+// moment as never, so its countdown hedges too, saying what ask does.
+func TestStageTrackerAdoptionAskHedgesBeforeDue(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyAsk, offlinePresence(now.Add(-3*time.Hour)))
+	a := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption
+	if a == nil || a.Due || a.BlockedBy != "" || a.Action != "" || a.Policy != "ask" || !a.AutoDue {
+		t.Fatalf("adoption = %+v", a)
+	}
+	if a.Text != "waiting on @hanthor (offline 3h, 2 nudges) — hive adopts it on the next sweep unless the author maintains this repository, then it asks" {
+		t.Fatalf("text = %q", a.Text)
+	}
+	store2 := stagelabels.NewStore("", func() time.Time { return now })
+	key := stagelabels.Key("hivecommons/hive", 14524)
+	store2.Observe(key, stagelabels.ReturnedToContributor, "conflicting")
+	store2.MarkNudged(key, "feed", 1, false, now.Add(-13*time.Minute))
+	s.stageStore = store2
+	s.presenceLookup = offlinePresence(now.Add(-13 * time.Minute))
+	if a = trackerItem(t, s.buildStageTracker(status, store2, now), "pr", 14524).Adoption; a == nil || a.AutoDue || a.AutoAdoptAt == nil || !a.AutoAdoptAt.Equal(now.Add(2*time.Minute)) || a.Text != "waiting on @hanthor (offline 13m, 1 nudge) — hive adopts it in 2m unless a new head lands or the author maintains this repository, then it asks" {
+		t.Fatalf("pending text = %+v", a)
+	}
+}
+
+// hivecommons/hive#15742: the hedge clause per maintainer policy.
+func TestStageTrackerAdoptionHedgeByPolicy(t *testing.T) {
+	for _, tc := range []struct{ policy, want string }{
+		{config.AdoptionMaintainerPolicyNever, " unless the author maintains this repository"},
+		{config.AdoptionMaintainerPolicyAsk, " unless the author maintains this repository, then it asks"},
+		{config.AdoptionMaintainerPolicyAdopt, ""},
+	} {
+		if got := stageTrackerAdoptionNeverHedge(StageTrackerAdoption{Policy: tc.policy}, " unless"); got != tc.want {
+			t.Errorf("policy %q: hedge = %q, want %q", tc.policy, got, tc.want)
+		}
 	}
 }
 
@@ -407,10 +443,10 @@ func TestStageTrackerAdoptionPersonAuthoredSaysNotAdopted(t *testing.T) {
 	if a == nil || !a.Due || a.BlockedBy != stagelabels.AdoptBlockedAuthorPerson || a.Action != "" {
 		t.Fatalf("adoption = %+v", a)
 	}
-	if a.Text != "@clubanderson pushed this PR themselves — not adopted: the hive asks them, not adopts" {
+	if a.Text != "author-owned — @clubanderson remains the owner; human availability is unknown" {
 		t.Fatalf("text = %q", a.Text)
 	}
-	if !strings.Contains(it.Caption, "not adopted") {
+	if !strings.Contains(it.Caption, "author-owned") {
 		t.Fatalf("caption = %q", it.Caption)
 	}
 	if d := it.DecisionNeeded; d != nil {

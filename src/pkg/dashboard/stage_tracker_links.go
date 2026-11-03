@@ -322,10 +322,13 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.SentinelNotice, lp.SentinelDetails = pr.SentinelNotice, pr.SentinelDetails
 				lp.Claimant = pr.Claimant
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
 				lp.Rework = pr.Rework
+				lp.CIActivity, lp.ReviewActivity, lp.CodeActivity = pr.CIActivity, pr.ReviewActivity, pr.CodeActivity
+				lp.DisplayColumn = pr.DisplayColumn
 				lp.Push = pr.Push
 				lp.Takeover = pr.Takeover
 				lp.Supersedes = pr.Supersedes
@@ -338,6 +341,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.DecisionNeeded = pr.DecisionNeeded
 				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
 				lp.MergeTrain, lp.LeftTrain, lp.Overlap = pr.MergeTrain, pr.LeftTrain, pr.Overlap
+				lp.Preparation = pr.Preparation
 				lp.Soak = pr.Soak
 				lp.NoteChangedAt = pr.NoteChangedAt
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
@@ -382,7 +386,8 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 	}
 
 	// NestedUnder is final only once every issue has been read; name it on
-	// each listing so the SPA draws the PR's strip under one parent only.
+	// each listing so the SPA draws the PR's strip under one parent only,
+	// and give the listing drawn there the other issues the PR also closes.
 	for i := range items {
 		it := &items[i]
 		if it.Kind != "issue" {
@@ -391,6 +396,9 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 		for j := range it.LinkedPRs {
 			if pr := prs[it.Repo+"#"+strconv.Itoa(it.LinkedPRs[j].Number)]; pr != nil {
 				it.LinkedPRs[j].DrawnUnder = pr.NestedUnder
+				if pr.NestedUnder == it.Number {
+					it.LinkedPRs[j].AlsoCloses = stageTrackerAlsoCloses(pr, it.Number)
+				}
 			}
 		}
 	}
@@ -401,6 +409,28 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 	}
 	stageTrackerFoldReviewNotes(items)
 }
+
+// stageTrackerAlsoCloses is the PR's other listed open issues — every
+// LinkedIssue with its own row in the response except the parent drawing
+// the PR — slimmed to number, title and URL and sorted lowest first; nil
+// when the PR closes only the parent (hivecommons/hive#15806). Soft links
+// (Refs / title / mention) are references, not closings, so they never
+// count as "also closes" even when listed.
+func stageTrackerAlsoCloses(pr *StageTrackerItem, parent int) []StageTrackerLinkedIssue {
+	var out []StageTrackerLinkedIssue
+	for _, li := range pr.LinkedIssues {
+		if !li.Listed || li.Number == parent || li.Number == 0 || stageTrackerLinkSoft(li) {
+			continue
+		}
+		out = append(out, StageTrackerLinkedIssue{Number: li.Number, Title: li.Title, URL: li.URL})
+	}
+	slices.SortFunc(out, func(a, b StageTrackerLinkedIssue) int { return a.Number - b.Number })
+	return out
+}
+
+// stageTrackerCoveredDecisionClause follows "Covered by PR #N" on an issue
+// whose covering PR is parked on a person's decision.
+const stageTrackerCoveredDecisionClause = "waiting for a decision on the PR"
 
 // Link evidence arrives after the issue's stage/new narration, including
 // reverse closing references from PRs. Do not narrate a completed intake
@@ -439,7 +469,12 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 			continue
 		}
 		text := fmt.Sprintf("PR #%d", pr.Number)
-		if pr.Caption != "" {
+		if pr.Stage == trackerNumberNeedsDecision {
+			// The decision and its button live on the PR's row; the issue
+			// says it waits there instead of repeating the PR's question
+			// (hivecommons/hive#15773).
+			text += " — " + stageTrackerCoveredDecisionClause
+		} else if pr.Caption != "" {
 			text += " — " + pr.Caption
 		}
 		progress = append(progress, text)

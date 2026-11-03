@@ -168,13 +168,13 @@ func (m *webhookModeMachine) status(window time.Duration, now time.Time) Webhook
 // mode plus whether this observation degraded to polling or recovered to
 // webhook mode, so the caller logs exactly once per transition.
 func ObserveWebhookMode() (status WebhookModeStatus, degraded, recovered bool) {
-	tr := sharedWebhookTracker.observeMode()
+	tr := sharedWebhookTracker().observeMode()
 	return tr.Status, tr.Degraded, tr.Recovered
 }
 
 // WebhookModeSnapshot reports the cadence mode without advancing it.
 func WebhookModeSnapshot() WebhookModeStatus {
-	return sharedWebhookTracker.modeSnapshot()
+	return sharedWebhookTracker().modeSnapshot()
 }
 
 // RecordGitHubActivity notes the newest `updated_at` a poll or reconcile
@@ -184,7 +184,7 @@ func RecordGitHubActivity(updatedAt time.Time) {
 	if updatedAt.IsZero() {
 		return
 	}
-	t := sharedWebhookTracker
+	t := sharedWebhookTracker()
 	t.mu.Lock()
 	if updatedAt.After(t.lastActivity) {
 		t.lastActivity = updatedAt
@@ -197,7 +197,7 @@ func RecordGitHubActivity(updatedAt time.Time) {
 // that did not verify or a payload that did not decode. Failures newer than
 // the newest good delivery degrade the cadence to polling.
 func RecordWebhookDeliveryFailure() {
-	t := sharedWebhookTracker
+	t := sharedWebhookTracker()
 	t.mu.Lock()
 	t.lastFailure = t.now()
 	t.mu.Unlock()

@@ -42,6 +42,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/webassets/kioskcta"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -102,6 +103,8 @@ var proxyProofRequired = true
 const staleDropStarvationThreshold = 5
 
 type Server struct {
+	nativeQueueTracker  nativeQueueTrackerRuntime
+	integration         integrationRuntime
 	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
 
 	feedbackRefreshBackoff feedbackBackoff
@@ -116,15 +119,24 @@ type Server struct {
 	chatGroundedOnce     sync.Once
 	chatGroundedInflight chan struct{}
 
-	port       int
-	authToken  string
-	statusMu   sync.RWMutex
-	status     *StatusPayload
-	sseClients map[chan []byte]struct{}
-	sseMu      sync.Mutex
-	logger     *slog.Logger
-	mux        *http.ServeMux
-	deps       *Dependencies
+	// matrix is the dashboard.matrix line source (matrix_source.go); nil
+	// until MatrixObserver is called with an active config.
+	matrixMu          sync.Mutex
+	matrix            *matrixSource
+	matrixNudge       stageTrackerNudger
+	matrixPersistPath string
+
+	port         int
+	authToken    string
+	sweepMu      sync.RWMutex
+	sweepCadence map[string]sweepCadence
+	statusMu     sync.RWMutex
+	status       *StatusPayload
+	sseClients   map[chan []byte]struct{}
+	sseMu        sync.Mutex
+	logger       *slog.Logger
+	mux          *http.ServeMux
+	deps         *Dependencies
 	// stageStore is the stage-label memory /api/stage-tracker reads; nil
 	// means the process-wide stagelabels.Shared(). Tests inject one.
 	stageStore *stagelabels.Store
@@ -197,6 +209,10 @@ type Server struct {
 	// "Merged" chip (merged_ledger.go); built lazily by mergedLedger.
 	merged     *MergedLedger
 	mergedOnce sync.Once
+	// recentlyClosed is the in-memory list behind
+	// StageTrackerResponse.RecentlyClosed (stage_tracker_recently_closed.go).
+	recentlyClosedMu sync.Mutex
+	recentlyClosed   []StageTrackerClosed
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
@@ -448,6 +464,13 @@ type Server struct {
 	// selfUpgradeDrain) so /api/status can show the countdown and the agents
 	// holding it (#14856). Guarded by versionMu; nil when not installed.
 	upgradeDrain upgradeDrainSource
+	// upgradeAnnounce is the announced/restarting roll record (#15788);
+	// see upgrade_announce.go. Zero value is usable.
+	upgradeAnnounce upgradeAnnounceStore
+	// startupPhase names the boot phase the process is in while s.status is
+	// still nil, so a dashboard reconnecting onto a fresh pod can show
+	// "starting: <phase>" instead of a bare spinner (#15788).
+	startupPhase atomic.Value
 	// hubPushedDashboardURL is the vanity dashboard URL the hub last delivered
 	// on a heartbeat (#7451). Non-empty means the hub owns hub.dashboard_url:
 	// an operator edit would be reverted by the next push, and until then a
@@ -747,9 +770,15 @@ type StatusPayload struct {
 	// banner; omitted when every watched repo accepts issues.
 	IssuesDisabledRepos []IssuesDisabledRepo `json:"issuesDisabledRepos,omitempty"`
 	GitHubBaseURL       string               `json:"githubBaseURL,omitempty"`
-	InferenceBackends   []InferenceBackend   `json:"inferenceBackends,omitempty"`
-	SystemAlerts        []SystemAlert        `json:"systemAlerts,omitempty"`
-	HubBanner           *HubBannerState      `json:"hubBanner,omitempty"`
+	// OnboardingIssues lists the setup problems in force that the Getting
+	// Started guide has a step for (GitHub App not installed / wrong org /
+	// permissions / credentials, repo target, no projects, no agents). The
+	// SPA appends an "open the 🧭 Guide → step …" tip wherever these are
+	// rendered and keeps the Guide chip visible while any is active.
+	OnboardingIssues  []OnboardingIssue  `json:"onboardingIssues,omitempty"`
+	InferenceBackends []InferenceBackend `json:"inferenceBackends,omitempty"`
+	SystemAlerts      []SystemAlert      `json:"systemAlerts,omitempty"`
+	HubBanner         *HubBannerState    `json:"hubBanner,omitempty"`
 	// Platform surfaces the v4 spoke capabilities — the configured forge, the
 	// mint token service state, and the skills registry. It is additive and
 	// nil-safe: a github-only, mint-off hive with no skills dir still gets a
@@ -881,6 +910,11 @@ type SystemAlert struct {
 	ID       string `json:"id"`
 	Severity string `json:"severity"`
 	Message  string `json:"message"`
+	// Onboarding/GuideStep are set (ClassifyOnboardingMessage) when the
+	// message is a setup problem the Getting Started guide has a step for,
+	// so the alert row can offer "open the 🧭 Guide → step …".
+	Onboarding bool   `json:"onboarding,omitempty"`
+	GuideStep  string `json:"guideStep,omitempty"`
 }
 
 // InferenceBackend describes a live inference endpoint and its available models.
@@ -930,12 +964,13 @@ type FrontendAgent struct {
 	// the prompt. The SPA renders this as "Waiting on CI" instead of
 	// "Working" so a stalled-on-CI agent no longer looks indistinguishable
 	// from one making progress.
-	AwaitingCI    bool   `json:"awaitingCI,omitempty"`
-	Paused        bool   `json:"paused"`
-	PausedAt      string `json:"pausedAt,omitempty"`
-	PausedReason  string `json:"pausedReason,omitempty"`
-	PausedTrigger string `json:"pausedTrigger,omitempty"`
-	PausedBy      string `json:"pausedBy,omitempty"`
+	AwaitingCI    bool           `json:"awaitingCI,omitempty"`
+	CodeWork      *crux.CodeWork `json:"codeWork,omitempty"`
+	Paused        bool           `json:"paused"`
+	PausedAt      string         `json:"pausedAt,omitempty"`
+	PausedReason  string         `json:"pausedReason,omitempty"`
+	PausedTrigger string         `json:"pausedTrigger,omitempty"`
+	PausedBy      string         `json:"pausedBy,omitempty"`
 	// OperatorStopped is true when the agent was stopped explicitly (not by a
 	// crash), so the governor will not revive it.
 	OperatorStopped bool   `json:"operatorStopped,omitempty"`
@@ -1673,14 +1708,15 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		terminalHandoffs: make(map[string]terminalHandoff),
 		cliModels:        newCLIModelCache(),
 		startedAt:        time.Now(),
+		matrixNudge:      stageTrackerNudger{interval: matrixLinesNudgeInterval},
 	}
 	s.registerCoreRoutes()
 	setOwnershipAuditSink(func(at time.Time, repo string, number int, detail string) {
 		s.audit.LogRecordAt(at.UTC().Format(time.RFC3339), "system", ownershipTransitionAction, detail, "", repo, number)
 	})
 	// A merge attempt beginning or ending is a tracker change the next poll
-	// must see (hivecommons/hive#15245).
-	github.DefaultMergeAttempts().SetOnChange(func() { s.invalidateStageTrackerCache() })
+	// must see (hivecommons/hive#15245, #15808).
+	github.DefaultMergeAttempts().SetOnChange(s.noteMergeAttempt)
 	return s
 }
 
@@ -1818,6 +1854,9 @@ func (s *Server) Start() error {
 		// Editing branding.json therefore needs a restart; editing the
 		// stylesheet does not. That asymmetry is documented in branding.md.
 		branded := webstatic.InjectBranding(applyBranding(rawIndex, s.loadBranding()))
+		// The kiosk call-to-action badge (#16236) is baked in the same way:
+		// its QR code and copy are static per process.
+		branded = kioskcta.Inject(branded, s.kioskCTAOptions())
 		idx = webstatic.NewIndexDocument(branded)
 		// Hand the FINAL served bytes to the CSP layer explicitly, rather than
 		// having the document constructor reach out and set global state:
@@ -1891,7 +1930,7 @@ func (w *serverTimingResponseWriter) Unwrap() http.ResponseWriter {
 
 func (w *serverTimingResponseWriter) WriteHeader(status int) {
 	if !w.wrote {
-		w.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.1f", float64(time.Since(w.start).Microseconds())/1000))
+		w.Header().Add("Server-Timing", fmt.Sprintf("app;dur=%.1f", float64(time.Since(w.start).Microseconds())/1000))
 		w.wrote = true
 	}
 	w.ResponseWriter.WriteHeader(status)
@@ -2891,6 +2930,13 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 			status.GitHubAppInstallURL = g.AppInstallURL()
 		}
 	}
+	// Derived AFTER the GitHub App / repo-target fields are final so the
+	// classification never disagrees with the banners rendered from them.
+	var onboardingCfg *config.Config
+	if s.deps != nil {
+		onboardingCfg = s.deps.Config
+	}
+	status.OnboardingIssues = onboardingIssuesFor(status, onboardingCfg)
 
 	status.InferenceBackends = s.buildInferenceBackends()
 	status.Spektacular = s.SpektacularStatus()
@@ -3014,14 +3060,17 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 func (s *Server) AddSystemAlert(id, severity, message string) {
 	s.systemAlertsMu.Lock()
 	defer s.systemAlertsMu.Unlock()
+	_, guideStep, onboarding := ClassifyOnboardingMessage(message)
 	for i, a := range s.systemAlerts {
 		if a.ID == id {
 			s.systemAlerts[i].Message = message
 			s.systemAlerts[i].Severity = severity
+			s.systemAlerts[i].Onboarding = onboarding
+			s.systemAlerts[i].GuideStep = guideStep
 			return
 		}
 	}
-	s.systemAlerts = append(s.systemAlerts, SystemAlert{ID: id, Severity: severity, Message: message})
+	s.systemAlerts = append(s.systemAlerts, SystemAlert{ID: id, Severity: severity, Message: message, Onboarding: onboarding, GuideStep: guideStep})
 }
 
 // ClearSystemAlert removes an alert by ID.
@@ -3484,7 +3533,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "starting"})
 		return
 	}
-	body := map[string]any{"status": "ok", "runtime": runtimeobs.Take()}
+	body := map[string]any{"status": "ok", "runtime": runtimeobs.Take(), "sweeps": s.sweepCadences(time.Now())}
 	if s.deps != nil && s.deps.CruxRuntimeHealth != nil {
 		rt := s.deps.CruxRuntimeHealth()
 		body["crux_runtime"] = rt
@@ -3625,11 +3674,11 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
 	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
-		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org"}
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org", "onboarding": true, "guideStep": GuideStepGitHubApp}
 		overall = "degraded"
 		failCount++
 	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
-		checks["github_auth"] = map[string]any{"status": "fail", "detail": detail}
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": detail, "onboarding": true, "guideStep": GuideStepGitHubApp}
 		overall = "degraded"
 		failCount++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
@@ -3959,14 +4008,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.statusMu.RLock()
 	if s.status == nil {
 		s.statusMu.RUnlock()
-		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
+		statusJSONResponse(w, r, s.initializingStatus())
 		return
 	}
 	now := time.Now().UTC()
 	status := s.status
 	snapshot := s.statusWithOverviewBands(status, now)
 	s.statusMu.RUnlock()
-	payload := statusWithWebhooks{StatusPayload: snapshot, Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot()}
+	payload := statusWithWebhooks{StatusPayload: snapshot, Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active()}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
@@ -3987,6 +4036,10 @@ type statusWithWebhooks struct {
 	// signals, the last one, webhook-triggered kicks and unmatched heads.
 	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
 	*EvalLoopStatus
+	// MatrixEnabled reports whether the Matrix block is active (enabled with
+	// at least one repo, see config.DashboardMatrixConfig.Active) so the header shows
+	// the Matrix tab only on hives whose /api/matrix/lines will serve it.
+	MatrixEnabled bool `json:"matrixEnabled"`
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
 	// machine (scheduled / draining / pulling / … / missed) with the drain
 	// countdown, derived at serve time (#14856). Absent on a hive the hub
@@ -4913,6 +4966,10 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		Name   string `json:"name"`
 		Status string `json:"status"`
 		Detail string `json:"detail,omitempty"`
+		// Onboarding/GuideStep mark setup problems the Getting Started guide
+		// has a step for (see OnboardingIssue); the SPA renders a guide tip.
+		Onboarding bool   `json:"onboarding,omitempty"`
+		GuideStep  string `json:"guideStep,omitempty"`
 	}
 	checks := []check{}
 	fails := 0
@@ -4929,10 +4986,10 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
 	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
-		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org"})
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org", Onboarding: true, GuideStep: GuideStepGitHubApp})
 		fails++
 	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
-		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail})
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail, Onboarding: true, GuideStep: GuideStepGitHubApp})
 		fails++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {
@@ -4960,7 +5017,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 	}
 
 	if status != nil && status.RepoTargetMisconfigured {
-		checks = append(checks, check{Name: "repo_target", Status: "warn", Detail: status.RepoTargetIssue})
+		checks = append(checks, check{Name: "repo_target", Status: "warn", Detail: status.RepoTargetIssue, Onboarding: true, GuideStep: GuideStepRepos})
 		warns++
 	}
 

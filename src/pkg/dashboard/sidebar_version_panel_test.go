@@ -74,6 +74,7 @@ const document = { getElementById(id) { return id === 'oc-version-chip' ? chip :
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionElapsedText") + "\n" +
 		jsFunc(t, html, "versionUpgradeProgressStatus") + "\n" +
+		jsRollUpgradeFuncs(t, html) +
 		jsFunc(t, html, "versionUpgradeKey") + "\n" +
 		jsFunc(t, html, "versionBeeGlyphHTML") + "\n" +
 		jsFunc(t, html, "versionUpgradeHiveHTML") + "\n" +
@@ -201,6 +202,7 @@ var _upgradeInProgress = false;
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionElapsedText") + "\n" +
 		jsFunc(t, html, "versionUpgradeProgressStatus") + "\n" +
+		jsRollUpgradeFuncs(t, html) +
 		jsFunc(t, html, "versionUpgradeKey") + "\n" +
 		jsFunc(t, html, "versionBeeGlyphHTML") + "\n" +
 		jsFunc(t, html, "versionUpgradeHiveHTML") + "\n" +
@@ -364,6 +366,7 @@ const localStorage = {data:{}, getItem(k){return this.data[k] || null}, setItem(
 		jsFunc(t, html, "versionClearUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionMarkUpgradeComplete") + "\n" +
 		jsFunc(t, html, "versionPolicy") + "\n" +
+		jsRollUpgradeFuncs(t, html) +
 		jsFunc(t, html, "versionReconcileUpgradeProgress") + `
 versionWriteUpgradeProgress({target:'bbb2222abcdef', targetShort:'bbb2222', startedAt:1000});
 let st = versionReconcileUpgradeProgress({hash:'bbb2222abcdef'}, 2000);
@@ -425,6 +428,7 @@ const localStorage = {data:{}, getItem(k){return this.data[k] || null}, setItem(
 		jsFunc(t, html, "versionWriteUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionClearUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionMarkUpgradeComplete") + "\n" +
+		jsRollUpgradeFuncs(t, html) +
 		jsFunc(t, html, "versionReconcileUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionHubUpgradeAttemptKey") + "\n" +
 		jsFunc(t, html, "versionAdoptHubUpgradeProgress") + `

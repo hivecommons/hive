@@ -34,6 +34,70 @@ func TestKioskModeWiring(t *testing.T) {
 	}
 }
 
+// TestDisplayModeWiring guards the attended `?display=1` wall view (#15925):
+// boot.js reads the flag before first paint and sets body.display-mode, kiosk
+// wins when both flags are present so the headless streamer's output never
+// changes, the 📺 header tool is a .ham-header-tool that kiosk hides, and
+// entering display mode never requests full screen or a wake lock.
+func TestDisplayModeWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`display=u.searchParams.get('display')==='1';`,
+		`window.HIVE_DISPLAY=display&&!kiosk;`,
+		`window.hiveDisplayMode=function(){ return !!window.HIVE_DISPLAY; };`,
+		"if(window.HIVE_DISPLAY){\n    document.body.classList.add('display-mode');",
+		`class="config-info section-settings-gear ham-header-tool ham-display-btn" id="activity-monitor-display"`,
+		`body.kiosk-mode .ham-header-tool, body.kiosk-mode .ham-popout-return { display: none !important; }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing display-mode wiring %q", want)
+		}
+	}
+	// Kiosk keeps its own branch: display mode never adds popout-mode or
+	// touches the kiosk class.
+	if !strings.Contains(html, "if(kiosk){\n    document.body.classList.add('kiosk-mode');\n  }else if(window.HIVE_POPOUT){") {
+		t.Error("boot.js kiosk/popout branch changed")
+	}
+	for _, fn := range []string{"toggleStageTrackerDisplay", "stageTrackerDisplayUrl", "stageTrackerDisplayHotkey"} {
+		if body := jsFunc(t, html, fn); strings.Contains(body, "requestFullscreen") || strings.Contains(body, "wakeLock") {
+			t.Errorf("%s must not request full screen or a wake lock:\n%s", fn, body)
+		}
+	}
+	if strings.Contains(html, `localStorage.setItem('hive-display`) {
+		t.Error("display mode must not persist state in localStorage")
+	}
+}
+
+// TestDisplayOptionsWiring guards the display-mode wall options (#15931):
+// `density=tv` and `shift=1` set their body classes only inside the
+// display-mode branch of boot.js, so `?density=tv` or `?shift=1` without
+// `display=1` (and any kiosk URL, where display mode is off) renders exactly
+// as before, and `density` accepts only `tv`.
+func TestDisplayOptionsWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`density=u.searchParams.get('density')==='tv'?'tv':'';`,
+		`shift=u.searchParams.get('shift')==='1';`,
+		`window.HIVE_DISPLAY_DENSITY=window.HIVE_DISPLAY?density:'';`,
+		`window.HIVE_DISPLAY_SHIFT=window.HIVE_DISPLAY&&shift;`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing display option wiring %q", want)
+		}
+	}
+	branch := "if(window.HIVE_DISPLAY){\n    document.body.classList.add('display-mode');\n    document.body.classList.add('ham-chromeless');\n" +
+		"    if(window.HIVE_DISPLAY_DENSITY==='tv') document.body.classList.add('display-density-tv');\n" +
+		"    if(window.HIVE_DISPLAY_SHIFT) document.body.classList.add('display-shift');\n"
+	if !strings.Contains(html, branch) {
+		t.Error("display-density-tv / display-shift must be added only inside boot.js's display-mode branch")
+	}
+	for _, cls := range []string{"display-density-tv", "display-shift"} {
+		if n := strings.Count(html, "classList.add('"+cls+"')"); n != 1 {
+			t.Errorf("%s added %d times; want exactly once, in the display-mode branch", cls, n)
+		}
+	}
+}
+
 // TestKioskSoundDefault guards the streamer's audio path: in kiosk mode the
 // tracker sounds are on unless the URL says `&sound=off`, the context is
 // resumed at init without waiting for a gesture (the streamer's Chromium

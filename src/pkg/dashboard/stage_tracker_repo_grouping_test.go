@@ -153,6 +153,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMotion"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
+		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
 		jsFunc(t, html, "stageTrackerStageWord"),
@@ -224,6 +225,9 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerGroupHeaderHtml"),
 		jsFunc(t, html, "stageTrackerRepoChipSetting"),
 		jsFunc(t, html, "stageTrackerSetRepoChip"),
+		// No am.* URL view (#15924): the group persists in localStorage.
+		"var _stageTrackerUrlView = null;",
+		jsFunc(t, html, "stageTrackerUrlView"),
 		jsFunc(t, html, "stageTrackerGroupSetting"),
 		jsFunc(t, html, "stageTrackerSetGroup"),
 		jsFunc(t, html, "stageTrackerLoadCollapsed"),

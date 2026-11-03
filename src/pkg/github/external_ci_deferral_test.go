@@ -161,7 +161,7 @@ func TestTransientCITriagedNeedsEveryFailingRun(t *testing.T) {
 func TestGraphQLCheckRunsCarryDatabaseID(t *testing.T) {
 	n := decodeGQLPRNode(t, gqlPRNodeWithContextsJSON(1, "sha-1",
 		`{"__typename":"CheckRun","databaseId":987654321,"name":"build","status":"COMPLETED","conclusion":"FAILURE"},`+
-			`{"__typename":"StatusContext","context":"DCO","state":"FAILURE"}`))
+			`{"__typename":"StatusContext","id":"SC_1","context":"DCO","state":"FAILURE"}`))
 	checks, ok := graphQLCheckRuns(n)
 	if !ok || len(checks) != 2 {
 		t.Fatalf("graphQLCheckRuns = %v, %v", checks, ok)
@@ -169,7 +169,10 @@ func TestGraphQLCheckRunsCarryDatabaseID(t *testing.T) {
 	if checks[0].GetID() != 987654321 {
 		t.Errorf("check run id = %d, want the databaseId 987654321", checks[0].GetID())
 	}
-	if checks[1].GetID() != 2 {
-		t.Errorf("status context id = %d, want positional 2 (a status has no run id)", checks[1].GetID())
+	if checks[1].ID != nil {
+		t.Errorf("status context id = %d; a status must not invent a numeric check-run identity", checks[1].GetID())
+	}
+	if checks[1].GetNodeID() != "SC_1" || checks[1].GetHeadSHA() != "sha-1" || checks[1].GetConclusion() != "failure" {
+		t.Errorf("status context lost its real identity, head or failure: %+v", checks[1])
 	}
 }

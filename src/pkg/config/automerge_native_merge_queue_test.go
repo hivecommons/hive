@@ -7,6 +7,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestNativeQueueBaseSetPreservesBranchIdentity(t *testing.T) {
+	if (NativeMergeQueueAutoMergeConfig{}).BaseSet() != nil {
+		t.Fatal("unset bases must preserve legacy YAML semantics")
+	}
+	q := NativeMergeQueueAutoMergeConfig{Bases: []string{" Acme/Widget#Release/V5 ", "malformed"}}
+	bases := q.BaseSet()
+	if !bases["acme/widget#Release/V5"] || bases["acme/widget#release/v5"] || len(bases) != 1 {
+		t.Fatalf("base scopes: %+v", bases)
+	}
+	if (NativeMergeQueueAutoMergeConfig{Bases: []string{"invalid"}}).BaseSet() == nil {
+		t.Fatal("invalid explicit scope must not become an unrestricted policy")
+	}
+}
+
 func TestNativeMergeQueueAutoMergeConfigIsOptInPerRepo(t *testing.T) {
 	tests := []struct {
 		name    string

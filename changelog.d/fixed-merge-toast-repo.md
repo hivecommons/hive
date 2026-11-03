@@ -1,0 +1,1 @@
+- Show the tracker's existing repository chip on merge notifications, keeping same-number PRs in different repositories linked to their own merge and row.

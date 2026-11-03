@@ -245,7 +245,7 @@ func TestIssueWrite_UnreadableIssueKeepsRefusal(t *testing.T) {
 
 	_ = c.AddLabels(context.Background(), "o/r", 63, []string{"claimed"})
 	err := c.AddLabels(context.Background(), "o/r", 63, []string{"claimed"})
-	if !errors.Is(err, effects.ErrNeedsReconciliation) || !strings.Contains(err.Error(), "reconciliation lookup failed") {
+	if !errors.Is(err, effects.ErrNeedsReconciliation) || !strings.Contains(err.Error(), "label read for reconciliation failed") {
 		t.Fatalf("second AddLabels err = %v, want the journal sentinel", err)
 	}
 	if got := writes.Load(); got != 1 {

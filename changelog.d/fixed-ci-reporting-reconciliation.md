@@ -1,0 +1,1 @@
+- Detect verified current-head GitHub Actions workflow/check reporting stalls after bounded consistency observations, expose exact run/attempt provenance and owner action without changing CI gates or automatically rerunning workflows.

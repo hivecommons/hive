@@ -344,6 +344,15 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			if issue == nil {
 				continue
 			}
+			// `/hive ack` / `/hive snooze` only touch the attention ledger
+			// (hivecommons/hive#16359); the item then continues through
+			// the un-park paths below unchanged.
+			// Items without an open episode cost no API call.
+			n, err := c.replyAttentionCommands(ctx, owner+"/"+repoName, owner, repoName, issue, cutoff)
+			result.Replies += n
+			if err != nil && c.logger != nil {
+				c.logger.Warn("unpark sweep skipped attention commands", "repo", repo, "item", issue.GetNumber(), "error", err)
+			}
 			labels := issueLabelNames(issue.Labels)
 			if issue.IsPullRequest() {
 				// `/hive approve` on any PR gets an acknowledgement or an
@@ -409,6 +418,15 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			if !acted {
 				result.Skipped++
 			}
+		}
+		// Reminders, closure clean-up and the per-repo attention queue
+		// (attention pilot, hivecommons/hive#16361, #16362) run after this
+		// pass recorded its `/hive ack` and `/hive snooze` commands.
+		if c.stageArchived.has(strings.ToLower(owner + "/" + repoName)) {
+			continue
+		}
+		if _, err := c.SweepAttentionQueue(ctx, owner+"/"+repoName); err != nil && c.logger != nil {
+			c.logger.Warn("unpark sweep: attention queue pass incomplete", "repo", repo, "error", err)
 		}
 	}
 	return result, nil
@@ -1030,6 +1048,7 @@ func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string
 		return removed, err
 	}
 	gone, _ := c.unparkStageLabelsLifted(ctx, owner, repo, number, stageLabels)
+	notifyItemRefresh(owner+"/"+repo, number, false)
 	return append(removed, gone...), nil
 }
 

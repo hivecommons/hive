@@ -136,7 +136,7 @@ comment (or issue) node id, so a mention seen twice is handled once.
 
 A mention is a comment or issue body containing `@<app-login>` where
 `<app-login>` is the installation's bot login, the value the hive already knows
-as `appBotLogin` (`isHiveAppReviewAuthor`, `src/pkg/github/automerge/automerge_sweep.go:1242`).
+as `appBotLogin` (`isHiveAppReviewAuthor`, `src/pkg/github/automerge/automerge_sweep_queued.go:256`).
 The text after the mention is the request. Two optional forms route it:
 
 ```

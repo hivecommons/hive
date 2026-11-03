@@ -32,8 +32,9 @@ type protectionServer struct {
 	signalsRejected bool
 	restCalls       int
 	// statuses are commit-status contexts answered by the combined-status
-	// endpoint; statusesFail makes that endpoint 500.
+	// endpoint; statusState defaults to success. statusesFail makes that endpoint 500.
 	statuses     []string
+	statusState  string
 	statusesFail bool
 }
 
@@ -99,10 +100,14 @@ func (p *protectionServer) start(t *testing.T) *httptest.Server {
 				return
 			}
 			sts := []map[string]any{}
-			for _, c := range p.statuses {
-				sts = append(sts, map[string]any{"context": c, "state": "success"})
+			state := p.statusState
+			if state == "" {
+				state = "success"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "statuses": sts})
+			for _, c := range p.statuses {
+				sts = append(sts, map[string]any{"context": c, "state": state})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "statuses": sts})
 		case strings.Contains(r.URL.Path, "/check-runs"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"total_count": len(p.checkRuns),

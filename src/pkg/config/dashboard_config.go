@@ -19,6 +19,9 @@ type DashboardConfig struct {
 	Port               int    `yaml:"port"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
+	// Matrix is the experimental, default-off Activity Monitor Matrix block
+	// (#15862). Nothing reads it yet; see dashboard_matrix.go.
+	Matrix DashboardMatrixConfig `yaml:"matrix,omitempty" json:"matrix,omitempty"`
 	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to
 	// embed the public, read-only /snapshot document. Empty keeps the historical
 	// fail-closed framing policy (X-Frame-Options: DENY plus CSP
@@ -76,6 +79,12 @@ type DashboardConfig struct {
 	// "redirect_uri is invalid". Validated at load time by
 	// ValidateDashboardPublicURL.
 	PublicURL string `yaml:"public_url,omitempty" json:"public_url,omitempty"`
+	// KioskCTAURL and KioskCTAText are the destination and copy of the
+	// call-to-action badge every `?kiosk=1` view shows bottom-right (#16236,
+	// pkg/webassets/kioskcta). Empty takes the hosted-hive request page and
+	// its default line. Read once at dashboard start-up, like branding.
+	KioskCTAURL  string `yaml:"kiosk_cta_url,omitempty" json:"kiosk_cta_url,omitempty"`
+	KioskCTAText string `yaml:"kiosk_cta_text,omitempty" json:"kiosk_cta_text,omitempty"`
 	// Theme names the built-in dashboard theme id ("hive" by default) or
 	// "custom" when theme_overrides supplies the complete operator palette.
 	Theme string `yaml:"theme,omitempty" json:"theme,omitempty"`
@@ -452,6 +461,13 @@ type DashboardStageTrackerConfig struct {
 	// ToastErrorS is the same for error toasts. 0 means the default (30);
 	// values are clamped to 3..120.
 	ToastErrorS int `yaml:"toast_error_s,omitempty" json:"toast_error_s,omitempty"`
+	// MergedHoldS is how many seconds the activity monitor keeps a row at
+	// "Merging · merge landed" after the payload dropped it, bridging the
+	// gap until the SPA has the merged fact (hivecommons/hive#15808). The
+	// celebration launches as soon as that fact arrives, so this is a
+	// ceiling, not a delay. 0 means the default (8); values under 3 read
+	// as 3.
+	MergedHoldS int `yaml:"merged_hold_s,omitempty" json:"merged_hold_s,omitempty"`
 }
 
 // defaultStageTrackerClosedSweepInterval is the default

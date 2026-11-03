@@ -1,0 +1,1 @@
+- Restore the Activity Monitor's compact preparation train pill and side rail on actual tracker rows, retaining live pipeline comments without changing stages, sorting, linked trees, or ready/native queue membership.

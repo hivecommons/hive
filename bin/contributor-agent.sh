@@ -81,6 +81,7 @@ source "${SCRIPT_DIR}/lib/knowledge-export.sh"
 # TTY — suitable for an unattended / future Kubernetes contributor (#2549).
 # Only the two literals are accepted; anything else falls back to interactive.
 CONTRIBUTOR_MODE="${CONTRIBUTOR_MODE:-interactive}"
+if [[ "${AGENT_BACKEND:-}" == "cline" ]]; then CONTRIBUTOR_MODE="headless"; fi
 if [[ "$CONTRIBUTOR_MODE" != "headless" ]]; then
   CONTRIBUTOR_MODE="interactive"
 fi
@@ -199,6 +200,9 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE:-}" == "1" ]]; then
 fi
 
 validate_pi_selection() {
+  if [[ "${AGENT_MODEL:-}" == mlx/* ]]; then
+    node "${SCRIPT_DIR}/mlx-backend.js" check "${AGENT_MODEL}" --endpoint-only >&2 || return
+  fi
   node "${SCRIPT_DIR}/pi-backend.js" "${AGENT_MODEL:-}"
 }
 
@@ -265,6 +269,13 @@ detect_cli() {
   fi
 
   case "$backend" in
+    cline)
+      if "${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --check >/dev/null 2>&1; then
+        echo "UNVERIFIED"
+      else
+        echo "NOT_AUTHED"
+      fi
+      ;;
     claude)
       if claude --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
       ;;
@@ -450,6 +461,16 @@ if [[ "$AGENT_BACKEND" == "pi" ]]; then
 fi
 
 # Check CLI readiness
+if [[ "$AGENT_BACKEND" == "cline" ]]; then
+  if [[ -n "${HIVE_CLINE_PROVIDERS_B64:-}" ]]; then
+    CLINE_SETTINGS="${HOME}/.cline/data/settings"
+    mkdir -p "$CLINE_SETTINGS"
+    (umask 077; printf '%s' "$HIVE_CLINE_PROVIDERS_B64" | base64 -d > "$CLINE_SETTINGS/providers.json") || exit 1
+    chmod 600 "$CLINE_SETTINGS/providers.json"
+    unset HIVE_CLINE_PROVIDERS_B64 CLINE_SETTINGS
+  fi
+  "${HIVE_CLINE_RUNNER:-crux}" cline-turn --model "${AGENT_MODEL:-}" --check || exit 1
+fi
 STATUS=$(detect_cli "$AGENT_BACKEND")
 case "$STATUS" in
   NOT_INSTALLED)
@@ -498,7 +519,7 @@ case "$STATUS" in
     exit 1
     ;;
   UNVERIFIED)
-    echo "$AGENT_BACKEND CLI is installed; authentication will be checked in its interactive pane."
+    echo "$AGENT_BACKEND CLI is installed; authentication remains unverified until its first request."
     ;;
   OK)
     if [[ "$AGENT_BACKEND" == "pi" ]]; then
@@ -676,6 +697,9 @@ if [[ -n "${AGENT_MODEL:-}" ]]; then
     goose|bob) ;;
     *) MODEL_FLAG="--model $AGENT_MODEL" ;;
   esac
+fi
+if [[ "$AGENT_BACKEND" == "pi" && "${AGENT_MODEL:-}" == mlx/* ]]; then
+  MODEL_FLAG+=" --extension $(printf %q "${SCRIPT_DIR}/mlx-pi-extension.js")"
 fi
 REASONING_FLAG=""
 if [[ "$AGENT_BACKEND" == "codex" && -n "${AGENT_REASONING_EFFORT:-}" ]]; then

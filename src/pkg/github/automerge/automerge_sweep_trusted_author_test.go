@@ -46,6 +46,9 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 	t.Helper()
 	fetches := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnprotectedSweepBase(w, r) {
+			return
+		}
 		state := fx.mergeableState
 		if state == "" {
 			state = "clean"
@@ -67,7 +70,7 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 				"mergeable":       state == "clean",
 				"user":            map[string]string{"login": author},
 				"head":            map[string]any{"sha": sha, "repo": map[string]string{"full_name": headRepo}},
-				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
+				"base":            map[string]any{"ref": "main", "sha": "base1", "repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          prLabelObjects(fx.labels),
 			}
 		}
@@ -84,12 +87,12 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 				http.Error(w, "get error", fx.getStatus)
 				return
 			}
-			if fetches > 1 && fx.recheckStatus != 0 {
+			if fetches > 2 && fx.recheckStatus != 0 {
 				http.Error(w, "recheck error", fx.recheckStatus)
 				return
 			}
 			sha := "sha7"
-			if fetches > 1 && fx.recheckHeadSHA != "" {
+			if fetches > 2 && fx.recheckHeadSHA != "" {
 				sha = fx.recheckHeadSHA
 			}
 			json.NewEncoder(w).Encode(pull(sha))
@@ -156,6 +159,9 @@ func newTrustedSweepEngine(apiURL string, policy TrustedAuthorPolicy, opts Optio
 	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, apiURL)
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	opts.TrustedAuthorPolicy = func() TrustedAuthorPolicy { return policy }
+	if opts.BasePreparation == nil {
+		opts.BasePreparation = NewBasePreparationStore("")
+	}
 	opts.TrustedAuthorizer = func(login, requireRole string) TrustedAuthorDecision {
 		return TrustedAuthorDecision{Allowed: login == "alice", Role: requireRole}
 	}

@@ -4,6 +4,20 @@ Hive can route agents through OpenAI-compatible model gateways instead of a subs
 
 See [Gateway-path tier](../src/docs/backend-support-tiers.md#gateway-path-tier) for which dashboard/agent features (terminal access, model discovery, token metering, login) are guaranteed, best-effort, or not applicable on this path, and what a gateway smoke check must prove.
 
+## Apple MLX: local contributor inference, not a hosted gateway
+
+ClankeR offers **Apple MLX** on `/contribute`, using the actual Pi coding
+backend with an `mlx/<model>` provider. MLX-LM runs natively on an Apple Silicon
+Mac (macOS 14+, native Python 3.10+); Pi supplies tools in the contributor
+container via Docker Desktop host networking. It is not a new `backend: mlx`
+for hosted agents or a Governor Model Gateway.
+
+Use the dedicated `just contribute-mlx-serve`, explicit
+`just contribute-mlx-setup <model> --verify-tools`, and `just contribute-mlx`
+workflow. Models are user-managed, must support structured tools, and consume
+shared host RAM. See [installation and troubleshooting](../src/docs/contributor-relay.md#apple-mlx-local-inference)
+for prerequisites, Pi registration, loopback restrictions and verification limits.
+
 ## Looking for Copilot (or Claude, Codex, Gemini…)? It is not a Model Gateway
 
 Subscription CLI backends — `copilot`, `claude`, `codex`, `gemini`, `goose`,

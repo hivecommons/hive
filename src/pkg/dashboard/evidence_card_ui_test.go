@@ -208,14 +208,14 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"reasons.slice(0, EV_TOP_REASONS)",
 		"no agent writes recorded in this window",
 		"no sentinel hits recorded in this window",
-		"agent writes blocked</b>",
+		"prohibited write(s) blocked</b>",
 		"${bar(row.kind === 'direct' ? 'wa' : 'wm', row.writes, 0, formatNumber(row.writes))}${bar('wb', row.blocked, 1,",
 		`aria-label="Sentinel hits per ISO week"`,
 		"direct-write counters recorded since",
 		"would-block counts from intent verification are shown separately in the explainer and never counted as blocked",
 		"Writes that bypass both the hive and the proxy are invisible here",
-		"const EV_BLOCKED_STRONG = 0.01;",
-		"const EV_BLOCKED_FAIR = 0.05;",
+		"Enforcement demonstrated",
+		"Enforcement not observed",
 		".ev-legend i.wm",
 		".ev-svg .ev-bar.wb",
 		".ev-legend i.wa",
@@ -251,6 +251,8 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
+	source.WriteString(jsFunc(t, html, "formatNumber"))
+	source.WriteByte('\n')
 	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\nconst EV_OM_DRAIN_MAX = 1, EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2, EV_OM_PARITY_TOLERANCE = 0.25, EV_OM_ROLLING_DAYS = 30, EV_OM_SPARK_TRAIL_DAYS = 7, EV_OM_BAR_MAX_RATIO = 3, EV_OM_SPARK_MAX_RATIO = 3;\nconst EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };\n")
 	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "evOmStatusLabel", "evOmRatioText", "evOmVerdict", "evOmSparkline", "evOpensMergesHtml", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
@@ -390,6 +392,16 @@ renderEvidenceSummary({reviewer_calibration: selfRows});
 assert.match(card.innerHTML, /<summary>Reviewer calibration<span[^>]*>n=0/);
 assert.match(card.innerHTML, /no reviewer verdicts with a confidence/);
 evSelectConfidence('self-reported');
+// Blocking is an observation, never a penalty, even for one attempt or all attempts.
+for (const [total, blocked] of [[652, 77], [1, 1], [19, 1], [30, 30], [1000, 0], [0, 0]]) {
+  const rendered = evWriteActivitySvg({total_writes: total, blocked, direct: {}});
+  assert.match(rendered, new RegExp(blocked > 0 ? 'Enforcement demonstrated' : 'Enforcement not observed'));
+  assert.ok(rendered.includes(blocked + ' prohibited write(s) blocked'));
+  assert.ok(rendered.includes(formatNumber(total) + ' observed agent writes'));
+}
+renderEvidenceSummary({write_activity: {total_writes: 652, blocked: 77}, cards: {'boundary-enforcement': {grade: {letter: 'C-', band: 'c', enough_data: true}}}});
+assert.match(card.innerHTML, /aria-label="Boundary enforcement is not graded">Not graded/);
+assert.doesNotMatch(card.innerHTML, /Grade C-/);
 // A band the client does not know falls back to the neutral pill.
 renderEvidenceSummary({cards: {'work-balance': {grade: {letter: 'Z', band: 'z', reason: 'x', enough_data: true}}}});
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="x" aria-label="Grade Z: x">Z<\/span>/);
@@ -492,8 +504,8 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"const EV_REVERT_FAIR = 0.15;",
 		"const EV_SHADOW_FALSE_ALARM_STRONG = 0.25;",
 		"const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;",
-		"const EV_BLOCKED_STRONG = 0.01;",
-		"const EV_BLOCKED_FAIR = 0.05;",
+		"grade: 'ungraded', reason: blocked > 0",
+		"Sentinel detections are informational observations, not proof that a write was blocked",
 		"const EV_DATA_SINCE = '2026-10-08';",
 		"const EV_REVERTS_SINCE = '2026-10-15';",
 		"const EV_GRADES = { excellent: 'Excellent', good: 'Good', strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };",

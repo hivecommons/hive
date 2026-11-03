@@ -121,6 +121,9 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 
 	resp := s.buildStageTracker(s.status, store, now)
 	labelled := trackerItem(t, resp, "pr", 109)
+	if labelled.SentinelNotice {
+		t.Fatal("a live blocking label must not become an informational notice")
+	}
 	if !labelled.SentinelAlert || labelled.SentinelFindings != 0 || labelled.SentinelReason != "" {
 		t.Fatalf("label-only PR 109 = alert %v findings %d reason %q", labelled.SentinelAlert, labelled.SentinelFindings, labelled.SentinelReason)
 	}
@@ -128,6 +131,9 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 		t.Fatalf("PR 109 stage = %d, want 085", labelled.Stage)
 	}
 	evid := trackerItem(t, resp, "pr", 110)
+	if !evid.SentinelNotice {
+		t.Fatal("verified trusted-author findings without a blocking label must be informational")
+	}
 	if !evid.SentinelAlert || evid.SentinelFindings != 2 || evid.SentinelReason != "touches OWNERS (+1 more)" || evid.Head != headEvidence {
 		t.Fatalf("evidence PR 110 = alert %v findings %d reason %q head %q", evid.SentinelAlert, evid.SentinelFindings, evid.SentinelReason, evid.Head)
 	}
@@ -176,6 +182,9 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 	}
 	if nested == nil || !nested.SentinelAlert || nested.Head != headClean {
 		t.Fatalf("issue 13 linked_prs must mirror PR 112's alert: %+v", issue.LinkedPRs)
+	}
+	if nested.SentinelNotice {
+		t.Fatal("the nested live label must retain its blocking meaning")
 	}
 
 	// Webhook: the label comes off → flag drops; goes on → flag returns.
@@ -251,7 +260,7 @@ func TestStageTrackerSentinelLabelClearsBlockingBundle(t *testing.T) {
 			if tt.findings != nil {
 				writeSentinelBundle(t, root, "acme/console", tt.number, head, tt.findings, tt.actions...)
 			}
-			alert, findings, reason := s.stageTrackerSentinel(verifier, "acme/console", tt.number, head, tt.labels)
+			alert, findings, reason, _ := s.stageTrackerSentinel(verifier, "acme/console", tt.number, head, tt.labels)
 			if alert != tt.wantAlert || findings != tt.wantFindings || reason != tt.wantReason {
 				t.Fatalf("stageTrackerSentinel = alert %v findings %d reason %q, want %v %d %q", alert, findings, reason, tt.wantAlert, tt.wantFindings, tt.wantReason)
 			}
@@ -264,13 +273,13 @@ func TestStageTrackerSentinelLabelClearsBlockingBundle(t *testing.T) {
 func TestStageTrackerSentinelConfiguredLabel(t *testing.T) {
 	s := newTestServer()
 	s.deps = &Dependencies{Config: &config.Config{Sentinel: config.SentinelConfig{Label: "security-hold"}}}
-	if alert, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{"Security-Hold"}); !alert {
+	if alert, _, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{"Security-Hold"}); !alert {
 		t.Fatal("configured label (case-insensitive) must flag")
 	}
-	if alert, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{config.DefaultSentinelLabel}); alert {
+	if alert, _, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{config.DefaultSentinelLabel}); alert {
 		t.Fatal("the default label is not the configured one")
 	}
-	if alert, n, reason := s.stageTrackerSentinel(nil, "acme/console", 1, "", nil); alert || n != 0 || reason != "" {
+	if alert, n, reason, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", nil); alert || n != 0 || reason != "" {
 		t.Fatal("no label, no head → clean")
 	}
 }
@@ -296,7 +305,9 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 		`confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel`,
 		`label: preface + 'What should the hive change on '`,
 		`if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));`,
-		`sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || ''`,
+		`sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || ''`,
+		`function stageTrackerSentinelPathLines(item)`,
+		`function stageTrackerSentinelTipWithPaths(item)`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing sentinel lane wiring %q", want)
@@ -331,6 +342,8 @@ func TestStageTrackerSentinelLaneText(t *testing.T) {
 	}
 	html := indexHTML(t)
 	script := stageTrackerRepoGroupingHarness(t, html) + strings.Join([]string{
+		jsFunc(t, html, "stageTrackerSentinelPathLines"),
+		jsFunc(t, html, "stageTrackerSentinelTipWithPaths"),
 		jsFunc(t, html, "stageTrackerSentinelPreface"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_MAX_ROWS"),
 		jsConstLine(t, html, "STAGE_TRACKER_EXIT_MS"),
@@ -373,13 +386,13 @@ assert.ok(lit[1].includes('title="' + TIP + ' — '), 'the chevron tooltip leads
 assert.ok(lit[1].includes('aria-current="step"'));
 assert.ok(lit[1].includes('aria-label="Sentinel alert · needs human — ' + TIP + '"'), 'aria-label carries the wording: ' + lit[1]);
 assert.ok(lit[2].includes('aria-label="Next move: human"'), 'the 👤 actor icon stays');
-assert.ok(parked.includes('<p class="ham-current-stage">Needs human decision · Sentinel alert · needs human · Next move: human</p>'), 'the compact caption says it too: ' + parked);
+assert.ok(parked.includes('<p class="ham-current-stage">Needs human decision · Sentinel alert · needs human · Next move: human'), 'the compact caption preserves the human gate beside independent tracks: ' + parked);
 assert.ok(!parked.includes('ham-badge-sentinel'), 'no chip when the lane word already says it');
 assert.ok(parked.includes(esc(TIP)), 'the PR link tooltip carries the sentinel line');
 
 // Other lanes: chip beside the modifier pill, same tooltip.
 const review = stageTrackerRowHtml(P('o/r', 110, 50, Object.assign({ modifiers: ['needs-rebase'] }, flagged)), stages, ctx);
-assert.ok(review.includes('<span class="ham-detour">') === false && review.includes('<span class="ham-seg-t">CI / Review</span>'), 'lane word unchanged off the merge gate');
+assert.ok(!review.includes('<span class="ham-detour">') && review.includes('data-track="ci"') && review.includes('data-track="review"'), 'the informational notice preserves both independent tracks off the merge gate');
 const chips = /<span class="ham-badges">([\s\S]*?)<\/span><\/li>/.exec(review);
 assert.ok(chips, review);
 assert.ok(/^<span class="ham-badge ham-badge-sentinel" title="[^"]+" aria-label="Sentinel alert — [^"]+">sentinel<\/span><span class="ham-badge ham-badge-mod ham-mod-needs-rebase">needs rebase<\/span>$/.test(chips[1]), 'sentinel chip leads the chip area: ' + chips[1]);

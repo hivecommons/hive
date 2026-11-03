@@ -1,0 +1,1 @@
+- Forward-merge the latest v5 controller, Matrix, integration-orchestration, notification, and CI improvements into v6 while retaining its split configuration, Crux runtime boundary, serialized merge lanes, and dashboard controls.

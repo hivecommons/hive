@@ -68,6 +68,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -477,7 +478,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
 		if stage == stagelabels.None {
-			store.Forget(key)
+			store.ForgetStage(key)
 		} else {
 			tr = store.ObserveProgress(key, stage, reason, d.Progress)
 			noteIssueCoveringPR(client, store, key, in, stage)
@@ -604,7 +605,10 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		// note; a covering PR's own falls are narrated on the PR.
 		if tr.Regressed && !covered && tr.Prev.Before(stagelabels.CoveredByPR) {
 			if rec, ok := store.Get(key); ok && !rec.RegressionCommented {
-				if err := client.CreateIssueComment(ctx, in.Repo, in.Number, stagelabels.RegressionComment(tr.Prev, tr.Next, reason)); err != nil {
+				note := stagelabels.RegressionComment(tr.Prev, tr.Next, reason)
+				if _, err := client.PostIssueNote(ctx, in.Repo, in.Number, prstatus.KeyStageRegressed, note, func(ctx context.Context) error {
+					return client.CreateIssueComment(ctx, in.Repo, in.Number, note)
+				}); err != nil {
 					if logger != nil {
 						logger.Warn("issue stage labels: regression comment failed", "repo", in.Repo, "issue", in.Number, "error", err)
 					}
@@ -653,6 +657,11 @@ const mergedPRPartialStageMarker = "<!-- hive:issue-stage-merged-partial"
 // comment landed is retried without a second comment.
 const mergedPRClosedStageMarker = "<!-- hive:closed-by-merged-pr"
 
+// mergedPRClosedStageMarkerFor is the full marker for pr.
+func mergedPRClosedStageMarkerFor(pr int) string {
+	return fmt.Sprintf("%s pr=%d -->", mergedPRClosedStageMarker, pr)
+}
+
 func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStageInput, logger *slog.Logger) (closed, commented bool) {
 	if client == nil || client.client == nil || in.Claim == nil || !in.Claim.MergedPR || in.Claim.PRNumber <= 0 {
 		return false, false
@@ -675,7 +684,9 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 			url = fmt.Sprintf("#%d", in.Claim.PRNumber)
 		}
 		body := fmt.Sprintf("%s\nPR #%d has merged: %s\n\nHive is moving this issue back to the actionable lane because the PR used a non-closing reference (`Refs` / `Part of`) and therefore landed partial work without closing the issue.", marker, in.Claim.PRNumber, url)
-		if err := client.CreateIssueComment(ctx, in.Repo, in.Number, body); err != nil {
+		if _, err := client.PostIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssuePartial(in.Claim.PRNumber), body, func(ctx context.Context) error {
+			return client.CreateIssueComment(ctx, in.Repo, in.Number, body)
+		}); err != nil {
 			if logger != nil {
 				logger.Warn("issue stage labels: merged partial PR comment failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 			}
@@ -686,17 +697,24 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 	if !in.Claim.Closing {
 		return false, false
 	}
-	marker := fmt.Sprintf("%s pr=%d -->", mergedPRClosedStageMarker, in.Claim.PRNumber)
-	alreadyCommented, err := client.IssueCommentsContain(ctx, in.Repo, in.Number, marker)
+	marker := mergedPRClosedStageMarkerFor(in.Claim.PRNumber)
+	// Close-on-merge's own "Fixed by #N" (CloseOnMergeMarker) counts as the
+	// closing comment too: one per issue, never both (hivecommons/hive#15727
+	// vs #15843).
+	alreadyCommented, err := client.issueCommentsContainAny(ctx, in.Repo, in.Number, marker, CloseOnMergeMarker)
 	if err != nil && logger != nil {
 		logger.Warn("issue stage labels: could not check merged full-fix PR close comment; posting a fresh note", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 	}
-	if !alreadyCommented {
+	if alreadyCommented {
+		client.noteCommentSuppressed()
+	} else {
 		body := fmt.Sprintf("%s\nFixed by #%d (merged). Closing because Hive's PR claim metadata says this PR was the full fix.", marker, in.Claim.PRNumber)
 		if strings.TrimSpace(in.Claim.PRURL) != "" {
 			body = fmt.Sprintf("%s\nFixed by #%d (%s, merged). Closing because Hive's PR claim metadata says this PR was the full fix.", marker, in.Claim.PRNumber, in.Claim.PRURL)
 		}
-		if err := client.CreateIssueComment(ctx, in.Repo, in.Number, body); err != nil {
+		if _, err := client.PostIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssueClose, body, func(ctx context.Context) error {
+			return client.CreateIssueComment(ctx, in.Repo, in.Number, body)
+		}); err != nil {
 			if logger != nil {
 				logger.Warn("issue stage labels: merged full-fix PR close comment failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 			}
@@ -756,7 +774,9 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 	if !ok || rec.EntryCommented {
 		return false, false, false
 	}
-	if err := client.CreateIssueComment(ctx, in.Repo, in.Number, link.StageComment); err != nil {
+	if _, err := client.PostIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssuePRLink, link.StageComment, func(ctx context.Context) error {
+		return client.CreateIssueComment(ctx, in.Repo, in.Number, link.StageComment)
+	}); err != nil {
 		owner, name := client.splitRepo(in.Repo)
 		if client.noteArchivedWrite(strings.ToLower(owner+"/"+name), err) {
 			if logger != nil {

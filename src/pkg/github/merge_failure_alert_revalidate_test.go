@@ -171,3 +171,64 @@ func TestRevalidateMergeFailureAlerts_AppPermissionClearsOnSuccessfulRead(t *tes
 		t.Fatalf("expected app-permission alert cleared, got %v", sink.clears)
 	}
 }
+
+const mergeQueueRequiredErr = "merging PR o/r#7 (squash): PUT https://api.github.test/repos/o/r/pulls/7/merge: 405 Repository rule violations found\n\nChanges must be made through the merge queue"
+
+// A merge-queue-required alert retires while the PR is still open once the
+// base branch's rules no longer include a merge queue.
+func TestRevalidateMergeFailureAlerts_MergeQueueRequiredClearsWhenRuleRemoved(t *testing.T) {
+	var rulesStatus atomic.Int32
+	rulesStatus.Store(http.StatusOK)
+	var queued atomic.Bool
+	queued.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pulls/"):
+			_, _ = io.WriteString(w, `{"number":7,"state":"open","head":{"sha":"abc"},"base":{"ref":"main"}}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/rules/branches/main"):
+			if code := int(rulesStatus.Load()); code != http.StatusOK {
+				w.WriteHeader(code)
+				return
+			}
+			if queued.Load() {
+				_, _ = io.WriteString(w, `[{"type":"merge_queue","parameters":{}}]`)
+				return
+			}
+			_, _ = io.WriteString(w, `[{"type":"deletion"}]`)
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	c := testMergeClient(t, srv.URL)
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+	c.raiseMergeFailureAlert("o/r", 7, mergeQueueRequiredErr)
+	if len(sink.adds) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(sink.adds))
+	}
+
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return now }
+	c.revalidateMergeFailureAlerts(context.Background(), nowFn)
+	if len(sink.clears) != 0 {
+		t.Fatalf("alert cleared while merge queue rule still applies: %v", sink.clears)
+	}
+
+	queued.Store(false)
+	rulesStatus.Store(http.StatusBadGateway)
+	now = now.Add(mergeAlertRevalidateInterval)
+	c.revalidateMergeFailureAlerts(context.Background(), nowFn)
+	if len(sink.clears) != 0 {
+		t.Fatalf("alert cleared on rules read error: %v", sink.clears)
+	}
+
+	rulesStatus.Store(http.StatusOK)
+	now = now.Add(mergeAlertRevalidateInterval)
+	c.revalidateMergeFailureAlerts(context.Background(), nowFn)
+	if len(sink.clears) != 1 || sink.clears[0] != sink.adds[0].id {
+		t.Fatalf("expected merge-queue-required alert cleared, got %v", sink.clears)
+	}
+}

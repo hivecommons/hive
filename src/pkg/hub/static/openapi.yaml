@@ -557,6 +557,9 @@ components:
           type: integer
         tasks_failed:
           type: integer
+        abandoned:
+          type: integer
+          description: Abandoned PR count summed per GitHub username across public spokes. Older spokes that omit this field contribute zero.
         active:
           type: boolean
         current_task:

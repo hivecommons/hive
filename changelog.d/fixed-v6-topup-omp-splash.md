@@ -1,0 +1,1 @@
+- Restore OMP splash detection after the pane-signal extraction: recognize both Unicode and plain Enter footers without requiring a welcome banner, while keeping matching scoped to the OMP backend.

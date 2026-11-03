@@ -60,7 +60,7 @@ func seedWebhookTestPRs(c *Client, updated time.Time) {
 }
 
 func webhookTestDirty(repo string, number int) bool {
-	t := sharedWebhookTracker
+	t := sharedWebhookTracker()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	_, ok := t.dirty[canonicalPRDetailRepo(repo)][number]
@@ -399,12 +399,12 @@ func TestWebhookDirtyMarkSurvivesInFlightFetch(t *testing.T) {
 	defer resetWebhookTrackerForTest(clock.Now)()
 	started := clock.now
 	clock.now = clock.now.Add(time.Second)
-	sharedWebhookTracker.markDirty([]string{"repo"}, 4)
-	sharedWebhookTracker.clearDirtyBefore("repo", 4, started)
+	sharedWebhookTracker().markDirty([]string{"repo"}, 4)
+	sharedWebhookTracker().clearDirtyBefore("repo", 4, started)
 	if !webhookTestDirty("repo", 4) {
 		t.Fatal("an event that lands after the fetch started must stay dirty")
 	}
-	sharedWebhookTracker.clearDirtyBefore("repo", 4, clock.now.Add(time.Second))
+	sharedWebhookTracker().clearDirtyBefore("repo", 4, clock.now.Add(time.Second))
 	if webhookTestDirty("repo", 4) {
 		t.Fatal("a mark older than the fetch should clear")
 	}

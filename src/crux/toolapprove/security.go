@@ -107,7 +107,11 @@ func NewDefaultSecurityScanner() *DefaultSecurityScanner {
 }
 
 var (
-	destructiveCmdRe  = regexp.MustCompile(`(?i)\b(rm\s+-[rRfF]+\s+(/|\*|/\*|\$HOME|~)|mkfs\b|dd\s+if=/dev/zero|:\(\)\{\s*:\|:&\s*\};:)\b`)
+	// destructiveCmdRe matches the non-rm destructive commands: mkfs, dd
+	// from /dev/zero and the fork bomb, which needs no word boundary. A
+	// recursive rm of a protected directory is decided by analyzeRmCommand
+	// (shellrm.go), which reads the command the way the shell does.
+	destructiveCmdRe  = regexp.MustCompile(`(?i)(\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
 	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
 )
 
@@ -156,8 +160,12 @@ func (s *DefaultSecurityScanner) Scan(ctx context.Context, req ToolRequest) (Sca
 	if IsBash(req.Tool) || req.GetCommand() != "" {
 		cmd := req.GetCommand()
 		if cmd != "" {
-			if destructiveCmdRe.MatchString(cmd) {
+			destructive, overBound := analyzeRmCommand(cmd)
+			switch {
+			case destructive || destructiveCmdRe.MatchString(cmd):
 				violations = append(violations, fmt.Sprintf("destructive shell command detected: %q", cmd))
+			case overBound:
+				violations = append(violations, fmt.Sprintf("shell command exceeds destructive-command analysis bounds: %q", cmd))
 			}
 			if credentialExfilRe.MatchString(cmd) {
 				violations = append(violations, fmt.Sprintf("credential exfiltration attempt detected: %q", cmd))
@@ -198,7 +206,12 @@ func (s *DefaultSecurityScanner) touchesGuardrailPath(path string) bool {
 
 func matchPattern(pattern, path string) bool {
 	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
-	path = filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(path), "./"))
+	path = strings.TrimSpace(path)
+	if path != "" {
+		// Collapse redundant separators and ./.. components so they cannot dodge the patterns.
+		path = filepath.Clean(path)
+	}
+	path = filepath.ToSlash(strings.TrimPrefix(filepath.ToSlash(path), "./"))
 
 	if ok, _ := filepath.Match(pattern, path); ok {
 		return true

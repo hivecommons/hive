@@ -34,7 +34,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false, gitStatus = '', ghIssueEditFailures = 0 } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false, gitStatus = '', ghIssueEditFailures = 0, mlxPreflightError = null } = {}) {
   const commands = [];
   // #7924: how many `gh issue edit` calls fail before one succeeds — models a
   // label the repository does not define (the first add fails, the relay
@@ -192,7 +192,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
-    child.stdin = { end() {} };
+    child.stdin = new EventEmitter();
+    child.stdin.end = input => { child.input = input; };
     child.killed = false;
     let completed = false;
     const r = execFileResult || {};
@@ -253,6 +254,11 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   };
 
   const stubs = {
+    './mlx-backend.js': {
+      checkRuntime(raw) {
+        if (raw.startsWith('mlx/') && mlxPreflightError) throw mlxPreflightError;
+      },
+    },
     child_process: {
       execSync: fakeExecSync,
       execFile: fakeExecFile,
@@ -401,6 +407,58 @@ function graceTicks(relay, tick) {
 
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
+test('Cline routes both relay modes through the bounded canonical adapter without prompt argv', () => {
+  const relay = loadRelay({ backend: 'cline', model: 'openrouter/anthropic/test', reasoningEffort: 'high' });
+  try {
+    assert.strictEqual(relay.CONTRIBUTOR_MODE, relay.MODE_HEADLESS);
+    assert.strictEqual(relay.headlessSupportsBackend(), true);
+    assert.strictEqual(relay.effectiveProvider(), 'openrouter');
+    const built = relay.buildHeadlessArgv('private prompt with quotes and $shell');
+    assert.strictEqual(built.bin, 'crux');
+    assert.deepStrictEqual(built.args, ['cline-turn', '--model', 'openrouter/anthropic/test', '--thinking', 'high']);
+    assert.strictEqual(built.input, 'private prompt with quotes and $shell');
+    assert(!built.args.some(a => a.includes('private prompt')));
+    const task = { task_id: 'cline-selection', task_gen: 1, kind: 'issue', repo: 'x/y', number: 1, title: 'Cline' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'Cline produced no completion receipt');
+    assert.strictEqual(complete.provider, 'openrouter');
+    assert.strictEqual(complete.model, 'openrouter/anthropic/test');
+    assert.strictEqual(complete.cli_backend, 'cline');
+  } finally { teardown(relay); }
+});
+
+test('Cline stdin EPIPE is a bounded task failure, not an uncaught relay error', () => {
+  const relay = loadRelay({ backend: 'cline', mode: 'headless', model: 'openrouter/test', execFileResult: { defer: true } });
+  try {
+    const task = { task_id: 'cline-epipe', task_gen: 1, kind: 'issue', repo: 'x/y', number: 1, title: 'Cline' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const child = relay.getHeadlessChild();
+    assert.ok(child.input && child.input.includes('Cline'), 'prompt was not delivered on stdin');
+    assert.doesNotThrow(() => child.stdin.emit('error', Object.assign(new Error('closed pipe'), { code: 'EPIPE' })));
+    relay.__completeDeferredExecFile(Object.assign(new Error('runner failed'), { code: 1 }));
+    assert.ok(relay.__sent.some(m => m.type === 'task_failed' && m.task_id === task.task_id));
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete' && m.task_id === task.task_id));
+  } finally { teardown(relay); }
+});
+
+test('Cline revoke requests graceful group cleanup and fences late completion', () => {
+  const relay = loadRelay({ backend: 'cline', mode: 'headless', model: 'openrouter/test', execFileResult: { defer: true } });
+  try {
+    const task = { task_id: 'cline-revoke', task_gen: 2, kind: 'issue', repo: 'x/y', number: 1, title: 'Cline' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const child = relay.getHeadlessChild();
+    let signal = '';
+    child.kill = value => { child.killed = true; signal = value; };
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: task.task_id, reason: 'operator stop' }));
+    assert.strictEqual(signal, 'SIGTERM');
+    relay.__completeDeferredExecFile(null, 'late success', '');
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete' && m.task_id === task.task_id));
+  } finally { teardown(relay); }
+});
 
 // ---------------------------------------------------------------------------
 // Bug 1 — the relaunch command must keep the model flag, and must never pass
@@ -2583,6 +2641,51 @@ test('Pi revoke kills the child and rejects a raced stale completion', () => {
     assert.strictEqual(child.killed, true, 'revoke did not kill Pi');
     relay.__completeDeferredExecFile(null, 'late success', '');
     assert.ok(!relay.__sent.some(m => m.type === 'task_complete' && m.task_id === task.task_id), 'revoked Pi emitted stale completion');
+  } finally { teardown(relay); }
+});
+
+test('MLX uses the real Pi task argv, model receipts and cancellation contract', () => {
+  const model = 'mlx/mlx-community/tool-coder-4bit';
+  const relay = loadRelay({ backend: 'pi', backendPerm: '', mode: 'headless', model, cliVersion: 'pi 1.4.0' });
+  try {
+    assert.deepStrictEqual(relay.buildHeadlessArgv('edit and test').args,
+      ['--model', model, '--extension', path.join(__dirname, 'mlx-pi-extension.js'), '--print', '--mode', 'json', 'edit and test']);
+    const task = { task_id: 'mlx-1', task_gen: 17, kind: 'issue', repo: 'x/y', number: 1, title: 'MLX' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete);
+    assert.strictEqual(complete.cli_backend, 'pi');
+    assert.strictEqual(complete.provider, 'mlx');
+    assert.strictEqual(complete.model, model);
+  } finally { teardown(relay); }
+  const waiting = loadRelay({ backend: 'pi', mode: 'headless', model, cliVersion: 'pi 1.4.0', execFileResult: { defer: true } });
+  try {
+    const task = { task_id: 'mlx-cancel', task_gen: 18, kind: 'issue', repo: 'x/y', number: 2, title: 'cancel' };
+    waiting.setCurrentTask(task);
+    waiting.runHeadlessTask(task);
+    const child = waiting.getHeadlessChild();
+    waiting.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: task.task_id, reason: 'operator stop' }));
+    assert.strictEqual(child.killed, true);
+    waiting.__completeDeferredExecFile(null, 'late success', '');
+    assert.ok(!waiting.__sent.some(m => m.type === 'task_complete'));
+  } finally { teardown(waiting); }
+});
+
+test('MLX endpoint failure refuses execution rather than falling back to a hosted Pi model', () => {
+  const relay = loadRelay({
+    backend: 'pi', mode: 'headless', model: 'mlx/mlx-community/tool-coder-4bit',
+    mlxPreflightError: new Error('MLX local endpoint request failed'),
+  });
+  try {
+    assert.throws(() => relay.buildHeadlessArgv('edit'), /local endpoint/);
+    assert.throws(() => relay.buildLaunchCommand(), /local endpoint/);
+    const task = { task_id: 'mlx-fail', task_gen: 19, kind: 'issue', repo: 'x/y', number: 3, title: 'fail' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    assert.ok(relay.__sent.some(m => m.type === 'task_failed'));
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete'));
+    assert.ok(!relay.__execFileCalls.some(call => call.bin === 'pi'), 'failed MLX preflight must not start a coding agent');
   } finally { teardown(relay); }
 });
 

@@ -1,6 +1,7 @@
 package mutation
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -12,9 +13,11 @@ import (
 // Keep the same entry and attempt history: retries after an ambiguous new
 // write must still reconcile. Generic Reconcile retains its terminal invariant.
 func (j *Journal) reopenLabel(observed Operation, now time.Time) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	unlock, err := j.lockAndRefreshLocked()
+	return j.reopenLabelContext(context.Background(), observed, now)
+}
+
+func (j *Journal) reopenLabelContext(ctx context.Context, observed Operation, now time.Time) error {
+	unlock, err := j.transaction(ctx)
 	if err != nil {
 		return err
 	}

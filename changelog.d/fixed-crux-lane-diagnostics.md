@@ -1,0 +1,1 @@
+- Distinguish durable lane broker initialization conflicts from unavailability without exposing backend details, and expose stable lane error-code constants while preserving existing HTTP responses.

@@ -1,0 +1,1 @@
+- Activity Monitor: a PR or issue by a registered contributor-hub clanker owner now reads as a clanker (author_kind_source `registry`) instead of an inferred person, so the row icon, its tooltip and the stage pill's holder ("@login's clanker") agree with the stage engine that adopts such PRs.

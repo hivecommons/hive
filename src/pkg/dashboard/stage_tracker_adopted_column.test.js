@@ -32,7 +32,7 @@ const src = [
   pick(/const STAGE_TRACKER_TERMINAL = \d+;/, 'STAGE_TRACKER_TERMINAL'),
   pick(/const STAGE_TRACKER_ADOPTED_BY_HIVE = \d+;/, 'STAGE_TRACKER_ADOPTED_BY_HIVE'),
   pick(/function stageTrackerAdoptedWord\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptedWord'),
-  pick(/function stageTrackerAnchor\(stage, stages, kind, item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
+  pick(/function stageTrackerAnchor\(stage, stages, kind, item, presentation\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
 ].join('\n');
 const lifted = new Function(src + '; return { anchor: stageTrackerAnchor, adoptedWord: stageTrackerAdoptedWord, ADOPTED: STAGE_TRACKER_ADOPTED_BY_HIVE };')();
 
@@ -47,9 +47,12 @@ const STAGES = [
 
 const COLUMN = { OPEN: 0, ACTIONABLE: 10, CLAIMED: 20, PR: 30, REVIEW: 50, MERGE_GATE: 80, DONE: 110 };
 
-test('074 adopted-by-hive renders in the CI/Review column, not the merge gate', () => {
+test('074 retains its native CI/Review aggregate while adopted repair displays in PR progress', () => {
   assert.strictEqual(lifted.ADOPTED, 74);
   assert.strictEqual(lifted.anchor(74, STAGES, 'pr'), COLUMN.REVIEW);
+  const item = { head: 'head', display_column: 30, code_activity: { head: 'head', state: 'adopted' } };
+  assert.strictEqual(lifted.anchor(74, STAGES, 'pr', item), COLUMN.PR);
+  assert.strictEqual(lifted.anchor(74, STAGES, 'pr', item, false), COLUMN.REVIEW, 'native sort/count mapping stays unchanged');
 });
 
 test('every PR stage lands in its owner-rule column', () => {

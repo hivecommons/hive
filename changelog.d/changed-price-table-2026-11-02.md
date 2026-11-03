@@ -1,0 +1,1 @@
+- Refreshed the Kimi K3 and K2.7 Code list-price estimates from Kimi's direct API pricing as of 2026-11-02, using K3's default 5-minute cache-write rate; all other model rates remain unchanged.

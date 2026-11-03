@@ -21,14 +21,18 @@ import (
 // withFakeSuExec prepends a directory holding a fake su-exec to PATH. The fake
 // drops the "uid:gid" spec argument and execs the rest of argv directly, which
 // is exactly the observable contract production relies on: spec first, command
-// after, stdin/stdout/stderr passed through.
+// after, stdin/stdout/stderr passed through. The script is probed once via
+// waitExecutable because a concurrent fork in another test can hold the write
+// descriptor and make the first exec fail with ETXTBSY (golang/go#22315).
 func withFakeSuExec(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\nshift\nexec \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "su-exec"), []byte(script), 0o755); err != nil {
+	path := filepath.Join(dir, "su-exec")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	waitExecutable(t, path)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

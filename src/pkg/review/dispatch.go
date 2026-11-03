@@ -432,6 +432,7 @@ type RecentReview struct {
 	DeltaPreviousHead string      `json:"delta_previous_head,omitempty"`
 	Dispatched        time.Time   `json:"dispatched_at,omitempty"`
 	Confirmed         time.Time   `json:"confirmed_at"`
+	Priority          string      `json:"priority,omitempty"`
 }
 
 type PendingFix struct {
@@ -497,6 +498,9 @@ type DispatchKick struct {
 	// DeltaPreviousHead is set when this kick is a delta re-review against
 	// that head (review.delta_rereview); empty for a full review.
 	DeltaPreviousHead string
+	// Priority is why the PR was placed where it was in this cycle's
+	// dispatch order (ReviewPriority*), for the dispatch log.
+	Priority string
 }
 
 // SkippedReviewModel is a perspective kick the planner withheld because the
@@ -513,9 +517,10 @@ type SkippedReviewModel struct {
 }
 
 type DispatchPlan struct {
-	ReviewKicks []DispatchKick
-	FixKicks    []DispatchKick
-	NewHuman    []HumanReviewHold
+	ReviewKicks    []DispatchKick
+	FixKicks       []DispatchKick
+	NewHuman       []HumanReviewHold
+	SettledReviews int
 	// SkippedReviewModels are perspective kicks withheld under a "skip"
 	// review_models fallback this cycle.
 	SkippedReviewModels []SkippedReviewModel
@@ -670,6 +675,11 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	if !opts.RequireApproval || !opts.FanOut {
 		return plan
 	}
+	// Release completed kicks before priority ordering: a later PR's delivered
+	// result must not make its reviewer look busy to every earlier PR.
+	pendingBefore := len(plan.State.Pending)
+	plan.State.Pending = removeCompletedReviews(plan.State.Pending, artifact)
+	plan.SettledReviews = pendingBefore - len(plan.State.Pending)
 	capable := reviewCapableAgents(opts)
 	heads, reviewers := dispatchReviewers(capable)
 	headsMode := len(heads) > 0
@@ -679,6 +689,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	}
 	availableSlots := maxParallel
 	prs, plan.Promoted = promoteStarvedWaits(prs, plan.State.Waits, opts.ProjectOrg)
+	prs = orderByReviewPriority(prs, plan.Promoted, opts.ProjectOrg, lastReviewWasPreparation(plan.State.Recent))
 	for _, pr := range prs {
 		pr.Repo = fullRepoName(pr.Repo, opts.ProjectOrg)
 		if pr.Number <= 0 || pr.Repo == "" {
@@ -742,12 +753,13 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 					// (their reports exist) and let the normal missing-
 					// perspective path below re-ask only for the rest, under
 					// the same TTL and max_redispatch budget as any head.
-					plan.State.Pending = removePendingForPerspectivesAndHeads(plan.State.Pending, pr, agg.Perspectives, agg.Heads)
-					delivered = agg.Perspectives
-					deliveredHeads = agg.Heads
-					if agg.AwaitingDecision {
-						a := agg
-						awaiting = &a
+					if strings.TrimSpace(agg.BodyDigest) == strings.TrimSpace(pr.BodyDigest) {
+						delivered = agg.Perspectives
+						deliveredHeads = agg.Heads
+						if agg.AwaitingDecision {
+							a := agg
+							awaiting = &a
+						}
 					}
 					if plan.redispatchExhausted(pr) {
 						continue
@@ -914,7 +926,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewModel:           choice.Model,
 				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 			for _, p := range missing {
 				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			}
@@ -984,7 +996,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewModel:           choice.Model,
 				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta), Priority: pr.Priority})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			availableSlots--
 		}
@@ -1714,7 +1726,7 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 			// first perspective alone would leave every other verdict in the
 			// array with nothing to bind to once its pending entry is gone.
 			for _, p := range kickPerspectives(k) {
-				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, HiveAuthored: k.HiveAuthored, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now})
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, HiveAuthored: k.HiveAuthored, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now, Priority: k.Priority})
 			}
 		}
 	}
@@ -1977,7 +1989,8 @@ func hasReviewCapability(a AgentCapability) bool {
 func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspectives []Perspective, delivered map[Perspective]Verdict) []Perspective {
 	pending := map[Perspective]bool{}
 	for _, p := range state.Pending {
-		if samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+		if samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) &&
+			strings.TrimSpace(p.BodyDigest) == strings.TrimSpace(pr.BodyDigest) {
 			pending[p.Perspective] = true
 		}
 	}
@@ -1994,6 +2007,65 @@ func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspective
 		}
 	}
 	return missing
+}
+
+func removeCompletedReviews(pending []PendingReview, artifact Artifact) []PendingReview {
+	out := pending[:0]
+	for _, p := range pending {
+		if !PendingReviewCompleted(p, artifact) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// PendingReviewCompleted is the dispatch ledger's completion rule, shared
+// with display consumers. Another agent's same-perspective report is not a
+// receipt for this assignment.
+func PendingReviewCompleted(p PendingReview, artifact Artifact) bool {
+	agg, ok := artifact.AggregateForBody(p.Repo, p.Number, p.HeadSHA, p.BodyDigest)
+	if !ok || strings.TrimSpace(agg.BodyDigest) != strings.TrimSpace(p.BodyDigest) ||
+		(!agg.RecordedAt.IsZero() && agg.RecordedAt.Before(p.Dispatched)) {
+		return false
+	}
+	_, reported := agg.Perspectives[p.Perspective]
+	if p.Decision {
+		reported = reported && agg.Decided && agg.Verdict != VerdictIncomplete
+	} else if p.Head != "" {
+		reported = containsHead(agg.Heads[p.Perspective], p.Head)
+	}
+	if !reported {
+		return false
+	}
+	for _, receipt := range agg.ReportReceipts {
+		if receipt.Agent != "" && receipt.Agent == p.Agent &&
+			receipt.Perspective == p.Perspective && receipt.Head == p.Head &&
+			receipt.Decided == p.Decision && !receipt.ReceivedAt.IsZero() &&
+			!receipt.ReceivedAt.Before(p.Dispatched) {
+			return true
+		}
+	}
+	return false
+}
+
+// PendingReviewerOccupancy counts durable dispatch bookkeeping, not running
+// processes. Confirmation means kick delivery, never review completion.
+func PendingReviewerOccupancy(state DispatchState) (records, agents, confirmedAgents int) {
+	pending := map[string]bool{}
+	confirmed := map[string]bool{}
+	for _, p := range state.Pending {
+		pending[p.Agent] = true
+		for _, r := range state.Recent {
+			if r.Agent == p.Agent && r.Perspective == p.Perspective && r.Head == p.Head &&
+				r.Decision == p.Decision && r.BodyDigest == p.BodyDigest &&
+				samePRHead(r.Repo, r.Number, r.HeadSHA, p.Repo, p.Number, p.HeadSHA) &&
+				!r.Confirmed.IsZero() && !r.Confirmed.Before(p.Dispatched) {
+				confirmed[p.Agent] = true
+				break
+			}
+		}
+	}
+	return len(state.Pending), len(pending), len(confirmed)
 }
 
 // revisitInFlight reports whether this head already has a review dispatched

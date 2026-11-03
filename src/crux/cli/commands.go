@@ -106,11 +106,25 @@ func (e *Env) stream(ctx context.Context, rt crux.Runtime, name string, interval
 	ticks, stop := e.ticker(interval)
 	defer stop()
 	var prev []string
+	var seq uint64
+	since, bySeq := rt.(crux.BufferSinceReader)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticks:
+			if bySeq {
+				fresh, next, err := since.GetBufferSince(name, seq)
+				if err != nil {
+					fmt.Fprintf(e.Stderr, "crux: output %s: %v\n", name, err)
+					return
+				}
+				for _, line := range fresh {
+					fmt.Fprintln(e.Stdout, line)
+				}
+				seq = next
+				continue
+			}
 			cur, err := rt.GetBufferOutput(name, streamWindow)
 			if err != nil {
 				fmt.Fprintf(e.Stderr, "crux: output %s: %v\n", name, err)

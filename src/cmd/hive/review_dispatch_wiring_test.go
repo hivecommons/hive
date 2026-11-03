@@ -67,6 +67,37 @@ func reviewSwarmConfig() *config.Config {
 	}
 }
 
+func TestRefreshReviewVerdictsForPRsCollectsOnlySnapshotTargets(t *testing.T) {
+	dir := redirectReviewPaths(t)
+	report := review.PerspectiveReport{
+		AgentReport: outputschema.AgentReport{
+			Lane: "review-swarm", Kind: outputschema.KindReview, Summary: "security review",
+			Findings: []outputschema.Finding{}, PRsOpened: []outputschema.PROpened{}, BeadsFiled: []outputschema.BeadFiled{},
+		},
+		Repo: "hivecommons/dibs", Number: 566, HeadSHA: reviewTestSHA,
+		BodyDigest: "current", Perspective: review.PerspectiveSecurity, Verdict: review.VerdictApprove,
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, review.ReportFilePrefix(report.Repo, report.Number)+"security.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, review.ReportFilePrefix("hivecommons/other", 1)+"bad.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refreshReviewVerdictsForPRs(reviewSwarmConfig(), []review.PullRequest{{Repo: report.Repo, Number: report.Number}}, restoreTestLogger())
+	artifact, err := review.LoadArtifact("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agg, ok := artifact.AggregateForBody(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
+	if !ok || agg.Perspectives[review.PerspectiveSecurity] != review.VerdictApprove || agg.Verdict != review.VerdictIncomplete {
+		t.Fatalf("target report was not collected with existing policy: %+v", artifact)
+	}
+}
+
 func actionableWithPR(author string) *github.ActionableResult {
 	return &github.ActionableResult{
 		PRs: github.PRResult{Items: []github.PullRequest{{

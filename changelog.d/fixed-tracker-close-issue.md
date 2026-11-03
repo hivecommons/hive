@@ -1,0 +1,1 @@
+- Every open issue in the Activity Monitor now offers a permission-checked Close issue action with an in-app confirmation; only the selected issue closes, leaving linked pull requests and other issues unchanged.

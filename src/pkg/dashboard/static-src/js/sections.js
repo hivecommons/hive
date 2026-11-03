@@ -78,6 +78,31 @@
       return `<button type="button" class="config-info section-settings-gear" data-section-settings="1" data-action="${esc(action)}" data-stop="1"${extraAttrs || ''} title="${esc(title || (label + ' settings'))}" aria-label="${esc(label)} settings"><svg class="section-settings-gear-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M13.3 2.25h-2.6l-.42 2.66a7.46 7.46 0 0 0-1.24.52L6.86 3.84 5.02 5.68 6.61 7.86c-.22.4-.4.82-.52 1.25l-2.66.42v2.6l2.66.42c.13.43.3.85.52 1.25l-1.59 2.18 1.84 1.84 2.18-1.59c.4.22.81.39 1.24.52l.42 2.66h2.6l.42-2.66c.43-.13.85-.3 1.24-.52l2.18 1.59 1.84-1.84-1.59-2.18c.22-.4.4-.82.52-1.25l2.66-.42v-2.6l-2.66-.42a7.4 7.4 0 0 0-.52-1.25l1.59-2.18-1.84-1.84-2.18 1.59c-.4-.22-.81-.39-1.24-.52l-.42-2.66ZM12 14.9a2.9 2.9 0 1 0 0-5.8 2.9 2.9 0 0 0 0 5.8Z"/></svg></button>`;
     }
 
+    // Pop out / full screen / return (hivecommons/hive#15829), rendered next to
+    // the activity monitor's gear; handlers live in js/tracker-popout.js and
+    // css/popout.css decides which of the three show in which mode.
+    const STAGE_TRACKER_HEADER_TOOLS_HTML = '<button type="button" class="config-info section-settings-gear ham-header-tool ham-popout-btn" id="activity-monitor-popout" data-action="openStageTrackerPopout" data-stop="1" title="Pop out — open the activity monitor in its own window, for another monitor" aria-label="Pop out the Hive activity monitor into its own window">⧉</button>'
+      + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-fullscreen-btn" id="activity-monitor-fullscreen" data-action="toggleStageTrackerFullscreen" data-stop="1" aria-pressed="false" title="Full screen — fill the screen with the activity monitor (f, Esc exits)" aria-label="Full screen — fill the screen with the activity monitor (f, Esc exits)">⛶</button>'
+      + '<button type="button" class="config-info section-settings-gear ham-header-tool ham-display-btn" id="activity-monitor-display" data-action="toggleStageTrackerDisplay" data-stop="1" aria-pressed="false" title="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)" aria-label="Display — show the activity monitor as a wall view with no row actions (d; Esc or d leaves)">📺</button>'
+      + '<button type="button" class="ham-popout-return" id="activity-monitor-return" data-action="stageTrackerReturnToDashboard" data-stop="1" title="Focus the main dashboard window and close this pop-out">⤶ Return to dashboard</button>';
+    // The monitor's own item count (hivecommons/hive#16243): the sidebar
+    // badge's twin, written by the same navCountBind call in
+    // renderStageTracker so kiosk, pop-out, display and full screen — which
+    // hide the sidebar — still show the count and its ↑/↓ cue.
+    const STAGE_TRACKER_HEADER_COUNT_HTML = '<span id="activity-monitor-header-badge" class="badge-count ham-header-count" data-zero title="Open items in the hive activity monitor" aria-label="0 items">0</span>';
+    // Display controls (hivecommons/hive#15929): the overlay
+    // stageTrackerDisplayControlsInit() appends to the body in display mode
+    // only. Full screen and Keep awake are explicit clicks; their disabled /
+    // denied states are rendered by stageTrackerRenderDisplayControls().
+    // Full screen and Keep awake get their title from
+    // stageTrackerRenderDisplayControls (STAGE_TRACKER_DISPLAY_CONTROL_LABELS
+    // in tracker-popout.js) as soon as the overlay mounts, so it is not
+    // repeated here.
+    const STAGE_TRACKER_DISPLAY_CONTROLS_HTML = '<button type="button" class="ham-display-control" data-display-control="exit" data-action="stageTrackerDisplayExit" aria-label="Exit display" title="Leave display mode (Esc or d)">✕ Exit display</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="copy" data-action="stageTrackerCopyDisplayLink" aria-label="Copy display link" title="Copy a link that opens this display — view parameters only, never a token">🔗 Copy link</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="fullscreen" data-action="toggleStageTrackerFullscreen" aria-label="Full screen" aria-pressed="false">⛶ Full screen</button>'
+      + '<button type="button" class="ham-display-control" data-display-control="wakelock" data-action="stageTrackerToggleWakeLock" aria-label="Keep screen awake" aria-pressed="false">☀ Keep awake</button>'
+      + '<input type="text" class="ham-input ham-display-link" id="activity-monitor-display-link" readonly aria-label="Display link" hidden>';
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'runs-section': { title: '🏃 Runs', summary: '0 active' },
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
@@ -109,7 +134,7 @@
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
-      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') + STAGE_TRACKER_HEADER_TOOLS_HTML, countHtml: STAGE_TRACKER_HEADER_COUNT_HTML },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -160,7 +185,7 @@
       return `https://github.com/hivecommons/hive/blob/${line}/src/docs/${page}.md${anchor ? '#' + anchor : ''}`;
     }
     function dashboardDocsHrefFromPath(path) {
-      const m = /^\/docs\/([\w-]+)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
+      const m = /^\/docs\/([\w-]+(?:\/[\w-]+)*)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
       return m ? dashboardDocsHref(m[1], m[2] || '') : String(path || '');
     }
     function setDashboardDocsLine(branch) {
@@ -194,7 +219,9 @@
     function sectionCardHeader(opts) {
       opts = opts || {};
       const id = opts.id || '';
-      const title = opts.titleHtml || esc(opts.title || id || 'Section');
+      // countHtml: a live count pill that reads as part of the title
+      // ("Hive activity monitor · 57"), before the help mark and the gear.
+      const title = (opts.titleHtml || esc(opts.title || id || 'Section')) + (opts.countHtml || '');
       const bodyId = opts.bodyId || (id + '-body');
       const action = opts.action || 'toggleSection';
       const keyAction = opts.keyAction || 'sectionHeaderKey';
@@ -252,7 +279,7 @@
       if (!body) return;
       const bodyId = sectionId + '-body';
       const template = document.createElement('template');
-      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml, settingsHtml: cfg.settingsHtml }, '');
+      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml, settingsHtml: cfg.settingsHtml, countHtml: cfg.countHtml }, '');
       const card = template.content.firstElementChild;
       const newHeader = card.querySelector('.dash-card-header');
       const badges = newHeader.querySelector('.dash-card-badges');

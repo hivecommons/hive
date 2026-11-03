@@ -729,7 +729,13 @@ func runEvalCycle(
 	runWaitEscalationSweep(cfg, dashSrv, logger)
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
-	refreshReviewVerdicts(cfg, logger)
+	reviewTargets := make([]review.PullRequest, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
+	for _, items := range [][]github.PullRequest{actionable.PRs.Items, actionable.PRs.Held} {
+		for _, pr := range items {
+			reviewTargets = append(reviewTargets, review.PullRequest{Repo: fullRepoName(pr.Repo, cfg.Project.Org), Number: pr.Number})
+		}
+	}
+	refreshReviewVerdictsForPRs(cfg, reviewTargets, logger)
 	recordReviewOutcomes(ctx, cfg, ghClient, actionable, logger)
 	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSetForRepo("")
 
@@ -989,7 +995,7 @@ func runEvalCycle(
 	// paused agent or exhausted budget. Fully guarded/cheap: with no `triggers:`
 	// configured, celEngineFor returns nil and celMatchedAgents does zero work.
 	if celEngine := celEngineFor(cfg, logger); celEngine != nil {
-		celAgents := celMatchedAgents(celEngine, actionable, cfg, gov, agentMgr.IsPaused, logger)
+		celAgents := celMatchedAgentsOnce(celEngine, actionable, cfg, gov, agentMgr.IsPaused, logger, &globalCELSeen)
 		if len(celAgents) > 0 {
 			before := len(agentsDue)
 			agentsDue = unionAgents(agentsDue, celAgents)
@@ -1011,6 +1017,24 @@ func runEvalCycle(
 	// policy, dashboard status, PR/review dispatch, escalation, and every path
 	// not explicitly enrolled.
 	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
+	if cfg.AutoMerge.NativeMergeQueue.Enabled {
+		go func() {
+			if err := dashSrv.ReconcileNativeQueues(ctx); err != nil {
+				logger.Warn("native queue observations incomplete", "error", err)
+			}
+		}()
+	}
+	if err := dashSrv.ReconcileIntegration(ctx); err != nil {
+		logger.Warn("integration observations incomplete", "error", err)
+	}
+	if cfg.IntegrationOrchestration.Execution.Effective().Mode != config.IntegrationOff {
+		go func() {
+			if err := dashSrv.ReconcileIntegrationExecution(ctx); err != nil {
+				logger.Warn("integration execution bounded reconciliation incomplete", "error", err)
+			}
+		}()
+	}
+	kickActionable = dashSrv.IntegrationKickAdmission(kickActionable)
 
 	sched.SetLastActionable(kickActionable)
 	// The filter compacts agentsDue in place, so snapshot it first to report

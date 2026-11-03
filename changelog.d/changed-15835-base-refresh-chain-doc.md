@@ -1,0 +1,1 @@
+- Document the per-hop either-parent tolerance in headIsBaseRefreshChainOf so the comment matches the code (#15835).

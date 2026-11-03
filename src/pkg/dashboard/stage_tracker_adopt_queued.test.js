@@ -48,7 +48,7 @@ function row(over) {
 test('before Adopt now: the approved-head blocker shows and Adopt now is offered', () => {
   const it = row();
   assert.equal(api.queued(it), false);
-  assert.equal(api.chipText(it), 'not adopted');
+  assert.equal(api.chipText(it), 'contributor-managed');
   const adopt = api.actions(it, ctx).find(a => a.id === 'decide:adopt-now');
   assert.ok(adopt && adopt.enabled, 'Adopt now offered');
 });

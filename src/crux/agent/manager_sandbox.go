@@ -98,6 +98,11 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 			return "", fmt.Errorf("agent %s sandbox job runtime requires job.workspace_claim — the PVC hive's sandbox workspace root lives on, mounted RWX so the Job can see it from another node", agent.Name)
 		}
 	}
+	if effectiveBackend(agent) == "cline" {
+		if err := validateClineSandbox(agent, runtime, agent.Config.SandboxJob(m.sandboxConfig)); err != nil {
+			return "", err
+		}
+	}
 	return runtime, nil
 }
 
@@ -141,15 +146,17 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 	spec := SandboxKickSpec{
 		Agent: agent.Name,
 		AgentConfig: configSnapshot{
-			Backend:   effectiveBackend(agent),
-			Model:     agent.Config.Model,
-			LaunchCmd: agent.Config.LaunchCmd,
+			Backend:         effectiveBackend(agent),
+			Model:           agent.Config.Model,
+			LaunchCmd:       agent.Config.LaunchCmd,
+			ReasoningEffort: agent.Config.ReasoningEffort,
 		},
 		Message:       message,
 		Org:           m.project.Org,
 		Repo:          repo,
 		WorkspaceDir:  m.sandboxWorkspaceDirLocked(),
 		Image:         agent.Config.SandboxImage(m.sandboxConfig),
+		Runtime:       runtime,
 		EnvAllowlist:  agent.Config.SandboxEnvAllowlist(m.sandboxConfig),
 		NetworkMode:   agent.Config.SandboxNetworkMode(m.sandboxConfig),
 		Timeout:       time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig)) * time.Second,
@@ -158,6 +165,9 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 		// Every sandbox kick gets a review spool (hivecommons/hive#14986);
 		// whether the agent may post through it is the relay's decision.
 		ReviewSpoolDir: crux.SandboxReviewSpoolsDir(m.workDir),
+	}
+	if spec.AgentConfig.Backend == "cline" {
+		spec.AgentConfig.Model = agent.effectiveModel()
 	}
 	// The verify list comes from config only. A kick message is not a trusted
 	// source for commands: by the time it reaches the manager it carries

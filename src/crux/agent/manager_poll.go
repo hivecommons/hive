@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agent/panesignal"
 )
 
 // pollTmuxOutputForAgent is pollTmuxOutput using the agent's tmux socket.
@@ -397,18 +399,6 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	}
 }
 
-// codexUpdatePromptLabel identifies the codex update menu in blockingPrompts.
-//
-// NOTE: answering "skip until next version" is deliberate, and updating in
-// place is NOT a viable alternative here. The prompt's own "1. Update now"
-// runs `npm install -g @openai/codex`, which needs write access to
-// /usr/local/lib/node_modules (root:root). Neither the agent UID nor the hub
-// process has it — attempting the install from the hub fails with the same
-// exit status 243. "Skip until next version" persists in each agent's
-// CODEX_HOME, so the prompt is answered once per agent and does not recur.
-// Updating the CLI belongs to the image build, not to a running agent.
-const codexUpdatePromptLabel = "codex update prompt"
-
 // watchForTrustPromptForAgent monitors a tmux session for startup-blocking
 // modal prompts using the agent's tmux socket, and answers each with the
 // specific option that unblocks it (see blockingPrompts).
@@ -466,6 +456,17 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 				backend = "claude"
 			}
 			if key, label, ok := blockingPromptKey(backend, output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
+				if label == claudePermissionDialogLabel {
+					title, _ := claudePermissionDialog(output)
+					if !agentExpectsSkipPermissions(agent, backend) {
+						m.logger.Warn("Claude Code permission dialog on screen; launch_cmd does not declare --dangerously-skip-permissions, leaving it for the operator",
+							"agent", agent.Name, "dialog", title)
+						answeredAt[label] = time.Now()
+						continue
+					}
+					m.logger.Warn("Claude Code permission dialog on screen; the agent is meant to run with --dangerously-skip-permissions — answering option 1",
+						"agent", agent.Name, "dialog", title, "option", key)
+				}
 				answeredAt[label] = time.Now()
 				time.Sleep(paneCaptureSleep)
 				// An empty key means the affirmative option is already selected
@@ -614,18 +615,8 @@ func diffNewLines(prev, curr []string) []string {
 	return out
 }
 
-var spinnerReplacer = strings.NewReplacer(
-	"◐", "○", "◑", "○", "◒", "○", "◓", "○",
-	"◎", "○", "◉", "○", "●", "○",
-)
-
-var creditsRe = regexp.MustCompile(`AI Credits: [\d.]+`)
-
 func normalizeLine(s string) string {
-	s = strings.TrimRight(s, " \t")
-	s = spinnerReplacer.Replace(s)
-	s = creditsRe.ReplaceAllString(s, "AI Credits: _")
-	return s
+	return panesignal.NormalizeLine(s)
 }
 
 func findOverlap(prev, curr []string) int {

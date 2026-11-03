@@ -353,6 +353,10 @@
       am = am || {};
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
+      const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
+      const integrationExecution = io.execution || { mode: 'off' };
+      const integrationExecutionProfile = Object.assign({}, integrationExecution);
+      delete integrationExecutionProfile.mode;
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -507,21 +511,21 @@
 
         ${featuresSectionHtml('auto-merge', `
         <div class="settings-subsection">
-          <div class="settings-subsection-title">Auto-Merge ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-Merge', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</div>
+          <div class="settings-subsection-title">Auto-Merge ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Auto-Merge', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${amSelfOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="self_authored"></div>
-            <span class="config-toggle-label">Auto-merge App-authored PRs ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-merge App-authored PRs', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</span>
+            <span class="config-toggle-label">Auto-merge App-authored PRs ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Auto-merge App-authored PRs', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</span>
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Max merges per sweep ${yamlHint('auto_merge.max_merges')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
+            <label>Max merges per sweep ${yamlHint('auto_merge.max_merges')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
             <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
           </div>
           <div class="config-field mt-4">
-            <label>Minimum head age ${yamlHint('auto_merge.min_head_age')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Minimum head age', `How old a PR head must be before the sweep trusts an unknown required-check set. Closes the window after a push where slow GitHub Actions checks have not registered yet. Positive Go duration such as 3m.`)}</label>
+            <label>Minimum head age ${yamlHint('auto_merge.min_head_age')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Minimum head age', `How old a PR head must be before the sweep trusts an unknown required-check set. Closes the window after a push where slow GitHub Actions checks have not registered yet. Positive Go duration such as 3m.`)}</label>
             <input type="text" value="${esc(am.min_head_age || '')}" placeholder="3m0s" data-change-action="markDirty" data-arg0="auto-merge" data-arg1="min_head_age" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Required CI checks ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated default status-check/check-run names the sweep must see green before merging, e.g. build-gate. For heterogeneous hives use auto_merge.repos.<repo>.required_checks per repository; keys may be bare repo names or owner/repo.`)}</label>
+            <label>Required CI checks ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated default status-check/check-run names the sweep must see green before merging, e.g. build-gate. For heterogeneous hives use auto_merge.repos.<repo>.required_checks per repository; keys may be bare repo names or owner/repo.`)}</label>
             <input type="text" value="${esc(amChecks.join(', '))}" placeholder="build-gate, lint" data-change-action="gh72">
             <p class="config-help">Applies to repos without an override. Use <code>auto_merge.repos.&lt;repo&gt;.required_checks</code> for per-repo required checks.</p>
           </div>
@@ -535,22 +539,22 @@
           </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${am.bot_takeover_enabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="bot_takeover_enabled"></div>
-            <span class="config-toggle-label">Take over github-actions[bot] PRs whose checks cannot run ${yamlHint('auto_merge.bot_takeover.enabled')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Take over github-actions[bot] PRs', `On by default. Applies only when github-actions[bot] is a trusted bot author above. A PR that bot opens with a workflow GITHUB_TOKEN never triggers pull_request checks, so it can never go green. Once its head is older than both the minimum head age and 30 minutes with no pull_request run, the App pushes the same change as one signed-off commit to hive/takeover-&lt;n&gt;, opens a PR that supersedes it and closes the bot PR. One attempt per bot head SHA. Applies on the next sweep.`)}</span>
+            <span class="config-toggle-label">Take over github-actions[bot] PRs whose checks cannot run ${yamlHint('auto_merge.bot_takeover.enabled')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Take over github-actions[bot] PRs', `On by default. Applies only when github-actions[bot] is a trusted bot author above. A PR that bot opens with a workflow GITHUB_TOKEN never triggers pull_request checks, so it can never go green. Once its head is older than both the minimum head age and 30 minutes with no pull_request run, the App pushes the same change as one signed-off commit to hive/takeover-&lt;n&gt;, opens a PR that supersedes it and closes the bot PR. One attempt per bot head SHA. Applies on the next sweep.`)}</span>
           </div>
           <div class="config-field mt-4" id="am-repo-policy">
-            <label>Per-repository merge policy ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Per-repository merge policy', `Repo-scoped rules every auto-merge lane applies. Repositories come from project.repos; saving writes each list in full and applies on the next sweep.`)}</label>
+            <label>Per-repository merge policy ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Per-repository merge policy', `Repo-scoped rules every auto-merge lane applies. Repositories come from project.repos; saving writes each list in full and applies on the next sweep.`)}</label>
             <div class="config-field mt-3">
-              <label for="am-require-current-base">Require current base ${yamlHint('auto_merge.require_current_base')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Require current base', `Listed repos only merge a head that contains the current base tip. A green head tested against an older base is updated with GitHub update-branch and merges once CI is green on the new head, so a semantic conflict turns the PR red instead of breaking the base. Costs one compare call per merge candidate.`)}</label>
+              <label for="am-require-current-base">Require current base ${yamlHint('auto_merge.require_current_base')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Require current base', `Listed repos only merge a head that contains the current base tip. A green head tested against an older base is updated with GitHub update-branch and merges once CI is green on the new head, so a semantic conflict turns the PR red instead of breaking the base. Costs one compare call per merge candidate.`)}</label>
               <select id="am-require-current-base" multiple size="${amRepoPolicySize}" data-change-action="markDirtyAutoMergeRepoPolicy" class="am-trusted-authors-repos">${amRepoPolicyOptions(am.require_current_base)}</select>
             </div>
             <div class="config-field mt-4">
-              <label for="am-squash-only">Squash only ${yamlHint('auto_merge.squash_only')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Squash only', `Listed repos forbid merge commits. Elsewhere a role/trusted PR mixing the contributor's commits with the hive's own signed-off fixes merges with a merge commit; in a listed repo it parks at stage/085 and the note names this key.`)}</label>
+              <label for="am-squash-only">Squash only ${yamlHint('auto_merge.squash_only')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Squash only', `Listed repos forbid merge commits. Elsewhere a role/trusted PR mixing the contributor's commits with the hive's own signed-off fixes merges with a merge commit; in a listed repo it parks at stage/085 and the note names this key.`)}</label>
               <select id="am-squash-only" multiple size="${amRepoPolicySize}" data-change-action="markDirtyAutoMergeRepoPolicy" class="am-trusted-authors-repos">${amRepoPolicyOptions(am.squash_only)}</select>
             </div>
             <div class="config-field mt-4" id="am-human-merge-paths">
-              <label>Paths a person must merge ${yamlHint('auto_merge.human_merge_paths')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Paths a person must merge', `Comma-separated glob patterns per repo (same syntax as intent.guardrail_path_patterns), for example .github/workflows/**. Every App merge path refuses a PR touching one, adds hold and posts one comment; a person must merge it. Leave a repo empty for no such paths.`)}</label>
+              <label>Paths a person must merge ${yamlHint('auto_merge.human_merge_paths')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Paths a person must merge', `Comma-separated glob patterns per repo (same syntax as intent.guardrail_path_patterns), for example .github/workflows/**. Every App merge path refuses a PR touching one, adds hold and posts one comment; a person must merge it. Leave a repo empty for no such paths.`)}</label>
               ${amHumanMergePathRepos.length ? amHumanMergePathRepos.map(r => `<div class="config-field mt-3 am-human-merge-path-row" data-repo="${esc(r)}">
-                <label><code>${esc(r)}</code> ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', r, `Comma-separated glob patterns for ${esc(r)}. A PR there that touches a matching path is held, and a person must merge it. Leave empty for no such paths.`)}</label>
+                <label><code>${esc(r)}</code> ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', r, `Comma-separated glob patterns for ${esc(r)}. A PR there that touches a matching path is held, and a person must merge it. Leave empty for no such paths.`)}</label>
                 <input type="text" class="am-human-merge-path-input" value="${esc(amHumanMergePathsFor(r).join(', '))}" placeholder=".github/workflows/**, CODEOWNERS" data-change-action="markDirtyAutoMergeRepoPolicy">
               </div>`).join('') : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
             </div>
@@ -723,7 +727,34 @@
           </div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${am.require_current_base_default ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="require_current_base_default"></div>
-            <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
+            <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
+          </div>
+          <div class="config-field">
+            <label>Native GitHub merge queue ${yamlHint('auto_merge.native_merge_queue')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native GitHub merge queue', `Default off. Hive controls admission and repair; GitHub tests and merges the synthetic group. Settings requires explicit repositories and exact repo#base pairs. Existing CI, trust, review, hold and attribution gates stay in force.`)}</label>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="enabled" data-prevent="1" data-section="native-queue" data-key="enabled" role="switch" tabindex="0" aria-label="Enable native GitHub merge queue" aria-checked="${am.native_merge_queue && am.native_merge_queue.enabled ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Enable native GitHub merge queue (default OFF) ${settingHelpMark('native-merge-queue', 'pilot-rollout', 'Enable native GitHub merge queue', `Operator opt-in only after the GitHub prerequisites below. Save applies the Hive hand-off policy; it does not create queues or change branch protection. Off preserves conventional direct merge on branches without a required queue; a queue-required branch remains parked, never bypassed.`)}</span>
+            </div>
+            <label>Native queue repositories ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue repositories', `Comma-separated owner/repo allow-list. Settings refuses enabled queues with an empty list. Start with hivecommons/hive only; other repositories retain direct mode.`)}</label>
+            <input type="text" value="${esc(((am.native_merge_queue || {}).repos || []).join(', '))}" placeholder="hivecommons/hive" data-change-action="markDirtyNativeQueue" data-arg0="repos" data-arg-types="s,w">
+            <label>Native queue bases ${yamlHint('auto_merge.native_merge_queue.bases[]')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue bases', `Comma-separated exact owner/repo#base pairs. Repository names ignore case; branch names preserve case. No wildcards. Start with hivecommons/hive#v5. Every pair must belong to a listed repository.`)}</label>
+            <input type="text" value="${esc(((am.native_merge_queue || {}).bases || []).join(', '))}" placeholder="hivecommons/hive#v5" data-change-action="markDirtyNativeQueue" data-arg0="bases" data-arg-types="s,w">
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="skip_current_base_gate" data-prevent="1" data-section="native-queue" data-key="skip_current_base_gate" role="switch" tabindex="0" aria-label="Native queue owns freshness" aria-checked="${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Queue owns freshness (default OFF) ${settingHelpMark('native-merge-queue', 'current-base-gate', 'Queue owns freshness', `Explicitly bypasses current-base and behind refresh only for opted-in repo/base pairs with an actual GitHub queue. Leave off until merge-group CI is proven and HIVE_NATIVE_QUEUE_FRESHNESS suppresses the external branch updater for the same pairs. Other branches retain coordinated refresh.`)}</span>
+            </div>
+            <label>Native queue probe TTL ${settingHelpMark('native-merge-queue', 'api-cost', 'Native queue probe TTL', `How long GitHub queue detection is cached per repo/base. Default 30m; 0 uses that default. Enter a non-negative Go duration, for example 30m.`)}</label>
+            <input type="text" value="${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}" data-change-action="markDirtyNativeQueue" data-arg0="probe_ttl" data-arg-types="s,w">
+            <p class="config-help">Configured: <strong>${am.native_merge_queue && am.native_merge_queue.enabled ? 'enabled' : 'disabled (default)'}</strong>.
+              Repositories: ${esc(((am.native_merge_queue || {}).repos || []).join(', ') || 'all watched repositories once enabled')}.
+              Bases: ${esc(((am.native_merge_queue || {}).bases || []).join(', ') || 'all queue bases (legacy YAML only)')}.
+              Queue owns freshness: ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'explicitly opted in' : 'no (default)'}.
+              Probe TTL: ${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}.</p>
+            <p class="config-help">Owner-only: stage these controls and click Save only after the
+              <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/native-merge-queue.md#pilot-rollout" target="_blank" rel="noopener noreferrer">checks and branch-rule rollout</a>.
+              Prerequisites: App installation authentication, withdrawal guards, trusted-base policy proof, equivalent required-check migration, MERGE method and a bounded pilot group.
+              Enabled here does not mean deployed or enabled in GitHub. Turning it off does not disable GitHub's queue or withdraw existing entries; drain those before rollback. Direct merge with coordinated refresh remains available; this is not Hive's visual train.
+              Integration-aware multi-agent orchestration is planned, not a selectable implementation.</p>
           </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
@@ -887,6 +918,7 @@
         `)}
 
         ${featuresSectionHtml('work-intake', `
+        ${renderEventTriggersSection()}
         <div class="settings-subsection">
           <div class="settings-subsection-title">Tier classifier</div>
           <p class="config-help">Override the issue-title keywords that map work to Simple or Complex tiers. Empty lists keep the built-in defaults.</p>
@@ -1407,6 +1439,77 @@
           <div class="config-help">Checkpoint, triage and recheck settings are applied live; no restart is needed.</div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Integration orchestration</div>
+          <div class="config-help">Default OFF. Coordinates authoring admission above existing preparation and native queues; never replaces CI, review, holds or current-base guards. Advisory cannot block. Enforce requires explicit repository/base scopes and complete runner telemetry. No native queue jumping or GitHub build-window control. 5,000/day is a capacity target, not a measured result.</div>
+          <div class="config-field"><label>Mode ${yamlHint('integration_orchestration.mode')} ${settingHelpMark('settings', 'features', 'Integration mode', `Off preserves existing dispatch. Advisory records observations but cannot block. Enforce applies only enrolled, authoritative constraints; it never replaces merge gates.`)}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(m => `<option value="${esc(m)}" ${io.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Exact scopes (one owner/repo#base per line) ${yamlHint('integration_orchestration.scopes[].repo')} ${yamlHint('integration_orchestration.scopes[].base')} ${settingHelpMark('settings', 'features', 'Integration scopes', `At most eight exact repository/base destinations. No wildcard enrollment. Multiple enrolled bases leave issue destination unknown rather than guessing.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="scope_lines" data-arg-types="s,s,v">${esc((io.scopes || []).map(s => s.repo + '#' + s.base).join('\n'))}</textarea>
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['max_active','Active admissions',2,'integration_orchestration.max_active'],
+              ['max_jobs','Executed jobs per window',20,'integration_orchestration.max_jobs'],
+              ['max_runner_minutes','Runner minutes per window',60,'integration_orchestration.max_runner_minutes'],
+              ['max_attempts','Attempt bound',2,'integration_orchestration.max_attempts'],
+              ['admission_jobs','Job allocation per admission',1,'integration_orchestration.admission_jobs'],
+              ['admission_runner_minutes','Minute allocation per admission',10,'integration_orchestration.admission_runner_minutes']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Validated static admission bound, not a capacity measurement. Outstanding allocations count conservatively alongside actual assigned-runner execution. Missing accounting freezes growth; retries never rerun or cancel GitHub jobs.`)}</label><input type="number" min="1" value="${esc(String(io[key] || def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field-row">
+            ${[
+              ['lease_ttl','Reservation TTL (minutes)',5,'integration_orchestration.lease_ttl'],
+              ['window','Accounting window (minutes)',60,'integration_orchestration.window'],
+              ['max_observation_age','Maximum observation age (minutes)',30,'integration_orchestration.max_observation_age']
+            ].map(([key,label,def,path]) =>
+              `<div class="config-field"><label>${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'features', label, `Lease TTL is 1–15 minutes and clipped to live ownership. Accounting window is 1 minute–24 hours. Maximum observation age is 1–60 minutes; stale observations are unknown, not zero.`)}</label><input type="number" min="1" value="${esc(String(io[key] ? io[key] / (60 * 1e9) : def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}_minutes" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-field"><label>Pinned workflow evidence contracts (JSON array) ${settingHelpMark('settings', 'features', 'Integration workflow contracts', `Pins a separately reviewed workflow blob, event engine, exact required job names and producer App ID. Empty means policy evidence remains unknown. This does not activate native queues or replace full CI, review, DCO or other gates.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="policy_json" data-arg-types="s,s,v">${esc(JSON.stringify(io.policies || [], null, 2))}</textarea>
+          </div>
+          <div class="config-help">${[
+            'integration_orchestration.policies[].repo', 'integration_orchestration.policies[].base',
+            'integration_orchestration.policies[].engine', 'integration_orchestration.policies[].workflow',
+            'integration_orchestration.policies[].blob', 'integration_orchestration.policies[].app_id',
+            'integration_orchestration.policies[].jobs[]'
+          ].map(path => yamlHint(path)).join(' ')} Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
+          <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
+          <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+          <div class="config-field"><label>Candidate execution (independent opt-in) ${yamlHint('integration_orchestration.execution.mode')} ${settingHelpMark('settings', 'features', 'Candidate execution', `Off does not enable a writer. Advisory cannot block or dispatch. Enforce requires exact enrolled repository/base profiles, complete real CI accounting, a designated executor and actual protected qualification. Revoke the old forge epoch before returning Hive authority to legacy flow. This is separate from authoring admission and native queue settings.`)}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="execution_mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(mode => `<option value="${esc(mode)}" ${(integrationExecution.mode || 'off') === mode ? 'selected' : ''}>${esc(mode)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Execution profile and bounded enrollment (JSON object) ${settingHelpMark('settings', 'features', 'Execution enrollment', `Explicit scopes, actual repository/actor/App installation/workflow IDs, policy and workflow-tree hashes, immutable authority epoch, isolated qualification ID, job/minute/member/attempt bounds and duration nanoseconds. No inferred actors, spare capacity, wildcard enrollment, automatic growth or failover. The mode selector, not this profile JSON, chooses execution mode.`)}</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="execution_json" data-arg-types="s,s,v">${esc(JSON.stringify(integrationExecutionProfile, null, 2))}</textarea>
+          </div>
+          <div class="config-help">Source, published image, running version, desired mode and effective writer are separate receipts. Unknown telemetry is not green or zero. Production requires a real one-member protected qualification and the same complete producer/actor profile. Native authority permits only ordinary Hive enqueue admission, never queue jumping or GitHub build-window control. All participating hives must be upgraded/enrolled or stopped; copied identity and automatic takeover are unsupported.</div>
+          <div class="config-help">${[
+            'integration_orchestration.execution.scopes[].repo', 'integration_orchestration.execution.scopes[].base',
+            'integration_orchestration.execution.scopes[].authority', 'integration_orchestration.execution.scopes[].repository_id',
+            'integration_orchestration.execution.scopes[].request_actor_id', 'integration_orchestration.execution.scopes[].candidate_actor_id',
+            'integration_orchestration.execution.scopes[].producer_app_id', 'integration_orchestration.execution.scopes[].promotion_app_id',
+            'integration_orchestration.execution.scopes[].promotion_installation_id', 'integration_orchestration.execution.scopes[].materializer_id',
+            'integration_orchestration.execution.scopes[].candidate_workflow_id', 'integration_orchestration.execution.scopes[].default_branch',
+            'integration_orchestration.execution.scopes[].policy', 'integration_orchestration.execution.scopes[].workflow_tree',
+            'integration_orchestration.execution.scopes[].required_jobs[]', 'integration_orchestration.execution.scopes[].executor_id',
+            'integration_orchestration.execution.scopes[].authority_ref', 'integration_orchestration.execution.scopes[].authority_commit',
+            'integration_orchestration.execution.scopes[].qualification_id', 'integration_orchestration.execution.scopes[].max_members',
+            'integration_orchestration.execution.scopes[].expected_jobs', 'integration_orchestration.execution.scopes[].expected_minutes',
+            'integration_orchestration.execution.scopes[].purpose', 'integration_orchestration.execution.scopes[].qualified_base',
+            'integration_orchestration.execution.max_active', 'integration_orchestration.execution.max_runner_minutes',
+            'integration_orchestration.execution.max_jobs', 'integration_orchestration.execution.max_attempts',
+            'integration_orchestration.execution.observation_age', 'integration_orchestration.execution.window',
+            'integration_orchestration.execution.cooldown'
+          ].map(path => yamlHint(path)).join(' ')}</div>
+          <button class="hv-btn btn-secondary btn" data-action="prepareIntegrationExecutionIdentity">Prepare local execution identity only</button>
+          <pre id="integration-execution-identity" class="config-help" aria-live="polite"></pre>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
           <div class="config-field">
             <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
@@ -1476,4 +1579,3 @@
         </div>
         `)}`;
     }
-

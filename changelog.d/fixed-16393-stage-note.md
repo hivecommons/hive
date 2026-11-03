@@ -1,0 +1,1 @@
+- Route normal-mode PR stage notes through the canary gate and effects journal used by other issue comments.

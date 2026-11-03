@@ -211,6 +211,78 @@ func TestAttemptsLoopGuard(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#16023: a dispatched attempt the fixer never pushes for
+// counts as failed past the deadline, so the episode advances (and is
+// exhausted) without a new dirty head; each attempt is dispatched once.
+func TestAttemptsExpireAdvancesStalledAttempt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "attempts.json")
+	s := NewAttempts(path)
+	now := time.Date(2026, 10, 31, 9, 0, 0, 0, time.UTC)
+	const timeout = 15 * time.Minute
+	s.Observe("o/r", 1, "aaa", now)
+	if _, ok := s.Expire("o/r", 1, timeout, now.Add(time.Hour)); ok {
+		t.Fatal("an attempt never dispatched must not expire")
+	}
+	a, first := s.Dispatch("o/r", 1, "scanner", now)
+	if !first || !a.Dispatched() || a.Fixer != "scanner" || a.DispatchedAttempt != 1 {
+		t.Fatalf("first dispatch: %+v first=%v", a, first)
+	}
+	if a, first = s.Dispatch("o/r", 1, "scanner", now.Add(5*time.Minute)); first || !a.DispatchedAt.Equal(now) {
+		t.Fatalf("re-dispatch of the same attempt: %+v first=%v", a, first)
+	}
+	if got := AttemptTextAt(a, now.Add(12*time.Minute)); got != "Rebasing · attempt 1/2 · waiting for scanner 12m" {
+		t.Fatalf("caption: %q", got)
+	}
+	if got := AttemptTextAt(a, now.Add(30*time.Second)); got != "Rebasing · attempt 1/2 · waiting for scanner <1m" {
+		t.Fatalf("fresh caption: %q", got)
+	}
+	if _, ok := s.Expire("o/r", 1, timeout, now.Add(14*time.Minute)); ok {
+		t.Fatal("expired before the deadline")
+	}
+	if _, ok := s.Expire("o/r", 1, 0, now.Add(time.Hour)); ok {
+		t.Fatal("a zero timeout must never expire")
+	}
+	a, ok := s.Expire("o/r", 1, timeout, now.Add(timeout))
+	if !ok || a.Count() != 2 || a.Stalled != 1 || a.Exhausted() || a.Dispatched() || a.Head() != "aaa" {
+		t.Fatalf("timed-out attempt 1: %+v ok=%v", a, ok)
+	}
+	if got := AttemptTextAt(a, now.Add(timeout)); got != "Rebasing · attempt 2/2" {
+		t.Fatalf("undispatched attempt 2 caption: %q", got)
+	}
+	if a, first = s.Dispatch("o/r", 1, "", now.Add(timeout)); !first || a.DispatchedAttempt != 2 {
+		t.Fatalf("attempt 2 dispatch: %+v first=%v", a, first)
+	}
+	if got := AttemptTextAt(a, now.Add(timeout+3*time.Minute)); got != "Rebasing · attempt 2/2 · waiting for the fixer 3m" {
+		t.Fatalf("no-fixer caption: %q", got)
+	}
+	a, ok = s.Expire("o/r", 1, timeout, now.Add(2*timeout))
+	if !ok || !a.Exhausted() || AttemptTextAt(a, now.Add(2*timeout)) != "Rebase failed · 2/2 — needs a person" {
+		t.Fatalf("timed-out attempt 2: %+v ok=%v", a, ok)
+	}
+	if _, first = s.Dispatch("o/r", 1, "scanner", now.Add(2*timeout)); first {
+		t.Fatal("an exhausted episode must not be dispatched")
+	}
+	if _, ok = s.Expire("o/r", 1, timeout, now.Add(3*timeout)); ok {
+		t.Fatal("an exhausted episode must not expire again")
+	}
+	if got, ok := NewAttempts(path).Get("o/r", 1); !ok || got.Stalled != 2 || !got.Exhausted() {
+		t.Fatalf("reload: %+v ok=%v", got, ok)
+	}
+	// A push (new dirty head) is the next attempt and needs a fresh dispatch.
+	s.Clear("o/r", 1)
+	s.Observe("o/r", 1, "bbb", now)
+	s.Dispatch("o/r", 1, "scanner", now)
+	if a = s.Observe("o/r", 1, "ccc", now.Add(5*time.Minute)); a.Count() != 2 || a.Dispatched() {
+		t.Fatalf("pushed head: %+v", a)
+	}
+	if _, ok = s.Expire("o/r", 1, timeout, now.Add(time.Hour)); ok {
+		t.Fatal("a pushed attempt not yet dispatched must not expire")
+	}
+	if _, first = s.Dispatch("o/r", 9, "scanner", now); first {
+		t.Fatal("dispatch without an episode")
+	}
+}
+
 // Request opens the episode on an operator's behalf (approve / merge-now on
 // a dirty PR): the actor is recorded once, a blank actor records nothing,
 // and the request rides the same head count as the sweep's Observe.

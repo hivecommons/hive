@@ -484,6 +484,10 @@
         if (data.statusSeq < _statusSeqFloor || data.statusSeq < _lastStatusSeq) return;
         _lastStatusSeq = data.statusSeq;
       }
+      if (typeof data.matrixEnabled === 'boolean') {
+        const matrixTab = document.getElementById('oc-matrix-tab');
+        if (matrixTab) matrixTab.hidden = !data.matrixEnabled;
+      }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
       const scrollAnchor = captureScrollAnchor();
       updateNavbarClockTimeZone(data);
@@ -524,12 +528,14 @@
       if (hiveIdBadge) hiveIdBadge.textContent = hiveId;
       const ocHiveId = document.getElementById('oc-hive-id');
       if (ocHiveId) ocHiveId.textContent = hiveId;
+      if (typeof stageTrackerPopoutSyncTitle === 'function') stageTrackerPopoutSyncTitle(hiveId);
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderProviderStrip(document.getElementById('oc-providers'), data.providers);
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
+      renderOnboardingGuideChip(data);
       renderIssuesDisabledBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
@@ -550,7 +556,6 @@
       renderSwarm(data.swarm || {});
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
-      updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
       renderHiveAdvice(data.hiveAdvice || null);
       renderFleetReport(data.fleetReport || null);
@@ -603,4 +608,3 @@
         if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       }
     }
-

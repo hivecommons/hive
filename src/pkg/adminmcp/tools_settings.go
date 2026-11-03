@@ -40,6 +40,7 @@ var settingsSections = []SettingsSection{
 	{"review", "/api/config/review", "Review settings: reviewers, perspectives, review bots and gates."},
 	{"convergence", "/api/config/convergence", "Convergence settings."},
 	{"sla", "/api/config/sla", "SLA settings."},
+	{"triggers", "/api/config/triggers", "Event trigger rules and settings."},
 	{"advisor", "/api/config/advisor", "Advisor settings and model roles."},
 	{"advisory", "/api/config/governor/advisory", "Advisory-mode settings."},
 	{"replan", "/api/config/governor/replan", "Replan settings."},

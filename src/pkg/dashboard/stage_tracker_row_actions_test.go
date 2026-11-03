@@ -38,6 +38,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_ALL_MIN"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_ACTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_GENERIC_ACTIONS"),
+		jsConstLine(t, html, "_stageTrackerCloseIssueBusy"),
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		"var _stageTrackerSel = new Set(); var _stageTrackerSelAnchor = ''; var _stageTrackerMenu = null; var _stageTracker = null; var _statusSeqFloor = 0; var _stageTrackerEtag = 'e'; var _stageTrackerSig = 's';",
 		jsFunc(t, html, "esc"),
@@ -96,6 +97,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLeadAction"),
 		jsFunc(t, html, "stageTrackerMaintainerMoved"),
 		jsFunc(t, html, "stageTrackerDevWarn"),
+		jsFunc(t, html, "stageTrackerPRListedOwnRow"),
+		jsFunc(t, html, "stageTrackerPRDrawnUnderOther"),
 		jsFunc(t, html, "stageTrackerLeadActionOnRow"),
 		jsFunc(t, html, "stageTrackerLeadActionHtml"),
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
@@ -160,6 +163,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerClearPending"),
 		jsFunc(t, html, "stageTrackerPendingLive"),
 		jsFunc(t, html, "stageTrackerPendingExpire"),
+		jsFunc(t, html, "stageTrackerLeadBusySync"),
 		jsFunc(t, html, "stageTrackerPendingSync"),
 		// Progress + failure surfacing for every mutating action (hivecommons/hive#15436).
 		jsConstBlock(t, html, "STAGE_TRACKER_TERMINAL_CAPTIONS"),
@@ -173,6 +177,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAdvisoryCloseHint"),
 		jsFunc(t, html, "stageTrackerAdvisoryCloseMessage"),
 		jsFunc(t, html, "stageTrackerNothingToActOn"),
+		jsFunc(t, html, "stageTrackerCopyLink"),
 		jsFunc(t, html, "runRowAction"),
 		jsFunc(t, html, "makeToastSticky"),
 		stageTrackerDomStubJS,
@@ -187,10 +192,14 @@ function hamStubEl(tag) {
   const el = { tagName: tag, className: '', textContent: '', children: [], attrs: {}, parentNode: null, _listeners: {},
     classList: { add(c) { if (!el.className.split(' ').includes(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(' ').filter(x => x && x !== c).join(' '); }, contains(c) { return el.className.split(' ').includes(c); } },
     appendChild(c) { c.parentNode = el; el.children.push(c); return c; }, prepend(c) { c.parentNode = el; el.children.unshift(c); },
-    setAttribute(k, v) { el.attrs[k] = String(v); }, getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
+    setAttribute(k, v) { el.attrs[k] = String(v); }, getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; }, removeAttribute(k) { delete el.attrs[k]; },
     addEventListener(n, fn) { el._listeners[n] = fn; }, remove() { if (el.parentNode) el.parentNode.children = el.parentNode.children.filter(c => c !== el); el.parentNode = null; },
     get lastChild() { return el.children[el.children.length - 1] || null; },
-    querySelector(sel) { const m = sel.match(/^:scope > \.([\w-]+)$/); if (!m) return null; return el.children.find(c => c.classList.contains(m[1])) || null; },
+    querySelector(sel) {
+      // ":scope > .child .descendant[attr]" — the lead button under the row head.
+      const d = sel.match(/^:scope > \.([\w-]+) \.([\w-]+)(?:\[([\w-]+)\])?$/);
+      if (d) { const head = el.children.find(c => c.classList && c.classList.contains(d[1])); if (!head) return null; const walk = n => { for (const c of (n.children || [])) { if (c.classList && c.classList.contains(d[2]) && (!d[3] || c.attrs[d[3]] != null)) return c; const r = walk(c); if (r) return r; } return null; }; return walk(head); }
+      const m = sel.match(/^:scope > \.([\w-]+)$/); if (!m) return null; return el.children.find(c => c.classList && c.classList.contains(m[1])) || null; },
     querySelectorAll(sel) { const out = []; const walk = n => { for (const c of (n.children || [])) { if (!c.attrs) continue; if ((sel.includes('[data-ham-key]') && c.attrs['data-ham-key'] != null) || (sel.includes('[data-ham-sub-key]') && c.attrs['data-ham-sub-key'] != null)) out.push(c); walk(c); } }; walk(el); return out; },
   };
   return el;
@@ -281,12 +290,12 @@ const ids = as => as.map(a => a.id);
 const ctx = { user: true, canHold: true, canHuman: true };
 const parked = { repo: 'o/r', kind: 'issue', number: 1, title: 'Parked', url: 'https://github.com/o/r/issues/1', stage: 45, modifiers: ['needs-decision'] };
 let as = stageTrackerRowActions(parked, ctx);
-assert.deepStrictEqual(ids(as), ['decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy']);
 assert.deepStrictEqual(ids(as[0].submenu), ['decide:delegate', 'decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'], 'an issue gets let-hive-decide first, then approve / direction / close');
 assert.ok(as.every(a => a.enabled), 'everything is enabled for a writer');
 
 const plain = { repo: 'o/r', kind: 'issue', number: 2, url: 'u', stage: 20, modifiers: [] };
-assert.deepStrictEqual(ids(stageTrackerRowActions(plain, ctx)), ['hold', 'retry', 'needs-human', 'open', 'copy'], 'no Decide off 045/085');
+assert.deepStrictEqual(ids(stageTrackerRowActions(plain, ctx)), ['hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy'], 'no Decide off 045/085');
 
 const held = { repo: 'o/r', kind: 'pr', number: 3, url: 'u', stage: 60, modifiers: ['hold', 'needs-human'] };
 as = stageTrackerRowActions(held, ctx);
@@ -364,7 +373,7 @@ assert.strictEqual(by.open.enabled, true);
 const menu = stageTrackerMenuHtml(as, 'o/r#1 · Parked');
 assert.ok(menu.startsWith('<div class="ham-menu ham-menu-hinted" role="menu"'), 'the rescan hint makes it a hinted menu: ' + menu.slice(0, 60));
 assert.ok(menu.includes('<div class="ham-menu-head">o/r#1 · Parked</div>'));
-assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 11, 'six top-level items + five decide options');
+assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 12, 'seven top-level items including Close issue + five decide options');
 assert.ok(menu.includes('data-ham-act="hold" tabindex="-1" aria-disabled="true" title="' + STAGE_TRACKER_WHY_WRITE + '"'), 'disabled items carry the reason');
 assert.ok(menu.includes('aria-haspopup="menu" aria-expanded="false"'), 'Decide is a collapsed submenu');
 assert.ok(menu.includes('<div class="ham-submenu" role="menu" aria-label="Decide…">'));
@@ -686,7 +695,7 @@ assert.strictEqual(stageTrackerActionRequest(a, 'decide:approve', {}).url, '/api
 // The issue row no longer picks one: no single Decide, an explicit all-PRs item.
 assert.strictEqual(stageTrackerDecisionTarget(issue), null, 'two parked PRs is ambiguous');
 as = stageTrackerRowActions(issue, ctx);
-assert.deepStrictEqual(ids(as), ['decide:delegate-all', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide:delegate-all', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy']);
 assert.strictEqual(as[0].label, 'Let hive decide — all 2 PRs'); assert.strictEqual(as[0].hint, 'per PR'); assert.deepStrictEqual(as[0].prs, [15017, 15020]);
 assert.strictEqual(stageTrackerRowActions(issue, { user: false, canHold: false })[0].enabled, false);
 const req = stageTrackerActionRequest(issue, 'decide:delegate-all');
@@ -839,6 +848,8 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP_FALLBACK"),
 		jsFunc(t, html, "stageTrackerSentinelTip"),
+		jsFunc(t, html, "stageTrackerSentinelPathLines"),
+		jsFunc(t, html, "stageTrackerSentinelTipWithPaths"),
 		jsFunc(t, html, "stageTrackerSentinelPreface"),
 		jsFunc(t, html, "stageTrackerConfirmSkipped"),
 		jsFunc(t, html, "stageTrackerSetConfirmSkip"),
@@ -868,14 +879,41 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeLabel"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeable"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeReason"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_PREFETCH_MS"),
+		jsConstLine(t, html, "_stageTrackerPlanPrefetch"),
+		jsFunc(t, html, "stageTrackerPlanRequestKey"),
+		jsFunc(t, html, "stageTrackerPostDelegatePlan"),
+		jsFunc(t, html, "stageTrackerPrefetchDelegatePlan"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_SKELETON_LINES"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_RETRY"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_BUTTONS_OPEN"),
+		jsFunc(t, html, "stageTrackerDelegatePlanSkeletonContent"),
+		jsFunc(t, html, "stageTrackerDelegatePlanSkeletonHtml"),
+		jsFunc(t, html, "stageTrackerDelegatePlanErrorContent"),
+		jsFunc(t, html, "stageTrackerDelegatePlanSubject"),
+		jsConstLine(t, html, "_stageTrackerDelegatePreviewing"),
 		jsFunc(t, html, "stageTrackerDelegatePreview"),
 		jsFunc(t, html, "stageTrackerActionPayload"),
 		jsFunc(t, html, "stageTrackerDirectionCarrier"),
-		// The preview dialog is recorded like the confirms; its answer is
-		// the "Let hive do that" button unless a test sets planAnswer.
-		`let planAnswer = null;
-function stageTrackerDelegatePlanDialog(plans, sentinel) { const view = stageTrackerDelegatePlanView(plans, sentinel); const html = stageTrackerDelegatePlanHtml(view); dialogs.push({ kind: 'plan', cfg: { title: view.title, message: stageTrackerDelegatePlanVisibleText(html), html, view, plans } }); return Promise.resolve(planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer); }`,
+		// The preview dialog is recorded like the confirms: it opens as the
+		// skeleton (planGate, when a test sets it, holds the plan back), then
+		// shows the plan or the inline error; its answer is the "Let hive do
+		// that" button unless a test sets planAnswer.
+		`let planAnswer = null; let planGate = null;
+function stageTrackerDelegatePlanDialog(load, sentinel, opts) {
+  const skeleton = { kind: 'plan-skeleton', cfg: { html: stageTrackerDelegatePlanSkeletonHtml((opts && opts.subject) || '', sentinel, opts && opts.caption), opts } };
+  dialogs.push(skeleton);
+  return Promise.resolve(planGate).then(() => load()).then(plans => {
+    if (opts && typeof opts.onSettled === 'function') opts.onSettled();
+    dialogs.splice(dialogs.indexOf(skeleton), 1);
+    const failed = plans.filter(p => p.error);
+    if (failed.length) { dialogs.push({ kind: 'plan-error', cfg: { html: stageTrackerDelegatePlanErrorContent((opts && opts.subject) || '', failed), failed } }); return null; }
+    const view = stageTrackerDelegatePlanView(plans, sentinel); const html = stageTrackerDelegatePlanHtml(view);
+    dialogs.push({ kind: 'plan', cfg: { title: view.title, message: stageTrackerDelegatePlanVisibleText(html), html, view, plans } });
+    return planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer;
+  });
+}`,
 		`const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
 global.window = { _hiveUser: 'clubanderson' };
 const dialogs = []; let dialogAnswer = true;
@@ -1338,7 +1376,7 @@ assert.strictEqual(as[1].enabled, false); assert.strictEqual(as[1].why, STAGE_TR
 // The issue row over its one asking PR: the same lead answers, acting on
 // PR #317 (runRowAction resolves the decision target to the PR).
 as = stageTrackerRowActions(issue316, merger);
-assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.deepStrictEqual(ids(as), ['decide:queue-merge', 'decide:merge-now', 'decide', 'hold', 'retry', 'needs-human', 'decide:close-issue', 'open', 'copy']);
 assert.strictEqual(as[0].target.number, 317); assert.strictEqual(as[0].target.kind, 'pr');
 assert.strictEqual(as[2].label, 'Decide PR #317…');
 assert.strictEqual(stageTrackerDecisionTarget(issue316).number, 317, 'a human-merge reason parks the PR for the issue row');
@@ -1698,6 +1736,24 @@ assert.ok(html.includes('<span class="ham-plan-chip" title="' + hiveDialogEscape
 assert.deepStrictEqual(buttons(html), ['Cancel', 'Let hive do that'], 'exactly two buttons when the head is not mergeable');
 assert.ok(html.includes('btn-danger hive-dialog-btn primary" data-initial-focus'), 'the sentinel case keeps the danger primary');
 assert.ok(html.indexOf('hive-dialog-btn cancel') < html.indexOf('hive-dialog-btn primary'), 'Cancel first, primary last');
+
+// 1b. The sentinel line names the files and the rule that fired, from the
+//     row's sentinel_details, bounded by the server (hivecommons/hive: "knowing
+//     what the sensitive path(s) (and files) are in this alert dialog would
+//     really help me make a decision"); the Details paragraph keeps the
+//     line breaks (white-space: pre-line) and the chip's tooltip carries it.
+const flagged = { repo: 'hivecommons/hive', number: 16230, kind: 'pr', head: '4396f46abcdef', sentinel_alert: true, sentinel_reason: 'changes 1 sensitive path(s)',
+  sentinel_details: [{ rule: 'sensitive_path', summary: 'changes 1 sensitive path(s)', paths: ['.github/workflows/release.yml'] }, { rule: 'permission_escalation', summary: 'widens workflow permissions' }] };
+assert.deepStrictEqual(stageTrackerSentinelPathLines(flagged), ['sensitive_path: .github/workflows/release.yml', 'permission_escalation (widens workflow permissions)']);
+assert.deepStrictEqual(stageTrackerSentinelPathLines(Object.assign({}, flagged, { sentinel_details: [{ rule: 'sensitive_path', paths: ['a', 'b'], more_paths: 4 }] })), ['sensitive_path: a, b (+4 more)']);
+assert.deepStrictEqual(stageTrackerSentinelPathLines({ sentinel_alert: true }), []);
+let preface = stageTrackerSentinelPreface([flagged]);
+assert.strictEqual(preface, '⚠ hivecommons/hive#16230 — Sentinel flagged security-relevant changes at 4396f46: changes 1 sensitive path(s)\n   · sensitive_path: .github/workflows/release.yml\n   · permission_escalation (widens workflow permissions)', preface);
+assert.strictEqual(stageTrackerSentinelPreface([Object.assign({}, flagged, { sentinel_details: [] })]), '⚠ hivecommons/hive#16230 — Sentinel flagged security-relevant changes at 4396f46: changes 1 sensitive path(s)', 'no details: the line is unchanged');
+html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([Object.assign({}, pr15332, { ref: 'hivecommons/hive#16230', number: 16230 })], preface));
+assert.ok(detailsOf(html).includes('<p class="ham-plan-finding">' + hiveDialogEscape(preface) + '</p>'), 'the Details finding names the files: ' + detailsOf(html));
+assert.ok(html.includes('<span class="ham-plan-chip" title="' + hiveDialogEscape(preface) + '">⚠ Sentinel</span>'), 'the chip tooltip names the files too');
+assert.ok(!visibleOf(html).includes('.github/workflows/release.yml'), 'the paths stay behind Details');
 
 // 2. A stale "Hive would:" prefix in the payload is still rendered once.
 view = stageTrackerDelegatePlanView([Object.assign({}, pr15332, { summary: 'Hive would: Hive would: send #15332 back' })], '');

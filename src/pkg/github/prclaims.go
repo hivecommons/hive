@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"log/slog"
@@ -976,6 +977,23 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 	return scan.Claims, err
 }
 
+// logMergedClaimScanFailure logs a merged-PR scan failure. A deadline or
+// cancellation is a transient API/rate condition that recurs every tick until
+// the API recovers, so it is logged at Info once per repo until a scan
+// succeeds again; any other error stays a Warn.
+func (c *Client) logMergedClaimScanFailure(repo string, err error) {
+	if c.logger == nil {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		if _, seen := c.mergedClaimScanTransient.LoadOrStore(repo, true); !seen {
+			c.logger.Info("merged-pr-claim scan timed out (transient); retrying next tick", "repo", repo, "error", err)
+		}
+		return
+	}
+	c.logger.Warn("merged-pr-claim scan failed for repo", "repo", repo, "error", err)
+}
+
 // FetchClaimScan is FetchClaims plus the churn history the same two listings
 // already contain (hivecommons/hive#7995). See ClaimScan.
 func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (ClaimScan, error) {
@@ -1047,11 +1065,10 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				if firstErr == nil {
 					firstErr = fmt.Errorf("listing merged PRs for %s/%s: %w", owner, repoName, err)
 				}
-				if c.logger != nil {
-					c.logger.Warn("merged-pr-claim scan failed for repo", "repo", repo, "error", err)
-				}
+				c.logMergedClaimScanFailure(repo, err)
 				break
 			}
+			c.mergedClaimScanTransient.Delete(repo)
 			pastWindow := false
 			for _, pr := range prs {
 				if pr == nil {
@@ -1077,11 +1094,15 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 						closedAt = pr.GetUpdatedAt().Time
 					}
 					if !closedAt.Before(mergedCutoff) {
-						c.emitPRTerminalObserved(PRTerminalObservation{
-							Repo:       repo,
-							Number:     pr.GetNumber(),
-							State:      PRStateClosed,
-							ObservedAt: closedAt,
+						c.observeTerminalPR(ctx, terminalEnrichmentTask{
+							owner: owner, repoName: repoName, identity: identity,
+							updatedAt: pr.GetUpdatedAt().Time,
+							observation: PRTerminalObservation{
+								Repo:       repo,
+								Number:     pr.GetNumber(),
+								State:      PRStateClosed,
+								ObservedAt: closedAt,
+							},
 						})
 						history = append(history,
 							prHistoryFromClaims(claimsFromPR(pr, repo, identity, now), PRStateClosed, now)...)
@@ -1091,18 +1112,21 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				if mergedAt.Before(mergedCutoff) {
 					continue
 				}
-				mergedBy := c.prTerminalMergedBy(ctx, owner, repoName, pr)
-				c.emitPRTerminalObserved(PRTerminalObservation{
-					Repo:        repo,
-					Number:      pr.GetNumber(),
-					State:       PRStateMerged,
-					ObservedAt:  mergedAt,
-					Actor:       mergedBy,
-					Attribution: prTerminalMergeAttribution(mergedBy, identity, c.appBotLogin),
-					CreatedAt:   pr.GetCreatedAt().Time,
-					URL:         pr.GetHTMLURL(),
-					Issues:      mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
+				c.observeTerminalPR(ctx, terminalEnrichmentTask{
+					owner: owner, repoName: repoName, identity: identity,
+					updatedAt: pr.GetUpdatedAt().Time, mergedBy: safeGetLogin(pr.GetMergedBy()),
+					observation: PRTerminalObservation{
+						Repo:       repo,
+						Number:     pr.GetNumber(),
+						State:      PRStateMerged,
+						ObservedAt: mergedAt,
+						CreatedAt:  pr.GetCreatedAt().Time,
+						URL:        pr.GetHTMLURL(),
+						Issues:     mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
+					},
 				})
+				// #16116: other people's reviews reach the throughput card's
+				// Reviewed row the way their merges reach Merged·Closed.
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
 				for _, claim := range prClaims {
