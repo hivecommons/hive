@@ -1704,7 +1704,9 @@ func (s *Server) Start() error {
 		branded = kioskcta.Inject(branded, s.kioskCTAOptions())
 		branded, mainScript = webstatic.ExternalizeDashboardScript(branded)
 		if mainScript != nil {
-			s.mux.Handle("GET "+mainScript.Path(), mainScript)
+			// Keep registration statically discoverable by route parity checks;
+			// the handler serves only its exact content-addressed path.
+			s.mux.Handle("GET /assets/{script}", mainScript)
 		} else {
 			s.logger.Warn("dashboard main script extraction unavailable; serving original inline dashboard")
 		}

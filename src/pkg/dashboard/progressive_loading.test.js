@@ -179,6 +179,25 @@ test('visibility resume and overlapping poll ticks use the same bounded flights'
   assert.equal(new Set(started).size, 3);
 });
 
+test('advisory and approvals bootstrap uses the same bounded queue instead of a request burst', async () => {
+  const e = environment(), gate = deferred(), started = [];
+  const panels = html.match(/function v4RefreshPanels\(\) \{[\s\S]*?\n    \}/);
+  assert.ok(panels);
+  const keys = ['advice', 'recommendation', 'lifecycle', 'throughput', 'approvals'];
+  const functions = keys.map(key => async () => { started.push(key); await gate.promise; });
+  new Function('dashboardScheduleWork', 'fetchHiveAdvice', 'fetchACMMReco', 'fetchLifecycle',
+    'fetchPRThroughput', 'fetchApprovals', panels[0] + '\nv4RefreshPanels();',
+  )(e.api.dashboardScheduleWork, ...functions);
+  e.start();
+  await e.turn();
+  await e.turn();
+  assert.equal(started.length, 2);
+  gate.resolve();
+  await flush();
+  while (e.turns.length) await e.turn();
+  assert.deepEqual(started, keys);
+});
+
 test('rendering coalesces snapshots and paints one section per idle turn', async () => {
   const e = environment(), rendered = [];
   e.api.dashboardRenderSection('tokens', ['token-panel'], () => rendered.push('stale'));

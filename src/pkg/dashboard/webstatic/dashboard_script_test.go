@@ -275,6 +275,66 @@ func TestDashboardScriptOnlyServesItsExactPath(t *testing.T) {
 	}
 }
 
+func TestDashboardScriptLiteralAssetRoute(t *testing.T) {
+	const pattern = "GET /assets/{script}"
+	server, err := os.ReadFile("../server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(server, []byte("s.mux.Handle("+strconv.Quote(pattern)+", mainScript)")) {
+		t.Fatal("production asset route must remain a literal pattern discoverable by the API parity guard")
+	}
+	_, asset := requireDashboardScript(t, dashboardScriptFixture())
+	mux := http.NewServeMux()
+	mux.Handle(pattern, asset)
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		req := httptest.NewRequest(method, asset.Path(), nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Header().Get("ETag") == "" {
+			t.Fatalf("%s current asset: status=%d, headers=%v", method, rec.Code, rec.Header())
+		}
+		if method == http.MethodHead && rec.Body.Len() != 0 {
+			t.Fatal("HEAD through the literal route must not carry a body")
+		}
+		req.Header.Set("If-None-Match", rec.Header().Get("ETag"))
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+			t.Fatalf("%s current asset revalidation: status=%d, body=%d bytes", method, rec.Code, rec.Body.Len())
+		}
+	}
+	for _, path := range []string{
+		"/assets/dashboard-main." + strings.Repeat("0", hex.EncodedLen(sha256.Size)) + ".js",
+		asset.Path() + ".extra", "/assets/server.go",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("If-None-Match", "*")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound || rec.Header().Get("ETag") != "" ||
+			strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
+			t.Fatalf("nonmatching asset path %q must be rejected before validators: status=%d, headers=%v",
+				path, rec.Code, rec.Header())
+		}
+	}
+	for _, path := range []string{"/", "/index.html", "/tokens.css", "/assets/nested/file.js"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusTeapot {
+			t.Fatalf("path %q escaped its existing fallback route: status=%d", path, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, asset.Path(), nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST asset: status=%d, want 405", rec.Code)
+	}
+}
+
 func TestDashboardScriptFailureBootstrap(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

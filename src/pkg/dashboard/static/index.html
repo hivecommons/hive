@@ -13127,17 +13127,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         try { Promise.resolve(dashboardRunInterval(entry)).catch(console.error); } catch (err) { console.error(err); }
       }, entry.ms);
     }
+    function dashboardClearInterval(key) {
+      if (!DASHBOARD_INTERVALS[key]) return;
+      clearInterval(DASHBOARD_INTERVALS[key].timer);
+      delete DASHBOARD_INTERVALS[key];
+    }
     function dashboardRunInterval(entry) {
       if (typeof dashboardScheduleWork === 'function' &&
           Object.prototype.hasOwnProperty.call(DASHBOARD_TASK_SECTIONS, entry.key)) {
         return dashboardScheduleWork(entry.key, entry.fn);
       }
       return entry.fn();
-    }
-    function dashboardClearInterval(key) {
-      if (!DASHBOARD_INTERVALS[key]) return;
-      clearInterval(DASHBOARD_INTERVALS[key].timer);
-      delete DASHBOARD_INTERVALS[key];
     }
     document.addEventListener('visibilitychange', () => {
       for (const [key, entry] of Object.entries(DASHBOARD_INTERVALS)) {
