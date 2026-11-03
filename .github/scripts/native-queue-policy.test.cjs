@@ -6,13 +6,17 @@ const {
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError,
   ProviderUnavailable,
+  DCO_ENUMERATION_SUMMARY_PREFIX,
+  DCO_ENUMERATION_SUMMARY_FALLBACK,
+  DCO_PROVIDER_UNAVAILABLE_TEXT,
+  DCO_PROVIDER_RUNBOOK,
 } = require('./native-queue-policy.cjs');
 
 const sha = n => n.toString(16).padStart(40, '0');
 // App 1861 check run 125732155592 on #16378, head 1989d20aa8d0d92cce761786ac05825aef1d9d3a.
-const unavailableSummary = 'The DCO check could not be evaluated because the complete pull request commit list could not be retrieved.\n\n' +
+const unavailableSummary = DCO_ENUMERATION_SUMMARY_PREFIX + '\n\n' +
   'GitHub returned 250 commits from the REST API, so the app attempted to retrieve the full list through GraphQL before evaluating the pull request. ' +
-  'That fallback did not complete, so the DCO verdict is unknown.\n\nHTTP status: unknown\nGitHub request ID: unavailable';
+  DCO_ENUMERATION_SUMMARY_FALLBACK + '\n\nHTTP status: unknown\nGitHub request ID: unavailable';
 const group = {
   base_sha: sha(1), head_sha: sha(4), base_ref: 'refs/heads/v5',
   head_ref: 'refs/heads/gh-readonly-queue/v5/pr-2-example',
@@ -176,6 +180,8 @@ test('provider enumeration UNKNOWN blocks both admission paths without retry or 
       assert.ok(error instanceof ProviderUnavailable);
       assert.ok(!(error instanceof PendingEvidence));
       assert.match(error.message, /verdict UNKNOWN.*App 1861/);
+      assert.ok(error.message.startsWith(DCO_PROVIDER_UNAVAILABLE_TEXT));
+      assert.ok(error.message.includes(DCO_PROVIDER_RUNBOOK));
       assert.match(error.message, /Admission remains blocked/);
       assert.match(error.message, /No PR source change is requested/);
       return true;

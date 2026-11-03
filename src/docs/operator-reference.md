@@ -123,3 +123,5 @@ The reference is organized into the sections below. Existing links to this page 
   - [Knowledge: Context7 content caps](operator-reference/runtime-and-quota.md#knowledge-context7-content-caps)
 <a id="inference-endpoint-fallbacks"></a>
   - [Inference endpoint fallbacks](operator-reference/runtime-and-quota.md#inference-endpoint-fallbacks)
+<a id="dco-provider-unavailable-on-large-forward-merges"></a>
+- [DCO provider unavailable on large forward merges](operator-reference/dco-provider-unavailable.md)
