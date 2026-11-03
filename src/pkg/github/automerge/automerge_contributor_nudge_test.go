@@ -425,3 +425,21 @@ func TestContributorNudgeCommentRelayFailed(t *testing.T) {
 		t.Fatalf("plain queued comment = %q", body)
 	}
 }
+
+func TestTrustedHuman071NoteNeutralisesCopiedMentions(t *testing.T) {
+	n := ContributorNudge{Author: "alice", HeadSHA: "abc",
+		FailingChecks: []string{"lint @bob"},
+		ReviewAsks:    []string{"@carol asked for a test"}}
+	got := TrustedHuman071Note(n, stagelabels.NeedsAuthor, true)
+	if !strings.Contains(got, "@alice this PR is held") {
+		t.Fatalf("deliberate author mention lost: %s", got)
+	}
+	for _, live := range []string{"@bob", "@carol"} {
+		if strings.Contains(got, live) {
+			t.Fatalf("copied mention %s survived: %s", live, got)
+		}
+	}
+	if !strings.Contains(got, "`carol`") || !strings.Contains(got, "lint bob") {
+		t.Fatalf("copied logins not kept readably: %s", got)
+	}
+}

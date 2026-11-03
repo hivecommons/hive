@@ -123,6 +123,10 @@ type Episode struct {
 	// Baseline is fail-quiet recovery: history must be reconciled, not replayed.
 	Baseline    bool `json:"baseline,omitempty"`
 	QuietReopen bool `json:"quiet_reopen,omitempty"`
+	// AckedBy and SnoozedBy record who ran `/hive ack` / `/hive snooze`
+	// (see Store.Apply); reminder scheduling reads them, holds never do.
+	AckedBy   string `json:"acked_by,omitempty"`
+	SnoozedBy string `json:"snoozed_by,omitempty"`
 }
 
 func (e Episode) Marker() string {
@@ -148,13 +152,22 @@ type Delivery interface {
 }
 
 type disk struct {
-	Version  int                 `json:"version"`
-	Items    map[string]bool     `json:"items"`
-	Episodes map[string]*Episode `json:"episodes"`
+	Version int             `json:"version"`
+	Items   map[string]bool `json:"items"`
+	// ItemSeen is additive: ledgers written before it existed load with zero times.
+	ItemSeen map[string]time.Time `json:"item_seen,omitempty"`
+	Episodes map[string]*Episode  `json:"episodes"`
+}
+
+// gate serializes Reports for one item while s.mu is released.
+type gate struct {
+	mu   sync.Mutex
+	refs int
 }
 
 type Store struct {
 	mu    sync.Mutex
+	gates map[string]*gate
 	path  string
 	state disk
 	now   func() time.Time
@@ -163,7 +176,7 @@ type Store struct {
 // Open treats missing/corrupt state as recovery, never as permission to replay.
 // Unknown versions are refused rather than clobbered during rolling upgrades.
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, now: time.Now, state: disk{Version: 1, Items: map[string]bool{}, Episodes: map[string]*Episode{}}}
+	s := &Store{path: path, now: time.Now, state: disk{Version: 1, Items: map[string]bool{}, ItemSeen: map[string]time.Time{}, Episodes: map[string]*Episode{}}}
 	if path == "" {
 		return s, nil
 	}
@@ -194,6 +207,9 @@ func Open(path string) (*Store, error) {
 		if e == nil {
 			return s, nil
 		}
+	}
+	if d.ItemSeen == nil {
+		d.ItemSeen = map[string]time.Time{}
 	}
 	s.state = d
 	return s, nil
@@ -260,6 +276,7 @@ func (s *Store) prune(now time.Time, window time.Duration) {
 	for k := range s.state.Items {
 		if !live[k] {
 			delete(s.state.Items, k)
+			delete(s.state.ItemSeen, k)
 		}
 	}
 }
@@ -268,11 +285,11 @@ func (s *Store) prune(now time.Time, window time.Duration) {
 // snapshot per item consults delivery history: a condition with a prior trusted
 // attention marker is seeded as a baseline WITHOUT sending, while a condition
 // that was never paged notifies immediately, ledger loss or not.
-// Calls are serialized through the POST outcome, including concurrent producers.
+// Calls for the same item are serialized through the POST outcome, including
+// concurrent producers; s.mu is never held across a Delivery call, so slow
+// GitHub listings for one item do not block other items or Snapshot.
 // Non-admitters only record would-notify. No marker lookup grants ownership.
 func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, item int, observations []Observation, d Delivery) ([]Episode, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -289,19 +306,116 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 			return nil, errors.New("attention: incomplete, oversized or mismatched key")
 		}
 	}
+	release := s.lockItem(itemKey)
+	defer release()
+
+	s.mu.Lock()
 	now := s.now().UTC()
 	s.prune(now, cfg.Window())
 	first := !s.state.Items[itemKey]
-	historical := map[string]bool{}
+	var capErr error
 	if first {
-		if len(s.state.Items) >= MaxItems {
-			return nil, errors.New("attention: item capacity reached; refusing replay-prone eviction")
-		}
-		keys, err := d.History(ctx, repo, item)
-		if err != nil {
+		capErr = s.admitItem()
+	}
+	s.mu.Unlock()
+	if capErr != nil {
+		return nil, capErr
+	}
+	var history []string
+	if first {
+		var err error
+		if history, err = d.History(ctx, repo, item); err != nil {
 			return nil, err
 		}
-		for _, k := range keys {
+	}
+	work, err := s.record(cfg, itemKey, first, history, observations, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range work {
+		if err := s.deliver(ctx, d, o, hiveID, owner, now); err != nil {
+			return nil, err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshot(repo, item), nil
+}
+
+// lockItem serializes Reports per item without holding s.mu.
+func (s *Store) lockItem(key string) func() {
+	s.mu.Lock()
+	if s.gates == nil {
+		s.gates = map[string]*gate{}
+	}
+	g := s.gates[key]
+	if g == nil {
+		g = &gate{}
+		s.gates[key] = g
+	}
+	g.refs++
+	s.mu.Unlock()
+	g.mu.Lock()
+	return func() {
+		g.mu.Unlock()
+		s.mu.Lock()
+		if g.refs--; g.refs == 0 {
+			delete(s.gates, key)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// admitItem makes room for one new item. Only items whose episodes are all
+// resolved and reconciled are evicted, oldest-touched first; History re-seeds
+// them replay-safely. With only open items left it fails closed as before.
+// Caller holds s.mu.
+func (s *Store) admitItem() error {
+	if len(s.state.Items) < MaxItems {
+		return nil
+	}
+	open := map[string]bool{}
+	for _, e := range s.state.Episodes {
+		if e.State != Resolved || e.Uncertain {
+			open[fmt.Sprintf("%s#%d", canonical(e.Key.Repo), e.Key.Item)] = true
+		}
+	}
+	victim := ""
+	for k := range s.state.Items {
+		if open[k] || s.gates[k] != nil {
+			continue
+		}
+		if victim == "" || s.state.ItemSeen[k].Before(s.state.ItemSeen[victim]) || (s.state.ItemSeen[k].Equal(s.state.ItemSeen[victim]) && k < victim) {
+			victim = k
+		}
+	}
+	if victim == "" {
+		return errors.New("attention: item capacity reached; refusing replay-prone eviction")
+	}
+	for h, e := range s.state.Episodes {
+		if fmt.Sprintf("%s#%d", canonical(e.Key.Repo), e.Key.Item) == victim {
+			delete(s.state.Episodes, h)
+		}
+	}
+	delete(s.state.Items, victim)
+	delete(s.state.ItemSeen, victim)
+	return nil
+}
+
+// record applies the observations under s.mu and persists them, returning the
+// observations that still need delivery.
+func (s *Store) record(cfg Config, itemKey string, first bool, history []string, observations []Observation, now time.Time) ([]Observation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	historical := map[string]bool{}
+	if first {
+		// Another item may have filled the ledger while History was in flight.
+		if !s.state.Items[itemKey] {
+			if err := s.admitItem(); err != nil {
+				return nil, err
+			}
+		}
+		for _, k := range history {
 			historical[k] = true
 			if s.state.Episodes[k] == nil {
 				if len(s.state.Episodes) >= MaxEpisodes {
@@ -354,76 +468,88 @@ func (s *Store) Report(ctx context.Context, cfg Config, hiveID, repo string, ite
 		e.WouldNotify = o.Actionable && !e.QuietReopen && e.PagedAt.IsZero() && e.AckedAt.IsZero() && !now.Before(e.SnoozedUntil)
 	}
 	s.state.Items[itemKey] = true
+	s.state.ItemSeen[itemKey] = now
 	if err := s.save(); err != nil {
 		return nil, err
 	}
-	for _, o := range observations {
-		e := s.state.Episodes[o.Key.Hash()]
-		if o.Resolved && e.Uncertain && e.Attempt != "" && owner == hiveID && hiveID != "" {
-			// Reconcile an uncertain POST once its condition resolved so the episode can be pruned.
-			found, err := d.Find(ctx, *e)
-			if err != nil {
-				return nil, err
+	return observations, nil
+}
+
+// deliver runs the Find/Post step for one observation. State is read and
+// written under s.mu; the Delivery calls themselves run without it.
+func (s *Store) deliver(ctx context.Context, d Delivery, o Observation, hiveID, owner string, now time.Time) error {
+	s.mu.Lock()
+	e := s.state.Episodes[o.Key.Hash()]
+	if e == nil {
+		s.mu.Unlock()
+		return nil
+	}
+	reconcileOnly := o.Resolved && e.Uncertain && e.Attempt != "" && owner == hiveID && hiveID != ""
+	if !reconcileOnly && (!e.WouldNotify || o.Resolved || e.Baseline || owner != hiveID || hiveID == "") {
+		s.mu.Unlock()
+		return nil
+	}
+	if !reconcileOnly && e.Attempt != "" && e.AttemptOwner != hiveID {
+		// Configuration handoff must not retry a previous admitter's uncertain POST.
+		s.mu.Unlock()
+		return nil
+	}
+	needFind := reconcileOnly || e.Attempt != ""
+	if !needFind {
+		var id [16]byte
+		if _, err := rand.Read(id[:]); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		e.Attempt = hex.EncodeToString(id[:])
+		e.AttemptOwner = hiveID
+	}
+	snap := *e
+	s.mu.Unlock()
+
+	if needFind {
+		found, err := d.Find(ctx, snap)
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		if found {
+			e.PagedAt = now
+			e.PagedTo = e.Key.Recipient
+			if !reconcileOnly {
+				e.State = Notified
 			}
-			if found {
-				e.PagedAt = now
-				e.PagedTo = e.Key.Recipient
-			}
+		}
+		if found || reconcileOnly {
 			e.Uncertain = false
 			e.WouldNotify = false
-			if err = s.save(); err != nil {
-				return nil, err
-			}
-			continue
+			err := s.save()
+			s.mu.Unlock()
+			return err
 		}
-		if !e.WouldNotify || o.Resolved || e.Baseline || owner != hiveID || hiveID == "" {
-			continue
-		}
-		if e.Attempt != "" {
-			// Configuration handoff must not retry a previous admitter's uncertain POST.
-			if e.AttemptOwner != hiveID {
-				continue
-			}
-			found, err := d.Find(ctx, *e)
-			if err != nil {
-				return nil, err
-			}
-			if found {
-				e.PagedAt = now
-				e.PagedTo = e.Key.Recipient
-				e.State = Notified
-				e.Uncertain = false
-				e.WouldNotify = false
-				if err = s.save(); err != nil {
-					return nil, err
-				}
-				continue
-			}
-		} else {
-			var id [16]byte
-			if _, err := rand.Read(id[:]); err != nil {
-				return nil, err
-			}
-			e.Attempt = hex.EncodeToString(id[:])
-			e.AttemptOwner = hiveID
-		}
-		e.Uncertain = true
-		if err := s.save(); err != nil {
-			return nil, err
-		}
-		if err := d.Post(ctx, *e, o.Body+"\n\n"+e.Marker()); err != nil {
-			return nil, err
-		}
-		e.PagedAt = now
-		e.PagedTo = e.Key.Recipient
-		e.State = Notified
-		e.Uncertain = false
-		e.WouldNotify = false
-		if err := s.save(); err != nil {
-			return nil, err
-		}
+		// Not found and not reconcile-only: fall through to retry the POST
+		// with s.mu still held from above.
+	} else {
+		s.mu.Lock()
 	}
-	return s.snapshot(repo, item), nil
+	e.Uncertain = true
+	err := s.save()
+	snap = *e
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := d.Post(ctx, snap, o.Body+"\n\n"+snap.Marker()); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e.PagedAt = now
+	e.PagedTo = e.Key.Recipient
+	e.State = Notified
+	e.Uncertain = false
+	e.WouldNotify = false
+	return s.save()
 }
 
 func (s *Store) snapshot(repo string, item int) []Episode {

@@ -799,14 +799,10 @@ func bobLaunchCmdV2(binary string, sessionLabels ...string) string {
 	return cmd
 }
 
-// toolRulesToLaunchCmd builds a backend-specific CLI command from ToolsConfig.
-// effort is the configured per-agent reasoning effort; only backends with an
-// effort control consume it (see codexEffortFlag / agyLaunchEffort /
-// claudeEffortFlag).
-func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort string) string {
-	return toolRulesToLaunchCmdWithBobSession(binary, model, backend, tools, isInference, effort, "")
-}
-
+// toolRulesToLaunchCmdWithBobSession builds a backend-specific CLI command from
+// ToolsConfig. effort is the configured per-agent reasoning effort; only
+// backends with an effort control consume it (see codexEffortFlag /
+// agyLaunchEffort / claudeEffortFlag).
 func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort, bobLabel string) string {
 	denies := tools.DenyPatterns()
 
@@ -851,7 +847,7 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 	case codexBackend:
 		// Codex has no deny-tool flag, so ToolsConfig cannot be expressed
 		// here (same shape as bob above); model and reasoning effort still
-		// apply, matching backendLaunchCmd. The hub tmux path is unattended
+		// apply, matching backendLaunchCmdWithBobSession. The hub tmux path is unattended
 		// and has the pod/egress proxy as its boundary, so mirror Claude's
 		// bypass posture rather than letting Codex prompt in an unwatched pane.
 		return codexUnattendedLaunchCmd(binary) + config.ModelFlag(model) + codexEffortFlag(effort)
@@ -868,18 +864,14 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 	}
 }
 
-// backendLaunchCmd builds the per-backend CLI command used when an agent has no
-// explicit ToolsConfig. It is the default-path counterpart to
-// toolRulesToLaunchCmd and is deliberately pure — no Manager, no tmux, no
-// process — so the flag contract each backend depends on can be asserted
-// directly in tests instead of by polling a live pane for typed output.
-// effort is the configured per-agent reasoning effort; only backends with an
-// effort control consume it (see codexEffortFlag / agyLaunchEffort /
+// backendLaunchCmdWithBobSession builds the per-backend CLI command used when
+// an agent has no explicit ToolsConfig. It is the default-path counterpart to
+// toolRulesToLaunchCmdWithBobSession and is deliberately pure — no Manager, no
+// tmux, no process — so the flag contract each backend depends on can be
+// asserted directly in tests instead of by polling a live pane for typed
+// output. effort is the configured per-agent reasoning effort; only backends
+// with an effort control consume it (see codexEffortFlag / agyLaunchEffort /
 // claudeEffortFlag).
-func backendLaunchCmd(binary, model, backend string, isInference bool, effort string) string {
-	return backendLaunchCmdWithBobSession(binary, model, backend, isInference, effort, "")
-}
-
 func backendLaunchCmdWithBobSession(binary, model, backend string, isInference bool, effort, bobLabel string) string {
 	var launchCmd string
 	switch backend {

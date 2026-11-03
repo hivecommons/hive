@@ -1986,6 +1986,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	// github.notifications.shadow (hivecommons/hive#16264): would-notify
 	// instrumentation only, read live; nothing is suppressed.
 	client.SetNotificationsShadow(func() bool { return cfg.GitHub.Notifications.Shadow })
+	// github.notifications.attention_pilot (hivecommons/hive#16358): fold
+	// routine issue notes into the issue's hive:status card. Read live.
+	client.SetAttentionPilot(func() bool { return cfg.GitHub.Notifications.AttentionPilot })
 	// review.require_labels (PR approval allow-list): the relay's half of the
 	// gate, read live so a Features-tab edit applies to the next request.
 	client.SetReviewRequireLabels(func() []string { return cfg.Review.RequireLabels })
