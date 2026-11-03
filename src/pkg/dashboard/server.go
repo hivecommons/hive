@@ -3735,7 +3735,26 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
 	payload.Writeback = s.WritebackStatus()
 	payload.Hotspots = s.HotspotStatusBlock()
+	payload.Config = s.configHealthStatus()
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
+}
+
+// ConfigHealthStatus is the `config` block of /api/status: what the boot
+// found wrong with the loaded config itself, as opposed to what it says.
+type ConfigHealthStatus struct {
+	// GateRegressions lists the safety gates a previous runtime overlay
+	// carried that the running config lacks or weakens (#16438). Always a
+	// list, empty on a healthy boot, so the dashboard banner needs no
+	// presence check.
+	GateRegressions []config.GateRegression `json:"gate_regressions"`
+}
+
+func (s *Server) configHealthStatus() *ConfigHealthStatus {
+	out := &ConfigHealthStatus{GateRegressions: []config.GateRegression{}}
+	if s.deps != nil && s.deps.Config != nil && len(s.deps.Config.GateRegressions) > 0 {
+		out.GateRegressions = append(out.GateRegressions, s.deps.Config.GateRegressions...)
+	}
+	return out
 }
 
 // statusWithWebhooks adds the live webhook health block (#11177) and the
@@ -3765,6 +3784,10 @@ type statusWithWebhooks struct {
 	// concurrent PRs in the window, how many warrant a split, how many have
 	// a modularize issue filed. Absent when the advisor is not wired.
 	Hotspots *HotspotStatus `json:"hotspots,omitempty"`
+	// Config reports boot-time findings about the loaded config itself:
+	// config.gate_regressions is the safety gates a previous runtime
+	// overlay carried that this boot dropped (#16438).
+	Config *ConfigHealthStatus `json:"config,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

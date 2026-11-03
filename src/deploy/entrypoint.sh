@@ -1143,6 +1143,14 @@ PYEOF
     fi
     # Write the (merged) config as the disaster-recovery snapshot. Always
     # under the new name; the legacy file is left untouched on the PVC.
+    #
+    # Reaching this branch on a hive that USED to have a runtime config means
+    # the safety gates it carried (review.require_labels, paused_repos, …)
+    # are now whatever the seed says — usually nothing (#16438). The Go
+    # binary compares the loaded config against hive.yaml.runtime.bak and
+    # hive.yaml.dashboard at boot and WARNs per dropped gate (fatal with
+    # config.refuse_gate_regression); an operator moving the runtime config
+    # aside should name the copy hive.yaml.runtime.bak so it is found.
     cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" 2>/dev/null || true
     hive_harden_runtime_config "$HIVE_CONFIG_RUNTIME"
     echo "[entrypoint] K8s mode — ConfigMap is the seed, runtime config written to $HIVE_CONFIG_RUNTIME"

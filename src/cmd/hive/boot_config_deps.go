@@ -56,6 +56,9 @@ type bootConfigDeps struct {
 	runHub func(logger *slog.Logger, configPath string)
 	// loadConfig is config.LoadWithDashboardOverlay.
 	loadConfig func(path string) (*config.Config, error)
+	// gateRegressions compares the loaded config against the previous
+	// runtime overlays on the PVC (#16438); nil-returning in tests.
+	gateRegressions func(cfg *config.Config) []config.GateRegression
 	// fileLogger builds the rolling-file logger from the loaded config.
 	fileLogger func(cfg *config.Config) *slog.Logger
 	// hiveID loads or generates the persistent hive identity.
@@ -98,6 +101,9 @@ func defaultBootConfigDeps() bootConfigDeps {
 		clearUpgradeMarker: func() error { return os.Remove(upgradeMarkerPath) },
 		runHub:             runHub,
 		loadConfig:         config.LoadWithDashboardOverlay,
+		gateRegressions: func(cfg *config.Config) []config.GateRegression {
+			return config.DetectPriorOverlayGateRegressions(cfg, config.PriorOverlayPaths())
+		},
 		fileLogger: func(cfg *config.Config) *slog.Logger {
 			l := cfg.Governor.Logging
 			return setupLogger(l.Dir, l.MaxSizeMB, l.MaxAgeDays, l.MaxBackups, l.Compress, l.Level)
