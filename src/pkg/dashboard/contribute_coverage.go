@@ -21,14 +21,18 @@ import (
 //     FleetSnapshot uses to mark a relay stale, so a relay whose socket died
 //     silently cannot keep the resident agent idle;
 //   - it is not in a failure-streak pause: a relay whose runtime keeps dying
-//     is connected but is not doing the lane's work.
+//     is connected but is not doing the lane's work;
+//   - the operator has not suspended contributions (hub.contribute_suspended).
+//     The suspend switch refuses work to every relay while their sockets stay
+//     up, so a connected relay is then covering nothing; reporting it as
+//     coverage would turn "pause contributors" into "pause the lane".
 //
 // A relay that is busy on a task still counts — it is draining the lane,
 // which is the point. Whether the relay is ALLOWED the role (trust tier,
 // grants, the delegatable list) was settled when the hub set c.role; nothing
 // is re-derived here.
 func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.ContributorCoverage {
-	if h == nil {
+	if h == nil || h.contributionsSuspended() {
 		return nil
 	}
 	type candidate struct {
@@ -80,6 +84,14 @@ func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.Contri
 		out[role] = governor.ContributorCoverage{Contributors: list}
 	}
 	return out
+}
+
+// contributionsSuspended mirrors the task-selection gate in
+// contribute_select.go: with hub.contribute_suspended set, no relay is handed
+// work, whatever role it holds.
+func (h *ContributeWSHub) contributionsSuspended() bool {
+	return h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil &&
+		h.server.deps.Config.Hub.ContributeSuspended
 }
 
 // ContributorRoleCoverage is the eval cycle's entry point to RoleCoverage. It

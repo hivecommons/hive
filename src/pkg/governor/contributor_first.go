@@ -20,7 +20,8 @@ import (
 // paused BUDGET work to volunteers and never fires before the budget is gone.
 //
 // contributor_first inverts the order for one lane. While at least one
-// connected, non-stale, non-suspended relay is acting as the role, the
+// connected, non-stale, non-failure-paused relay is acting as the role (and
+// the operator has not suspended contributions), the
 // governor WITHHOLDS the resident agent's kicks — at exactly the gates where it
 // withholds them for an exhausted budget. The relay is the primary worker; the
 // resident agent is the fallback, and it resumes on its normal cadence once no
