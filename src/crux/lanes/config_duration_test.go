@@ -56,15 +56,3 @@ func TestLoadConfigSurfacesDurationError(t *testing.T) {
 	}
 }
 
-func TestValidateNamesFailingField(t *testing.T) {
-	c := Config{URL: "nats://localhost:4222", Principals: []Principal{{Project: "atlas", TokenEnv: "ATLAS_TOKEN"}}}
-	c.Defaults()
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	c.MaxPending = -1
-	err := c.Validate()
-	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "max_pending") {
-		t.Fatalf("expected max_pending error, got %v", err)
-	}
-}

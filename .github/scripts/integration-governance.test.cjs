@@ -79,7 +79,12 @@ test('real pinned helpers enforce each original member and reject missing signof
   const root = process.cwd(), workspace = path.join(root, '.integration-governance-fixture');
   const helper = path.join(root, '.github/scripts/integration-governance.cjs');
   const env = {...process.env, GITHUB_TOKEN: '', GH_TOKEN: '', GITHUB_REPOSITORY: '', DCO_GITHUB_REPOSITORY: ''};
-  const git = (...args) => cp.execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args],
+  // gc.auto/maintenance.auto off: a background `git gc --auto` forked by one of
+  // the fixture commits can still be writing under .git while the cleanup below
+  // removes it, and on a persistent self-hosted workspace the resulting
+  // ENOTEMPTY leaves a fixture behind that fails the next run's precondition.
+  const git = (...args) => cp.execFileSync('git',
+    ['-c', 'core.hooksPath=/dev/null', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args],
     {cwd: workspace, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
   const check = (kind, manifest, members, knownAuthor = true) => cp.execFileSync(process.execPath, ['-e',
     `const subject = ${JSON.stringify(manifest)};
@@ -141,5 +146,5 @@ test('real pinned helpers enforce each original member and reject missing signof
     const forgedSource = structuredClone(bad);
     forgedSource.preparedBy.sourceSHA = git('rev-parse', 'HEAD');
     assert.throws(() => check('dco', forgedSource, [pr]), /closure unavailable/);
-  } finally { fs.rmSync(workspace, {recursive: true, force: true}); }
+  } finally { fs.rmSync(workspace, {recursive: true, force: true, maxRetries: 10, retryDelay: 100}); }
 });
