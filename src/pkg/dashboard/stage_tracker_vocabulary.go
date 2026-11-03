@@ -115,7 +115,7 @@ func stageTrackerStagePhrase(stage stagelabels.Stage) string {
 	case stagelabels.Reviewed:
 		return "review passed · waiting for merge admission"
 	case stagelabels.Fixing:
-		return "being fixed by hive"
+		return "being remediated by hive"
 	case stagelabels.NeedsAuthor:
 		return "waiting for its author"
 	case stagelabels.ReturnedToContributor:

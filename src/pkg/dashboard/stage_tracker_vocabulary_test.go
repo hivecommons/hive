@@ -29,7 +29,7 @@ func TestStageTrackerVocabularyTable(t *testing.T) {
 		stagelabels.IssueNeedsDecision:     {trackerColumnActionable, "waiting for a human decision"},
 		stagelabels.ReviewPending:          {trackerColumnReview, "in CI / review"},
 		stagelabels.Reviewed:               {trackerColumnReview, "review passed · waiting for merge admission"},
-		stagelabels.Fixing:                 {trackerColumnReview, "being fixed by hive"},
+		stagelabels.Fixing:                 {trackerColumnReview, "being remediated by hive"},
 		stagelabels.NeedsAuthor:            {trackerColumnReview, "waiting for its author"},
 		stagelabels.ReturnedToContributor:  {trackerColumnReview, "returned to the contributor"},
 		stagelabels.AdoptedByHive:          {trackerColumnReview, "adopted by hive"},

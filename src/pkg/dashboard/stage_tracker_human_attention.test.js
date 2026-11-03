@@ -17,6 +17,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 function load() {
   const c = vm.createContext({ Date, esc,
     STAGE_TRACKER_TERMINAL: 100, STAGE_TRACKER_PR_COLUMN: 40,
+    STAGE_TRACKER_PATH: [0, 10, 20, 40, 50, 80],
     STAGE_TRACKER_LINKED_GLYPH: '↳', STAGE_TRACKER_SOFT_LINK_TIP: 'refs',
     stageTrackerAnchor: n => Number(n) || 0,
     stageTrackerAttentionTier: () => 1,

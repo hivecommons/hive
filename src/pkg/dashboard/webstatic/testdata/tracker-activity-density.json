@@ -1,0 +1,83 @@
+{
+  "source": "Screenshot 2026-11-03 at 12.01.36 PM.png",
+  "clock": "2026-11-03T17:01:36Z",
+  "provenance": "Screenshot-shaped acceptance data, not a live backend snapshot. Titles/authors/heads were read from GitHub at 17:04Z. Relationships follow the screenshot, including dashboard-only links under #16404. Stage/activity projections are deterministic test inputs; #16437 is also exercised as a PR-only view variant. Passing a fixture is not published-preview proof.",
+  "rows": [
+    {
+      "repo": "hivecommons/hive", "kind": "issue", "number": 16404, "stage": 40, "url": "https://github.com/hivecommons/hive/issues/16404",
+      "title": "[scanner] native-queue-policy cannot pass when the DCO app hits its 250-commit ceiling (forward-merge PRs)",
+      "linked_prs": [
+        {
+          "number": 16442, "stage": 85, "base_ref": "v5", "author": "thatguywob", "author_kind": "clanker", "url": "https://github.com/hivecommons/hive/pull/16442",
+          "title": "🐛 fix(ci): report unavailable DCO enumeration without weakening admission",
+          "head": "0ac19dfa36e6fbe46e50120ddced291fac3a7bdb",
+          "decision_needed": { "question": "Should this admission-workflow change land?", "blocker": "Workflow/admission policy edits need a maintainer's sign-off." },
+          "ci_activity": { "head": "0ac19dfa36e6fbe46e50120ddced291fac3a7bdb", "state": "passing", "caption": "CI passed", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" },
+          "review_activity": { "head": "0ac19dfa36e6fbe46e50120ddced291fac3a7bdb", "state": "changes_requested", "caption": "Review findings · human decision · adjudicator", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" }
+        },
+        {
+          "number": 16378, "stage": 71, "display_column": 30, "base_ref": "v6", "author": "clubanderson", "author_kind": "human", "url": "https://github.com/hivecommons/hive/pull/16378",
+          "title": "🌱 Top up v6 with the latest v5 snapshot",
+          "head": "670776c942dbed8c3e9d82cc5593599071675e67",
+          "caption": "Waiting for @clubanderson · not observed coding",
+          "reason": "CI failed: native-queue-policy; waits for a new author commit.",
+          "code_activity": { "head": "670776c942dbed8c3e9d82cc5593599071675e67", "state": "waiting_owner", "caption": "Waiting for @clubanderson · not observed coding", "source": "native-author-wait" },
+          "push": { "state": "waiting", "login": "clubanderson", "since": "2026-11-03T16:49:36Z", "next": "re-review" },
+          "rework": { "state": "pushed", "actor": "clubanderson", "since": "2026-11-03T16:49:36Z" }
+        }
+      ]
+    },
+    {
+      "repo": "hivecommons/hotshot", "kind": "issue", "number": 343, "stage": 40, "url": "https://github.com/hivecommons/hotshot/issues/343",
+      "title": "[scanner] injection-failure runbook omits injection.iterm2 events; runbook-events guard regex cannot validate them",
+      "linked_prs": [{
+        "number": 344, "stage": 60, "base_ref": "main", "author": "hivecommons-hive", "author_kind": "hive", "url": "https://github.com/hivecommons/hotshot/pull/344",
+        "title": "📖 docs: document injection.iterm2 runbook events and widen the runbook-events guard",
+        "head": "ece77aa02c477fe85875cb399decd3ecb00a2e85",
+        "push": { "state": "pushed", "login": "hivecommons-hive[bot]", "sha": "ece77aa02c477fe85875cb399decd3ecb00a2e85", "since": "2026-11-03T16:01:36Z", "next": "re-review" },
+        "ci_activity": { "head": "ece77aa02c477fe85875cb399decd3ecb00a2e85", "state": "queued", "caption": "CI queued", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" },
+        "review_activity": { "head": "ece77aa02c477fe85875cb399decd3ecb00a2e85", "state": "approved", "caption": "Review approved", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" }
+      }]
+    },
+    {
+      "repo": "hivecommons/hive", "kind": "issue", "number": 16438, "stage": 40, "url": "https://github.com/hivecommons/hive/issues/16438",
+      "title": "Boot from ConfigMap seed silently drops safety gates present in the prior runtime overlay",
+      "linked_prs": [
+        {
+          "number": 16446, "stage": 72, "display_column": 30, "base_ref": "v5", "author": "thatguywob", "author_kind": "clanker", "url": "https://github.com/hivecommons/hive/pull/16446",
+          "title": "🐛 fix: warn before boot recovery drops safety gates",
+          "head": "96d5ad5db1cf6989f118d78e60738d233f97b509",
+          "caption": "Waiting for @thatguywob · not observed coding",
+          "code_activity": { "head": "96d5ad5db1cf6989f118d78e60738d233f97b509", "state": "waiting_owner", "caption": "Waiting for @thatguywob · not observed coding", "source": "native-author-wait" },
+          "push": { "state": "waiting", "login": "thatguywob", "since": "2026-11-03T16:55:36Z", "next": "re-review" },
+          "rework": { "state": "acknowledged", "actor": "thatguywob", "since": "2026-11-03T16:55:36Z" },
+          "ci_activity": { "head": "96d5ad5db1cf6989f118d78e60738d233f97b509", "state": "failing", "caption": "CI failing · test", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" },
+          "review_activity": { "head": "96d5ad5db1cf6989f118d78e60738d233f97b509", "state": "queued", "caption": "Review queued · unassigned", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" }
+        },
+        {
+          "number": 16449, "stage": 71, "display_column": 30, "base_ref": "v5", "author": "clubanderson", "author_kind": "human", "url": "https://github.com/hivecommons/hive/pull/16449",
+          "title": "🐛 fix(config): warn, report and optionally refuse when a seed boot drops a safety gate the previous runtime overlay carried",
+          "head": "3b4c78cad27083e1e39b8e08460485d78102fdf4",
+          "caption": "Waiting for @clubanderson · not observed coding",
+          "reason": "CI failed: build-and-test; waits for a new author commit.",
+          "code_activity": { "head": "3b4c78cad27083e1e39b8e08460485d78102fdf4", "state": "waiting_owner", "caption": "Waiting for @clubanderson · not observed coding", "source": "native-author-wait" },
+          "push": { "state": "waiting", "login": "clubanderson", "since": "2026-11-03T16:57:36Z", "next": "re-review" },
+          "rework": { "state": "requested", "actor": "clubanderson", "since": "2026-11-03T16:57:36Z" },
+          "ci_activity": { "head": "3b4c78cad27083e1e39b8e08460485d78102fdf4", "state": "failing", "caption": "CI failing · golangci-lint", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" },
+          "review_activity": { "head": "3b4c78cad27083e1e39b8e08460485d78102fdf4", "state": "queued", "caption": "Review queued · unassigned", "observed_at": "2026-11-03T17:01:36Z", "source": "acceptance-fixture" }
+        }
+      ]
+    },
+    {
+      "repo": "hivecommons/hive", "kind": "issue", "number": 16420, "stage": 20, "url": "https://github.com/hivecommons/hive/issues/16420",
+      "title": "[v6] 🐛 standby tile counts an item for a lane that dispatch then refuses (lane split mismatch)",
+      "operator_action_count": 1
+    },
+    {
+      "repo": "hivecommons/hive", "kind": "pr", "number": 16437, "stage": 90, "base_ref": "v6", "url": "https://github.com/hivecommons/hive/pull/16437",
+      "title": "📖 docs: complete standby readiness prerequisites", "author": "thatguywob", "author_kind": "clanker",
+      "head": "13b859a8d5e8e434d6f708c75321265241493ac6",
+      "manual_merge": true, "human_merge_reason_text": "untrusted author"
+    }
+  ]
+}

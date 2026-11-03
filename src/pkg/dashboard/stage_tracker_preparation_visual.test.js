@@ -21,6 +21,7 @@ function load() {
   const ctx = vm.createContext({
     console, Date, esc, document: { getElementById: id => elements.get(id) || null },
     STAGE_TRACKER_TERMINAL: 100, STAGE_TRACKER_PR_COLUMN: 40,
+    STAGE_TRACKER_PATH: [0, 10, 20, 40, 50, 80],
     STAGE_TRACKER_LINKED_GLYPH: '<span class="ham-linked-ico">↳</span>',
     STAGE_TRACKER_SOFT_LINK_TIP: 'soft link',
     stageTrackerAnchor: stage => Number(stage) || 0,

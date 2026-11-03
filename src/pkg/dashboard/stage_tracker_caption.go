@@ -754,6 +754,8 @@ func joinClause(head, clause string) string {
 	return head + " — " + clause
 }
 
+const stageTrackerRemediationNeededCaption = "CI failed or review changes requested; remediation needed"
+
 // stageTrackerCaption builds the human sentence and the actor for an item.
 func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int, head string) (caption, actor string) {
 	clause := humanizeStageReason(reason)
@@ -798,7 +800,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.Reviewed:
 		return joinClause("Review passed; waiting for merge admission", clause), "CI"
 	case stagelabels.Fixing:
-		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
+		return joinClause(stageTrackerRemediationNeededCaption, clause), "hive"
 	case stagelabels.NeedsAuthor:
 		return joinClause("Needs "+who, clause) + " — " + who + " must act", strings.TrimPrefix(who, "@")
 	case stagelabels.ReturnedToContributor:

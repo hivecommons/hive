@@ -19,7 +19,8 @@
       if (!d || d.effect !== 'pending' || !d.text) return null;
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       const sep = String(d.text).indexOf(' · ');
-      const word = sep > 0 ? d.text.slice(0, sep) : (d.word || d.text);
+      const rawWord = sep > 0 ? d.text.slice(0, sep) : (d.word || d.text);
+      const word = rawWord === 'Fixing' ? 'Remediating' : rawWord;
       let detail = sep > 0 ? d.text.slice(sep + 3) : '';
       const until = d.next_at ? Date.parse(d.next_at) : 0;
       if (until > nowMs) detail += (detail ? ' · ' : '') + 'in ' + stageTrackerShortLeft(until - nowMs);
