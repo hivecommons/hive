@@ -201,7 +201,7 @@ func TestWriteStatusSectionOwnsOnlyThisAppLogin(t *testing.T) {
 			}}
 			clock := &contributorLaneClock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}
 			e, _ := quietStageEngine(t, api, clock)
-			created, err := e.writeStatusSection(context.Background(), "acme", "widget", 7, prstatus.KeyStageStalled, "new")
+			created, err := e.writeStatusSectionWith(context.Background(), "acme", "widget", 7, prstatus.KeyStageStalled, "new", prstatus.Write)
 			if err != nil {
 				t.Fatal(err)
 			}
