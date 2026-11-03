@@ -509,6 +509,8 @@ func TestMergeRequestWatcher_MergeQueueRequiredIsTerminal(t *testing.T) {
 	c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var reEngaged int
 	c.SetMergeReEngageHook(func(string, int) bool { reEngaged++; return true })
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
 
 	dir := t.TempDir()
 	mergeRequestDirForTest = dir
@@ -526,6 +528,10 @@ func TestMergeRequestWatcher_MergeQueueRequiredIsTerminal(t *testing.T) {
 	resp := readMergeResult(t, reqPath)
 	if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, mergeQueueRequiredReason) {
 		t.Fatalf("result = %+v, want a failed attempt 1 carrying %q", resp, mergeQueueRequiredReason)
+	}
+
+	if len(sink.adds) != 1 || !strings.Contains(sink.adds[0].message, "merge queue") {
+		t.Fatalf("merge-queue-required quarantine must raise one operator alert, got %+v", sink.adds)
 	}
 
 	again, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 74, ExpectSHA: "abc", Agent: "scanner"})

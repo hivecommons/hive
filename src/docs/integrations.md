@@ -1,7 +1,7 @@
 # Integrations
 
 What Hive works with today, and what is planned. One row per integration.
-Each row links the doc that explains it. Planned rows link the tracking issue.
+Each row links the doc that explains it. Planned and In progress rows link the tracking issue, or the page that leads to it.
 
 Status key:
 
