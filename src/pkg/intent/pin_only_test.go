@@ -122,12 +122,13 @@ func TestPinReplacementNarrowGrammar(t *testing.T) {
 func TestClassifyPinOnlyActionsReturnsAcceptedPins(t *testing.T) {
 	sha := func(c string) string { return strings.Repeat(c, 40) }
 	spec := PinOnlySpec{Paths: []string{".github/workflows/*.yml", "Containerfile"}, Kinds: []string{"action-sha", "image-digest"}}
-	workflow := ChangedFile{Filename: ".github/workflows/build.yml", Status: "modified", Additions: 3, Deletions: 3, Patch: "@@ -1,4 +1,4 @@\n" +
+	workflow := ChangedFile{Filename: ".github/workflows/build.yml", Status: "modified", Additions: 3, Deletions: 3, Patch: "@@ -1,5 +1,5 @@\n" +
 		"-  - uses: actions/checkout@" + sha("a") + " # v4\n" +
 		"+  - uses: actions/checkout@" + strings.ToUpper(sha("b")) + " # v4.2.1\n" +
 		" context\n" +
 		"-    uses: github/codeql-action/init@" + sha("c") + "\n" +
 		"+    uses: github/codeql-action/init@" + sha("d") + "\n" +
+		" more context\n" +
 		"-  - uses: actions/checkout@" + sha("a") + " # v4\n" +
 		"+  - uses: actions/checkout@" + sha("b") + " # v4.2.1"}
 	image := ChangedFile{Filename: "Containerfile", Status: "modified", Additions: 1, Deletions: 1,
