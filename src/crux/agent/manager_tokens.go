@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/internal/textutil"
 )
 
 // AppTokenMinter and AgentMintIssuer are the host-provided credential
@@ -900,13 +901,7 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 	}
 }
 
-func truncateStr(s string, maxRunes int) string {
-	runes := []rune(s)
-	if len(runes) <= maxRunes {
-		return s
-	}
-	return string(runes[:maxRunes]) + "..."
-}
+func truncateStr(s string, maxRunes int) string { return textutil.Head(s, maxRunes) }
 
 // mintAgentTokenUnlocked mints the per-agent tier-scoped GitHub App token
 // (WriteAgentToken) and the opt-in short-lived mint token for the agent. It is
