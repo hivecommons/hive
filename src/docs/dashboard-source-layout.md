@@ -67,9 +67,19 @@ focuses decision actions without scrolling, which would otherwise close the
 dialog through its scroll-away listener. Control probes await a bounded stable
 scroll/visual viewport before every mandatory hit-test; native pointer/keyboard
 reports also retain each decision action's bounds and actual hit target.
-Fixture transitions close the preceding terminal/export dialog through its
-native close API, releasing its captured keyboard listener instead of leaving
-an unrelated modal over the activity controls. Native pointer preconditions
+Before any state probes or screenshots, bounded render readiness waits for
+the actual body/root opacity and visibility and two stable layout frames.
+It never forces styles or treats a fixed sleep as proof: the file-page cannot
+receive the status refresh that normally reveals the body before its boot
+fallback. Each viewport/theme report records page readiness; viewport captures
+also record their own readiness. A real timeout remains a capture failure,
+including when animation frames never arrive.
+Fixture transitions use the existing native overlay dismissal policy for all
+three legacy modal producers: Settings, Knowledge Sources, and terminal/export.
+Cleanup is bounded, waits for the production modal observer, and rejects any
+remaining fixture modal or root/body scroll lock. It does not delete modal DOM,
+hide overlays manually, or remove scroll-lock classes to manufacture a pass.
+Each activity report records cleanup evidence. Native pointer preconditions
 also hit-test the trigger itself. Viewport captures explicitly target the
 current document scroll rectangle; density and pointer/keyboard reports inspect
 their actual PNG pixels, excluding scrollbars, and fail a uniform-background

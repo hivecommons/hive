@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+const { pathToFileURL } = require('node:url');
 
 const root = path.join(__dirname, 'static-src', 'js');
 const strip = fs.readFileSync(path.join(root, 'tracker-row-strip.js'), 'utf8');
@@ -277,8 +279,10 @@ test('canonical activity browser wiring is retained (not browser/visual proof)',
   assert.match(harness, /failures\.push\(\.\.\.pointerCapture\.failures\)/);
   assert.match(harness, /failures\.push\(\.\.\.keyboardCapture\.failures\)/);
   assert.match(harness, /if \(!point\.triggerReachable\) failures\.push/);
-  assert.match(harness, /document\.querySelectorAll\('\.hive-dialog-overlay'\)[\s\S]*?el\.hiveDialogClose\(\)/);
-  assert.match(harness, /Prior fixture dialog survived native cleanup/);
+  assert.match(harness, /resetDashboardFixtureOverlays\.toString\(\)/);
+  assert.match(harness, /const pageReadiness = await renderReady\(\)/);
+  assert.match(harness, /const readiness = await renderReady\(\)/);
+  assert.match(harness, /provenance, pageReadiness, fixtureCleanup, fixture, results/);
   assert.match(harness, /screenshot\(prefix \+ '-decision-pointer\.png', true\)/);
   assert.match(harness, /screenshot\(prefix \+ '-decision-keyboard\.png', true\)/);
   assert.match(harness, /every native decision action must be reachable and unobscured/);
@@ -295,6 +299,130 @@ test('canonical activity browser wiring is retained (not browser/visual proof)',
   assert.match(fixture, /stageTrackerWireRowActions\(panel\)/);
   assert.match(fixture, /fix-dispatch\+successful-edit\+verified-git-worktree/);
   assert.match(fixture, /__activityDensityCleanup/);
+});
+
+function simulatedBrowser() {
+  let time = 0, sequence = 0, locked = false;
+  const frames = new Map(), timers = new Map(), overlays = [];
+  const style = { opacity: '0', visibility: 'visible', display: 'block' };
+  const classList = { contains: name => name === 'modal-open' && locked };
+  const body = { classList, getBoundingClientRect: () => ({ width: 1440, height: 2000 }) };
+  const context = {
+    document: { body, documentElement: { classList }, readyState: 'complete',
+      visibilityState: 'visible', querySelectorAll: () => overlays },
+    getComputedStyle: node => node === body ? style : { opacity: '1', visibility: 'visible', display: 'block' },
+    performance: { now: () => time },
+    requestAnimationFrame: callback => { const id = ++sequence; frames.set(id, callback); return id; },
+    cancelAnimationFrame: id => frames.delete(id),
+    setTimeout: callback => { const id = ++sequence; timers.set(id, callback); return id; },
+    clearTimeout: id => timers.delete(id),
+    hiveOverlayIsOpen: overlay => overlay.open,
+    hiveDismissTopOverlay: () => {
+      const overlay = overlays.find(candidate => candidate.open);
+      if (!overlay) return false;
+      overlay.open = false;
+      return true;
+    },
+  };
+  return { context, style, overlays, frames, timers,
+    lock(value) { locked = value; },
+    frame() {
+      time += 16;
+      const callbacks = [...frames.values()]; frames.clear();
+      callbacks.forEach(callback => callback(time));
+    },
+    expire() {
+      time += 10000;
+      const callbacks = [...timers.values()]; timers.clear();
+      callbacks.forEach(callback => callback());
+    },
+  };
+}
+
+test('canonical paint readiness waits for real opacity and stable frames without changing page styles', async () => {
+  const helpers = await import(pathToFileURL(path.join(__dirname, '../../scripts/fixtures/dashboard-browser-readiness.mjs')).href);
+  assert.throws(() => helpers.waitForDashboardPaint(), /dedicated preview/);
+  const browser = simulatedBrowser();
+  const ready = vm.runInNewContext('(' + helpers.waitForDashboardPaint.toString() + ')', browser.context);
+  const pending = ready({ dedicatedPreview: true });
+  browser.frame();
+  assert.equal(browser.frames.size, 1, 'body opacity zero cannot pass');
+  browser.style.opacity = '0.5';
+  browser.frame();
+  assert.equal(browser.frames.size, 1, 'the boot fade-in must finish, not merely start');
+  browser.style.opacity = '1';
+  browser.frame();
+  assert.equal(browser.frames.size, 1, 'one visible frame cannot pass');
+  browser.style.visibility = 'hidden';
+  browser.frame();
+  browser.style.visibility = 'visible';
+  browser.frame();
+  assert.equal(browser.frames.size, 1, 'hidden frames reset consecutive readiness');
+  browser.frame();
+  const result = await pending;
+  assert.equal(result.ready, true);
+  assert.equal(result.stableFrames, 2);
+  assert.equal(result.state.opacity, '1');
+  assert.equal(browser.frames.size, 0);
+  assert.equal(browser.timers.size, 0);
+  assert.equal(browser.context.document.body.style, undefined, 'readiness never forces body styles');
+});
+
+test('render readiness has a real deadline even when animation frames never arrive', async () => {
+  const helpers = await import(pathToFileURL(path.join(__dirname, '../../scripts/fixtures/dashboard-browser-readiness.mjs')).href);
+  for (const sample of [false, true]) {
+    const browser = simulatedBrowser();
+    const ready = vm.runInNewContext('(' + helpers.waitForDashboardPaint.toString() + ')', browser.context);
+    const pending = ready({ dedicatedPreview: true });
+    if (sample) browser.frame();
+    browser.expire();
+    await assert.rejects(pending, error => /render readiness timed out/.test(error.message) &&
+      (!sample || /"opacity":"0"/.test(error.message)));
+    assert.equal(browser.frames.size, 0, 'timeout cancels a pending animation frame');
+    assert.equal(browser.timers.size, 0);
+    assert.equal(browser.style.opacity, '0', 'timeout must not turn invisible content into a pass');
+  }
+});
+
+test('native fixture reset closes every legacy modal and waits for the production scroll-lock observer', async () => {
+  const helpers = await import(pathToFileURL(path.join(__dirname, '../../scripts/fixtures/dashboard-browser-readiness.mjs')).href);
+  await assert.rejects(helpers.resetDashboardFixtureOverlays(), /dedicated preview/);
+  const browser = simulatedBrowser();
+  browser.overlays.push({ id: 'terminal-export', open: true }, { id: 'kb-modal-overlay', open: true }, { id: 'config-overlay', open: true });
+  browser.lock(true);
+  const reset = vm.runInNewContext('(' + helpers.resetDashboardFixtureOverlays.toString() + ')', browser.context);
+  const pending = reset({ dedicatedPreview: true });
+  assert.ok(browser.overlays.every(overlay => !overlay.open), 'all three legacy producers use native dismissal');
+  browser.lock(false);
+  browser.frame();
+  const result = await pending;
+  assert.equal(result.dismissals, 3);
+  assert.equal(result.remaining.length, 0);
+  assert.equal(result.scrollLocked, false);
+  assert.equal(browser.timers.size, 0);
+  const source = helpers.resetDashboardFixtureOverlays.toString();
+  assert.doesNotMatch(source, /\.remove\(|classList\.(?:add|remove)|style\.\w+\s*=/, 'no raw modal deletion, hiding, or manual scroll-lock override');
+});
+
+test('native cleanup rejects undispatched overlays, stuck dismissal loops, scroll locks and stalled observer frames', async () => {
+  const helpers = await import(pathToFileURL(path.join(__dirname, '../../scripts/fixtures/dashboard-browser-readiness.mjs')).href);
+  for (const failure of ['overlay', 'bound', 'lock', 'frame']) {
+    const browser = simulatedBrowser();
+    let calls = 0;
+    browser.context.hiveDismissTopOverlay = () => { calls++; return failure === 'bound'; };
+    if (failure === 'overlay') browser.overlays.push({ id: 'kb-modal-overlay', open: true });
+    if (failure === 'lock') browser.lock(true);
+    const reset = vm.runInNewContext('(' + helpers.resetDashboardFixtureOverlays.toString() + ')', browser.context);
+    const pending = reset({ dedicatedPreview: true, maxDismissals: 3 });
+    if (failure === 'frame') browser.expire(); else browser.frame();
+    await assert.rejects(pending, error => {
+      const expected = { overlay: 'kb-modal-overlay', bound: 'dismissal bound', lock: '"scrollLocked":true', frame: 'observer did not settle' };
+      return error.message.includes(expected[failure]);
+    });
+    assert.ok(calls <= 3, 'native cleanup is bounded');
+    assert.equal(browser.frames.size, 0);
+    assert.equal(browser.timers.size, 0);
+  }
 });
 
 test('browser probes require a dedicated preview and cannot count offscreen header controls as success', async () => {
