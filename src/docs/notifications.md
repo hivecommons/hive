@@ -526,7 +526,11 @@ issue gets the same card, written through the same single status writer
   creating the card when the issue has none, otherwise one explicit
   comment tagged `<!-- hive:attention cause=<cause> -->`. A later pass that
   sees the tag only refreshes the card; a new cause gets its own single
-  announcement.
+  announcement. The explicit comment consults the write-back gate like
+  every other unsolicited comment; a refusal is returned to the caller as
+  `writeback.ErrSuppressed` before anything is written (no comment, no tag
+  on the card), so the action is not reported as announced and the next
+  pass retries once the policy admits it.
 - **Not folded:** the blocked sweep's re-target note (`<!-- hive:blocked-on … -->`)
   stays a comment, because the sweep reads the *newest* blocked-on marker
   by comment order and a section in an older card would not be newest.

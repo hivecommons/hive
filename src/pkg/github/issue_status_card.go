@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/prstatus"
@@ -59,6 +60,11 @@ func (c *Client) PostIssueNote(ctx context.Context, repo string, number int, key
 // prstatus.IssueAttentionMarker(cause) — a card edit alone would reach
 // nobody. A cause already announced is only refreshed on the card. Reports
 // whether a new comment was created.
+//
+// The explicit comment consults the write-back gate. A refusal is returned
+// as an error wrapping writeback.ErrSuppressed before anything is written:
+// the card carries no marker, so the caller does not treat the action as
+// announced and the next pass retries once the policy admits it.
 func (c *Client) PostIssueAttention(ctx context.Context, repo string, number int, cause, body string, legacy func(context.Context) error) (bool, error) {
 	if c == nil {
 		return false, ErrNoGitHubClient
@@ -85,8 +91,12 @@ func (c *Client) PostIssueAttention(ctx context.Context, repo string, number int
 	posted := false
 	// The explicit comment goes first: if the card edit then fails, the
 	// next pass finds the marker and only retries the edit, never a second
-	// announcement.
-	if !announced && cardExists && c.issueAttentionAllowed(ctx, owner, name, number, repo, body) {
+	// announcement. A gate refusal returns before any write so the marker
+	// is never recorded for an announcement that did not happen.
+	if !announced && cardExists {
+		if err := c.issueAttentionAllowed(ctx, owner, name, number, repo, body); err != nil {
+			return false, err
+		}
 		if err := c.CreateIssueComment(WithNotificationSubject(ctx, prstatus.KeyIssueAttentionPrefix+cause), repo, number, marker+"\n"+body); err != nil { // writeback:gated — issueAttentionAllowed consulted the gate above
 			return false, err
 		}
@@ -100,12 +110,16 @@ func (c *Client) PostIssueAttention(ctx context.Context, repo string, number int
 }
 
 // issueAttentionAllowed consults the write-back gate for the explicit
-// attention comment on an issue. A failed issue read refuses the comment; the
-// next pass retries it.
-func (c *Client) issueAttentionAllowed(ctx context.Context, owner, name string, number int, repo, body string) bool {
+// attention comment on an issue. A refusal is an error wrapping
+// writeback.ErrSuppressed; a failed issue read is returned as is. Either
+// way the caller writes nothing and retries on its next pass.
+func (c *Client) issueAttentionAllowed(ctx context.Context, owner, name string, number int, repo, body string) error {
 	issue, _, _, err := c.getIssueWithBlockedCount(ctx, owner, name, number)
-	if err != nil || issue == nil {
-		return false
+	if err != nil {
+		return fmt.Errorf("issue attention %s#%d: reading issue: %w", repo, number, err)
+	}
+	if issue == nil {
+		return fmt.Errorf("issue attention %s#%d: reading issue: empty response", repo, number)
 	}
 	item := writeback.Item{
 		Number:       number,
@@ -116,5 +130,8 @@ func (c *Client) issueAttentionAllowed(ctx context.Context, owner, name string, 
 	for _, l := range issue.Labels {
 		item.Labels = append(item.Labels, l.GetName())
 	}
-	return c.WritebackAllowed(repo, item, writeback.KindNeedsDecisionComment, body).Allowed
+	if d := c.WritebackAllowed(repo, item, writeback.KindNeedsDecisionComment, body); !d.Allowed {
+		return fmt.Errorf("issue attention %s#%d: %w: %s", repo, number, writeback.ErrSuppressed, d.Reason)
+	}
+	return nil
 }

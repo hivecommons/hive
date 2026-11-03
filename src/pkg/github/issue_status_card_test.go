@@ -3,12 +3,14 @@ package github
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // github.notifications.attention_pilot off (the default, and nothing wired):
@@ -188,5 +190,50 @@ func TestIssueStatusCardAttentionCreatesCardOnce(t *testing.T) {
 	body, _ := s.comments[0]["body"].(string)
 	if !prstatus.IsStatusComment(body) || !strings.Contains(body, prstatus.IssueAttentionMarker("confirm-9")) {
 		t.Fatalf("card = %q", body)
+	}
+}
+
+// When the write-back gate refuses the explicit attention comment, the
+// refusal surfaces as writeback.ErrSuppressed before anything is written:
+// no comment, no marker on the card, so the caller does not report the
+// action as announced. Once the policy admits the write, the next pass
+// posts the one announcement.
+func TestIssueStatusCardAttentionGateRefusalRetries(t *testing.T) {
+	ctx := context.Background()
+	s := &statusCommentServer{}
+	c := testClient(t, s.start(t).URL)
+	c.SetAttentionPilot(func() bool { return true })
+	noLegacy := func(context.Context) error {
+		t.Error("legacy write ran with the attention pilot on")
+		return nil
+	}
+	if _, err := c.PostIssueNote(ctx, "o/r", 5, prstatus.KeyIssuePRLink, "covered by #9", noLegacy); err != nil {
+		t.Fatal(err)
+	}
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{RepoPause: func(string) (writeback.RepoPauseInfo, bool) {
+		return writeback.RepoPauseInfo{By: "op", Reason: "paused"}, true
+	}}, ""))
+	posted, err := c.PostIssueAttention(ctx, "o/r", 5, "confirm-9", "confirm #9", noLegacy)
+	if posted || !errors.Is(err, writeback.ErrSuppressed) {
+		t.Fatalf("refused attention: posted=%v err=%v, want ErrSuppressed", posted, err)
+	}
+	if s.creates != 1 || s.edits != 0 {
+		t.Fatalf("creates=%d edits=%d after refusal, want nothing written", s.creates, s.edits)
+	}
+	card, _ := s.comments[0]["body"].(string)
+	if strings.Contains(card, prstatus.IssueAttentionMarker("confirm-9")) {
+		t.Fatalf("refused announcement left its marker on the card: %q", card)
+	}
+
+	c.SetWritebackGate(nil)
+	posted, err = c.PostIssueAttention(ctx, "o/r", 5, "confirm-9", "confirm #9", noLegacy)
+	if err != nil || !posted {
+		t.Fatalf("admitted attention: posted=%v err=%v", posted, err)
+	}
+	if s.creates != 2 {
+		t.Fatalf("creates=%d, want the card plus one attention comment", s.creates)
+	}
+	if posted, err := c.PostIssueAttention(ctx, "o/r", 5, "confirm-9", "confirm #9", noLegacy); err != nil || posted || s.creates != 2 {
+		t.Fatalf("repeat: posted=%v err=%v creates=%d", posted, err, s.creates)
 	}
 }

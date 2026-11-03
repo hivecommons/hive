@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +19,9 @@ import (
 
 // statusCommentServer is a GitHub stand-in that keeps issue comments: POST
 // appends, PATCH rewrites, GET lists. It counts creates and edits so a test
-// can prove the second write edited in place instead of posting again.
+// can prove the second write edited in place instead of posting again. GET
+// of the issue itself answers with a plain open issue by a human, so a
+// writer that consults the write-back gate can build its item.
 type statusCommentServer struct {
 	mu       sync.Mutex
 	comments []map[string]any
@@ -26,6 +30,8 @@ type statusCommentServer struct {
 	deletes  []string
 }
 
+var issuePathRe = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/(\d+)$`)
+
 func (s *statusCommentServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +39,9 @@ func (s *statusCommentServer) start(t *testing.T) *httptest.Server {
 		defer s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && issuePathRe.MatchString(r.URL.Path):
+			n, _ := strconv.Atoi(issuePathRe.FindStringSubmatch(r.URL.Path)[1])
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "user": map[string]any{"login": "alice", "type": "User"}, "labels": []any{}})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
 			_ = json.NewEncoder(w).Encode(s.comments)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
