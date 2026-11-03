@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -89,6 +90,11 @@ func TestClaimHooks_RelaunchReleasePostsReleaseMarker(t *testing.T) {
 		_, _ = w.Write([]byte(`{"number":7,"labels":[{"name":"stage/020-claimed"},{"name":"hive/claimed-by-scanner"}]}`))
 	})
 	mux.HandleFunc("/repos/acme/widgets/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// The claim ledger looks for its comment before writing.
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		comments = append(comments, string(body))
@@ -123,5 +129,103 @@ func TestClaimHooks_RelaunchReleasePostsReleaseMarker(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "hive:release who=scanner kind=agent reason=holding_agent_relaunched at=") {
 		t.Fatalf("release comment:\n%s", got[0])
+	}
+}
+
+// With the claim ledger on (the default), an issue's claim, release and
+// re-claim are one comment: the first claim creates it, every later
+// transition PATCHes it, and the body always carries exactly one machine
+// marker — the current state — above the history (hivecommons/hive#16433).
+// With the ledger off, each transition is its own comment as before.
+func TestClaimHooks_ClaimLedgerEditsOneCommentPerIssue(t *testing.T) {
+	for _, ledgerOn := range []bool{true, false} {
+		name := "ledger"
+		if !ledgerOn {
+			name = "legacy"
+		}
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var posted, edited []string
+			var existing []byte
+			mux := http.NewServeMux()
+			mux.HandleFunc("/repos/acme/widgets/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				if r.Method == http.MethodGet {
+					if existing == nil {
+						_, _ = w.Write([]byte(`[]`))
+						return
+					}
+					_, _ = w.Write([]byte(`[{"id":41,"body":` + string(existing) + `,"user":{"login":"hive[bot]"}}]`))
+					return
+				}
+				var body struct {
+					Body string `json:"body"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				posted = append(posted, body.Body)
+				existing, _ = json.Marshal(body.Body)
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":41}`))
+			})
+			mux.HandleFunc("/repos/acme/widgets/issues/comments/41", func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Body string `json:"body"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				mu.Lock()
+				edited = append(edited, body.Body)
+				existing, _ = json.Marshal(body.Body)
+				mu.Unlock()
+				_, _ = w.Write([]byte(`{"id":41}`))
+			})
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			gh.SetAppBotLogin("hive[bot]")
+			cfg := &config.Config{}
+			cfg.Governor.Claims.Label = boolPtr(false)
+			cfg.Governor.Claims.Comment = boolPtr(true)
+			cfg.GitHub.Notifications.ClaimLedger = boolPtr(ledgerOn)
+			hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
+			at := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+			claim := claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "scanner", HolderID: "scanner", Kind: claims.KindAgent, ClaimedAt: at, ExpiresAt: at.Add(time.Hour)}
+
+			hooks.OnClaimed(claim, claims.OutcomeClaimed)
+			hooks.OnReleased(claim, claims.ReasonHolderRelaunched)
+			claim.ClaimedAt = at.Add(2 * time.Minute)
+			hooks.OnClaimed(claim, claims.OutcomeClaimed)
+			wantPosted, wantEdited := 1, 2
+			if !ledgerOn {
+				wantPosted, wantEdited = 3, 0
+			}
+			testutil.Eventually(t, 5*time.Second, func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(posted) == wantPosted && len(edited) == wantEdited
+			}, "claim transitions never settled")
+			mu.Lock()
+			defer mu.Unlock()
+			if len(posted) != wantPosted || len(edited) != wantEdited {
+				t.Fatalf("posted=%d edited=%d, want %d/%d", len(posted), len(edited), wantPosted, wantEdited)
+			}
+			if !ledgerOn {
+				return
+			}
+			if !strings.HasPrefix(posted[0], claims.LedgerMarker) || !strings.Contains(posted[0], "<!-- hive:claim who=scanner kind=agent") {
+				t.Fatalf("first claim must create the ledger with the claim marker:\n%s", posted[0])
+			}
+			if !strings.Contains(edited[0], "hive:release who=scanner kind=agent reason=holding_agent_relaunched at=") || strings.Contains(edited[0], "<!-- hive:claim ") {
+				t.Fatalf("release must rewrite the ledger to carry only the release marker:\n%s", edited[0])
+			}
+			final := edited[1]
+			if strings.Count(final, "<!-- hive:claim ")+strings.Count(final, "<!-- hive:release ") != 1 || !strings.Contains(final, "<!-- hive:claim who=scanner kind=agent") {
+				t.Fatalf("re-claim must leave exactly one machine marker, the claim:\n%s", final)
+			}
+			if history := claims.ParseLedgerHistory(final); len(history) != 3 || !strings.Contains(history[1], "released by `scanner`") {
+				t.Fatalf("history = %q", history)
+			}
+		})
 	}
 }
