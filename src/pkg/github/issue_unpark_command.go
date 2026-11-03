@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // issueParkingLabels are the labels that park an issue on a person and so
@@ -47,7 +48,8 @@ const maintainerCommandsDocURL = "https://github.com/hivecommons/hive/blob/v5/sr
 const unparkCommandPrefix = "/hive"
 
 // unparkNoticeMarker tags the "What to reply" comment the hive keeps on every
-// parked issue, so it is edited in place rather than duplicated per cycle.
+// parked issue. There is one per issue, kept as the newest comment
+// (ensureUnparkNoticeComment).
 const unparkNoticeMarker = "<!-- hive:unpark-notice:9879 -->"
 
 // unparkReplyMarkerPrefix tags the hive's answer to one specific comment. The
@@ -519,7 +521,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		c.rememberIssueOwnerStep(displayRepo, number, menu.releaseStep)
 	}
 	if !labelDriven {
-		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), issue.GetUser(), comments, releasePolicy.enabled); err != nil {
+		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, issue, comments, releasePolicy.enabled); err != nil {
 			return false, err
 		}
 	}
@@ -1430,7 +1432,7 @@ func renderUnparkHelpFor(menu unparkMenu) string {
 }
 
 func renderUnparkHelpForPolicy(menu unparkMenu, releaseOnApprove bool) string {
-	return "**Maintainer commands**\n" + menu.sourceLine() + menu.bulletsFor(releaseOnApprove) + "\n" + maintainerCommandReference()
+	return menu.unparkReplyBox("**Maintainer commands**", releaseOnApprove) + "\n" + maintainerCommandReference()
 }
 
 // unparkNoticeBody is the "What to reply" comment kept on every parked issue.
@@ -1444,7 +1446,7 @@ func renderUnparkNotice(menu unparkMenu) string {
 }
 
 func renderUnparkNoticeForPolicy(menu unparkMenu, releaseOnApprove bool) string {
-	return unparkNoticeMarker + "\n**What to reply**\n" + menu.sourceLine() + menu.bulletsFor(releaseOnApprove) +
+	return unparkNoticeMarker + "\n" + menu.unparkReplyBox("**What to reply**", releaseOnApprove) +
 		"\nIf what this issue waited on has been done (a merged fix, or an action taken outside this repository), a maintainer can reply `/fixed` to close it as completed; Hive clears its park labels.\n\n" +
 		fmt.Sprintf("_Only a maintainer with write access can un-park; everything else is ignored. Full command reference: %s._", maintainerCommandsDocURL)
 }
@@ -1576,28 +1578,82 @@ func unparkOptionLetter(line string) string {
 	return letter
 }
 
-// ensureUnparkNoticeComment posts the "What to reply" block once per parked
-// issue and edits it in place when the issue's options change, so a maintainer
-// reading the bottom of the issue always sees the current commands. Options
-// and owner-only steps the hive posted in comments count as well as the body.
-func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo string, number int, issueBody string, issueAuthor *gh.User, comments []*gh.IssueComment, releaseOnApprove bool) error {
-	desired := renderUnparkNoticeForPolicy(c.unparkMenuFor(issueBody, issueAuthor, comments), releaseOnApprove)
-	for _, cm := range comments {
-		if cm == nil || !strings.Contains(cm.GetBody(), unparkNoticeMarker) {
-			continue
+// ensureUnparkNoticeComment keeps the "What to reply" block as the newest
+// comment on a parked issue, so a maintainer reading the bottom of the issue
+// always sees the current commands. Options and owner-only steps the hive
+// posted in comments count as well as the body.
+//
+// While nothing newer buries it, the notice is edited in place when the
+// options change. Once a later comment buries it (an agent's new owner step,
+// a question, a re-check note), a fresh notice is posted at the bottom and
+// the old one is deleted, so the thread keeps exactly one notice. A
+// maintainer's command and the hive's reply to it do not bury the notice:
+// the command is answered in the same pass, and an accepted one un-parks the
+// issue. Earlier notices left by an interrupted move are deleted too. Moving
+// and deleting consult the write-back gate (KindNeedsDecisionComment, as the
+// park re-check note does); a refusal keeps the in-place edit.
+func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo string, issue *gh.Issue, comments []*gh.IssueComment, releaseOnApprove bool) error {
+	number := issue.GetNumber()
+	desired := renderUnparkNoticeForPolicy(c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments), releaseOnApprove)
+	var notices []*gh.IssueComment
+	last := -1
+	for i, cm := range comments {
+		if cm != nil && strings.Contains(cm.GetBody(), unparkNoticeMarker) {
+			notices = append(notices, cm)
+			last = i
 		}
-		if cm.GetBody() == desired {
-			return nil
-		}
-		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
-			return fmt.Errorf("editing unpark notice on %s/%s#%d: %w", owner, repo, number, err)
+	}
+	if last < 0 {
+		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
+			return fmt.Errorf("creating unpark notice on %s/%s#%d: %w", owner, repo, number, err)
 		}
 		return nil
 	}
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
-		return fmt.Errorf("creating unpark notice on %s/%s#%d: %w", owner, repo, number, err)
+	// The move and the clean-up of leftover notices consult the gate; a
+	// refusal deletes nothing and keeps the in-place edit.
+	stale, moved := notices[:len(notices)-1], false
+	if buried := unparkNoticeBuried(comments[last+1:]); buried || len(stale) > 0 {
+		item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
+		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, desired); !d.Allowed {
+			stale = nil
+		} else if buried {
+			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil { // writeback:gated
+				return fmt.Errorf("moving unpark notice to the bottom of %s/%s#%d: %w", owner, repo, number, err)
+			}
+			stale, moved = notices, true
+		}
+	}
+	if keep := notices[len(notices)-1]; !moved && keep.GetBody() != desired {
+		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, keep.GetID(), &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
+			return fmt.Errorf("editing unpark notice on %s/%s#%d: %w", owner, repo, number, err)
+		}
+	}
+	for _, cm := range stale {
+		if _, err := c.client.Issues.DeleteComment(ctx, owner, repo, cm.GetID()); err != nil { // writeback:gated
+			return fmt.Errorf("deleting buried unpark notice on %s/%s#%d: %w", owner, repo, number, err)
+		}
 	}
 	return nil
+}
+
+// unparkNoticeBuried reports whether any comment posted after the notice
+// pushes it off the bottom of the issue. A maintainer's command and the
+// hive's reply to one do not: the command is answered in the same pass.
+func unparkNoticeBuried(after []*gh.IssueComment) bool {
+	for _, cm := range after {
+		if cm == nil {
+			continue
+		}
+		body := cm.GetBody()
+		if strings.Contains(body, unparkNoticeMarker) || strings.Contains(body, unparkReplyMarkerPrefix) {
+			continue
+		}
+		if _, ok := parseUnparkCommand(body); ok {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // postUnparkReply answers one command comment exactly once; the marker carries

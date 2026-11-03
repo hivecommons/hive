@@ -79,6 +79,19 @@ recommendation; the issue stays parked. On a `blocked` park and on an owner
 step `/hive approve` keeps its meaning (the blocker is cleared; accept the
 proposed step) and needs no recommendation.
 
+The notice is always the newest comment on a parked issue. While nothing newer
+is posted it is edited in place when the options change; once a later comment
+pushes it up the thread (an agent's new owner step, a question, a re-check
+note), the next sweep posts a fresh notice at the bottom and deletes the old
+one, so the issue keeps exactly one. A maintainer's `/hive` or `/fixed`
+command and Hive's reply to it do not move it. The move goes through the
+write-back gate; when the gate refuses (a paused repo, for example), the
+notice is edited where it is. The commands sit in a GitHub
+`[!TIP]` alert, which GitHub shows as a green box in light and dark themes,
+one `` `command` → what it does `` bullet each; the reply `/hive approve`
+accepts is bold and ends `(recommended)` when the park names a recommendation.
+The `/hive help` reply uses the same box.
+
 ### When a park's premise moves
 
 A park is written once, often by a contributor relay, and names the work it

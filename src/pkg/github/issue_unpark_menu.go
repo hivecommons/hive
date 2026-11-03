@@ -157,45 +157,85 @@ func (m unparkMenu) bullets() string {
 	return m.bulletsFor(false)
 }
 
+// unparkReply is one command the "What to reply" block offers.
+type unparkReply struct {
+	command, does string
+	recommended   bool
+}
+
 // bulletsFor lists the commands after applying the repository's release policy.
 func (m unparkMenu) bulletsFor(releaseOnApprove bool) string {
-	var b strings.Builder
+	return renderUnparkReplies(m.replies(releaseOnApprove))
+}
+
+func (m unparkMenu) replies(releaseOnApprove bool) []unparkReply {
+	var out []unparkReply
+	add := func(command, does string, recommended bool) {
+		out = append(out, unparkReply{command: command, does: does, recommended: recommended})
+	}
 	if m.ownerStep {
-		fmt.Fprintln(&b, "- `/hive done`: you did the step only you can do; Hive re-checks it and closes the issue once it is verified")
+		add("/hive done", "you did the step only you can do; Hive re-checks it and closes the issue once it is verified", false)
 	}
 	switch {
 	case releaseOnApprove && m.releaseStep != nil:
-		fmt.Fprintf(&b, "- `/hive approve`: Hive creates release `%s` from `%s`\n", m.releaseStep.Tag, m.releaseStep.Target)
-		fmt.Fprintln(&b, "- `/hive decision <your instructions>`: go ahead, following your instructions")
+		add("/hive approve", fmt.Sprintf("Hive creates release `%s` from `%s`", m.releaseStep.Tag, m.releaseStep.Target), false)
+		add("/hive decision <your instructions>", "go ahead, following your instructions", false)
 	case len(m.options) > 0 && m.recommended != "":
-		fmt.Fprintf(&b, "- `/hive approve`: go with the recommendation (option %s)%s\n", m.recommended, m.summaryFor(m.recommended))
+		add("/hive approve", "go with the recommendation (option "+m.recommended+")"+m.summaryFor(m.recommended), true)
 		for _, opt := range m.options {
 			if opt == m.recommended {
 				continue
 			}
-			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s%s\n", opt, opt, m.summaryFor(opt))
+			add("/hive decision "+opt, "go with option "+opt+m.summaryFor(opt), false)
 		}
 	case len(m.options) > 0 && m.hasRecommendation:
 		// A recommendation is stated but names none of the listed options,
 		// so no option is attributed to it; every option stays an explicit
 		// decision.
-		fmt.Fprintln(&b, "- `/hive approve`: go with the recommendation")
+		add("/hive approve", "go with the recommendation", true)
 		for _, opt := range m.options {
-			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s%s\n", opt, opt, m.summaryFor(opt))
+			add("/hive decision "+opt, "go with option "+opt+m.summaryFor(opt), false)
 		}
 	case len(m.options) > 0:
 		first := m.options[0]
-		fmt.Fprintf(&b, "- `/hive approve`: go with option %s%s\n", first, m.summaryFor(first))
+		add("/hive approve", "go with option "+first+m.summaryFor(first), false)
 		for _, opt := range m.options[1:] {
-			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s%s\n", opt, opt, m.summaryFor(opt))
+			add("/hive decision "+opt, "go with option "+opt+m.summaryFor(opt), false)
 		}
 	case m.hasRecommendation:
-		fmt.Fprintln(&b, "- `/hive approve`: go with the recommendation")
-		fmt.Fprintln(&b, "- `/hive decision <your instructions>`: go ahead, following your instructions")
+		add("/hive approve", "go with the recommendation", true)
+		add("/hive decision <your instructions>", "go ahead, following your instructions", false)
 	default:
-		fmt.Fprintln(&b, "- `/hive decision <your instructions>`: go ahead, following your instructions")
+		add("/hive decision <your instructions>", "go ahead, following your instructions", false)
 	}
-	fmt.Fprintln(&b, "- `/hive help`: show these again")
+	add("/hive help", "show these again", false)
+	return out
+}
+
+// renderUnparkReplies renders one bullet per command, the recommended
+// reply, when there is one, in bold.
+func renderUnparkReplies(replies []unparkReply) string {
+	var b strings.Builder
+	for _, r := range replies {
+		if r.recommended {
+			fmt.Fprintf(&b, "- **`%s` → %s (recommended)**\n", r.command, r.does)
+			continue
+		}
+		fmt.Fprintf(&b, "- `%s` → %s\n", r.command, r.does)
+	}
+	return b.String()
+}
+
+// unparkReplyBox renders title, the options' source line and the commands
+// as a GitHub TIP alert: a green box GitHub themes for light and dark, so
+// the replies stand out at the bottom of the issue.
+func (m unparkMenu) unparkReplyBox(title string, releaseOnApprove bool) string {
+	inner := title + "\n" + m.sourceLine() + m.bulletsFor(releaseOnApprove)
+	var b strings.Builder
+	b.WriteString("> [!TIP]\n")
+	for _, line := range strings.Split(strings.TrimRight(inner, "\n"), "\n") {
+		b.WriteString(strings.TrimRight("> "+line, " ") + "\n")
+	}
 	return b.String()
 }
 
