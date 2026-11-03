@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/attention"
+	"github.com/hivecommons/hive/pkg/attentionbudget"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -32,7 +33,12 @@ import (
 //     Prow already owns is never duplicated;
 //   - keeps one per-repo tracking issue listing every open episode. The
 //     issue is created once — its only notifying write — and afterwards
-//     edited in place, which notifies nobody.
+//     edited in place, which notifies nobody;
+//   - admits every reminder through the per-recipient attention budget
+//     (github.attention.recipient_budget, #16271): an over-budget reminder
+//     is not posted but stays open, listed on the item and in the queue, and
+//     for github.attention.digest_recipients in their single edited-in-place
+//     digest comment on the tracking issue.
 
 // attentionNow is the reminder clock; tests replace it.
 var attentionNow = time.Now
@@ -55,6 +61,9 @@ type AttentionQueueResult struct {
 	// Suppressed counts reminders the write-back gate refused; they are
 	// retried on a later pass.
 	Suppressed int
+	// Overflowed counts reminders the per-recipient attention budget held
+	// back; they stay open and are retried on a later pass.
+	Overflowed int
 	// QueueIssue is the tracking issue number (0 when none exists).
 	QueueIssue int
 	// QueueCreated and QueueEdited report the tracking issue write.
@@ -117,6 +126,8 @@ func (c *Client) SweepAttentionQueue(ctx context.Context, repo string) (Attentio
 			switch {
 			case errors.Is(err, writeback.ErrSuppressed):
 				res.Suppressed++
+			case errors.Is(err, errAttentionOverflow):
+				res.Overflowed++
 			case err != nil:
 				errs = append(errs, err)
 			case sent:
@@ -129,13 +140,47 @@ func (c *Client) SweepAttentionQueue(ctx context.Context, repo string) (Attentio
 				errs = append(errs, err)
 			}
 		}
+		if cfg.Config.Enabled() {
+			if _, err := c.UpsertPRStatusSection(ctx, repo, n, attentionbudget.SectionKey, attentionbudget.RenderSection(store.Budget().Overflowed(repo, "", n))); err != nil {
+				errs = append(errs, err)
+			}
+		}
 	}
 	num, created, edited, err := c.syncAttentionQueueIssue(ctx, repo, store.OpenEpisodes(repo))
 	res.QueueIssue, res.QueueCreated, res.QueueEdited = num, created, edited
 	if err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.syncAttentionDigests(ctx, cfg, store, repo, num); err != nil {
+		errs = append(errs, err)
+	}
+	if c.logger != nil {
+		c.logger.Info(store.Budget().LogLine(), "repo", repo)
+	}
 	return res, errors.Join(errs...)
+}
+
+// errAttentionOverflow reports a reminder the per-recipient attention budget
+// held back. It is not a failure: the episode stays open and listed.
+var errAttentionOverflow = errors.New("attention reminder held by recipient budget")
+
+// syncAttentionDigests keeps one digest comment per opted-in recipient on the
+// repo's tracking issue through the existing marker-comment upsert: created
+// once when something overflowed, edited in place thereafter, never reposted.
+func (c *Client) syncAttentionDigests(ctx context.Context, cfg attention.Config, store *attention.Store, repo string, queueIssue int) error {
+	if !cfg.Config.Enabled() || len(cfg.DigestRecipients) == 0 || queueIssue <= 0 {
+		return nil
+	}
+	if d := c.WritebackAllowed(repo, writeback.Item{Number: queueIssue, HiveAuthored: true}, writeback.KindIssueFile, ""); !d.Allowed {
+		return fmt.Errorf("attention digest %s: %w: %s", repo, writeback.ErrSuppressed, d.Reason)
+	}
+	var errs []error
+	for _, login := range cfg.DigestRecipients {
+		if _, err := attentionbudget.UpsertDigest(ctx, c, repo, queueIssue, login, store.Budget().Overflowed(repo, login, 0)); err != nil { // writeback:gated — WritebackAllowed consulted above
+			errs = append(errs, fmt.Errorf("attention digest %s#%d: %w", repo, queueIssue, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // remindAttention sends one reminder for e unless its recipient acted on the
@@ -164,6 +209,15 @@ func (c *Client) remindAttention(ctx context.Context, store *attention.Store, re
 	}
 	if d := c.WritebackAllowed(repo, item, writeback.KindNeedsDecisionComment, body); !d.Allowed {
 		return false, fmt.Errorf("attention reminder %s#%d: %w: %s", repo, n, writeback.ErrSuppressed, d.Reason)
+	}
+	if c.attentionConfig != nil {
+		d, err := store.AdmitReminder(c.attentionConfig(), e, now)
+		if err != nil {
+			return false, err
+		}
+		if d.Outcome == attentionbudget.Overflow {
+			return false, fmt.Errorf("attention reminder %s#%d: %w: %s", repo, n, errAttentionOverflow, d.Reason)
+		}
 	}
 	if err := c.CreateIssueComment(WithNotificationSubject(ctx, "attention-reminder:"+e.Key.Hash()), repo, n, body); err != nil { // writeback:gated — WritebackAllowed consulted above
 		return false, err

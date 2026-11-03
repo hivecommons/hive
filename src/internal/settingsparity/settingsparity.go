@@ -51,6 +51,7 @@ func ConfigLeaves(repoRoot string) ([]Leaf, error) {
 		filepath.Join("pkg", "dashboard", "theme"),
 		filepath.Join("pkg", "writeback"),
 		filepath.Join("pkg", "attention"),
+		filepath.Join("pkg", "attentionbudget"),
 	} {
 		if err := c.collect(fset, repoRoot, rel); err != nil {
 			return nil, err

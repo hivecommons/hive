@@ -197,7 +197,9 @@ evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854
 github.additional_bot_logins[] # TODO #11854
 github.attention.admitter.<key> # single-admitter ownership and flap window are YAML-only rollout controls; see src/docs/attention-episodes.md
+github.attention.digest_recipients[] # opt-in attention digest recipients; yaml-only, see docs/notifications.md (#16271)
 github.attention.flap_window # single-admitter ownership and flap window are YAML-only rollout controls; see src/docs/attention-episodes.md
+github.attention.recipient_budget # per-recipient attention budget, off by default; yaml-only, see docs/notifications.md (#16271)
 github.attention.reminder_interval # attention-pilot reminder interval; yaml-only, see src/docs/attention-episodes.md (#16361)
 github.notifications.attention_pilot # opt-in attention-pilot issue status card; yaml-only, see docs/notifications.md (#16358)
 github.notifications.mode # quiet|normal PR notification mode; yaml-only, see operator-reference.md

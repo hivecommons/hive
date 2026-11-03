@@ -147,15 +147,25 @@ items, and never drops an ask that goes over the cap
 | `github.attention.digest_recipients` | empty | GitHub logins (case-insensitive, optional `@`) that opted into the digest. |
 
 These keys live in the `github.attention` block owned by the condition-episode
-ledger ([#16267](https://github.com/hivecommons/hive/issues/16267)); the budget
-takes effect once the ledger routes its non-urgent writes through it.
+ledger ([#16267](https://github.com/hivecommons/hive/issues/16267)), which
+admits every non-urgent write through the budget: the ledger's first ping for
+a newly actionable episode (`Store.Report`) and every attention-pilot reminder
+(`SweepAttentionQueue`). The budget is seeded from the ledger's delivered
+history (`paged_to`/`paged_at` and the last reminder) when the ledger opens, so
+the rolling window survives restarts. An over-budget ask is never dropped: its
+episode stays open and would-notify, is marked `overflowed` in the ledger,
+stays in the repo's attention queue issue, and is posted on a later pass once
+the recipient's budget frees up (or cleared when it is acknowledged, snoozed
+or resolved). Producers mark exempt asks with `Observation.Class`
+(`security`, `required_review`, `protocol_command`, `hold`); an unset class is
+an ordinary non-urgent ping.
 
 - **Off (shadow mode).** With `recipient_budget: 0` every write is delivered
   exactly as before. The budget still counts, per recipient, how many writes
   would have overflowed a candidate cap of 5 (`ShadowBudget`) and reports
   `delivered`, `exempt`, `overflowed` and `would_overflow` per login in the
-  `attention budget:` log line, so an operator can choose N from evidence
-  before enabling it.
+  `attention budget:` log line (emitted on every attention-queue sweep), so an
+  operator can choose N from evidence before enabling it.
 - **Enabled, recipient opted into the digest.** The (N+1)th non-urgent ping or
   reminder in the window is not posted. It stays an open, overflowed ask: it is
   listed in the item's status card (`attention-overflow` section), in the
@@ -164,9 +174,9 @@ takes effect once the ledger routes its non-urgent writes through it.
   actionable asks are always posted; only reminders over the cap are deferred
   (and remain visible in the status card and action queue).
 - **Digest.** One comment per recipient per repo, identified by
-  `<!-- hive:attention-digest recipient=<login> -->`, created once through the
-  existing marker-comment upsert and edited in place afterwards (edits notify
-  nobody). It serves as the reminder for the asks it lists. No external
+  `<!-- hive:attention-digest recipient=<login> -->`, posted on the repo's
+  attention queue issue, created once through the existing marker-comment
+  upsert and edited in place afterwards (edits notify nobody). It serves as the reminder for the asks it lists. No external
   service is involved.
 - **Never budgeted.** Materially new security risk or imminent destructive
   action, mandatory/required reviews, machine-consumed protocol commands, and
