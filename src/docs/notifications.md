@@ -219,6 +219,19 @@ Operator-defined [hooks](hooks.md) with the `notify` action send through the sam
 
 The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
 
+## Review requests
+
+An agent's `request_review` relay (`hive-open-issue request-review`, or
+`gh pr edit --add-reviewer`) skips any user or team whose review request on
+the PR is still pending: asking again would only re-ping them for the same
+unresolved ask. The skipped names are reported in the request result as
+`reviewers_already_pending` / `team_reviewers_already_pending` and in the
+audit entry as `already_pending`; when everyone named is already pending, no
+GitHub call is made. Someone who has already submitted a review is no longer
+pending, so they can still be asked again for a new head. If the pending list
+cannot be read, everyone named is requested, so a needed review is never
+dropped.
+
 ## Mention hygiene
 
 Text the hive copies into a body it authors (issue/PR titles, quoted comments,

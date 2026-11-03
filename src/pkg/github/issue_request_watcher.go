@@ -188,6 +188,11 @@ type IssueResponse struct {
 	// "request_review" request asked, after normalization.
 	ReviewersRequested     []string `json:"reviewers_requested,omitempty"`
 	TeamReviewersRequested []string `json:"team_reviewers_requested,omitempty"`
+	// ReviewersAlreadyPending and TeamReviewersAlreadyPending report who was
+	// skipped because their review request on the PR is still pending, so
+	// asking again would only re-ping them for the same ask.
+	ReviewersAlreadyPending     []string `json:"reviewers_already_pending,omitempty"`
+	TeamReviewersAlreadyPending []string `json:"team_reviewers_already_pending,omitempty"`
 	// ParentLinked reports that the created issue was linked as a GitHub
 	// sub-issue of req.Parent. ParentLinkError carries the (non-fatal) reason
 	// when a requested link did not succeed; the issue is still created OK.
@@ -743,12 +748,16 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	case "request_review":
 		reviewers := normalizeReviewers(req.Reviewers)
 		teams := normalizeTeamReviewers(req.TeamReviewers)
+		var pendingUsers, pendingTeams []string
+		reviewers, teams, pendingUsers, pendingTeams = c.dropPendingReviewers(ctx, req.Repo, req.Number, reviewers, teams)
 		err = c.RequestReviewers(ctx, req.Repo, req.Number, reviewers, teams)
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
 			resp.ReviewersRequested = reviewers
 			resp.TeamReviewersRequested = teams
+			resp.ReviewersAlreadyPending = pendingUsers
+			resp.TeamReviewersAlreadyPending = pendingTeams
 		}
 	case "close":
 		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
@@ -899,6 +908,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		extra = []string{
 			"reviewers", strings.Join(resp.ReviewersRequested, " "),
 			"team_reviewers", strings.Join(resp.TeamReviewersRequested, " "),
+			"already_pending", strings.Join(append(append([]string{}, resp.ReviewersAlreadyPending...), resp.TeamReviewersAlreadyPending...), " "),
 		}
 	}
 	if closedPR {
