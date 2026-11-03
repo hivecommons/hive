@@ -20,6 +20,13 @@
     function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';
+      // Compact chevron vocabulary keyed by the backend's activity state.
+      // The track name leads so CI and Review read apart at a glance; a
+      // failing check names its blocker. Kept inline: test harnesses lift
+      // this function by name.
+      const words = kind === 'ci'
+        ? { passing: 'green', running: 'running', queued: 'queued', missing: 'waiting', skipped: 'skipped', failing: 'failing', pushed: 'pending', unknown: 'unknown' }
+        : { approved: 'approved', changes_requested: 'changes requested', human_decision: 'human decision', assigned: 'assigned', unassigned: 'queued', reviewing: 'working', adjudicating: 'adjudicating', pushed: 're-review pending', unknown: 'unknown' };
       const a = item && item[kind + '_activity'];
       const matches = a && item.head && a.head === item.head;
       let caption = matches ? a.caption || name + ' unknown' : name + ' unknown';
@@ -48,19 +55,27 @@
       const codeObserved = Date.parse(code && code.observed_at || '');
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
       if (!codeFresh) decided = decided.replace(/>(?:Fixing|Remediating)(?=\s|<)/g, '>Fix requested');
-      const word = esc(caption);
+      // The chevron word is "CI · running" / "Review · approved": the track
+      // name plus the backend state, so two lit chevrons read apart at a
+      // glance. A state observed on this head but no longer fresh keeps its
+      // last word with "· stale"; a head mismatch or no evidence is unknown.
+      const labelState = matches ? state : 'unknown';
+      let labelWord = words[labelState] || String(labelState || 'unknown').replace(/_/g, ' ');
+      if (labelState === 'failing' && a.blocker) labelWord += ' (' + a.blocker + ')';
+      if (labelState !== 'unknown' && !known) labelWord += ' · stale';
+      const label = name + ' · ' + labelWord;
+      const word = esc(label);
       const evidenceURL = matches && /^https?:\/\//i.test(String(a.url || '')) ? a.url : '';
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${word}</a>` : word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
       const hold = item.hold;
-      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + tip +
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + label + ' · ' + tip +
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
       const icon = stageTrackerIcon(kind === 'ci' ? 'ci' : 50, 'ham-ico', name);
-      const content = known ? `<span class="ham-chevron-copy ham-track-state">${evidenceLink}</span>` : icon;
-      const linkedIcon = !known && ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}</a>` : content;
+      const linkedIcon = `${icon}<span class="ham-chevron-copy ham-track-state">${evidenceLink}</span>`;
       return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${linkedIcon}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 

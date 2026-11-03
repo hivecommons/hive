@@ -178,7 +178,7 @@ test('12:01 screenshot density preserves physical tracks for issue-only, one-to-
       }
       for (const cell of cells.filter(cell => /data-display-state="unknown"/.test(cell))) {
         const content = cell.match(/aria-describedby="[^"]+">([^]*?)<span id=/)[1];
-        assert.equal(content.replace(/<[^>]*>/g, '').trim(), '', 'missing evidence remains icon-only at screenshot density');
+        assert.match(content.replace(/<[^>]*>/g, '').trim(), /^(CI|Review) · (unknown|.* · stale)$/, 'missing evidence shows icon plus the compact track word at screenshot density');
       }
     }
   }
@@ -560,16 +560,18 @@ test('current-phase styling is steady and undimmed, including compact/reduced-mo
   assert.doesNotMatch(css, /\.ham-track-position/);
 });
 
-test('unknown tracks show only the canonical column glyph, preserving full focus/hover details and safe evidence links', () => {
+test('unknown tracks show the column glyph plus a compact "name · unknown" word, preserving full focus/hover details and safe evidence links', () => {
   for (const kind of ['ci', 'review']) {
+    const name = kind === 'ci' ? 'CI' : 'Review';
     const item = livePR({
       number: 16434, repo: 'hivecommons/hive',
-      [kind + '_activity']: { head: 'head', state: 'unknown', caption: (kind === 'ci' ? 'CI' : 'Review') + ' unknown · full precise reason', source: 'unavailable', url: 'https://github.com/org/repo/actions/runs/1' },
+      [kind + '_activity']: { head: 'head', state: 'unknown', caption: name + ' unknown · full precise reason', source: 'unavailable', url: 'https://github.com/org/repo/actions/runs/1' },
     });
     const rendered = track(item, kind, { state: 'active' }, false, now);
     const content = rendered.match(/aria-describedby="[^"]+">([^]*?)<span id="[^"]+" class="config-tooltip/)[1];
     assert.match(content, kind === 'ci' ? /<svg [^]*data-icon="ci"/ : /<svg [^]*data-icon="50"/, 'CI and Review wear distinct glyphs');
-    assert.equal(content.replace(/<[^>]*>/g, '').trim(), '', 'no CI/Review/unknown/reason/question-mark panel text');
+    assert.equal(content.replace(/<[^>]*>/g, '').trim(), name + ' · unknown', 'the compact word names the track and its state; the reason stays in the tooltip');
+    assert.match(content, /<span class="ham-chevron-copy ham-track-state"><a href="https:\/\/github\.com\/org\/repo\/actions\/runs\/1"/, 'the word is the evidence link and shares the chevron clamp');
     assert.match(content, /aria-label="Open current-head/);
     assert.match(rendered, /class="ham-chevron-info config-info" tabindex="0"/);
     assert.match(rendered, /role="tooltip">[^]*full precise reason[^]*head head/);
@@ -642,9 +644,29 @@ test('stale activity is visibly unknown and old green observations cannot look l
   assert.match(html, /activity unknown · last observed reviewing/);
   assert.doesNotMatch(html, /data-motion/);
   assert.match(html, /data-display-state="unknown"/);
-  assert.doesNotMatch(html, /ham-chevron-copy/);
+  assert.match(html, /ham-track-state">Review · working · stale</, 'a stale observation keeps its last word but says so');
   item.review_activity = activity('approved', 'Review approved');
-  assert.doesNotMatch(track(item, 'review', {}, false, now + 300000), /ham-activity-track done/);
+  const staleGreen = track(item, 'review', {}, false, now + 300000);
+  assert.doesNotMatch(staleGreen, /ham-activity-track done/);
+  assert.match(staleGreen, /ham-track-state">Review · approved · stale</);
+});
+
+test('every track chevron carries icon plus a compact "name · state" word, with the full text in the tooltip', () => {
+  const ci = track(livePR({ ci_activity: { ...activity('running', 'CI running', true), url: 'https://github.com/org/repo/actions/runs/7' } }), 'ci', { state: 'active' }, false, now);
+  assert.match(ci, /<svg class="ham-ico" data-icon="ci"><\/svg><span class="ham-chevron-copy ham-track-state"><a href="https:\/\/github\.com\/org\/repo\/actions\/runs\/7"[^>]*>CI · running<\/a><\/span>/);
+  assert.match(ci, /class="ham-seg ham-activity-track active ham-current"[^>]*data-motion="active"/, 'a live running track is the lit, moving one');
+  assert.match(ci, /role="tooltip">Current pipeline phase · CI · running · CI running · head head · observed-test-source · observed · /, 'the tooltip opens with the untruncated word');
+  const review = track(livePR({ review_activity: activity('unassigned', 'Review queued · unassigned') }), 'review', { state: 'active' }, false, now);
+  assert.match(review, /<svg class="ham-ico" data-icon="50"><\/svg><span class="ham-chevron-copy ham-track-state">Review · queued<\/span>/);
+  assert.match(review, /class="ham-seg ham-activity-track todo ham-current"/, 'a queued review is lit but not moving');
+  const green = track(livePR({ ci_activity: activity('passing', 'CI passed') }), 'ci', { state: 'done' }, false, now);
+  assert.match(green, /class="ham-seg ham-activity-track done"[^>]*>[^]*ham-track-state">CI · green</, 'a passing track is the done chevron, distinguishable from the active one');
+  const red = track(livePR({ ci_activity: { ...activity('failing', 'CI failing · lint'), blocker: 'lint' } }), 'ci', { state: 'active' }, false, now);
+  assert.match(red, /ham-track-state">CI · failing \(lint\)</, 'a failing check names its blocker');
+  const rereview = track(livePR({ review_activity: activity('pushed', 'New head pushed · CI and re-review') }), 'review', { state: 'active' }, false, now);
+  assert.match(rereview, /ham-track-state">Review · re-review pending</);
+  const approved = track(livePR({ review_activity: activity('approved', 'Review approved') }), 'review', { state: 'done' }, false, now);
+  assert.match(approved, /ham-track-state">Review · approved</);
 });
 
 test('current-head evidence links are accessible and never retained across a new head', () => {
