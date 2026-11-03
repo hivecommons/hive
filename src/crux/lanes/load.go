@@ -32,7 +32,7 @@ func loadConfig(r io.Reader) (Config, error) {
 	d.DisallowUnknownFields()
 	var cfg Config
 	if err := d.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("%w: cannot decode lane configuration", ErrInvalid)
+		return Config{}, fmt.Errorf("%w: cannot decode lane configuration: %v", ErrInvalid, err)
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {

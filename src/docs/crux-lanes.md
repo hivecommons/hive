@@ -240,8 +240,11 @@ but remain in the bounded ledger and are never silently ACKed or discarded.
 
 ## Bounds and failure behavior
 
-Configuration uses integer nanoseconds for duration fields; omitted or zero
-values select defaults. Negative/invalid explicit values fail initialization.
+Duration fields accept either a string parsed by Go `time.ParseDuration`
+(for example `"30s"` or `"5m"`) or an integer number of nanoseconds; omitted or
+zero values select defaults. Out-of-range settings fail validation with an
+error naming the field and its allowed range, for example
+`lanes: max_pending must be at least 1, got -1`. Negative/invalid explicit values fail initialization.
 Short retention remains supported even when an operation timeout is longer:
 expiry produces explicit generation/cursor errors, not a false duplicate ACK.
 For normal deployments choose retention comfortably above polling, retry and

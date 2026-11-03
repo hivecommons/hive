@@ -3,6 +3,8 @@
 package lanes
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -148,16 +150,8 @@ func (c Config) Validate() error {
 	if err != nil || (u.Scheme != "nats" && u.Scheme != "tls") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("%w: broker URL must be nats:// or tls:// without inline credentials", ErrInvalid)
 	}
-	if !ValidID(c.Namespace) || c.Retention < MinRetention || c.Retention > MaxRetention ||
-		c.Dedup < MinDedup || c.Dedup > c.Retention || c.Lease < MinLease || c.Lease > MaxLease ||
-		c.AckRetention < c.Lease || c.AckRetention > c.Retention || c.Timeout <= 0 || c.Timeout > MaxTimeout ||
-		c.RetryDelay < MinRetryDelay || c.MaxRetryDelay < c.RetryDelay || c.MaxRetryDelay > MaxRetryDelay ||
-		c.MaxPayload <= 0 || c.MaxPayload > MaxPayload || c.MaxMessages <= 0 || c.MaxMessages > MaxLaneMessages ||
-		c.MaxBytes < int64(c.MaxPayload) || c.MaxBytes > MaxStorageBytes || c.MaxKVBytes <= 0 || c.MaxKVBytes > MaxStorageBytes ||
-		c.MaxPending <= 0 || c.MaxLedger < c.MaxPending || c.MaxLedger > MaxLedgerEntries ||
-		c.Replicas < 1 || c.Replicas > MaxReplicas || len(c.Lanes) > DefaultMaxLanes ||
-		len(c.Principals) == 0 || len(c.Principals) > DefaultMaxMembers {
-		return fmt.Errorf("%w: lane configuration bounds", ErrInvalid)
+	if err := c.validateBounds(); err != nil {
+		return err
 	}
 	if c.CredentialsEnv != "" && !validEnv(c.CredentialsEnv) {
 		return fmt.Errorf("%w: broker credential binding", ErrInvalid)
@@ -272,4 +266,86 @@ func (b *Broker) Registry(project string) []api.Lane {
 		}
 	}
 	return out
+}
+
+func bound(field string, bad bool, rng string, got any) error {
+	if !bad {
+		return nil
+	}
+	return fmt.Errorf("%w: lanes: %s must be %s, got %v", ErrInvalid, field, rng, got)
+}
+
+func (c Config) validateBounds() error {
+	checks := []error{
+		bound("namespace", !ValidID(c.Namespace), fmt.Sprintf("a lowercase identifier of at most %d characters", MaxIDLength), fmt.Sprintf("%q", c.Namespace)),
+		bound("retention", c.Retention < MinRetention || c.Retention > MaxRetention, fmt.Sprintf("between %s and %s", MinRetention, MaxRetention), c.Retention),
+		bound("dedup", c.Dedup < MinDedup || c.Dedup > c.Retention, fmt.Sprintf("between %s and retention (%s)", MinDedup, c.Retention), c.Dedup),
+		bound("lease", c.Lease < MinLease || c.Lease > MaxLease, fmt.Sprintf("between %s and %s", MinLease, MaxLease), c.Lease),
+		bound("ack_retention", c.AckRetention < c.Lease || c.AckRetention > c.Retention, fmt.Sprintf("between lease (%s) and retention (%s)", c.Lease, c.Retention), c.AckRetention),
+		bound("timeout", c.Timeout <= 0 || c.Timeout > MaxTimeout, fmt.Sprintf("greater than 0 and at most %s", MaxTimeout), c.Timeout),
+		bound("retry_delay", c.RetryDelay < MinRetryDelay, fmt.Sprintf("at least %s", MinRetryDelay), c.RetryDelay),
+		bound("max_retry_delay", c.MaxRetryDelay < c.RetryDelay || c.MaxRetryDelay > MaxRetryDelay, fmt.Sprintf("between retry_delay (%s) and %s", c.RetryDelay, MaxRetryDelay), c.MaxRetryDelay),
+		bound("max_payload", c.MaxPayload <= 0 || c.MaxPayload > MaxPayload, fmt.Sprintf("between 1 and %d", MaxPayload), c.MaxPayload),
+		bound("max_messages", c.MaxMessages <= 0 || c.MaxMessages > MaxLaneMessages, fmt.Sprintf("between 1 and %d", MaxLaneMessages), c.MaxMessages),
+		bound("max_bytes", c.MaxBytes < int64(c.MaxPayload) || c.MaxBytes > MaxStorageBytes, fmt.Sprintf("between max_payload (%d) and %d", c.MaxPayload, MaxStorageBytes), c.MaxBytes),
+		bound("max_kv_bytes", c.MaxKVBytes <= 0 || c.MaxKVBytes > MaxStorageBytes, fmt.Sprintf("between 1 and %d", MaxStorageBytes), c.MaxKVBytes),
+		bound("max_pending", c.MaxPending <= 0, "at least 1", c.MaxPending),
+		bound("max_ledger", c.MaxLedger < c.MaxPending || c.MaxLedger > MaxLedgerEntries, fmt.Sprintf("between max_pending (%d) and %d", c.MaxPending, MaxLedgerEntries), c.MaxLedger),
+		bound("replicas", c.Replicas < 1 || c.Replicas > MaxReplicas, fmt.Sprintf("between 1 and %d", MaxReplicas), c.Replicas),
+		bound("lanes", len(c.Lanes) > DefaultMaxLanes, fmt.Sprintf("at most %d entries", DefaultMaxLanes), len(c.Lanes)),
+		bound("principals", len(c.Principals) == 0 || len(c.Principals) > DefaultMaxMembers, fmt.Sprintf("between 1 and %d entries", DefaultMaxMembers), len(c.Principals)),
+	}
+	for _, err := range checks {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// flexDuration accepts a JSON number (nanoseconds) or a time.ParseDuration string.
+type flexDuration time.Duration
+
+func (d *flexDuration) UnmarshalJSON(data []byte) error {
+	var s string
+	if json.Unmarshal(data, &s) == nil {
+		v, err := time.ParseDuration(s)
+		if err != nil {
+			return fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		*d = flexDuration(v)
+		return nil
+	}
+	var n int64
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("duration must be a string such as \"30s\" or integer nanoseconds")
+	}
+	*d = flexDuration(n)
+	return nil
+}
+
+// UnmarshalJSON accepts duration fields as integer nanoseconds or strings such as "30s".
+// It decodes strictly: the outer decoder's DisallowUnknownFields does not propagate
+// into Unmarshaler methods, so unknown keys must be rejected here.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type plain Config
+	aux := struct {
+		*plain
+		Retention     flexDuration `json:"retention"`
+		Dedup         flexDuration `json:"dedup"`
+		Lease         flexDuration `json:"lease"`
+		AckRetention  flexDuration `json:"ack_retention"`
+		RetryDelay    flexDuration `json:"retry_delay"`
+		MaxRetryDelay flexDuration `json:"max_retry_delay"`
+		Timeout       flexDuration `json:"timeout"`
+	}{plain: (*plain)(c)}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&aux); err != nil {
+		return err
+	}
+	c.Retention, c.Dedup, c.Lease = time.Duration(aux.Retention), time.Duration(aux.Dedup), time.Duration(aux.Lease)
+	c.AckRetention, c.RetryDelay = time.Duration(aux.AckRetention), time.Duration(aux.RetryDelay)
+	c.MaxRetryDelay, c.Timeout = time.Duration(aux.MaxRetryDelay), time.Duration(aux.Timeout)
+	return nil
 }
