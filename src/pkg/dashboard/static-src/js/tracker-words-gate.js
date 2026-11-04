@@ -259,7 +259,10 @@
     }
     // Pure: the merge-failed pill. A refusal because required checks have
     // not reported is not a failure — the sweep called too early — so the
-    // chip reads "Waiting for CI · 4 checks"; a sweep retrying now reads
+    // chip reads "Queued for merge · after CI" (the check count rides the
+    // hover, the chip stays ≤ 5 words); a moved head or
+    // a pending protection rule reads "Queued for merge · needs rebase" /
+    // "· branch protection pending"; a sweep retrying now reads
     // "Merge failed · retrying"; otherwise "Merge failed · <short reason>".
     // The chip is a fixed short phrase (≤ 5 words); the tooltip carries the
     // plain sentence and GitHub's raw text after "Details:".
@@ -277,12 +280,20 @@
       const details = why ? ' Details: ' + why : '';
       if (kind === 'checks-pending') {
         const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? '; hive is on it now' : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
-        return { state, word: 'Waiting for CI', detail: checks > 0 ? checks + ' check' + (checks === 1 ? '' : 's') : '', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
+        return { state, word: 'Queued for merge', detail: 'after CI', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
       }
       const word = STAGE_TRACKER_MERGE_GATE_WORD[state];
       const sentence = 'hive tried to merge this' + when + ' and GitHub refused' + (text ? ' — ' + text : '') + '.';
       if (mg.sweep_running) {
         return { state, word, detail: 'retrying', tip: sentence + ' hive is retrying it now.' + lastSeen + details, cue: 'running', until: 0 };
+      }
+      // Refusals the lane clears on its own next pass (the head moved, a
+      // protection rule still has something pending) are not failures the
+      // reader must fix: the chip stays "Queued for merge · <qualifier>"
+      // (hivecommons/hive#16653); the hover still says GitHub refused.
+      const queuedDetail = { 'head-moved': 'needs rebase', protection: 'branch protection pending' }[kind];
+      if (queuedDetail) {
+        return { state, word: 'Queued for merge', detail: queuedDetail, tip: sentence + ' Still queued: the lane retries it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
     }
@@ -309,7 +320,7 @@
       if (!line) return 'GitHub refused the merge';
       return line.length > STAGE_TRACKER_MERGE_FAILED_SHORT_MAX ? line.slice(0, STAGE_TRACKER_MERGE_FAILED_SHORT_MAX - 1).trimEnd() + '…' : line;
     }
-    // Pure: the pill word with its live detail — "Ready for auto merge ·
+    // Pure: the pill word with its live detail — "Queued for merge ·
     // next pass in 42s". The detail span carries data-ham-until so the
     // countdown ticks in place.
     function stageTrackerMergeGateWordHtml(item, nowMs, trains) {

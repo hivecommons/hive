@@ -1391,7 +1391,7 @@ assert.deepStrictEqual(req.body, { decision: 'merge-now', comment: '', type: 'pr
 assert.deepStrictEqual(stageTrackerActionRequest(pr317, 'decide:queue-merge', {}).body, { decision: 'queue-merge', comment: '', type: 'pr' });
 assert.strictEqual(STAGE_TRACKER_ACTING_CAPTIONS['decide:merge-now'], 'Merging…');
 assert.strictEqual(STAGE_TRACKER_ACTION_WORDS.merged, 'merged');
-assert.strictEqual(STAGE_TRACKER_ACTION_WORDS['queued-for-merge'], 'approved — hive will merge on the next tick once CI is green');
+assert.strictEqual(STAGE_TRACKER_ACTION_WORDS['queued-for-merge'], 'queued for merge — hive merges it on its next pass once CI is green');
 assert.strictEqual(STAGE_TRACKER_ACTING_CAPTIONS['decide:queue-merge'], 'Recording approval…');
 assert.strictEqual(STAGE_TRACKER_ACTION_LABELS['decide:queue-merge'], 'Approve and let hive merge');
 assert.strictEqual(STAGE_TRACKER_ACTION_LABELS['decide:merge-now'], 'Merge now as maintainer');

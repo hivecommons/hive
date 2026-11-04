@@ -307,7 +307,13 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		// explanation. Redirecting to "/" here is what produced the historical
 		// infinite bounce: "/" is auth-gated, sends the user back to the hub
 		// login, the hub sees a valid session and hands off to /sso again.
-		writeSSOError(w, r, http.StatusServiceUnavailable, ssoErrNoSecret,
+		//
+		// 401, not 503: the hive is up and the user simply has to sign in
+		// another way. A hosted spoke's Ingress (custom-http-errors "502,503")
+		// replaces any upstream 503 with the "Hive is restarting" error page,
+		// so a 503 here hid this explanation and the sign-in link behind what
+		// looked like a crashed application (#16652).
+		writeSSOError(w, r, http.StatusUnauthorized, ssoErrNoSecret,
 			"This hive has no hub SSO verification key configured, so single sign-on from the hub cannot be verified.",
 			"Ask the hive operator to set HIVE_HUB_SECRET (or HIVE_SSO_PUBLIC_KEY) on this hive. In the meantime you can sign in directly with GitHub using the button below.")
 		return
@@ -427,6 +433,10 @@ const maxSSOHops = 3
 //
 // It also clears any stale session cookie, so a half-established session cannot
 // keep re-triggering the same failure on reload.
+//
+// A failure the user can resolve by signing in must use a 4xx status: gateways
+// in front of hosted spokes intercept 502/503 and swap this page for a generic
+// outage page, which strands the user (#16652).
 func writeSSOError(w http.ResponseWriter, r *http.Request, status int, code, what, action string) {
 	clearSessionCookie(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
