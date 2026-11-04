@@ -71,3 +71,17 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "🌱 build(deps)"
+
+  # discord/ runs on hosts as hive-discord.service; its lockfile pins
+  # discord.js's transitive undici, which has needed a hand bump.
+  - package-ecosystem: "npm"
+    directory: "/discord"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "no-changelog"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "🌱 build(deps)"
