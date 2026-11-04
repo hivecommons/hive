@@ -210,3 +210,29 @@ func TestFixerExhaustedMarkerLabelAloneBlocksReauthor(t *testing.T) {
 		t.Fatalf("marker label ignored: %s (%q) edits=%q", rec.Stage, rec.Reason, o.adopt.prEdits)
 	}
 }
+
+// A retry pass while the close is pending reuses the stored re-author
+// target instead of reading the closing issue again (hivecommons/hive#16586).
+func TestFixerExhaustedRetryPassSkipsIssueGetWhenStoreHasTarget(t *testing.T) {
+	o, done, status := fixerExhaustedHarness(t)
+	defer done()
+	setStagePRTruth(12)
+
+	status[90] = review.FixDispatchStatus{Attempts: 6, Reason: review.FixDispatchExcludedAttemptsExhausted}
+	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	if rec, _ := o.e.stageStoreOrShared().Get(stageKey("acme", "widget", 90)); !rec.Reauthored() {
+		t.Fatalf("first pass did not record the re-author: %+v", rec)
+	}
+	if o.api.issueGets[12] == 0 {
+		t.Fatal("first pass never read issue 12")
+	}
+
+	o.api.mu.Lock()
+	o.api.issueGets = nil
+	o.api.mu.Unlock()
+	o.clock.advance(time.Hour)
+	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	if got := o.api.issueGets[12]; got != 0 {
+		t.Fatalf("retry pass read issue 12 %d times, want 0", got)
+	}
+}

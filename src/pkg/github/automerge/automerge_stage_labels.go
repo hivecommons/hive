@@ -1136,9 +1136,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// a person decides (give direction / hand over / close
 				// as not planned) instead of the row reading "Fixing"
 				// with nobody on it for hours (#15308).
-				target := c.autoReauthorTarget(ctx, store, obs)
+				var target reauthorTarget
 				if prev, ok := store.Get(key); ok && prev.Reauthored() {
 					target = reauthorTarget{Issue: prev.ReauthorIssue}
+				} else {
+					target = c.autoReauthorTarget(ctx, store, obs)
 				}
 				if target.eligible() && policy.Adoption && !obs.Merged {
 					n, noted, err := c.reauthorExhaustedHivePR(ctx, store, key, obs, fixer, target.Issue, now)
