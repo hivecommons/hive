@@ -457,7 +457,8 @@ test('Hotshot #344 shape: queued CI and approved review retain current phase wit
   assert.match(cells.ci, /ham-activity-track active ham-current/, 'queued CI is in progress: the full active fill, no pulse');
   assert.match(cells.ci, /ham-track-state"><svg [^>]*><\/svg>CI \?\/\? · queued</);
   assert.match(cells.review, /ham-activity-track done ham-current/);
-  assert.match(cells.review, /Review approved</);
+  assert.match(cells.review, /data-verdict="pass"[^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/, 'an approved review is the glyph alone');
+  assert.match(cells.review, /Review: Review approved · /, 'the words move to the tooltip');
   for (const cell of [cells.ci, cells.review]) {
     assert.match(cell, /aria-current="step"/);
     assert.match(cell, /aria-label="Current pipeline phase/);
@@ -495,7 +496,8 @@ test('Hive #16268 shape: held native Fixing waits for a fixer in the CI/Review p
   assert.match(cells.ci, /pending ham-current/, 'held: unreported checks are not motion (#16540)');
   assert.match(cells.ci, /CI \?\/\? · no checks reported yet</);
   assert.match(cells.review, /done ham-current/);
-  assert.match(cells.review, /Review approved</);
+  assert.match(cells.review, /data-verdict="pass"[^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/);
+  assert.match(cells.review, /Review: Review approved · /);
   assert.match(cells.review, /Waiting for fixer · no code work observed/);
   assert.match(cells.review, /Held by @hanthor · Maintainer hold/);
   assert.doesNotMatch(cells.rendered, /data-motion=|>(?:Fixing|Remediating) ·/);
@@ -540,7 +542,7 @@ test('old-head or stale observations cannot fabricate running/completion, but do
       assert.doesNotMatch(cells.review, /ham-activity-track done/);
     } else {
       assert.match(cells.ci, /active ham-current[^]*CI \?\/\? · running</, mode + ': the last observed state still reads in words');
-      assert.match(cells.review, /done ham-current[^]*Review approved</, mode + ': an approval of this head stays done, freshness only in the tooltip');
+      assert.match(cells.review, /done ham-current[^]*data-verdict="pass"[^]*Review: Review approved · /, mode + ': an approval of this head stays done, freshness only in the tooltip');
       assert.match(cells.review, mode === 'stale' ? /stale · / : /observation time unknown/);
     }
   }
@@ -690,7 +692,7 @@ test('stale activity is visibly unknown in the tooltip, never pulses, and still 
   assert.match(html, /data-display-state="unknown"/);
   assert.match(html, /ham-activity-track active"[^]*ham-chevron-copy ham-track-state"><svg [^>]*><\/svg>Review 1\/5 · reviewer reviewing</, 'stale in-progress evidence keeps the lit fill and its count words');
   item.review_activity = { ...activity('approved', 'Review approved'), perspectives_done: 5, perspectives_total: 5 };
-  assert.match(track(item, 'review', {}, false, now + 300000), /ham-activity-track done"[^]*Review 5\/5 approved</, 'an approval of this head stays done when stale');
+  assert.match(track(item, 'review', {}, false, now + 300000), /ham-activity-track done"[^]*Review: Review 5\/5 approved · [^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/, 'an approval of this head stays done when stale: glyph alone, count words in the tooltip');
 });
 
 test('current-head evidence links are accessible and never retained across a new head', () => {
@@ -805,8 +807,12 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
   cells = physicalTracks(livePR({ head, stage: 70, display_column: 50, modifiers: ['hold'], hold: { by: 'hanthor', pill: 'Held by @hanthor' },
     ci_activity: fresh('failing', { checks_passed: 13, checks_total: 14, checks_failed: 1, checks_failing: ['native-queue-policy'], blocker: 'native-queue-policy' }),
     review_activity: fresh('approved', { perspectives_done: 5, perspectives_total: 5 }) }));
-  assert.equal(cls(cells.ci), 'failing'); assert.equal(text(cells.ci), 'CI 13/14 · 1 failing (native-queue-policy)');
-  assert.equal(cls(cells.review), 'done'); assert.equal(text(cells.review), 'Review 5/5 approved');
+  // Settled verdicts are the glyph alone; the count words ride in the tooltip.
+  const tip = cell => cell.match(/ aria-label="([^"]*)"/)[1];
+  assert.equal(cls(cells.ci), 'failing'); assert.equal(text(cells.ci), ''); assert.match(cells.ci, /data-verdict="fail"/);
+  assert.match(tip(cells.ci), /^(?:Current pipeline phase · )?CI: CI 13\/14 · 1 failing \(native-queue-policy\) · /);
+  assert.equal(cls(cells.review), 'done'); assert.equal(text(cells.review), ''); assert.match(cells.review, /data-verdict="pass"/);
+  assert.match(tip(cells.review), /^(?:Current pipeline phase · )?Review: Review 5\/5 approved · /);
   assert.match(cells.review, /Held by @hanthor/);
   // Not started: a PR still being written (column 30) with no evidence shows the glyph alone, never lit.
   cells = physicalTracks(livePR({ head, stage: 30, display_column: 30 }));

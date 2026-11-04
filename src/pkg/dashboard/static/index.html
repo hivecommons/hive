@@ -1729,6 +1729,11 @@
     .ham-seg.ham-activity-track.done.decided { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
     /* The count words stay on one line and ellipsize instead of wrapping. */
     .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
+    /* A settled verdict is the glyph alone (green passed / approved, red
+       failed / changes requested — the .done / .failing colours above);
+       the words live in the tooltip. Same box, same height: only the
+       trailing gap goes and the stroke firms up so the colour reads. */
+    .ham-chevron-copy.ham-track-verdict .ham-ico { margin-right: 0; stroke-width: 2; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
@@ -18292,7 +18297,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!codeFresh) decided = decided.replace(/>(?:Fixing|Remediating)(?=\s|<)/g, '>Fix requested');
       const sha7 = item.head ? String(item.head).slice(0, 7) : '';
       const lead = current && ownsPR && typeof stageTrackerTrackLead === 'function' ? stageTrackerTrackLead(item) : null;
-      const word = esc(text);
+      // A settled verdict (CI passed / failed, review approved / changes
+      // requested) collapses to its glyph alone in the pass / fail colour;
+      // the count words move into the tooltip. A glance then says whether
+      // the track went on to the merge queue or to remediation. Pending,
+      // running, not-reported and sign-off states keep their words.
+      const verdict = finished ? 'pass' : finding ? 'fail' : '';
+      const word = verdict ? '' : esc(text);
       const evidenceURL = matches && /^https?:\/\//i.test(String(a.url || '')) ? a.url : '';
       const icon = stageTrackerIcon(kind === 'ci' ? 'ci' : 50, 'ham-ico', name);
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
@@ -18304,8 +18315,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
         (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
-      const copy = `<span class="ham-chevron-copy ham-track-state">${evidenceLink}</span>`;
-      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
+      const copy = `<span class="ham-chevron-copy ham-track-state${verdict ? ' ham-track-verdict' : ''}">${evidenceLink}</span>`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -19000,12 +19011,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return out;
     }
+    // A human-requirement line is a hive note: it opens, then tucks into
+    // its ⬡ icon like the "Hive: …" line (stageTrackerHumanNoteHtml,
+    // tracker-motion). Lifted copies without tracker-motion (tests,
+    // previews) render the plain row instead.
+    function stageTrackerHumanContextLine(item, bodyHtml, text, nowMs) {
+      if (typeof stageTrackerHumanNoteHtml === 'function' && typeof stageTrackerItemKey === 'function') {
+        return stageTrackerHumanNoteHtml(stageTrackerItemKey(item), bodyHtml, text, nowMs);
+      }
+      return `<div class="cue-event ham-human-context"><span>${bodyHtml}</span></div>`;
+    }
     function stageTrackerHumanContextHtml(item, stages, nowMs, subRows) {
       const required = stageTrackerHumanContextOf(item, stages);
       const lines = required.map(entry => {
         const it = entry.item;
         const href = it.url || item.url;
-        return `<div class="cue-event ham-human-context"><span>${esc(entry.text)}${href ? ` <a href="${esc(href)}" target="_blank" rel="noopener">View ${it.kind === 'pr' ? 'PR' : 'issue'} #${Number(it.number)}</a>` : ''}</span></div>`;
+        const view = href ? 'View ' + (it.kind === 'pr' ? 'PR' : 'issue') + ' #' + Number(it.number) : '';
+        const body = esc(entry.text) + (view ? ` <a href="${esc(href)}" target="_blank" rel="noopener">${view}</a>` : '');
+        return stageTrackerHumanContextLine(item, body, entry.text + (view ? ' · ' + view : ''), nowMs);
       });
       if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines.join('');
       const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
@@ -19013,7 +19036,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
       if (stale || staleLinks.length) {
         const refs = staleLinks.length ? staleLinks.map(lp => 'PR #' + lp.number).join(', ') : item.kind === 'pr' ? 'PR #' + item.number : 'Issue #' + item.number;
-        return `<div class="cue-event ham-human-context"><span>${esc(refs)} · decision context unavailable for the displayed identity/head${item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''}</span></div>`;
+        const text = refs + ' · decision context unavailable for the displayed identity/head';
+        return stageTrackerHumanContextLine(item, esc(text) + (item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''), text, nowMs);
       }
       const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
       if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
@@ -19029,9 +19053,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const who = actor.login ? '@' + actor.login : 'a person';
         const prNumber = item.kind === 'issue' && (item.linked_pr || ((item.linked_prs || []).length === 1 && item.linked_prs[0].number));
         const target = prNumber ? ' on PR #' + prNumber : '';
-        lines.push(`<div class="cue-event ham-human-context"><span>Next move: ${esc(who + target)}${actor.why ? ' — ' + esc(actor.why) : ' · action reason unavailable'}</span></div>`);
+        const text = 'Next move: ' + who + target + (actor.why ? ' — ' + actor.why : ' · action reason unavailable');
+        lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
       } else if (claimant && claimant.kind === 'person' && claimant.login) {
-        lines.push(`<div class="cue-event ham-human-context"><span>Claimed by @${esc(claimant.login)} · claim ownership, not a human decision request</span></div>`);
+        const text = 'Claimed by @' + claimant.login + ' · claim ownership, not a human decision request';
+        lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
       }
       if (typeof stageTrackerLeadActionOnRow === 'function' && typeof stageTrackerActionCtx === 'function') {
         const ctx = stageTrackerActionCtx(item.repo);
@@ -19040,7 +19066,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
           const action = stageTrackerLeadActionOnRow(item, ctx, subRows);
           if (action && (action.id === 'decide:delegate' || action.id === 'decide:delegate-all')) {
-            lines.push('<div class="cue-event ham-human-context"><span>Optional delegation: Let hive decide is available; it does not itself mean human input is required.</span></div>');
+            const text = 'Optional delegation: Let hive decide is available; it does not itself mean human input is required.';
+            lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
           }
         }
       }
@@ -19808,6 +19835,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const next = stageTrackerStateMap(d && d.items);
       const ttl = typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting() ? Infinity : STAGE_TRACKER_EVENT_MS;
       _stageTrackerEvents = stageTrackerEventsNext(_stageTrackerEvents, _stageTrackerStates, next, d && d.stages, nowMs, ttl);
+      _stageTrackerHumanNotes = stageTrackerHumanNotesNext(_stageTrackerHumanNotes, next);
       _stageTrackerStates = next;
     }
     /* ---- Hive notes: show, then tuck ---------------------------------------
@@ -19879,6 +19907,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNoteTitle(ev, nowMs) {
       if (!ev) return '';
       const age = stageTrackerAgoText(ev.at, nowMs);
+      if (ev.who === 'human') return ev.text + (age ? ' · ' + age : '');
       return (ev.who === 'you' ? 'You' : 'Hive') + ': ' + ev.text + (age ? ' · ' + age : '');
     }
     let _stageTrackerNoteTimer = 0;
@@ -19893,7 +19922,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // it went hidden (the age keeps counting).
       const openNow = _stageTrackerNoteHiddenAt || nowMs;
       for (const p of Array.from(el.querySelectorAll('.cue-event[data-cue-key]'))) {
-        const ev = _stageTrackerEvents[p.getAttribute('data-cue-key')];
+        const ev = stageTrackerNoteEventOf(p.getAttribute('data-cue-key'));
         const open = !ev || stageTrackerNoteOpen(ev, openNow, auto);
         if (open) p.classList.remove('cue-event-tucked'); else p.classList.add('cue-event-tucked');
         const btn = p.querySelector('.cue-event-ico');
@@ -19904,16 +19933,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNoteSchedule(nowMs) {
       if (_stageTrackerNoteTimer) { clearTimeout(_stageTrackerNoteTimer); _stageTrackerNoteTimer = 0; }
       if (document.hidden) return;
-      const due = stageTrackerNoteNextDue(_stageTrackerEvents, nowMs, stageTrackerNoteTuckSetting());
+      const due = stageTrackerNoteNextDue(stageTrackerNoteEventsAll(), nowMs, stageTrackerNoteTuckSetting());
       if (due === Infinity) return;
       _stageTrackerNoteTimer = setTimeout(() => { _stageTrackerNoteTimer = 0; stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), Date.now()); }, due);
     }
     // The icon's click (and Enter / Space, it is a button).
     function stageTrackerNoteToggle(key) {
-      const ev = _stageTrackerEvents[key];
+      const ev = stageTrackerNoteEventOf(key);
       if (!ev) return;
       const nowMs = Date.now();
-      _stageTrackerEvents[key] = stageTrackerNoteToggled(ev, nowMs, stageTrackerNoteTuckSetting());
+      stageTrackerNoteEventSet(key, stageTrackerNoteToggled(ev, nowMs, stageTrackerNoteTuckSetting()));
       stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), nowMs);
     }
     // Hidden tab: stop the clock on every open line; visible again: give
@@ -19925,7 +19954,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (_stageTrackerNoteTimer) { clearTimeout(_stageTrackerNoteTimer); _stageTrackerNoteTimer = 0; }
         return;
       }
-      if (_stageTrackerNoteHiddenAt) { _stageTrackerEvents = stageTrackerNoteShift(_stageTrackerEvents, nowMs - _stageTrackerNoteHiddenAt); _stageTrackerNoteHiddenAt = 0; }
+      if (_stageTrackerNoteHiddenAt) {
+        _stageTrackerEvents = stageTrackerNoteShift(_stageTrackerEvents, nowMs - _stageTrackerNoteHiddenAt);
+        _stageTrackerHumanNotes = stageTrackerNoteShift(_stageTrackerHumanNotes, nowMs - _stageTrackerNoteHiddenAt);
+        _stageTrackerNoteHiddenAt = 0;
+      }
       stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), nowMs);
     }
     // The owner's own action writes the row's line at once ("you: approved").
@@ -19942,15 +19975,71 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerEventHtml(key, ctx) {
       const ev = ctx && ctx.events ? ctx.events[key] : null;
       if (!ev) return '';
+      const who = ev.who === 'you' ? 'You' : ev.who === 'merge' ? 'Merge' : 'Hive';
+      const body = `<span class="cue-event-who">${esc(who)}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`;
+      return stageTrackerNoteLineHtml(key, ev, ctx, body, '');
+    }
+    // Pure: one note line — the shared shape behind the hive line and the
+    // human-requirement line, so both open, tuck and re-open the same way.
+    function stageTrackerNoteLineHtml(key, ev, ctx, body, extraClass) {
       const nowMs = ctx && typeof ctx.nowMs === 'number' ? ctx.nowMs : Date.now();
       const auto = ctx && typeof ctx.noteTuck === 'boolean' ? ctx.noteTuck : (typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting());
       const fading = !auto && nowMs - stageTrackerEventShownAt(ev) > STAGE_TRACKER_EVENT_MS * 2 / 3;
       const open = !auto || stageTrackerNoteOpen(ev, nowMs, auto);
-      const who = ev.who === 'you' ? 'You' : ev.who === 'merge' ? 'Merge' : 'Hive';
-      const body = `<span class="cue-event-who">${esc(who)}:</span> <span class="cue-event-text">${esc(ev.text)}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`;
-      if (!auto) return `<p class="cue-event${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}">${body}</p>`;
+      const cls = extraClass ? ' ' + extraClass : '';
+      if (!auto) return `<p class="cue-event${cls}${fading ? ' cue-event-fading' : ''}" data-cue-key="${esc(key)}">${body}</p>`;
       const ico = `<button type="button" class="cue-event-ico" aria-label="${STAGE_TRACKER_NOTE_LABEL}" aria-expanded="${open ? 'true' : 'false'}" title="${esc(stageTrackerNoteTitle(ev, nowMs))}" data-action="stageTrackerNoteToggle" data-arg0="${esc(key)}" data-stop="1">${STAGE_TRACKER_NOTE_ICON}</button>`;
-      return `<p class="cue-event cue-event-tuckable${open ? '' : ' cue-event-tucked'}" data-cue-key="${esc(key)}">${ico}<span class="cue-event-body">${body}</span></p>`;
+      return `<p class="cue-event cue-event-tuckable${cls}${open ? '' : ' cue-event-tucked'}" data-cue-key="${esc(key)}">${ico}<span class="cue-event-body">${body}</span></p>`;
+    }
+    /* ---- Human-requirement notes -------------------------------------
+       "Needs human: …" / "Current blocker: …" (tracker-human-attention)
+       are hive comments too. #16011 drew them as a static row under the
+       item so the ask stayed readable; the owner (2026-11-04): "these
+       things should be hive comments and they should hide (slide-left)
+       as they used to." They now ride the same show-then-tuck line as the
+       hive note — the row's Let hive decide / Sentinel alert controls keep
+       the decision state in view after the words tuck. Their own map,
+       keyed by row and words, remembers when this tab first showed each
+       line so a re-render never re-opens one already seen; a row leaving
+       the payload (or its words changing) drops the entry. */
+    let _stageTrackerHumanNotes = {};
+    function stageTrackerTextHash(text) {
+      let h = 5381;
+      for (let i = 0; i < text.length; i++) h = (h * 33 + text.charCodeAt(i)) >>> 0;
+      return h.toString(36);
+    }
+    function stageTrackerHumanNote(rowKey, text, nowMs) {
+      const key = 'human:' + rowKey + ':' + stageTrackerTextHash(text);
+      let ev = _stageTrackerHumanNotes[key];
+      if (!ev) { ev = { who: 'human', row: rowKey, text, at: nowMs }; _stageTrackerHumanNotes[key] = ev; }
+      return { key, ev };
+    }
+    // Pure: the human notes still backed by a row in nextStates.
+    function stageTrackerHumanNotesNext(notes, nextStates) {
+      const out = {};
+      for (const k of Object.keys(notes || {})) if (!nextStates || nextStates[notes[k].row]) out[k] = notes[k];
+      return out;
+    }
+    // bodyHtml is the line's already-escaped words (with its View link);
+    // text is the plain words the icon's tooltip and the key use.
+    function stageTrackerHumanNoteHtml(rowKey, bodyHtml, text, nowMs) {
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      const { key, ev } = stageTrackerHumanNote(rowKey, text, nowMs);
+      const auto = typeof stageTrackerNoteTuckSetting === 'function' && stageTrackerNoteTuckSetting();
+      // Auto-collapse off: the old two-minute life and fade, like a hive line.
+      if (!auto && nowMs - stageTrackerEventShownAt(ev) >= STAGE_TRACKER_EVENT_MS) return '';
+      return stageTrackerNoteLineHtml(key, ev, { nowMs, noteTuck: auto }, `<span class="cue-event-text">${bodyHtml}</span> <span class="cue-event-age" data-at="${ev.at}"></span>`, 'ham-human-context');
+    }
+    // A note by key from either map; a toggle writes back to the map it
+    // came from.
+    function stageTrackerNoteEventOf(key) {
+      return _stageTrackerEvents[key] || _stageTrackerHumanNotes[key] || null;
+    }
+    function stageTrackerNoteEventSet(key, ev) {
+      if (_stageTrackerEvents[key]) _stageTrackerEvents[key] = ev; else _stageTrackerHumanNotes[key] = ev;
+    }
+    function stageTrackerNoteEventsAll() {
+      return Object.assign({}, _stageTrackerHumanNotes, _stageTrackerEvents);
     }
     const STAGE_TRACKER_CUE_TICK_MS = 15000;
     function stageTrackerCueAgeSync(el, nowMs) {
@@ -20270,7 +20359,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The hive note's open / tucked state is applied in place
     // (stageTrackerNoteSync), so it is not a reason to swap the node either.
     function stageTrackerRowSrcKey(html) {
-      return String(html || '').replace(/ data-ham-prev-col="\d+" data-ham-col="\d+"/g, '').replace(/ cue-event-tucked"/g, '"').replace(/ aria-expanded="(?:true|false)"/g, '').replace(/ title="(?:You|Hive): [^"]*" data-action="stageTrackerNoteToggle"/g, ' data-action="stageTrackerNoteToggle"');
+      return String(html || '').replace(/ data-ham-prev-col="\d+" data-ham-col="\d+"/g, '').replace(/ cue-event-tucked"/g, '"').replace(/ aria-expanded="(?:true|false)"/g, '').replace(/ title="[^"]*" data-action="stageTrackerNoteToggle"/g, ' data-action="stageTrackerNoteToggle"');
     }
     // Pure: whether the stamped move attributes name this strip.
     function stageTrackerRowHasMove(html) { return / data-ham-prev-col="\d+"/.test(String(html || '')); }
