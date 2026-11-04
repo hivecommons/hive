@@ -170,7 +170,7 @@ test('strip uses the person glyph only for a current requirement; claimant and s
     STAGE_TRACKER_PRE_MERGE_SOAK: 95, STAGE_TRACKER_READY_FOR_HUMAN_MERGE: 90,
   });
 
-  vm.runInContext(fn('tracker-row-strip', 'stageTrackerStripItems'), c);
+  vm.runInContext(fn('tracker-row-strip', 'stageTrackerWaitingOnPerson') + fn('tracker-row-strip', 'stageTrackerTrackRunning') + fn('tracker-row-strip', 'stageTrackerStripItems'), c);
   item.stage = 40;
   assert.match(c.stageTrackerStripItems(item, [], null, 1, {}), /data-kind="human"/);
   item.human_attention = null;

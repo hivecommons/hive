@@ -715,6 +715,15 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     ci_activity: { head: 'f269349', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'f269349', state: 'reviewing', active: true, actor: 'reviewer-2', caption: 'Review working', perspectives_done: 2, perspectives_total: 5, source: 'dispatch', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(busy), 2, 'three qualify, two light: ' + strip(busy));
+  // #16456: back in PR in progress with changes requested — one filled
+  // chevron; CI 11/11 is green words (done), the review finding red words
+  // (failing), neither a fill.
+  const changes = stageTrackerRowHtml({ repo: 'acme/console', number: 16456, kind: 'pr', stage: 70, display_column: 30, head: 'f269349', author: 'hive[bot]', author_kind: 'hive',
+    code_activity: { head: 'f269349', state: 'unassigned', caption: 'Changes requested · unassigned · next: scanner', source: 'no-pickup-evidence', since: seen, observed_at: seen },
+    ci_activity: { head: 'f269349', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: 'f269349', state: 'changes_requested', caption: 'Review findings · changes requested', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } }, stages, ctx);
+  assert.strictEqual(lit(changes), 1, 'changes requested in PR in progress: one filled chevron: ' + strip(changes));
+  assert.ok(/<li class="ham-seg ham-activity-track done" data-track="ci"[^>]*>[\s\S]*?CI 11\/11 passed<\/span>/.test(changes) && /<li class="ham-seg ham-activity-track failing" data-track="review"[^>]*>[\s\S]*?Review 5\/5 · changes requested<\/span>/.test(changes), changes);
   assert.ok(/<li class="ham-seg active ham-settled-current ham-remediation-remediating detoured"/.test(busy) && busy.includes('Remediating · scanner · 4m'), 'the stage chevron is settled-current with its words: ' + busy);
 }
 // Merged: the lit cap is the only chevron with hover text.

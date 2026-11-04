@@ -328,6 +328,15 @@ func stageTrackerCountPerspectives(out *StageTrackerActivity, pr github.PullRequ
 			out.PerspectivesDone++
 		}
 	}
+	// A swarm that is requested or queued has not started this round: no
+	// perspective of it is done, whatever an earlier round left behind.
+	// "Review 5/5 · swarm requested" contradicts itself (hivecommons/hive#16540).
+	if out.State == "unassigned" {
+		out.PerspectivesDone = 0
+		if out.PerspectivesTotal == 0 {
+			out.PerspectivesTotal = len(expected)
+		}
+	}
 }
 
 func trackerHeadMatches(repo string, number int, head, observedRepo string, observedNumber int, observedHead string) bool {

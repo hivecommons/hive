@@ -570,7 +570,12 @@ test('current-phase styling is steady and undimmed, including compact/reduced-mo
   for (const block of css.match(/\.ham-(?:seg\.)?ham-activity-track[^{]*\{[^}]*\}/g)) {
     assert.doesNotMatch(block, /clip-path|border(?!-radius)|box-shadow: inset/, block);
   }
-  assert.match(css, /\.ham-seg\.ham-activity-track\.failing \{ background: var\(--status-error\); color: var\(--surface-0\);/, 'a finding wears the error colour at full strength');
+  // Only a running track is filled (#16540): done / failing / pending /
+  // decided are words in their colour on the muted field.
+  assert.match(css, /\.ham-seg\.ham-activity-track\.failing \{ background: var\(--panel-strong\); color: var\(--status-error\);/, 'a finding is red words and glyph, not a red fill');
+  assert.match(css, /\.ham-seg\.ham-activity-track\.done \{ background: var\(--panel-strong\); color: var\(--green\);/, 'a pass is green words, not a fill');
+  for (const state of ['pending', 'done.decided']) assert.match(css, new RegExp('\\.ham-seg\\.ham-activity-track\\.' + state.replace('.', '\\.') + ' \\{ background: var\\(--panel-strong\\); color: var\\(--muted\\);'), state + ' is muted words on the muted field');
+  assert.doesNotMatch(css, /\.ham-seg\.ham-activity-track\.(?:done|failing|pending)[^{]*\{[^}]*background: var\(--(?:amber|status-error|green|red)\)/, 'no fill colour on a non-running track');
   assert.doesNotMatch(css, /\.ham-track-state \{[^}]*white-space: nowrap/, 'count words wrap to the strip-wide two-line budget like every other chevron, never ellipsised mid-count');
   const current = css.match(/\.ham-activity-track\.ham-current \{([^}]*)\}/)[1];
   assert.doesNotMatch(current, /animation|data-motion/);

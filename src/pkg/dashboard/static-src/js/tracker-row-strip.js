@@ -124,10 +124,12 @@
     // cannot say who reviews, whether checks run, or whether an author codes.
     // The chevron wears its glyph plus the count words from
     // stageTrackerTrackWord (hivecommons/hive#16484). Style follows the
-    // track's own state on the current head: in progress = the full active
-    // fill (both tracks may be lit at once; the words disambiguate), done =
-    // the passed-stage style, a finding = the failing style, not started =
-    // the empty chevron with the glyph alone. Freshness gates only the pulse.
+    // track's own state on the current head: running = the full active
+    // fill (both tracks may be lit at once; the words disambiguate); done,
+    // a finding, pending and decided are words in their colour on the muted
+    // field — only a running track is filled (hivecommons/hive#16540); not
+    // started = the empty chevron with the glyph alone. Freshness gates only
+    // the pulse.
     function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';

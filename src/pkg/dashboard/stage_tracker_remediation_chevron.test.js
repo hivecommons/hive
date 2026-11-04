@@ -192,3 +192,21 @@ test('three qualify: CI and review running on a lit PR in progress → tracks wi
   assert.match(one[3], /class="ham-seg active ham-remediation-remediating detoured"[^>]*data-motion="active"/);
   assert.equal(litCount(one.join('')), 2);
 });
+
+test('#16456 row: PR in progress with changes requested → the stage chevron is the only lit one; review is a red-text finding, CI a green-text pass', () => {
+  const c = cells(redPR({ display_column: 30,
+    code_activity: { head: 'abc1234def', state: 'unassigned', caption: 'Changes requested · unassigned · next: scanner', source: 'no-pickup-evidence', since: red, observed_at: seen },
+    ci_activity: { head: 'abc1234def', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: 'abc1234def', state: 'changes_requested', caption: 'Review findings', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: red } }));
+  assert.match(c[3], /class="ham-seg active ham-remediation-unassigned detoured"/);
+  assert.match(c[4], /class="ham-seg ham-activity-track done"[^]*CI 11\/11 passed</);
+  assert.match(c[5], /class="ham-seg ham-activity-track failing"[^]*Review 5\/5 · changes requested</);
+  assert.equal(litCount(c.join('')), 1, 'done / failing tracks are text-colour variants, not fills');
+});
+
+test('#16539 shape: a queued swarm reads 0/5, pending, not filled', () => {
+  const c = cells(redPR({ display_column: 50, stage: 50,
+    review_activity: { head: 'abc1234def', state: 'unassigned', caption: 'Review queued · unassigned', blocker: 'no-free-reviewer', perspectives_done: 0, perspectives_total: 5, source: 'review-dispatch-wait', observed_at: seen } }));
+  assert.match(c[5], /class="ham-seg ham-activity-track pending ham-current"[^]*Review 0\/5 · swarm requested</);
+  assert.equal(litCount(c.join('')), 0, 'CI passed and a queued swarm: nothing runs, nothing is filled');
+});
