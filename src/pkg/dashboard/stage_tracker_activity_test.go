@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,7 +142,8 @@ func TestStageTrackerActivitySourceRepairAndWaits(t *testing.T) {
 	}
 	dispatch.Fixes = []review.PendingFix{{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: "fixer", Dispatched: now}}
 	stageTrackerApplyCodeActivity(&it, dispatch, status, now)
-	if it.Stage != trackerNumberFixing || it.DisplayColumn != trackerNumberPRInProgress || !it.CodeActivity.Active || it.CodeActivity.Actor != "fixer" {
+	if it.Stage != trackerNumberFixing || it.DisplayColumn != trackerNumberPRInProgress || !it.CodeActivity.Active || it.CodeActivity.Actor != "fixer" ||
+		it.CodeActivity.State != "fixing" || it.CodeActivity.Caption != "Remediating · fixer" {
 		t.Fatalf("repair failed to return visually: %+v", it)
 	}
 	if !stageTrackerReviewActivity(pr, nil, nil, dispatch, status, now).Active {
@@ -251,6 +253,19 @@ func TestStageTrackerActivityApprovalRequiresConsistentBundle(t *testing.T) {
 	}
 }
 
+func TestStageTrackerRemediationPausedWordingPreservesEvidence(t *testing.T) {
+	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
+	for _, prefix := range []string{"Remediation paused", "Fixing paused"} {
+		it := StageTrackerItem{Kind: "pr", Repo: "org/repo", Number: 7, Head: "head", Stage: trackerNumberFixing,
+			Caption: prefix + " — attempts exhausted; historical stage Fixing"}
+		stageTrackerApplyCodeActivity(&it, review.DispatchState{}, nil, now)
+		if it.CodeActivity == nil || it.CodeActivity.Active || it.CodeActivity.State != "waiting_fixer" ||
+			it.DisplayColumn != trackerNumberReviewPending || it.CodeActivity.Blocker != "Fix task blocked — attempts exhausted; historical stage Fixing" {
+			t.Fatalf("paused remediation or legacy caption invented work or rewrote history: %+v", it)
+		}
+	}
+}
+
 func TestStageTrackerActivityCIRetryAndMixedChecks(t *testing.T) {
 	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
 	pr, dispatch, status := trackerActivityFixture(now)
@@ -315,5 +330,158 @@ func TestStageTrackerActivitySelectsObservedReviewer(t *testing.T) {
 	dispatch.Pending[0].Decision = true
 	if got := stageTrackerReviewActivity(pr, nil, nil, dispatch, status, now); got.State != "adjudicating" {
 		t.Fatalf("adjudication was described as an independent reviewer: %+v", got)
+	}
+}
+
+func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
+	now := time.Date(2026, 11, 3, 23, 0, 0, 0, time.UTC)
+	pr, _, _ := trackerActivityFixture(now)
+	ci := func(checks ...github.PRActivityCheck) github.PullRequest {
+		pr.CIActivity = &github.PRCIActivity{Head: pr.HeadSHA, Source: "github-check-runs", ObservedAt: &now, StatusesKnown: true,
+			RequiredSource: "protection", RequiredChecks: []github.PRRequiredCheck{{Name: "build", AppKnown: true}, {Name: "lint", AppKnown: true}, {Name: "test", AppKnown: true}},
+			RequiredKnown: true, Required: []string{"build", "lint", "test"}, Checks: checks}
+		return pr
+	}
+	chk := func(name, state, conclusion string) github.PRActivityCheck {
+		return github.PRActivityCheck{Name: name, State: state, Conclusion: conclusion}
+	}
+	done := func(name string) github.PRActivityCheck { return chk(name, "completed", "success") }
+	cases := []struct {
+		name          string
+		pr            github.PullRequest
+		state, want   string
+		detailMention string
+	}{
+		{"missing", ci(done("build"), done("lint")), "missing", `CI waiting · required check "test" hasn't reported for this head yet`, `check named "test"`},
+		{"running counts", ci(done("build"), chk("lint", "in_progress", ""), chk("test", "in_progress", "")), "running", "CI running · 1/3 checks done", "1 of the 3 required checks"},
+		{"queued", ci(done("build"), done("lint"), chk("test", "queued", "")), "queued", `CI queued · "test" waiting for a runner`, "not started"},
+		{"failing", ci(done("build"), chk("lint", "completed", "failure"), done("test")), "failing", `CI failing · "lint" red`, `"lint" finished without success`},
+		{"skipped", ci(done("build"), done("lint"), chk("test", "completed", "skipped")), "skipped", `CI skipped · check "test" skipped`, "does not count as a pass"},
+		{"ambiguous", ci(done("build"), done("lint"), done("test"), chk("test", "completed", "failure")), "unknown", `CI unknown · "test" reported but with no conclusion`, "several runs share the name"},
+		{"green", ci(done("build"), done("lint"), done("test")), "passing", "CI green · all 3 required checks passed", "reported success"},
+	}
+	for _, tc := range cases {
+		got := stageTrackerCIActivity(tc.pr, now)
+		if got.State != tc.state || got.Caption != tc.want || !strings.Contains(got.Detail, tc.detailMention) {
+			t.Fatalf("%s: want %s %q (detail mentioning %q), got %+v", tc.name, tc.state, tc.want, tc.detailMention, got)
+		}
+	}
+	mixed := ci(done("build"), chk("lint", "completed", "failure"), chk("test", "in_progress", ""))
+	if got := stageTrackerCIActivity(mixed, now); got.Caption != `CI failing · "lint" red · other checks still running` {
+		t.Fatalf("mixed red+running caption: %+v", got)
+	}
+	if got := stageTrackerCIActivity(github.PullRequest{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA}, now); got.Caption != "CI unknown · no check results observed for this head yet" || got.Detail == "" {
+		t.Fatalf("no-evidence caption: %+v", got)
+	}
+}
+
+func TestStageTrackerActivityCICheckCounts(t *testing.T) {
+	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
+	required := func(names ...string) []github.PRRequiredCheck {
+		out := make([]github.PRRequiredCheck, 0, len(names))
+		for _, n := range names {
+			out = append(out, github.PRRequiredCheck{Name: n, AppKnown: true})
+		}
+		return out
+	}
+	pr := github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{
+		Head: "head", Source: "github-check-runs", ObservedAt: &now, RequiredKnown: true, StatusesKnown: true,
+		Required: []string{"build", "lint", "test"}, RequiredSource: "protection", RequiredChecks: required("build", "lint", "test"),
+		Checks: []github.PRActivityCheck{
+			{Name: "build", State: "completed", Conclusion: "success"},
+			{Name: "lint", State: "completed", Conclusion: "failure"},
+			{Name: "test", State: "in_progress"},
+			{Name: "optional", State: "completed", Conclusion: "failure"},
+		},
+	}}
+	got := stageTrackerCIActivity(pr, now)
+	if got.ChecksPassed != 1 || got.ChecksTotal != 3 || got.ChecksFailed != 1 || strings.Join(got.ChecksFailing, ",") != "lint" {
+		t.Fatalf("required counts = %d/%d failed %d %v, want 1/3 failed 1 [lint] (optional checks do not count): %+v", got.ChecksPassed, got.ChecksTotal, got.ChecksFailed, got.ChecksFailing, got)
+	}
+	// Every required check green: the count is complete and no name is red.
+	pr.CIActivity.Checks = []github.PRActivityCheck{
+		{Name: "build", State: "completed", Conclusion: "success"}, {Name: "lint", State: "completed", Conclusion: "success"}, {Name: "test", State: "completed", Conclusion: "success"},
+	}
+	if got := stageTrackerCIActivity(pr, now); got.State != "passing" || got.ChecksPassed != 3 || got.ChecksTotal != 3 || got.ChecksFailed != 0 {
+		t.Fatalf("green counts = %+v", got)
+	}
+	// A required check with no run yet still counts in the total, not in passed.
+	pr.CIActivity.Checks = pr.CIActivity.Checks[:2]
+	if got := stageTrackerCIActivity(pr, now); got.State != "missing" || got.ChecksPassed != 2 || got.ChecksTotal != 3 {
+		t.Fatalf("missing counts = %+v", got)
+	}
+	// Required set unknown (an unprotected base such as v6): count every
+	// check run observed on the head, one per name, latest run decides.
+	earlier, later := now.Add(-2*time.Minute), now.Add(-time.Minute)
+	pr.CIActivity.RequiredKnown, pr.CIActivity.Required, pr.CIActivity.RequiredChecks = false, nil, nil
+	pr.CIActivity.Checks = []github.PRActivityCheck{
+		{Name: "build", State: "completed", Conclusion: "success"},
+		{Name: "flaky", State: "completed", Conclusion: "failure", Since: &earlier},
+		{Name: "flaky", State: "completed", Conclusion: "success", Since: &later},
+		{Name: "test", State: "queued"},
+		{Name: "other-head", State: "completed", Conclusion: "success", Head: "old-head"},
+	}
+	got = stageTrackerCIActivity(pr, now)
+	if got.State != "unknown" || got.ChecksTotal != 3 || got.ChecksPassed != 1 || got.ChecksFailed != 1 || strings.Join(got.ChecksFailing, ",") != "flaky" {
+		t.Fatalf("head-wide counts = %d/%d failed %d %v (state %s), want 1/3 failed 1 [flaky] unknown: a red run of a name stays red", got.ChecksPassed, got.ChecksTotal, got.ChecksFailed, got.ChecksFailing, got.State)
+	}
+	// No evidence for the head at all: no count ("CI ?/?").
+	pr.CIActivity.Checks = nil
+	if got := stageTrackerCIActivity(pr, now); got.ChecksTotal != 0 || got.ChecksPassed != 0 {
+		t.Fatalf("empty head produced a count: %+v", got)
+	}
+}
+
+func TestStageTrackerActivityReviewPerspectiveCounts(t *testing.T) {
+	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
+	pr, dispatch, status := trackerActivityFixture(now)
+	qualify := stageTrackerRepoQualifier(status)
+	expected := stageTrackerExpectedPerspectives(nil)
+	if len(expected) != len(review.DefaultPerspectives) {
+		t.Fatalf("nil config did not fall back to the built-in set: %v", expected)
+	}
+	count := func(bundle *evidence.Bundle, agg *review.Aggregate, d review.DispatchState) *StageTrackerActivity {
+		out := stageTrackerReviewActivity(pr, bundle, agg, d, status, now)
+		stageTrackerCountPerspectives(out, pr, bundle, agg, d, qualify, expected)
+		return out
+	}
+	// Swarm requested, nothing reported yet: 0 of the expected set.
+	if got := count(nil, nil, dispatch); got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("fresh dispatch counts = %d/%d, want 0/%d: %+v", got.PerspectivesDone, got.PerspectivesTotal, len(expected), got)
+	}
+	// Three of five reported on the current head.
+	agg := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: "changes_requested",
+		Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: "approve", review.PerspectiveSecurity: "approve", review.PerspectiveStyle: "changes_requested"}}
+	bundle := &evidence.Bundle{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, UpdatedAt: now, Verdicts: []evidence.Verdict{
+		{Perspective: string(review.PerspectiveCorrectness), Backend: "b", Model: "m", Verdict: "approve", RecordedAt: now},
+		{Perspective: string(review.PerspectiveSecurity), Backend: "b", Model: "m", Verdict: "approve", RecordedAt: now},
+		{Perspective: string(review.PerspectiveStyle), Backend: "b", Model: "m", Verdict: "changes_requested", RecordedAt: now},
+	}}
+	if got := count(bundle, agg, dispatch); got.PerspectivesDone != 3 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("partial counts = %d/%d (%s), want 3/%d", got.PerspectivesDone, got.PerspectivesTotal, got.State, len(expected))
+	}
+	// A perspective outside the configured set that was dispatched or reported
+	// for this head widens the total rather than vanishing.
+	dispatch.Pending = append(dispatch.Pending, review.PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: "plan-match", Agent: "reviewer-2", Dispatched: now})
+	if got := count(bundle, agg, dispatch); got.PerspectivesTotal != len(expected)+1 || got.PerspectivesDone != 3 {
+		t.Fatalf("extra dispatched perspective counts = %d/%d, want 3/%d", got.PerspectivesDone, got.PerspectivesTotal, len(expected)+1)
+	}
+	// hive#16539: five verdicts exist for the head but the swarm is queued
+	// again (a wait, no reviewer free): this round has not started, so the
+	// word is "Review 0/5 · swarm requested", never "5/5 · swarm requested".
+	full := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: "approve",
+		Perspectives: map[review.Perspective]review.Verdict{}}
+	for _, p := range expected {
+		full.Perspectives[p] = "approve"
+	}
+	waiting := review.DispatchState{GeneratedAt: now, Waits: []review.ReviewWaitRecord{{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: "no-free-reviewer", FirstAt: now.Add(-8 * time.Minute), LastAt: now}}}
+	if got := count(bundle, full, waiting); got.State != "unassigned" || got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("queued swarm counts = %d/%d (%s), want 0/%d unassigned", got.PerspectivesDone, got.PerspectivesTotal, got.State, len(expected))
+	}
+	// Evidence for another head counts nothing for this one.
+	agg.HeadSHA, bundle.HeadSHA = "old-head", "old-head"
+	dispatch.Pending = nil
+	if got := count(bundle, agg, dispatch); got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("old-head evidence leaked into counts: %d/%d", got.PerspectivesDone, got.PerspectivesTotal)
 	}
 }

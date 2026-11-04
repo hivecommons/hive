@@ -19,7 +19,8 @@
       if (!d || d.effect !== 'pending' || !d.text) return null;
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       const sep = String(d.text).indexOf(' · ');
-      const word = sep > 0 ? d.text.slice(0, sep) : (d.word || d.text);
+      const rawWord = sep > 0 ? d.text.slice(0, sep) : (d.word || d.text);
+      const word = rawWord === 'Fixing' ? 'Remediating' : rawWord;
       let detail = sep > 0 ? d.text.slice(sep + 3) : '';
       const until = d.next_at ? Date.parse(d.next_at) : 0;
       if (until > nowMs) detail += (detail ? ' · ' : '') + 'in ' + stageTrackerShortLeft(until - nowMs);
@@ -28,10 +29,16 @@
     // Pure: the in-flight caption for a recorded decision — from the
     // server's projection when it has one, else from the result's action.
     const STAGE_TRACKER_DECIDED_ACTING = { adopted: 'Adopting · opening hive copy…', approved: 'Approving…', directed: 'Sending back…', closed: 'Closing…', merged: 'Merging…', 'queued-for-merge': 'Queuing for merge…', recommended: 'Recommendation recorded' };
+    // A park-keeping verdict by what it recorded: a recommendation only
+    // when there is one (recommend-only); owner-only / operator-action hand
+    // the decision back, so the caption says so (hivecommons/hive#16572).
+    const STAGE_TRACKER_PARK_KEPT_ACTING = { 'recommend-only': 'Recommendation recorded', 'owner-only': 'Your decision needed · owner sign-off', 'operator-action': 'Your action needed · operator step' };
     function stageTrackerDecidedActing(result, item) {
       const d = item && item.decided;
       if (d && d.acting) return d.acting;
-      return STAGE_TRACKER_DECIDED_ACTING[result && result.action] || 'Hive decided…';
+      const action = result && result.action;
+      if (action === 'recommended') return STAGE_TRACKER_PARK_KEPT_ACTING[result.verdict] || 'Your decision needed';
+      return STAGE_TRACKER_DECIDED_ACTING[action] || 'Hive decided…';
     }
     // Pure: the ✓ badge's first line for a decided row: the decision name
     // and who / what triggered it — "you · Let hive decide · hive chose

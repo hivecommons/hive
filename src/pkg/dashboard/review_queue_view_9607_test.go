@@ -78,7 +78,7 @@ func TestReviewQueueViewStaticWiring(t *testing.T) {
 		`reviewEvidenceButtonHtml(e.repo, e.number) +`,
 		`function reviewEvidenceButtonHtml(repo, number)`,
 		`data-action="openReviewEvidence"`,
-		`() => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),`,
+		`['review-queue', () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); })],`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html is missing review-queue wiring %q", want)
@@ -121,7 +121,7 @@ func TestReviewQueueEntryRendering(t *testing.T) {
 	// The evidence button is role-gated on window state that does not exist
 	// under node; its wiring is pinned in TestReviewQueueViewStaticWiring.
 	source.WriteString("function reviewEvidenceButtonHtml() { return ''; }\n")
-	for _, name := range []string{"esc", "reviewQueuePriorityMeta", "reviewQueueAgeLabel", "reviewQueueSupersededHtml", "renderReviewQueueEntry"} {
+	for _, name := range []string{"esc", "reviewQueuePriorityMeta", "reviewQueueAgeLabel", "reviewQueueSupersededHtml", "fixerQueueHint", "renderReviewQueueEntry"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -166,6 +166,14 @@ assert.match(entry({ priority: 'weird' }), /review-priority\/normal/);
 // Agent authorship and held state surface.
 assert.match(entry({ hive_authored: true }), /agent/);
 assert.match(entry({ held: true }), /held/);
+
+// Fixer status is independent of review rank and disappears after delivery.
+assert.doesNotMatch(entry(), /fixer queued/);
+assert.match(entry({ fixer_queue_position: 3, fixer_queue_ahead: 2 }), /fixer queued, 2 ahead/);
+assert.match(entry({ fixer_queue_position: 1, fixer_queue_ahead: 0 }), /fixer queued, 0 ahead/);
+assert.doesNotMatch(entry({ fixer_queue_position: 0, fixer_queue_ahead: 0 }), /fixer queued/);
+assert.doesNotMatch(entry({ fixer_queue_ahead: 4 }), /fixer queued/);
+assert.doesNotMatch(entry({ fixer_queue_position: '<img src=x>' }), /fixer queued/);
 
 // No reasons still renders without throwing.
 assert.match(entry({ reasons: [] }), /no ranking reasons recorded/);

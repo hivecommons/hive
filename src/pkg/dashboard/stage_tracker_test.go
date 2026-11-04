@@ -95,13 +95,19 @@ func TestStageTrackerStagesFallsTo(t *testing.T) {
 // returned-to-contributor (clanker) are both review-side detours with their
 // own chevron word and an author-must-act caption.
 func TestStageTrackerNeedsAuthorAndReturnedWords(t *testing.T) {
+	for _, stage := range stageTrackerStages(nil) {
+		if stage.Number == stagelabels.Fixing.Number() &&
+			(stage.Label != stagelabels.Fixing.Label() || stage.Short != "Remediating" || stage.Description != "CI failed or review changes requested; remediation needed") {
+			t.Fatalf("remediation display wording changed the native identity or lost its waiting-safe description: %+v", stage)
+		}
+	}
 	for _, tc := range []struct {
 		stage             stagelabels.Stage
 		word, captionHead string
 	}{
 		{stagelabels.NeedsAuthor, "Needs author", "Needs @sam"},
 		{stagelabels.ReturnedToContributor, "Returned to contributor", "Returned to @sam"},
-		{stagelabels.Fixing, "Fixing", "Red or changes requested; a hive agent is fixing it"},
+		{stagelabels.Fixing, "Remediating", "CI failed or review changes requested; remediation needed"},
 	} {
 		if got := stageTrackerShort(tc.stage); got != tc.word {
 			t.Errorf("%v: short = %q, want %q", tc.stage, got, tc.word)

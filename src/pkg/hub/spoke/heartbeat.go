@@ -1441,6 +1441,13 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		}
 	}
 
+	// A timeout cannot cancel a collector blocked on a mutex or NFS. Keep
+	// subsequent beats from starting more copies of that same blocked work.
+	collect = nonOverlappingHeartbeatCollector(collect)
+	if freshCollect != nil {
+		freshCollect = FreshStatusCollector(nonOverlappingHeartbeatCollector(StatusCollector(freshCollect)))
+	}
+
 	logger.Info("hub heartbeat enabled", "url", hubURL, "interval", interval)
 
 	waitForReady(ctx, logger)
@@ -1969,7 +1976,8 @@ func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout ti
 			// outcome. Here we only note the timeout itself, then name the
 			// sections that consumed the budget.
 			logger.Warn("hub heartbeat collect timed out; loop keeps ticking so liveness stays green",
-				"timeout", timeout.String())
+				"timeout", timeout.String(),
+				"slowest", timings.summary(collectTimingTopN))
 			logCollectTimeoutBreakdown(logger, timings, timeout)
 		}
 		return nil

@@ -392,11 +392,11 @@
         return INFERENCE_MODELS[backend] || [];
       }
     }
-    function refreshBackendDiscovery(force) {
-      INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b, force));
+    async function refreshBackendDiscovery(force) {
+      for (const backend of INFERENCE_BACKENDS) await fetchInferenceModels(backend, force);
       // Load configured gateway names so the backend/method pickers list them
       // (e.g. openrouter) alongside KNOWN_BACKENDS after the first paint.
-      fetchConfiguredGateways();
+      await fetchConfiguredGateways();
     }
 
     const CLI_MODEL_CACHE_TTL_MS = 30000;

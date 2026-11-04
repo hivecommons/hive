@@ -29,7 +29,7 @@
     }
     triggerAttentionShimmy();
 
-    checkClaudeAuth();
+    dashboardScheduleWork('welcome-claude-auth', checkClaudeAuth).catch(console.error);
     var CLAUDE_AUTH_CHECK_INTERVAL_MS = 60000;
     dashboardSetInterval('welcome-claude-auth', checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
 
@@ -87,59 +87,38 @@
       sendPresencePing();
     })();
 
-    // Deferred initialization — non-critical fetches staggered after first paint.
-    // Each entry returns a promise so anchor scrolling can wait for layout to settle.
-    const DEFERRED_INIT_DELAY_MS = 1500;
-    const DEFERRED_STAGGER_MS = 200;
+    // Visible sections win; slow background panels cannot delay navigation.
+    const DEFERRED_INIT_DELAY_MS = DASHBOARD_BACKGROUND_DELAY_MS;
     _deferredLoadPromise = new Promise(function(resolveAll) {
       setTimeout(() => {
         const deferred = [
-          () => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig()),
-          () => fetchFactHistory(),
-          () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); }),
-          () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); }),
-          () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
-          () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); }),
-          () => ensureNousPolling(),
-          () => fetchPublicKnowledgeSetting(),
-          () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); }),
-          () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); }),
-          () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
-          () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); }),
-          () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); }),
-          () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); }),
-          () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); }),
-          () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); }),
-          () => fetchACMMEvaluation().then(() => { dashboardSetInterval('acmm-evaluation', fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); }),
-          () => Promise.resolve(startVersionCheck()),
-          () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}).then(() => { dashboardSetInterval('weekly-trends', () => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); }),
-          () => fetchTimeline().then(() => { dashboardSetInterval('timeline', fetchTimeline, TIMELINE_REFRESH_MS); }),
-          () => fetchAgentLogs().then(() => { dashboardSetInterval('agent-logs', fetchAgentLogs, LOGS_REFRESH_MS); }),
+          ['backend-discovery', () => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig())],
+          ['fact-history', () => fetchFactHistory()],
+          ['overview-kpi-history', () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); })],
+          ['history', () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); })],
+          ['budget-ignore', () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(console.error)],
+          ['budget-history', () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); })],
+          ['nous-status', () => ensureNousPolling()],
+          ['public-knowledge', () => fetchPublicKnowledgeSetting()],
+          ['knowledge-stats', () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); })],
+          ['audit-log', () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); })],
+          ['review-queue', () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); })],
+          ['review-pipeline', () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); })],
+          ['stage-tracker', () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); })],
+          ['contributors', () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); })],
+          ['leaderboard', () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); })],
+          ['git-version', () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); })],
+          ['acmm-evaluation', () => fetchACMMEvaluation().then(() => { dashboardSetInterval('acmm-evaluation', fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); })],
+          ['version-check', () => Promise.resolve(startVersionCheck())],
+          ['weekly-trends', () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(console.error).then(() => { dashboardSetInterval('weekly-trends', () => { return fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(console.error); }, TREND_REFRESH_MS); })],
+          ['timeline', () => fetchTimeline().then(() => { dashboardSetInterval('timeline', fetchTimeline, TIMELINE_REFRESH_MS); })],
+          ['agent-logs', () => fetchAgentLogs().then(() => { dashboardSetInterval('agent-logs', fetchAgentLogs, LOGS_REFRESH_MS); })],
         ];
-        // `Promise.resolve().then(fn)` rather than `fn()`, so ONE bad entry
-        // cannot strand the whole chain (#6581). `fn()` was called bare inside
-        // the setTimeout callback, so an entry that threw synchronously — or
-        // returned undefined and had `.then` called on it, which is what
-        // fetchTimeline did — threw out of the callback with nothing to catch
-        // it. That entry's promise then never settled, so Promise.all never
-        // settled, so resolveAll never ran and _deferredLoadPromise stayed
-        // pending for the life of the page. _afterPaint awaits it, so first-
-        // load view restoration (making #oc-agent-detail active, navigating to
-        // a saved section) silently never happened.
-        //
-        // Wrapping turns a synchronous throw into a rejection, which
-        // `.then(resolve, resolve)` already handles: the entry is recorded as
-        // finished-badly instead of never finishing, and the other twelve
-        // entries still complete. The throw is still reported below rather
-        // than swallowed — the point is that one broken entry degrades to one
-        // broken feature, not to a dashboard that never finishes initialising.
-        const allDone = deferred.map((fn, i) =>
-          new Promise(resolve => setTimeout(() => {
-            Promise.resolve().then(fn).then(resolve, err => {
-              console.error('deferred init entry ' + i + ' failed', err);
-              resolve();
-            });
-          }, i * DEFERRED_STAGGER_MS))
+        // A synchronous throw must not strand the other panels (#6581).
+        const allDone = deferred.map(([key, fn]) =>
+          dashboardScheduleWork(key, () => Promise.resolve().then(fn)).catch(err => {
+            console.error('deferred init ' + key + ' failed', err);
+          })
         );
         Promise.all(allDone).then(resolveAll);
       }, DEFERRED_INIT_DELAY_MS);
@@ -353,4 +332,3 @@
       gh84: function (event, A) { markSentinelDirty('exemptLogins', parseSecurityList(this.value)); },
       gh85: function (event, A) { markSentinelDirty('repos', parseSecurityList(this.value)); },
     };
-

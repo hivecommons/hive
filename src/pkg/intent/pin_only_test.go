@@ -1,6 +1,7 @@
 package intent
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -115,5 +116,40 @@ func TestPinReplacementNarrowGrammar(t *testing.T) {
 		if got := pinReplacement(tc.old, tc.next, kinds); got != tc.want {
 			t.Errorf("%q -> %q: got %v", tc.old, tc.next, got)
 		}
+	}
+}
+
+func TestClassifyPinOnlyActionsReturnsAcceptedPins(t *testing.T) {
+	sha := func(c string) string { return strings.Repeat(c, 40) }
+	spec := PinOnlySpec{Paths: []string{".github/workflows/*.yml", "Containerfile"}, Kinds: []string{"action-sha", "image-digest"}}
+	workflow := ChangedFile{Filename: ".github/workflows/build.yml", Status: "modified", Additions: 3, Deletions: 3, Patch: "@@ -1,5 +1,5 @@\n" +
+		"-  - uses: actions/checkout@" + sha("a") + " # v4\n" +
+		"+  - uses: actions/checkout@" + strings.ToUpper(sha("b")) + " # v4.2.1\n" +
+		" context\n" +
+		"-    uses: github/codeql-action/init@" + sha("c") + "\n" +
+		"+    uses: github/codeql-action/init@" + sha("d") + "\n" +
+		" more context\n" +
+		"-  - uses: actions/checkout@" + sha("a") + " # v4\n" +
+		"+  - uses: actions/checkout@" + sha("b") + " # v4.2.1"}
+	image := ChangedFile{Filename: "Containerfile", Status: "modified", Additions: 1, Deletions: 1,
+		Patch: "@@ -1 +1 @@\n-FROM ghcr.io/org/image@sha256:" + strings.Repeat("a", 64) + "\n+FROM ghcr.io/org/image@sha256:" + strings.Repeat("b", 64)}
+	ok, why, pins := ClassifyPinOnlyActions([]ChangedFile{workflow, image}, []string{workflow.Filename, image.Filename}, spec)
+	if !ok {
+		t.Fatalf("refused: %s", why)
+	}
+	want := []ActionPin{
+		{Repo: "actions/checkout", SHA: sha("b"), Version: "v4.2.1"},
+		{Repo: "github/codeql-action", SHA: sha("d")},
+	}
+	if !slices.Equal(pins, want) {
+		t.Fatalf("pins = %+v, want %+v", pins, want)
+	}
+	if ok, _, pins := ClassifyPinOnlyActions([]ChangedFile{image}, []string{image.Filename}, spec); !ok || len(pins) != 0 {
+		t.Fatalf("image-only diff: ok=%v pins=%+v, want accepted with no action pins", ok, pins)
+	}
+	workflow.Patch += "\n+  - run: evil"
+	workflow.Additions++
+	if ok, _, pins := ClassifyPinOnlyActions([]ChangedFile{workflow}, []string{workflow.Filename}, spec); ok || pins != nil {
+		t.Fatalf("refused diff: ok=%v pins=%+v, want no pins", ok, pins)
 	}
 }

@@ -28,7 +28,7 @@
       if (_eventSource) { _eventSource.onerror = null; _eventSource.onmessage = null; _eventSource.close(); _eventSource = null; }
       const source = new EventSource('/api/events');
       _eventSource = source;
-      if (window.HIVE_MATRIX) window.hiveMatrixAttach(source);
+      if (window.HIVE_READER) window.hiveReaderAttach(source);
       _sseOpenedAtMs = Date.now();
       _sseLastFrameAtMs = 0;
       const conn = document.getElementById('conn');
@@ -113,10 +113,14 @@
           const lastData = window._lastStatus || {};
           if (lastData.agents) {
             applyPinOverrides(lastData.agents);
-            renderAgents(lastData.agents);
+            dashboardRenderSection('agents', ['agents-section', 'agent-activity-section'], () => {
+              if (!_dropdownOpen && !_configModalOpen) renderAgents(lastData.agents);
+            });
             // Keep the cost table's "running agents" column live as agents
             // switch models or pause/resume between cost polls.
-            if (_lastCost) renderCost(_lastCost);
+            if (_lastCost) dashboardRenderSection('cost', ['cost-panel'], () => {
+              if (_lastCost) renderCost(_lastCost);
+            });
           }
           ocUpdateFocusedState();
           const _lvl = (lastData.acmmLevel != null) ? lastData.acmmLevel : 0;

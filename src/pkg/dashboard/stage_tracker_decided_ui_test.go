@@ -31,6 +31,7 @@ func stageTrackerDecidedUIJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerGateCueHtml"),
 		jsFunc(t, html, "stageTrackerDecidedOf"),
 		jsConstBlock(t, html, "STAGE_TRACKER_DECIDED_ACTING"),
+		jsConstLine(t, html, "STAGE_TRACKER_PARK_KEPT_ACTING"),
 		jsFunc(t, html, "stageTrackerDecidedActing"),
 		jsFunc(t, html, "stageTrackerDecidedLead"),
 		jsFunc(t, html, "stageTrackerLinkedSupersededText"),
@@ -262,6 +263,11 @@ assert.strictEqual(stageTrackerLinkedSupersededText({ adopted_by: 9, adopted_by_
 assert.strictEqual(stageTrackerLinkedSupersededText({}, null), '');
 assert.strictEqual(stageTrackerLinkedSupersededTip({ superseded_by: 9 }), 'Hive re-authored this PR as #9 with the same commits and sign-off. This PR closes as superseded when #9 merges.');
 assert.strictEqual(stageTrackerLinkedSupersededTip({ adopted_by: 9, state: 'closed' }), 'Hive re-authored this PR as #9 with the same commits and sign-off. This PR is closed as superseded.');
+// A record pill ("↳ adopted from #N") is a muted ham-badge, never the
+// filled inline-action class — the two must not look alike (hive#16456).
+{ const chip = stageTrackerAdoptedFromChipHtml({ adopted_from: { number: 16398, url: 'https://github.com/o/r/pull/16398' } }, 0);
+  assert.ok(chip.includes('class="ham-badge ham-adopted-from"'), chip);
+  assert.ok(!chip.includes('ham-lead-act') && !chip.includes('<button'), 'a record is not a button: ' + chip); }
 assert.strictEqual(stageTrackerSupersededOriginalClause(9, 'open'), ' #9 is superseded and still open; it closes when this merges.');
 assert.strictEqual(stageTrackerSupersededOriginalClause(9, 'closed'), ' #9 is closed as superseded.');
 assert.strictEqual(stageTrackerSupersededOriginalClause(9, ''), '');

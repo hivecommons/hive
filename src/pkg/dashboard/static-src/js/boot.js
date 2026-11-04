@@ -1,4 +1,4 @@
-// Apply layout immediately and hide content until first data render.
+// Apply layout immediately; keep the shell visible while live data loads.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.
 // applyLayout() (defined in the main script) is the single source of truth
@@ -36,10 +36,12 @@
 (function(){
   var kiosk=false, popout=false, display=false, view='', sound=true, density='', shift=false;
   try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; view=u.searchParams.get('view'); popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
-  window.HIVE_MATRIX = kiosk && view === 'matrix';
-  if(window.HIVE_MATRIX){
-    document.body.classList.add('matrix-mode');
-    document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
+  // Code activity is the sole opt-in code display (#16477); view=matrix is a
+  // deprecated alias so saved Matrix display URLs open the reader.
+  window.HIVE_READER = kiosk && (view === 'reader' || view === 'matrix');
+  if(window.HIVE_READER){
+    document.body.classList.add('reader-mode');
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveReaderStart === 'function' && hiveReaderStart(); });
   }
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
@@ -84,9 +86,6 @@
   if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
-  document.body.style.opacity='0';
-  document.body.style.transition='opacity 0.15s ease-in';
-  setTimeout(function(){ document.body.style.opacity='1'; }, 3000);
   document.addEventListener('DOMContentLoaded', function(){
     if (typeof applyLayout === 'function' && typeof getLayout === 'function') {
       applyLayout(getLayout());
@@ -171,4 +170,3 @@
     document.addEventListener('DOMContentLoaded', renderStyleState);
   }
 })();
-

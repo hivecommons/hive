@@ -16,7 +16,7 @@ test('hiveKioskCTAOn: kiosk=1 only, cta=off opts out', () => {
   new Function('window', m[0])(window);
   const on = window.hiveKioskCTAOn;
   assert.strictEqual(on('https://hive.example/?kiosk=1#section-activity-monitor-section'), true);
-  assert.strictEqual(on('https://hive.example/?kiosk=1&view=matrix&sound=off'), true);
+  assert.strictEqual(on('https://hive.example/?kiosk=1&view=reader&sound=off'), true);
   assert.strictEqual(on('https://hive.example/?kiosk=1&cta=off'), false);
   assert.strictEqual(on('https://hive.example/'), false);
   assert.strictEqual(on('https://hive.example/?display=1'), false);
@@ -24,12 +24,12 @@ test('hiveKioskCTAOn: kiosk=1 only, cta=off opts out', () => {
   assert.strictEqual(on('not a url'), false);
 });
 
-test('badge wiring: placeholder outside the root, hidden without the body class, lifted and dimmed in matrix', () => {
+test('badge wiring: placeholder outside the root, hidden without the body class, lifted and dimmed in Code activity', () => {
   assert.ok(html.includes("if(window.hiveKioskCTAOn(window.location.href)) document.body.classList.add('kiosk-cta-on');"));
   const root = html.indexOf('<!-- /#hive-dashboard-root -->');
   const ph = html.indexOf('<!-- hive-kiosk-cta -->');
   assert.ok(root > 0 && ph > root, 'placeholder must follow the dashboard root');
   assert.ok(html.includes('#kiosk-cta { display: none; }'));
   assert.ok(html.includes('body.kiosk-cta-on #kiosk-cta {'));
-  assert.ok(html.includes('body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }'));
+  assert.ok(html.includes('body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }'));
 });

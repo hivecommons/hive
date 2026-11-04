@@ -27,6 +27,140 @@ is *where edits land* — a toast fix touches `css/alerts-toasts.css`, a tracker
 fix touches `js/tracker-row.js`, and two such PRs no longer conflict on one
 60 000-line file.
 
+Activity row headers share the progress strip's physical grid. Their issue
+metadata spans Open through Claimed, even without a PR; PR metadata starts at
+the canonical PR in progress boundary and spans through Merge gate, including
+the independent CI and Review tracks. Modifier/action badges wrap in their own
+full-width, far-right-anchored toolbar line, rather than overflowing the history
+cap into a title or ending in an issue-side column. At narrow widths the header
+slots stack and wrap; small-screen progress strips scroll horizontally without
+moving header controls offscreen. `stage_tracker_header_spans.test.js`
+checks rendered markup and track arithmetic in CI; these are not visual proof.
+The existing Dashboard Mobile Shots workflow additionally runs the generated
+SPA in real Chrome against `scripts/fixtures/dashboard-activity-density.mjs`,
+preserving the preparation-rail suite. It adds activity-only desktop widths
+2400, 1440, 1110 and 1024 to the existing mobile/tablet viewports (including
+768 and 390), in both themes. Canonical lane boundaries are carried in
+`data-ham-pr-start` and bound to the CSS custom property by the production
+row materializer, including nested rows; no parallel hardcoded span is used.
+Browser fixture evidence is explicitly mocked and rebased to the browser clock;
+permissions are mocked only in this isolated file-page, restored on cleanup.
+This does not validate private authenticated live projection or production rollout.
+The existing `dashboard-mobile-shots` artifact contains `activity-layout.json`,
+per-viewport/theme `*-activity-probes.json`, full-document `*-activity-density.png`
+and actual-viewport `*-activity-density-viewport.png`, with
+PR head, checkout SHA and generated-asset SHA256 provenance. Activity probe
+violations fail capture after saving the results/screenshots for every viewport;
+the existing reporting-only workflow policy and permissions are unchanged.
+In addition to the DOM-handler probes, real CDP mouse movement and
+ArrowDown/Enter/Space key dispatch check tooltip takeover and entry into an
+already-open decision dialog. `*-activity-decision-pointer.png` and
+`*-activity-decision-keyboard.png` capture the actual viewport during those
+browser interactions, rather than a full-document composite of fixed dialogs;
+the isolated headless page owns emulated focus, recorded in pointer preconditions.
+Geometry failures include the actual control hit target or measured content gap;
+no decision action is activated. Fixture/probe failures remain failures, not
+skipped or string-assertion substitutes for browser proof.
+Persistent human/preparation context overrides the generic event-entry animation
+so transient translation cannot move neighboring narrow captions. Keyboard entry
+focuses decision actions without scrolling, which would otherwise close the
+dialog through its scroll-away listener. Control probes await a bounded stable
+scroll/visual viewport before every mandatory hit-test; native pointer/keyboard
+reports also retain each decision action's bounds and actual hit target.
+Before any state probes or screenshots, bounded render readiness waits for
+the actual body/root opacity and visibility and two stable layout frames.
+It never forces styles or treats a fixed sleep as proof: the file-page cannot
+receive the status refresh that normally reveals the body before its boot
+fallback. Each viewport/theme report records page readiness; viewport captures
+also record their own readiness. A real timeout remains a capture failure,
+including when animation frames never arrive.
+Fixture transitions use the existing native overlay dismissal policy for all
+three legacy modal producers: Settings, Knowledge Sources, and terminal/export.
+Cleanup is bounded, waits for the production modal observer, and rejects any
+remaining fixture modal or root/body scroll lock. It does not delete modal DOM,
+hide overlays manually, or remove scroll-lock classes to manufacture a pass.
+Each activity report records cleanup evidence. Native pointer preconditions
+also hit-test the trigger itself. Viewport captures explicitly target the
+current document scroll rectangle; density and pointer/keyboard reports inspect
+their actual PNG pixels, excluding scrollbars, and fail a uniform-background
+capture. This paint check only rejects empty evidence; nonblank images still
+require visual inspection and do not replace geometry or interaction checks.
+The 12:36 screenshot shapes additionally exercise nested #16450 and root
+#16451 recorded/unverified preparation fronts, #16446 awaiting a superseding
+human decision, pluk #436 assigned review after passing CI, #16437 approved
+review with unknown CI, and Hotshot #344 queued CI with approved review.
+These identities/relationships are acceptance inputs, not live stage claims.
+Every rendered progress strip must own a visible current location or delegate
+to drawn PR children; closed adopted-original notes intentionally own no strip.
+The existing preparation-root rail gutter is retained: cross-row comparison
+uses like gutters, while every header is measured against its own lane edges.
+The same probes can be invoked on a dedicated published-preview fixture tab:
+invoke
+`webstatic/testdata/tracker-header-geometry.js` as
+`(<file contents>)({ dedicatedPreview: true })` there at desktop and narrow
+widths with issue-only, linked, and PR-only rows present, including long titles
+and waiting/regression badges. It asserts measured lane boundaries, metadata
+containment, badge separation and header-to-progress separation. Every relevant
+header control must stay horizontally contained and pass center hit-testing;
+the probe deliberately scrolls vertically offscreen controls into view and
+restores scroll positions rather than silently skipping them. It never activates
+controls. Do not run interaction/scroll probes in the user's live dashboard tab.
+Nested PRs use the same explicit bounded grid-track contract as root rows,
+not implicit min-content tracks that long identity/context text can widen.
+The probe also compares physical lane positions/heights across rows and bounds
+vertical gaps by the actual CSS gap/margins, allowing real wrapped content but
+rejecting unexplained empty space.
+
+`webstatic/testdata/tracker-activity-density.json` records acceptance shapes from
+the owner's 12:01 screenshot: #16404 with #16442/#16378, Hotshot #343/#344,
+#16438 with #16446/#16449, issue-only #16420, and a PR-only #16437 view variant.
+It preserves full GitHub-read titles, author identities, heads and long waiting
+captions. Its stage/activity projections and frozen clock are deterministic test
+inputs, not a claimed live backend snapshot. Use these structures plus long
+unbroken-handle stress data for preview coverage; a fixture passing is not proof
+that the published application renders correctly.
+
+The split CI/Review lanes are chevrons like every other stage — the same notch
+polygon, padding and content-driven height as their neighbours, never a bordered
+card (the boxed opt-out of #16384 is gone). They express lane state the way the
+other chevrons do, through fill, tint and text colour: `done` (passed/approved),
+dimmed `todo`, the lit `active` fill for fresh observed work, a muted amber tint
+for `ham-current` occupancy, and an amber-on-tint treatment for failing CI or
+changes requested. They also distinguish position from activity: a steady
+current-phase tint and accessible current-phase label identify the occupied
+phase, even when evidence is unknown, work is queued or a PR is held. The running-work class and
+motion still require fresh current-head activity evidence; completion remains
+evidence-based. Both parallel tracks can occupy the current phase without
+claiming either is running. Native stages, holds and merge authority do not
+change.
+
+All progress chevrons share a two-line text budget, wrapping even unbroken
+handles, but a row is only as tall as its longest caption: one line of text gives
+a one-line-tall chevron, two lines a two-line-tall one, never more (the grid row
+sizes to content above a one-line floor; sibling cells stretch to the row's
+tallest chevron, not to a fixed box). The caption, with its reserved icons, is
+centred in the chevron both horizontally and vertically, as before the two-line
+budget; a wrapped second line is centred under the first. Icons have reserved
+space clear of the chevron points. Full details
+remain in the native title and/or shared hover/focus tooltip portal; links and
+decision controls remain interactive. Decision chevrons, including native
+merge-gate claim conflicts, instead use their existing decision dialog as the
+sole hover/focus detail surface. The gate caption remains a decision button;
+full caption, reason and head metadata go to its keyboard-accessible Details,
+without a competing tooltip or extra focus stop. The dedicated-preview
+`webstatic/testdata/tracker-decision-interaction.js` probe uses the same invocation
+to check pointer hover, focus, ArrowDown/Enter/Space entry, action hit-testing,
+and tooltip exclusion. It never activates a decision action. Unknown, stale or old-head CI/Review
+observations show only the existing 050 column glyph, with their full source,
+reason, owner and head metadata available in the keyboard-accessible tooltip.
+Unknown does not mean running, passed or approved. Known track captions use the
+same two-line budget; fixer/diagnostic detail belongs in the tooltip.
+PR source repair after failed CI or review findings is labelled **Remediating**
+when current-head verified work is observed. Native `fixing` state identifiers
+and `stage/070-fixing` remain unchanged; waiting for an author/fixer, stale
+evidence and re-review do not become active remediation. General Fix actions,
+PR titles and recorded historical text are not renamed.
+
 The sources sit in a sibling directory (`static-src/`, not `static/src/`) on
 purpose: `//go:embed static` embeds everything under `static/` recursively, so
 sources placed inside it would be compiled into the binary and served.

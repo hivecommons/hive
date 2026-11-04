@@ -81,6 +81,41 @@ func TestListPRCommitsPaginatesWithinBound(t *testing.T) {
 	}
 }
 
+// The exported lister reports a list cut off at the page cap as incomplete,
+// so callers that must see every commit (the pin-only exception) fail closed;
+// a list that ends on its own is complete.
+func TestListPRRepositoryCommitsReportsTruncationAtCap(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		endless      bool
+		wantPages    int
+		wantComplete bool
+	}{
+		{name: "ends within cap", wantPages: 2, wantComplete: true},
+		{name: "next page past cap", endless: true, wantPages: maxPRCommitPages, wantComplete: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pages := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				pages++
+				if tc.endless || pages == 1 {
+					w.Header().Set("Link", `<http://`+r.Host+r.URL.Path+`?page=`+strconv.Itoa(pages+1)+`>; rel="next"`)
+				}
+				json.NewEncoder(w).Encode([]any{map[string]any{"sha": "sha-" + strconv.Itoa(pages)}, nil})
+			}))
+			defer server.Close()
+			c := NewClientForTest(server.URL, "acme", []string{"widget"}, nil)
+			got, complete, err := ListPRRepositoryCommits(context.Background(), c.client, "acme", "widget", 7)
+			if err != nil {
+				t.Fatalf("ListPRRepositoryCommits: %v", err)
+			}
+			if pages != tc.wantPages || len(got) != tc.wantPages || complete != tc.wantComplete {
+				t.Fatalf("pages=%d commits=%d complete=%v, want %d pages, nils dropped, complete=%v", pages, len(got), complete, tc.wantPages, tc.wantComplete)
+			}
+		})
+	}
+}
+
 func TestListPRCommitsNilClientAndAPIError(t *testing.T) {
 	var nilClient *Client
 	if _, err := nilClient.ListPRCommits(context.Background(), "widget", 7); err == nil {

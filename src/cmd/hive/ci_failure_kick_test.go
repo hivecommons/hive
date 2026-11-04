@@ -21,9 +21,10 @@ func newCIFailureKickerForTest(t *testing.T, cfg *config.Config) (*ciFailureKick
 	t.Helper()
 	var sent []ciKickRecord
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
 	k := &ciFailureKicker{
 		cfg:       func() *config.Config { return cfg },
-		gov:       governor.New(cfg.Governor, cfg.EnabledAgents(), logger),
+		gov:       func() *governor.Governor { return gov },
 		attribute: func(repo string, number int) string { return "quality" },
 		message: func(agent string, sig github.CIFailureSignal) string {
 			return "CI failed on " + sig.Repo + " for " + agent

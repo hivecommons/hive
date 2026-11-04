@@ -396,7 +396,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		agentName, ok := p.translatorAgentName(r)
 		if !ok {
 			p.logger.Warn("inference request from unidentified caller refused",
-				"remote", r.RemoteAddr, "method", r.Method, "path", r.URL.Path)
+				p.translatorRefusalAttrs(r)...)
 			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"caller could not be identified"}}`, http.StatusUnauthorized)
 			return
 		}

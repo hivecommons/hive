@@ -15,9 +15,227 @@
       return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap ham-history-head" title="History — decisions and actions on this item">${stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — decisions and actions on this item')}</li></ol><span class="ham-since">since</span></div></div>`;
     }
 
+    // Pure: which of the two column-50 tracks the hive is waiting on when
+    // both share the current phase (hivecommons/hive#16484). Review
+    // findings and red CI are the fixer's turn ("the fix"); otherwise CI
+    // leads until it is green, then review. newHead: the head was just
+    // pushed, so CI is (re)running on it and the review is a re-review.
+    function stageTrackerTrackLead(item) {
+      if (!item || !item.head) return null;
+      const stateOf = k => { const a = item[k + '_activity']; return a && a.head === item.head && a.state ? a.state : 'unknown'; };
+      const ci = stateOf('ci');
+      const review = stateOf('review');
+      const done = s => s === 'passing' || s === 'approved';
+      const code = item.code_activity;
+      const push = item.push;
+      const newHead = !!((code && code.head === item.head && code.state === 'pushed') || (push && push.state === 'pushed' && push.sha === item.head));
+      if (review === 'changes_requested') return { track: 'review', waitingOn: 'the fix', newHead: false };
+      if (ci === 'failing') return { track: 'ci', waitingOn: 'the fix', newHead: false };
+      if (done(ci) && done(review)) return null;
+      if (done(ci)) return { track: 'review', waitingOn: 'review', newHead };
+      return { track: 'ci', waitingOn: 'CI', newHead };
+    }
+
+    // Pure: the chevron's primary words — the count grammar the operator
+    // asked for (hivecommons/hive#16484): "CI 12/14 passed", "CI 11/14 · 1
+    // failing (lint)", "CI 0/14 · queued", "CI ?/? · no checks reported
+    // yet"; "Review 3/5 perspectives", "Review 5/5 approved", "Review 0/5 ·
+    // re-review pending (new head)", "Review 2/5 · awaiting human
+    // decision". '' means the track has not started on this head (the
+    // chevron shows its glyph alone). current: column 50 is the row's
+    // active phase, so even absent evidence is "in progress" there.
+    function stageTrackerTrackWord(item, kind, current) {
+      const a = item && item[kind + '_activity'];
+      const matches = !!(a && item.head && a.head === item.head);
+      const state = matches ? a.state || 'unknown' : 'unknown';
+      if (state === 'unknown' && !current) return '';
+      const n = k => matches ? Number(a[k]) || 0 : 0;
+      if (kind === 'ci') {
+        const total = n('checks_total');
+        const passed = n('checks_passed');
+        const failed = n('checks_failed');
+        const names = matches && Array.isArray(a.checks_failing) ? a.checks_failing : [];
+        const count = 'CI ' + (total ? passed + '/' + total : '?/?');
+        const failing = failed ? failed + ' failing' + (names.length ? ' (' + names.slice(0, 2).join(', ') + (names.length > 2 ? ', …' : '') + ')' : '') : '';
+        const blocker = matches && a.blocker ? String(a.blocker) : '';
+        switch (state) {
+          case 'passing': return count + ' passed';
+          case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + blocker + ')' : ''));
+          case 'running': return count + ' · running' + (failing ? ' · ' + failing : '');
+          case 'queued': return count + ' · queued' + (failing ? ' · ' + failing : '');
+          case 'skipped': return count + ' · ' + (blocker ? blocker + ' skipped' : 'skipped');
+          case 'missing': {
+            if (stageTrackerWorkflowApprovalPending(a) > 0) return count + ' · waiting on workflow approval' + (failing ? ' · ' + failing : '');
+            return count + ' · ' + (passed ? (blocker ? blocker + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
+          }
+          default: return count + ' · ' + (total ? 'no verdict yet' : 'no checks reported yet');
+        }
+      }
+      const total = n('perspectives_total');
+      const done = n('perspectives_done');
+      const count = 'Review' + (total ? ' ' + done + '/' + total : '');
+      const actor = matches && a.actor ? String(a.actor) : '';
+      const code = item.code_activity;
+      const push = item.push;
+      const newHead = !!((code && code.head === item.head && code.state === 'pushed') || (push && push.state === 'pushed' && push.sha === item.head));
+      switch (state) {
+        case 'approved': return count + ' approved';
+        case 'changes_requested': return count + ' · changes requested';
+        // The hive on the repair (adopted / remediating) is not a human
+        // decision: the findings are the changes requested. Otherwise the
+        // reviews are done and a person's sign-off is what is left — the
+        // viewer's when the ask names them, else the owner's. Never
+        // "awaiting human" to the human it waits on (hivecommons/hive#16572:
+        // "why does review say awaiting humans if 5/5 reviews are good?").
+        case 'human_decision': {
+          if (stageTrackerHiveOwnsRepair(item)) return count + ' · changes requested';
+          const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
+          const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
+          const mine = !!me && new RegExp('@' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])').test(q);
+          return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
+        }
+        case 'reviewing': return count + ' · ' + (actor ? actor + ' reviewing' : 'in progress');
+        case 'adjudicating': return count + ' · ' + (actor ? actor + ' adjudicating' : 'adjudicating');
+        case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued') + stageTrackerQueueAheadWord(a);
+        case 'unassigned': return count + ' · queued' + stageTrackerQueueAheadWord(a);
+        default: return count + ' · ' + (newHead ? 're-review pending (new head)' : total && done ? 'perspectives' : 'queued');
+      }
+    }
+
+    // Unreported checks whose workflow runs sit behind GitHub's
+    // approve-workflows gate (dependabot, forks): the CI blocker reads
+    // "workflow-approval-required:<n>" (stage_tracker_activity.go). A
+    // person's click moves them, so the chevron names the wait and wears
+    // the person icon (hivecommons/hive#16599).
+    const STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER = 'workflow-approval-required:';
+    const STAGE_TRACKER_WORKFLOW_APPROVAL_TIP = 'Needs a maintainer to approve the workflow runs on GitHub before the checks can start';
+    function stageTrackerWorkflowApprovalPending(a) {
+      if (!a) return 0;
+      const b = String(a.blocker || '');
+      if (b.indexOf(STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER) === 0) return Math.max(1, Number(b.slice(STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER.length)) || 0);
+      return a.workflow_approval && Number(a.workflow_approval.pending) > 0 ? Number(a.workflow_approval.pending) : 0;
+    }
+
+    // The tiny ring in a CI / Review chevron: total steps around the
+    // circle, filled clockwise from twelve — done (green or the state's
+    // colour) first, then failed (red), the rest the muted track. Steps are
+    // separated by a gap up to 16 of them, a continuous arc beyond. While
+    // the track runs the next step pulses. Colours are CSS classes only
+    // (tracker.css tokens); the SVG carries no raw colour.
+    const STAGE_TRACKER_RING_SEGMENT_GAP_MAX = 16;
+    const STAGE_TRACKER_RING_RADIUS = 6;
+    const STAGE_TRACKER_RING_GAP_DEG = 14;
+    function stageTrackerRingSvg(done, total, failed, state, label) {
+      const t = Math.max(0, Math.floor(Number(total) || 0));
+      const d = Math.min(t, Math.max(0, Math.floor(Number(done) || 0)));
+      const f = Math.min(t - d, Math.max(0, Math.floor(Number(failed) || 0)));
+      const st = String(state || '');
+      const running = ['running', 'queued', 'reviewing', 'adjudicating', 'assigned'].includes(st);
+      const tone = st === 'changes_requested' || st === 'failing' ? 'fail' : st === 'approved' || st === 'passing' ? 'pass' : st === 'human_decision' ? 'decided' : running ? 'live' : 'pass';
+      const a11y = label || (t ? `${d} of ${t} done` + (f ? `, ${f} failed` : '') : 'no steps');
+      const r = STAGE_TRACKER_RING_RADIUS, c = 8;
+      const pt = (deg) => { const rad = (deg - 90) * Math.PI / 180; return (c + r * Math.cos(rad)).toFixed(2) + ' ' + (c + r * Math.sin(rad)).toFixed(2); };
+      const arc = (from, to, cls) => {
+        if (to - from >= 360) return `<circle class="${cls}" cx="${c}" cy="${c}" r="${r}"/>`;
+        if (to <= from) return '';
+        const large = to - from > 180 ? 1 : 0;
+        return `<path class="${cls}" d="M${pt(from)} A${r} ${r} 0 ${large} 1 ${pt(to)}"/>`;
+      };
+      const open = `<svg class="ham-ico ham-ring ham-ring-${tone}${running ? ' ham-ring-running' : ''}" viewBox="0 0 16 16" fill="none" stroke-width="2.2" stroke-linecap="butt" role="img" aria-label="${esc(a11y)}" data-ring-total="${t}" data-ring-done="${d}" data-ring-failed="${f}">`;
+      if (!t) return open + `<circle class="ham-ring-track" cx="${c}" cy="${c}" r="${r}"/></svg>`;
+      const next = Math.min(t - 1, d + f);
+      const segs = [];
+      if (t <= STAGE_TRACKER_RING_SEGMENT_GAP_MAX) {
+        const step = 360 / t;
+        const gap = t === 1 ? 0 : Math.min(STAGE_TRACKER_RING_GAP_DEG, step / 3);
+        for (let i = 0; i < t; i++) {
+          const cls = 'ham-ring-seg ' + (i < d ? 'ham-ring-done' : i < d + f ? 'ham-ring-failed' : 'ham-ring-rest') + (running && i === next ? ' ham-ring-pulse' : '');
+          segs.push(arc(i * step + gap / 2, (i + 1) * step - gap / 2, cls));
+        }
+      } else {
+        const unit = 360 / t;
+        segs.push(arc(0, 360, 'ham-ring-seg ham-ring-rest ham-ring-track'));
+        segs.push(arc(0, d * unit, 'ham-ring-seg ham-ring-done'));
+        segs.push(arc(d * unit, (d + f) * unit, 'ham-ring-seg ham-ring-failed'));
+        if (running && d + f < t) segs.push(arc(next * unit, (next + 1) * unit, 'ham-ring-seg ham-ring-rest ham-ring-pulse'));
+      }
+      return open + segs.join('') + '</svg>';
+    }
+
+    // Which chevron carries a row stuck at column 50 with no track in
+    // motion: the track that has not settled — CI unless it passed, else
+    // Review (a pending verdict or a sign-off). A row never shows no
+    // filled chevron (hivecommons/hive#16599).
+    function stageTrackerStalledTrack(item) {
+      const on = kind => { const a = item && item[kind + '_activity']; return a && item.head && a.head === item.head ? a.state || 'unknown' : 'unknown'; };
+      if (typeof stageTrackerStageTrack === 'function' && stageTrackerStageTrack(item)) return '';
+      if (on('ci') !== 'passing') return 'ci';
+      return 'review';
+    }
+
+    // ", 3 ahead" when the backend knows the swarm queue position.
+    function stageTrackerQueueAheadWord(a) {
+      const n = a && Number(a.queue_ahead);
+      return Number.isFinite(n) && n > 0 ? ', ' + n + ' ahead' : '';
+    }
+
+    // The track that IS the item's current stage: at review pending (050)
+    // the Review column. It is lit whenever its verdict has not settled —
+    // queued, in progress, adjudicating alike — because the chevron that
+    // corresponds to the stage is the lit one (hivecommons/hive#16599,
+    // reversing #16545's "queued = pending" for the stage column only).
+    function stageTrackerStageTrack(item) {
+      if (!item || Number(item.stage) !== 50) return '';
+      const a = item.review_activity;
+      const st = a && item.head && a.head === item.head ? a.state || 'unknown' : 'unknown';
+      return ['approved', 'changes_requested', 'human_decision'].includes(st) ? '' : 'review';
+    }
+
+    function stageTrackerHiveOwnsRepair(item) {
+      if (!item || item.needs_human || item.on_hold || item.hold) return false;
+      const code = item.code_activity;
+      const hive = code && code.head === item.head && ['adopted', 'remediating', 'unassigned', 'fix_pushed', 'fixing'].includes(code.state);
+      return !!(hive || item.stage === 74 || item.adopted_by);
+    }
+
+    // A row parked on a person: the contributor's move (071/072 or a
+    // waiting_owner code word), a hold, or a human decision. Nothing of
+    // the hive's is in motion on it, so no CI / Review track is amber.
+    function stageTrackerWaitingOnPerson(item) {
+      if (!item) return false;
+      if (item.needs_human || item.on_hold || item.hold) return true;
+      const stage = Number(item.stage);
+      // A freshly pushed head is in motion: checks run on it, matching
+      // tracker-row-anchor's column-50 anchor (hivecommons/hive#16552).
+      if ((stage === 71 || stage === 72) && !(item.push && ['pushed', 'checking'].includes(item.push.state))) return true;
+      const code = item.code_activity;
+      return !!(code && code.head === item.head && code.state === 'waiting_owner');
+    }
+
+    // A CI / Review track is in motion only on concrete evidence on the
+    // current head: a check-run in_progress / queued, or a reviewer
+    // running / queued (or the backend's own active flag). Checks that
+    // have not reported, unknown evidence and settled verdicts are not
+    // motion (hivecommons/hive#16540).
+    function stageTrackerTrackRunning(item, kind) {
+      const a = item && item[kind + '_activity'];
+      if (!a || !item.head || a.head !== item.head) return false;
+      if (stageTrackerWaitingOnPerson(item)) return false;
+      const moving = kind === 'ci' ? ['running', 'queued'] : ['reviewing', 'adjudicating', 'assigned'];
+      return !!(a.active || moving.includes(a.state));
+    }
+
     // Evidence is supplied independently by the backend. A native 050 label
     // cannot say who reviews, whether checks run, or whether an author codes.
-    function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
+    // The chevron wears its glyph plus the count words from
+    // stageTrackerTrackWord (hivecommons/hive#16484). Style follows the
+    // track's own state on the current head: running = the full active
+    // fill (both tracks may be lit at once; the words disambiguate); done,
+    // a finding, pending and decided are words in their colour on the muted
+    // field — only a running track is filled (hivecommons/hive#16540); not
+    // started = the empty chevron with the glyph alone. Freshness gates only
+    // the pulse.
+    function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs, opts) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';
       const a = item && item[kind + '_activity'];
@@ -27,16 +245,45 @@
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
-      const active = matches && a.active && Number.isFinite(observed) && !stale;
+      const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      if (matches && (a.active || ['running', 'reviewing', 'adjudicating'].includes(state)) && (!Number.isFinite(observed) || stale)) caption = name + ' activity unknown · last observed ' + state;
-      const cls = Number.isFinite(observed) && !stale && (state === 'passing' || state === 'approved') ? 'done' : active ? 'active' : 'todo';
+      const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
+      const active = known && a.active;
+      if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
+      const ownsPR = item.kind === 'pr' || item.via_pr;
+      const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
+      const finished = matches && (state === 'passing' || state === 'approved');
+      const finding = matches && (state === 'failing' || state === 'changes_requested');
+      // A complete verdict parked on a person is settled (muted icon).
+      const settled = matches && state === 'human_decision' && (!known || !a.active);
+      // ACTIVE = filled amber with its words; 1 ≤ active ≤ 2 on a row. A
+      // track is active while it genuinely runs on the current head, when
+      // it is the stage's own track (stageTrackerStageTrack), or when it is
+      // the stalled blocker of a row with nothing in motion (opts.stalled,
+      // still amber-muted). Everything else is the icon alone — green for
+      // a pass, red for a finding, neutral when not run or decided — with
+      // its count words in the tooltip (hivecommons/hive#16599).
+      const running = stageTrackerTrackRunning(item, kind);
+      const stageTrack = current && typeof stageTrackerStageTrack === 'function' && stageTrackerStageTrack(item) === kind;
+      const stalled = !!(opts && opts.stalled) && current && !running;
+      const lit = running || stageTrack || stalled;
+      const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') : finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo';
+      const approvalPending = kind === 'ci' && matches ? stageTrackerWorkflowApprovalPending(a) : 0;
+      const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
+      const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
-      const blocker = matches && a.blocker ? ' · ' + a.blocker : '';
-      let tip = caption + blocker + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
-      const ownsPR = item.kind === 'pr' || item.via_pr;
+      let blocker = matches && a.blocker ? ' · ' + a.blocker : '';
+      // A sign-off ask: the tooltip carries the question itself (who should
+      // decide what, and why — "workflow change from a fork") when the
+      // review evidence did not already quote it.
+      const ask = matches && state === 'human_decision' && item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question) : '';
+      if (ask && blocker.indexOf(ask) < 0) blocker += ' · ' + ask;
+      // The backend's plain-language sentence behind the caption rides in
+      // the tooltip only; the chevron clamps the caption.
+      const detail = matches && a.detail ? ' · ' + a.detail : '';
+      let tip = caption + blocker + detail + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
@@ -45,12 +292,32 @@
       let decided = kind === 'review' && sg.state === 'active' && item.decided && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
       const codeObserved = Date.parse(code && code.observed_at || '');
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
-      if (!codeFresh) decided = decided.replace(/>Fixing(?=\s|<)/g, '>Fix requested');
-      const word = esc(caption.replace(new RegExp('^' + name + ' ?'), '') || state);
+      if (!codeFresh) decided = decided.replace(/>(?:Fixing|Remediating)(?=\s|<)/g, '>Fix requested');
+      const sha7 = item.head ? String(item.head).slice(0, 7) : '';
+      const lead = current && ownsPR && typeof stageTrackerTrackLead === 'function' ? stageTrackerTrackLead(item) : null;
+      // Only an active track carries words; an inactive one is its icon
+      // (ring) in the pass / fail / neutral colour, words in the tooltip.
+      const verdict = finished ? 'pass' : finding ? 'fail' : '';
+      const word = lit ? esc(text) : '';
       const evidenceURL = matches && /^https?:\/\//i.test(String(a.url || '')) ? a.url : '';
-      const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${word}</a>` : word;
+      // The glyph is the ring of steps (checks / perspectives) once a
+      // count exists; the flask / eye only while no total is known.
+      const ringTotal = matches ? Number(a[kind === 'ci' ? 'checks_total' : 'perspectives_total']) || 0 : 0;
+      const ringDone = matches ? Number(a[kind === 'ci' ? 'checks_passed' : 'perspectives_done']) || 0 : 0;
+      const ringFailed = kind === 'ci' && matches ? Number(a.checks_failed) || 0 : 0;
+      const ringLabel = name + ': ' + (text || (ringTotal ? ringDone + '/' + ringTotal : 'no count'));
+      const icon = ringTotal && typeof stageTrackerRingSvg === 'function' ? stageTrackerRingSvg(ringDone, ringTotal, ringFailed, running ? (kind === 'ci' ? 'running' : 'reviewing') : state, ringLabel) : stageTrackerIcon(kind === 'ci' ? 'ci' : 50, 'ham-ico', name);
+      const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
-      return `<li class="ham-seg ham-activity-track ${cls}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}"${sg.state === 'active' ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(tip + (codeNote ? ' · ' + codeNote : ''))}"` : ''} aria-label="${esc(name + ': ' + tip + (codeNote ? ' · ' + codeNote : ''))}"><span class="ham-track-name">${name}</span><span class="ham-track-state">${evidenceLink}</span>${codeNote || contextWord ? `<span class="ham-track-code-note">${esc(codeNote || contextWord)}</span>` : ''}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}${stale || !Number.isFinite(observed) ? '<span class="ham-track-freshness">?</span>' : ''}</li>`;
+      const hold = item.hold;
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text ? text + ' · ' : '') + tip +
+        (matches && a.actor ? ' · actor ' + a.actor : '') +
+        (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
+        (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
+        (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
+      const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
+      const copy = `<span class="ham-chevron-copy ham-track-state${lit ? '' : ' ham-track-verdict'}">${evidenceLink}</span>${personIco}`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -66,7 +333,10 @@
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
       const humanIcon = actorKind === 'human' || actorKind === 'maintainer';
-      const humanRequired = typeof stageTrackerHumanAttentionOf !== 'function' || !!stageTrackerHumanAttentionOf(item);
+      // A current requirement from the server (human_attention), or a
+      // decision the row carries itself (045 / 085 with decision_needed,
+      // which the server leaves out of human_attention past the gate).
+      const humanRequired = typeof stageTrackerHumanAttentionOf !== 'function' || !!stageTrackerHumanAttentionOf(item) || (typeof stageTrackerNeedsHumanAsk === 'function' && !!stageTrackerNeedsHumanAsk(item));
       const actorIco = actorKind && (!humanIcon || humanRequired) ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
       // Guarded: test harnesses lift this function by name without stageTrackerHumanReason.
@@ -99,15 +369,35 @@
       if (code && !codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_STATIC;
       if (motion === STAGE_TRACKER_MOTION_ACTIVE && !worker) motion = STAGE_TRACKER_MOTION_STATIC;
       if (codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
+      // Evidence-based remediation (stage_tracker_remediation.go): the PR in
+      // progress chevron pulses only while somebody is KNOWN to be on a red
+      // PR (kick / claim); "unassigned" is bright but still; a fix head
+      // pushed after the red signal is done-style with its word.
+      const codeOnHead = code && String(code.head || '') === String(item.head || '');
+      const remediation = codeOnHead && ['unassigned', 'remediating', 'fix_pushed'].includes(code.state) ? code.state : '';
+      if (remediation === 'remediating' && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
+      const evidence = item.remediation && item.remediation.kind ? 'evidence: ' + item.remediation.kind + (item.remediation.actor ? ' by ' + item.remediation.actor : '') + (item.remediation.since ? ' since ' + item.remediation.since : '') + (item.remediation.source ? ' (' + item.remediation.source + ')' : '') : '';
+      // Both tracks running: the PR waits on them, nobody works it. The
+      // stage chevron is settled-current (bright words, no amber, no pulse)
+      // so the row never lights three chevrons (hivecommons/hive#16540).
+      const tracksRunning = ['ci', 'review'].filter(kind => stageTrackerTrackRunning(item, kind)).length;
+      const waitingOnTracks = tracksRunning === 2;
+      if (waitingOnTracks) motion = STAGE_TRACKER_MOTION_STATIC;
       const motionAttr = motion === STAGE_TRACKER_MOTION_STATIC ? '' : ` data-motion="${motion}"`;
+      // Column 50 is the row's phase and no track moves: one track is
+      // filled stalled so the row always shows where it is (#16599).
+      const stalledTrack = tracksRunning === 0 && segs.some(sg => sg.number === 50 && sg.state === 'active') && typeof stageTrackerStalledTrack === 'function' ? stageTrackerStalledTrack(item) : '';
       return segs.map(sg => {
-        if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs)).join('');
+        if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs, { stalled: stalledTrack === kind })).join('');
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
+        const blockerNote = sg.state === 'done' && sg.blockerNote ? String(sg.blockerNote) : '';
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
+        let gateCaption = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
@@ -119,7 +409,10 @@
           // With merge_gate in the payload the sentence is the gate's own
           // (what holds it, next sweep, soak left — #15073).
           const gateInfo = !sg.detour && typeof stageTrackerMergeGateInfo === 'function' ? stageTrackerMergeGateInfo(item, nowMs, trains) : null;
-          if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;
+          if (gateInfo) {
+            tip = sg.label + ' — ' + gateInfo.tip;
+            gateCaption = [gateInfo.word, gateInfo.detail].filter(Boolean).join(' · ');
+          }
           else if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
@@ -141,9 +434,12 @@
           if (!sg.cap && typeof stageTrackerCueLead === 'function') tip = stageTrackerCueLead(item, worker, nowMs) + tip;
           if (sg.number === 30 && item.code_activity && Number(item.display_column) === 30) {
             tip = (codeWorking ? code.caption : sg.detour ? sg.detour.text : 'Code activity unknown') + ' · head ' + (item.head || 'unknown') + ' · ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown');
+            if (code.detail) tip += ' · ' + code.detail;
+            if (evidence) tip += ' · ' + evidence;
             if (code.blocker) tip += ' · ' + code.blocker;
             if (claimant) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
           }
+          if (waitingOnTracks && !sg.cap) tip = 'Waiting on CI and review, both running — ' + tip;
         }
         let inner;
         // A lit chevron on a row parked on a person ("Needs human decision",
@@ -170,9 +466,32 @@
         // The cap chevron is the ✓ only once the PR is merged; until then
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
-        else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);
-        else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
+        else if (active) {
+          const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short), item.caption, item.reason,
+            item.head ? 'head ' + item.head : '',
+            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          const caption = gateWord || word;
+          const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
+          const content = `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
+          // A decision's dialog is its sole hover/focus detail surface.
+          inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
+        } else if (fixPushed) {
+          const pushedTip = [code.caption, code.detail, evidence, item.head ? 'head ' + item.head : '', code.since ? 'since ' + code.since : ''].filter(Boolean).join(' · ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          // Inactive = icon only (hivecommons/hive#16599): the pushed fix is
+          // the green glyph; its caption rides the tooltip.
+          inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(pushedTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(pushedTip)}</span></span>`;
+        } else if (blockerNote) {
+          // The issue's own column keeps the blocker in view while the
+          // covering PR's strip runs (hivecommons/docs#612): the word, the
+          // person glyph, and the blocker's detail as the hover.
+          const b = item.blocker || {};
+          const noteTip = [blockerNote, b.detail, item.human_attention && item.human_attention.reason].filter(Boolean).join(' — ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(noteTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(blockerNote)}</span></span>${stageTrackerIcon('human', 'ham-ico ham-actor-ico', 'Next move: human')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(noteTip)}</span></span>`;
+        } else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
 
@@ -195,7 +514,7 @@
         const activityFreshMS = 2 * 60 * 1000;
         const clock = Number(nowMs) || Date.now();
         const working = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
-        const word = !working && decidedInfo.word === 'Fixing' ? 'Fix requested' : decidedInfo.word;
+        const word = !working && ['Fixing', 'Remediating'].includes(decidedInfo.word) ? 'Fix requested' : decidedInfo.word;
         text = word + (decidedInfo.detail ? ' · ' + decidedInfo.detail : '') + (regressed ? ' · ' + regressed : '');
       }
       const tracks = (item.kind === 'pr' || item.via_pr) && item.head ? ['ci', 'review'].map(kind => {
@@ -386,6 +705,23 @@
       return lines.join('\n');
     }
 
+    // Pure: the one open covering PR an issue's `blocked` pill stands for
+    // when nothing else blocks the issue — no structured blocker, no
+    // blocked_on dependencies, no blocked-on-PR marker, no re-check
+    // deadline — and that PR is parked on a human decision (085). The
+    // pill then reads "decision on #N" rather than a bare "blocked"
+    // (rationguard#431 under #480). null otherwise.
+    function stageTrackerBlockedForDecisionPR(item) {
+      if (!item || item.kind !== 'issue' || item.blocker) return null;
+      if (Array.isArray(item.blocked_on) && item.blocked_on.length) return null;
+      if (typeof stageTrackerBlockedOnPR === 'function' && stageTrackerBlockedOnPR(item)) return null;
+      if (/^blocked until /i.test(String(item.bucket_reason || ''))) return null;
+      const open = (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && (typeof stageTrackerLinkedPROpen !== 'function' || stageTrackerLinkedPROpen(lp, item)));
+      if (open.length !== 1) return null;
+      const lp = open[0];
+      const parked = Number(lp.stage) === STAGE_TRACKER_NEEDS_DECISION || (Array.isArray(lp.modifiers) && lp.modifiers.indexOf('needs-decision') >= 0) || !!(lp.decision_needed && lp.decision_needed.question);
+      return parked ? lp : null;
+    }
     function stageTrackerChipsHtml(item) {
       // A row Hive cannot finish on its own: the server's your-turn decision
       // (item.finisher, from the status refresh rather than the current step)
@@ -419,8 +755,10 @@
       // A row the scheduler withholds for open GitHub "blocked by" dependencies names them (hivecommons/hive#14765);
       // one blocked on a PR (hive:blocked-on marker) names it and links to it (hivecommons/hive#14952).
       const blockedPR = mods[0] === 'blocked' ? stageTrackerBlockedOnPR(item) : null;
+      const decisionPR = mods[0] === 'blocked' && !blockedPR ? stageTrackerBlockedForDecisionPR(item) : null;
       if (mods[0] === 'blocked' && Array.isArray(item.blocked_on) && item.blocked_on.length) text = stageTrackerBlockedTip(item);
       else if (blockedPR) text = 'blocked on ' + blockedPR.short;
+      else if (decisionPR) text = 'decision on #' + Number(decisionPR.number);
       // A blocked row with a hive:recheck-after deadline ("blocked until <RFC3339>") names when the sweep re-checks it.
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
       const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
@@ -432,7 +770,14 @@
       // the regressed pill explains itself; a blocked pill names what it waits on;
       // failing all three, a draft pill does.
       const anyBlockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
+      // A needs-human pill's hover is the full ask (hivecommons/docs#612
+      // showed a bare muted "needs human" with no reason anywhere on the row).
+      const askable = mods[0] === 'needs-human' || mods[0] === 'needs-decision';
+      const ask = (askable && typeof stageTrackerHumanAttentionOf === 'function' && stageTrackerHumanAttentionOf(item))
+        || (askable && typeof stageTrackerNeedsHumanAsk === 'function' && stageTrackerNeedsHumanAsk(item)) || null;
       const tip = (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed
+        || (decisionPR ? 'Blocked only because PR #' + Number(decisionPR.number) + ' waits on a human decision' + (decisionPR.decision_needed && decisionPR.decision_needed.question ? ' — ' + decisionPR.decision_needed.question : '') : '')
+        || (ask ? ask.reason : '')
         || (holdPill && typeof stageTrackerHoldTip === 'function' ? stageTrackerHoldTip(item, Date.now()) : '')
         || (mods.indexOf('blocked') >= 0 && Array.isArray(item.blocked_on) && item.blocked_on.length ? 'Withheld from the scanner until ' + item.blocked_on.join(', ') + (item.blocked_on.length > 1 ? ' close' : ' closes') : '')
         || (anyBlockedPR ? anyBlockedPR.tip : '')
@@ -445,8 +790,12 @@
       // popover (what to decide, who asked, the applicable actions) instead
       // of a native tooltip.
       // A hive-set hold is a decision too (release or keep): its pill opens the same popover.
-      const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision' || (holdPill && item.hold && item.hold.by === 'hive')) && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+      const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision' || decisionPR || (holdPill && item.hold && item.hold.by === 'hive')) && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
       if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-badge ham-badge-mod ' + cls);
+      // No popover to open (the ask is the issue's own while a covering
+      // PR drives the strip): the pill is a button that reveals the row's
+      // "Needs human: …" note line and carries the full reason as its hover.
+      if (ask && typeof stageTrackerItemKey === 'function') return sentinel + `<button type="button" class="ham-badge ham-badge-mod ${esc(cls)} ham-needs-human-pill" data-action="stageTrackerNeedsHumanReveal" data-arg0="${esc(stageTrackerItemKey(item))}" data-stop="1" title="${esc(tip)}" aria-label="${esc(text + ' — ' + ask.reason + '. Click to show why on the row.')}">${inner}</button>`;
       return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${inner}</span>`;
     }
 
@@ -471,6 +820,9 @@
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
       'queue-merge': 'Approve and let hive merge', 'merge-now': 'Merge now as maintainer',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
+      // Historical ledger entries only: the hive now re-authors its own
+      // exhausted PRs itself and a person's rewrite of a contributor PR is adopt.
+      're-author': 'Re-author (now: adopt)',
     };
     // "Rebase, then merge as maintainer" is merge-now on a row that needs a
     // rebase (hivecommons/hive#14822): the server relabels the option and

@@ -5,11 +5,12 @@ import (
 	"strings"
 )
 
-// DashboardMatrixConfig is the experimental, default-off dashboard.matrix block
+// DashboardMatrixConfig is the default-off Code activity source configuration
 // (#15862). Repos is the single explicit public-repo allowlist gating every
-// Matrix output; empty means nothing is captured. ExcludePaths adds globs to
+// Code activity output; empty means nothing is captured. ExcludePaths adds globs to
 // the built-in deny-list. There are deliberately no authors or private_repos
 // keys.
+// The dashboard.matrix names are deprecated but retained for configuration compatibility.
 type DashboardMatrixConfig struct {
 	Enabled      bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Repos        []string `yaml:"repos,omitempty" json:"repos,omitempty"`

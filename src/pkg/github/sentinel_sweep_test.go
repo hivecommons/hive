@@ -1,6 +1,7 @@
 package github
 
-// Tests for the sentinel sweep: label + one comment per head on a finding,
+// Tests for the sentinel sweep: label + one comment per PR on a finding
+// (rewritten for each new head when the hive can verify its own comment),
 // nothing on a clean PR, no re-application once a maintainer clears the
 // label for an unchanged head (including across a restart, where the
 // clearance is read back from the alert comment), fail-closed on an
@@ -551,8 +552,8 @@ func TestSweepSentinelClearanceOnNewerHeadIsHonoured(t *testing.T) {
 			c := newTestClient(t, srv, "o", []string{"o/r"})
 			c.SetAppBotLogin("hive[bot]")
 			res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
-			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hC") {
-				t.Fatalf("push after clearance must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], SentinelMarker+" hC") {
+				t.Fatalf("push after clearance must re-alert by rewriting the hive's comment: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
 			}
 		})
 	}
@@ -617,8 +618,8 @@ func TestSweepSentinelDashboardApprovalReleasesHead(t *testing.T) {
 	c := newTestClient(t, srv, "o", []string{"o/r"})
 	c.SetAppBotLogin("hive[bot]")
 	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
-	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 4 || !strings.Contains(f.comments[9][3], SentinelMarker+" hC") {
-		t.Fatalf("push after the approval must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 3 || !strings.Contains(f.comments[9][0], SentinelMarker+" hC") {
+		t.Fatalf("push after the approval must re-alert by rewriting the hive's comment: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
 	}
 }
 
@@ -654,8 +655,8 @@ func TestSweepSentinelDashboardApprovalNotHonoured(t *testing.T) {
 			c := newTestClient(t, srv, "o", []string{"o/r"})
 			c.SetAppBotLogin("hive[bot]")
 			res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
-			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 3 || !strings.Contains(f.comments[9][2], SentinelMarker+" hB") {
-				t.Fatalf("new head must re-alert: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
+			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][0], SentinelMarker+" hB") || f.comments[9][1] != tc.body {
+				t.Fatalf("new head must re-alert by rewriting the hive's comment, leaving the other alone: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
 			}
 		})
 	}
@@ -800,8 +801,8 @@ func TestSweepSentinelClearanceOnNewerHeadRejected(t *testing.T) {
 			if got := f.labels[9]; len(got) != 1 || got[0] != "sentinel-alert" {
 				t.Fatalf("label must be applied: %v", got)
 			}
-			if len(f.comments[9]) != 2 || f.comments[9][0] != alertA || !strings.Contains(f.comments[9][1], SentinelMarker+" hB") {
-				t.Fatalf("a fresh alert for hB must be posted and the hA alert left alone: %v", f.comments[9])
+			if len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], SentinelMarker+" hB") || strings.Contains(f.comments[9][0], SentinelMarker+" hA") {
+				t.Fatalf("the hA alert must be rewritten for hB, not duplicated: %v", f.comments[9])
 			}
 		})
 	}
@@ -858,7 +859,8 @@ func sentinelClearedFixture(t *testing.T, remover string, filesB []map[string]an
 // reviewed: the clearance carries over, no label and no new alert, and the
 // hive's marker comment is rewritten as the cleared alert for hB so the next
 // pass (a fresh client, as after a restart) stays quiet too. A later push that
-// changes the flagged file re-alerts.
+// changes the flagged file re-alerts, rewriting the hive's one comment for
+// the new head (#16433) rather than stamping the PR again.
 func TestSweepSentinelClearanceCarriesOverUnchangedFlaggedChanges(t *testing.T) {
 	filesB := []map[string]any{{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatch}}
 	f, client := sentinelClearedFixture(t, "danathar", filesB)
@@ -887,15 +889,15 @@ func TestSweepSentinelClearanceCarriesOverUnchangedFlaggedChanges(t *testing.T) 
 	f.checkSuites["hC"] = []string{"2026-10-25T04:00:00Z"}
 	f.mu.Unlock()
 	res, err := client().SweepSentinel(context.Background(), defaultSentinelOpts(nil))
-	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 2 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hC") {
-		t.Fatalf("a changed flagged file must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 2 || len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], SentinelMarker+" hC") {
+		t.Fatalf("a changed flagged file must re-alert by rewriting the hive's comment: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
 	}
 }
 
 // The carry-over needs the same flagged content and a human's removal. A
 // changed patch, an added flagged file, a flagged file GitHub returns with
 // no patch, and a removal by a bot each leave the existing behaviour: hB is
-// alerted on and labelled.
+// alerted on and labelled, the hive's hA alert rewritten for hB (#16433).
 func TestSweepSentinelClearanceCarryOverRejected(t *testing.T) {
 	owners := map[string]any{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatch}
 	cases := []struct {
@@ -918,8 +920,8 @@ func TestSweepSentinelClearanceCarryOverRejected(t *testing.T) {
 			if got := f.labels[9]; len(got) != 2 {
 				t.Fatalf("label must be applied again: %v", got)
 			}
-			if len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hB") {
-				t.Fatalf("a fresh alert for hB must be posted: %v", f.comments[9])
+			if len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], SentinelMarker+" hB") || strings.Contains(f.comments[9][0], SentinelMarker+" hA") {
+				t.Fatalf("the hA alert must be rewritten for hB, not duplicated: %v", f.comments[9])
 			}
 		})
 	}

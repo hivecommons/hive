@@ -142,6 +142,10 @@ type GovernorConfig struct {
 	// different merged PR. A person's PR still needs their decision.
 	AutoCloseSuperseded *bool `yaml:"auto_close_superseded,omitempty" json:"auto_close_superseded,omitempty"`
 
+	// Review tunes what the governor does with the review swarm's verdicts
+	// on the hive's own PRs. See GovernorReviewConfig.
+	Review GovernorReviewConfig `yaml:"review,omitempty" json:"review,omitempty"`
+
 	// Hotspot* tune the merge-hotspot advisor. Zero values use the defaults;
 	// disabling issues keeps reporting enabled without filing on GitHub.
 	HotspotEnabled     *bool `yaml:"hotspot_enabled,omitempty" json:"hotspot_enabled,omitempty"`
@@ -1037,4 +1041,25 @@ func (c StageAdoptionConfig) EffectiveCloseSuperseded() string {
 		}
 	}
 	return DefaultAdoptionCloseSuperseded
+}
+
+// GovernorReviewConfig is governor.review: how the governor treats the
+// review swarm's verdicts on hive-authored PRs.
+type GovernorReviewConfig struct {
+	// AutoDecideQuestions lets the hive answer a reviewer's scope or
+	// follow-up QUESTION on its own green, finding-free PR through the
+	// delegated-decision path instead of parking the PR at stage/085 for a
+	// person (hivecommons/docs#618: "this is auto-merge material, not
+	// needs-human"). Policy sign-off asks — workflow edits from a fork,
+	// secrets / permissions / OWNERS / security paths, auto_merge or
+	// human_merge_paths changes, an explicit owner-only guard in the ask —
+	// still park. At most one auto-decision per head; a new push re-asks.
+	// Default on. See review.ClassifyDecisionQuestion for the two classes.
+	AutoDecideQuestions *bool `yaml:"auto_decide_questions,omitempty" json:"auto_decide_questions,omitempty"`
+}
+
+// AutoDecideQuestionsEnabled resolves GovernorReviewConfig.AutoDecideQuestions
+// with its default (on).
+func (r GovernorReviewConfig) AutoDecideQuestionsEnabled() bool {
+	return r.AutoDecideQuestions == nil || *r.AutoDecideQuestions
 }

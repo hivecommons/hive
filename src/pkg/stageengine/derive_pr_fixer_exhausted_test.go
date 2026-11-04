@@ -66,3 +66,15 @@ func TestPreserveStageOnStaleDecisionAnswer(t *testing.T) {
 		t.Fatal("a PR not previously at 085 has nothing to preserve")
 	}
 }
+
+// The hive re-authors its own exhausted PR instead of asking a person:
+// the PR stays on its fixing stage, the reason names the issue a fresh
+// PR is being opened for, and the exhausted count does not park it.
+func TestDerivePRReauthoringStaysOnFixing(t *testing.T) {
+	f := hiveFixingFacts(contributorLaneReasonChangesRequested)
+	f.PR.Pass = &PRPassFacts{AuthorIsApp: true, FixerExhausted: 6, FixerExcluded: true, Reauthoring: 16265}
+	d := DerivePR(f)
+	if d.Stage != stagelabels.Fixing || d.Reason != stagelabels.ReauthoringReason(16265) {
+		t.Fatalf("re-authoring: stage = %s reason = %q, want 070 re-authoring:16265", d.Stage, d.Reason)
+	}
+}

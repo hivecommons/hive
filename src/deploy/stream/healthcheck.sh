@@ -12,4 +12,11 @@ age=$(( $(date +%s) - $(stat -c %Y "$p") ))
 [ "$age" -le "$STALL_SECONDS" ] || { echo "ffmpeg progress stale (${age}s)"; exit 1; }
 frames=$(grep -a '^frame=' "$p" | tail -1 | cut -d= -f2)
 [ "${frames:-0}" -gt 0 ] || { echo "ffmpeg has encoded 0 frames"; exit 1; }
-echo "ok frames=${frames} progress_age=${age}s"
+# Surface the stall watchdog's verdict (entrypoint.sh writes health.json);
+# it is informational — the watchdog restarts ffmpeg itself.
+h="$RUN_DIR/health.json"
+wd=""
+if [ -s "$h" ]; then
+  wd=" watchdog=$(sed -n 's/.*"state":"\([a-z]*\)".*"watchdog_restarts":\([0-9]*\).*/\1 restarts=\2/p' "$h")"
+fi
+echo "ok frames=${frames} progress_age=${age}s${wd}"

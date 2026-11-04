@@ -135,6 +135,39 @@ func TestInferenceTranslatorHandler_RefusesUnidentified(t *testing.T) {
 	}
 }
 
+// TestInferenceTranslatorHandler_RefusalLogsDiagnostics pins that the refusal
+// WARN keeps its message (the fleet-report class matches on it) and carries why
+// the caller was unidentified.
+func TestInferenceTranslatorHandler_RefusalLogsDiagnostics(t *testing.T) {
+	fakeProcNetTCP(t)
+	var buf strings.Builder
+	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(&buf, nil))}
+	p.uidMap = &agent.UIDMap{BaseUID: 2001, Agents: map[string]int{"quality": 2002}}
+
+	rec := httptest.NewRecorder()
+	p.inferenceTranslatorHandler().ServeHTTP(rec, translatorReq("127.0.0.1:43210", "quality"))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	for _, want := range []string{"inference request from unidentified caller refused", "reason=uid_not_mapped", "uid=2003", "has_api_key=true"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("log %q missing %q", buf.String(), want)
+		}
+	}
+	if strings.Contains(buf.String(), "sk-hive-") {
+		t.Errorf("log leaks the api key: %q", buf.String())
+	}
+
+	buf.Reset()
+	p.uidMap = nil
+	p.inferenceTranslatorHandler().ServeHTTP(httptest.NewRecorder(), translatorReq("127.0.0.1:43210", ""))
+	for _, want := range []string{"reason=no_uid_map", "has_api_key=false"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("log %q missing %q", buf.String(), want)
+		}
+	}
+}
+
 // Private forwarding may reach the translator, but its proxy-owned socket must
 // not turn a forged agent name into an authenticated inference request.
 func TestPlainForwardPrivateTranslatorRejectsProxyUID(t *testing.T) {

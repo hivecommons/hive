@@ -40,10 +40,44 @@
       if (state === 'resolving-conflicts') return 'Adopting · fixer resolving conflicts';
       return 'Adopted → #' + by;
     }
-    const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
+    // "Waiting for @clubanderson · rerun shared ci on GitHub": the person
+    // owed the step is named when the author is one (a hive / bot / clanker
+    // author cannot grant the permission; a maintainer is asked instead).
+    const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Waiting for';
+    const STAGE_TRACKER_UNAUTHORIZED_WHERE = 'on GitHub';
+    function stageTrackerUnauthorizedWho(item) {
+      // An issue row drawn on its one covering PR names that PR's author.
+      const linked = item && item.via_pr && Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => lp && String(lp.unauthorized_step || '').trim()) : [];
+      const src = linked.length === 1 ? linked[0] : item;
+      const author = String((src && src.author) || '').trim().replace(/^@/, '');
+      const kind = String((src && src.author_kind) || '');
+      if (author && kind !== 'hive' && kind !== 'bot' && kind !== 'clanker') return '@' + author;
+      return 'a maintainer';
+    }
     function stageTrackerUnauthorizedWord(item) {
       const step = String((item && item.unauthorized_step) || '').trim();
-      return step ? STAGE_TRACKER_UNAUTHORIZED_WORD + ': ' + step : '';
+      return step ? STAGE_TRACKER_UNAUTHORIZED_WORD + ' ' + stageTrackerUnauthorizedWho(item) + ' · ' + step + ' ' + STAGE_TRACKER_UNAUTHORIZED_WHERE : '';
+    }
+    // A PR parked at 085 because a person has to act ON THE PR (rerun CI,
+    // approve workflow runs, resolve a permission, answer review findings
+    // or red checks still open on its head) is not queued, merging or
+    // merge-ready: it lights PR in progress, never Merge queue. Merge
+    // queue is only for rows actually queued / merging / merged, or a
+    // merge-ready PR (review approved, CI green on this head) parked on a
+    // merge decision. A bare 085 with no track evidence keeps the gate:
+    // the person decides there (hive#14821). Hive's own #16524 read
+    // "Awaiting human: rerun shared ci" under Merge queue with CI unknown
+    // and review findings open. Mirrors stageTrackerPersonActsOnPR in Go.
+    function stageTrackerPersonActsOnPR(item) {
+      if (!item || (item.via_pr ? 'pr' : item.kind) !== 'pr' || Number(item.stage) !== STAGE_TRACKER_HUMAN_GATED) return false;
+      if (item.merge_gate && item.merge_gate.state) return false;
+      if (item.merge_train && item.merge_train.state) return false;
+      const onHead = a => !!a && (!a.head || !item.head || String(a.head) === String(item.head));
+      const review = onHead(item.review_activity) ? item.review_activity : null;
+      const ci = onHead(item.ci_activity) ? item.ci_activity : null;
+      const mergeReady = !!(review && review.state === 'approved' && ci && ci.state === 'passing');
+      if (String(item.unauthorized_step || '').trim()) return !mergeReady;
+      return !!((review && review.state !== 'approved') || (ci && ci.state !== 'passing'));
     }
     // A parked issue with a structured blocker (item.blocker, #15099) reads
     // "Blocked · App lacks workflows permission", never "Needs human
@@ -53,6 +87,56 @@
       const b = item && item.blocker;
       const short = String((b && b.short) || '').trim();
       return short ? STAGE_TRACKER_BLOCKED_WORD + ' · ' + short : '';
+    }
+    // Why a person is needed, in a few words, for the row itself to say
+    // (hivecommons/docs#612, rationguard#480: "it's not clear reading the
+    // row why a human is needed"). The structured blocker's short text
+    // first; else the server's reason key (stage_actor.human_reason, the
+    // human-merge reason, the clause after "—" in stage_actor.why) through
+    // a small map of known reasons; else that clause's first sentence.
+    const STAGE_TRACKER_NEEDS_HUMAN_SHORT = {
+      'workflow path': 'edits CI workflows',
+      'hive signoff attribution': 'hive signoff attribution',
+      'high-risk review': 'high-risk review',
+      'optional check failing': 'optional check failing',
+      'capability:workflows-permission': 'App lacks workflows permission',
+    };
+    const STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX = 48;
+    const STAGE_TRACKER_NEEDS_HUMAN_WORD = 'Needs human';
+    function stageTrackerNeedsHumanShort(item) {
+      if (!item) return '';
+      const b = item.blocker;
+      if (b && String(b.short || '').trim()) return String(b.short).trim();
+      if (b && STAGE_TRACKER_NEEDS_HUMAN_SHORT[String(b.kind || '').trim()]) return STAGE_TRACKER_NEEDS_HUMAN_SHORT[String(b.kind || '').trim()];
+      const sa = item.stage_actor || {};
+      const afterDash = s => { const t = String(s || ''); const i = t.indexOf(' — '); return i >= 0 ? t.slice(i + 3) : ''; };
+      const keys = [sa.human_reason, item.human_merge_reason, afterDash(sa.why), afterDash(item.caption), item.reason];
+      for (const k of keys) {
+        const key = String(k || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (key && STAGE_TRACKER_NEEDS_HUMAN_SHORT[key]) return STAGE_TRACKER_NEEDS_HUMAN_SHORT[key];
+      }
+      const clause = String(afterDash(sa.why) || sa.human_reason || '').replace(/\s+/g, ' ').trim().split(/[;.](?:\s|$)/)[0].trim();
+      if (!clause) return '';
+      return clause.length > STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX ? clause.slice(0, STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX - 1).replace(/\s+\S*$/, '') + '…' : clause;
+    }
+    // The lit 045 / 085 chevron's caption: "Needs human · edits CI
+    // workflows" rather than a bare "Needs human decision". '' when no
+    // short reason is known (the plain stage word stands).
+    function stageTrackerNeedsHumanWord(item) {
+      const short = stageTrackerNeedsHumanShort(item);
+      return short ? STAGE_TRACKER_NEEDS_HUMAN_WORD + ' · ' + short : '';
+    }
+    // A decomposed parent at 010 (server `open_children` > 0, hive#16481)
+    // reads "Tracking · 3/4" (children known) or "Tracking · 1 open child",
+    // never "Actionable": the scanner leaves it to its children, so the
+    // row is not a stuck unclaimed issue.
+    const STAGE_TRACKER_TRACKING_WORD = 'Tracking';
+    function stageTrackerTrackingWord(item) {
+      const open = Number(item && item.open_children) || 0;
+      if (!(open > 0) || !item || item.kind !== 'issue') return '';
+      const c = item.children;
+      if (c && Number(c.total) > 0) return STAGE_TRACKER_TRACKING_WORD + ' · ' + (Number(c.completed) || 0) + '/' + Number(c.total);
+      return STAGE_TRACKER_TRACKING_WORD + ' · ' + open + ' open child' + (open === 1 ? '' : 'ren');
     }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
@@ -232,7 +316,7 @@
     // the chevron and the caption name one blocker (hive's own #15577 read
     // "Merge queued · 1st" while its caption said "check build-and-test
     // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
-    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Fixing', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Remediating', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
     // Pure: true when the row's queue slot is a forecast — the server says
     // so (merge_train.provisional), or, from an older server, the row's
     // own stage is short of the merge gate.
@@ -339,7 +423,7 @@
     // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
     // person says what the person has to do (the owner's ask: "waiting on
     // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
-    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being remediated by its author', unknown: 'head not in this view' };
     // Pure: the short reason a stalled head is stuck — the head_state
     // table, a human-decision head told apart by its reason, else the
     // head's own plain-word reason cut at its first clause.

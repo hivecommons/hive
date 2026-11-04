@@ -1137,6 +1137,38 @@ func (s *Store) StaleRed(repo string, number int, headSHA string) bool {
 	return s.now().Sub(e.FirstRedAt) >= RedPRStaleAfter
 }
 
+// ClaimReleaseAfter is how long a red head may sit unchanged before the
+// claim-release valve lets the covered issue go even though no re-engagement
+// was ever delivered (an owner the fix loop could not reach). It is the
+// whole re-engagement window — MaxReEngagements spaced by ReEngageCooldown —
+// so an issue is never offered for a second PR while the first is still
+// inside the hive's own repair budget.
+const ClaimReleaseAfter = time.Duration(MaxReEngagements) * ReEngageCooldown
+
+// AbandonedRed reports whether the hive has stopped repairing the PR's
+// CURRENT red head SHA: the head is StaleRed AND the fix loop has given up
+// on it — the PR was escalated to a human, the re-engagement budget for
+// this head is spent, or the head has been red for ClaimReleaseAfter with
+// nobody reachable to re-engage. It is the predicate the claim-release
+// valve (FilterClaimedIssues, "Fix #3") must use instead of StaleRed: a
+// red head that is merely stale is still being re-engaged by the reaper
+// and the merge watcher, and releasing its issue then stages the issue
+// 010-actionable while the covering PR reads 070-fixing — one piece of
+// work with two owners (hivecommons/hive#16522).
+func (s *Store) AbandonedRed(repo string, number int, headSHA string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[Key(repo, number)]
+	if e == nil || e.CurRedSHA == "" || headSHA == "" || e.CurRedSHA != headSHA || e.FirstRedAt.IsZero() {
+		return false
+	}
+	redFor := s.now().Sub(e.FirstRedAt)
+	if redFor < RedPRStaleAfter {
+		return false
+	}
+	return e.Escalated || e.ReEngagements >= MaxReEngagements || redFor >= ClaimReleaseAfter
+}
+
 // TryReEngage atomically decides whether the re-engagement paths (#2/#4) may
 // dispatch another fix for the PR's current red head SHA, and if so records the
 // attempt. It returns true at most MaxReEngagements times per red SHA: the cap

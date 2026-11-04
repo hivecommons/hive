@@ -24,19 +24,21 @@ import (
 // was sent, serves a scripted sequence of Job statuses, one pod, its log and
 // its terminated exit code, and records deletes.
 type fakeAPI struct {
-	mu        sync.Mutex
-	created   map[string]any
-	statuses  []string // JSON bodies served to successive GET job calls
-	getCalls  int
-	deleted   bool
-	podName   string
-	exitCode  int
-	noPod     bool
-	logBody   string
-	podStatus string // "terminated" or "running"
-	failCode  int    // when >0, every request fails with this status
-	createErr int    // when >0, POST fails with this status
-	onJobGet  func() // called (under mu) on every GET job, after it is counted
+	mu                    sync.Mutex
+	created               map[string]any
+	statuses              []string // JSON bodies served to successive GET job calls
+	getCalls              int
+	deleted               bool
+	podName               string
+	exitCode              int
+	noPod                 bool
+	logBody               string
+	podStatus             string // "terminated" or "running"
+	failCode              int    // when >0, every request fails with this status
+	createErr             int    // when >0, POST fails with this status
+	onJobGet              func() // called (under mu) on every GET job, after it is counted
+	onPodLogAfterComplete func() // called (under mu) on pod log request after Job Complete
+	jobCompleted          bool   // tracks whether job status shows Complete
 }
 
 func newFakeAPI() *fakeAPI {
@@ -73,10 +75,14 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				i = len(f.statuses) - 1
 			}
 			f.getCalls++
+			statusBody := f.statuses[i]
+			if strings.Contains(statusBody, `"type":"Complete"`) {
+				f.jobCompleted = true
+			}
 			if f.onJobGet != nil {
 				f.onJobGet()
 			}
-			_, _ = w.Write([]byte(f.statuses[i]))
+			_, _ = w.Write([]byte(statusBody))
 		case r.Method == http.MethodDelete:
 			f.deleted = true
 			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
@@ -87,6 +93,9 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			}
 			_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"` + f.podName + `"}}]}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/log"):
+			if f.jobCompleted && f.onPodLogAfterComplete != nil {
+				f.onPodLogAfterComplete()
+			}
 			_, _ = w.Write([]byte(f.logBody))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pods/"):
 			state := `{"terminated":{"exitCode":` + itoa(f.exitCode) + `}}`
@@ -223,6 +232,31 @@ func TestRunCompleteWithNoPodStillSucceeds(t *testing.T) {
 	}
 	if res.ExitCode != 0 || res.Stdout != "" {
 		t.Errorf("result = %+v, want exit 0 (Complete) and no log", res)
+	}
+}
+
+func TestRunSuccessDeletesJobEvenIfContextExpiresDuringLogCollection(t *testing.T) {
+	api := newFakeAPI()
+	api.statuses = []string{statusPending, statusComplete}
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	l := newLauncher(srv, Options{})
+
+	// Cancel context during pod log collection, after Job is Complete.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	api.onPodLogAfterComplete = cancel
+
+	res, err := l.Run(ctx, specFor("/data/agents/sandbox/deps-123"))
+	// Run should succeed: context expires during collection but cleanup uses a fresh context.
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", res.ExitCode)
+	}
+	if !api.deleted {
+		t.Error("Job must be deleted even if context expires during log collection")
 	}
 }
 

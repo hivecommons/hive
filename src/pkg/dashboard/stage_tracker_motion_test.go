@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -432,6 +434,8 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_HUMAN_MODS"),
 		jsFunc(t, html, "stageTrackerMotion"),
 		jsFunc(t, html, "stageTrackerShortAgo"),
+		jsFunc(t, html, "stageTrackerWaitingOnPerson"),
+		jsFunc(t, html, "stageTrackerTrackRunning"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
@@ -567,6 +571,8 @@ func TestStageTrackerMotionPreviewSample(t *testing.T) {
 		jsFunc(t, html, "stageTrackerHeaderHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
+		jsFunc(t, html, "stageTrackerWaitingOnPerson"),
+		jsFunc(t, html, "stageTrackerTrackRunning"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
@@ -693,7 +699,13 @@ assert.deepStrictEqual(animated, [[claimed, review, 'wash'], [review, claimed, '
 // a re-render after clicks picks up where the preview left off
 assert.strictEqual(activeShort(stageTrackerMotionSectionHtml('wash', stages)), 'CI + Review');
 `
-	cmd := exec.Command(node, "-e", script)
+	// The lifted strip exceeds Linux's single-argument limit, so the script
+	// goes through a file rather than -e.
+	path := filepath.Join(t.TempDir(), "motion_preview_sample.js")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, path)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node motion preview sample fixture failed: %v\n%s", err, out)
 	}

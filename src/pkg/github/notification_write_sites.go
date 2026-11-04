@@ -27,6 +27,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.(*repoForgeRouter).CreateIssueComment":   {Class: NotificationClassAttention, Passthrough: true},
 	"main.liveTriageCommenter.CreateIssueComment":  {Class: NotificationClassAttention, Passthrough: true},
 	"github.(*Client).UpsertIssueMarkerComment":    {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).EditIssueMarkerComment":      {Class: NotificationClassStatus, Passthrough: true},
 	"github.(*clientStatusForge).CreateComment":    {Class: NotificationClassStatus, Passthrough: true},
 	"mergelane.(*RESTGitHub).CreateIssueComment":   {Class: NotificationClassStatus, Passthrough: true},
 	"worksource.(*forgeWorkSource).AddComment":     {Class: NotificationClassAttention, Passthrough: true},

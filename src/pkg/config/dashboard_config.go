@@ -19,8 +19,8 @@ type DashboardConfig struct {
 	Port               int    `yaml:"port"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
-	// Matrix is the experimental, default-off Activity Monitor Matrix block
-	// (#15862). Nothing reads it yet; see dashboard_matrix.go.
+	// Matrix is the default-off Code activity source configuration.
+	// The dashboard.matrix name is deprecated but retained for compatibility.
 	Matrix DashboardMatrixConfig `yaml:"matrix,omitempty" json:"matrix,omitempty"`
 	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to
 	// embed the public, read-only /snapshot document. Empty keeps the historical

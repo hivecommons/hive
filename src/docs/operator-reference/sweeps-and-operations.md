@@ -398,6 +398,7 @@ between. Two mechanisms close that gap
 |---|---|---|
 | `scanner.skip_issues_with_open_pr` | `true` (unset) | Set `false` to turn off both the pre-dispatch guard and the duplicate-fix sweep; the claim ledger alone then decides, as before. |
 | `governor.auto_close_superseded` | `true` (unset) | At ACMM L6, a **hive-authored** PR whose closing targets are all closed, one of them by a different merged PR, and whose head conflicts with the base (or whose files are a subset of that PR's) is closed by the hive itself as superseded — `hive/superseded`, one notice naming the superseding PR — in the self-authored auto-merge lane (before any review cycle), the supersession sweep, and close-on-merge of the superseding PR. Human-authored PRs are never auto-closed. Set `false` to report the refusal once and leave the PR for a person, as before ([#14965](https://github.com/hivecommons/hive/pull/14965)). See [labels-and-control-signals.md § Supersession](../labels-and-control-signals/stage-labels.md#supersession-closed-issue-another-merged-pr). |
+| `governor.review.auto_decide_questions` | `true` (unset) | A review perspective that ends with a **question** rather than a finding used to park the PR at 085 "Needs human decision" on its wording alone. The dashboard now classifies the ask. **Policy sign-off** stays a person's: the PR edits `.github/workflows/*` or `.github/actions/*` from a fork; touches OWNERS / CODEOWNERS / SECURITY / rulesets / secrets / key material; adds or removes `auto_merge`, `human_merge_paths` or `self_authored_decision_policy` config; or the ask names an owner-only guard (sentinel, GitHub/App permissions, unauthorized, tokens / secrets / credentials, branch protection). **Scope / follow-up question** — "should we also…", "merge ahead of…", "apply X from the PR body", "confirm Y is acceptable" — on a hive-authored (or hive-adopted) PR with CI green and no unresolved finding on the head runs the existing *Let hive decide* pipeline with the hive as requester: an approve verdict admits the PR to the merge queue and files the question as a `follow-up: …` issue linked to the PR; a direction verdict routes the fixer (070); an owner-only or recommend-only verdict keeps the 085 park with the hive's recommendation on the row ("needs your sign-off"). At most one auto-decide per head (a new push asks again), one INFO line `reviewer question auto-decided` per run, and `review_questions_autodecided_1h` on `/api/status`. Set `false` to park every reviewer question for a person, as before. |
 
 ## What hive writes to GitHub, and when
 
@@ -545,12 +546,19 @@ not what it records:
   The comment is created the first time a note is due and PATCHed for every
   later note; only the creation sends email.
 - **No "no findings" reviews.** A reviewer whose whole body is the clean
-  acknowledgement has its verdict recorded through the relay and the
-  evidence bundle, and no GitHub review is submitted (the reviewer prompts
-  also stop asking for the line, whatever `review.acknowledge_no_findings`
-  says). Only perspectives with findings post, and a head carries at most
-  one hive review: a later perspective's findings for the same head are
-  folded into the status comment instead of becoming a second review.
+  acknowledgement — or whose body says it has no findings while its verdict
+  report approves with an empty findings list, as the plain `reviewer`
+  lanes narrate ("Read the tree at … Looks correct to me. No findings.") —
+  has its verdict recorded through the relay and the evidence bundle, and
+  no GitHub review is submitted (the reviewer prompts also stop asking for
+  the line, whatever `review.acknowledge_no_findings` says). The verdict
+  and the reviewer's notes land in the status comment as a
+  `review-findings:<agent>` section instead. A body that asks for a
+  decision, carries a hive marker, or rides a non-approving verdict is a
+  real review and still posts. Only perspectives with findings post, and a
+  head carries at most one hive review: a later perspective's findings for
+  the same head are folded into the status comment instead of becoming a
+  second review.
 - **@-mentions once per cause.** The 071 note mentions the author the first
   time a cause class appears (conflict, red CI, changes requested) and is
   silent for further heads with the same cause; a new cause mentions again.
@@ -591,6 +599,59 @@ already present), so the effect of the mode can be charted from the logs.
 
 `normal` restores the previous behaviour: every note is its own comment,
 every perspective's verdict its own review, every new head its own mention.
+
+Three issue-side comments are edited in place in either mode, because a
+re-post never carried information the previous comment lacked:
+
+- **Needs-decision entry** (`<!-- hive:stage-needs-decision -->` and the
+  other stage entry markers): a PR that re-enters the stage after a decision
+  cycle has its existing entry comment rewritten, with an `Updated <ts>`
+  line, instead of receiving a new one. Only the hive's own comment is
+  reused; a stranger's comment carrying the marker is ignored.
+- **Sentinel alert** (`<!-- hive-sentinel --> <head>`): a new push rewrites
+  the hive's existing sentinel comment for the new head rather than
+  stamping the PR again. The label is what blocks; one explanation per PR
+  is enough. A hive that cannot verify its own account (no App login and
+  no resolvable identity) still posts a fresh comment rather than edit a
+  comment the PR author may have forged.
+- **Claim ledger** (`github.notifications.claim_ledger`, default `true`):
+  see below.
+
+### Claim ledger (`github.notifications.claim_ledger`)
+
+**Why:** every `hive:claim` and `hive:release` the fleet posted was a new
+comment, and a relaunch or lease revocation appends a release+claim pair
+each time. Over 48 hours that was 334 comments — a quarter of everything
+the hive wrote — on issues whose holder, as far as a reader cared, had not
+changed.
+
+```yaml
+github:
+  notifications:
+    claim_ledger: true   # default; false restores one comment per claim/release
+```
+
+With the ledger on, an issue carries **one** claim comment marked
+`<!-- hive:issue-claim-ledger -->` that is PATCHed on every transition. It
+shows the current state — the same `hive:claim` / `hive:release` /
+`hive:preempt` machine marker and text the separate comments carried — and
+a collapsed `Claim history` list of the last 8 transitions (timestamp,
+agent, kind, release reason). The first claim on an issue creates the
+comment; later claims, takeovers and releases edit it, and only the
+creation sends email.
+
+The ledger is written so that every reader of the old comments keeps
+working without change: it carries exactly one machine marker, for the
+current state, so `issueclaim.Latest` (claim recovery after a restart, the
+`claimed-by` label sweep, the contributor lane's "is it free" check and the
+dashboard's claims view) reads the ledger the way it read the newest
+separate comment. A legacy claim comment on the same issue is superseded
+by the ledger's later `at=` the same way a later comment superseded it.
+
+A human is still told, in a fresh comment, the two things only a new
+comment can tell them: that an agent took over an issue they held, and
+that they displaced an agent (so they know to drop the `claimed-by` label
+when done). Everything else goes into the ledger.
 
 `github.notifications.shadow: true` (default off) adds would-notify
 instrumentation without changing any write: every new comment, review,

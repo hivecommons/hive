@@ -20,7 +20,7 @@ jobs:
   fossa:
     name: FOSSA license scan
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
     steps:
@@ -33,10 +33,51 @@ jobs:
         if: env.FOSSA_API_KEY == ''
         run: echo "FOSSA_API_KEY secret not set; skipping FOSSA scan." >> "$GITHUB_STEP_SUMMARY"
 
+      # The key must be a push-only token from the *CNCF* FOSSA organization so
+      # the project lands in the CNCF instance (cncf/sandbox#545). `team` takes
+      # the team NAME, not the numeric id, and is honored only on the very first
+      # upload that creates the project (fossa-cli docs/references/files/fossa-yml.md).
+      # With `run-tests: true` the action runs ONLY `fossa test` (no analyze)
+      # and forwards `team`/`branch` to it, which `fossa test` rejects. So:
+      # always analyze (upload), then on PRs run the policy test separately.
       - name: Run FOSSA scan
         if: env.FOSSA_API_KEY != ''
         uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
-          run-tests: ${{ github.event_name == 'pull_request' }}
+          project: hivecommons/hive
+          team: Hive Commons
+          branch: ${{ github.head_ref || github.ref_name }}
+
+      # A recent base-branch push may still be queued or analyzing in FOSSA.
+      # Upload the exact diff baseline here so the PR test does not race it.
+      # Check it out after the PR scan to keep it out of that scan's discovery.
+      - name: Checkout FOSSA diff baseline
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .fossa-base
+          persist-credentials: false
+
+      - name: Analyze FOSSA diff baseline
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        working-directory: .fossa-base
+        env:
+          FOSSA_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FOSSA_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        # Reuse the CLI installed by Run FOSSA scan; the action has no revision input.
+        run: |
+          fossa analyze --project hivecommons/hive \
+            --revision "$FOSSA_BASE_SHA" \
+            --branch "$FOSSA_BASE_BRANCH" \
+            --team "Hive Commons"
+
+      - name: Run FOSSA policy test
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          project: hivecommons/hive
+          run-tests: true
           test-diff-revision: ${{ github.event.pull_request.base.sha }}

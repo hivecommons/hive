@@ -430,6 +430,7 @@
     .cmp-banner { border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 8%, transparent); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-6); font-size: var(--fs-sm); }
     .cmp-banner strong { color: var(--text); }
     .cmp-banner-detail { color: var(--muted); margin-top: var(--sp-2); }
+    ul.cmp-banner-detail { margin: var(--sp-2) 0 0 var(--sp-5); }
     .cmp-framework { display: flex; gap: var(--sp-4); align-items: flex-start; padding: var(--sp-3) var(--sp-0); cursor: pointer; }
     .cmp-framework input { width: auto; margin-top: var(--sp-1); }
     .cmp-framework-name { font-weight: 600; color: var(--text); }

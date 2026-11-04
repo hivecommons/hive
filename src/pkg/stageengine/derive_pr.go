@@ -316,7 +316,10 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		verdict.Rank = stageRankOwned
 		obs.Reason = stagelabels.LaneReasonRebaseFailedTwice
 	}
-	if !verdict.Terminal && pass.FixerExhausted > 0 && verdict.Stage == FixingStage(obs) {
+	if !verdict.Terminal && pass.Reauthoring > 0 && verdict.Stage == FixingStage(obs) {
+		obs.Reason = stagelabels.ReauthoringReason(pass.Reauthoring)
+	}
+	if !verdict.Terminal && pass.FixerExhausted > 0 && pass.Reauthoring == 0 && verdict.Stage == FixingStage(obs) {
 		verdict.Stage = stagelabels.NeedsDecision
 		verdict.Rank = stageRankOwned
 		obs.Reason = stagelabels.FixerExhaustedReason(pass.FixerExhausted)

@@ -416,6 +416,46 @@ func getMatrixLines(t *testing.T, s *Server, target string) matrixLinesResponse 
 	return resp
 }
 
+// More describes visible work, even when the page is full and newer ring
+// entries are all filtered out (#16530).
+func TestHandleMatrixLines_MoreCountsOnlyAllowedLines(t *testing.T) {
+	s := newTestServer()
+	s.MatrixObserver(config.DashboardMatrixConfig{Enabled: true, Repos: []string{"hivecommons/allowed"}})
+	src := s.matrix
+	t.Cleanup(src.close)
+	helperAddMatrixLine(src, "hivecommons/denied", "hidden before")
+	helperAddMatrixLine(src, "hivecommons/allowed", "first")
+	helperAddMatrixLine(src, "hivecommons/denied", "hidden between")
+	helperAddMatrixLine(src, "hivecommons/allowed", "last")
+	helperAddMatrixLine(src, "hivecommons/denied", "hidden after")
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		seqs  []uint64
+		more  bool
+	}{
+		{"truncated", "since=0&max=1", []uint64{2}, true},
+		{"full final page", "since=2&max=1", []uint64{4}, false},
+		{"short final page", "since=2&max=2", []uint64{4}, false},
+		{"initial backlog", "since=0", []uint64{2, 4}, false},
+		{"only hidden lines", "since=4&max=1", nil, false},
+		{"caught up", "since=5&max=1", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := getMatrixLines(t, s, "/api/matrix/lines?"+tc.query)
+			if resp.Seq != 5 || resp.More != tc.more || len(resp.Lines) != len(tc.seqs) {
+				t.Fatalf("response = %+v, want latest=5 more=%v seqs=%v", resp, tc.more, tc.seqs)
+			}
+			for i, seq := range tc.seqs {
+				if resp.Lines[i].Seq != seq {
+					t.Fatalf("line %d seq = %d, want %d", i, resp.Lines[i].Seq, seq)
+				}
+			}
+		})
+	}
+}
+
 // /api/matrix/lines reports when the ingest pass last ran and when the next
 // is due (#16276), null/0 before the first pass, so the kiosk can tell "no
 // pushes" from "no ingest".

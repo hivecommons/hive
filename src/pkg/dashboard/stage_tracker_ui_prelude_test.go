@@ -97,6 +97,20 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTrainIconHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
+		jsFunc(t, html, "stageTrackerWaitingOnPerson"),
+		jsFunc(t, html, "stageTrackerTrackRunning"),
+		jsFunc(t, html, "stageTrackerHiveOwnsRepair"),
+		jsConstLine(t, html, "STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER"),
+		jsConstLine(t, html, "STAGE_TRACKER_WORKFLOW_APPROVAL_TIP"),
+		jsFunc(t, html, "stageTrackerWorkflowApprovalPending"),
+		jsConstLine(t, html, "STAGE_TRACKER_RING_SEGMENT_GAP_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_RING_RADIUS"),
+		jsConstLine(t, html, "STAGE_TRACKER_RING_GAP_DEG"),
+		jsFunc(t, html, "stageTrackerRingSvg"),
+		jsFunc(t, html, "stageTrackerStalledTrack"),
+		jsFunc(t, html, "stageTrackerQueueAheadWord"),
+		jsFunc(t, html, "stageTrackerStageTrack"),
+		jsFunc(t, html, "stageTrackerTrackWord"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
@@ -110,6 +124,14 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerHopName"),
 		jsFunc(t, html, "stageTrackerTrailText"),
 		jsFunc(t, html, "stageTrackerTooltip"),
+		jsConstLine(t, html, "STAGE_TRACKER_BLOCKED_WORD"),
+		jsFunc(t, html, "stageTrackerBlockerWord"),
+		jsConstBlock(t, html, "STAGE_TRACKER_NEEDS_HUMAN_SHORT"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_WORD"),
+		jsFunc(t, html, "stageTrackerNeedsHumanShort"),
+		jsFunc(t, html, "stageTrackerNeedsHumanWord"),
+		jsFunc(t, html, "stageTrackerBlockedForDecisionPR"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
@@ -197,8 +219,28 @@ var _stageTracker = { stages };
 // needs-rebase always lands a PR in 070/071/072 (automerge_stage_labels.go), so a
 // fixture pairing it with 050/060 would draw a contradictory row.
 const rebaseCoherent = (it) => { if ((it.modifiers || []).includes('needs-rebase')) assert.ok(![50, 60].includes(Number(it.stage)), 'fixture #' + it.number + ' pairs needs-rebase with stage ' + it.stage); (it.linked_prs || []).forEach(rebaseCoherent); };
+// hivecommons/hive#16540: no strip ever lights more than two chevrons. Lit =
+// the stage chevron's active fill (a settled-current one is not amber) or a
+// CI / Review track in the active class. Checked on every fixture rendered.
+const litChevrons = (html) => (html.match(/class="ham-seg active(?! [^"]*ham-settled-current)|class="ham-seg ham-activity-track active\b/g) || []).length;
+// hivecommons/hive#16599 (canonical): 1 ≤ active ≤ 2 — the stage column is
+// always active (a settled-current one counts as filled), a track only while
+// it runs or is the stage's own / stalled track; and words ride ONLY active
+// chevrons — an inactive CI / Review track is its icon alone.
+const filledChevrons = (html) => litChevrons(html) + (html.match(/class="ham-seg active [^"]*ham-settled-current/g) || []).length;
+const trackCopyText = (li) => ((/<span class="ham-chevron-copy[^"]*">([\s\S]*?)<\/span>(?:<svg|<span id=)/.exec(li) || [])[1] || '').replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]+>/g, '').trim();
+const wordsOnlyWhenActive = (item, s) => Array.from(s.matchAll(/<li class="ham-seg ham-activity-track ([^"]*)"[\s\S]*?<\/li>/g)).forEach(m => {
+  const words = trackCopyText(m[0]);
+  if (/\bactive\b/.test(m[1])) assert.ok(words, 'fixture #' + item.number + ' active track without words: ' + m[0]);
+  else assert.strictEqual(words, '', 'fixture #' + item.number + ' inactive track carries words: ' + m[0]);
+});
+const atMostTwoLit = (item, row) => row.split('aria-label="Pipeline progress"').slice(1).forEach((s, i) => {
+  assert.ok(litChevrons(s) <= 2, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' lights ' + litChevrons(s) + ' chevrons: ' + s);
+  if (s.includes('aria-current="step"')) assert.ok(filledChevrons(s) >= 1, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' has no filled chevron: ' + s);
+  wordsOnlyWhenActive(item, s);
+});
 const rawRowHtml = stageTrackerRowHtml;
-stageTrackerRowHtml = (item, stages, ctx) => { rebaseCoherent(item); return rawRowHtml(item, stages, ctx); };
+stageTrackerRowHtml = (item, stages, ctx) => { rebaseCoherent(item); const row = rawRowHtml(item, stages, ctx); atMostTwoLit(item, row); return row; };
 // A row is a title line, its strip, then zero or more nested PR sub-rows.
 const strips = (row) => row.split('aria-label="Pipeline progress"').slice(1);
 const strip = (row) => strips(row)[0].split('<div class="ham-sub"')[0];
@@ -212,7 +254,8 @@ const segStates = (html) => Array.from(strip(html).matchAll(/<li class="ham-seg 
 const titles = (html, t) => (html.match(new RegExp('>' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<', 'g')) || []).length;
 const prCol = (html) => Array.from(html.slice(0, html.indexOf('aria-label="Pipeline progress"')).matchAll(/<a class="ham-pr-ref"[^>]*>(.*?)<\/a>/g)).map(m => m[1]);
 const B = 'blank';
-const text = (h) => h.replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+const visibleMarkup = (h) => h.replace(/<span[^>]*class="config-tooltip ham-chevron-tip"[^>]*>[^<]*<\/span>/g, '');
+const text = (h) => visibleMarkup(h).replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
 // The row tooltip rides the issue's #N link on an issue row and the PR link
 // (after "PR title · ") on a PR row; the issue slot of a PR row carries none.
 const tooltip = (row) => (/<a class="ham-ref"[^>]*title="([^"]*)"/.exec(row) || /<a class="ham-pr-ref"[^>]*title="([^"]*)"/.exec(row))[1];

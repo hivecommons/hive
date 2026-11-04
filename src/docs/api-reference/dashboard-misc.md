@@ -72,7 +72,7 @@ The monitor renders CI and Review concurrently on one shared PR row; see
 
 
 
-| `GET` | `/api/matrix/lines` | Dashboard auth/session | Matrix Lines: serve bounded backlog of pushed lines behind dashboard.matrix with repo allowlist filtering. `max` counts only lines the repo allowlist admits, so a page is never emptied by filtered-out lines. A client paging with `max` should use the last returned line's `seq` as its next `since`, not the top-level `seq`, which is the source's latest sequence number and would skip lines still past the page. | `pkg/dashboard/api.go:204` |
+| `GET` | `/api/matrix/lines` | Dashboard auth/session | Matrix Lines (deprecated name, see [Published-checkpoint regions](#published-checkpoint-regions)): serve bounded backlog of pushed lines behind dashboard.matrix with repo allowlist filtering. `max` counts only lines the repo allowlist admits, so a page is never emptied by filtered-out lines. A client paging with `max` should use the last returned line's `seq` as its next `since`, not the top-level `seq`, which is the source's latest sequence number and would skip lines still past the page. `more` is true only while another line the caller may see remains past the page; stop paging when it is false. | `pkg/dashboard/api.go:204` |
 | `GET` | `/api/leaderboard/battle-log` | Public | Scrubbed public Battle Log activity feed for leaderboard widgets. | `pkg/dashboard/battle_log.go:108` |
 | `GET` | `/api/leaderboard/hive-of-week` | Public | Featured weekly project metadata, configured render URLs (empty when none), gource source URL, and embed snippets. | `pkg/dashboard/battle_log.go:109` |
 | `GET` | `/api/leaderboard/gource-log` | Public | Gource custom log source for a project/week, derived from public hive event data. | `pkg/dashboard/battle_log.go:110` |
@@ -83,7 +83,7 @@ The monitor renders CI and Review concurrently on one shared PR row; see
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:389` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:390` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:391` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1838` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1840` |
 
 ### Activity observation provenance
 
@@ -123,3 +123,25 @@ PR writes. Push and same-head retry observations do not inherit an old fixer,
 owner or worker observation timestamp. Review completion uses the dispatch
 ledger's own agent/review-head/decision receipt and aggregate participation;
 another agent's same-perspective bundle verdict cannot settle that assignment.
+
+### Published-checkpoint regions
+
+`GET /api/matrix/lines?format=regions&since=<seq>&max=<lines>` selects whole
+changed regions from the existing authorized sentinel observer. Authentication
+and dashboard read permission are required, including in kiosk mode; responses
+use `Cache-Control: no-store`. Disabled capture returns 404. An active cold
+source returns 200 with an empty `regions` array and null `last_ingest_at`.
+
+The response contains continuation `seq`, source high-water mark `latest`, policy
+`epoch`, source label `Pushed PR`, stage `pushed-checkpoint`, `last_ingest_at`,
+`next_ingest_in_s`, and `regions`. Each region has its own sequence, repo, actual
+PR number and `pr_url`, head, path, stage, observed `at`, and ordered `lines`
+(`op` is `+` or `-`, `line` is untrimmed text). Follow response `seq`, not
+`latest`, until caught up. `max` is a line budget (1–500, default 200); the first
+eligible region is always returned whole, even if larger than the budget.
+Code buffers are bounded and memory-only, so this is not an audit history.
+Clear retained browser code on epoch changes and failed/disabled/unauthorized
+pulls. An empty response says nothing about work outside the admitted source.
+
+This endpoint supplies the [Code activity reader](../dashboard.md#code-activity-reader);
+see that section for presentation, compatibility, capture and access policies.

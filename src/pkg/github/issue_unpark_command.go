@@ -520,7 +520,11 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	if menu.releaseStep != nil || c.issueOwnerStepProposed(issue, comments) {
 		c.rememberIssueOwnerStep(displayRepo, number, menu.releaseStep)
 	}
-	if !labelDriven {
+	// A held issue (hivecommons/hive#16591) has nothing open to decide: no
+	// "What to reply" notice and no prose hint, but every command it does
+	// get is still answered.
+	held := isHeldAfterDecision(issueLabelNames(issue.Labels))
+	if !labelDriven && !held {
 		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, issue, comments, releasePolicy.enabled); err != nil {
 			return false, err
 		}
@@ -610,6 +614,9 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return true, nil
 	case unparkCommandNone:
 		// Prose assent, no command. Say what to type; do not act on it.
+		if held {
+			return false, nil
+		}
 		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), unparkProseHintReply); err != nil {
 			return false, err
 		}
@@ -792,7 +799,7 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 	// The engine re-derives the stage from the labels left behind, so a kept
 	// park label (a person's or a lifecycle bot's `needs-human`) re-parks the
 	// issue at the same stage (hivecommons/hive#12715).
-	stayingStage := unparkStageThatStays(displayRepo, number, labels, removed, stageLabels)
+	stayingStage := unparkStageThatStays(displayRepo, number, labels, removed, stageLabels, acknowledge)
 	if acknowledge && !labelPresent(labels, HumanAckLabel) {
 		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanAckLabel}); err != nil {
 			return false, fmt.Errorf("adding %s to %s/%s#%d: %w", HumanAckLabel, owner, repo, number, err)
@@ -831,13 +838,21 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 }
 
 // unparkStageThatStays returns the stage label among stageLabels that the
-// issue still derives once the un-park has removed removed and applied
-// approved-direction, or "" when the park lifts.
-func unparkStageThatStays(displayRepo string, number int, labels, removed, stageLabels []string) string {
+// issue still derives once the un-park has removed removed and, when
+// acknowledge is set, applied approved-direction, or "" when the park
+// lifts. The ack is only counted when it is really applied: a kept
+// `needs-human` withholds it, and the engine reads a plain `needs-human`
+// as a 045 park but a `needs-human` beside the ack as held human work
+// (hivecommons/hive#16579), so seeding the ack unconditionally would
+// misreport a kept park as lifted.
+func unparkStageThatStays(displayRepo string, number int, labels, removed, stageLabels []string, acknowledge bool) string {
 	if len(stageLabels) == 0 {
 		return ""
 	}
-	after := []string{HumanAckLabel}
+	var after []string
+	if acknowledge {
+		after = append(after, HumanAckLabel)
+	}
 	for _, label := range labels {
 		if !labelPresent(removed, label) && !labelPresent(stageLabels, label) {
 			after = append(after, label)
@@ -1740,4 +1755,15 @@ func renderUnparkFixedReply(actor, note string, removed []string) string {
 	}
 	b.WriteString("; any `hold` label is left exactly as it was.\n\nIf this was closed by mistake, the reporter or a maintainer can comment `/reopen`.")
 	return b.String()
+}
+
+// isHeldAfterDecision reports an issue held after a human decision:
+// `needs-human` beside the approval label and without a stage/045 park label.
+// Nothing is open to decide on it, so the sweep stops offering `/hive approve`
+// / `/hive decision` (hivecommons/hive#16591) while still answering any
+// command a maintainer posts.
+func isHeldAfterDecision(labels []string) bool {
+	return hasIssueNeedsHumanLabel(labels) && labelPresent(labels, HumanAckLabel) &&
+		!labelPresent(labels, NeedsDecisionStageLabel) && !labelPresent(labels, legacyIssueNeedsDecisionStageLabel) &&
+		!labelPresent(labels, issueNeedsDecisionLabel) && !labelPresent(labels, issueNeedsDirectionLabel)
 }

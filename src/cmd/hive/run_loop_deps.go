@@ -70,6 +70,7 @@ func defaultRunLoopDeps() runLoopDeps {
 		newWakeTimer:   func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
 		newHealthTimer: func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
 		runEval: func(b *boot, restarted []string, source evalCycleSource) {
+			defer b.ciFailureKicker.Drain()
 			if b.evalLoop != nil {
 				b.evalLoop.noteCycle(source)
 			}

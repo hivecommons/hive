@@ -90,7 +90,6 @@ const (
 	decisionActionCloseWontfix    = "decide:close-wontfix"
 	decisionActionMergeNow        = "decide:merge-now"
 	decisionActionQueueMerge      = "decide:queue-merge"
-	decisionActionReauthor        = "decide:re-author"
 	decisionActionAcceptTriage    = "accept-triage"
 	decisionActionHold            = "hold"
 	decisionActionRelease         = "release"

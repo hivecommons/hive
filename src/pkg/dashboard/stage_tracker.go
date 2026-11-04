@@ -279,6 +279,9 @@ type StageTrackerItem struct {
 	CIActivity     *StageTrackerActivity `json:"ci_activity,omitempty"`
 	ReviewActivity *StageTrackerActivity `json:"review_activity,omitempty"`
 	CodeActivity   *StageTrackerActivity `json:"code_activity,omitempty"`
+	// Remediation is the pickup evidence behind a red PR's code activity
+	// (stage_tracker_remediation.go); absent while nobody has picked it up.
+	Remediation *StageTrackerRemediation `json:"remediation,omitempty"`
 	// DisplayColumn is presentation only; native stages, filters and merge gates remain unchanged.
 	DisplayColumn int                           `json:"display_column,omitempty"`
 	Preparation   *StageTrackerPreparation      `json:"preparation,omitempty"`
@@ -296,6 +299,12 @@ type StageTrackerItem struct {
 	ClaimReference bool                  `json:"claim_reference,omitempty"`
 	IsTracker      bool                  `json:"is_tracker,omitempty"`
 	Children       *github.IssueChildren `json:"children,omitempty"`
+	// OpenChildren is how many sub-issues of a decomposed parent are still
+	// open (the stage engine's "waiting on N open child issue(s)" suffix on
+	// a 010 reason). Non-zero means the parent is tracking its children,
+	// not waiting on the scanner, and the row reads "Tracking", not
+	// "Actionable" (hivecommons/hive#16481).
+	OpenChildren int `json:"open_children,omitempty"`
 	// Labels are the item's GitHub labels as the snapshot saw them, so the
 	// dashboard can offer a label filter without a second endpoint.
 	Labels    []string   `json:"labels,omitempty"`
@@ -491,9 +500,9 @@ type StageTrackerItem struct {
 	// UnauthorizedStep is set when the item wears hive:unauthorized: the
 	// step the hive's GitHub App is not permitted to take, in words
 	// ("approve workflow runs"), from the `unauthorized:<step>` stage
-	// reason; the gate cell reads "Awaiting human: <step>". Unauthorized
-	// is the pill's tooltip naming the permission and the human action
-	// (hivecommons/hive#14589).
+	// reason; the PR in progress chevron reads "Waiting for @who · <step>
+	// on GitHub" (hive#16524). Unauthorized is the pill's tooltip naming
+	// the permission and the human action (hivecommons/hive#14589).
 	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
 	Unauthorized     string `json:"unauthorized,omitempty"`
 	// DecisionNeeded is set on a row parked on a person (085 / 045 / 015,
@@ -713,6 +722,9 @@ type StageTrackerLinkedPR struct {
 	Stage          int                         `json:"stage,omitempty"`
 	StageSince     *time.Time                  `json:"stage_since,omitempty"`
 	Caption        string                      `json:"caption,omitempty"`
+	// UnauthorizedStep mirrors the PR's own field so the nested chevron
+	// reads "Waiting for @who · <step> on GitHub" too (hive#16524).
+	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
 	// NoteChangedAt mirrors the PR row's: when the caption last changed
 	// meaning.
 	NoteChangedAt *time.Time `json:"note_changed_at,omitempty"`
@@ -1021,7 +1033,7 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.Reviewed:
 		return "Review passed"
 	case stagelabels.Fixing:
-		return "Fixing"
+		return "Remediating"
 	case stagelabels.NeedsAuthor:
 		return "Needs author"
 	case stagelabels.ReturnedToContributor:
@@ -1046,9 +1058,13 @@ func stageTrackerStages(overrides map[string]time.Duration) []StageTrackerStage 
 	out := make([]StageTrackerStage, 0, len(stagelabels.Table))
 	for _, d := range stagelabels.Table {
 		branch := stageTrackerBranchFrom(d.Number)
+		description := d.Description
+		if d.Stage == stagelabels.Fixing {
+			description = stageTrackerRemediationNeededCaption
+		}
 		out = append(out, StageTrackerStage{
 			Number: d.Number, Slug: d.Slug, Label: d.Stage.Label(), Short: stageTrackerShort(d.Stage),
-			Description: d.Description, Issue: d.Issue, PR: d.PR, Main: branch == 0, BranchFrom: branch,
+			Description: description, Issue: d.Issue, PR: d.PR, Main: branch == 0, BranchFrom: branch,
 			DwellSeconds: int64(stagelabels.Dwell(d.Stage, overrides) / time.Second),
 			FallsTo:      stageTrackerFallsTo(d),
 		})

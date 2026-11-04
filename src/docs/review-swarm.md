@@ -182,6 +182,8 @@ review:
   max_parallel_reviews: 5
   reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
+  fixer_fallback_agents: []                  # opt-in ordered fallback lanes, e.g. [fixer, scanner-2]
+  fixer_fallback_after_undeliverable: 3       # 0 defaults to 3 only when fallbacks are configured
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
   self_authored_decision_policy: resolve    # resolve (default) non-risk-class Hive-authored decision questions, or escalate all of them
   # all_authors: true                       # deprecated no-op; every open PR is reviewed regardless of author
@@ -576,7 +578,13 @@ Expiry also covers a head whose aggregate is `incomplete`: the delivered perspec
 
 The PR review queue (`GET /api/review/queue`) shows this state on unreviewed items: `pending_since` (first dispatch for the current head still pending) and `redispatch_count`, plus a reason such as `review dispatched 32m ago, no verdict yet (re-dispatched 2x after expiry)` or `review dispatch exhausted: …; waiting on a human` after the generic `not reviewed at this head` line.
 
-When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick containing the aggregate findings and sends it to `review.fixer_agent`, the classified PR lane, or `scanner`. Fix dispatches are capped by `escalation.MaxReEngagements`; once exhausted, dispatch state records a `requires_human` hold for the PR head so the automated loop stops.
+When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick containing the aggregate findings and sends it to `review.fixer_agent`, the classified PR lane, or `scanner`.
+
+Set `review.fixer_fallback_agents` to an ordered list of enabled, kick-capable repair agents to route around an undeliverable fixer. An empty or unset list preserves existing behavior; setting `review.fixer_fallback_after_undeliverable` alone has no effect. With the list set, a candidate yields after that many consecutive undeliverable kicks (default 3), or after at least one refusal when its last known transcript activity is older than its agent-level `busy_no_activity_threshold` (default 30m). Missing transcript activity is unknown, and an idle agent with no outstanding refusals does not yield merely because its transcript is old.
+
+Both review-fix kicks and stale CI-red PR re-engagements retain their existing owner/fixer selection order, then try the configured fallback list in order. Paused, disabled, on-demand, non-kick, cadence-paused, provider-backed-off or already refusing fallback agents are skipped. Routing is logged, and the next repair returns to the primary once its refusal count clears. No turn is interrupted or restarted, and a fix already delivered to a fallback remains pending under the usual `pending_fix_ttl` rather than being dispatched twice.
+
+Fix dispatches are capped by `escalation.MaxReEngagements`; once exhausted, dispatch state records a `requires_human` hold for the PR head so the automated loop stops.
 
 Once that cap is hit the hive is no longer fixing the PR, and the stage must say so ([#15744](https://github.com/hivecommons/hive/issues/15744)):
 

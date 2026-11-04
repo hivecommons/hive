@@ -65,6 +65,10 @@ type Client struct {
 	graphQLPRBatchEnabled  func() bool
 	graphQLPRBatchPageSize func() int
 	prBatchMu              sync.Mutex
+	// ciRefetch coalesces the check-run re-reads CI webhook deliveries ask
+	// for on heads no listing has covered (webhook_ci_evidence.go).
+	ciRefetchOnce          sync.Once
+	ciRefetch              *ciRefetcher
 	prBatchCheckRuns       map[prBatchCheckRunKey][]*gh.CheckRun
 	prBatchCheckObservedAt map[prBatchCheckRunKey]time.Time
 	prBatchReviews         map[string]map[int]prReviewState
@@ -533,6 +537,20 @@ type Client struct {
 	// issues:write) still surface within ~an hour instead of never. Guarded by
 	// advisoryMu.
 	advisoryDigestSkips map[string]int
+	// advisoryDigestAnchors memoizes, per "owner/repo#issue", the ID of the
+	// App-authored digest comment the last successful write landed on
+	// (#16439). It is the pin the digest returns to when a foreign-authored
+	// digest comment sits newer on the issue, and the key for the per-anchor
+	// last-written material fingerprint in advisoryDigestAnchorHashes, which
+	// lets an unchanged re-render skip the PATCH even when the listed body is
+	// stale. Guarded by advisoryMu.
+	advisoryDigestAnchors      map[string]int
+	advisoryDigestAnchorHashes map[string]string
+	// advisoryForeignDigestWarned records, per "owner/repo#issue", that the
+	// "digest comment not authored by this App" condition has already been
+	// logged at Warn in this process; later cycles log it at Debug (#16439).
+	// Guarded by advisoryMu.
+	advisoryForeignDigestWarned map[string]bool
 	// hiveIdentity records which accounts count as "this hive" for the
 	// self-authorization gate (pr_self_authorization.go, #5117). It is optional
 	// — the gate recognises the App bot without it — and exists so an issue
@@ -2675,6 +2693,12 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	incidents := map[string]bool{}
 	for i := range prs {
 		reported := c.enrichPRCI(ctx, &prs[i])
+		// Unreported checks may be workflow runs waiting on GitHub's
+		// approve-workflows gate (dependabot, forks); only a pending head
+		// pays for the extra listing (hivecommons/hive#16599).
+		if prs[i].CIStatus == "pending" && prs[i].CIActivity != nil {
+			prs[i].CIActivity.WorkflowApproval = c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA)
+		}
 		if prs[i].CIStatus == "failure" {
 			if texts, ok := c.redPRCommentTexts(ctx, &prs[i]); ok {
 				prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], texts, incidents)
@@ -2683,6 +2707,14 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			}
 		}
 		facts.attach(ctx, &prs[i], reported)
+		// The listing is the head's complete observation; checks delivered
+		// by webhook since then are laid over it (hivecommons/hive#16521).
+		owner, name := c.splitRepo(prs[i].Repo)
+		if prs[i].CIStatus == "success" {
+			CIFailureSignals().forgetGreenHead(owner+"/"+name, prs[i].Number, prs[i].HeadSHA)
+		}
+		sharedCIEvidence().recordListed(owner+"/"+name, prs[i].HeadSHA, prs[i].CIActivity)
+		prs[i].CIActivity = sharedCIEvidence().merged(owner+"/"+name, prs[i].HeadSHA, prs[i].CIActivity)
 	}
 	c.enrichBaseBranchRed(ctx, prs)
 }
@@ -4977,6 +5009,10 @@ type RepoWorkPR struct {
 	Reason         string    `json:"reason,omitempty"`
 	// BaseRef is the target branch, retained for the covering-PR chip.
 	BaseRef string `json:"base_ref,omitempty"`
+	// HeadSHA is the PR's head commit from the list payload, so the activity
+	// monitor can match webhook-delivered CI evidence to a sidelined row
+	// (hivecommons/hive#16521).
+	HeadSHA string `json:"head_sha,omitempty"`
 	// LinkedIssues mirrors PullRequest.LinkedIssues so a sidelined PR can
 	// still stand under the issue its `Fixes #N` names in the activity
 	// monitor. Stamped by EnrichReviewSignalsAndWorkPRs, not by the
@@ -5008,6 +5044,7 @@ func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hi
 		UpdatedAt:      pr.GetUpdatedAt().Time,
 		URL:            pr.GetHTMLURL(),
 		BaseRef:        prBaseRef(pr),
+		HeadSHA:        prHeadSHA(pr),
 		Bucket:         bucket,
 		Reason:         reason,
 		// The list payload carries the body, so the soft issue links cost

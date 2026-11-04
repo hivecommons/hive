@@ -26,8 +26,11 @@
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
       /* Type ramp — section headers / card titles / labels only; body-copy sizes stay. */
-      --fs-xs: .68rem; --fs-sm: .75rem; --fs-base: .82rem;
-      --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem;
+      --fs-2xs: .6rem; --fs-xs: .68rem; --fs-sm: .75rem; --fs-base: .82rem;
+      --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem; --fs-2xl: 1.5rem; --fs-3xl: 2rem;
+      /* The A6 ends of the ramp (2xs/2xl/3xl) were only ever defined inside
+         .config-modal, so var(--fs-2xs) elsewhere fell back to the 16px body
+         size (hivecommons/hive#16601). Same values in light and dark. */
       /* Touch floor: iOS Safari zooms the page when a focused control is under 16px. */
       --fs-touch: 16px;
       /* Mobile icon-only buttons (section ?/⚙/grip, topbar chips): a fixed

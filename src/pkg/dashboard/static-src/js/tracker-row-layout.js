@@ -1,14 +1,21 @@
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
-    // the given refs, and the cap cell the modifier chip, bottom-aligned so
-    // it sits on the last title line, directly over the strip's right end.
+    // the given refs followed by the modifier chips / action buttons,
+    // right-anchored on that same line (margin-left: auto). The chips ride
+    // the title line rather than a second full-width toolbar line, so the
+    // chevrons sit directly under the title (hivecommons/hive#16454 left a
+    // one-line band between them); when the PR metadata leaves no room the
+    // chips wrap under it, content-driven, never a fixed row. A row without
+    // PR refs still gets the PR cell (ham-head-tools) so its chips sit on
+    // the title line in the PR span, not on a line of their own.
     // The since column is an empty spacer here (same width as the strip
     // row's, which carries the time on step): a wrapped title must not float
     // the age away from the chevrons it describes.
     function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml, prTargetKey) {
       const wide = !(prRefs && prRefs.length);
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr"${prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
+      const prStart = STAGE_TRACKER_PATH.indexOf(STAGE_TRACKER_PR_COLUMN) + 1;
+      return `<div class="ham-strip-row ham-head-cols" data-ham-pr-start="${prStart}"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li><li class="ham-seg ham-head-pr${wide ? ' ham-head-tools' : ''}"${!wide && prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${wide ? '' : prRefs.join('')}<span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -66,7 +73,7 @@
         ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
         state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0,
@@ -122,13 +129,17 @@
       if (l.kind === 'superseded') return Number(l.to_number) > 0 ? 'superseded by #' + Number(l.to_number) + tail : '';
       if (!(Number(l.from_number) > 0)) return '';
       const whose = l.from_author ? '@' + l.from_author + "'s " : '';
-      return (l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : 'adopted from ') + whose + '#' + Number(l.from_number) + tail;
+      // "re-authored from #N" is the hive rewriting its OWN exhausted PR;
+      // "adopted from" is a contributor's PR the hive took over.
+      const verb = l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : l.kind === 're-authored' ? 're-authored from ' : 'adopted from ';
+      return verb + whose + '#' + Number(l.from_number) + tail;
     }
     // Pure: the hover — why the hive took it over, in plain words.
     function stageTrackerLineageTip(item) {
       const l = item && item.lineage;
       if (!l || !l.kind) return '';
       if (l.kind === 'superseded') return 'Hive took this PR over as #' + Number(l.to_number) + '; this original is closed when that merges.';
+      if (l.kind === 're-authored') return "Hive's fixer gave up on its own #" + Number(l.from_number) + ', so the hive closed it as superseded and opened this fresh PR from the current base.' + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
       const who = l.from_author ? '@' + l.from_author : 'the contributor';
       const tip = STAGE_TRACKER_LINEAGE_REASON_TIP[l.reason] || STAGE_TRACKER_LINEAGE_REASON_TIP['ci-red-contributor-offline'];
       return tip.split('@AUTHOR').join(who) + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
@@ -159,7 +170,7 @@
       let l = item && item.lineage;
       if (!l && item && item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length === 1) l = item.linked_prs[0].lineage;
       if (!l || !(Number(l.from_number) > 0) || l.kind === 'superseded') return '';
-      return ' (adopted from #' + Number(l.from_number) + ')';
+      return (l.kind === 're-authored' ? ' (re-authored from #' : ' (adopted from #') + Number(l.from_number) + ')';
     }
     // Pure: the "↳ adopted from #N · you let hive decide 17:51" chip on the
     // hive's copy of an adopted PR (hivecommons/hive#15126).
@@ -218,12 +229,10 @@
       if (typeof stageTrackerPreparationMark === 'function') stageTrackerPreparationMark(pr);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded ? superseded + ' · ' + stageTrackerLinkedSupersededTip(lp) : stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
-      // One line (hivecommons/hive: "consolidate from 3 lines of text to
-      // 1"): connector, repo chip, author icon + #N + title, the lineage /
-      // adopted-from chip, then the base pill — all siblings of the flex-row
-      // PR cell; the title ellipsizes, the pills never shrink. A superseded
-      // original wears neither pill — it closes as superseded, not as the
-      // closer of anything.
+      // Connector, repo chip, author icon + #N + title, lineage /
+      // adopted-from chip and base pill share the wrapping PR-side cell.
+      // A superseded original wears neither pill — it closes as superseded,
+      // not as the closer of anything.
       const lineage = superseded ? '' : ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : ''));
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
@@ -232,7 +241,7 @@
       if (superseded) {
         // The adopted original: one muted line, no chevron track, no row
         // tools, no needs-human styling — the copy carries the chevron. The
-        // trailing note never wraps; the title ellipsizes first (owner,
+        // trailing note stays distinct from the wrapping title (owner,
         // hivecommons/hive#15511: "superseded · hive adopted → #15574").
         return `<div class="ham-sub ham-sub-superseded" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}" data-ham-superseded-by="${Number(lp.superseded_by || lp.adopted_by) || 0}">
           <div class="ham-row-head">
@@ -240,6 +249,9 @@
           </div>
         </div>`;
       }
+      const subKey = stageTrackerItemKey(pr);
+      const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(pr, stages, nowMs, undefined, ctx, subKey) : '';
+      const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, subKey) : ctx;
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(pr, stages, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
@@ -250,7 +262,7 @@
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
-          ${typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(pr, stages, nowMs) : ''}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
+          ${humanNote}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, noteCtx, subKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(subKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
         </div>`;
     }
 

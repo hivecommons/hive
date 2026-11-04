@@ -108,6 +108,12 @@ type ReviewConfig struct {
 	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
 	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
 	FixerAgent         string   `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
+	// FixerFallbackAgents opts into routing repairs around an undeliverable
+	// fixer, in list order. Empty preserves the historical delivery behavior.
+	FixerFallbackAgents []string `yaml:"fixer_fallback_agents,omitempty" json:"fixer_fallback_agents,omitempty"`
+	// FixerFallbackAfterUndeliverable is the consecutive refusal threshold;
+	// zero uses 3, only when FixerFallbackAgents is non-empty.
+	FixerFallbackAfterUndeliverable int `yaml:"fixer_fallback_after_undeliverable,omitempty" json:"fixer_fallback_after_undeliverable,omitempty"`
 	// Severity controls which review findings block vs. comment/backlog.
 	Severity ReviewSeverityConfig `yaml:"severity,omitempty" json:"severity,omitempty"`
 	// Backlog controls where non-blocking review findings are filed.

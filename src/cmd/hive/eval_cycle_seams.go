@@ -508,6 +508,9 @@ type kickDispatchDeps struct {
 	// continuous-mode scheduler uses this to exponential-backoff instead of
 	// returning the same due agent on every eval while the CLI is stalled.
 	onFailed func(msg scheduler.KickMessage, err error)
+	// onDeferred optionally records kicks that wait for a busy agent's lane.
+	// It runs in message order, like the delivered and failed effects.
+	onDeferred func(msg scheduler.KickMessage)
 	// markProbeReleased stamps the provider-budget probe. Called at most once
 	// per dispatch, and only after a kick actually goes out.
 	markProbeReleased func(at time.Time)
@@ -635,6 +638,9 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		if out.deferred || errors.Is(out.sendErr, crux.ErrAgentBusy) {
 			endSpan(nil)
 			logger.Info("agent busy: deferring kick", "agent", msg.Agent)
+			if deps.onDeferred != nil {
+				deps.onDeferred(msg)
+			}
 			continue
 		}
 		if out.startErr != nil {

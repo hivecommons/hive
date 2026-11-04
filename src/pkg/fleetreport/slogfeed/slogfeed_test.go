@@ -64,6 +64,31 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	}
 }
 
+// #16510: polling an exhausted rebase episode must keep warning locally
+// without turning the intentional handoff into a repeated runtime defect.
+func TestRebaseAttemptsExhaustedLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "rebase attempts exhausted; leaving the conflict to a person"
+	for i := 0; i < 10; i++ {
+		logger.Warn(msg, "repo", "projectbluefin/fsdk-containers", "number", 491,
+			"head", "c0ad5df0927de888c373ccf9b5caead751ef9a6f", "attempts", 2,
+			"max", 2, "timed_out", 2, "mergeable_state", "dirty")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected rebase handoff produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	if !strings.Contains(out.String(), msg) || !strings.Contains(out.String(), `"timed_out":2`) {
+		t.Fatal("local logs lost the warning or its diagnostics")
+	}
+	logger.Warn("rebase failed", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("rebase failure must remain reportable: %+v", *seen)
+	}
+}
+
 func TestHandlerWithAttrsCarriesBoundAttrsIntoDiagnostics(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.With("agent", "quality").WithGroup("req").Warn("ledger write failed", "path", "/data/x.json")
@@ -699,6 +724,41 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #16520: the base-refresh merge guard is a self-limiting skip, not a defect.
+func TestAutomergeMergeGuardSkipLogsWithoutFleetReport(t *testing.T) {
+	guard := []any{"repo", "hive", "pr", 16511, "reason", "base-refresh:merge-guard", "error", "destination merge already in progress"}
+	cases := []struct {
+		name string
+		msg  string
+		args []any
+		want int
+	}{
+		{"merge guard", "automerge sweep skipped PR", guard, 0},
+		{"trusted lane merge guard", "trusted-author automerge sweep skipped PR", guard, 0},
+		{"contributor lane merge guard", "contributor-lane automerge sweep skipped PR", guard, 0},
+		{"other reason", "automerge sweep skipped PR", []any{"repo", "hive", "pr", 16511, "reason", "base-refresh", "error", "update branch: 422 conflict"}, 8},
+		{"guard reason other error", "automerge sweep skipped PR", []any{"repo", "hive", "pr", 16511, "reason", "base-refresh:merge-guard", "error", "boom"}, 8},
+		{"other message", "self-authored automerge sweep skipped PR", guard, 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn(tc.msg, tc.args...)
+			}
+			if tc.want == 0 && len(*seen) != 0 {
+				t.Errorf("produced observations: %+v", *seen)
+			}
+			if tc.want != 0 && len(*seen) == 0 {
+				t.Errorf("must remain reportable")
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+		})
+	}
+}
+
 // #15789: a hub that is restarting answers the heartbeat 5xx and the spoke
 // retries on the next beat; auth rejections stay reportable.
 func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
@@ -722,6 +782,52 @@ func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
 		if len(*seen) != 1 {
 			t.Errorf("status %d must remain reportable: %+v", status, *seen)
 		}
+	}
+}
+
+// #16507: using last-good stats after a bounded collect timeout is the
+// liveness safeguard working, not another defect distinct from the timeout.
+func TestHubHeartbeatCachedFallbackLogsWithoutFleetReport(t *testing.T) {
+	for _, msg := range []string{
+		"hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect timed out with no cached payload — sending MINIMAL liveness beat (identity only, no stats) so the hub keeps this hive online; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect timed out and hive identity not yet known — skipping this beat; loop keeps ticking so liveness stays green",
+		"hub heartbeat fresh stats collect timed out; sending stale cached stats without fresh agent overlay",
+	} {
+		t.Run(msg, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn(msg)
+			}
+			if len(*seen) != 0 {
+				t.Fatalf("outcome notice produced observations: %+v", *seen)
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+			if !strings.Contains(out.String(), msg) {
+				t.Error("outcome notice missing from local logs")
+			}
+		})
+	}
+
+	// Preserve the underlying timeout diagnostics and actual heartbeat failures.
+	for _, failure := range []string{
+		"hub heartbeat collect timed out; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect budget exceeded — slowest collectors (in-flight = still running at timeout)",
+		"hub heartbeat collect panicked",
+		"hub heartbeat fresh stats collect panicked",
+		"hub heartbeat fresh stats collect timed out",
+		"hub heartbeat failed",
+		"hub heartbeat rejected",
+	} {
+		t.Run(failure, func(t *testing.T) {
+			logger, seen, _ := newFeed(t)
+			logger.Warn(failure)
+			if len(*seen) != 1 || (*seen)[0].message != failure {
+				t.Fatalf("heartbeat failure must remain reportable: %+v", *seen)
+			}
+		})
 	}
 }
 

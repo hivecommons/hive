@@ -339,6 +339,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.BaseRef = pr.BaseRef
 				lp.Finisher, lp.FinisherVerb, lp.FinisherReason = pr.Finisher, pr.FinisherVerb, pr.FinisherReason
 				lp.DecisionNeeded = pr.DecisionNeeded
+				lp.UnauthorizedStep = pr.UnauthorizedStep
 				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
 				lp.MergeTrain, lp.LeftTrain, lp.Overlap = pr.MergeTrain, pr.LeftTrain, pr.Overlap
 				lp.Preparation = pr.Preparation

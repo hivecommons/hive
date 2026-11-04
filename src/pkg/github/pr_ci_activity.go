@@ -21,6 +21,9 @@ type PRCIActivity struct {
 	Checks             []PRActivityCheck `json:"checks,omitempty"`
 	StatusesKnown      bool              `json:"statuses_known"`
 	StatusesObservedAt *time.Time        `json:"statuses_observed_at,omitempty"`
+	// WorkflowApproval names workflow runs on this head that GitHub holds
+	// behind its approve-workflows gate; nil when none were observed.
+	WorkflowApproval *PRWorkflowApproval `json:"workflow_approval,omitempty"`
 }
 
 type PRActivityCheck struct {

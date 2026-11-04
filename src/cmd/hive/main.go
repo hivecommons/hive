@@ -458,6 +458,11 @@ const (
 	// HIVE_PROXY_ADVISORY_OK=true). Its own code so a refusing pod's
 	// termination state says "fix the env", not "bug".
 	proxyInjectConfigExitCode = 19
+	// gateRegressionExitCode marks an exit caused by config.refuse_gate_regression
+	// (hivecommons/hive#16438): a previous runtime overlay carried a safety
+	// gate the effective config lacks. Its own code so the termination state
+	// says "restore the gate or the overlay", not "bug".
+	gateRegressionExitCode = 21
 )
 
 // singletonLockPath resolves where the process singleton lock lives. Every
@@ -680,6 +685,24 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		"count", len(b.cfg.RemovedAgents),
 		"agents", b.cfg.RemovedAgents,
 	)
+
+	// Safety-gate regression check (#16438). A boot from the ConfigMap seed
+	// (runtime overlay moved aside, truncated, or never written) silently
+	// dropped review.require_labels on a live hive and the reviewer posted on
+	// unlabelled PRs for hours. Compare the effective config against whatever
+	// previous overlay is still on the PVC and say so, once per gate; refuse
+	// to start when the operator asked for that.
+	b.cfg.GateRegressions = deps.gateRegressions(b.cfg)
+	for _, g := range b.cfg.GateRegressions {
+		b.logger.Warn("safety gate dropped: "+g.String(),
+			"gate", g.Gate, "previous", g.Previous, "effective", g.Effective, "source", g.Source)
+	}
+	if len(b.cfg.GateRegressions) > 0 && b.cfg.ConfigGuard.RefuseGateRegression {
+		err := &config.GateRegressionError{Regressions: b.cfg.GateRegressions}
+		b.logger.Error("refusing to start: safety gate regression (config.refuse_gate_regression is on)", "error", err.Error())
+		deps.exit(gateRegressionExitCode)
+		return false
+	}
 
 	// Surface config provenance: when the persisted runtime config exists, init
 	// containers restore it over the ConfigMap seed on restart, so edits made
@@ -2614,10 +2637,6 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
-	// The Matrix backlog survives a restart so the kiosk never blanks
-	// (#16276); the paired sentinel head map is set in
-	// applyGitHubClientConfigHooks.
-	b.dashSrv.SetMatrixPersistPath(matrixLinesStatePath)
 	b.dashSrv.SetIntegrationExecutionEvaluators(b.integrationPreparationEligibility, b.integrationEligibility)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
@@ -3633,6 +3652,10 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	// re-reads the issue into the cached snapshot and the Activity Monitor
 	// the way an inbound label webhook does (hivecommons/hive#14952).
 	github.SetItemRefreshHook(b.dashSrv.RefreshSelfEditedItem)
+	// A check/status delivery applied to a head's check set, or the
+	// coalesced re-read it scheduled, re-derives the Activity Monitor row
+	// at once (hivecommons/hive#16521).
+	github.SetCIEvidenceHook(b.dashSrv.RefreshCIEvidence)
 	spekCloneAuth := lazySpektacularCloneAuth(func() pushbroker.TokenMinter {
 		if b.appAuth == nil {
 			return nil

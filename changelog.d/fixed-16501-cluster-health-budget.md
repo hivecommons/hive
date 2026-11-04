@@ -1,0 +1,1 @@
+- Bound spoke cluster-health collection with a shared deadline so slow Kubernetes APIs return partial health reports without exhausting the hub heartbeat collection budget ([#16501](https://github.com/hivecommons/hive/issues/16501)).

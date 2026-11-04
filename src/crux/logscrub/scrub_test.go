@@ -111,6 +111,37 @@ func TestScrubStringWebhookPatternsLeaveOrdinaryURLs(t *testing.T) {
 	}
 }
 
+func TestScrubStringAPIKeyKeepsBoundary(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"short hive key", "sk-hive-qa", redacted},
+		{"after space", "key sk-" + "abcdefghijkl", "key " + redacted},
+		{"quoted", `KEY='sk-` + `abcdefghijkl'`, `KEY='` + redacted + `'`},
+		{"inside identifier", "module task-sk-flow ok", "module task-sk-flow ok"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ScrubString(tt.in); got != tt.want {
+				t.Fatalf("ScrubString = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if got, want := ScrubString("key sk-hive-qa", WithMarkers()), "key <redacted:api-key>"; got != want {
+		t.Fatalf("marked = %q, want %q", got, want)
+	}
+}
+
+func TestScrubStringSlackTokenWithoutDigitIsProse(t *testing.T) {
+	for _, in := range []string{"xoxb-abcdefghijklmnop", "xapp-abcdefghijklmnop"} {
+		if got := ScrubString(in); got != in {
+			t.Fatalf("ScrubString(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
 func TestScrubStringMarkedMode(t *testing.T) {
 	cases := []struct {
 		name string
