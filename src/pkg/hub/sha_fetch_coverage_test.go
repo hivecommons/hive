@@ -432,7 +432,8 @@ func TestFetchCommitMessageThrottleBacksOffAllSHAs(t *testing.T) {
 }
 
 func TestCommitMsgThrottleWaitPrefersRetryAfter(t *testing.T) {
-	now := time.Now()
+	// X-RateLimit-Reset is whole epoch seconds, so keep now second-aligned.
+	now := time.Now().Truncate(time.Second)
 	h := http.Header{}
 	h.Set("X-RateLimit-Reset", strconv.FormatInt(now.Add(50*time.Minute).Unix(), 10))
 	h.Set("Retry-After", "60")
