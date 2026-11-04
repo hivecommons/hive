@@ -40,21 +40,33 @@ func warnGitHubFetchOnce(logger *slog.Logger, key, msg string, args ...any) {
 	logger.Debug(msg, args...)
 }
 
-// commitMsgBackoff is how long a SHA whose commit-message fetch failed (e.g.
-// 403 rate limit) is left alone before it is fetched again; callers carry on
-// with the SHA alone meanwhile.
-const commitMsgBackoff = 10 * time.Minute
+// commitMsgBackoff is how long a SHA whose commit-message fetch failed is left
+// alone before it is fetched again; callers carry on with the SHA alone
+// meanwhile. It is also the fallback global back-off for a 403/429 that carries
+// no reset hint. A 403/429 is a client-wide condition (rate limit or a token
+// without access), so it additionally parks every SHA until
+// commitMsgGlobalBackoffUntil, capped at commitMsgGlobalBackoffMax.
+const (
+	commitMsgBackoff          = 10 * time.Minute
+	commitMsgGlobalBackoffMax = time.Hour
+)
 
 var (
 	commitMsgBackoffMu    sync.Mutex
 	commitMsgBackoffUntil = map[string]time.Time{}
+
+	commitMsgGlobalBackoffUntil time.Time
 )
 
 func commitMsgBackedOff(sha string) bool {
 	commitMsgBackoffMu.Lock()
 	defer commitMsgBackoffMu.Unlock()
+	now := githubWarnNow()
+	if now.Before(commitMsgGlobalBackoffUntil) {
+		return true
+	}
 	until, ok := commitMsgBackoffUntil[sha]
-	return ok && githubWarnNow().Before(until)
+	return ok && now.Before(until)
 }
 
 func markCommitMsgBackoff(sha string) {
@@ -64,4 +76,11 @@ func markCommitMsgBackoff(sha string) {
 		commitMsgBackoffUntil = map[string]time.Time{}
 	}
 	commitMsgBackoffUntil[sha] = githubWarnNow().Add(commitMsgBackoff)
+}
+
+// markCommitMsgGlobalBackoff parks every commit-message fetch for d.
+func markCommitMsgGlobalBackoff(d time.Duration) {
+	commitMsgBackoffMu.Lock()
+	defer commitMsgBackoffMu.Unlock()
+	commitMsgGlobalBackoffUntil = githubWarnNow().Add(d)
 }
