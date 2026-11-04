@@ -604,6 +604,71 @@ The **Hive activity monitor** section (sidebar, Dashboard group; expanded by def
 
 The endpoint returns `stages` (the stage table with `short`, `branch_from`, configured dwell and `falls_to` — the lower same-kind stages a move to which is a regression per the stage engine, so the event line says "fell back to" only for those; 015 → 010 triage accepted, 085 → 080 decision made and 072 → 070 author resuming read "moved to"), `items` (one per open issue/PR represented by the status snapshot, including actionable and held items plus display-only non-actionable issues, drafts, and exempt PRs: `labels`, `created_at`, `updated_at`, `bucket`, `bucket_reason`, stage, `stage_since`, humanised `reason`/`caption`, `actor`, `modifiers`, `author_kind` + `author_kind_source` (`label`, `inferred`, or `registry` — the author has a contributor-hub profile on this hive, so their clanker pushed it; the row icon, tooltip and claimant all read this one value), `lane`, `tier`, `linked_pr`, `linked_prs` (number, title, url, author, author kind, stage, `stage_since`, `caption` and `modifiers` of each open covering PR — enough to draw the nested sub-row without a second lookup), `nested_under` (on a PR: the issue it is listed under), nudge info and the last eight `history` hops from the stage store) and `author_kind_labels`. It answers `{"status":"initializing"}` until the first scan.
 
+## Code activity reader
+
+The code activity reader is a kiosk view at `?kiosk=1&view=reader` that shows
+pushed changes as readable paragraphs. It is the planned successor to the
+Matrix code view ([#16137](https://github.com/hivecommons/hive/issues/16137)).
+Until the cutover, both views are available. The reader uses the same opt-in
+setting and authorized `GET /api/matrix/lines` endpoint as Matrix, so it has
+the same `dashboard.matrix` repository allowlist, author restriction and
+scrub/path filters. When `dashboard.matrix.enabled` is set, the header shows a
+**Reader** tab next to **Matrix**. Without that setting, the endpoint answers
+404 and the view says it is not enabled. The reader adds no permission and no
+anonymous access.
+
+- **Cards.** Each card is a complete contiguous add/remove region from a
+  validated unified-diff hunk at an actual published PR head. Indentation, blank lines
+  and repeated lines are kept. Additions start with a green `+`, and removals
+  start with a red `−`. Long lines wrap at a
+  fixed font size and are never truncated. Every card shows the repository
+  and PR number, the file, the source label (`Pushed PR`), and when hive
+  observed the change. The repository links to the real pull request. Code is
+  always shown as text and is never parsed as HTML.
+- **Pacing.** One card is read at a time. A card stays in focus for a few
+  seconds plus a little more for each line, up to 30 seconds, and then the
+  next card scrolls into view. New work waits behind the paragraph being read.
+  When the reader is caught up, it holds quietly. Opening backlog is labelled
+  **Buffered snapshot**. **Replay buffered snapshot** explicitly replays only
+  the retained regions with a replay label; automatic replay is off. There is
+  no filler, typing effect or sound.
+- **Pause.** Press **P**, press **Space**, or use the **Pause** button to pause
+  or resume. Scrolling with the wheel, touch, arrow keys, Page Up/Page Down,
+  Home or End also pauses the reader so you can inspect the text. The feed is
+  native, scrollable text.
+- **Motion.** With `prefers-reduced-motion`, every card is shown at once and
+  nothing scrolls by itself. Hiding the tab clears buffered browser code;
+  returning obtains a new buffered snapshot.
+
+The reader requests `GET /api/matrix/lines?format=regions&since=<seq>` through
+existing dashboard read authorization. The sentinel's existing optional patch
+observer feeds this memory-only projection; no new poller or workspace collector
+is installed. Only positively identified Hive/clanker PRs from explicitly
+allowlisted, verified-public repositories are eligible. Private or unknown
+visibility fails closed. The source reports its last completed ingest pass and
+next expected pass; a cold empty feed does **not** mean no work happened. Its
+freshness is bounded by sentinel polling, unchanged-head suppression and budgets,
+not a live editor stream.
+
+Changed regions preserve both signs, indentation, blanks and repeated lines.
+An unsafe addition **or removal** drops its entire region. Built-in path denies
+and configured exclusions still apply. Admission, pagination, deduplication and
+eviction operate on whole regions. Limits are 4,096 runes per line, 16 KiB per
+region, 200 changed lines per head, 600 per minute, and 2,000 lines / 512 KiB of
+server text. Browser history holds at most 1,200 lines / 256 KiB of UTF-16 text
+and 32 visible cards, evicting whole regions. These are text bounds, not total
+process-memory measurements. Secret filtering remains heuristic.
+
+Policy changes clear server buffers and rotate a policy epoch. The browser
+clears its retained code and replay history on a changed epoch, disabled or
+unauthorized response, failed pull, or hidden tab. A 30-second authorized pull
+recovers missed sequence-only SSE nudges; code is never sent on SSE or logged.
+Buffers no longer persist across restarts, including the legacy Matrix line
+projection. Existing `/data/matrix-lines.json` files are neither restored nor
+updated; operators may remove such historical files according to their own
+retention policy. The sentinel evaluated-head map remains separate and persists.
+There is no `dashboard.matrix.workspaces` setting or pre-push capture.
+
 ## PR review and link signals
 
 PR pills also carry GitHub's own review state and conversation evidence
