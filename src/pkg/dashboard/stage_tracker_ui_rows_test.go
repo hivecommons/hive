@@ -706,19 +706,19 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 // settled-current. The ≤2 invariant itself runs on every fixture above.
 {
   const seen = new Date(now - 60000).toISOString();
-  const unreported = { head: 'f269349', state: 'missing', caption: 'CI waiting · required check "test" hasn\'t reported for this head yet', checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen };
+  const unreported = { head: 'f269349', state: 'missing', caption: "CI waiting · required check 'test' hasn't reported for this head yet", checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen };
   const lit = (html) => litChevrons(strip(html));
   const three = stageTrackerRowHtml({ repo: 'acme/console', number: 16509, kind: 'pr', stage: 74, display_column: 30, head: 'f269349', author: 'thatguywob', author_kind: 'human',
     code_activity: { head: 'f269349', state: 'adopted', caption: 'Adopted by hive · activity', source: 'adoption', observed_at: seen }, ci_activity: unreported,
     review_activity: { head: 'f269349', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(three), 1, 'adopted + unreported CI + decided review lights one chevron: ' + strip(three));
-  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · test not reported · /.test(three), 'unreported checks are the neutral icon, words in the tooltip: ' + three);
+  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · &#39;test&#39; not reported · /.test(three), 'unreported checks are the neutral icon, words in the tooltip: ' + three);
   const owner = stageTrackerRowHtml({ repo: 'acme/console', number: 16268, kind: 'pr', stage: 71, display_column: 30, head: 'f269349', author: 'hanthor', author_kind: 'human',
     code_activity: { head: 'f269349', state: 'waiting_owner', caption: 'Waiting for @hanthor · not observed coding', actor: 'hanthor', source: 'native-author-wait', observed_at: seen }, ci_activity: unreported,
     review_activity: { head: 'f269349', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(owner), 1, 'with the contributor: only the stage chevron is lit: ' + strip(owner));
   assert.ok(/<li class="ham-seg active detoured"[^>]*aria-current="step"/.test(owner) && owner.includes('Waiting for @hanthor'), owner);
-  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · test not reported · /.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*data-verdict="pass"[^>]*>[\s\S]*?ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg><\/span>[\s\S]*?Review: Review 5\/5 approved · /.test(owner), 'with the contributor both tracks are icons alone, words in the tooltips: ' + owner);
+  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · &#39;test&#39; not reported · /.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*data-verdict="pass"[^>]*>[\s\S]*?ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg><\/span>[\s\S]*?Review: Review 5\/5 approved · /.test(owner), 'with the contributor both tracks are icons alone, words in the tooltips: ' + owner);
   const busy = stageTrackerRowHtml({ repo: 'acme/console', number: 16456, kind: 'pr', stage: 70, display_column: 30, head: 'f269349', author: 'hive[bot]', author_kind: 'hive',
     code_activity: { head: 'f269349', state: 'remediating', caption: 'Remediating · scanner · 4m', actor: 'scanner', active: true, source: 'fix-dispatch', observed_at: seen },
     ci_activity: { head: 'f269349', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
@@ -806,7 +806,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     review_activity: { head: '9bdf058', state: 'reviewing', active: true, caption: 'Review 2/5 · in progress', perspectives_done: 2, perspectives_total: 5, source: 'verified-review-bundle+stage-review-pending', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(progress), 1, 'review in progress lights the Review column only: ' + strip(progress));
   assert.ok(/<li class="ham-seg ham-activity-track active ham-current" data-track="review"[^>]*data-motion="active"[^>]*>[\s\S]*?Review 2\/5 · in progress<\/span>/.test(progress), progress);
-  assert.ok(/<li class="ham-seg ham-activity-track todo ham-current" data-track="ci"[^>]*>[\s\S]*?<svg class="ham-ico ham-ring ham-ring-pass"[^>]*data-ring-done="7"[\s\S]*?<\/svg><\/span><span id=/.test(progress) && progress.includes('CI: CI 7/11 · test not reported · '), 'unreported checks are the neutral ring, words in the tooltip: ' + progress);
+  assert.ok(/<li class="ham-seg ham-activity-track todo ham-current" data-track="ci"[^>]*>[\s\S]*?<svg class="ham-ico ham-ring ham-ring-pass"[^>]*data-ring-done="7"[\s\S]*?<\/svg><\/span><span id=/.test(progress) && progress.includes("CI: CI 7/11 · &#39;test&#39; not reported · "), 'unreported checks are the neutral ring, words in the tooltip: ' + progress);
   assert.ok(/<svg class="ham-ico ham-ring ham-ring-live ham-ring-running" [^>]*data-ring-total="5" data-ring-done="2"/.test(progress) && (progress.match(/ham-ring-pulse/g) || []).length === 1, 'the review ring pulses its next step: ' + progress);
   const both = stageTrackerRowHtml({ repo: 'acme/promptargs', number: 427, kind: 'pr', stage: 50, display_column: 50, head: '9bdf058', author: 'hive[bot]', author_kind: 'hive',
     ci_activity: { head: '9bdf058', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },

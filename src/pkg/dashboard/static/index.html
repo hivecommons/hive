@@ -18000,30 +18000,33 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const failed = n('checks_failed');
         const names = matches && Array.isArray(a.checks_failing) ? a.checks_failing : [];
         const count = 'CI ' + (total ? passed + '/' + total : '?/?');
-        const failing = failed ? failed + ' failing' + (names.length ? ' (' + names.slice(0, 2).join(', ') + (names.length > 2 ? ', …' : '') + ')' : '') : '';
+        // A check name inside the words wears single quotes ('test' not
+        // reported) so it stands apart from the words around it.
+        const q = n => "'" + n + "'";
+        const failing = failed ? failed + ' failing' + (names.length ? ' (' + names.slice(0, 2).map(q).join(', ') + (names.length > 2 ? ', …' : '') + ')' : '') : '';
         const blocker = matches && a.blocker ? String(a.blocker) : '';
         // The unfinished count carries information; "no verdict yet" or a
         // bare "running" beside 12/66 did not (hivecommons/hive#16630). The
         // last one or two unfinished names are spelled out.
         const pendingNames = matches && Array.isArray(a.checks_pending) ? a.checks_pending.map(String).filter(Boolean) : [];
         const pendingCount = total ? Math.max(total - passed - failed, pendingNames.length) : pendingNames.length;
-        const pending = verb => !pendingCount ? verb : pendingNames.length && pendingNames.length <= STAGE_TRACKER_PENDING_CHECKS_NAMED ? pendingNames.join(', ') + ' ' + verb : pendingCount + ' ' + verb;
+        const pending = verb => !pendingCount ? verb : pendingNames.length && pendingNames.length <= STAGE_TRACKER_PENDING_CHECKS_NAMED ? pendingNames.map(q).join(', ') + ' ' + verb : pendingCount + ' ' + verb;
         switch (state) {
           case 'passing': return count + ' passed';
-          case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + blocker + ')' : ''));
+          case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + q(blocker) + ')' : ''));
           case 'running': return count + ' · ' + pending('running') + (failing ? ' · ' + failing : '');
           case 'queued': return count + ' · ' + pending('queued') + (failing ? ' · ' + failing : '');
-          case 'skipped': return count + ' · ' + (blocker ? blocker + ' skipped' : 'skipped');
+          case 'skipped': return count + ' · ' + (blocker ? q(blocker) + ' skipped' : 'skipped');
           case 'missing': {
             if (stageTrackerWorkflowApprovalPending(a) > 0) return count + ' · waiting on workflow approval' + (failing ? ' · ' + failing : '');
-            return count + ' · ' + (passed ? (blocker ? blocker + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
+            return count + ' · ' + (passed ? (blocker ? q(blocker) + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
           }
           default: {
             if (!total) return count + ' · no checks reported yet';
             if (failing) return count + ' · ' + failing + (pendingCount ? ' · ' + pending('running') : '');
             // A blocker here is a phrase ("commit statuses not observed") or
             // the one check whose result cannot be read.
-            if (blocker) return count + ' · ' + (/\s/.test(blocker) ? blocker : blocker + ' unclear');
+            if (blocker) return count + ' · ' + (/\s/.test(blocker) ? blocker : q(blocker) + ' unclear');
             if (pendingCount) return count + ' · ' + pending('running');
             return count + ' · required set unknown';
           }

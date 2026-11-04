@@ -239,7 +239,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			out.Since = since
 		}
 	}
-	check := fmt.Sprintf("%q", out.Blocker)
+	check := stageTrackerCheckName(out.Blocker)
 	switch out.State {
 	case "passing":
 		out.Caption = "CI green · all " + plural(total, "required check") + " passed"
@@ -390,7 +390,7 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 		// Fail closed to unknown, never to a verdict, without the required
 		// set — but the caption carries the red name.
 		out.Blocker = out.ChecksFailing[0]
-		out.Caption = fmt.Sprintf("CI unknown · %q red · required set unknown", out.ChecksFailing[0])
+		out.Caption = "CI unknown · " + stageTrackerCheckName(out.ChecksFailing[0]) + " red · required set unknown"
 		out.Detail = fmt.Sprintf("%s of the %s finished without success on the PR's current commit, but %s, so it cannot tell whether the red check gates the merge.", plural(out.ChecksFailed, "check"), observed, unknownSet)
 	default:
 		out.Caption = fmt.Sprintf("CI unknown · all %s passed · required set unknown", observed)
@@ -413,17 +413,24 @@ func stageTrackerLatestCheckTime(a *github.PRCIActivity) *time.Time {
 	return latest
 }
 
+// stageTrackerCheckName is a CI job / check name as it reads inside
+// caption, detail and chevron text: wrapped in single quotes, so a name
+// stands apart from the words around it ('test' not reported).
+func stageTrackerCheckName(name string) string {
+	return "'" + name + "'"
+}
+
 // stageTrackerPendingChecksNamed is the most pending check names the
 // caption spells out; beyond it the count speaks.
 const stageTrackerPendingChecksNamed = 2
 
-// stageTrackerPendingChecksWord: `"test" pending`, `"lint", "test" pending`,
+// stageTrackerPendingChecksWord: `'test' pending`, `'lint', 'test' pending`,
 // or "54 checks pending".
 func stageTrackerPendingChecksWord(pending []string) string {
 	if n := len(pending); n > 0 && n <= stageTrackerPendingChecksNamed {
 		quoted := make([]string, 0, n)
 		for _, name := range pending {
-			quoted = append(quoted, fmt.Sprintf("%q", name))
+			quoted = append(quoted, stageTrackerCheckName(name))
 		}
 		return strings.Join(quoted, ", ") + " pending"
 	}
@@ -435,7 +442,7 @@ func stageTrackerPendingChecksWord(pending []string) string {
 func stageTrackerUnreportedChecksSentence(names []string) string {
 	quoted := make([]string, 0, len(names))
 	for _, name := range names {
-		quoted = append(quoted, fmt.Sprintf("%q", name))
+		quoted = append(quoted, stageTrackerCheckName(name))
 	}
 	return fmt.Sprintf("Required %s %s %s not reported for this head yet.", pluralVerb(len(names), "check", "checks"), strings.Join(quoted, ", "), pluralVerb(len(names), "has", "have"))
 }
