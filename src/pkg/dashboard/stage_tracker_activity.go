@@ -202,6 +202,21 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Caption = "CI queued · " + check + " waiting for a runner"
 		out.Detail = "Required check " + check + " has been requested for the PR's current commit but has not started executing yet."
 	case "missing":
+		if wa := a.WorkflowApproval; wa != nil && wa.Pending > 0 {
+			// Unreported because GitHub holds the runs behind its
+			// approve-workflows gate: a person's click, not a push,
+			// moves it (hivecommons/hive#16599).
+			out.Blocker = stageTrackerWorkflowApprovalBlocker(wa.Pending)
+			out.Caption = fmt.Sprintf("CI waiting · %s %s approval on GitHub", plural(wa.Pending, "workflow run"), pluralVerb(wa.Pending, "needs", "need"))
+			out.Detail = fmt.Sprintf("%s for the PR's current commit %s waiting for a maintainer to approve workflows on GitHub (the gate GitHub applies to dependabot and first-time or fork contributors), so required check %s cannot report until someone approves them.", plural(wa.Pending, "workflow run"), pluralVerb(wa.Pending, "is", "are"), check)
+			if wa.Actor != "" {
+				out.Actor = wa.Actor
+			}
+			if wa.ObservedAt != nil {
+				out.Since = wa.ObservedAt
+			}
+			break
+		}
 		out.Caption = "CI waiting · required check " + check + " hasn't reported for this head yet"
 		out.Detail = "Branch protection requires a check named " + check + ", but no check run or commit status with that name exists for the PR's current commit. Usually the workflow that produces it has not been triggered; a push, re-run, or label can start it."
 	case "unknown":
@@ -221,6 +236,22 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Caption += " · other checks still running"
 	}
 	return out
+}
+
+// stageTrackerWorkflowApprovalBlockerPrefix leads the CI blocker when the
+// unreported checks are workflow runs waiting on GitHub's approve-workflows
+// gate; the strip reads the count after the colon.
+const stageTrackerWorkflowApprovalBlockerPrefix = "workflow-approval-required:"
+
+func stageTrackerWorkflowApprovalBlocker(n int) string {
+	return fmt.Sprintf("%s%d", stageTrackerWorkflowApprovalBlockerPrefix, n)
+}
+
+func pluralVerb(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // stageTrackerCountHeadChecks fills the check counts from every check run
@@ -336,6 +367,50 @@ func stageTrackerCountPerspectives(out *StageTrackerActivity, pr github.PullRequ
 		if out.PerspectivesTotal == 0 {
 			out.PerspectivesTotal = len(expected)
 		}
+	}
+}
+
+// stageTrackerReviewPendingState resolves the Review track for a PR the
+// stage itself says is under review (050) when no verdict settled it: the
+// swarm is in progress, so the track is "reviewing" (active) with the
+// count of perspectives that posted for the current head — never
+// "unknown", which left review-pending rows with no lit chevron
+// (hivecommons/hive#16599). Without a head bundle or aggregate no
+// perspective has posted: done is 0, whatever earlier rounds left behind.
+func stageTrackerReviewPendingState(out *StageTrackerActivity, stage int, stageSince *time.Time) {
+	if out == nil || out.State != "unknown" || stage != trackerNumberReviewPending {
+		return
+	}
+	bundleSeen := strings.Contains(out.Source, "verified-review-bundle")
+	if !bundleSeen {
+		out.PerspectivesDone = 0
+	}
+	total := out.PerspectivesTotal
+	done := out.PerspectivesDone
+	if total > 0 && done >= total && bundleSeen {
+		out.State = "adjudicating"
+		out.Caption = fmt.Sprintf("Review %d/%d · verdicts in · aggregating", done, total)
+		out.Detail = "Every perspective has posted a verdict for the PR's current commit; hive is combining them into the review decision."
+	} else {
+		out.State = "reviewing"
+		out.Caption = fmt.Sprintf("Review %d/%d · in progress", done, total)
+		out.Detail = fmt.Sprintf("The PR is at review pending: %d of %s have posted a verdict for the PR's current commit; the rest are still reviewing or waiting for a reviewer.", done, plural(total, "perspective"))
+	}
+	out.Active = true
+	// The stage label is the observation; its time is when the label
+	// landed (stable across rebuilds, so the payload ETag does not move).
+	if out.ObservedAt == nil && stageSince != nil {
+		at := *stageSince
+		out.ObservedAt = &at
+	}
+	if out.Since == nil && stageSince != nil {
+		at := *stageSince
+		out.Since = &at
+	}
+	if out.Source == "" || out.Source == "unavailable" {
+		out.Source = "stage-review-pending"
+	} else {
+		out.Source += "+stage-review-pending"
 	}
 }
 
