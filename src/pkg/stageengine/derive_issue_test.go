@@ -134,9 +134,10 @@ func TestDeriveIssueFlags(t *testing.T) {
 }
 
 // hivecommons/hive#15099: `needs-human` with a structured blocker stays
-// 045 and names the blocker. `approved-direction` next to `needs-human`
-// is the stale label either way (the un-park that applies the ack removes
-// the park label, so a surviving park label came later) and is cleared.
+// 045 and names the blocker, and `approved-direction` next to it is the
+// stale label and is cleared. A plain `needs-human` next to the ack is the
+// agent standing down on human-only work after a decision and stays out of
+// 045 with the ack kept (hivecommons/hive#16579).
 func TestDeriveIssueBlockerAndApprovedDirection(t *testing.T) {
 	blocked := func(f *Facts) {
 		f.Issue.Bucket = BucketFiltered
@@ -160,8 +161,20 @@ func TestDeriveIssueBlockerAndApprovedDirection(t *testing.T) {
 		f.Park.NeedsHuman = true
 		f.Issue.ApprovedDirectionLabel = "approved-direction"
 	}))
+	if d.Stage != stagelabels.None || d.Reason != "decided; remaining work held for a person: needs-human" || len(d.Clear) != 0 {
+		t.Fatalf("a plain needs-human after a decision keeps the ack out of 045 (#16579): %+v", d)
+	}
+	// A newer, different `/hive decision` is pending (the label relay let
+	// an agent's park through on it): the ack is stale again, the issue
+	// re-parks at 045 and the writer clears it.
+	d = DeriveIssue(derivedIssueFacts(func(f *Facts) {
+		f.Issue.Bucket = BucketFiltered
+		f.Park.NeedsHuman = true
+		f.Park.DecisionSuperseded = true
+		f.Issue.ApprovedDirectionLabel = "approved-direction"
+	}))
 	if d.Stage != stagelabels.IssueNeedsDecision || d.Reason != "held for a person: needs-human" || len(d.Clear) != 1 || d.Clear[0] != "approved-direction" {
-		t.Fatalf("a later needs-human outranks the ack: %+v", d)
+		t.Fatalf("a park on a newer decision outranks the stale ack: %+v", d)
 	}
 	d = DeriveIssue(derivedIssueFacts(func(f *Facts) { blocked(f); f.Issue.BlockerShort = "" }))
 	if d.Reason != "blocked: capability:workflows-permission" {
@@ -175,5 +188,53 @@ func TestDeriveIssueBlockerAndApprovedDirection(t *testing.T) {
 	}))
 	if d.Stage != stagelabels.None || len(d.Clear) != 0 {
 		t.Fatalf("held: %+v", d)
+	}
+}
+
+// hivecommons/hive#16579 (seen on hivecommons/dibs#567): parked →
+// `/hive decision` → `approved-direction` + 010 → a later scanner pass
+// finds the remaining checklist human-only and adds `needs-human`. That
+// evaluation must neither re-derive 045 nor strip the ack — doing so put
+// the decision back in the inbox and the un-park sweep re-applied the same
+// decision, bouncing the issue every pass.
+func TestDeriveIssueDecisionSticksOverHumanOnlyRemainder(t *testing.T) {
+	steps := []struct {
+		name      string
+		mutate    func(f *Facts)
+		wantStage stagelabels.Stage
+	}{
+		{"agent parks", func(f *Facts) {
+			f.Issue.Bucket = BucketFiltered
+			f.Park.NeedsHuman = true
+		}, stagelabels.IssueNeedsDecision},
+		{"maintainer decides", func(f *Facts) {
+			f.Park.ApprovedDirection = true
+			f.Issue.ApprovedDirectionLabel = "approved-direction"
+		}, stagelabels.Actionable},
+		{"remainder is human-only", func(f *Facts) {
+			f.Issue.Bucket = BucketFiltered
+			f.Park.NeedsHuman = true
+			f.Issue.ApprovedDirectionLabel = "approved-direction"
+		}, stagelabels.None},
+		{"next pass re-evaluates", func(f *Facts) {
+			f.Issue.Bucket = BucketFiltered
+			f.Park.NeedsHuman = true
+			f.Issue.ApprovedDirectionLabel = "approved-direction"
+			f.Issue.Stalled = true
+		}, stagelabels.None},
+	}
+	for _, tc := range steps {
+		d := DeriveIssue(derivedIssueFacts(tc.mutate))
+		if d.Stage != tc.wantStage {
+			t.Fatalf("%s: stage = %v, want %v (%+v)", tc.name, d.Stage, tc.wantStage, d)
+		}
+		for _, c := range d.Clear {
+			if c == "approved-direction" {
+				t.Fatalf("%s: stripped approved-direction: %+v", tc.name, d)
+			}
+		}
+		if d.Terminal {
+			t.Fatalf("%s: an open decided issue is not terminal: %+v", tc.name, d)
+		}
 	}
 }
