@@ -1,15 +1,21 @@
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
-    // the given refs. Modifier chips wrap on their own full-width,
-    // right-anchored line rather than overflowing the history cap into titles.
+    // the given refs followed by the modifier chips / action buttons,
+    // right-anchored on that same line (margin-left: auto). The chips ride
+    // the title line rather than a second full-width toolbar line, so the
+    // chevrons sit directly under the title (hivecommons/hive#16454 left a
+    // one-line band between them); when the PR metadata leaves no room the
+    // chips wrap under it, content-driven, never a fixed row. A row without
+    // PR refs still gets the PR cell (ham-head-tools) so its chips sit on
+    // the title line in the PR span, not on a line of their own.
     // The since column is an empty spacer here (same width as the strip
     // row's, which carries the time on step): a wrapped title must not float
     // the age away from the chevrons it describes.
     function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml, prTargetKey) {
       const wide = !(prRefs && prRefs.length);
       const prStart = STAGE_TRACKER_PATH.indexOf(STAGE_TRACKER_PR_COLUMN) + 1;
-      return `<div class="ham-strip-row ham-head-cols" data-ham-pr-start="${prStart}"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr"${prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
+      return `<div class="ham-strip-row ham-head-cols" data-ham-pr-start="${prStart}"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li><li class="ham-seg ham-head-pr${wide ? ' ham-head-tools' : ''}"${!wide && prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${wide ? '' : prRefs.join('')}<span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {

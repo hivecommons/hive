@@ -54,6 +54,18 @@
       const short = String((b && b.short) || '').trim();
       return short ? STAGE_TRACKER_BLOCKED_WORD + ' · ' + short : '';
     }
+    // A decomposed parent at 010 (server `open_children` > 0, hive#16481)
+    // reads "Tracking · 3/4" (children known) or "Tracking · 1 open child",
+    // never "Actionable": the scanner leaves it to its children, so the
+    // row is not a stuck unclaimed issue.
+    const STAGE_TRACKER_TRACKING_WORD = 'Tracking';
+    function stageTrackerTrackingWord(item) {
+      const open = Number(item && item.open_children) || 0;
+      if (!(open > 0) || !item || item.kind !== 'issue') return '';
+      const c = item.children;
+      if (c && Number(c.total) > 0) return STAGE_TRACKER_TRACKING_WORD + ' · ' + (Number(c.completed) || 0) + '/' + Number(c.total);
+      return STAGE_TRACKER_TRACKING_WORD + ' · ' + open + ' open child' + (open === 1 ? '' : 'ren');
+    }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';

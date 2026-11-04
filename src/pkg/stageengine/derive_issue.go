@@ -35,6 +35,28 @@ func ReasonIsPartialCover(reason string) bool {
 	return strings.HasPrefix(strings.TrimSpace(reason), "open PR addresses part of it")
 }
 
+const reasonOpenChildrenPrefix = "waiting on "
+
+// ReasonOpenChildren reads the "; waiting on N open child issue(s)" suffix
+// deriveIssue appends to a decomposed parent's reason and returns N, or 0
+// when the reason carries no such suffix. Presentation layers use it to say
+// the parent is tracking its children rather than waiting on the scanner.
+func ReasonOpenChildren(reason string) int {
+	for _, part := range strings.Split(reason, ";") {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(part, reasonOpenChildrenPrefix) || !strings.HasSuffix(part, " open child issue(s)") {
+			continue
+		}
+		digits := strings.TrimSuffix(strings.TrimPrefix(part, reasonOpenChildrenPrefix), " open child issue(s)")
+		n, err := strconv.Atoi(digits)
+		if err != nil || n <= 0 {
+			return 0
+		}
+		return n
+	}
+	return 0
+}
+
 // deriveIssue maps issue Facts to a Decision. Pure: same Facts → same
 // Decision. An issue never goes past 040-covered-by-pr: 050+ are PR stages
 // (stagelabels.Table, PR: true) and mirroring them onto the issue is what
