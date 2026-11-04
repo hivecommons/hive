@@ -1848,12 +1848,17 @@ func issueReopenedHookFor(ledger *github.ClaimLedger, logger *slog.Logger) githu
 }
 
 // claimingPRRedStale builds the Fix #3 release predicate: given a claiming PR
-// (prRepo, prNumber), report whether it is red on a required check AND stale.
-// It looks up the PR's live CI state + head SHA from this pass's enumeration and
-// consults the shared staleness clock. A PR not found in the enumeration, or one
-// that is green/pending, or one whose red head only just appeared, returns false
-// — so a HEALTHY claiming PR still suppresses its issue. Returns a nil func when
-// escalation is disabled, preserving the original unconditional-suppress
+// (prRepo, prNumber), report whether it is red on a required check AND the
+// hive has given up repairing it (escalation.Store.AbandonedRed: stale, and
+// escalated / re-engagement budget spent / red for the whole re-engagement
+// window). It looks up the PR's live CI state + head SHA from this pass's
+// enumeration and consults the shared staleness clock. A PR not found in the
+// enumeration, one that is green/pending, one whose red head only just
+// appeared, or one the reaper is still re-engaging returns false — so a
+// HEALTHY or still-being-fixed claiming PR keeps suppressing its issue, and
+// the issue stays 040-covered-by-pr while the PR reads 070-fixing instead of
+// falling to 010 under a live PR (hivecommons/hive#16522). Returns a nil func
+// when escalation is disabled, preserving the original unconditional-suppress
 // behavior. GENERIC: keys only off check state + staleness.
 func claimingPRRedStale(cfg *config.Config, actionable *github.ActionableResult) github.RedStaleFunc {
 	if cfg.Escalation.Disabled || actionable == nil {
@@ -1886,7 +1891,7 @@ func claimingPRRedStale(cfg *config.Config, actionable *github.ActionableResult)
 		if !ok || !st.red {
 			return false // not enumerated, or healthy → keep suppressing
 		}
-		return store.StaleRed(st.repo, prNumber, st.headSHA)
+		return store.AbandonedRed(st.repo, prNumber, st.headSHA)
 	}
 }
 

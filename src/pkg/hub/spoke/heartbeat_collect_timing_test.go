@@ -126,6 +126,12 @@ func TestCollectWithTimeout_LogsSlowestSectionsOnTimeout(t *testing.T) {
 	mu.Lock()
 	out := buf.String()
 	mu.Unlock()
+	// Self-report captures attributes from the original timeout record, not
+	// the separate breakdown record. Keep the culprit on that first warning.
+	first, _, _ := strings.Cut(out, "\n")
+	if !strings.Contains(first, "collect timed out;") || !strings.Contains(first, "evidence=") || !strings.Contains(first, "(in-flight)") {
+		t.Fatalf("timeout warning lacks the in-flight section: %s", first)
+	}
 	if !strings.Contains(out, "slowest collectors") || !strings.Contains(out, "evidence=") || !strings.Contains(out, "(in-flight)") {
 		t.Fatalf("timeout log lacks the per-section breakdown naming the in-flight collector:\n%s", out)
 	}

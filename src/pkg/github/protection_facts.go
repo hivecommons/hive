@@ -166,6 +166,38 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 	pr.Protection = &f
 }
 
+// attachRequiredChecks stamps the base branch's required-check policy onto
+// pr.CIActivity exactly as attach does, plus the commit statuses an any-App
+// or unreported required context needs, without the protection facts: it
+// is the webhook CI re-read's half (webhook_ci_evidence.go), where no
+// mergeability or review decision is being collected.
+func (pc *protectionCollector) attachRequiredChecks(ctx context.Context, pr *PullRequest) {
+	if pc == nil || pc.c == nil || pr == nil || pr.CIActivity == nil || pr.BaseRef == "" {
+		return
+	}
+	req := pc.requiredChecks(ctx, pr.Repo, pr.BaseRef)
+	a := pr.CIActivity
+	a.setRequired(req.set, req.known)
+	a.RequiredChecks = req.bindings
+	a.RequiredSource = req.source
+	a.RequiredKnown = req.known && req.source != "config" && observedRequiredBindings(req.set, req.bindings)
+	if !req.known {
+		return
+	}
+	needsStatuses := a.NeedsCommitStatusEvidence()
+	for name := range req.set {
+		if len(a.ChecksForRequired(name)) == 0 {
+			needsStatuses = true
+		}
+	}
+	if !needsStatuses {
+		return
+	}
+	if collected, known := pc.c.commitStatuses(ctx, pr.Repo, pr.HeadSHA); known {
+		a.addCommitStatuses(collected, time.Now().UTC())
+	}
+}
+
 // commitStatuses retains state and identity, not just context presence.
 // A failed, incomplete or explicitly wrong-head listing is unknown.
 func (c *Client) commitStatuses(ctx context.Context, repo, sha string) ([]*gh.RepoStatus, bool) {

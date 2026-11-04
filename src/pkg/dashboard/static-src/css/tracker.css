@@ -350,6 +350,12 @@
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
+    /* Evidence-based remediation on the PR in progress chevron: a red PR
+       nobody has picked up is bright and still; a pushed fix head is a
+       done-style step that keeps its word (stage_tracker_remediation.go). */
+    .ham-seg.active.ham-remediation-unassigned { background: color-mix(in srgb, var(--amber) 70%, var(--red)); }
+    .ham-seg.done.ham-fix-pushed { color: var(--green); }
+    .ham-seg.done.ham-fix-pushed .ham-seg-t::before { content: '✓'; margin-right: var(--sp-1); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.blank { visibility: hidden; }
     .ham-sub { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
@@ -371,6 +377,7 @@
     .ham-activity-track.ham-current { opacity: 1; box-shadow: none; }
     .ham-seg.ham-activity-track.failing { background: var(--status-error); color: var(--surface-0); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }
+    .ham-seg.ham-activity-track.done.decided { background: var(--surface-3); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
     /* The count words stay on one line and ellipsize instead of wrapping. */
     .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }

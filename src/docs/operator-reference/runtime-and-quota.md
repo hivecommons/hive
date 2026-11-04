@@ -148,7 +148,9 @@ manage are ignored.
    webhook with the same secret works too). Subscribe the App to these events:
    `pull_request`, `pull_request_review`, `pull_request_review_comment`,
    `issue_comment`, `issues`, `check_suite`, `check_run`, `status`, `push`,
-   and, with `governor.work_source.type: github_projects`, `projects_v2_item`
+   optionally `workflow_job` (Actions: read; lets the CI counts on the
+   activity monitor move from the job payload for Apps that do not surface
+   check runs), and, with `governor.work_source.type: github_projects`, `projects_v2_item`
    (organization-scoped; see [Work sources](../work-sources.md#type-github_projects--github-projects-projects-v2)).
 3. **Hub relay.** The hub verifies the HMAC and relays the body byte-for-byte,
    with the original signature and `X-GitHub-Delivery`, to the spoke whose
@@ -171,8 +173,8 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
 #### What a delivery does
 
 - `pull_request`, `pull_request_review`, `pull_request_review_comment`,
-  `check_suite`, `check_run`, `status`, `issue_comment` (on PRs only) and
-  `push` invalidate the cached PR detail and the GraphQL batch
+  `check_suite`, `check_run`, `workflow_job`, `status`, `issue_comment` (on
+  PRs only) and `push` invalidate the cached PR detail and the GraphQL batch
   check-run/review entries for the affected PR and mark it dirty. Check and
   status events are matched by PR number and head SHA (fork PRs arrive
   without a PR list); `push` invalidates every open PR whose base or head
@@ -288,8 +290,7 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   `issues` — any action) also drops the `/api/stage-tracker` cache at once
   and queues a **targeted re-read of just that item**: one `GET` of the PR
   or issue, debounced by `dashboard.stage_tracker.webhook_refresh_debounce_ms`
-  (default `2000`) and coalesced per item, so a check fan-out of twenty
-  `check_run` deliveries costs one request. The re-read patches that row of
+  (default `2000`) and coalesced per item. The re-read patches that row of
   the status snapshot in place — labels, title, draft flag, last activity;
   a closed or merged item leaves — then drops the tracker cache again and
   sends the `stage-tracker` SSE nudge. The same re-read is handed to the
@@ -318,6 +319,24 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   also lists each repo's items closed since its last look every
   `dashboard.stage_tracker.closed_sweep_interval_s` (default `300`; one
   list call per repo; negative disables) and evicts any still shown.
+- **CI counts on the activity monitor move from the check payload.** A
+  `check_run`, `workflow_job` or `status` delivery is applied directly into
+  the per-head check set the tracker's CI chevron counts (`CI 7/11`): the
+  named check is upserted by run id (or check name and producing App), a
+  newer run replaces an older one, and the row is pushed over the
+  `stage-tracker` SSE nudge without any GitHub request — a fan-out of
+  twenty `check_run` deliveries costs zero requests. The payload-only
+  `check_run`/`status` delivery no longer queues the PR re-read above.
+  When no check-run listing exists yet for that head (first delivery after
+  a push, or a sidelined PR the eval cycle never enriched) one coalesced
+  listing of the head's check runs is scheduled instead (debounced by the
+  same `webhook_refresh_debounce_ms`), so the required-check set and the
+  `pass/total` denominator are right from the first row. The polling
+  path's `EnrichCIStatus` still refreshes every actionable PR each cycle
+  and is the backstop for spokes without webhooks.
+  `/api/status.webhooks.last_ci_event_at`, `ci_events_1h`,
+  `ci_events_applied_1h` and `ci_refetches_1h` show whether check
+  deliveries actually arrive and how many were served from the payload.
 
 #### Polling cadence vs webhook patch vs reconcile
 

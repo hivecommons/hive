@@ -74,14 +74,7 @@ func TestWebhookCIFailure_EventsAndConclusions(t *testing.T) {
 	}
 }
 
-type checkRunPayload = struct {
-	HeadSHA      string         `json:"head_sha"`
-	Name         string         `json:"name"`
-	Conclusion   string         `json:"conclusion"`
-	DetailsURL   string         `json:"details_url"`
-	HTMLURL      string         `json:"html_url"`
-	PullRequests []webhookPRRef `json:"pull_requests"`
-}
+type checkRunPayload = webhookCheckRunPayload
 
 type checkSuitePayload = struct {
 	HeadSHA      string         `json:"head_sha"`

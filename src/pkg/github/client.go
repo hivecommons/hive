@@ -64,6 +64,10 @@ type Client struct {
 	graphQLPRBatchEnabled  func() bool
 	graphQLPRBatchPageSize func() int
 	prBatchMu              sync.Mutex
+	// ciRefetch coalesces the check-run re-reads CI webhook deliveries ask
+	// for on heads no listing has covered (webhook_ci_evidence.go).
+	ciRefetchOnce          sync.Once
+	ciRefetch              *ciRefetcher
 	prBatchCheckRuns       map[prBatchCheckRunKey][]*gh.CheckRun
 	prBatchCheckObservedAt map[prBatchCheckRunKey]time.Time
 	prBatchReviews         map[string]map[int]prReviewState
@@ -2560,6 +2564,11 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], incidents)
 		}
 		facts.attach(ctx, &prs[i], reported)
+		// The listing is the head's complete observation; checks delivered
+		// by webhook since then are laid over it (hivecommons/hive#16521).
+		owner, name := c.splitRepo(prs[i].Repo)
+		sharedCIEvidence().recordListed(owner+"/"+name, prs[i].HeadSHA, prs[i].CIActivity)
+		prs[i].CIActivity = sharedCIEvidence().merged(owner+"/"+name, prs[i].HeadSHA, prs[i].CIActivity)
 	}
 	c.enrichBaseBranchRed(ctx, prs)
 }
@@ -4843,6 +4852,10 @@ type RepoWorkPR struct {
 	Reason         string    `json:"reason,omitempty"`
 	// BaseRef is the target branch, retained for the covering-PR chip.
 	BaseRef string `json:"base_ref,omitempty"`
+	// HeadSHA is the PR's head commit from the list payload, so the activity
+	// monitor can match webhook-delivered CI evidence to a sidelined row
+	// (hivecommons/hive#16521).
+	HeadSHA string `json:"head_sha,omitempty"`
 	// LinkedIssues mirrors PullRequest.LinkedIssues so a sidelined PR can
 	// still stand under the issue its `Fixes #N` names in the activity
 	// monitor. Stamped by EnrichReviewSignalsAndWorkPRs, not by the
@@ -4874,6 +4887,7 @@ func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hi
 		UpdatedAt:      pr.GetUpdatedAt().Time,
 		URL:            pr.GetHTMLURL(),
 		BaseRef:        prBaseRef(pr),
+		HeadSHA:        prHeadSHA(pr),
 		Bucket:         bucket,
 		Reason:         reason,
 		// The list payload carries the body, so the soft issue links cost
