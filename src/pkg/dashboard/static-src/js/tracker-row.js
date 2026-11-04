@@ -50,6 +50,7 @@
         const tipStage = (state === 'active' && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         if (state === 'active' && n === 50) word = 'CI + Review';
+        if (state === 'active' && n === 10 && cur === 10 && typeof stageTrackerTrackingWord === 'function') { const tw = stageTrackerTrackingWord(item); if (tw) word = tw; }
         if (state === 'active' && n === 30 && cur === 70 && !codeWorking) word = 'PR in progress';
         // A merge-train member's word is its place in the train (#15117).
         if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
