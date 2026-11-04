@@ -211,13 +211,17 @@ func inferenceBlockedStall(r slog.Record) bool {
 	return blocked
 }
 
-// automergeMergeGuardSkip reports whether r is the automerge sweep declining to
-// refresh a PR's base while a merge to that destination is already in flight
-// (reason base-refresh:merge-guard). The guard is self-limiting and the PR is
-// retried next tick (hivecommons/hive#16520). Any other sweep skip stays
-// reportable.
+// automergeMergeGuardSkip reports whether r is an automerge sweep lane
+// (queued, trusted-author or contributor) declining to refresh a PR's base
+// while a merge to that destination is already in flight (reason
+// base-refresh:merge-guard). The guard is self-limiting and the PR is retried
+// next tick (hivecommons/hive#16520). Any other sweep skip stays reportable.
 func automergeMergeGuardSkip(r slog.Record) bool {
-	if strings.TrimSpace(r.Message) != "automerge sweep skipped PR" {
+	switch strings.TrimSpace(r.Message) {
+	case "automerge sweep skipped PR",
+		"trusted-author automerge sweep skipped PR",
+		"contributor-lane automerge sweep skipped PR":
+	default:
 		return false
 	}
 	reason, err := "", ""
