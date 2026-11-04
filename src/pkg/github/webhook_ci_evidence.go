@@ -485,6 +485,10 @@ func (c *Client) applyWebhookCIEvidence(event string, p webhookEventPayload, con
 	}
 	repo := p.Repository.FullName
 	sharedWebhookTracker().recordCIEvent()
+	// Any CI delivery for the head — a workflow_run leaving action_required
+	// once someone clicked Approve, a check run starting — means the cached
+	// approval probe may be stale; re-list on the next cycle.
+	forgetWorkflowApproval(repo, head)
 	out := &WebhookCIEvidence{HeadSHA: head, PRs: append([]int(nil), numbers...)}
 	store := sharedCIEvidence()
 	checks := webhookCIChecks(event, p)

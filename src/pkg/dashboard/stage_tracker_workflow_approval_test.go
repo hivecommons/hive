@@ -52,7 +52,7 @@ func TestStageTrackerCIActivityWorkflowApproval(t *testing.T) {
 				t.Fatalf("counts %d/%d", got.ChecksPassed, got.ChecksTotal)
 			}
 			if tc.wa != nil && tc.wa.Pending > 0 {
-				if !strings.Contains(got.Detail, "approve workflows") || !strings.Contains(got.Detail, "auto_approve_workflows") {
+				if !strings.Contains(got.Detail, "approve workflows") {
 					t.Fatalf("detail=%q", got.Detail)
 				}
 				if tc.wa.ObservedAt != nil && (got.Since == nil || !got.Since.Equal(seen)) {

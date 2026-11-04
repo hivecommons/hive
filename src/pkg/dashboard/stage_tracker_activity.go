@@ -208,7 +208,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			// moves it (hivecommons/hive#16599).
 			out.Blocker = stageTrackerWorkflowApprovalBlocker(wa.Pending)
 			out.Caption = fmt.Sprintf("CI waiting · %s %s approval on GitHub", plural(wa.Pending, "workflow run"), pluralVerb(wa.Pending, "needs", "need"))
-			out.Detail = fmt.Sprintf("%s for the PR's current commit %s waiting for a maintainer to approve workflows on GitHub (the gate GitHub applies to dependabot and first-time or fork contributors), so required check %s cannot report until someone approves them. Hive approves trusted bot heads automatically when governor.ci.auto_approve_workflows is on.", plural(wa.Pending, "workflow run"), pluralVerb(wa.Pending, "is", "are"), check)
+			out.Detail = fmt.Sprintf("%s for the PR's current commit %s waiting for a maintainer to approve workflows on GitHub (the gate GitHub applies to dependabot and first-time or fork contributors), so required check %s cannot report until someone approves them.", plural(wa.Pending, "workflow run"), pluralVerb(wa.Pending, "is", "are"), check)
 			if wa.Actor != "" {
 				out.Actor = wa.Actor
 			}
@@ -370,10 +370,6 @@ func stageTrackerCountPerspectives(out *StageTrackerActivity, pr github.PullRequ
 	}
 }
 
-// trackerReviewPendingStage is the native stage whose label alone says the
-// review swarm is requested or running on the current head.
-const trackerReviewPendingStage = 50
-
 // stageTrackerReviewPendingState resolves the Review track for a PR the
 // stage itself says is under review (050) when no verdict settled it: the
 // swarm is in progress, so the track is "reviewing" (active) with the
@@ -382,7 +378,7 @@ const trackerReviewPendingStage = 50
 // (hivecommons/hive#16599). Without a head bundle or aggregate no
 // perspective has posted: done is 0, whatever earlier rounds left behind.
 func stageTrackerReviewPendingState(out *StageTrackerActivity, stage int, stageSince *time.Time) {
-	if out == nil || out.State != "unknown" || stage != trackerReviewPendingStage {
+	if out == nil || out.State != "unknown" || stage != trackerNumberReviewPending {
 		return
 	}
 	bundleSeen := strings.Contains(out.Source, "verified-review-bundle")

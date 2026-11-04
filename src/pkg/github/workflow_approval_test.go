@@ -43,3 +43,27 @@ func TestCloneCIActivityCopiesWorkflowApproval(t *testing.T) {
 		t.Fatal("clone shares workflow approval with its source")
 	}
 }
+
+func TestWorkflowApprovalCacheEvictsAndForgets(t *testing.T) {
+	workflowApprovalCache.Store("org/repo@old", workflowApprovalEntry{at: time.Now().Add(-2 * workflowApprovalEvictAfter)})
+	workflowApprovalCache.Store("org/repo@fresh", workflowApprovalEntry{at: time.Now()})
+	workflowApprovalLastEvict.Store(0)
+	evictStaleWorkflowApprovals(time.Now())
+	if _, ok := workflowApprovalCache.Load("org/repo@old"); ok {
+		t.Fatal("stale entry survived eviction")
+	}
+	if _, ok := workflowApprovalCache.Load("org/repo@fresh"); !ok {
+		t.Fatal("fresh entry evicted")
+	}
+	// Within the window the sweep is a no-op even for stale entries.
+	workflowApprovalCache.Store("org/repo@old2", workflowApprovalEntry{at: time.Now().Add(-2 * workflowApprovalEvictAfter)})
+	evictStaleWorkflowApprovals(time.Now())
+	if _, ok := workflowApprovalCache.Load("org/repo@old2"); !ok {
+		t.Fatal("eviction ran again inside its window")
+	}
+	forgetWorkflowApproval("org/repo", "fresh")
+	if _, ok := workflowApprovalCache.Load("org/repo@fresh"); ok {
+		t.Fatal("forget left the entry")
+	}
+	workflowApprovalCache.Delete("org/repo@old2")
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -37,6 +38,32 @@ type workflowApprovalEntry struct {
 
 var workflowApprovalCache sync.Map // repo@sha → workflowApprovalEntry
 
+// workflowApprovalEvictAfter is how long a head's probe stays cached once
+// it is no longer refreshed: heads that got pushed over or merged stop
+// being probed, and their entries go with the next sweep of the map.
+const workflowApprovalEvictAfter = 30 * time.Minute
+
+var workflowApprovalLastEvict atomic.Int64 // unix seconds
+
+// evictStaleWorkflowApprovals drops entries older than
+// workflowApprovalEvictAfter, at most once per eviction window, so the
+// package-global map stays bounded by the heads probed in the last half hour.
+func evictStaleWorkflowApprovals(now time.Time) {
+	last := workflowApprovalLastEvict.Load()
+	if now.Unix()-last < int64(workflowApprovalEvictAfter/time.Second) {
+		return
+	}
+	if !workflowApprovalLastEvict.CompareAndSwap(last, now.Unix()) {
+		return
+	}
+	workflowApprovalCache.Range(func(key, value any) bool {
+		if e, ok := value.(workflowApprovalEntry); !ok || now.Sub(e.at) > workflowApprovalEvictAfter {
+			workflowApprovalCache.Delete(key)
+		}
+		return true
+	})
+}
+
 // workflowRunsAwaitingApproval lists the head's workflow runs and keeps the
 // ones gated on approval. It returns nil when none are, or when the listing
 // failed: absence of evidence is not evidence.
@@ -45,6 +72,7 @@ func (c *Client) workflowRunsAwaitingApproval(ctx context.Context, repo, sha str
 		return nil
 	}
 	key := repo + "@" + sha
+	evictStaleWorkflowApprovals(time.Now())
 	if cached, ok := workflowApprovalCache.Load(key); ok {
 		if e, ok := cached.(workflowApprovalEntry); ok && time.Since(e.at) < workflowApprovalCacheTTL {
 			return e.val
@@ -95,7 +123,8 @@ func workflowApprovalFromRuns(runs []*gh.WorkflowRun, now time.Time) *PRWorkflow
 }
 
 // forgetWorkflowApproval drops the cached probe for a head so the next
-// cycle re-lists after an approval was issued.
+// cycle re-lists: called when a CI webhook for the head arrives (someone
+// approved, a run started) and after the hive approves runs itself.
 func forgetWorkflowApproval(repo, sha string) {
 	workflowApprovalCache.Delete(repo + "@" + sha)
 }
