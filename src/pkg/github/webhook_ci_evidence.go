@@ -278,6 +278,13 @@ func (s *ciEvidenceStore) merged(repo, head string, base *PRCIActivity) *PRCIAct
 	if base != nil && (listed == nil || observedAfter(base.ObservedAt, listed.ObservedAt)) {
 		listed = base
 	}
+	// The approval sweep runs after the check listing. Its workflow-run
+	// observation has a separate clock, so selecting check evidence must
+	// not discard (or revive) the base snapshot's approval gate.
+	if base != nil && listed != nil && listed != base {
+		listed = cloneCIActivity(listed)
+		listed.WorkflowApproval = base.WorkflowApproval
+	}
 	if len(events) == 0 {
 		return listed
 	}
@@ -488,7 +495,7 @@ func (c *Client) applyWebhookCIEvidence(event string, p webhookEventPayload, con
 	// Any CI delivery for the head — a workflow_run leaving action_required
 	// once someone clicked Approve, a check run starting — means the cached
 	// approval probe may be stale; re-list on the next cycle.
-	forgetWorkflowApproval(repo, head)
+	c.forgetWorkflowApproval(repo, head)
 	out := &WebhookCIEvidence{HeadSHA: head, PRs: append([]int(nil), numbers...)}
 	store := sharedCIEvidence()
 	checks := webhookCIChecks(event, p)

@@ -1,0 +1,1 @@
+- Hive approves GitHub-gated workflow runs once per PR head for trusted bots, its App, or owner-admitted PRs, with configurable trust, approval counters and a manual-action caption when permissions are missing.

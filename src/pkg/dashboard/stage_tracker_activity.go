@@ -67,6 +67,27 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	if a.StatusesKnown {
 		out.Source += "+github-commit-statuses"
 	}
+	defer func() {
+		wa := a.WorkflowApproval
+		if wa == nil || wa.Pending <= 0 || (out.State != "missing" && out.State != "unknown") {
+			return
+		}
+		out.State, out.Blocker = "missing", stageTrackerWorkflowApprovalBlocker(wa.Pending)
+		verb := "need"
+		if wa.Pending == 1 {
+			verb = "needs"
+		}
+		out.Caption = fmt.Sprintf("CI waiting · %s %s approval on GitHub", plural(wa.Pending, "workflow run"), verb)
+		out.Detail = "GitHub is holding workflow runs for this commit behind Approve and run workflows."
+		if wa.PermissionDenied {
+			out.Caption = "CI waiting · needs workflow approval on GitHub"
+			out.Detail = "The App was refused workflow approval (actions: write is required). A maintainer must click Approve and run workflows on GitHub."
+		}
+		if out.Active {
+			out.Caption += " · other checks still running"
+		}
+		out.Actor, out.Since = wa.Actor, wa.ObservedAt
+	}()
 	if !a.RequiredKnown || a.RequiredSource == "" || len(a.RequiredChecks) == 0 || len(a.Required) == 0 {
 		stageTrackerCountHeadChecks(out, a)
 		return out
@@ -202,21 +223,6 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Caption = "CI queued · " + check + " waiting for a runner"
 		out.Detail = "Required check " + check + " has been requested for the PR's current commit but has not started executing yet."
 	case "missing":
-		if wa := a.WorkflowApproval; wa != nil && wa.Pending > 0 {
-			// Unreported because GitHub holds the runs behind its
-			// approve-workflows gate: a person's click, not a push,
-			// moves it (hivecommons/hive#16599).
-			out.Blocker = stageTrackerWorkflowApprovalBlocker(wa.Pending)
-			out.Caption = fmt.Sprintf("CI waiting · %s %s approval on GitHub", plural(wa.Pending, "workflow run"), pluralVerb(wa.Pending, "needs", "need"))
-			out.Detail = fmt.Sprintf("%s for the PR's current commit %s waiting for a maintainer to approve workflows on GitHub (the gate GitHub applies to dependabot and first-time or fork contributors), so required check %s cannot report until someone approves them.", plural(wa.Pending, "workflow run"), pluralVerb(wa.Pending, "is", "are"), check)
-			if wa.Actor != "" {
-				out.Actor = wa.Actor
-			}
-			if wa.ObservedAt != nil {
-				out.Since = wa.ObservedAt
-			}
-			break
-		}
 		out.Caption = "CI waiting · required check " + check + " hasn't reported for this head yet"
 		out.Detail = "Branch protection requires a check named " + check + ", but no check run or commit status with that name exists for the PR's current commit. Usually the workflow that produces it has not been triggered; a push, re-run, or label can start it."
 	case "unknown":
