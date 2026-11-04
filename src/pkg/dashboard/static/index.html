@@ -42,8 +42,11 @@
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
       /* Type ramp — section headers / card titles / labels only; body-copy sizes stay. */
-      --fs-xs: .68rem; --fs-sm: .75rem; --fs-base: .82rem;
-      --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem;
+      --fs-2xs: .6rem; --fs-xs: .68rem; --fs-sm: .75rem; --fs-base: .82rem;
+      --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem; --fs-2xl: 1.5rem; --fs-3xl: 2rem;
+      /* The A6 ends of the ramp (2xs/2xl/3xl) were only ever defined inside
+         .config-modal, so var(--fs-2xs) elsewhere fell back to the 16px body
+         size (hivecommons/hive#16601). Same values in light and dark. */
       /* Touch floor: iOS Safari zooms the page when a focused control is under 16px. */
       --fs-touch: 16px;
       /* Mobile icon-only buttons (section ?/⚙/grip, topbar chips): a fixed
@@ -3228,23 +3231,30 @@
     .overview-repo-filter { display: grid; gap: var(--sp-2); max-height: min(16rem, 32vh); overflow: auto; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
     .overview-settings-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
     .overview-headline { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .overview-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr) auto) minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--sp-3); align-items: stretch; }
+    /* No headline child may widen the single auto column: on a phone a nowrap
+       stale pill otherwise stretches the track and every KPI tile with it
+       (hivecommons/hive#16601). */
+    .overview-headline > * { min-width: 0; max-width: 100%; }
+    .overview-kpis { display: grid; min-width: 0; grid-template-columns: repeat(5, minmax(0, 1fr) auto) minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--sp-3); align-items: stretch; }
     .overview-kpi-operator { display: inline-flex; align-items: center; justify-content: center; align-self: start; padding-top: var(--sp-3); color: var(--muted); font-size: var(--fs-lg); font-weight: 800; line-height: 1; }
     .overview-kpi-coverage-spacer { width: 1px; min-height: 100%; background: var(--border); opacity: 0.8; }
-    .overview-kpi-stale { display: inline-flex; align-items: center; gap: var(--sp-1); margin-left: var(--sp-2); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); border: 1px solid var(--orange); color: var(--orange); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; }
+    .overview-kpi-stale { display: inline-flex; align-items: center; gap: var(--sp-1); margin-left: var(--sp-2); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); border: 1px solid var(--orange); color: var(--orange); font-size: var(--fs-xs); font-weight: 700; justify-self: start; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     @media (max-width: 1399px) { .overview-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .overview-kpi-operator, .overview-kpi-coverage-spacer { display: none; } }
     @media (max-width: 720px) { .overview-kpis { grid-template-columns: minmax(0, 1fr); } }
     .overview-kpi-range { display: inline-flex; gap: var(--sp-1); }
     .overview-kpi-range-btn { min-width: 2rem; height: 1.25rem; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; cursor: pointer; }
     .overview-kpi-range-btn.active { border-color: var(--accent); color: var(--accent); }
-    .overview-kpi { display: grid; gap: var(--sp-1); text-align: left; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--text); padding: var(--sp-3); min-height: 5.9rem; cursor: pointer; }
+    .overview-kpi { display: grid; min-width: 0; gap: var(--sp-1); text-align: left; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--text); padding: var(--sp-3); min-height: 5.9rem; cursor: pointer; }
     .overview-kpi:hover { border-color: var(--accent); }
     .overview-kpi-value { font-size: var(--fs-lg); font-weight: 800; font-variant-numeric: tabular-nums; }
     .overview-kpi-label { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
-    .overview-kpi-subline { color: var(--muted); font-size: var(--fs-2xs); line-height: 1.25; }
-    .overview-kpi-spark { min-height: 24px; display: flex; align-items: end; margin-top: var(--sp-1); }
-    .overview-kpi-spark .sparkline { width: 100%; }
-    .overview-kpi-spark svg { width: 100%; height: 24px; }
+    .overview-kpi-subline { color: var(--muted); font-size: var(--fs-2xs); line-height: 1.25; min-width: 0; overflow-wrap: anywhere; }
+    .overview-kpi-spark { min-height: 24px; min-width: 0; display: flex; align-items: end; margin-top: var(--sp-1); }
+    .overview-kpi-spark .sparkline { width: 100%; max-width: 100%; min-width: 0; }
+    .overview-kpi-spark svg { width: 100%; max-width: 100%; height: 24px; }
+    /* Phone: keep the tile label/subline at the compact body sizes the tiles
+       shipped with rather than the 2xs helper size. */
+    @media (max-width: 720px) { .overview-kpi-label { font-size: var(--fs-base); } .overview-kpi-subline { font-size: var(--fs-md); } }
     .overview-kpi-coverage[data-coverage-state="success"] { --overview-coverage-color: var(--green); }
     .overview-kpi-coverage[data-coverage-state="warn"] { --overview-coverage-color: var(--yellow); }
     .overview-kpi-coverage[data-coverage-state="danger"] { --overview-coverage-color: var(--red); }
