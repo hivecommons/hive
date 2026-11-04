@@ -229,3 +229,27 @@ test('#16539 shape: a queued swarm reads 0/5 and, as the stage\'s own track, is 
   assert.doesNotMatch(c[5], /data-motion=/, 'queued is lit but still');
   assert.equal(litCount(c.join('')), 1, 'the Review column is where the item is: the one lit chevron');
 });
+
+// hivecommons/hive#16631: a CI ring that is not full is a running ring.
+// 13/19 with checks still pending is active with its count beside the
+// running Review; only a complete 19/19 ring is the silent green glyph.
+test('#16628 shape: CI 13/19 with pending checks + review in progress → both tracks active with words', () => {
+  const review = { head: 'abc1234def', state: 'reviewing', active: true, caption: 'Review 0/5 · in progress', perspectives_done: 0, perspectives_total: 5, source: 'dispatch', observed_at: seen };
+  for (const state of ['running', 'unknown', 'queued']) {
+    const c = cells(redPR({ display_column: 50, stage: 50,
+      ci_activity: { head: 'abc1234def', state, caption: 'CI ' + state, checks_passed: 13, checks_total: 19, source: 'checks', observed_at: seen },
+      review_activity: review }));
+    assert.match(c[4], /class="ham-seg ham-activity-track active ham-current"/, state + ': a part-filled ring is lit');
+    assert.match(c[4], /CI 13\/19 · (running|queued)</, state + ': words carry the count');
+    assert.match(c[5], /class="ham-seg ham-activity-track active ham-current"[^]*Review 0\/5 · in progress</);
+    assert.equal(litCount(c.join('')), 2, state + ': CI and Review both in motion');
+  }
+  const full = cells(redPR({ display_column: 50, stage: 50,
+    ci_activity: { head: 'abc1234def', state: 'passing', caption: 'CI green', checks_passed: 19, checks_total: 19, source: 'checks', observed_at: seen },
+    review_activity: review }));
+  assert.match(full[4], /class="ham-seg ham-activity-track done ham-current"/, 'a complete ring is the green glyph');
+  assert.match(full[4], /ham-track-verdict/);
+  assert.doesNotMatch(full[4], /CI 19\/19 passed</, 'no words on the inactive track');
+  assert.match(full[4], /data-ring-done="19" data-ring-failed="0"/);
+  assert.equal(litCount(full.join('')), 1, 'only Review is in motion');
+});
