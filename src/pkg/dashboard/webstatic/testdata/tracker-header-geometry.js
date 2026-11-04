@@ -210,8 +210,15 @@
       if (cell.dataset.activityState) coverage.states[cell.dataset.activityState] = (coverage.states[cell.dataset.activityState] || 0) + 1;
       if (cell.dataset.routeState?.split(' ').includes('active')) {
         assert(cell.classList.contains('ham-current'), name + 'current phase remains highlighted independently of work');
-        const style = getComputedStyle(cell);
-        assert(Number(style.opacity) >= 0.9 && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent', name + 'queued/unknown/assigned/completed current tracks retain a visible steady fill');
+        if (cell.classList.contains('active') || !cell.dataset.track) {
+          const style = getComputedStyle(cell);
+          assert(Number(style.opacity) >= 0.9 && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent', name + 'active and stalled current tracks retain a visible steady fill');
+        } else {
+          // Inactive CI/Review lanes keep their current-phase location but
+          // render only the state-coloured icon (#16599); words stay in the label.
+          const words = cell.querySelector('.ham-track-state')?.innerText.trim() || '';
+          assert(!!cell.querySelector('svg') && words === '' && /\b(CI|Review): (CI|Review)\b/.test(cell.getAttribute('aria-label') || ''), name + 'inactive current tracks retain an icon with their words in the label');
+        }
       }
       if (cell.dataset.track) {
         // CI / Review lanes are chevrons like their neighbours: same notch
