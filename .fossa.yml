@@ -13,14 +13,19 @@ project:
   link: https://hivecommons.dev
 
 # The Go workspace lives under src/ (src/go.work: root module + src/crux).
-# FOSSA auto-discovers both go.mod files plus the dashboard's Node manifests;
-# list them explicitly so a future re-layout does not silently drop a module.
+# FOSSA auto-discovers every manifest; list the shipped components explicitly
+# so a future re-layout does not silently drop one. Shipped: the two Go
+# modules, the spoke's runtime Node proxy (src/proxy) and the dashboard.
+# Deliberately out of scope as repo tooling, not shipped code:
+# discord/package.json and .github/scripts/package.json.
 targets:
   only:
     - type: gomod
       path: src
     - type: gomod
       path: src/crux
+    - type: npm
+      path: src/proxy
     - type: npm
       path: dashboard
 
