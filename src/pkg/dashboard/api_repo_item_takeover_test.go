@@ -130,6 +130,33 @@ func TestRepoItemAdoptNowGuards(t *testing.T) {
 	}
 }
 
+// An operator may take over anyone's PR, a hive owner's included: Adopt now
+// on an owner-authored PR records the forced mark and the audit names the
+// author as an owner.
+func TestRepoItemAdoptNowOnOwnerAuthoredPR(t *testing.T) {
+	srv, store := takeoverServer(t, &repoItemDecisionMock{prForeign: true})
+	srv.deps.Config.Dashboard.AuthorizedUsers = []string{"someone:owner"}
+	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"adopt","force":true,"type":"pr"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("owner-authored: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if rec, _ := store.Get(stagelabels.Key("testorg/testrepo", 8)); !recForced(rec) {
+		t.Fatalf("forced mark not recorded for an owner's PR: %+v", rec)
+	}
+	found := false
+	for _, e := range srv.GetAudit().Recent(20) {
+		if e.Action == auditRepoItemDecisionAdoptNow {
+			found = true
+			if !strings.Contains(e.Detail, "author=someone") || !strings.Contains(e.Detail, "author_owner=true") {
+				t.Fatalf("audit detail %q lacks the owner attribution", e.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("audit = %v", decisionAuditActions(srv))
+	}
+}
+
 func TestRepoItemRerouteNoneOnlineIsConflict(t *testing.T) {
 	srv, _ := takeoverServer(t, &repoItemDecisionMock{prForeign: true})
 	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"reroute","to":"any","type":"pr"}`)

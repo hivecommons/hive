@@ -296,6 +296,12 @@ type StageTrackerItem struct {
 	ClaimReference bool                  `json:"claim_reference,omitempty"`
 	IsTracker      bool                  `json:"is_tracker,omitempty"`
 	Children       *github.IssueChildren `json:"children,omitempty"`
+	// OpenChildren is how many sub-issues of a decomposed parent are still
+	// open (the stage engine's "waiting on N open child issue(s)" suffix on
+	// a 010 reason). Non-zero means the parent is tracking its children,
+	// not waiting on the scanner, and the row reads "Tracking", not
+	// "Actionable" (hivecommons/hive#16481).
+	OpenChildren int `json:"open_children,omitempty"`
 	// Labels are the item's GitHub labels as the snapshot saw them, so the
 	// dashboard can offer a label filter without a second endpoint.
 	Labels    []string   `json:"labels,omitempty"`

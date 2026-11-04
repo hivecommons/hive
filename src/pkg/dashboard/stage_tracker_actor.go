@@ -177,6 +177,9 @@ func stageTrackerStageActorOf(it StageTrackerItem, workers map[string]stageTrack
 		}
 		return set(StageActorNone, "", "not in any stage yet — the stage engine has not classified it")
 	case stagelabels.Actionable:
+		if it.OpenChildren > 0 {
+			return set(StageActorNone, "", stageTrackerTrackingWhy(it.OpenChildren))
+		}
 		return set(StageActorHive, "", "waiting for the scanner to pick it up")
 	case stagelabels.TriageNeeded:
 		return set(StageActorHuman, "", "no maintainer has triaged it yet")

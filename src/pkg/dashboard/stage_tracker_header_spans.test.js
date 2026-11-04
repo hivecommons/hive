@@ -126,8 +126,9 @@ test('spans share the physical lane grid, including independent concurrent CI/Re
   assert.equal(laneCount, physicalCount - 1, 'CSS and actual rendered lane count must agree');
   assert.match(rule('.ham-head-cols .ham-seg.ham-head-lead'), /grid-column: 1 \/ var\(--ham-pr-start\)/);
   assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr'), /grid-column: var\(--ham-pr-start\) \/ -2/);
-  assert.match(rule('.ham-head-cols .ham-seg.cap'), /grid-column: 1 \/ -1; grid-row: 2/);
-  assert.match(rule('.ham-head-cols .ham-seg.cap'), /justify-content: flex-end/);
+  assert.doesNotMatch(html, /\.ham-head-cols \.ham-seg\.cap \{/, 'no separate toolbar line between the title line and the chevrons');
+  assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-badges'), /margin-left: auto/, 'chips right-anchor on the PR line');
+  assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-badges'), /justify-content: flex-end/);
   // Resolve the declared grid lines using the actual header's track count.
   // Content cannot alter minmax(0,1fr) track widths; covered gaps belong to spans.
   const start = Number(ctx.stageTrackerHeadColsHtml(['PR'], 'issue', chips).match(/data-ham-pr-start="(\d+)"/)[1]);
@@ -145,33 +146,56 @@ test('spans share the physical lane grid, including independent concurrent CI/Re
   assert.match(ctx.stageTrackerHeadColsHtml(['PR']), /data-ham-pr-start="5"/, 'boundary derives from canonical stages, not a second hard-coded span');
 });
 
-test('chevron height is content-driven (one-line floor, two-line clamp) and the caption stays centred', () => {
+test('chevron height is one caption line (compact strip, single-line clamp) and the caption stays centred', () => {
   const strip = rule('.ham-strip[aria-label="Pipeline progress"]');
   const seg = rule('.ham-strip[aria-label="Pipeline progress"] > .ham-seg');
   const copy = rule('.ham-chevron-copy');
-  assert.match(strip, /grid-auto-rows: minmax\(calc\(var\(--ham-chevron-line-height\) \* 1em \+ 2 \* var\(--sp-2\) \+ 2 \* var\(--line-width\)\), auto\)/,
-    'rows size to their tallest caption above a one-line floor');
+  assert.match(strip, /grid-auto-rows: minmax\(calc\(var\(--ham-chevron-line-height\) \* 1em \+ 2 \* var\(--sp-1\) \+ 2 \* var\(--line-width\)\), auto\)/,
+    'rows size to content above a one-line floor with sp-1 vertical padding (~20px strip)');
+  assert.match(seg, /padding: var\(--sp-1\) calc\(var\(--ham-notch\) \+ var\(--sp-2\)\)/, 'sp-2 vertical padding doubled the strip height (hivecommons/hive#16454)');
+  assert.match(rule('.ham-strip'), /--ham-chevron-text-lines: 1;/, 'captions are clamped to one line so the strip stays compact');
   assert.doesNotMatch(strip, /grid-auto-rows: calc\(var\(--ham-chevron-text-lines\)/, 'no fixed two-line row height around one line of text');
   assert.match(seg, /align-self: stretch/);
   assert.doesNotMatch(seg, /height: 100%/, 'siblings follow the row, the row follows its content');
-  assert.match(copy, /max-height: calc\(var\(--ham-chevron-text-lines\) \* var\(--ham-chevron-line-height\) \* 1em\)/, 'the two-line clamp stays');
+  assert.match(copy, /max-height: calc\(var\(--ham-chevron-text-lines\) \* var\(--ham-chevron-line-height\) \* 1em\)/, 'the clamp caps the copy at --ham-chevron-text-lines lines');
   assert.match(copy, /flex: 0 1 auto/, 'the copy shrink-wraps its text so justify-content: center centres it');
   assert.match(copy, /text-align: center/, 'a wrapped second line is centred under the first');
   assert.match(rule('.ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision'), /align-items: center; justify-content: center/);
 });
 
+test('the issue title sits inline after its chips on the first line, not on a line of its own', () => {
+  const ctx = load();
+  const rendered = ctx.stageTrackerRowHtml({ ...issue, number: 16475 }, [], { nowMs: 1, repoChips: {} });
+  // One flex container holds icon, repo chip, #ref, agent chip and title.
+  const main = rendered.match(/<div class="ham-head-main">([\s\S]*?)<\/div>/)[1];
+  assert.match(main, /ham-kind-ico[\s\S]*ham-repo-chip[\s\S]*ham-ref[\s\S]*#16475[\s\S]*ham-title-tag[\s\S]*class="ham-title"/,
+    'kind icon, repo chip, #ref, agent chip and title render in that order in one container');
+  assert.doesNotMatch(main, /<(div|p|br)\b/, 'no block element splits the title from its chips');
+  const container = rule('.ham-head-main');
+  assert.match(container, /display: flex/);
+  assert.match(container, /flex-wrap: wrap/, 'chips may still wrap when a line is genuinely full');
+  const t = rule('.ham-head-main > .ham-title');
+  assert.match(t, /flex: 1 1 0/, 'a zero flex-basis keeps the title on the chip line and fills the rest of it (a max-content basis drops the whole title to line 2)');
+  assert.match(t, /min-width: 0/);
+  assert.match(t, /white-space: normal/, 'the title wraps its own words only when there is no room');
+  const prRef = rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line');
+  assert.match(prRef, /flex: 1 1 0; min-width: min\(100%, 20em\)/, 'the PR ref shares its line with the right-anchored pills');
+  assert.match(rule('.ham-head-pr .ham-pr-title'), /flex: 1 1 0/);
+});
+
 test('long metadata wraps in bounded slots and the narrow layout resets both grid axes', () => {
   assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr'), /flex-wrap: wrap/);
-  assert.match(rule('.ham-head-cols .ham-seg.cap .ham-badges'), /flex-wrap: wrap/);
-  assert.match(rule('.ham-head-cols .ham-seg.cap .ham-badges'), /max-width: 100%/);
-  assert.match(rule('.ham-head-cols .ham-seg.cap .ham-badges'), /justify-content: flex-end/);
+  assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-badges'), /flex-wrap: wrap/);
+  assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-badges'), /max-width: 100%/);
+  assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-badges'), /justify-content: flex-end/);
   assert.match(rule('.ham-head-cols .ham-badge'), /white-space: normal; overflow-wrap: anywhere/);
-  assert.match(html, /\.ham-head-main > \.ham-title, \.ham-head-pr \.ham-pr-title \{ white-space: normal; overflow: visible; overflow-wrap: anywhere; \}/);
+  assert.match(html, /\.ham-head-main > \.ham-title \{ flex: 1 1 0; min-width: 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; \}/);
+  assert.match(html, /\.ham-head-pr \.ham-pr-title \{ flex: 1 1 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; \}/);
   assert.match(html, /@media \(max-width: 1100px\) \{[\s\S]*?\.ham-head-cols \.ham-strip > \.ham-seg \{ grid-column: 1 \/ -1; grid-row: auto; padding: 0; \}/);
   assert.doesNotMatch(html, /\.ham-strip:not\(\.ham-head-cols\)/, 'the old ancestor/element selector mistake must not return');
 });
 
-test('issue-only, linked and PR-only controls occupy one full-row far-right toolbar, independent of title spans', () => {
+test('issue-only, linked and PR-only controls ride the title line, right-anchored in the PR span, never a line of their own', () => {
   for (const [number, label, history, blocked] of [
     [15329, 'Let hive decide', 1, false],
     [16242, '', 0, false],
@@ -187,23 +211,30 @@ test('issue-only, linked and PR-only controls occupy one full-row far-right tool
     ctx.stageTrackerLeadButtonHtml = () => label ? '<button type="button" class="ham-lead-act" data-action="fixtureAction">' + label + '</button>' : '';
     for (const item of [{ ...issue, number, is_tracker: number === 16242 }, { ...issue, number, linked_prs: [pr] }, { ...pr, number }]) {
       const rendered = ctx.stageTrackerRowHtml(item, [], { nowMs: 1 });
-      const toolbar = rendered.match(/<li class="ham-seg cap"><span class="ham-badges">([^]*?)<\/li>/)[1];
+      assert.doesNotMatch(rendered, /<li class="ham-seg cap">/, 'the title line has no separate toolbar cell');
+      const prCell = rendered.match(/<li class="ham-seg ham-head-pr[^"]*"[^>]*>([^]*?)<\/li>/)[1];
+      const toolbar = prCell.match(/<span class="ham-badges">([^]*)<\/span>$/);
+      assert.ok(toolbar, 'chips are the trailing flex item of the PR cell');
+      const chipsHtml = toolbar[1];
+      if (!item.linked_prs && item.kind === 'issue') assert.match(rendered, /<li class="ham-seg ham-head-pr ham-head-tools">/, 'an issue without PR refs still gets the PR cell for its chips');
       if (label) {
-        assert.ok(toolbar.includes(label));
+        assert.ok(chipsHtml.includes(label));
         assert.equal(rendered.split(label).length - 1, 1, 'action is not duplicated to fake alignment');
-        assert.match(toolbar, /type="button"[^]*data-action="fixtureAction"/);
+        assert.match(chipsHtml, /type="button"[^]*data-action="fixtureAction"/);
       }
-      if (history) assert.match(toolbar, /ham-acted" tabindex="0">history 1/);
-      if (blocked) assert.match(toolbar, />blocked</);
+      if (history) assert.match(chipsHtml, /ham-acted" tabindex="0">history 1/);
+      if (blocked) assert.match(chipsHtml, />blocked</);
       const lead = rendered.match(/<li class="ham-seg ham-head-lead[^"]*">([^]*?)<\/li>/)[1];
       assert.doesNotMatch(lead, /ham-lead-act|ham-acted|>blocked</);
     }
   }
-  const toolbar = rule('.ham-head-cols .ham-seg.cap');
-  assert.match(toolbar, /grid-column: 1 \/ -1; grid-row: 2/);
+  const toolbar = rule('.ham-head-cols .ham-seg.ham-head-pr > .ham-badges');
+  assert.match(toolbar, /position: static/);
+  assert.match(toolbar, /margin-left: auto/);
   assert.match(toolbar, /justify-content: flex-end/);
-  assert.doesNotMatch(toolbar, /position: absolute|left:|right:/);
-  assert.match(html, /@media \(max-width: 1100px\) \{[^]*?\.ham-head-cols \.ham-seg\.cap \{[^}]*justify-content: flex-end/);
+  assert.doesNotMatch(toolbar, /position: absolute|[^-]left:|[^-]right:/, "flow layout, never an absolute overlay over the title");
+  assert.match(rule('.ham-head-cols .ham-seg.ham-head-pr'), /grid-row: 1/, 'the PR cell, and so its chips, shares the title line');
+  assert.doesNotMatch(html, /\.ham-head-cols [^{]*\{[^}]*grid-row: 2/, 'nothing in the title block claims a second grid row');
 });
 
 test('12:01 screenshot density: real multi-PR/sub-row structure preserves distinct headers and full-width control ownership', () => {
@@ -227,7 +258,8 @@ test('12:01 screenshot density: real multi-PR/sub-row structure preserves distin
     assert.equal((rendered.match(/class="ham-strip-row ham-head-cols"/g) || []).length, 1 + children.length);
     for (const header of rendered.matchAll(/<div class="ham-strip-row ham-head-cols"([^]*?)<\/ol>/g)) {
       assert.match(header[1], /data-ham-pr-start="4"/);
-      assert.equal((header[1].match(/class="ham-seg cap"/g) || []).length, 1, 'one separate far-right toolbar per identity');
+      assert.equal((header[1].match(/class="ham-badges"/g) || []).length, 1, 'one right-anchored toolbar per identity, on its title line');
+      assert.doesNotMatch(header[1], /class="ham-seg cap"/, 'no separate toolbar line');
       const lead = header[1].match(/ham-head-lead[^"]*">([^]*?)<\/li>/)[1];
       assert.doesNotMatch(lead, /ham-badge-waiting|ham-lead-act|ham-acted/, 'activity/action/history controls never overprint the issue title slot');
     }
@@ -235,12 +267,12 @@ test('12:01 screenshot density: real multi-PR/sub-row structure preserves distin
       const start = rendered.indexOf('data-ham-sub-key="pr:' + pr.number + '"');
       assert.ok(start >= 0);
       const sub = rendered.slice(start).split('<div class="ham-sub')[0];
-      const metadata = sub.match(/class="ham-seg ham-head-pr"[^>]*>([^]*?)<\/li>/)[1];
-      assert.ok(metadata.includes(esc(pr.title)), 'complete PR title stays in its own PR-side cell');
-      assert.ok(metadata.includes('>' + pr.base_ref + '</span>'));
-      assert.doesNotMatch(metadata, /ham-badge-waiting|ham-lead-act/);
-      const toolbar = sub.match(/class="ham-seg cap"><span class="ham-badges">([^]*?)<\/li>/)[1];
-      if (pr.push) assert.ok(toolbar.includes(esc('@' + pr.push.login)), 'owner/activity pill is separately right-anchored');
+      const metadata = sub.match(/class="ham-seg ham-head-pr"[^>]*>([^]*?)<span class="ham-badges">([^]*?)<\/span><\/li>/);
+      assert.ok(metadata, 'PR metadata then its chips close the PR cell');
+      assert.ok(metadata[1].includes(esc(pr.title)), 'complete PR title stays in its own PR-side cell');
+      assert.ok(metadata[1].includes('>' + pr.base_ref + '</span>'));
+      assert.doesNotMatch(metadata[1], /ham-badge-waiting|ham-lead-act/, 'chips follow the metadata, never interleave it');
+      if (pr.push) assert.ok(metadata[2].includes(esc('@' + pr.push.login)), 'owner/activity pill trails the PR line, right-anchored');
     }
   }
   assert.equal(multi, 2, 'both #16404 and #16438 exercise multiple linked PRs');

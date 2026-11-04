@@ -55,6 +55,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		cfg = s.deps.Config
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
+	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
 	verifier, verifierErr := s.reviewEvidenceVerifier()
 	var evidenceVerifier *github.ReviewEvidenceVerifier
 	if verifierErr == nil {
@@ -181,6 +182,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		stageTrackerApplyTracking(it, stage)
 		if c := stageTrackerSoakCaption(rec, now); c != "" {
 			it.Caption = c
 		}
@@ -467,6 +469,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			currentAggregate = &a
 		}
 		it.ReviewActivity = stageTrackerReviewActivity(activityPR, bundle, currentAggregate, dispatchState, status, now)
+		stageTrackerCountPerspectives(it.ReviewActivity, activityPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
 			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
@@ -540,6 +543,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				currentAggregate = &a
 			}
 			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
+			stageTrackerCountPerspectives(it.ReviewActivity, currentPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 		}
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
 		it.CodeActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.DisplayColumn, activityItem.Caption
