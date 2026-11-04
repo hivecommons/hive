@@ -23,7 +23,7 @@ func TestReaderUIWiring(t *testing.T) {
 			t.Errorf("reader.js contains forbidden sink/effect %q", forbidden)
 		}
 	}
-	for _, want := range []string{"visibilitychange", "prefers-reduced-motion: reduce", "'/api/matrix/lines?since='", "source.addEventListener('code-lines'", "'wheel'", "'touchstart'"} {
+	for _, want := range []string{"visibilitychange", "prefers-reduced-motion: reduce", "'&format=regions'", "source.addEventListener('code-lines'", "'wheel'", "'touchstart'", "'\\u2212 '"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("reader.js missing %q", want)
 		}
@@ -103,12 +103,11 @@ const first = [
   {seq: 3, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '\tx := 1', at},
   {seq: 4, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '\tx := 1', at},
   {seq: 5, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '    old()', op: '-', at},
-  {seq: 6, repo: 'org/other', pr: 7, head: 'def', path: 'README.md', line: 'a very long line '.repeat(40), pr_url: 'https://example.test/review/7', at},
+  {seq: 6, repo: 'org/other', pr: 7, head: 'def', path: 'README.md', line: 'a very long line '.repeat(40), pr_url: 'https://github.com/org/other/pull/7', at},
 ];
 async function scenario(query, opts = {}) {
   const docEvents = {}, timers = new Map(), requests = [], scrolls = [], sse = {};
-  // page caps each response like the server does; seq always reports the newest line held.
-  let id = 0, status = opts.status || 200, seq = 6, lines = first, page = opts.page || Infinity;
+  let id = 0, status = opts.status || 200, seq = 6, lines = first;
   const elements = [];
   function el(tag) { const e = {tagName: tag.toUpperCase(), children: [], listeners: {}, attrs: {}, className: '',
     textContent: '', hidden: false, scrollTop: 0, offsetHeight: 10, classList: {add(){}},
@@ -125,52 +124,84 @@ async function scenario(query, opts = {}) {
     localStorage: {getItem(){return null}, setItem(){}},
     requestAnimationFrame(){throw new Error('reader must not animate frames')},
     setTimeout(fn){timers.set(++id, fn); return id}, clearTimeout(i){timers.delete(i)}, setInterval(){}, dashboardSetInterval(){},
-    fetch(url){requests.push(url); const body = {seq, source: 'pushed-lines', lines: lines.slice(0, page)}; lines = lines.slice(page);
+    fetch(url){requests.push(url); const regions = [];
+      lines.forEach(line => {
+        let last = regions[regions.length - 1];
+        if (!last || last.path !== line.path || last.repo !== line.repo) regions.push(last = {...line, seq: line.seq, lines: []});
+        last.lines.push({op: line.op || '+', line: line.line});
+      });
+      let body = {seq, latest: seq, epoch: 'policy-1', source: 'Pushed PR', regions}; lines = [];
+      if (opts.pages && opts.pages.length) body = opts.pages.shift();
       return Promise.resolve({status, ok: status === 200, json(){return Promise.resolve(body)}})},
     Date, Math});
   vm.runInContext(reader, c); c.hiveReaderStart = win.hiveReaderStart;
   vm.runInContext(boot, c);
   for (const fn of docEvents.DOMContentLoaded || []) fn();
-  const flush = async () => {for (let i = 0; i < 12; i++) await Promise.resolve()};
+  const flush = async () => {for (let i = 0; i < 64; i++) await Promise.resolve()};
   await flush();
   if (!win.HIVE_READER) {assert.equal(requests.length, 0); assert(!doc.getElementById('hive-reader')); return;}
   const byClass = n => elements.find(e => e.className === n);
   const feed = byClass('reader-feed'), statusEl = byClass('reader-status'), button = byClass('reader-pause');
   const fire = () => {assert.equal(timers.size, 1); const [k, fn] = [...timers][0]; timers.delete(k); fn()};
   const key = (key, code) => docEvents.keydown[0]({key, code, target: doc.body, preventDefault(){}});
-  assert.equal(requests[0], '/api/matrix/lines?since=0');
+  assert.equal(requests[0], '/api/matrix/lines?since=0&format=regions');
   if (status !== 200) {
     assert.equal(feed.children.length, 0); assert.equal(timers.size, 0);
     assert(statusEl.textContent.includes(status === 404 ? 'not enabled' : 'Sign in'));
     return;
   }
   const meta = card => card.children[0].children, rows = card => card.children[1].children.map(r => r.textContent);
+  if (opts.boundaries) {
+    // Two complete regions in one file remain separate across pages. The
+    // reader follows continuation rather than skipping to source.latest.
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1], '/api/matrix/lines?since=1&format=regions');
+    assert.equal(feed.children.length, 2);
+    assert.deepEqual(rows(feed.children[0]), ['+ one\n']);
+    assert.deepEqual(rows(feed.children[1]), ['− two\n']);
+    assert.equal(meta(feed.children[1])[3].textContent, 'Buffered snapshot');
+    win.hiveReaderAttach({addEventListener(n, fn){sse[n] = fn}});
+    opts.pages.push({seq: 3, latest: 3, epoch: 'policy-2', regions: [{repo: 'org/repo', pr: 2, path: 'main.go', seq: 3, at, lines: [{op: '+', line: 'new policy'}]}]});
+    sse['code-lines'](); await flush();
+    assert.equal(feed.children.length, 1);
+    assert.deepEqual(rows(feed.children[0]), ['+ new policy\n']);
+    byClass('reader-pause reader-replay').listeners.click();
+    assert.equal(feed.children.length, 1); // old policy is gone from replay too
+    assert.deepEqual(rows(feed.children[0]), ['+ new policy\n']);
+    // Busy feeds evict whole regions under line, text and viewport bounds.
+    const base = {repo: 'org/repo', pr: 2, path: 'main.go', at};
+    opts.pages.push({seq: 10, latest: 10, epoch: 'policy-2', regions: Array.from({length: 7}, (_, i) => ({...base, seq: i + 4, lines: Array.from({length: 200}, () => ({op: '+', line: 'bounded line'}))}))});
+    sse['code-lines'](); await flush();
+    assert(feed.children.reduce((n, card) => n + rows(card).length, 0) <= 1200);
+    assert(feed.children.every(card => rows(card).length === 1 || rows(card).length === 200));
+    opts.pages.push({seq: 50, latest: 50, epoch: 'policy-2', regions: Array.from({length: 40}, (_, i) => ({...base, seq: i + 11, lines: [{op: '+', line: 'one'}]}))});
+    sse['code-lines'](); await flush(); assert.equal(feed.children.length, 32);
+    opts.pages.push({seq: 70, latest: 70, epoch: 'policy-2', regions: Array.from({length: 20}, (_, i) => ({...base, seq: i + 51, lines: [{op: '+', line: 'safe '.repeat(3000)}]}))});
+    sse['code-lines'](); await flush();
+    assert(feed.children.reduce((n, card) => n + rows(card).join('').length * 2, 0) < 256 * 1024);
+    status = 404; sse['code-lines'](); await flush();
+    assert.equal(feed.children.length, 0);
+    return;
+  }
+
   const checkFirst = card => {
     // One contiguous region: blank, indented and repeated lines kept as text.
     assert.deepEqual(rows(card), ['+ <script>alert(1)</script>\n', '+ \n', '+ \tx := 1\n', '+ \tx := 1\n', '\u2212     old()\n']);
     assert.equal(card.children[1].tagName, 'PRE');
     assert.deepEqual(card.children[1].children.map(r => r.className), ['reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-del']);
-    const [repo, file, stage, time] = meta(card);
+    const [repo, file, stage, delivery, time] = meta(card);
     assert.equal(repo.tagName, 'A'); assert.equal(repo.textContent, 'org/repo #2');
     assert.equal(repo.href, 'https://github.com/org/repo/pull/2'); assert.equal(repo.attrs.rel, 'noopener noreferrer');
-    assert.equal(file.textContent, 'main.go'); assert.equal(stage.textContent, 'pushed');
+    assert.equal(file.textContent, 'main.go'); assert.equal(stage.textContent, 'Pushed PR'); assert.equal(delivery.textContent, 'Buffered snapshot');
     assert.equal(time.tagName, 'TIME'); assert.equal(time.attrs.datetime, '2026-11-03T12:00:00.000Z');
     assert(time.textContent.startsWith('observed '));
   };
   const checkSecond = card => {
-    assert.equal(meta(card)[0].href, 'https://example.test/review/7');
+    assert.equal(meta(card)[0].href, 'https://github.com/org/other/pull/7');
     assert.equal(meta(card)[1].textContent, 'README.md');
     assert.equal(rows(card)[0], '+ ' + 'a very long line '.repeat(40) + '\n');
   };
   win.hiveReaderAttach({addEventListener(n, fn){sse[n] = fn}});
-  if (opts.page) {
-    // A capped page resumes from the last returned line, not the newest seq,
-    // so no line is skipped and the region stays one contiguous card.
-    await flush();
-    assert.deepEqual(requests, ['/api/matrix/lines?since=0', '/api/matrix/lines?since=2', '/api/matrix/lines?since=4']);
-    assert.equal(feed.children.length, 2); checkFirst(feed.children[0]); checkSecond(feed.children[1]);
-    return;
-  }
   if (opts.reduced) {
     // Static and scrollable: everything shown at once, nothing scheduled or scrolled.
     assert.equal(feed.children.length, 2); assert.equal(timers.size, 0); assert.equal(scrolls.length, 0);
@@ -187,7 +218,7 @@ async function scenario(query, opts = {}) {
   // Incoming work queues behind the paragraph being read.
   lines = [{seq: 7, repo: 'org/repo', pr: 2, head: 'abc', path: 'b.go', line: 'next', at}]; seq = 7;
   sse['code-lines'](); await flush();
-  assert.equal(requests.at(-1), '/api/matrix/lines?since=6');
+  assert.equal(requests.at(-1), '/api/matrix/lines?since=6&format=regions');
   assert.equal(feed.children.length, 1); assert.equal(timers.size, 1);
   // P pauses and resumes; the button mirrors it.
   key('p'); assert.equal(timers.size, 0); assert.equal(button.textContent, 'Resume');
@@ -200,14 +231,18 @@ async function scenario(query, opts = {}) {
   byClass('reader-scroll').listeners.touchstart(); assert.equal(timers.size, 0);
   button.listeners.click(); key('PageDown'); assert.equal(timers.size, 0);
   button.listeners.click(); assert.equal(timers.size, 1);
-  // A hidden tab stops all motion.
-  doc.hidden = true; docEvents.visibilitychange.forEach(fn => fn()); assert.equal(timers.size, 0);
-  doc.hidden = false; docEvents.visibilitychange.forEach(fn => fn()); await flush();
+  // Quiet hold after consuming the queued paragraph; no automatic replay.
   fire(); assert.equal(feed.children.length, 3); assert.equal(rows(feed.children[2])[0], '+ next\n');
-  // Caught up: a quiet hold with no replay or filler.
-  fire(); assert.equal(timers.size, 0); assert.equal(feed.children.length, 3);
-  assert(statusEl.textContent.includes('Caught up'));
+  fire(); assert.equal(timers.size, 0); assert(statusEl.textContent.includes('Caught up'));
   sse['code-lines'](); await flush(); assert.equal(timers.size, 0); assert.equal(feed.children.length, 3);
+  // Replay requires a deliberate click and is labelled on every card.
+  byClass('reader-pause reader-replay').listeners.click();
+  assert.equal(feed.children.length, 1); assert.equal(meta(feed.children[0])[3].textContent, 'Replay · buffered snapshot');
+  doc.hidden = true; docEvents.visibilitychange.forEach(fn => fn());
+  assert.equal(timers.size, 0); assert.equal(feed.children.length, 0);
+  doc.hidden = false; docEvents.visibilitychange.forEach(fn => fn()); await flush();
+  assert.equal(feed.children.length, 0); assert(statusEl.textContent.includes('No buffered checkpoints'));
+  assert(byClass('reader-freshness').textContent.includes('empty does not mean no work'));
   status = 403; sse['code-lines'](); await flush();
   assert.equal(feed.children.length, 0); assert(statusEl.textContent.includes('Sign in'));
 }
@@ -215,7 +250,11 @@ async function scenario(query, opts = {}) {
   await scenario(''); await scenario('?view=reader'); await scenario('?kiosk=1'); await scenario('?kiosk=1&view=matrix');
   await scenario('?kiosk=1&view=reader');
   await scenario('?kiosk=1&view=reader', {reduced: true});
-  await scenario('?kiosk=1&view=reader', {reduced: true, page: 2});
+  const region = {repo: 'org/repo', pr: 2, path: 'main.go', at};
+  await scenario('?kiosk=1&view=reader', {reduced: true, boundaries: true, pages: [
+    {seq: 1, latest: 2, epoch: 'policy-1', regions: [{...region, seq: 1, lines: [{op: '+', line: 'one'}]}]},
+    {seq: 2, latest: 2, epoch: 'policy-1', regions: [{...region, seq: 2, lines: [{op: '-', line: 'two'}]}]},
+  ]});
   for (const status of [404, 401, 403]) await scenario('?kiosk=1&view=reader', {status});
 })().catch(e => {console.error(e); process.exit(1)});
 `

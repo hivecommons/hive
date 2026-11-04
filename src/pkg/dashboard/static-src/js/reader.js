@@ -13,9 +13,8 @@
     if (!window.HIVE_READER || document.getElementById('hive-reader')) return;
     // Cards kept on screen, regions waiting to be read, and how long one
     // paragraph stays in focus before the next arrives.
-    var MAX_CARDS = 60, MAX_PENDING = 40, BASE_DWELL = 5000, LINE_DWELL = 600, MAX_DWELL = 30000;
+    var MAX_CARDS = 32, MAX_LINES = 1200, MAX_BYTES = 256 * 1024, BASE_DWELL = 5000, LINE_DWELL = 600, MAX_DWELL = 30000;
     var NAV_KEYS = ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'];
-    var STAGES = {'pushed-lines': 'pushed'};
     var root = document.createElement('main');
     root.id = 'hive-reader';
     root.setAttribute('aria-label', 'Code activity reader');
@@ -35,32 +34,44 @@
     button.setAttribute('type', 'button');
     button.setAttribute('aria-pressed', 'false');
     button.setAttribute('title', 'Pause or resume (P / Space)');
+    var replay = element('button', 'reader-pause reader-replay', 'Replay buffered snapshot', bar);
+    replay.setAttribute('type', 'button');
+    replay.setAttribute('title', 'Explicit replay of retained changes; off by default');
+    var freshness = element('span', 'reader-freshness', 'Source has not completed an ingest pass', bar);
     var scroller = element('div', 'reader-scroll');
     scroller.setAttribute('tabindex', '0');
     var feed = element('div', 'reader-feed', '', scroller);
     var motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     var pending = [], current = null, readUntil = 0, timer = 0, lastSeq = 0;
+    var retained = [], retainedLines = 0, retainedBytes = 0, epoch = '', snapshotThrough = null, contentGeneration = 0;
     var enabled = false, manualPause = false, loading = false, again = false, problem = '';
     function paused(){ return manualPause || document.hidden; }
-    function regionKey(line){ return [line.repo, line.pr, line.head || '', line.path].join('\u0000'); }
-    // Consecutive lines of one file at one head form one contiguous region;
-    // a gap in seq (a dropped line or another file) starts a new one. Only
-    // unread regions grow, so a paragraph on screen never changes.
-    function group(lines, stage){
-      lines.forEach(function(line){
-        var last = pending[pending.length - 1], seq = Number(line.seq) || 0;
-        if (last && last.key === regionKey(line) && seq && seq === last.lastSeq + 1) {
-          last.lines.push(line); last.lastSeq = seq; last.at = line.at;
-          return;
+    // The source supplies indivisible regions. Never infer a paragraph from
+    // neighbouring sequence numbers or merge across context/page boundaries.
+    function group(regions){
+      regions.forEach(function(region){
+        if (!region || !Array.isArray(region.lines) || !region.lines.length) return;
+        if (!region.lines.every(function(line){ return line && typeof line.line === 'string' && (line.op === '+' || line.op === '-'); })) return;
+        var size = region.lines.reduce(function(n, line){ return n + line.line.length * 2; }, 0);
+        if (region.lines.length > MAX_LINES || size > MAX_BYTES) return;
+        var item = {repo: region.repo, pr: region.pr, path: region.path, prURL: region.pr_url,
+          stage: 'Pushed PR', at: region.at, lines: region.lines, size: size,
+          delivery: Number(region.seq) <= snapshotThrough ? 'Buffered snapshot' : 'Newly received checkpoint'};
+        retained.push(item); pending.push(item);
+        retainedLines += item.lines.length; retainedBytes += size;
+        while (retainedLines > MAX_LINES || retainedBytes > MAX_BYTES) {
+          var victim = retained.findIndex(function(r){ return r !== current; });
+          var old = retained.splice(victim, 1)[0];
+          retainedLines -= old.lines.length; retainedBytes -= old.size;
+          pending = pending.filter(function(r){ return r !== old; });
+          if (old.node) { feed.removeChild(old.node); old.node = null; }
+          if (current === old) current = null;
         }
-        pending.push({key: regionKey(line), repo: line.repo, pr: Number(line.pr) || 0, path: line.path,
-          stage: stage, prUrl: line.pr_url, lines: [line], lastSeq: seq, at: line.at});
       });
-      if (pending.length > MAX_PENDING) pending = pending.slice(-MAX_PENDING);
     }
-    // Prefer an https pr_url from the source; otherwise derive the link from repo and PR number.
     function prLink(region){
-      if (typeof region.prUrl === 'string' && /^https:\/\/[^\s<>"']+$/.test(region.prUrl)) return region.prUrl;
+      var url = typeof region.prURL === 'string' ? region.prURL : '';
+      if (/^https:\/\/[^\s"'<>]+\/pull\/\d+$/.test(url)) return url;
       if (/^[\w.-]+\/[\w.-]+$/.test(region.repo || '') && region.pr > 0) {
         return 'https://github.com/' + region.repo + '/pull/' + region.pr;
       }
@@ -87,14 +98,15 @@
       }
       element('span', 'reader-file', region.path, meta);
       element('span', 'reader-stage', region.stage, meta);
+      element('span', 'reader-delivery', region.delivery, meta);
       var when = observed(region.at);
       var time = element('time', 'reader-time', when.text, meta);
       if (when.iso) time.setAttribute('datetime', when.iso);
       var diff = element('pre', 'reader-diff', '', article);
       region.lines.forEach(function(line){
-        var del = line.op === '-';
-        var row = element('span', 'reader-line ' + (del ? 'reader-del' : 'reader-add'), '', diff);
-        row.textContent = (del ? '\u2212' : line.op || '+') + ' ' + line.line + '\n';
+        var removed = line.op === '-';
+        var row = element('span', 'reader-line ' + (removed ? 'reader-del' : 'reader-add'), '', diff);
+        row.textContent = (removed ? '\u2212 ' : '+ ') + line.line + '\n';
       });
       return article;
     }
@@ -104,6 +116,7 @@
       while (feed.children.length > MAX_CARDS) {
         var first = feed.children[0], height = first.offsetHeight || 0;
         feed.removeChild(first);
+        retained.forEach(function(r){ if (r.node === first) r.node = null; });
         scroller.scrollTop = Math.max(0, (scroller.scrollTop || 0) - height);
       }
     }
@@ -119,7 +132,7 @@
       var text = problem;
       if (!text && enabled) {
         if (pending.length) text = pending.length + (pending.length === 1 ? ' change' : ' changes') + ' waiting';
-        else text = current ? 'Caught up · holding until new changes are pushed' : 'Waiting for pushed changes…';
+        else text = current ? 'Caught up with available checkpoints · holding' : 'No buffered checkpoints · source may still be warming or filtering';
       }
       if (paused()) text = 'paused' + (text ? ' · ' + text : '');
       status.textContent = text;
@@ -165,51 +178,55 @@
     }
     function inspect(){ setPaused(true); }
     function clearContent(message){
+      contentGeneration++;
       stop();
-      enabled = false; pending = []; current = null; lastSeq = 0; problem = message;
+      enabled = false; pending = []; retained = []; retainedLines = 0; retainedBytes = 0;
+      current = null; lastSeq = 0; snapshotThrough = null; problem = message;
       feed.replaceChildren();
       updateStatus();
     }
     pull = function(){
+      if (document.hidden) return;
       if (loading) { again = true; return; }
       loading = true; again = false;
-      fetch('/api/matrix/lines?since=' + lastSeq, {cache: 'no-store', credentials: 'same-origin'})
+      var requestGeneration = contentGeneration;
+      fetch('/api/matrix/lines?since=' + lastSeq + '&format=regions', {cache: 'no-store', credentials: 'same-origin'})
         .then(function(response){
+          if (requestGeneration !== contentGeneration || document.hidden) return null;
           if (response.status === 404) { clearContent('The code activity reader is not enabled on this hive'); return null; }
           if (response.status === 401 || response.status === 403) { clearContent('Sign in with permission to read code activity'); return null; }
           if (!response.ok) throw new Error('reader pull failed');
           return response.json();
         }).then(function(data){
-          if (!data) return;
+          if (!data || requestGeneration !== contentGeneration || document.hidden) return;
           var seq = Number(data.seq) || 0;
-          // A restarted hive can reset its sequence; start over cleanly.
-          if (seq < lastSeq) { stop(); pending = []; current = null; lastSeq = 0; feed.replaceChildren(); }
-          var raw = Array.isArray(data.lines) ? data.lines : [];
-          var incoming = raw.filter(function(line){
-            return line && typeof line.line === 'string' && typeof line.repo === 'string' && typeof line.path === 'string';
-          });
-          var source = typeof data.source === 'string' ? data.source : '';
-          group(incoming, STAGES[source] || source || 'pushed');
-          // data.seq is the newest line the hive holds, not the last one in
-          // this page: the server caps a page, so resume from the last line
-          // returned and pull again until the page reaches the newest seq.
-          var returned = raw.length ? Number(raw[raw.length - 1] && raw[raw.length - 1].seq) || 0 : 0;
-          var more = returned > 0 && returned < seq;
-          lastSeq = more ? returned : seq;
+          if (data.epoch !== epoch || seq < lastSeq) {
+            clearContent(''); epoch = data.epoch;
+          }
+          if (snapshotThrough === null) snapshotThrough = Number(data.latest) || 0;
+          group(Array.isArray(data.regions) ? data.regions : []);
+          freshness.textContent = data.last_ingest_at
+            ? 'Last source pass: ' + data.last_ingest_at + ' · next expected in ' + (data.next_ingest_in_s || 0) + 's'
+            : 'Source has not completed an ingest pass · empty does not mean no work';
+          if (seq < Number(data.latest)) again = true;
+          lastSeq = seq;
           enabled = true; problem = '';
-          // Hold the reveal while catching up so a region split across
-          // pages still arrives as one paragraph.
-          if (more) { again = true; updateStatus(); return; }
           schedule(false);
-        }).catch(function(){ problem = 'Code activity unavailable · retrying'; updateStatus(); })
+        }).catch(function(){ clearContent('Code activity unavailable · retrying'); })
         .finally(function(){ loading = false; if (again) pull(); });
     };
+    replay.addEventListener('click', function(){
+      if (!enabled || !retained.length) return;
+      stop(); feed.replaceChildren(); current = null; readUntil = 0;
+      retained.forEach(function(r){ r.node = null; r.delivery = 'Replay · buffered snapshot'; });
+      pending = retained.slice(); schedule(false);
+    });
     button.addEventListener('click', function(){ setPaused(!manualPause); });
     scroller.addEventListener('wheel', inspect, {passive: true});
     scroller.addEventListener('touchstart', inspect, {passive: true});
     document.addEventListener('visibilitychange', function(){
-      if (document.hidden) { stop(); updateStatus(); return; }
-      schedule(true); pull();
+      if (document.hidden) { clearContent('Hidden · buffered code cleared'); return; }
+      pull();
     });
     document.addEventListener('keydown', function(event){
       var target = event.target || {};
