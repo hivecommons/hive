@@ -1,0 +1,1 @@
+- An operator's Adopt now takes over any PR, a hive owner's or maintainer's included: the stage engine honours the forced adoption instead of refusing it as person-authored on every sweep, which left the row at "adopting… (queued)" forever. The hive still never adopts a person's own PR on its own initiative; the audit names the author taken over from.
