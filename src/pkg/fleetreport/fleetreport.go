@@ -897,7 +897,7 @@ func IsBenignMessage(msg string) bool {
 	}
 	// A sentinel finding flags a PR for a human: the sweep working as designed,
 	// not a runtime defect (#16112). Match only the finding notice; "sentinel
-	// sweep failed" and "sentinel sweep: PR skipped" stay reportable.
+	// sweep failed" and non-pacing "sentinel sweep: PR skipped" remain reportable.
 	if strings.TrimSpace(m) == "sentinel alert" {
 		return true
 	}
