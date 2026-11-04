@@ -487,9 +487,9 @@ type StageTrackerItem struct {
 	// UnauthorizedStep is set when the item wears hive:unauthorized: the
 	// step the hive's GitHub App is not permitted to take, in words
 	// ("approve workflow runs"), from the `unauthorized:<step>` stage
-	// reason; the gate cell reads "Awaiting human: <step>". Unauthorized
-	// is the pill's tooltip naming the permission and the human action
-	// (hivecommons/hive#14589).
+	// reason; the PR in progress chevron reads "Waiting for @who · <step>
+	// on GitHub" (hive#16524). Unauthorized is the pill's tooltip naming
+	// the permission and the human action (hivecommons/hive#14589).
 	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
 	Unauthorized     string `json:"unauthorized,omitempty"`
 	// DecisionNeeded is set on a row parked on a person (085 / 045 / 015,
@@ -709,6 +709,9 @@ type StageTrackerLinkedPR struct {
 	Stage          int                         `json:"stage,omitempty"`
 	StageSince     *time.Time                  `json:"stage_since,omitempty"`
 	Caption        string                      `json:"caption,omitempty"`
+	// UnauthorizedStep mirrors the PR's own field so the nested chevron
+	// reads "Waiting for @who · <step> on GitHub" too (hive#16524).
+	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
 	// NoteChangedAt mirrors the PR row's: when the caption last changed
 	// meaning.
 	NoteChangedAt *time.Time `json:"note_changed_at,omitempty"`

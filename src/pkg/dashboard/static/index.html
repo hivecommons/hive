@@ -15755,10 +15755,44 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (state === 'resolving-conflicts') return 'Adopting · fixer resolving conflicts';
       return 'Adopted → #' + by;
     }
-    const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
+    // "Waiting for @clubanderson · rerun shared ci on GitHub": the person
+    // owed the step is named when the author is one (a hive / bot / clanker
+    // author cannot grant the permission; a maintainer is asked instead).
+    const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Waiting for';
+    const STAGE_TRACKER_UNAUTHORIZED_WHERE = 'on GitHub';
+    function stageTrackerUnauthorizedWho(item) {
+      // An issue row drawn on its one covering PR names that PR's author.
+      const linked = item && item.via_pr && Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => lp && String(lp.unauthorized_step || '').trim()) : [];
+      const src = linked.length === 1 ? linked[0] : item;
+      const author = String((src && src.author) || '').trim().replace(/^@/, '');
+      const kind = String((src && src.author_kind) || '');
+      if (author && kind !== 'hive' && kind !== 'bot' && kind !== 'clanker') return '@' + author;
+      return 'a maintainer';
+    }
     function stageTrackerUnauthorizedWord(item) {
       const step = String((item && item.unauthorized_step) || '').trim();
-      return step ? STAGE_TRACKER_UNAUTHORIZED_WORD + ': ' + step : '';
+      return step ? STAGE_TRACKER_UNAUTHORIZED_WORD + ' ' + stageTrackerUnauthorizedWho(item) + ' · ' + step + ' ' + STAGE_TRACKER_UNAUTHORIZED_WHERE : '';
+    }
+    // A PR parked at 085 because a person has to act ON THE PR (rerun CI,
+    // approve workflow runs, resolve a permission, answer review findings
+    // or red checks still open on its head) is not queued, merging or
+    // merge-ready: it lights PR in progress, never Merge queue. Merge
+    // queue is only for rows actually queued / merging / merged, or a
+    // merge-ready PR (review approved, CI green on this head) parked on a
+    // merge decision. A bare 085 with no track evidence keeps the gate:
+    // the person decides there (hive#14821). Hive's own #16524 read
+    // "Awaiting human: rerun shared ci" under Merge queue with CI unknown
+    // and review findings open. Mirrors stageTrackerPersonActsOnPR in Go.
+    function stageTrackerPersonActsOnPR(item) {
+      if (!item || (item.via_pr ? 'pr' : item.kind) !== 'pr' || Number(item.stage) !== STAGE_TRACKER_HUMAN_GATED) return false;
+      if (item.merge_gate && item.merge_gate.state) return false;
+      if (item.merge_train && item.merge_train.state) return false;
+      const onHead = a => !!a && (!a.head || !item.head || String(a.head) === String(item.head));
+      const review = onHead(item.review_activity) ? item.review_activity : null;
+      const ci = onHead(item.ci_activity) ? item.ci_activity : null;
+      const mergeReady = !!(review && review.state === 'approved' && ci && ci.state === 'passing');
+      if (String(item.unauthorized_step || '').trim()) return !mergeReady;
+      return !!((review && review.state !== 'approved') || (ci && ci.state !== 'passing'));
     }
     // A parked issue with a structured blocker (item.blocker, #15099) reads
     // "Blocked · App lacks workflows permission", never "Needs human
@@ -17741,6 +17775,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // sits at 050/070, and hive's own #15400 ("1st") lit CI / Review
       // next to its 2nd-place sibling in Merge queue (hivecommons/hive#15395).
       if (item && item.merge_train && item.merge_train.state && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
+      // A person owes a step on the PR itself (085 under hive:unauthorized,
+      // not merge-ready): PR in progress, with the merge-queue chevron
+      // empty (hivecommons/hive#16524).
+      if (kind === 'pr' && typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) return STAGE_TRACKER_PR_COLUMN;
       if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
@@ -19151,7 +19189,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
         state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
@@ -19581,7 +19619,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
