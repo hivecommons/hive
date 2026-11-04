@@ -134,6 +134,7 @@
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-agent-nav="${(window.CSS && CSS.escape) ? CSS.escape(name) : String(name).replace(/["\\]/g, '\\$&')}"]`);
       if (active) active.classList.add('active');
+      if (typeof dashboardProgressiveWake === 'function') dashboardProgressiveWake();
       navPeekRestore('agents-section', { instant: true });
       const expanded = navPeekExpand('agents-section');
       if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
@@ -938,4 +939,3 @@
     // Agent descriptions now come from the JSON status payload (agent.description field).
     // This empty map serves as a fallback for agents without a description in config.
     const AGENT_DESCRIPTIONS = {};
-

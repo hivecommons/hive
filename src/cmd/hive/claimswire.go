@@ -246,6 +246,9 @@ func githubClaimHooksOn(queue *claimEffectQueue, ctx context.Context, cfg *confi
 	}
 	comment := cfg.Governor.Claims.CommentEnabled()
 	label := cfg.Governor.Claims.LabelEnabled()
+	// The ledger folds every transition into one edited comment per issue
+	// (hivecommons/hive#16433); off, each transition is its own comment.
+	ledgerMode := cfg.GitHub.Notifications.ClaimLedgerEnabled()
 	attempt := func(fn func(ctx context.Context, gh *github.Client) error, gh *github.Client) error {
 		cctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
 		defer cancel()
@@ -270,13 +273,44 @@ func githubClaimHooksOn(queue *claimEffectQueue, ctx context.Context, cfg *confi
 			logger.Warn("issue-claims: GitHub side effect failed", "what", what, "issue", c.Key(), "attempts", 1, "error", err)
 		}
 	}
+	// ledger edits the issue's claim ledger comment for event, posting the
+	// one notifying comment a human owed one gets. The edit is retried: a
+	// PATCH that lands twice is the same body, unlike a POST.
+	ledger := func(what string, event claims.LedgerEvent, notice func(previous string) string) {
+		run(what, event.Claim, func(ctx context.Context, gh *github.Client) error {
+			res, err := gh.EditIssueMarkerComment(ctx, event.Claim.Repo, event.Claim.Issue, claims.LedgerMarker, func(previous string) string {
+				return claims.LedgerComment(previous, event)
+			})
+			if err != nil {
+				return err
+			}
+			if notice == nil || !res.Found {
+				// A freshly created ledger already notified: it carries the
+				// same @-mention the standalone comment did.
+				return nil
+			}
+			if body := notice(res.Previous); body != "" {
+				return gh.CreateIssueCommentBudgeted(ctx, event.Claim.Repo, event.Claim.Issue, body)
+			}
+			return nil
+		})
+	}
 	return claims.Hooks{
 		OnClaimed: func(c claims.Claim, outcome claims.Outcome) {
 			queue.run(c.Key(), func() {
 				if comment && outcome == claims.OutcomeClaimed {
-					runOnce("claim comment", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
-					})
+					if ledgerMode {
+						ledger("claim ledger", claims.LedgerEvent{Claim: c, At: c.ClaimedAt}, func(previous string) string {
+							if claims.LedgerNotifiesHuman(previous, c) {
+								return claims.LedgerNoticeComment(c)
+							}
+							return ""
+						})
+					} else {
+						runOnce("claim comment", c, func(ctx context.Context, gh *github.Client) error {
+							return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
+						})
+					}
 				}
 				if label {
 					// The stage is a fact for the engine (ADR-0025): a live
@@ -301,9 +335,17 @@ func githubClaimHooksOn(queue *claimEffectQueue, ctx context.Context, cfg *confi
 		OnTakenOver: func(now, previous claims.Claim) {
 			queue.run(now.Key(), func() {
 				if comment {
-					runOnce("takeover comment", now, func(ctx context.Context, gh *github.Client) error {
-						return gh.CreateIssueComment(ctx, now.Repo, now.Issue, claims.TakeoverComment(now, previous))
-					})
+					if ledgerMode {
+						ledger("takeover ledger", claims.LedgerEvent{Claim: now, Previous: previous, At: now.ClaimedAt}, func(string) string {
+							// The displaced person must hear it; an edit
+							// tells them nothing.
+							return claims.LedgerDisplacedNotice(now, previous)
+						})
+					} else {
+						runOnce("takeover comment", now, func(ctx context.Context, gh *github.Client) error {
+							return gh.CreateIssueComment(ctx, now.Repo, now.Issue, claims.TakeoverComment(now, previous))
+						})
+					}
 				}
 				if label {
 					run("claimed stage", now, func(ctx context.Context, gh *github.Client) error {
@@ -350,8 +392,9 @@ func githubClaimHooksOn(queue *claimEffectQueue, ctx context.Context, cfg *confi
 					})
 				}
 				// Every early release needs a marker: the 🔒 comment is
-				// never edited, and issueclaim.Latest otherwise reads the
-				// hold as live until until=. This includes relay disconnect,
+				// never edited (the ledger rewrites it to carry the release
+				// marker instead), and issueclaim.Latest otherwise reads
+				// the hold as live until until=. This includes relay disconnect,
 				// revoke and lease-expiry releases: omitting them starved
 				// hive agents while relays flapped (hivecommons/hive#13579).
 				// TTL expiry needs no marker: until= has already lapsed.
@@ -361,9 +404,13 @@ func githubClaimHooksOn(queue *claimEffectQueue, ctx context.Context, cfg *confi
 				// SetIssueClaimLedgerHive still prevents this hive from
 				// believing its own stale hold.
 				if comment && reason != claims.ReasonExpired {
-					runOnce("release comment", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ReleaseComment(c, reason))
-					})
+					if ledgerMode {
+						ledger("release ledger", claims.LedgerEvent{Claim: c, Released: true, Reason: reason, At: time.Now()}, nil)
+					} else {
+						runOnce("release comment", c, func(ctx context.Context, gh *github.Client) error {
+							return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ReleaseComment(c, reason))
+						})
+					}
 				}
 			})
 		},

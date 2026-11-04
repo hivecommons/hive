@@ -1,11 +1,13 @@
 package dashboard
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -15,9 +17,13 @@ import (
 // native stage and next mover. Worker activity requires assignment AND worker;
 // CI activity comes only from observed required checks.
 type StageTrackerActivity struct {
-	Head       string     `json:"head"`
-	State      string     `json:"state"`
-	Caption    string     `json:"caption"`
+	Head    string `json:"head"`
+	State   string `json:"state"`
+	Caption string `json:"caption"`
+	// Detail is the longer, plain-language sentence behind Caption: what
+	// the state means and what would move it. The chevron clamps Caption;
+	// the tooltip carries Detail in full.
+	Detail     string     `json:"detail,omitempty"`
 	Actor      string     `json:"actor,omitempty"`
 	Source     string     `json:"source"`
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
@@ -25,6 +31,20 @@ type StageTrackerActivity struct {
 	Blocker    string     `json:"blocker,omitempty"`
 	URL        string     `json:"url,omitempty"`
 	Active     bool       `json:"active,omitempty"`
+	// Check counts on the current head for the CI track (hivecommons/hive#16484):
+	// over the required checks when branch protection is known, otherwise
+	// over every check run observed on the head. ChecksTotal == 0 means no
+	// count could be made ("CI ?/?").
+	ChecksPassed  int      `json:"checks_passed,omitempty"`
+	ChecksTotal   int      `json:"checks_total,omitempty"`
+	ChecksFailed  int      `json:"checks_failed,omitempty"`
+	ChecksFailing []string `json:"checks_failing,omitempty"`
+	// Perspective counts on the current head for the Review track: Total is
+	// the swarm's expected set for this PR (configured perspectives plus any
+	// extra one dispatched or reported for the head), Done the ones with a
+	// verdict for the current head.
+	PerspectivesDone  int `json:"perspectives_done,omitempty"`
+	PerspectivesTotal int `json:"perspectives_total,omitempty"`
 }
 
 const trackerActivityFreshWindow = 2 * time.Minute
@@ -34,7 +54,8 @@ func trackerUnknownActivity(head, caption string) *StageTrackerActivity {
 }
 
 func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerActivity {
-	out := trackerUnknownActivity(pr.HeadSHA, "CI unknown · required checks not observed")
+	out := trackerUnknownActivity(pr.HeadSHA, "CI unknown · no check results observed for this head yet")
+	out.Detail = "hive has not yet seen which checks branch protection requires, or any check run or commit status for the PR's current commit."
 	a := pr.CIActivity
 	if a == nil || pr.HeadSHA == "" || !strings.EqualFold(a.Head, pr.HeadSHA) {
 		return out
@@ -47,6 +68,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Source += "+github-commit-statuses"
 	}
 	if !a.RequiredKnown || a.RequiredSource == "" || len(a.RequiredChecks) == 0 || len(a.Required) == 0 {
+		stageTrackerCountHeadChecks(out, a)
 		return out
 	}
 	type requiredObservation struct {
@@ -81,11 +103,20 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			}
 		}
 		if !found {
+			stageTrackerCountHeadChecks(out, a)
 			return out
 		}
 	}
-	out.State, out.Caption = "passing", "CI passed"
+	out.State, out.Caption = "passing", "CI green"
+	// Per required-check name: the leading state across its observations,
+	// for the passed / failed counts.
+	perName := map[string]string{}
 	running := false
+	// Per required-check name: which have a final result, for the running count.
+	settled := map[string]bool{}
+	for _, name := range a.Required {
+		settled[name] = true
+	}
 	for _, observation := range observations {
 		name := observation.name
 		check := github.PRActivityCheck{}
@@ -116,8 +147,14 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 				state = "failing"
 			}
 		}
+		if state != "passing" && state != "failing" && state != "skipped" {
+			settled[name] = false
+		}
 		// A red required check leads, then missing/unknown, then running/queued.
 		rank := map[string]int{"passing": 0, "queued": 1, "running": 2, "skipped": 3, "unknown": 4, "missing": 5, "failing": 6}
+		if previous, seen := perName[name]; !seen || rank[state] >= rank[previous] {
+			perName[name] = state
+		}
 		if rank[state] >= rank[out.State] {
 			out.State, out.Since, out.URL = state, check.Since, check.URL
 			out.ObservedAt = a.ObservedAt
@@ -129,28 +166,168 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			}
 		}
 	}
-	if out.State == "passing" && a.NeedsCommitStatusEvidence() && !a.StatusesKnown {
+	statusesMissing := out.State == "passing" && a.NeedsCommitStatusEvidence() && !a.StatusesKnown
+	if statusesMissing {
 		out.State, out.Blocker = "unknown", "commit statuses not observed"
 	}
+	done := 0
+	for _, name := range a.Required {
+		if settled[name] {
+			done++
+		}
+	}
+	total := len(a.Required)
+	out.ChecksTotal = total
+	for _, name := range a.Required {
+		switch perName[name] {
+		case "passing":
+			out.ChecksPassed++
+		case "failing":
+			out.ChecksFailed++
+			out.ChecksFailing = append(out.ChecksFailing, name)
+		}
+	}
+	check := fmt.Sprintf("%q", out.Blocker)
 	switch out.State {
+	case "passing":
+		out.Caption = "CI green · all " + plural(total, "required check") + " passed"
+		out.Detail = "Every check that branch protection requires has reported success for the PR's current commit."
 	case "failing":
-		out.Caption = "CI failing · " + out.Blocker
+		out.Caption = "CI failing · " + check + " red"
+		out.Detail = "Required check " + check + " finished without success (failed, timed out, was cancelled, or needs action) on the PR's current commit. A fix or a re-run has to turn it green before CI can pass."
 	case "running":
-		out.Caption = "CI running"
+		out.Caption = fmt.Sprintf("CI running · %d/%d checks done", done, total)
+		out.Detail = fmt.Sprintf("%d of the %s have a final result; the rest are still executing on the PR's current commit.", done, plural(total, "required check"))
 	case "queued":
-		out.Caption = "CI queued"
+		out.Caption = "CI queued · " + check + " waiting for a runner"
+		out.Detail = "Required check " + check + " has been requested for the PR's current commit but has not started executing yet."
 	case "missing":
-		out.Caption = "CI waiting · " + out.Blocker + " not observed"
+		out.Caption = "CI waiting · required check " + check + " hasn't reported for this head yet"
+		out.Detail = "Branch protection requires a check named " + check + ", but no check run or commit status with that name exists for the PR's current commit. Usually the workflow that produces it has not been triggered; a push, re-run, or label can start it."
 	case "unknown":
-		out.Caption = "CI unknown · " + out.Blocker
+		if statusesMissing {
+			out.Caption = "CI unknown · commit statuses not observed for this head"
+			out.Detail = "A required check is reported as a commit status rather than a check run, and hive has not yet fetched commit statuses for the PR's current commit."
+		} else {
+			out.Caption = "CI unknown · " + check + " reported but with no conclusion"
+			out.Detail = "Required check " + check + " exists for the PR's current commit but hive cannot read a clear result from it (several runs share the name, or the run ended with no conclusion)."
+		}
 	case "skipped":
-		out.Caption = "CI skipped · " + out.Blocker
+		out.Caption = "CI skipped · check " + check + " skipped"
+		out.Detail = "Required check " + check + " finished as skipped or neutral on the PR's current commit, which branch protection does not count as a pass."
 	}
 	out.Active = running && a.ObservedAt != nil && !a.ObservedAt.After(now) && now.Sub(*a.ObservedAt) <= trackerActivityFreshWindow
 	if running && out.State != "running" {
-		out.Caption += " · others running"
+		out.Caption += " · other checks still running"
 	}
 	return out
+}
+
+// stageTrackerCountHeadChecks fills the check counts from every check run
+// observed on the head when the required set is not known: one entry per
+// check name, red if any run of that name is red, green only if its latest
+// run succeeded.
+func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivity) {
+	type tally struct {
+		passing, failing bool
+		since            time.Time
+	}
+	byName := map[string]*tally{}
+	var order []string
+	for _, check := range a.Checks {
+		if check.Head != "" && !strings.EqualFold(check.Head, a.Head) {
+			continue
+		}
+		t := byName[check.Name]
+		if t == nil {
+			t = &tally{}
+			byName[check.Name] = t
+			order = append(order, check.Name)
+		}
+		at := time.Time{}
+		if check.Since != nil {
+			at = *check.Since
+		}
+		red := check.State == "completed" && (check.Conclusion == "failure" || check.Conclusion == "timed_out" || check.Conclusion == "cancelled" || check.Conclusion == "action_required" || check.Conclusion == "startup_failure" || check.Conclusion == "stale")
+		if red {
+			t.failing = true
+		}
+		if !at.Before(t.since) {
+			t.since, t.passing = at, check.State == "completed" && check.Conclusion == "success"
+		}
+	}
+	out.ChecksTotal = len(order)
+	for _, name := range order {
+		t := byName[name]
+		switch {
+		case t.failing:
+			out.ChecksFailed++
+			out.ChecksFailing = append(out.ChecksFailing, name)
+		case t.passing:
+			out.ChecksPassed++
+		}
+	}
+}
+
+// stageTrackerExpectedPerspectives is the swarm's perspective set for this
+// hive: the configured list (built-ins when empty), falling back to the
+// built-ins when the configuration cannot be resolved.
+func stageTrackerExpectedPerspectives(cfg *config.Config) []review.Perspective {
+	var names []string
+	var prompts map[string]string
+	if cfg != nil {
+		names, prompts = cfg.Review.Perspectives, cfg.Review.PerspectivePrompts
+	}
+	if set, err := review.NewPerspectiveSet(names, prompts); err == nil && set.Len() > 0 {
+		return set.List()
+	}
+	return append([]review.Perspective(nil), review.DefaultPerspectives...)
+}
+
+// stageTrackerCountPerspectives fills the Review track's done / total
+// perspective counts for the PR's current head: total is the expected set
+// plus any extra perspective dispatched or reported for the head; done the
+// perspectives with a verdict for the head (the aggregate's, or the latest
+// verified bundle verdict).
+func stageTrackerCountPerspectives(out *StageTrackerActivity, pr github.PullRequest, bundle *evidence.Bundle, agg *review.Aggregate, dispatch review.DispatchState, qualify func(string) string, expected []review.Perspective) {
+	if out == nil || pr.HeadSHA == "" {
+		return
+	}
+	total := map[review.Perspective]bool{}
+	done := map[review.Perspective]bool{}
+	for _, p := range expected {
+		total[p] = true
+	}
+	if agg != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, agg.Repo, agg.Number, agg.HeadSHA) {
+		for p, v := range agg.Perspectives {
+			total[p] = true
+			if v != "" {
+				done[p] = true
+			}
+		}
+	}
+	if bundle != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, bundle.Repo, bundle.Number, bundle.HeadSHA) {
+		for _, verdict := range trackerLatestBundleVerdicts(bundle) {
+			if verdict.Perspective == "" {
+				continue
+			}
+			total[review.Perspective(verdict.Perspective)] = true
+			if verdict.Verdict != "" {
+				done[review.Perspective(verdict.Perspective)] = true
+			}
+		}
+	}
+	for _, pending := range dispatch.Pending {
+		if pending.Perspective != "" && !pending.Decision && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, qualify(pending.Repo), pending.Number, pending.HeadSHA) {
+			total[pending.Perspective] = true
+		}
+	}
+	out.PerspectivesTotal, out.PerspectivesDone = len(total), 0
+	for p := range done {
+		if total[p] {
+			out.PerspectivesDone++
+		}
+	}
 }
 
 func trackerHeadMatches(repo string, number int, head, observedRepo string, observedNumber int, observedHead string) bool {
@@ -416,7 +593,7 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 		// Bind an observed successful, worktree-verified edit to the exact
 		// actor/repo/head assignment; unsupported instrumentation is unknown.
 		if codeWork := trackerAssignedCodeWorker(status, it.Repo, it.Number, it.Head, fix.Agent, fix.Dispatched, now); codeWork != nil {
-			out.State, out.Caption, out.Active = "fixing", "Fixing · "+fix.Agent, true
+			out.State, out.Caption, out.Active = "fixing", "Remediating · "+fix.Agent, true
 			out.Source, out.ObservedAt = "fix-dispatch+"+codeWork.Source, timePtr(codeWork.At)
 			it.DisplayColumn = trackerNumberPRInProgress
 		}
@@ -429,7 +606,8 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 					if err != nil || at.Before(fix.Dispatched) || at.After(now) || now.Sub(at) > trackerActivityFreshWindow {
 						continue
 					}
-					out.State, out.Caption = "waiting_ci", "Fix task waiting on CI · not observed coding"
+					out.State, out.Caption = "waiting_ci", "Fix task idle · agent waiting for CI before coding"
+					out.Detail = "The assigned fix agent is holding until CI reports on the PR's current commit; no code edits have been observed yet."
 					out.Source, out.ObservedAt = "fix-dispatch+current-worker-ci-wait", &at
 					if it.Stage != trackerNumberNeedsAuthor && it.Stage != trackerNumberReturned && it.Stage != trackerNumberAdopted {
 						it.DisplayColumn = trackerNumberReviewPending
@@ -454,7 +632,8 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 			out = &StageTrackerActivity{Head: it.Head, State: "pushed", Caption: "New head pushed · CI and re-review",
 				Source: "recorded-push", Since: it.Push.Since}
 			if it.Push.State == pushStateChecking {
-				out.State, out.Caption, out.Source = "waiting_ci", "CI retry · no new head observed", "recorded-ci-retry"
+				out.State, out.Caption, out.Source = "waiting_ci", "CI retry requested · no new commit pushed yet", "recorded-ci-retry"
+				out.Detail = "A CI re-run was requested on the PR's current commit; the PR head has not changed, so the tracker waits for the re-run's result."
 			}
 		}
 	}
@@ -462,15 +641,19 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 	if it.Stage == trackerNumberNeedsDecision || it.Stage >= trackerNumberAwaitingMerge || it.Superseded != nil {
 		it.DisplayColumn = 0
 	}
-	if out.State == "waiting_fixer" && strings.HasPrefix(it.Caption, "Fixing paused") {
-		out.Blocker = strings.Replace(it.Caption, "Fixing paused", "Fix task blocked", 1)
+	if out.State == "waiting_fixer" && (strings.HasPrefix(it.Caption, "Remediation paused") || strings.HasPrefix(it.Caption, "Fixing paused")) {
+		detail := strings.TrimPrefix(it.Caption, "Remediation paused")
+		if detail == it.Caption {
+			detail = strings.TrimPrefix(it.Caption, "Fixing paused")
+		}
+		out.Blocker = "Fix task blocked" + detail
 		out.Source += "+fix-dispatch-status"
 	}
 	it.CodeActivity = out
 	// Replace generic or previously projected activity, not independent
 	// native facts such as a foreign bot conflict, hold or rebase episode.
 	if it.Stage == trackerNumberFixing && it.Superseded == nil &&
-		(it.Caption == "" || strings.HasPrefix(it.Caption, "Fixing") || activityCaption || out.Active) {
+		(it.Caption == "" || strings.HasPrefix(it.Caption, "Remediating") || strings.HasPrefix(it.Caption, "Remediation paused") || strings.HasPrefix(it.Caption, "Fixing") || activityCaption || out.Active) {
 		it.Caption = out.Caption
 		if out.Actor != "" && !out.Active {
 			it.Caption += " · " + out.Actor

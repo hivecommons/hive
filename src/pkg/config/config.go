@@ -205,7 +205,9 @@ type Config struct {
 	// exposure is opt-in; with remote_enabled false the endpoint remains usable
 	// only through the existing dashboard/contribute auth path.
 	TaskMCP TaskMCPConfig `yaml:"task_mcp,omitempty" json:"task_mcp,omitempty"`
-
+	// ConfigGuard is the `config:` block: how the config itself is loaded
+	// (hivecommons/hive#16438). See ConfigGuardConfig in gate_regression.go.
+	ConfigGuard ConfigGuardConfig `yaml:"config,omitempty" json:"config,omitempty"`
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
 	// anywhere: the delete handlers dropped the agent from the in-memory map
@@ -236,6 +238,11 @@ type Config struct {
 	// dashboard can raise a banner for each. Runtime-only; see
 	// DegradeContradictingLaunchCmds.
 	LaunchCmdDegradations []LaunchCmdDegradation `yaml:"-" json:"-"`
+	// GateRegressions lists the safety gates a previous runtime overlay
+	// carried that this config lacks or weakens, as detected at boot
+	// (hivecommons/hive#16438). Runtime-only; served in /api/status as
+	// config.gate_regressions. See DetectPriorOverlayGateRegressions.
+	GateRegressions []GateRegression `yaml:"-" json:"-"`
 	// ReviewerAutoscaleActive is the reviewer autoscaler's current target
 	// replica count for the autoscaled lane (hivecommons/hive#14685).
 	// Runtime-only: it is never persisted, is carried across config reloads

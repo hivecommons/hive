@@ -348,7 +348,7 @@
       }
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);
-      } else { start(); }
+      } else { queueMicrotask(start); }
     })();
 
     const OC_TOPBAR_HEIGHT = 64;

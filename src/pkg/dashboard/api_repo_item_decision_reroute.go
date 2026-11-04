@@ -117,7 +117,10 @@ func (s *Server) handleRepoItemAdoptNow(ctx context.Context, w http.ResponseWrit
 		jsonError(w, "queuing forced adoption: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	s.audit.LogRecord(user, auditRepoItemDecisionAdoptNow, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", "pr", "action", repoItemDecisionAdoptNowAction, "label", delegatedecision.LabelAdoptSupersede), "", repoFull, number)
+	// The audit names whose PR was taken over: an operator may force the
+	// adoption of anyone's PR, a hive owner's included, and that choice
+	// stays attributable.
+	s.audit.LogRecord(user, auditRepoItemDecisionAdoptNow, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", "pr", "action", repoItemDecisionAdoptNowAction, "label", delegatedecision.LabelAdoptSupersede, "author", facts.Author, "author_owner", strconv.FormatBool(s.isAuthorizedUserLogin(facts.Author))), "", repoFull, number)
 	superseding := s.nudgeSweepAndAwaitAdoption(ctx, store, key, repoFull, number)
 	jsonResponse(w, repoItemAdoptNowResponse(repoFull, number, superseding))
 }

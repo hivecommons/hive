@@ -58,6 +58,7 @@ html/tracker.html
 html/faq.html
 glue/main-script-open.html
 js/core.js
+js/progressive.js
 js/feedback.js
 js/sections.js
 js/layout.js

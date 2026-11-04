@@ -13427,6 +13427,30 @@ test('#9078 short task prompts use the same bracketed-paste path', () => {
   } finally { teardown(relay); }
 });
 
+test('#16423 oversized task prompts are pasted via load-buffer on every backend', () => {
+  const relay = loadRelay({ backend: 'claude', paneText: CODEX_WORKING_PANE });
+  try {
+    relay.setCliReady(true);
+    const prompt = 'lane role prompt. ' + 'padding '.repeat(7000);
+    relay.tmuxSendKeys(prompt);
+    const loads = tmuxCalls(relay, 'load-buffer');
+    assert.strictEqual(loads.length, 1);
+    assert.strictEqual(loads[0].opts && loads[0].opts.input, prompt);
+    assert.strictEqual(tmuxCalls(relay, 'paste-buffer').length, 1);
+    assert.deepStrictEqual(relay.__tmuxSends().filter(c => / -l lane role prompt/.test(c)), [],
+      'an oversized prompt must not be sent as one send-keys argument');
+  } finally { teardown(relay); }
+});
+
+test('#16423 small task prompts on claude keep the send-keys path', () => {
+  const relay = loadRelay({ backend: 'claude', paneText: CODEX_WORKING_PANE });
+  try {
+    relay.setCliReady(true);
+    relay.tmuxSendKeys('short task prompt');
+    assert.strictEqual(tmuxCalls(relay, 'load-buffer').length, 0);
+  } finally { teardown(relay); }
+});
+
 // #9082: tmux capture-pane -p pads to the pane height. A codex turn that is
 // in flight renders "esc to interrupt" near the top of a tall pane, so a raw
 // slice(-15) window is blank padding and the busy marker is never seen.

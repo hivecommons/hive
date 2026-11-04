@@ -55,6 +55,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		cfg = s.deps.Config
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
+	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
 	verifier, verifierErr := s.reviewEvidenceVerifier()
 	var evidenceVerifier *github.ReviewEvidenceVerifier
 	if verifierErr == nil {
@@ -181,6 +182,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		stageTrackerApplyTracking(it, stage)
 		if c := stageTrackerSoakCaption(rec, now); c != "" {
 			it.Caption = c
 		}
@@ -469,6 +471,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			currentAggregate = &a
 		}
 		it.ReviewActivity = stageTrackerReviewActivity(activityPR, bundle, currentAggregate, dispatchState, status, now)
+		stageTrackerCountPerspectives(it.ReviewActivity, activityPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
 			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
@@ -526,7 +529,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// A push projection can advance the head ahead of the cached PR list.
 		// Never leave old-head approval/check verdicts on the projected item.
 		if it.CIActivity == nil || !strings.EqualFold(it.CIActivity.Head, it.Head) {
-			it.CIActivity = trackerUnknownActivity(it.Head, "CI unknown · current-head checks not observed")
+			it.CIActivity = trackerUnknownActivity(it.Head, "CI unknown · no check results observed for this head yet")
 		}
 		if it.ReviewActivity == nil || !strings.EqualFold(it.ReviewActivity.Head, it.Head) {
 			currentPR := github.PullRequest{Repo: activityItem.Repo, Number: it.Number, HeadSHA: it.Head, Author: it.Author}
@@ -542,6 +545,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				currentAggregate = &a
 			}
 			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
+			stageTrackerCountPerspectives(it.ReviewActivity, currentPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 		}
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
 		it.CodeActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.DisplayColumn, activityItem.Caption

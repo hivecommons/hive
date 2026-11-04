@@ -39,7 +39,7 @@ func stageTrackerApplyFixerStatus(it *StageTrackerItem, fixer review.FixDispatch
 	if slices.Contains(it.Modifiers, modNeedsRebase) {
 		why += "; conflicting with the base branch"
 	}
-	it.Caption = "Fixing paused — " + why + "; no fix job is dispatched"
+	it.Caption = "Remediation paused — " + why + "; no fix job is dispatched"
 	it.StageActor.Kind = StageActorNone
 	it.StageActor.Login = ""
 	it.StageActor.Why = "nobody — " + why + "; the hive will not re-kick it"

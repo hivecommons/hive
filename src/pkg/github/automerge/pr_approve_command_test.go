@@ -128,9 +128,11 @@ func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
 		name, patch string
 		trusted     []string
 		commits     []*gh.RepositoryCommit
+		tagSHA      string // upstream tags/v5 target; "" means testPinNewSHA
 		want        string
 	}{
 		{name: "trusted pure pin", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: verifiedHead, want: "releases that hold on the current head"},
+		{name: "upstream tag points elsewhere", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: verifiedHead, tagSHA: strings.Repeat("c", 40), want: "requires a person to merge manually"},
 		{name: "untrusted author", patch: pin, trusted: []string{"someone-else"}, want: "requires a person to merge manually"},
 		{name: "missing patch", trusted: []string{testHiveAppBotLogin}, want: "requires a person to merge manually"},
 		{name: "head commit pushed by another login", patch: pin, trusted: []string{testHiveAppBotLogin}, commits: []*gh.RepositoryCommit{
@@ -160,6 +162,12 @@ func TestPRApproveReplyPinOnlyMatchesSweep(t *testing.T) {
 						t.Errorf("commit list read for a diff the classifier refuses")
 					}
 					json.NewEncoder(w).Encode(tc.commits)
+				case "/repos/actions/checkout/git/ref/tags/v5":
+					sha := tc.tagSHA
+					if sha == "" {
+						sha = testPinNewSHA
+					}
+					json.NewEncoder(w).Encode(testPinRef("commit", sha))
 				default:
 					t.Errorf("unexpected read: %s", r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)

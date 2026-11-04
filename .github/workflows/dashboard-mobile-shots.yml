@@ -9,6 +9,7 @@ on:
       - 'src/pkg/dashboard/**'
       - 'src/scripts/dashboard-mobile-shots.mjs'
       - 'src/scripts/fixtures/dashboard-preparation-rail.mjs'
+      - 'src/scripts/fixtures/dashboard-activity-density.mjs'
       - '.github/workflows/dashboard-mobile-shots.yml'
 
 concurrency:

@@ -198,9 +198,16 @@ commit to the listed identity, since a spoofed committer email is not on the
 signer's account and fails verification. Dependabot and Renovate commits are
 web-flow committed and signed; a human trusted author must commit and sign as
 themselves. A commit list that cannot be fetched, is empty, is longer than
-GitHub serves, or does not end at the head holds the PR. The diff check reuses the file list the
+GitHub serves, or does not end at the head holds the PR. Finally every new
+`action-sha` pin must be anchored in its upstream action repository, because
+GitHub resolves a `uses:` SHA across the whole fork network: with a
+`# vX[.Y[.Z]]` comment, the upstream `tags/vX…` ref (annotated tags
+dereferenced) must point at exactly the new SHA; without one, the new SHA must
+be an ancestor of the upstream default branch. A 404, mismatch, rate limit or
+any other API error holds the PR. Image digests are content-addressed and need
+no such check. The diff check reuses the file list the
 path gate already fetches, so a PR the classifier refuses costs no extra API
-call; the commit list is read only once the diff qualifies. A repo without an
+call; the commit list and upstream refs are read only once the diff qualifies. A repo without an
 enabled entry behaves exactly as before. `/hive approve` applies the same check, so its
 reply never contradicts the lane. Any other outcome holds the PR as before.
 The exception only prevents a new path hold: a PR that already carries `hold`
@@ -230,10 +237,9 @@ permission/credential/signing text and non-pin edits fail closed.
 This classifier proves **syntax only**, not authenticated identity, exact-head
 binding, file-list completeness, semantic interpretation or review of upstream
 references. The sweep supplies the author (GitHub's PR author login), the
-verified-commit provenance of the head and file-list completeness itself; it
-does not yet anchor a replaced action SHA to the upstream action's own refs
-(GitHub resolves `uses:` SHAs across the fork network; the open second item
-of #16399); the relay integration remains #16265;
+verified-commit provenance of the head, file-list completeness and the
+upstream anchoring of each action SHA itself (#16399); the relay integration
+remains #16265;
 attribution and safe hold release are tracked in #16269. None of the
 schema or classifier APIs grants permission to merge or clears a hold. Native
 required checks and producer bindings, freshness, current reviews, substantive

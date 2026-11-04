@@ -1840,13 +1840,15 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("loading embedded static files: %w", err)
 	}
-	// The SPA document gets a dedicated handler with a strong ETag and one-time
-	// gzip cache (see pkg/dashboard/webstatic): http.FileServer would serve the
+	// The SPA shell and content-addressed main script get dedicated ETag/gzip
+	// handlers (see pkg/dashboard/webstatic): http.FileServer would serve the
 	// ~1.3 MB inline document uncompressed with no cache validators (embed.FS
 	// has a zero ModTime, so not even Last-Modified), forcing a full re-download
-	// on every visit. "/{$}" matches the root path exactly; every other static
-	// path falls through to the plain file server below.
+	// on every visit. The generated monolith remains embedded for source
+	// consumers; extraction happens after all startup injections. "/{$}" matches
+	// the root exactly; other static paths use the revalidating file server below.
 	var idx *webstatic.IndexDocument
+	var mainScript *webstatic.DashboardScript
 	if rawIndex, err := fs.ReadFile(staticContent, "index.html"); err == nil {
 		// Strings are baked in ONCE here, unlike custom.css which is read per
 		// request: the document carries a strong ETag and one immutable gzip
@@ -1857,6 +1859,14 @@ func (s *Server) Start() error {
 		// The kiosk call-to-action badge (#16236) is baked in the same way:
 		// its QR code and copy are static per process.
 		branded = kioskcta.Inject(branded, s.kioskCTAOptions())
+		branded, mainScript = webstatic.ExternalizeDashboardScript(branded)
+		if mainScript != nil {
+			// Keep registration statically discoverable by route parity checks;
+			// the handler serves only its exact content-addressed path.
+			s.mux.Handle("GET /assets/{script}", mainScript)
+		} else {
+			s.logger.Warn("dashboard main script extraction unavailable; serving original inline dashboard")
+		}
 		idx = webstatic.NewIndexDocument(branded)
 		// Hand the FINAL served bytes to the CSP layer explicitly, rather than
 		// having the document constructor reach out and set global state:
@@ -1879,7 +1889,7 @@ func (s *Server) Start() error {
 	// index document itself remains immutable and one-time precompressed.
 	s.mux.HandleFunc("GET /branding/custom.css", s.handleBrandingCSS)
 
-	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
+	s.mux.Handle("GET /", webstatic.FileServer(staticContent))
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
@@ -1904,6 +1914,9 @@ func (s *Server) Start() error {
 		// Bind before BestCompression work so readiness/liveness probes can
 		// answer even when a saturated node is slow to build the static cache.
 		go idx.Precompress()
+	}
+	if mainScript != nil {
+		go mainScript.Precompress()
 	}
 	// Viewer-independent cost sampling (#13483); the ring's throttle is the
 	// same interval, so this is exactly one snapshot per period.
@@ -4023,7 +4036,26 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
 	payload.Writeback = s.WritebackStatus()
 	payload.Hotspots = s.HotspotStatusBlock()
+	payload.Config = s.configHealthStatus()
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
+}
+
+// ConfigHealthStatus is the `config` block of /api/status: what the boot
+// found wrong with the loaded config itself, as opposed to what it says.
+type ConfigHealthStatus struct {
+	// GateRegressions lists the safety gates a previous runtime overlay
+	// carried that the running config lacks or weakens (#16438). Always a
+	// list, empty on a healthy boot, so the dashboard banner needs no
+	// presence check.
+	GateRegressions []config.GateRegression `json:"gate_regressions"`
+}
+
+func (s *Server) configHealthStatus() *ConfigHealthStatus {
+	out := &ConfigHealthStatus{GateRegressions: []config.GateRegression{}}
+	if s.deps != nil && s.deps.Config != nil && len(s.deps.Config.GateRegressions) > 0 {
+		out.GateRegressions = append(out.GateRegressions, s.deps.Config.GateRegressions...)
+	}
+	return out
 }
 
 // statusWithWebhooks adds the live webhook health block (#11177) and the
@@ -4053,6 +4085,10 @@ type statusWithWebhooks struct {
 	// concurrent PRs in the window, how many warrant a split, how many have
 	// a modularize issue filed. Absent when the advisor is not wired.
 	Hotspots *HotspotStatus `json:"hotspots,omitempty"`
+	// Config reports boot-time findings about the loaded config itself:
+	// config.gate_regressions is the safety gates a previous runtime
+	// overlay carried that this boot dropped (#16438).
+	Config *ConfigHealthStatus `json:"config,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

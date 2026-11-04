@@ -754,6 +754,8 @@ func joinClause(head, clause string) string {
 	return head + " — " + clause
 }
 
+const stageTrackerRemediationNeededCaption = "CI failed or review changes requested; remediation needed"
+
 // stageTrackerCaption builds the human sentence and the actor for an item.
 func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int, head string) (caption, actor string) {
 	clause := humanizeStageReason(reason)
@@ -798,7 +800,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.Reviewed:
 		return joinClause("Review passed; waiting for merge admission", clause), "CI"
 	case stagelabels.Fixing:
-		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
+		return joinClause(stageTrackerRemediationNeededCaption, clause), "hive"
 	case stagelabels.NeedsAuthor:
 		return joinClause("Needs "+who, clause) + " — " + who + " must act", strings.TrimPrefix(who, "@")
 	case stagelabels.ReturnedToContributor:
@@ -1057,4 +1059,36 @@ func stageTrackerStaleDecisionRecord(rec stagelabels.Record, labels []string) bo
 		}
 	}
 	return true
+}
+
+// stageTrackerTrackingActor is the actor word of a decomposed parent at 010:
+// nobody on the parent is due to move; its children carry the work.
+const stageTrackerTrackingActor = "its children"
+
+// stageTrackerTrackingWhy is the stage_actor.why of a decomposed parent at
+// 010 waiting on n open children.
+func stageTrackerTrackingWhy(n int) string {
+	return "waiting on " + strconv.Itoa(n) + " open child issue(s) — the scanner does not claim a decomposed parent; its children carry the work"
+}
+
+// stageTrackerApplyTracking rewrites a 010 issue row whose reason carries
+// the stage engine's "waiting on N open child issue(s)" suffix: the parent
+// is tracking its children, not waiting on the scanner, so the caption and
+// actor say so and OpenChildren lets the client draw "Tracking · 3/4"
+// instead of "Actionable" (hivecommons/hive#16481).
+func stageTrackerApplyTracking(it *StageTrackerItem, stage stagelabels.Stage) {
+	if it == nil || it.Kind != "issue" || stage != stagelabels.Actionable {
+		return
+	}
+	n := stageengine.ReasonOpenChildren(it.Reason)
+	if n <= 0 {
+		return
+	}
+	it.OpenChildren = n
+	head := "Tracking"
+	if c := it.Children; c != nil && c.Total > 0 {
+		head += " — " + strconv.Itoa(c.Completed) + " of " + strconv.Itoa(c.Total) + " children done"
+	}
+	it.Caption = head + "; waiting on " + strconv.Itoa(n) + " open child issue(s). The scanner leaves a decomposed parent to its children"
+	it.Actor = stageTrackerTrackingActor
 }

@@ -1,0 +1,1 @@
+- Heartbeat loops no longer accumulate blocked full or fresh-stats collectors after repeated collection timeouts; fallback liveness beats continue, and timeout self-reports include the slowest collector sections.

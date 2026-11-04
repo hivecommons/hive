@@ -941,6 +941,26 @@ func TestIsBenignMessageInferenceModelNotConfigured(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageRebaseAttemptsExhausted(t *testing.T) {
+	for _, msg := range []string{
+		"rebase attempts exhausted; leaving the conflict to a person",
+		"  REBASE ATTEMPTS EXHAUSTED; LEAVING THE CONFLICT TO A PERSON  ",
+	} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("expected rebase handoff %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"rebase failed",
+		"rebase attempt state could not be persisted",
+		"review dispatch exhausted; holding PR for a human",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
 func TestIsBenignMessageKnowledgePrimerBytecap(t *testing.T) {
 	const msg = "knowledge primer: dropped facts over the byte cap"
 	if !IsBenignMessage(msg) {

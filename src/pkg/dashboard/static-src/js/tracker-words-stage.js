@@ -135,7 +135,7 @@
         case 45: return 'Needs a human decision';
         case 50: return 'Waiting for review' + viaPR;
         case 60: return 'Reviewed' + viaPR;
-        case 70: return 'Fixing review findings' + viaPR;
+        case 70: return 'Remediating CI or review findings' + viaPR;
         case 71: return 'Waiting on the author' + viaPR;
         case 72: return 'Back with the contributor' + viaPR;
         case 74: return 'Hive took it over' + viaPR;
@@ -227,7 +227,7 @@
     // Stage → operator phrase, mirrored from stageTrackerStagePhrase
     // (stage_tracker_vocabulary.go): every string the page renders names a
     // stage by its chevron's words, never by a code ("060 reviewed").
-    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being fixed by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
+    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being remediated by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
     // Pure: a stage's name in plain words for cues and tooltips — its short
     // word when the stages table has one, else its label with the lane's
     // "stage/060-" slug prefix dropped and the slug humanised ("Reviewed").

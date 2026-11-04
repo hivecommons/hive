@@ -39,6 +39,19 @@ type GitHubNotificationsConfig struct {
 	// required action is still announced by exactly one notifying write.
 	// Default off: behaviour is unchanged.
 	AttentionPilot bool `yaml:"attention_pilot,omitempty" json:"attention_pilot,omitempty"`
+	// ClaimLedger keeps one per-issue claim ledger comment
+	// (`<!-- hive:issue-claim-ledger -->`) that every claim, takeover and
+	// release edits in place, instead of posting a fresh `hive:claim` /
+	// `hive:release` comment per transition (hivecommons/hive#16433). A
+	// human holder the ledger has not named before still gets one notifying
+	// comment. Default on; `claim_ledger: false` restores a comment per
+	// transition.
+	ClaimLedger *bool `yaml:"claim_ledger,omitempty" json:"claim_ledger,omitempty"`
+}
+
+// ClaimLedgerEnabled resolves ClaimLedger with its default (on).
+func (c GitHubNotificationsConfig) ClaimLedgerEnabled() bool {
+	return c.ClaimLedger == nil || *c.ClaimLedger
 }
 
 // Quiet reports whether the hive should fold its PR notes into one edited

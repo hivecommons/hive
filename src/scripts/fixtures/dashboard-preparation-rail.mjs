@@ -23,9 +23,7 @@ export function preparationRailLayoutFixture() {
       html: stageTrackerRowHtml(item, [], { ...ctx, prevRow: items[i - 1], nextRow: items[i + 1] }) }));
     const block = document.createElement('div');
     const rendered = stageTrackerPreparationInlineRows(rows, items, []);
-    block.innerHTML = rendered.map(row => row.html).join('');
-    // The production reconciler stamps keys separately from the row renderer.
-    [...block.children].forEach((element, index) => { element.dataset.hamKey = rendered[index].key; });
+    for (const row of rendered) block.appendChild(stageTrackerRowNode(row.key, row.html));
     host.appendChild(block);
     return block;
   };

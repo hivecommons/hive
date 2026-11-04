@@ -774,6 +774,22 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 			return 0, nil
 		}
 	}
+	// One entry comment per PR and stage, edited in place
+	// (hivecommons/hive#16433): a later head or cause rewrites the hive's
+	// existing 085 / 090 comment with an "updated" line instead of posting
+	// another copy, which emailed everyone again to say the same thing.
+	if existing := c.findOwnEntryComment(ctx, obs, stagelabels.EntryCommentMarker(route.Stage)); existing != nil {
+		updated := stagelabels.EntryCommentUpdated(body, c.now())
+		// Rewrites the comment the gate admitted when it was posted; an edit notifies nobody.
+		if _, _, err := c.gh.Issues.EditComment(ctx, obs.Owner, obs.Repo, existing.GetID(), &gh.IssueComment{Body: gh.Ptr(updated)}); err != nil { // writeback:gated
+			c.warn("stage labels: entry comment edit failed", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "error", err)
+			return 0, err
+		}
+		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
+		store.MarkEntryCommentedDecisionKey(key, decisionKey)
+		c.info("stage labels: entry comment updated in place", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
+		return 0, nil
+	}
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("stage labels: entry comment failed", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "error", err)
 		return 0, err
@@ -782,6 +798,33 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	store.MarkEntryCommentedDecisionKey(key, decisionKey)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
+}
+
+// findOwnEntryComment returns the hive's existing entry comment carrying
+// marker on the PR, or nil. Only a comment the hive's App login wrote
+// counts: anyone can type the marker, and the hive must never edit a
+// stranger's comment. A list failure reads as "none", so the entry is
+// posted rather than lost.
+func (c *Engine) findOwnEntryComment(ctx context.Context, obs stageObservation, marker string) *gh.IssueComment {
+	if marker == "" || c == nil || c.transport == nil {
+		return nil
+	}
+	app := normalizeBotLogin(c.transport.AppBotLogin())
+	if app == "" {
+		return nil
+	}
+	comments, err := c.listIssueComments(ctx, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		c.warn("stage labels: could not list comments for the entry upsert", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return nil
+	}
+	for _, cm := range comments {
+		if cm == nil || !strings.Contains(cm.GetBody(), marker) || normalizeBotLogin(cm.GetUser().GetLogin()) != app {
+			continue
+		}
+		return cm
+	}
+	return nil
 }
 
 // workflowApprovalSnippet appends the self-contained ok-to-test workflow,

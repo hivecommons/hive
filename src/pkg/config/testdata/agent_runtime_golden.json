@@ -825,5 +825,6 @@
   "classification": {
     "review_bots": {}
   },
-  "task_mcp": {}
+  "task_mcp": {},
+  "config": {}
 }

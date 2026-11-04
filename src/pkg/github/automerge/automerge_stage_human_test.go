@@ -876,3 +876,61 @@ func TestApplyStageLabelsHumanPRNeverAskedSupersededCloser(t *testing.T) {
 		t.Fatalf("calls=%v result=%+v added=%v", spy.calls, res, api.added)
 	}
 }
+
+// TestEntryCommentUpsertsExistingComment: when the hive's 085 entry comment
+// is still on the PR, a re-entry on a new head rewrites it in place with an
+// "Updated" line instead of posting a second copy (hivecommons/hive#16433).
+// A comment carrying the marker but written by someone else is left alone.
+func TestEntryCommentUpsertsExistingComment(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, statefulComments: true}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	e, store := humanStageEngine(t, srv.URL, clock, verdict, 0)
+	ctx := context.Background()
+	sweep := func(head string, labels ...string) {
+		t.Helper()
+		api.reset()
+		pr := stagePR(14, labels...)
+		pr.Head.SHA = gh.Ptr(head)
+		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageVerdict("acme", "widget", 14, *verdict)
+		e.noteStageRole("acme", "widget", 14, stagelabels.RoleContributor)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := stageKey("acme", "widget", 14)
+
+	// A stranger's comment carrying the marker must never be edited.
+	api.issueComments = map[int][]map[string]any{14: {{"id": int64(5), "body": stagelabels.DecisionCommentMarker + "\nforged", "user": map[string]any{"login": "mallory"}}}}
+
+	sweep("sha", "role/contributor", "author/human", "stage/050-review-pending")
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) {
+		t.Fatalf("first entry comments = %q", api.comments)
+	}
+	if len(api.commentEdits) != 0 {
+		t.Fatalf("a stranger's marker comment was edited: %q", api.commentEdits)
+	}
+
+	store.Observe(key, stagelabels.ReviewPending, "review-requested")
+	clock.advance(time.Hour)
+	sweep("sha2", "role/contributor", "author/human", "stage/050-review-pending")
+	if got := stageOf(t, store, 14); got != stagelabels.NeedsDecision {
+		t.Fatalf("stage=%v want 085", got)
+	}
+	if len(api.comments) != 0 {
+		t.Fatalf("new head must edit the existing entry comment, not post another: %q", api.comments)
+	}
+	if len(api.commentEdits) != 1 || !strings.HasPrefix(api.commentEdits[0], stagelabels.DecisionCommentMarker) || !strings.Contains(api.commentEdits[0], "<sub>Updated 2026-10-20 13:00 UTC.</sub>") {
+		t.Fatalf("entry comment edits = %q", api.commentEdits)
+	}
+	if rec, _ := store.Get(key); !rec.EntryCommented || rec.EntryCommentedHead != "sha2" {
+		t.Fatalf("record after the in-place update: %+v", rec)
+	}
+}

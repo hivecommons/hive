@@ -1424,7 +1424,7 @@
        grid, the slot takes the Merge gate column plus the ✓ cap and
        right-aligns the chip over the gate. It never wraps with the
        filter bar, so the chip stays put whatever the toolbar does. */
-    .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
+    .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-4) var(--sp-2); }
     /* Each entry is fenced by a hairline above it and lights up as a whole
        on hover, so a tall row (wrapped title, ↳ PR line) still reads as one
        block: its chip and age can only belong to the strip they sit beside. */
@@ -1432,40 +1432,44 @@
     .ham-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); border-radius: var(--r-sm); }
     /* Title line = a ghost strip with the same column widths as the chevrons
        below: a lead cell spanning Open..Claimed carries the number + title, a
-       PR cell spanning PR in progress..Merge gate carries "[icon] #N title",
-       the cap column is kept for the modifier chip and the since column is
-       an empty spacer (the time on step rides the strip row's since cell, in
-       line with the chevrons). Both cells wrap rather than collide; the lead
-       keeps a clear gap before the PR column. The spanning cells' flex-basis
-       absorbs the gaps they cover so the PR cell starts exactly at the PR in
-       progress chevron. */
+       PR cell spanning PR in progress..Merge gate carries "[icon] #N title"
+       with the modifier chips / action buttons right-anchored on that same
+       line (margin-left: auto), wrapping under the PR metadata only when
+       there is no room. No separate toolbar line: the chevrons sit directly
+       under the title line. The since column is an empty spacer (the time on
+       step rides the strip row's since cell).
+       Explicit grid spans share the chevrons' tracks, including the two
+       concurrent CI/Review tracks, without content changing their widths. */
     .ham-row-head { position: relative; display: flex; align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); min-width: 0; line-height: 1.3; }
     .ham-head-cols { flex: 1 1 auto; min-width: 0; min-height: 1.3em; align-items: flex-start; }
     .ham-head-cols .ham-strip { height: auto; }
     .ham-head-cols .ham-seg { background: transparent; clip-path: none; align-items: flex-start; justify-content: flex-start; padding: 0 var(--sp-2) 0 var(--sp-4); white-space: normal; }
-    /* Lead = exactly three of the six equal chevrons (half of the strip
-       minus the fixed 4em cap and the six gaps) plus the two gaps between
-       them, so the PR cell starts at the PR in progress chevron; the PR cell takes what
-       is left and gives way to the chip, which lives in the cap cell. */
-    .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - var(--ham-visible-columns) * var(--sp-1)) * 3 / var(--ham-visible-columns) + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
-    .ham-head-cols .ham-seg.ham-head-lead.ham-head-wide { flex: 1 1 0; }
-    /* The PR cell is one line: connector, author icon + #N + title, lineage
-       chip and base pill sit side by side; the lineage chip gives way first
-       (flex-shrink 2), then the title (1), the pills and the connector never shrink
-       (hivecommons/hive "consolidate from 3 lines of text to 1"). */
-    .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: var(--sp-2); min-width: 0; overflow: hidden; }
-    .ham-head-cols .ham-seg.ham-head-pr > .ham-linked-ico, .ham-head-cols .ham-seg.ham-head-pr > .ham-badge { flex: 0 0 auto; }
-    .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage, .ham-head-cols .ham-seg.ham-head-pr > .ham-adopted-from { display: block; flex: 0 2 auto; min-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+    .ham-head-cols .ham-seg.ham-head-lead { grid-column: 1 / var(--ham-pr-start); grid-row: 1; padding: 0 var(--sp-6) 0 0; }
+    .ham-head-cols .ham-seg.ham-head-pr { grid-column: var(--ham-pr-start) / -2; grid-row: 1; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; overflow: visible; padding: 0; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-linked-ico { flex: 0 0 auto; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage, .ham-head-cols .ham-seg.ham-head-pr > .ham-adopted-from { flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage > .ham-author-ico { vertical-align: text-bottom; margin-right: var(--sp-1); }
-    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line { flex: 0 1 auto; }
-    /* The chip hugs the bottom of the title block (align-items: flex-end
-       inside the stretched cap cell): on a two-line title it sits on the
-       second line, directly over the strip it describes, never up at the
-       previous entry's edge. */
-    .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; align-items: flex-end; justify-content: flex-end; padding: 0; }
-    .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
-    .ham-head-main { display: flex; flex: 1; align-items: center; gap: var(--sp-3); min-width: 0; overflow: hidden; }
-    .ham-head-main > .ham-badge { flex: 0 0 auto; }
+    /* The PR ref shares the first line with the right-anchored pills: it
+       grows into the free space but keeps a readable floor, so pills wrap
+       under it only when the line is genuinely full. */
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line { flex: 1 1 0; min-width: min(100%, 20em); }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line > .ham-pr-ref { flex: 1 1 0; min-width: 0; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-badges { position: static; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; min-width: 0; max-width: 100%; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-badges:empty { display: none; }
+    .ham-head-cols .ham-seg.ham-head-tools { align-items: flex-start; }
+    .ham-head-cols .ham-seg.ham-head-tools:has(> .ham-badges:empty) { display: none; }
+    .ham-head-cols .ham-badges > :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    .ham-head-cols .ham-badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    .ham-head-main { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--sp-3); min-width: 0; }
+    .ham-head-main > .ham-badge { flex: 0 1 auto; }
+    /* The title fills whatever is left of the first line beside its chips
+       (flex-basis 0) and only wraps its own words when there is no room;
+       with a max-content basis (flex: 0 1 auto) a wrapping flex container
+       drops the whole title onto a second line as soon as it cannot fit
+       entirely, even with half the row free (hivecommons/hive#16454). */
+    .ham-head-main > .ham-title { flex: 1 1 0; min-width: 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+    .ham-head-pr .ham-pr-title { flex: 1 1 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+    .ham-head-pr .ham-pr-ref, .ham-head-pr .ham-pr-line { flex-wrap: wrap; overflow: visible; }
     .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
     .ham-pr-ref:hover { color: var(--text); }
     .ham-linked-ico { color: var(--text-faint); font-size: var(--fs-xs); margin-right: var(--sp-1); }
@@ -1560,8 +1564,8 @@
     .ham-preparation-node:focus-visible { outline: var(--focus-ring-width) solid var(--ham-train-accent); outline-offset: var(--sp-1); }
     .ham-row.ham-preparation-gap::before, .ham-sub.ham-preparation-member.ham-preparation-gap::before { border-left-style: dashed; }
     .ham-preparation-unverified > .ham-strip-row > .ham-preparation-node::after { background: var(--bg); box-shadow: 0 0 0 var(--line-width) var(--ham-train-accent); }
-    .ham-preparation-comment { animation: none; }
-    .ham-human-context { animation: none; }
+    .cue-event.ham-preparation-comment { animation: none; }
+    .cue-event.ham-human-context { animation: none; }
     /* Mixed issue trees keep their existing children; only actual prep PRs
        receive a rail, at the original gutter offset minus the parent inset. */
     .ham-row > .ham-preparation-head { margin-left: calc(-1 * var(--sp-2)); }
@@ -1667,16 +1671,14 @@
     .ham-badge-reroute { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-badge-reroute .ham-presence-dot { width: 0.5em; height: 0.5em; border-radius: var(--r-pill); background: var(--text-faint); flex: 0 0 auto; }
     .ham-badge-reroute.ham-reroute-online .ham-presence-dot { background: var(--status-ok); }
-    .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; --ham-visible-columns: 7; }
-    .ham-strip:not(.ham-head-cols) { display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; }
+    .ham-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); --ham-notch: 8px; --ham-visible-columns: 7; --ham-chevron-text-lines: 1; --ham-chevron-line-height: 1.3; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
-    .ham-activity-track { clip-path: none; border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); flex-direction: column; align-items: flex-start; padding: var(--sp-1) var(--sp-2); white-space: normal; }
-    .ham-track-name { font-weight: var(--fw-semibold); }
-    .ham-track-state { overflow-wrap: anywhere; font-size: var(--fs-xs); }
+    /* The concurrent CI / Review lanes are chevrons like every other stage
+       (same clip-path, padding and height — the boxed card opt-out of
+       #16384 is gone); their lane state reads through fill, tint and text
+       colour exactly as done / todo / active do, never a border or ring,
+       which the notched polygon would clip anyway. */
     .ham-track-state a { color: inherit; }
-    .ham-track-code-note, .ham-track-context { overflow-wrap: anywhere; font-size: var(--fs-xs); }
-    .ham-track-freshness { position: absolute; right: var(--sp-1); top: 0; color: var(--amber); }
-    .ham-activity-track[data-activity-state="failing"], .ham-activity-track[data-activity-state="changes_requested"] { border-color: var(--amber); color: var(--amber); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
     .ham-seg.cap { flex: 0 0 4em; }
     .ham-seg.active.merged { background: var(--green); color: var(--surface-0); animation: none; }
@@ -1686,17 +1688,12 @@
     /* The holder's offline / not-registered state is muted: a flag, not an alarm. */
     .ham-holder-presence { margin-right: 0; color: var(--text-faint); font-weight: normal; }
     .ham-holder-presence.ham-presence-offline { --ham-presence-color: var(--text-faint); }
-    /* A word with a holder ("PR in progress · @bob's clanker") stays on one
-       line: the stage word keeps its width and the name gives way with an
-       ellipsis before anything wraps (hivecommons/hive#15541). */
-    .ham-seg-t.ham-has-holder, .ham-detour.ham-has-holder { display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%; white-space: nowrap; }
-    .ham-has-holder > .ham-holder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.blank { visibility: hidden; }
-    .ham-sub { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
+    .ham-sub { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
     /* Only the two moving buckets animate (see stageTrackerMotion): the hive
        acting = gentle pulse; waiting on a person = slower amber→red breathe.
        A lit step with no data-motion (Open, Open · hold, Claimed, …) is a
@@ -1706,6 +1703,17 @@
        layerize pass of the page every vsync (#13764). ::after is the
        movement effects' (flash / ripple / wash). */
     .ham-seg.active { background: var(--amber); color: var(--surface-0); }
+    /* A CI / Review track wears its own state on the current head
+       (hivecommons/hive#16484): in progress = the full .active fill, done =
+       .done, a finding (red CI, changes requested) = .failing in the error
+       colour, not started = .todo with the glyph alone. No muted
+       "current-phase" tint: the operator reads the words, not the shade.
+       Only fresh observed work earns the pulse. */
+    .ham-activity-track.ham-current { opacity: 1; box-shadow: none; }
+    .ham-seg.ham-activity-track.failing { background: var(--status-error); color: var(--surface-0); box-shadow: none; opacity: 1; }
+    .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }
+    /* The count words stay on one line and ellipsize instead of wrapping. */
+    .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
@@ -1735,10 +1743,27 @@
        after the word ("next sweep in 42s", "7m left") is muted. */
     .ham-gate-ico { display: inline-flex; align-items: center; margin-right: var(--sp-1); cursor: help; }
     .ham-gate-ico .ham-ico { width: 12px; height: 12px; }
-    /* The detail is a fixed short phrase; should a long one ever reach it
-       (hivecommons/docs#512 drew a raw GitHub URL across the column) it is
-       clipped with an ellipsis rather than overflowing the chip. */
-    .ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; display: inline-block; vertical-align: bottom; max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
+    .ham-gate-detail { font-weight: normal; opacity: 0.85; font-variant-numeric: tabular-nums; }
+    /* Every physical chevron is one caption line tall (--ham-chevron-text-lines:
+       1, the clamp below ellipsises the rest): the strip rides directly under
+       the title line as a ~20px band, the density the tracker had before
+       hivecommons/hive#16454 doubled it with a two-line budget and sp-2
+       vertical padding. The grid row sizes to content with that one-line
+       floor so icon-only cells and siblings share the row's height, never a
+       fixed box. The portal tooltip is outside the clipped polygon; keyboard
+       focus exposes the same full text. */
+    .ham-strip[aria-label="Pipeline progress"] { grid-auto-rows: minmax(calc(var(--ham-chevron-line-height) * 1em + 2 * var(--sp-1) + 2 * var(--line-width)), auto); }
+    .ham-strip[aria-label="Pipeline progress"] > .ham-seg { box-sizing: border-box; align-self: stretch; line-height: var(--ham-chevron-line-height); padding: var(--sp-1) calc(var(--ham-notch) + var(--sp-2)); }
+    .ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); width: 100%; height: 100%; min-width: 0; flex-shrink: 1; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; position: static; }
+    .ham-chevron-info.config-info:hover { background: transparent; border: 0; color: inherit; }
+    .ham-chevron-info:focus-visible, .ham-chevron-decision:focus-within { outline: var(--line-width) solid currentColor; outline-offset: var(--sp-1); }
+    /* The copy shrink-wraps its text (flex 0 1 auto) so the words, with
+       their icons, sit centred in the chevron as before; a wrapped second
+       line is centred under the first rather than ragged-left. */
+    .ham-chevron-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-height: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em); flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+    .ham-chevron-copy :is(.ham-seg-t, .ham-detour, .ham-holder, .ham-gate-detail) { display: inline; white-space: normal; overflow-wrap: anywhere; }
+    .ham-chevron-copy > .ham-decision-trigger { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
+    .config-tooltip.ham-chevron-tip { overflow-wrap: anywhere; max-width: calc(100vw - var(--sp-8)); max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------
        Owner request: a viewer must always read where an item stands,
@@ -1835,7 +1860,7 @@
        page text: ≥ 15:1 in both themes, see the contrast test) above the
        stripes and the pulse overlay, on one line with an ellipsis. */
     .cue-acting > .ham-strip-row > .ham-strip > .ham-seg.active:not(.cap) > :not(.cue-acting-cap) { display: none; }
-    .ham-seg.active > .cue-acting-cap { display: inline-block; position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-seg.active > .cue-acting-cap { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: var(--ham-chevron-line-height); overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
     .ham-seg.active > .cue-acting-cap > .cue-acting-spin { vertical-align: -1px; margin-right: var(--sp-2); }
     .cue-event { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; padding-left: var(--sp-5); font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; animation: cue-event-in 0.4s ease-out; }
     .cue-event-who { font-weight: var(--fw-medium); color: var(--text); }
@@ -2001,7 +2026,7 @@
     .ham-row { position: relative; }
     .ham-row:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: calc(-1 * var(--focus-ring-width)); border-radius: var(--r-sm); }
     .ham-row.ham-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset var(--sp-1) 0 0 var(--accent); border-radius: var(--r-sm); }
-    .ham-row-tools { position: absolute; left: calc(-1 * var(--ham-gutter)); top: var(--sp-5); width: var(--ham-gutter); display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); }
+    .ham-row-tools { position: absolute; left: calc(-1 * var(--ham-gutter)); top: var(--sp-4); width: var(--ham-gutter); display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); }
     /* A nested PR sub-row carries its own gutter (checkbox + ⋯), so each
        PR under an issue is selected and acted on by itself (two PRs under
        one issue, one decision each — the owner's 2026-10-28 report). The
@@ -2099,27 +2124,27 @@
        a needs-human step keeps a steady red tint so it still stands out. */
     @media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none; box-shadow: inset 0 0 0 2px var(--surface-0); } .ham-seg.active[data-motion]::before { display: none; } .ham-seg.active[data-motion="needs-human"] { background: color-mix(in srgb, var(--amber) 45%, var(--red)); } }
     @media (max-width: 1100px) {
-      /* Keep the aligned progress strip compact; put its active step in a
-         wrapping caption instead of squeezing actionable words into a chevron. */
-      .ham-cols .ham-seg-t, .ham-row .ham-seg-t, .ham-row .ham-detour { display: none; }
+      /* Stack headers, but keep the same two-line progress text budget. */
+      .ham-cols .ham-seg-t { display: none; }
       .ham-cols .ham-track-head .ham-seg-t { display: inline; }
-      .ham-track-state { display: none; }
-      .ham-track-code-note, .ham-track-context { display: none; }
-      .ham-activity-track { align-items: center; }
       .ham-active-ico { display: block; }
       .ham-row .ham-actor-ico { display: none; }
       .ham-current-stage { display: block; }
       .ham-head-cols { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2) var(--sp-3); }
       .ham-head-cols > .ham-strip { display: contents; }
-      .ham-head-cols .ham-seg.ham-head-lead, .ham-head-cols .ham-seg.ham-head-pr { grid-column: 1 / -1; padding: 0; }
+      .ham-head-cols .ham-strip > .ham-seg { grid-column: 1 / -1; grid-row: auto; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
-      .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; min-width: 0; justify-content: flex-start; }
       .ham-head-cols > .ham-since { display: none; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
       .ham-since { width: 3em; }
       .ham-cols .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-cols .ham-seg.cap { flex-basis: 2em; }
+    }
+    @media (max-width: 640px) {
+      #activity-monitor-panel { --ham-compact-min-width: 60em; }
+      .ham-row > .ham-strip-row, .ham-sub > .ham-strip-row, .ham-cols > .ham-strip-row { overflow-x: auto; }
+      .ham-row > .ham-strip-row > .ham-strip, .ham-sub > .ham-strip-row > .ham-strip, .ham-cols > .ham-strip-row > .ham-strip { min-width: var(--ham-compact-min-width); }
     }
     /* Movement animation: when an item's lit chevron changes column between
        two refreshes, the chosen effect (settings gear → Movement animation)
@@ -4584,6 +4609,7 @@
     .cmp-banner { border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 8%, transparent); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-6); font-size: var(--fs-sm); }
     .cmp-banner strong { color: var(--text); }
     .cmp-banner-detail { color: var(--muted); margin-top: var(--sp-2); }
+    ul.cmp-banner-detail { margin: var(--sp-2) 0 0 var(--sp-5); }
     .cmp-framework { display: flex; gap: var(--sp-4); align-items: flex-start; padding: var(--sp-3) var(--sp-0); cursor: pointer; }
     .cmp-framework input { width: auto; margin-top: var(--sp-1); }
     .cmp-framework-name { font-weight: 600; color: var(--text); }
@@ -7343,14 +7369,14 @@ body.matrix-mode #hive-matrix {
   --matrix-muted: #b8ccbb;
   position: fixed; inset: 0; z-index: 100000; background: var(--matrix-bg); color: var(--matrix-color, var(--matrix-fg)); font: 16px monospace;
 }
-body.matrix-mode .matrix-canvas { width: 100%; height: 100%; }
-body.matrix-mode .matrix-labels { position: absolute; bottom: 1rem; left: 1rem; right: 1rem; padding: var(--sp-3); background: var(--matrix-surface); color: var(--matrix-text); font-size: var(--fs-base); overflow-wrap: anywhere; }
-body.matrix-mode .matrix-notice { position: absolute; top: 2rem; left: 1rem; right: 1rem; color: var(--matrix-text); }
-body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; overflow: hidden; }
+body.matrix-mode .matrix-canvas { display: block; position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; }
+body.matrix-mode .matrix-labels { position: fixed; bottom: 1rem; left: 1rem; max-width: min(60vw, 48rem); z-index: 2; padding: var(--sp-3); background: var(--matrix-surface); color: var(--matrix-text); font-size: var(--fs-base); overflow-wrap: anywhere; }
+body.matrix-mode .matrix-notice { position: fixed; top: 2rem; left: 1rem; right: 1rem; z-index: 2; color: var(--matrix-text); }
+body.matrix-mode .matrix-list { position: absolute; inset: 4rem 1rem 8rem; z-index: 1; overflow: hidden; }
 body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 1rem; }
 body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
 body.matrix-mode #hive-matrix [hidden] { display: none !important; }
-body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
+body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -7445,6 +7471,10 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
       rs: 'rs', c: 'c', h: 'c', cc: 'c', cpp: 'c', hpp: 'c', java: 'c', cs: 'c'};
     Object.keys(languages).forEach(function(k){ languages[k].words = new Set(languages[k].words.split(' ')); });
     function paused(){ return manualPause || document.hidden; }
+    // Height of the bottom band the freshness HUD occupies, so typed rows
+    // never run under it in any effect (#16441). 100px is the floor used
+    // before the HUD was measured.
+    function hudBand(){ return Math.max(100, (labels.offsetHeight || 0) + 32); }
     function resize(){
       width = window.innerWidth; height = window.innerHeight;
       canvas.width = width; canvas.height = height;
@@ -7540,7 +7570,7 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
         top = 56;
       }
       ctx.font = '16px monospace';
-      var visible = Math.max(1, Math.floor((height - top - 100) / rowH));
+      var visible = Math.max(1, Math.floor((height - top - hudBand()) / rowH));
       var current = {n: tab.count + 1, path: typing.line.path, text: typing.chars.slice(0, Math.floor(typing.typed)).join(''), current: true};
       tab.rows.slice(-(visible - 1) || tab.rows.length).concat([current]).forEach(function(row, i){
         var y = top + (i + 1) * rowH, col = 0;
@@ -7570,7 +7600,7 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
       if (!termRows.length) emitTerminal();
       termClock += dt * 4;
       while (termClock >= 1) { termClock -= 1; emitTerminal(); }
-      var bottom = height - 100;
+      var bottom = height - hudBand();
       ctx.font = '16px monospace';
       termRows.forEach(function(row, i){
         var y = bottom - (termRows.length - 1 - i + termClock) * rowH;
@@ -7711,7 +7741,7 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
     }
   };
 })();
-// Apply layout immediately and hide content until first data render.
+// Apply layout immediately; keep the shell visible while live data loads.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.
 // applyLayout() (defined in the main script) is the single source of truth
@@ -7797,9 +7827,6 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
   if(window.HIVE_KIOSK){ var kt=null; try { kt=new URL(window.location.href).searchParams.get('theme'); } catch(e) {} m=(kt==='light')?'light':'dark'; }
   if(!m)m='light';
   if(m==='light'){document.body.classList.add('light-mode')}
-  document.body.style.opacity='0';
-  document.body.style.transition='opacity 0.15s ease-in';
-  setTimeout(function(){ document.body.style.opacity='1'; }, 3000);
   document.addEventListener('DOMContentLoaded', function(){
     if (typeof applyLayout === 'function' && typeof getLayout === 'function') {
       applyLayout(getLayout());
@@ -7884,7 +7911,6 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
     document.addEventListener('DOMContentLoaded', renderStyleState);
   }
 })();
-
 </script>
 <div id="gh-auth-banner" class="gh-auth-banner" style="display:none">
   <span id="gh-auth-msg">GitHub login required for advisory posting</span>
@@ -9252,6 +9278,165 @@ body.matrix-mode #kiosk-cta { z-index: 100001; opacity: .85; }
     })();
 
 
+    const DASHBOARD_BACKGROUND_CONCURRENCY = 2;
+    const DASHBOARD_IDLE_TIMEOUT_MS = 1000;
+    const DASHBOARD_YIELD_MS = 32;
+    const DASHBOARD_BACKGROUND_DELAY_MS = 350;
+    const DASHBOARD_TASK_SECTIONS = Object.freeze({
+      'backend-discovery': ['debug-section'],
+      'stat-sources': ['agents-section'],
+      'cost': ['cost-panel'],
+      'hive-advice': ['advisory-section'],
+      'acmm-reco': ['advisory-section'],
+      'lifecycle': ['advisory-section'],
+      'pr-throughput': ['pr-throughput-section'],
+      'approvals': ['approvals-section'],
+      'fact-history': ['knowledge-section'],
+      'overview-kpi-history': ['overview-section'],
+      'history': ['overview-section', 'repos-section'],
+      'budget-ignore': ['repos-section'],
+      'budget-history': ['governor'],
+      'nous-status': ['nous-section'],
+      'public-knowledge': ['knowledge-section'],
+      'knowledge-stats': ['knowledge-section'],
+      'audit-log': ['audit-section'],
+      'review-queue': ['review-queue-section'],
+      'review-pipeline': ['review-queue-section'],
+      'stage-tracker': ['activity-monitor-section'],
+      'contributors': ['contributors-section'],
+      'leaderboard': ['contributors-section'],
+      'git-version': ['debug-section'],
+      'acmm-evaluation': ['acmm-eval-section'],
+      'version-check': ['debug-section'],
+      'version-reload-check': ['debug-section'],
+      'weekly-trends': ['overview-section'],
+      'timeline': ['governor'],
+      'agent-logs': ['logs-section'],
+      'debug-section': ['debug-section'],
+      'chat-capabilities': [],
+      'chat-presence': [],
+      'welcome-gh-auth': [],
+      'welcome-claude-auth': [],
+      'gh-auth-banner': [],
+    });
+    const _dashboardBackgroundJobs = new Map();
+    const _dashboardRenderJobs = new Map();
+    let _dashboardBackgroundRunning = 0;
+    let _dashboardBackgroundScheduled = false;
+    let _dashboardRenderScheduled = false;
+    let _dashboardBackgroundReady = false;
+
+    function dashboardWorkPriority(sections) {
+      let priority = 2;
+      for (const id of sections || []) {
+        if (window.location.hash === '#section-' + id) return 0;
+        const el = document.getElementById(id);
+        if (!el || !el.getClientRects().length) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom >= 0 && rect.top <= window.innerHeight) priority = 1;
+      }
+      return priority;
+    }
+    function dashboardNextWork(jobs) {
+      let next;
+      let priority = Infinity;
+      for (const job of jobs.values()) {
+        if (job.running) continue;
+        const rank = dashboardWorkPriority(job.sections);
+        if (rank < priority) { next = job; priority = rank; }
+      }
+      return next;
+    }
+    function dashboardIdle(callback) {
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(callback, { timeout: DASHBOARD_IDLE_TIMEOUT_MS });
+      } else {
+        setTimeout(callback, DASHBOARD_YIELD_MS);
+      }
+    }
+    function dashboardWakeBackground() {
+      if (!_dashboardBackgroundReady || document.hidden || _dashboardBackgroundScheduled ||
+          _dashboardBackgroundRunning >= DASHBOARD_BACKGROUND_CONCURRENCY ||
+          !dashboardNextWork(_dashboardBackgroundJobs)) return;
+      _dashboardBackgroundScheduled = true;
+      dashboardIdle(function() {
+        _dashboardBackgroundScheduled = false;
+        if (document.hidden) return;
+        const job = dashboardNextWork(_dashboardBackgroundJobs);
+        if (!job) return;
+        job.running = true;
+        _dashboardBackgroundRunning++;
+        function finished() {
+          _dashboardBackgroundJobs.delete(job.key);
+          _dashboardBackgroundRunning--;
+          dashboardWakeBackground();
+        }
+        Promise.resolve().then(job.fn).then(function(value) {
+          finished(); job.resolve(value);
+        }, function(err) {
+          finished(); job.reject(err);
+        });
+        dashboardWakeBackground();
+      });
+    }
+    // Keep a slot through JSON decoding and rendering, not just response headers.
+    // Repeated timer ticks share the same flight rather than adding stale work.
+    function dashboardScheduleWork(key, fn) {
+      const existing = _dashboardBackgroundJobs.get(key);
+      if (existing) return existing.promise;
+      let resolve, reject;
+      const promise = new Promise(function(ok, fail) { resolve = ok; reject = fail; });
+      _dashboardBackgroundJobs.set(key, {
+        key, fn, promise, resolve, reject, running: false,
+        sections: DASHBOARD_TASK_SECTIONS[key] || [],
+      });
+      dashboardWakeBackground();
+      return promise;
+    }
+    function dashboardWakeRender() {
+      if (document.hidden || _dashboardRenderScheduled || !_dashboardRenderJobs.size) return;
+      _dashboardRenderScheduled = true;
+      dashboardIdle(function() {
+        _dashboardRenderScheduled = false;
+        if (document.hidden) return;
+        const job = dashboardNextWork(_dashboardRenderJobs);
+        if (!job) return;
+        _dashboardRenderJobs.delete(job.key);
+        if (job.snapshot && !dashboardStatusCanRender(job.snapshot)) {
+          dashboardWakeRender();
+          return;
+        }
+        const anchor = typeof captureScrollAnchor === 'function' ? captureScrollAnchor() : null;
+        try {
+          job.fn();
+          job.sections.forEach(function(id) {
+            if (typeof applySectionCollapse === 'function') applySectionCollapse(id);
+          });
+          if (typeof refreshDashboardSectionSummaries === 'function') refreshDashboardSectionSummaries();
+        } catch (err) {
+          console.error('dashboard render ' + job.key + ' failed', err);
+        } finally {
+          if (anchor && typeof restoreScrollAnchor === 'function' &&
+              (typeof _hashScrollPending === 'undefined' || !_hashScrollPending)) restoreScrollAnchor(anchor);
+          dashboardWakeRender();
+        }
+      });
+    }
+    // Latest snapshot wins. Paint one section per idle turn so input and
+    // navigation can run between large cards, even when SSE arrives in a burst.
+    function dashboardRenderSection(key, sections, fn, snapshot) {
+      _dashboardRenderJobs.set(key, { key, sections, fn, snapshot });
+      dashboardWakeRender();
+    }
+    function dashboardProgressiveWake() {
+      dashboardWakeBackground();
+      dashboardWakeRender();
+    }
+    document.addEventListener('visibilitychange', dashboardProgressiveWake);
+    setTimeout(function() {
+      _dashboardBackgroundReady = true;
+      dashboardWakeBackground();
+    }, DASHBOARD_BACKGROUND_DELAY_MS);
     // ── Console-style dashboard feedback ───────────────────────────────────
     const FEEDBACK_DRAFT_KEY = 'hive-feedback-draft-v1';
     const FEEDBACK_IDENTITY_KEY = 'hive-feedback-github-username-v1';
@@ -11758,7 +11943,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);
-      } else { start(); }
+      } else { queueMicrotask(start); }
     })();
 
     const OC_TOPBAR_HEIGHT = 64;
@@ -11898,6 +12083,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-agent-nav="${(window.CSS && CSS.escape) ? CSS.escape(name) : String(name).replace(/["\\]/g, '\\$&')}"]`);
       if (active) active.classList.add('active');
+      if (typeof dashboardProgressiveWake === 'function') dashboardProgressiveWake();
       navPeekRestore('agents-section', { instant: true });
       const expanded = navPeekExpand('agents-section');
       if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
@@ -12702,7 +12888,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Agent descriptions now come from the JSON status payload (agent.description field).
     // This empty map serves as a fallback for agents without a description in config.
     const AGENT_DESCRIPTIONS = {};
-
     // ── Config-driven agent color/sort helpers ──────────────────────────────
     const _DEFAULT_AGENT_COLOR = 'var(--muted)';
     function _getAgentColor(name) {
@@ -13379,18 +13564,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function dashboardSetInterval(key, fn, ms) {
       dashboardClearInterval(key);
-      const entry = { fn, ms, timer: null };
+      const entry = { key, fn, ms, timer: null };
       DASHBOARD_INTERVALS[key] = entry;
       if (!document.hidden) dashboardStartInterval(entry);
       return entry;
     }
     function dashboardStartInterval(entry) {
-      entry.timer = setInterval(entry.fn, entry.ms);
+      entry.timer = setInterval(function() {
+        try { Promise.resolve(dashboardRunInterval(entry)).catch(console.error); } catch (err) { console.error(err); }
+      }, entry.ms);
     }
     function dashboardClearInterval(key) {
       if (!DASHBOARD_INTERVALS[key]) return;
       clearInterval(DASHBOARD_INTERVALS[key].timer);
       delete DASHBOARD_INTERVALS[key];
+    }
+    function dashboardRunInterval(entry) {
+      if (typeof dashboardScheduleWork === 'function' &&
+          Object.prototype.hasOwnProperty.call(DASHBOARD_TASK_SECTIONS, entry.key)) {
+        return dashboardScheduleWork(entry.key, entry.fn);
+      }
+      return entry.fn();
     }
     document.addEventListener('visibilitychange', () => {
       for (const [key, entry] of Object.entries(DASHBOARD_INTERVALS)) {
@@ -13402,7 +13596,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // A refresh failure must not prevent the other panels from resuming.
         // Snapshot iteration also permits a callback to clear/replace itself.
         if (DASHBOARD_INTERVALS[key] === entry) {
-          try { Promise.resolve(entry.fn()).catch(console.error); } catch (err) { console.error(err); }
+          try { Promise.resolve(dashboardRunInterval(entry)).catch(console.error); } catch (err) { console.error(err); }
         }
       }
     });
@@ -13852,7 +14046,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         capHistory(historyData);
       }
     }
-
     // ── Cost spend-over-time (hourly / daily / weekly / monthly / custom) ──
     // The server keeps 30 days of CUMULATIVE all-time estimated-$ snapshots at
     // ~5-min resolution. We derive per-bucket SPEND on the client by taking the
@@ -15683,6 +15876,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const short = String((b && b.short) || '').trim();
       return short ? STAGE_TRACKER_BLOCKED_WORD + ' · ' + short : '';
     }
+    // A decomposed parent at 010 (server `open_children` > 0, hive#16481)
+    // reads "Tracking · 3/4" (children known) or "Tracking · 1 open child",
+    // never "Actionable": the scanner leaves it to its children, so the
+    // row is not a stuck unclaimed issue.
+    const STAGE_TRACKER_TRACKING_WORD = 'Tracking';
+    function stageTrackerTrackingWord(item) {
+      const open = Number(item && item.open_children) || 0;
+      if (!(open > 0) || !item || item.kind !== 'issue') return '';
+      const c = item.children;
+      if (c && Number(c.total) > 0) return STAGE_TRACKER_TRACKING_WORD + ' · ' + (Number(c.completed) || 0) + '/' + Number(c.total);
+      return STAGE_TRACKER_TRACKING_WORD + ' · ' + open + ' open child' + (open === 1 ? '' : 'ren');
+    }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
@@ -15861,7 +16066,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the chevron and the caption name one blocker (hive's own #15577 read
     // "Merge queued · 1st" while its caption said "check build-and-test
     // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
-    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Fixing', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Remediating', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
     // Pure: true when the row's queue slot is a forecast — the server says
     // so (merge_train.provisional), or, from an older server, the row's
     // own stage is short of the merge gate.
@@ -15968,7 +16173,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
     // person says what the person has to do (the owner's ask: "waiting on
     // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
-    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being remediated by its author', unknown: 'head not in this view' };
     // Pure: the short reason a stalled head is stuck — the head_state
     // table, a human-decision head told apart by its reason, else the
     // head's own plain-word reason cut at its first clause.
@@ -16487,7 +16692,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 45: return 'Needs a human decision';
         case 50: return 'Waiting for review' + viaPR;
         case 60: return 'Reviewed' + viaPR;
-        case 70: return 'Fixing review findings' + viaPR;
+        case 70: return 'Remediating CI or review findings' + viaPR;
         case 71: return 'Waiting on the author' + viaPR;
         case 72: return 'Back with the contributor' + viaPR;
         case 74: return 'Hive took it over' + viaPR;
@@ -16579,7 +16784,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Stage → operator phrase, mirrored from stageTrackerStagePhrase
     // (stage_tracker_vocabulary.go): every string the page renders names a
     // stage by its chevron's words, never by a code ("060 reviewed").
-    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being fixed by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
+    const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being remediated by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge queue', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
     // Pure: a stage's name in plain words for cues and tooltips — its short
     // word when the stages table has one, else its label with the lane's
     // "stage/060-" slug prefix dropped and the slug humanised ("Reviewed").
@@ -16626,7 +16831,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!d || d.effect !== 'pending' || !d.text) return null;
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       const sep = String(d.text).indexOf(' · ');
-      const word = sep > 0 ? d.text.slice(0, sep) : (d.word || d.text);
+      const rawWord = sep > 0 ? d.text.slice(0, sep) : (d.word || d.text);
+      const word = rawWord === 'Fixing' ? 'Remediating' : rawWord;
       let detail = sep > 0 ? d.text.slice(sep + 3) : '';
       const until = d.next_at ? Date.parse(d.next_at) : 0;
       if (until > nowMs) detail += (detail ? ' · ' : '') + 'in ' + stageTrackerShortLeft(until - nowMs);
@@ -17680,7 +17886,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
       const codeWorking = codeMatches && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
-      const codeCaption = codeMatches ? (!codeWorking && code.state === 'fixing' ? 'Fix task assigned · activity unknown' : code.caption) : 'Code activity unknown';
+      const codeCaption = codeMatches ? (!codeWorking && code.state === 'fixing' ? 'Fix task assigned · activity unknown' : (code.state === 'fixing' ? String(code.caption || '').replace(/^Fixing\b/, 'Remediating') : code.caption)) : 'Code activity unknown';
       if (detour && !code && cur === 70 && !detour.sentinel) detour.text = 'Waiting for fixer · activity unknown';
       if (detour && code && [70, 71, 72].includes(cur)) detour.text = codeCaption || detour.text;
       if (detour && code && cur === 74 && codeWorking) detour.text += ' · ' + codeCaption;
@@ -17701,6 +17907,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const tipStage = (state === 'active' && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         if (state === 'active' && n === 50) word = 'CI + Review';
+        if (state === 'active' && n === 10 && cur === 10 && typeof stageTrackerTrackingWord === 'function') { const tw = stageTrackerTrackingWord(item); if (tw) word = tw; }
         if (state === 'active' && n === 30 && cur === 70 && !codeWorking) word = 'PR in progress';
         // A merge-train member's word is its place in the train (#15117).
         if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
@@ -17760,7 +17967,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       20: '<rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
       30: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="5" r="1.5"/><path d="M4 4.5v7M12 6.5c0 3-8 1-8 4"/>',
       40: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M4 4.5v7M4 6c0 3 6 2 6.5 5"/>',
+      // Column 50 splits into two tracks: CI wears a flask (checks run, no
+      // verdict implied), Review keeps the eye. The eye alone on both read
+      // as one duplicated glyph (operator, 2026-11-03).
       50: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
+      ci: '<path d="M5.5 1.5h5M6.5 1.5v4.6L2.6 12.9a1 1 0 0 0 .9 1.6h9a1 1 0 0 0 .9-1.6L9.5 6.1V1.5"/><path d="M4.4 10.5h7.2"/>',
       // Merge queue: the same railcar as the column header and train chip
       // (STAGE_TRACKER_TRAIN_ICON_PATH in tracker-words.js; a test keeps them equal).
       80: '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>',
@@ -18015,8 +18226,85 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap ham-history-head" title="History — decisions and actions on this item">${stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — decisions and actions on this item')}</li></ol><span class="ham-since">since</span></div></div>`;
     }
 
+    // Pure: which of the two column-50 tracks the hive is waiting on when
+    // both share the current phase (hivecommons/hive#16484). Review
+    // findings and red CI are the fixer's turn ("the fix"); otherwise CI
+    // leads until it is green, then review. newHead: the head was just
+    // pushed, so CI is (re)running on it and the review is a re-review.
+    function stageTrackerTrackLead(item) {
+      if (!item || !item.head) return null;
+      const stateOf = k => { const a = item[k + '_activity']; return a && a.head === item.head && a.state ? a.state : 'unknown'; };
+      const ci = stateOf('ci');
+      const review = stateOf('review');
+      const done = s => s === 'passing' || s === 'approved';
+      const code = item.code_activity;
+      const push = item.push;
+      const newHead = !!((code && code.head === item.head && code.state === 'pushed') || (push && push.state === 'pushed' && push.sha === item.head));
+      if (review === 'changes_requested') return { track: 'review', waitingOn: 'the fix', newHead: false };
+      if (ci === 'failing') return { track: 'ci', waitingOn: 'the fix', newHead: false };
+      if (done(ci) && done(review)) return null;
+      if (done(ci)) return { track: 'review', waitingOn: 'review', newHead };
+      return { track: 'ci', waitingOn: 'CI', newHead };
+    }
+
+    // Pure: the chevron's primary words — the count grammar the operator
+    // asked for (hivecommons/hive#16484): "CI 12/14 passed", "CI 11/14 · 1
+    // failing (lint)", "CI 0/14 · queued", "CI ?/? · no checks reported
+    // yet"; "Review 3/5 perspectives", "Review 5/5 approved", "Review 0/5 ·
+    // re-review pending (new head)", "Review 2/5 · awaiting human
+    // decision". '' means the track has not started on this head (the
+    // chevron shows its glyph alone). current: column 50 is the row's
+    // active phase, so even absent evidence is "in progress" there.
+    function stageTrackerTrackWord(item, kind, current) {
+      const a = item && item[kind + '_activity'];
+      const matches = !!(a && item.head && a.head === item.head);
+      const state = matches ? a.state || 'unknown' : 'unknown';
+      if (state === 'unknown' && !current) return '';
+      const n = k => matches ? Number(a[k]) || 0 : 0;
+      if (kind === 'ci') {
+        const total = n('checks_total');
+        const passed = n('checks_passed');
+        const failed = n('checks_failed');
+        const names = matches && Array.isArray(a.checks_failing) ? a.checks_failing : [];
+        const count = 'CI ' + (total ? passed + '/' + total : '?/?');
+        const failing = failed ? failed + ' failing' + (names.length ? ' (' + names.slice(0, 2).join(', ') + (names.length > 2 ? ', …' : '') + ')' : '') : '';
+        const blocker = matches && a.blocker ? String(a.blocker) : '';
+        switch (state) {
+          case 'passing': return count + ' passed';
+          case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + blocker + ')' : ''));
+          case 'running': return count + ' · running' + (failing ? ' · ' + failing : '');
+          case 'queued': return count + ' · queued' + (failing ? ' · ' + failing : '');
+          case 'skipped': return count + ' · ' + (blocker ? blocker + ' skipped' : 'skipped');
+          case 'missing': return count + ' · ' + (passed ? (blocker ? blocker + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
+          default: return count + ' · ' + (total ? 'no verdict yet' : 'no checks reported yet');
+        }
+      }
+      const total = n('perspectives_total');
+      const done = n('perspectives_done');
+      const count = 'Review' + (total ? ' ' + done + '/' + total : '');
+      const actor = matches && a.actor ? String(a.actor) : '';
+      const code = item.code_activity;
+      const push = item.push;
+      const newHead = !!((code && code.head === item.head && code.state === 'pushed') || (push && push.state === 'pushed' && push.sha === item.head));
+      switch (state) {
+        case 'approved': return count + ' approved';
+        case 'changes_requested': return count + ' · changes requested';
+        case 'human_decision': return count + ' · awaiting human decision';
+        case 'reviewing': case 'adjudicating': return count + ' · ' + (actor ? actor + ' reviewing' : 'reviewing');
+        case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued');
+        case 'unassigned': return count + ' · swarm requested';
+        default: return count + ' · ' + (newHead ? 're-review pending (new head)' : total && done ? 'perspectives' : 'swarm requested');
+      }
+    }
+
     // Evidence is supplied independently by the backend. A native 050 label
     // cannot say who reviews, whether checks run, or whether an author codes.
+    // The chevron wears its glyph plus the count words from
+    // stageTrackerTrackWord (hivecommons/hive#16484). Style follows the
+    // track's own state on the current head: in progress = the full active
+    // fill (both tracks may be lit at once; the words disambiguate), done =
+    // the passed-stage style, a finding = the failing style, not started =
+    // the empty chevron with the glyph alone. Freshness gates only the pulse.
     function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';
@@ -18027,16 +18315,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
-      const active = matches && a.active && Number.isFinite(observed) && !stale;
+      const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      if (matches && (a.active || ['running', 'reviewing', 'adjudicating'].includes(state)) && (!Number.isFinite(observed) || stale)) caption = name + ' activity unknown · last observed ' + state;
-      const cls = Number.isFinite(observed) && !stale && (state === 'passing' || state === 'approved') ? 'done' : active ? 'active' : 'todo';
+      const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
+      const active = known && a.active;
+      if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
+      const ownsPR = item.kind === 'pr' || item.via_pr;
+      const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
+      const finished = matches && (state === 'passing' || state === 'approved');
+      const finding = matches && (state === 'failing' || state === 'changes_requested');
+      const cls = finished ? 'done' : finding ? 'failing' : text ? 'active' : 'todo';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
       const blocker = matches && a.blocker ? ' · ' + a.blocker : '';
-      let tip = caption + blocker + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
-      const ownsPR = item.kind === 'pr' || item.via_pr;
+      // The backend's plain-language sentence behind the caption rides in
+      // the tooltip only; the chevron clamps the caption.
+      const detail = matches && a.detail ? ' · ' + a.detail : '';
+      let tip = caption + blocker + detail + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
@@ -18045,12 +18341,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let decided = kind === 'review' && sg.state === 'active' && item.decided && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
       const codeObserved = Date.parse(code && code.observed_at || '');
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
-      if (!codeFresh) decided = decided.replace(/>Fixing(?=\s|<)/g, '>Fix requested');
-      const word = esc(caption.replace(new RegExp('^' + name + ' ?'), '') || state);
+      if (!codeFresh) decided = decided.replace(/>(?:Fixing|Remediating)(?=\s|<)/g, '>Fix requested');
+      const sha7 = item.head ? String(item.head).slice(0, 7) : '';
+      const lead = current && ownsPR && typeof stageTrackerTrackLead === 'function' ? stageTrackerTrackLead(item) : null;
+      const word = esc(text);
       const evidenceURL = matches && /^https?:\/\//i.test(String(a.url || '')) ? a.url : '';
-      const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${word}</a>` : word;
+      const icon = stageTrackerIcon(kind === 'ci' ? 'ci' : 50, 'ham-ico', name);
+      const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
-      return `<li class="ham-seg ham-activity-track ${cls}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}"${sg.state === 'active' ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(tip + (codeNote ? ' · ' + codeNote : ''))}"` : ''} aria-label="${esc(name + ': ' + tip + (codeNote ? ' · ' + codeNote : ''))}"><span class="ham-track-name">${name}</span><span class="ham-track-state">${evidenceLink}</span>${codeNote || contextWord ? `<span class="ham-track-code-note">${esc(codeNote || contextWord)}</span>` : ''}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}${stale || !Number.isFinite(observed) ? '<span class="ham-track-freshness">?</span>' : ''}</li>`;
+      const hold = item.hold;
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text ? text + ' · ' : '') + tip +
+        (matches && a.actor ? ' · actor ' + a.actor : '') +
+        (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
+        (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
+        (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
+      const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
+      const copy = `<span class="ham-chevron-copy ham-track-state">${evidenceLink}</span>`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -18108,6 +18415,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
+        let gateCaption = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
@@ -18119,7 +18427,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // With merge_gate in the payload the sentence is the gate's own
           // (what holds it, next sweep, soak left — #15073).
           const gateInfo = !sg.detour && typeof stageTrackerMergeGateInfo === 'function' ? stageTrackerMergeGateInfo(item, nowMs, trains) : null;
-          if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;
+          if (gateInfo) {
+            tip = sg.label + ' — ' + gateInfo.tip;
+            gateCaption = [gateInfo.word, gateInfo.detail].filter(Boolean).join(' · ');
+          }
           else if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
@@ -18170,8 +18481,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // The cap chevron is the ✓ only once the PR is merged; until then
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
-        else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);
-        else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        else if (active) {
+          const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short), item.caption, item.reason,
+            item.head ? 'head ' + item.head : '',
+            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          const caption = gateWord || word;
+          const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
+          const content = `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
+          // A decision's dialog is its sole hover/focus detail surface.
+          inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
+        } else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
@@ -18195,7 +18515,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const activityFreshMS = 2 * 60 * 1000;
         const clock = Number(nowMs) || Date.now();
         const working = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
-        const word = !working && decidedInfo.word === 'Fixing' ? 'Fix requested' : decidedInfo.word;
+        const word = !working && ['Fixing', 'Remediating'].includes(decidedInfo.word) ? 'Fix requested' : decidedInfo.word;
         text = word + (decidedInfo.detail ? ' · ' + decidedInfo.detail : '') + (regressed ? ' · ' + regressed : '');
       }
       const tracks = (item.kind === 'pr' || item.via_pr) && item.head ? ['ci', 'review'].map(kind => {
@@ -18773,14 +19093,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
-    // the given refs, and the cap cell the modifier chip, bottom-aligned so
-    // it sits on the last title line, directly over the strip's right end.
+    // the given refs followed by the modifier chips / action buttons,
+    // right-anchored on that same line (margin-left: auto). The chips ride
+    // the title line rather than a second full-width toolbar line, so the
+    // chevrons sit directly under the title (hivecommons/hive#16454 left a
+    // one-line band between them); when the PR metadata leaves no room the
+    // chips wrap under it, content-driven, never a fixed row. A row without
+    // PR refs still gets the PR cell (ham-head-tools) so its chips sit on
+    // the title line in the PR span, not on a line of their own.
     // The since column is an empty spacer here (same width as the strip
     // row's, which carries the time on step): a wrapped title must not float
     // the age away from the chevrons it describes.
     function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml, prTargetKey) {
       const wide = !(prRefs && prRefs.length);
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr"${prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
+      const prStart = STAGE_TRACKER_PATH.indexOf(STAGE_TRACKER_PR_COLUMN) + 1;
+      return `<div class="ham-strip-row ham-head-cols" data-ham-pr-start="${prStart}"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li><li class="ham-seg ham-head-pr${wide ? ' ham-head-tools' : ''}"${!wide && prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${wide ? '' : prRefs.join('')}<span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -18990,12 +19317,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (typeof stageTrackerPreparationMark === 'function') stageTrackerPreparationMark(pr);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded ? superseded + ' · ' + stageTrackerLinkedSupersededTip(lp) : stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
-      // One line (hivecommons/hive: "consolidate from 3 lines of text to
-      // 1"): connector, repo chip, author icon + #N + title, the lineage /
-      // adopted-from chip, then the base pill — all siblings of the flex-row
-      // PR cell; the title ellipsizes, the pills never shrink. A superseded
-      // original wears neither pill — it closes as superseded, not as the
-      // closer of anything.
+      // Connector, repo chip, author icon + #N + title, lineage /
+      // adopted-from chip and base pill share the wrapping PR-side cell.
+      // A superseded original wears neither pill — it closes as superseded,
+      // not as the closer of anything.
       const lineage = superseded ? '' : ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : ''));
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
@@ -19004,7 +19329,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (superseded) {
         // The adopted original: one muted line, no chevron track, no row
         // tools, no needs-human styling — the copy carries the chevron. The
-        // trailing note never wraps; the title ellipsizes first (owner,
+        // trailing note stays distinct from the wrapping title (owner,
         // hivecommons/hive#15511: "superseded · hive adopted → #15574").
         return `<div class="ham-sub ham-sub-superseded" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}" data-ham-superseded-by="${Number(lp.superseded_by || lp.adopted_by) || 0}">
           <div class="ham-row-head">
@@ -20004,6 +20329,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       tpl.innerHTML = html;
       const node = tpl.content.firstElementChild;
       node.dataset.hamKey = key;
+      // Bind canonical lane geometry when materializing root and nested rows.
+      if (typeof node.querySelectorAll === 'function') {
+        for (const header of node.querySelectorAll('.ham-head-cols[data-ham-pr-start]')) {
+          header.style.setProperty('--ham-pr-start', header.dataset.hamPrStart);
+        }
+      }
       if (_stageTrackerRowSrc) _stageTrackerRowSrc.set(node, stageTrackerRowSrcKey(html));
       return node;
     }
@@ -22730,9 +23061,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerOpenDecisionPop(trigger, pin) {
       const key = trigger && trigger.dataset ? trigger.dataset.hamDecision : '';
       if (!key) return;
+      if (typeof hideConfigTooltip === 'function') hideConfigTooltip();
       if (_stageTrackerDecisionPop && _stageTrackerDecisionPop.key === key) {
         if (pin) _stageTrackerDecisionPop.pinned = true;
         clearTimeout(_stageTrackerDecisionPop.timer);
+        if (pin && pin.focus) {
+          const first = _stageTrackerDecisionPop.el.querySelector('.ham-decision-act:not([aria-disabled="true"])');
+          (first || _stageTrackerDecisionPop.el).focus({ preventScroll: true });
+        }
         return;
       }
       stageTrackerCloseDecisionPop(false);
@@ -22785,7 +23121,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       window.addEventListener('resize', p.onAway);
       window.addEventListener('scroll', p.onAway, true);
       _stageTrackerDecisionPop = p;
-      if (pin && pin.focus) { const first = el.querySelector('.ham-decision-act:not([aria-disabled="true"])'); (first || el).focus(); }
+      if (pin && pin.focus) { const first = el.querySelector('.ham-decision-act:not([aria-disabled="true"])'); (first || el).focus({ preventScroll: true }); }
     }
     // The pointer left the trigger or the popover: close after a beat unless
     // it is pinned or the pointer is back over either (rows re-render, so
@@ -24027,7 +24363,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           n.classList.add('cue-acting');
           if (capEl && capEl.parentNode !== host) { capEl.remove(); capEl = null; }
           if (host && !capEl) { capEl = document.createElement('span'); capEl.className = 'cue-acting-cap'; capEl.setAttribute('role', 'status'); const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; capEl.appendChild(sp); capEl.appendChild(document.createTextNode('')); host.appendChild(capEl); }
-          if (capEl) capEl.lastChild.nodeValue = cap;
+          if (capEl) { capEl.lastChild.nodeValue = cap; capEl.title = cap; capEl.setAttribute('aria-label', cap); capEl.setAttribute('tabindex', '0'); }
         } else {
           n.classList.remove('cue-acting');
           if (capEl) capEl.remove();
@@ -36236,11 +36572,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return INFERENCE_MODELS[backend] || [];
       }
     }
-    function refreshBackendDiscovery(force) {
-      INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b, force));
+    async function refreshBackendDiscovery(force) {
+      for (const backend of INFERENCE_BACKENDS) await fetchInferenceModels(backend, force);
       // Load configured gateway names so the backend/method pickers list them
       // (e.g. openrouter) alongside KNOWN_BACKENDS after the first paint.
-      fetchConfiguredGateways();
+      await fetchConfiguredGateways();
     }
 
     const CLI_MODEL_CACHE_TTL_MS = 30000;
@@ -37841,9 +38177,8 @@ function burnAreaChart() {
         renderCost(cost);
       } catch (e) { /* transient — leave last render in place */ }
     }
-    fetchCost();
+    dashboardScheduleWork('cost', fetchCost).catch(console.error);
     dashboardSetInterval('cost', fetchCost, COST_POLL_MS);
-
     // ── v4: ACMM level-up recommendation (advisory) + lifecycle timeline ──
     // Both are additive, read-only panels polled on their own modest interval.
     // They fail quietly: a transient error leaves the last render in place and
@@ -40842,7 +41177,13 @@ function burnAreaChart() {
 
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchPRThroughput(); fetchApprovals(); }
+    function v4RefreshPanels() {
+      [['hive-advice', fetchHiveAdvice], ['acmm-reco', fetchACMMReco],
+        ['lifecycle', fetchLifecycle], ['pr-throughput', fetchPRThroughput],
+        ['approvals', fetchApprovals]].forEach(function([key, fn]) {
+        dashboardScheduleWork(key, fn).catch(console.error);
+      });
+    }
     v4RefreshPanels();
     searchPaneProbe();
     dashboardSetInterval('v4-panels', v4RefreshPanels, V4_PANELS_POLL_MS);
@@ -40884,7 +41225,7 @@ function burnAreaChart() {
         }
       } catch (_) { /* dashboard unreachable — different problem */ }
     }
-    checkGhAuth();
+    dashboardScheduleWork('gh-auth-banner', checkGhAuth).catch(console.error);
     dashboardSetInterval('gh-auth-banner', checkGhAuth, GH_AUTH_POLL_MS);
 
     function renderGhRateLimits(ghRateLimits) {
@@ -40996,7 +41337,6 @@ function burnAreaChart() {
     function setIfChanged(el, html) {
       if (el.innerHTML !== html) el.innerHTML = html;
     }
-
     // ── Experiment Lab (Nous) rendering ──────────────────────────────────────
     let _nousCache = null;
     let _nousPollTimer = null;
@@ -46613,27 +46953,22 @@ function burnAreaChart() {
       const n = Number(minSeq);
       if (Number.isFinite(n) && n > _statusSeqFloor) _statusSeqFloor = n;
     }
+    // A snapshot accepted before a mutation can become stale while queued.
+    function dashboardStatusCanRender(data) {
+      return data.statusSeq == null ||
+        (data.statusSeq >= _statusSeqFloor && data.statusSeq >= _lastStatusSeq &&
+          (!data.statusInstance || !_statusInstance || data.statusInstance === _statusInstance));
+    }
     var SCROLL_SETTLE_DELAY_MS = 500;
     var _deferredLoadPromise = null;
     function _afterPaint(callback) {
       _hashScrollPending = true;
-      if (_deferredLoadPromise) {
-        _deferredLoadPromise.then(function() {
-          requestAnimationFrame(function() {
-            requestAnimationFrame(function() {
-              callback();
-              setTimeout(function() { _hashScrollPending = false; }, 200);
-            });
-          });
-        });
-      } else {
+      requestAnimationFrame(function() {
         requestAnimationFrame(function() {
-          requestAnimationFrame(function() {
-            setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
-            setTimeout(function() { _hashScrollPending = false; }, 500);
-          });
+          setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
+          setTimeout(function() { _hashScrollPending = false; }, SCROLL_SETTLE_DELAY_MS);
         });
-      }
+      });
     }
 
     const NAVBAR_CLOCK_TICK_MS = 1000;
@@ -46978,7 +47313,9 @@ function burnAreaChart() {
       applyDashboardFeatureVisibility();
       // The tracker's hop cue reads which agent is on which item from this
       // payload; redraw the rows when that set changes (no extra fetch).
-      if (typeof stageTrackerWorkers === 'function' && JSON.stringify(stageTrackerWorkers(data)) !== prevWorkers && typeof renderStageTracker === 'function') renderStageTracker();
+      if (typeof stageTrackerWorkers === 'function' && JSON.stringify(stageTrackerWorkers(data)) !== prevWorkers && typeof renderStageTracker === 'function') {
+        dashboardRenderSection('tracker-workers', ['activity-monitor-section'], () => renderStageTracker());
+      }
       if (typeof refreshThroughputSLA === 'function') refreshThroughputSLA();
       if (window._acmmOverride) {
         if (data.acmmLevel === window._acmmOverride.level) {
@@ -47016,26 +47353,30 @@ function burnAreaChart() {
       renderSystemAlerts(data.systemAlerts || []);
       if (!_dropdownOpen && !_configModalOpen) {
         applyPinOverrides(data.agents || []);
-        renderAgents(data.agents || []);
-        renderGovernor(data.governor || {}, data.cadenceMatrix || [], data);
+        dashboardRenderSection('agents', ['agents-section', 'agent-activity-section'], () => {
+          if (!_dropdownOpen && !_configModalOpen) renderAgents(data.agents || []);
+        }, data);
+        dashboardRenderSection('governor', ['governor'], () => {
+          if (!_dropdownOpen && !_configModalOpen) renderGovernor(data.governor || {}, data.cadenceMatrix || [], data);
+        }, data);
         // Keep the focused agent detail in sync with fresh payloads — its
         // fast path only rebuilds when the config fingerprint changes.
         if (_ocSelectedAgent) ocRenderAgentDetail();
       }
-      renderTokens(data.tokens || {});
-      renderAdvisoryDigest(data.advisoryDigest || null);
-      renderRepos(data.repos || []);
-      renderRuns(dashboardRunsFromStatus(data));
-      renderSwarm(data.swarm || {});
+      dashboardRenderSection('tokens', ['token-panel'], () => renderTokens(data.tokens || {}), data);
+      dashboardRenderSection('advisory', ['advisory-section'], () => renderAdvisoryDigest(data.advisoryDigest || null), data);
+      dashboardRenderSection('repos', ['repos-section', 'overview-section'], () => renderRepos(data.repos || []), data);
+      dashboardRenderSection('runs', ['runs-section'], () => renderRuns(dashboardRunsFromStatus(data)), data);
+      dashboardRenderSection('swarm', ['repos-section'], () => renderSwarm(data.swarm || {}), data);
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
       renderPlatform(data.platform || null);
-      renderHiveAdvice(data.hiveAdvice || null);
-      renderFleetReport(data.fleetReport || null);
-      renderSystemGauges(data.systemResources || null);
+      dashboardRenderSection('hive-advice', ['advisory-section'], () => renderHiveAdvice(data.hiveAdvice || null), data);
+      dashboardRenderSection('fleet-report', ['advisory-section'], () => renderFleetReport(data.fleetReport || null), data);
+      dashboardRenderSection('system-gauges', ['debug-section'], () => renderSystemGauges(data.systemResources || null), data);
       ocUpdateSidebarAgents();
-      renderDebugSection();
-      renderFAQ();
+      dashboardRenderSection('debug', ['debug-section'], () => renderDebugSection(), data);
+      dashboardRenderSection('faq', ['faq-section'], () => renderFAQ(), data);
       initializeDashboardSectionCards();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
@@ -53854,10 +54195,14 @@ function burnAreaChart() {
           const lastData = window._lastStatus || {};
           if (lastData.agents) {
             applyPinOverrides(lastData.agents);
-            renderAgents(lastData.agents);
+            dashboardRenderSection('agents', ['agents-section', 'agent-activity-section'], () => {
+              if (!_dropdownOpen && !_configModalOpen) renderAgents(lastData.agents);
+            });
             // Keep the cost table's "running agents" column live as agents
             // switch models or pause/resume between cost polls.
-            if (_lastCost) renderCost(_lastCost);
+            if (_lastCost) dashboardRenderSection('cost', ['cost-panel'], () => {
+              if (_lastCost) renderCost(_lastCost);
+            });
           }
           ocUpdateFocusedState();
           const _lvl = (lastData.acmmLevel != null) ? lastData.acmmLevel : 0;
@@ -55156,7 +55501,7 @@ function burnAreaChart() {
         // agent's kick history over the selected time window.
         if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
-        body.innerHTML = renderGovernorTab(tabId);
+        body.innerHTML = renderGateRegressionBanner() + renderGovernorTab(tabId);
         settingsAnnotateRows(body);
         if (tabId === 'Hub') { fetchQueueCount(); fetchAutoUpdateStatus(); }
         // The escalation breaker lives at the top level of hive.yaml, so the
@@ -55194,6 +55539,18 @@ function burnAreaChart() {
       // invariant on every render (requirement #4). Cheap and idempotent — a
       // no-op on tabs/dialogs without a repos list.
       if (typeof syncRepoSaveGuard === 'function') syncRepoSaveGuard();
+    }
+
+    // Safety-gate regression banner (#16438): /api/status config.gate_regressions
+    // lists the gates (review.require_labels, project.paused_repos, …) a
+    // previous runtime overlay carried that this boot's config dropped or
+    // loosened. Shown at the top of every Settings tab until the operator
+    // restores the gate (or removes it on purpose) and the hive restarts.
+    function renderGateRegressionBanner() {
+      const regs = ((window._lastStatus || {}).config || {}).gate_regressions || [];
+      if (!regs.length) return '';
+      const items = regs.map(g => `<li><code>${esc(g.gate || '')}</code> was <code>${esc(g.previous || '')}</code>, now ${esc(g.effective || '')}${g.source ? ` <span class="text-muted">(from ${esc(g.source)})</span>` : ''}</li>`).join('');
+      return `<div class="cmp-banner" id="gate-regression-banner" role="alert"><strong>Safety gate dropped at boot.</strong> This hive booted without ${regs.length === 1 ? 'a gate' : regs.length + ' gates'} its previous runtime config enforced; agents may now act on items it used to leave alone. Restore the setting here and save, or set <code>config.refuse_gate_regression: true</code> to make this fatal.<ul class="cmp-banner-detail">${items}</ul></div>`;
     }
 
     function renderAgentImport() {
@@ -62311,7 +62668,7 @@ function burnAreaChart() {
       }
       return _statSources;
     }
-    ensureStatSources();
+    dashboardScheduleWork('stat-sources', ensureStatSources).catch(console.error);
 
     /* statSourcesForDialog returns the source catalogue for the agent the
        config dialog is showing. The agent config response carries a catalogue
@@ -62523,7 +62880,6 @@ function burnAreaChart() {
           <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
         </div>`;
     }
-
     // ── Watchdog activity strip (#7254) ──────────────────────────────────────
     // "Review the watchdog-*-observed entries in the Audit Log, then switch to
     // Heal" is only a data-driven decision if the data is on the page. The
@@ -69639,8 +69995,8 @@ function burnAreaChart() {
     chatInput.value = localStorage.getItem(CHAT_DRAFT_KEY) || '';
     renderChatCheatsheet();
     renderChatSuggestions();
-    detectChatCapabilities();
-    refreshChatPresence();
+    dashboardScheduleWork('chat-capabilities', detectChatCapabilities).catch(console.error);
+    dashboardScheduleWork('chat-presence', refreshChatPresence).catch(console.error);
     dashboardSetInterval('chat-presence', refreshChatPresence, 30000);
 
     chatFab.onclick = () => {
@@ -71846,11 +72202,10 @@ function burnAreaChart() {
       updateWelcomeProgress();
     }
 
-    checkGHAuth();
+    dashboardScheduleWork('welcome-gh-auth', checkGHAuth).catch(console.error);
     dashboardSetInterval('welcome-gh-auth', checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
     initWelcomeDialog();
     initNPSSurvey();
-
     // ── One-shot attention shimmy ──────────────────────────────────────
     // Draw the eye, once per page load, to two interactive affordances users
     // often miss: the ACMM level badge and the topbar Guide (Getting Started
@@ -71882,7 +72237,7 @@ function burnAreaChart() {
     }
     triggerAttentionShimmy();
 
-    checkClaudeAuth();
+    dashboardScheduleWork('welcome-claude-auth', checkClaudeAuth).catch(console.error);
     var CLAUDE_AUTH_CHECK_INTERVAL_MS = 60000;
     dashboardSetInterval('welcome-claude-auth', checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
 
@@ -71940,59 +72295,38 @@ function burnAreaChart() {
       sendPresencePing();
     })();
 
-    // Deferred initialization — non-critical fetches staggered after first paint.
-    // Each entry returns a promise so anchor scrolling can wait for layout to settle.
-    const DEFERRED_INIT_DELAY_MS = 1500;
-    const DEFERRED_STAGGER_MS = 200;
+    // Visible sections win; slow background panels cannot delay navigation.
+    const DEFERRED_INIT_DELAY_MS = DASHBOARD_BACKGROUND_DELAY_MS;
     _deferredLoadPromise = new Promise(function(resolveAll) {
       setTimeout(() => {
         const deferred = [
-          () => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig()),
-          () => fetchFactHistory(),
-          () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); }),
-          () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); }),
-          () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
-          () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); }),
-          () => ensureNousPolling(),
-          () => fetchPublicKnowledgeSetting(),
-          () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); }),
-          () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); }),
-          () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
-          () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); }),
-          () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); }),
-          () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); }),
-          () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); }),
-          () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); }),
-          () => fetchACMMEvaluation().then(() => { dashboardSetInterval('acmm-evaluation', fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); }),
-          () => Promise.resolve(startVersionCheck()),
-          () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}).then(() => { dashboardSetInterval('weekly-trends', () => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); }),
-          () => fetchTimeline().then(() => { dashboardSetInterval('timeline', fetchTimeline, TIMELINE_REFRESH_MS); }),
-          () => fetchAgentLogs().then(() => { dashboardSetInterval('agent-logs', fetchAgentLogs, LOGS_REFRESH_MS); }),
+          ['backend-discovery', () => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig())],
+          ['fact-history', () => fetchFactHistory()],
+          ['overview-kpi-history', () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); })],
+          ['history', () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); })],
+          ['budget-ignore', () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(console.error)],
+          ['budget-history', () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); })],
+          ['nous-status', () => ensureNousPolling()],
+          ['public-knowledge', () => fetchPublicKnowledgeSetting()],
+          ['knowledge-stats', () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); })],
+          ['audit-log', () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); })],
+          ['review-queue', () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); })],
+          ['review-pipeline', () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); })],
+          ['stage-tracker', () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); })],
+          ['contributors', () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); })],
+          ['leaderboard', () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); })],
+          ['git-version', () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); })],
+          ['acmm-evaluation', () => fetchACMMEvaluation().then(() => { dashboardSetInterval('acmm-evaluation', fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); })],
+          ['version-check', () => Promise.resolve(startVersionCheck())],
+          ['weekly-trends', () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(console.error).then(() => { dashboardSetInterval('weekly-trends', () => { return fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(console.error); }, TREND_REFRESH_MS); })],
+          ['timeline', () => fetchTimeline().then(() => { dashboardSetInterval('timeline', fetchTimeline, TIMELINE_REFRESH_MS); })],
+          ['agent-logs', () => fetchAgentLogs().then(() => { dashboardSetInterval('agent-logs', fetchAgentLogs, LOGS_REFRESH_MS); })],
         ];
-        // `Promise.resolve().then(fn)` rather than `fn()`, so ONE bad entry
-        // cannot strand the whole chain (#6581). `fn()` was called bare inside
-        // the setTimeout callback, so an entry that threw synchronously — or
-        // returned undefined and had `.then` called on it, which is what
-        // fetchTimeline did — threw out of the callback with nothing to catch
-        // it. That entry's promise then never settled, so Promise.all never
-        // settled, so resolveAll never ran and _deferredLoadPromise stayed
-        // pending for the life of the page. _afterPaint awaits it, so first-
-        // load view restoration (making #oc-agent-detail active, navigating to
-        // a saved section) silently never happened.
-        //
-        // Wrapping turns a synchronous throw into a rejection, which
-        // `.then(resolve, resolve)` already handles: the entry is recorded as
-        // finished-badly instead of never finishing, and the other twelve
-        // entries still complete. The throw is still reported below rather
-        // than swallowed — the point is that one broken entry degrades to one
-        // broken feature, not to a dashboard that never finishes initialising.
-        const allDone = deferred.map((fn, i) =>
-          new Promise(resolve => setTimeout(() => {
-            Promise.resolve().then(fn).then(resolve, err => {
-              console.error('deferred init entry ' + i + ' failed', err);
-              resolve();
-            });
-          }, i * DEFERRED_STAGGER_MS))
+        // A synchronous throw must not strand the other panels (#6581).
+        const allDone = deferred.map(([key, fn]) =>
+          dashboardScheduleWork(key, () => Promise.resolve().then(fn)).catch(err => {
+            console.error('deferred init ' + key + ' failed', err);
+          })
         );
         Promise.all(allDone).then(resolveAll);
       }, DEFERRED_INIT_DELAY_MS);
@@ -72206,7 +72540,6 @@ function burnAreaChart() {
       gh84: function (event, A) { markSentinelDirty('exemptLogins', parseSecurityList(this.value)); },
       gh85: function (event, A) { markSentinelDirty('repos', parseSecurityList(this.value)); },
     };
-
   </script>
 </body>
 </html>

@@ -29,13 +29,15 @@ assert.ok(row.includes('<span class="ham-since">30m</span>'), row);
 // The age and the chip belong to the strip they describe, not to a title line
 // that may wrap: the since text closes the strip row (an empty spacer keeps
 // the title line's width) and the chip is the last thing in the title line's
-// ghost strip, right above the strip's cap.
+// ghost strip — trailing the PR cell (ham-head-tools when there is no PR),
+// right-anchored on the title line, never a toolbar line of its own.
 assert.ok(row.indexOf('<span class="ham-since">30m</span>') > row.indexOf('aria-label="Pipeline progress"'), 'since sits on the strip row, in line with the chevrons');
 assert.ok(/aria-label="Pipeline progress">[\s\S]*?<\/ol>\s*<span class="ham-since">30m<\/span>\s*<\/div>/.test(row), 'the strip row ends with the since cell');
-assert.ok(/<li class="ham-seg cap"><span class="ham-badges">[\s\S]*?<\/span><\/li><\/ol><span class="ham-since"><\/span><\/div>\s*<\/div>\s*<div class="ham-strip-row">/.test(row), 'the chip cell closes the title line, directly above its own strip row');
+assert.ok(/<li class="ham-seg ham-head-pr ham-head-tools"><span class="ham-badges">[\s\S]*?<\/span><\/li><\/ol><span class="ham-since"><\/span><\/div>\s*<\/div>\s*<div class="ham-strip-row">/.test(row), 'the chip cell closes the title line, directly above its own strip row');
+assert.ok(!row.includes('<li class="ham-seg cap">'), 'no separate toolbar line between the title and the chevrons');
 assert.ok(row.indexOf('<div class="ham-row-head">') < row.indexOf('ham-badges') && row.indexOf('ham-badges') < row.indexOf('aria-label="Pipeline progress"'), 'chip and strip share one row container');
 assert.ok(row.includes('ham-kind-ico'), 'kind icon');
-assert.strictEqual((strip(row).match(/<svg class="ham-ico( ham-history-ico)?"/g) || []).length, 5, 'native icons remain; CI and Review have their own evidence text');
+assert.strictEqual((strip(row).match(/<svg class="ham-ico( ham-history-ico)?"/g) || []).length, 7, 'native icons remain; unknown CI and Review each use the existing column glyph');
 assert.ok(/<li class="ham-seg todo cap"><svg class="ham-ico ham-history-ico"/.test(strip(row)), 'the unmerged cap wears the history mark, not the ✓');
 assert.ok(!strip(row).includes('✓'), 'no ✓ in the strip before the PR merges');
 assert.ok(tooltip(row).includes('Claimed by scanner') && tooltip(row).includes('@alice') && tooltip(row).includes('30 min ago'), tooltip(row));
@@ -67,7 +69,7 @@ assert.ok(tooltip(row).includes('Open · on hold (do-not-merge/hold) · No stage
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 11, kind: 'issue', title: 'New report', stage: 0, caption: 'No stage recorded yet', labels: ['needs-triage'], modifiers: ['needs-triage'] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 assert.ok(row.includes('ham-mod-needs-triage">triage needed</span>'), row);
-assert.ok(/aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-seg-t">Open<\/span><\/li>/.test(row), row);
+assert.ok(/aria-current="step"><span class="ham-chevron-info config-info"[^>]*><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-chevron-copy"><span class="ham-seg-t">Open<\/span><\/span>/.test(row), row);
 assert.ok(tooltip(row).startsWith('Open No stage recorded yet') && tooltip(row).includes('Flags: triage needed'), tooltip(row));
 
 // 015 triage-needed: the Actionable column lights (not a detour) with the
@@ -75,7 +77,7 @@ assert.ok(tooltip(row).startsWith('Open No stage recorded yet') && tooltip(row).
 // chevron tooltip name the stage; the server already dropped the chip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 13262, kind: 'issue', title: 'Review backlog (security)', stage: 15, author: 'hive-bot', author_kind: 'hive', caption: 'Actionable, but no maintainer has looked at it yet; waiting for triage' }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, 'active', T, T, T, T, 'todo cap'], '015 lights the Actionable column: ' + row);
-assert.ok(/aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-seg-t">Triage needed<\/span><svg class="ham-ico ham-actor-ico"/.test(row) && row.includes('aria-label="Next move: human"'), '015 word + maintainer move: ' + row);
+assert.ok(/aria-current="step"><span class="ham-chevron-info config-info"[^>]*><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-chevron-copy"><span class="ham-seg-t">Triage needed<\/span><\/span><svg class="ham-ico ham-actor-ico"/.test(row) && row.includes('aria-label="Next move: human"'), '015 word + maintainer move: ' + row);
 assert.ok(!row.includes('ham-detour'), '015 is not a detour');
 assert.ok(strip(row).includes('title="Triage needed — Actionable but no maintainer has looked at it yet · Next move: human"'), 'chevron tooltip names 015: ' + row);
 assert.ok(tooltip(row).startsWith('Triage needed Actionable, but no maintainer has looked at it yet; waiting for triage'), tooltip(row));
@@ -86,7 +88,7 @@ assert.ok(!stageTrackerNeedsAttention({ kind: 'issue', stage: 15 }), '015 is a t
 // A plain 010 row is unchanged by the new stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 12999, kind: 'issue', title: 'Epic', stage: 10 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, 'active', T, T, T, T, 'todo cap']);
-assert.ok(/aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-seg-t">Actionable<\/span><\/li>/.test(row), row);
+assert.ok(/aria-current="step"><span class="ham-chevron-info config-info"[^>]*><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-chevron-copy"><span class="ham-seg-t">Actionable<\/span><\/span>/.test(row), row);
 
 // Plain Open (no stage label, not held) says how long it has sat there, from
 // the same instant the since column draws (stage_since), with the ISO time on
@@ -212,7 +214,7 @@ assert.ok(!stageTrackerRowHtml({ repo: 'acme/console', number: 30, kind: 'pr', t
 // With the PR's stage known the issue strip rides it (merge queue → Merge gate lit, hive move).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 40, linked_prs: [{ number: 102, title: 'Fix it', author_kind: 'human', author: 'bob', stage: 100, stage_since: new Date(now - 7200000).toISOString(), modifiers: ['stalled'], caption: 'Admitted, merging' }] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
-assert.ok(row.includes('<span class="ham-seg-t">Merging</span><svg class="ham-ico ham-actor-ico"') && row.includes('aria-label="Next move: hive"'), row);
+assert.ok(row.includes('<span class="ham-seg-t">Merging</span></span><svg class="ham-ico ham-actor-ico"') && row.includes('aria-label="Next move: hive"'), row);
 assert.ok(row.includes('ham-mod-stalled">stalled</span>') && row.includes('<span class="ham-since ham-stalled">2h</span>'), 'chips + since come from the covering PR: ' + row);
 assert.ok(tooltip(row).includes('Admitted, merging') && tooltip(row).includes('Covering PR: #102'), tooltip(row));
 assert.ok(prCol(row)[0].includes('ham-author-human') && prCol(row)[0].includes('<span class="ham-pr-title">Fix it</span>'), prCol(row)[0]);
@@ -334,7 +336,7 @@ assert.ok(row.includes('Review unknown') && row.includes('CI unknown'), 'legacy 
 // 071 needs-author: the owner wait returns to PR in progress without pretending coding.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{number:50,slug:'review-pending'},{number:71,slug:'needs-author',from:50}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured', T, T, 'todo cap']);
-assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Needs @sam</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-chevron-copy"><span class="ham-detour">Needs @sam</span></span><svg class="ham-ico ham-actor-ico"'), row);
 assert.ok(tooltip(row).includes('Trail: CI / Review → Needs author'), tooltip(row));
 // The trail names hops from the payload's {number, slug} entries (#14787
 // showed "undefined → undefined → …" when it read a field the server never
@@ -366,17 +368,17 @@ assert.strictEqual(stageTrackerTrailText(live14787), 'review-pending → needs-a
 assert.strictEqual(stageTrackerTrailText({ history: [{ number: 50 }, { number: 85 }] }), '', 'numbers alone, no table, no slug: nothing to name');
 _stageTracker = savedStages;
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }] }, stages, ctx);
-assert.ok(subs(row).length === 0 && strip(row).includes('aria-label="Next move: clanker"') && strip(row).includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'single covering PR: the issue strip lights PR in progress with the PR author as the mover: ' + row);
+assert.ok(subs(row).length === 0 && strip(row).includes('aria-label="Next move: clanker"') && strip(row).includes('<span class="ham-seg-t">PR in progress</span></span><svg class="ham-ico ham-actor-ico"'), 'single covering PR: the issue strip lights PR in progress with the PR author as the mover: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }, { number: 109, author_kind: 'hive', stage: 50 }] }, stages, ctx);
-assert.ok(!strip(row).includes('ham-actor-ico') && !strip(row).includes('aria-current') && subs(row).length === 2 && subs(row)[1].includes('aria-label="Next move: clanker"') && subs(row)[1].includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'two covering PRs: the sub-rows, not the issue, light their stage: ' + row);
+assert.ok(!strip(row).includes('ham-actor-ico') && !strip(row).includes('aria-current') && subs(row).length === 2 && subs(row)[1].includes('aria-label="Next move: clanker"') && subs(row)[1].includes('<span class="ham-seg-t">PR in progress</span></span><svg class="ham-ico ham-actor-ico"'), 'two covering PRs: the sub-rows, not the issue, light their stage: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 20, claimant_kind: 'hive' }, stages, ctx);
-assert.ok(row.includes('aria-label="Next move: hive"') && row.includes('<span class="ham-seg-t">Claimed</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(row.includes('aria-label="Next move: hive"') && row.includes('<span class="ham-seg-t">Claimed</span></span><svg class="ham-ico ham-actor-ico"'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 20 }, stages, ctx);
 assert.ok(!row.includes('ham-actor-ico') && row.includes('<span class="ham-seg-t">Claimed</span>'), 'no claimant known, no icon: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', stage: 10 }, stages, ctx);
 assert.ok(!row.includes('ham-actor-ico') && !tooltip(row).includes('Next move'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 105, kind: 'pr', stage: 90 }, stages, ctx);
-assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Ready for human merge</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-chevron-copy"><span class="ham-detour">Ready for human merge</span></span><svg class="ham-ico ham-actor-ico"'), row);
 
 // Merged: everything neutral-done, the cap carries the only check.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
@@ -473,7 +475,7 @@ assert.strictEqual(sr.length, 2, 'one sub-row per covering PR');
 assert.ok(prCol(sr[0])[0].includes('ham-author-human') && prCol(sr[0])[0].includes('#102') && prCol(sr[0])[0].includes('<span class="ham-pr-title">Fix it</span>'), prCol(sr[0])[0]);
 assert.deepStrictEqual(segStates(sr[0]), [B, B, B, D, 'active detoured', T, 'todo cap'], 'PR strip starts at PR in progress');
 assert.ok(sr[0].includes('Waiting for fixer') && !sr[0].includes('ham-actor-ico') && sr[0].indexOf('<span class="ham-since">1h</span>') > sr[0].indexOf('aria-label="Pipeline progress"') && sr[0].includes('ham-mod-needs-rebase">needs rebase</span>'), 'a rebase label and next mover cannot manufacture observed coding: ' + sr[0]);
-assert.ok(/^ data-ham-kind="pr" data-ham-stage="70" data-ham-sub-key="acme\/console\/pr#102">/.test(sr[0]) && /<a class="ham-pr-ref"[^>]*title="Fix it · Fixing review findings Rebasing onto main/.test(sr[0]), 'sub-row tooltip rides the PR link, not the container: ' + sr[0].slice(0, 400));
+assert.ok(/^ data-ham-kind="pr" data-ham-stage="70" data-ham-sub-key="acme\/console\/pr#102">/.test(sr[0]) && /<a class="ham-pr-ref"[^>]*title="Fix it · Remediating CI or review findings Rebasing onto main/.test(sr[0]), 'sub-row tooltip rides the PR link, not the container: ' + sr[0].slice(0, 400));
 assert.ok(prCol(sr[1])[0].includes('ham-author-clanker') && prCol(sr[1])[0].includes('#103'));
 assert.deepStrictEqual(segStates(sr[1]), [B, B, B, 'active', T, T, 'todo cap'], 'a PR at 030 lights PR in progress on its own sub-row');
 assert.ok(!row.slice(0, row.indexOf('<div class="ham-sub"')).includes('ham-pr-ref'), 'the issue title line itself lists no PRs');
@@ -495,7 +497,7 @@ sr = subs(row);
   assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, PR link, lineage chip, base pill in that order as siblings: ' + cell);
   assert.ok(cell.indexOf('<span class="ham-badge">v5</span>') > cell.indexOf('</a>', cell.indexOf('<a class="ham-pr-ref"')), 'the base pill is a sibling after the PR link, not inside it: ' + cell);
   assert.ok(/<a class="ham-pr-ref"[^>]*title="docs: remove duplicate README run routes · /.test(cell), 'the PR link hover starts with the full title: ' + cell);
-  assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<li class="ham-seg cap">'), 'the lineage chip rides the PR cell, not the chip cap: ' + head);
+  assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<span class="ham-badges">'), 'the lineage chip rides the PR cell ahead of the modifier chips, not the chip toolbar: ' + head);
   assert.strictEqual((head.match(/ham-lineage/g) || []).length, 1, 'the lineage chip is drawn once');
 }
 // The same order on an issue row with a single covering PR: lineage chip
@@ -520,7 +522,7 @@ assert.deepStrictEqual(segStates(subs(row)[0]), [B, B, B, D, D, D, 'active cap m
 // Title line: lead cell (Open..Claimed) and PR cell (PR in progress..Merge gate) each truncate with an ellipsis; the full title is on the element itself.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 12, kind: 'issue', title: 'A very long issue title that must not wrap', stage: 10 }, stages, ctx);
 // No PR to list: the lead cell widens over the empty PR column so a long title has room before it truncates.
-assert.ok(/<li class="ham-seg ham-head-lead ham-head-wide"><div class="ham-head-main">[\s\S]*?<span class="ham-title" title="A very long issue title that must not wrap">A very long issue title that must not wrap<\/span>[\s\S]*?<\/li><li class="ham-seg cap"><span class="ham-badges"><\/span><\/li>/.test(row), row);
+assert.ok(/<li class="ham-seg ham-head-lead ham-head-wide"><div class="ham-head-main">[\s\S]*?<span class="ham-title" title="A very long issue title that must not wrap">A very long issue title that must not wrap<\/span>[\s\S]*?<\/li><li class="ham-seg ham-head-pr ham-head-tools"><span class="ham-badges"><\/span><\/li>/.test(row), row);
 // Sort key: a covered issue counts as far along as its furthest PR.
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1, stage: 30 }, { number: 2, stage: 90 }] }, stages).anchor, 80);
 // An issue parked on 045 (or a pre-045 085) with no PR sorts at Actionable, not past the merge gate.
@@ -555,7 +557,7 @@ for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passe
     assert.ok(r.includes('CI unknown') && r.includes('Review unknown'), 'legacy labels alone cannot supply activity at ' + st);
     continue;
   }
-  const m = /aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
+  const m = /aria-current="step"><span class="ham-chevron-info (?:config-info|ham-chevron-decision)"[^>]*><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-chevron-copy"><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);
   assert.deepStrictEqual([m[1], m[2]], [word, actor === 'author' ? 'clanker' : actor], 'stage ' + st);
   prWords[st] = m[1];
@@ -606,12 +608,28 @@ assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'issue', repo: '' }).map(i
 assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'pr', repo: '' }).map(it => it.number), [21, 31, 32, 40], 'Pull requests filter flattens every PR once');
 
 // Hover text budget per row (owner request): only the #N link, the PR link,
-// the item title and the active chevron carry title="…". The row container,
+// the item title and the active chevron carry nonempty title="…". The row container,
 // sub-row container, kind / author / actor icons, chips, since cells and
 // every non-active chevron carry none; icons expose their label via aria-label.
+// Accessible chevron wrappers use title="" only to suppress inherited native
+// hover text while the shared portal exposes their full details.
 const tags = (html) => Array.from(html.matchAll(/<(\w+)\b([^>]*)>/g)).map(m => ({ tag: m[1], attrs: m[2] }));
-const titled = (html) => tags(html).filter(t => / title="/.test(t.attrs) && !t.attrs.includes('data-track='));
-const expectTitles = (html, want, what) => assert.deepStrictEqual(titled(html).map(t => t.tag + '.' + ((/class="([^" ]+)/.exec(t.attrs) || [])[1] || '')), want, what + ': ' + html);
+const titleAttribute = (tag) => (/(?:^|\s)title="([^"]*)"/.exec(tag.attrs) || [])[1];
+const chevronHelp = (tag) => tag.tag === 'span' && /(?:^|\s)class="ham-chevron-info config-info"/.test(tag.attrs);
+const titled = (html) => tags(html).filter(t => titleAttribute(t) !== undefined && !t.attrs.includes('data-track=') &&
+  !(chevronHelp(t) && titleAttribute(t) === ''));
+const expectTitles = (html, want, what) => {
+  for (const tag of tags(html).filter(chevronHelp)) {
+    assert.strictEqual(titleAttribute(tag), '', what + ': portal wrapper must suppress inherited native hover text');
+    assert.match(tag.attrs, /(?:^|\s)tabindex="0"/, what + ': full details remain keyboard reachable');
+    assert.match(tag.attrs, /(?:^|\s)aria-label="[^"]+"/, what + ': full accessible caption remains');
+    assert.match(tag.attrs, /(?:^|\s)aria-describedby="ham-(?:chevron|track)-tip-[^"]+"/, what + ': shared tooltip stays associated');
+  }
+  assert.deepStrictEqual(titled(html).map(t => t.tag + '.' + ((/class="([^" ]+)/.exec(t.attrs) || [])[1] || '')), want, what + ': ' + html);
+};
+assert.strictEqual(titled('<span class="ham-chevron-info config-info" title=""></span>').length, 0, 'only the exact empty portal suppressor is exempt');
+assert.strictEqual(titled('<span class="ham-chevron-info config-info" title="unexpected native tooltip"></span>').length, 1, 'nonempty wrapper titles still violate the exact hover budget');
+assert.strictEqual(titled('<li class="ham-seg" title=""></li><span class="unexpected" title=""></span>').length, 2, 'unrelated title-bearing extras are never whitelisted');
 assert.ok(!/<svg[^>]*>\s*<title>/.test(golden), 'no svg <title> tooltips anywhere in the tracker');
 assert.ok(!/<(div|span)[^>]*class="ham-(row|sub|since|badge|kind-ico)[^>]*title="/.test(golden), 'containers, since cells, chips and kind icons carry no title');
 for (const r of golden.split('<div class="ham-row"').slice(1)) {

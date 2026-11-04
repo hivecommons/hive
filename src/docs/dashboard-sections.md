@@ -33,6 +33,7 @@ These words have a special meaning in Hive. Each entry explains them again the f
 - **Autonomy level:** how much Hive may do on its own, from L1 (watch only) to L6 (works and merges on its own). Hive calls this the ACMM level.
 - **Tracked:** an issue or pull request that Hive has put on its work list after its filters ran.
 - **Actionable:** a tracked item that Hive could work on now, because nothing is waiting on a person.
+- **Tracking:** an actionable issue that was split into child issues and still has some open. The activity monitor lights its Actionable step as `Tracking · 3/4` (children done / total) instead of *Actionable*, and its caption names the open children: the scanner leaves such a parent to its children, so the time on the step is not scanner delay ([#16481](https://github.com/hivecommons/hive/issues/16481)).
 - **Held:** an item someone parked on purpose by adding a hold label, such as `hold` or `on-hold`. Hive leaves it alone.
 - **Outside:** an open item that Hive's filters kept off its work list, for example because of a label.
 - **Band:** a group the dashboard puts an issue or pull request in, named after what it needs next. Bands are for display only.

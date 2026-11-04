@@ -53,7 +53,8 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		"function prtWindowLabel",
 		"dto.recorded_since",
 		"of recorded history",
-		"fetchPRThroughput(); fetchApprovals();",
+		"['pr-throughput', fetchPRThroughput]",
+		"['approvals', fetchApprovals]",
 		"'governor','runs-section','pr-throughput-section','repos-section',",
 	} {
 		if !strings.Contains(html, snippet) {

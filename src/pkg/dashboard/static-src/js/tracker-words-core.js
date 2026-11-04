@@ -54,6 +54,18 @@
       const short = String((b && b.short) || '').trim();
       return short ? STAGE_TRACKER_BLOCKED_WORD + ' · ' + short : '';
     }
+    // A decomposed parent at 010 (server `open_children` > 0, hive#16481)
+    // reads "Tracking · 3/4" (children known) or "Tracking · 1 open child",
+    // never "Actionable": the scanner leaves it to its children, so the
+    // row is not a stuck unclaimed issue.
+    const STAGE_TRACKER_TRACKING_WORD = 'Tracking';
+    function stageTrackerTrackingWord(item) {
+      const open = Number(item && item.open_children) || 0;
+      if (!(open > 0) || !item || item.kind !== 'issue') return '';
+      const c = item.children;
+      if (c && Number(c.total) > 0) return STAGE_TRACKER_TRACKING_WORD + ' · ' + (Number(c.completed) || 0) + '/' + Number(c.total);
+      return STAGE_TRACKER_TRACKING_WORD + ' · ' + open + ' open child' + (open === 1 ? '' : 'ren');
+    }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
@@ -232,7 +244,7 @@
     // the chevron and the caption name one blocker (hive's own #15577 read
     // "Merge queued · 1st" while its caption said "check build-and-test
     // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
-    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Fixing', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Remediating', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
     // Pure: true when the row's queue slot is a forecast — the server says
     // so (merge_train.provisional), or, from an older server, the row's
     // own stage is short of the merge gate.
@@ -339,7 +351,7 @@
     // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
     // person says what the person has to do (the owner's ask: "waiting on
     // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
-    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for the next merge pass', merging: 'merge call in flight', fixing: 'being remediated by its author', unknown: 'head not in this view' };
     // Pure: the short reason a stalled head is stuck — the head_state
     // table, a human-decision head told apart by its reason, else the
     // head's own plain-word reason cut at its first clause.

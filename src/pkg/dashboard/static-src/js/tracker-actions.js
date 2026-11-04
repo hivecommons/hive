@@ -1027,9 +1027,14 @@
     function stageTrackerOpenDecisionPop(trigger, pin) {
       const key = trigger && trigger.dataset ? trigger.dataset.hamDecision : '';
       if (!key) return;
+      if (typeof hideConfigTooltip === 'function') hideConfigTooltip();
       if (_stageTrackerDecisionPop && _stageTrackerDecisionPop.key === key) {
         if (pin) _stageTrackerDecisionPop.pinned = true;
         clearTimeout(_stageTrackerDecisionPop.timer);
+        if (pin && pin.focus) {
+          const first = _stageTrackerDecisionPop.el.querySelector('.ham-decision-act:not([aria-disabled="true"])');
+          (first || _stageTrackerDecisionPop.el).focus({ preventScroll: true });
+        }
         return;
       }
       stageTrackerCloseDecisionPop(false);
@@ -1082,7 +1087,7 @@
       window.addEventListener('resize', p.onAway);
       window.addEventListener('scroll', p.onAway, true);
       _stageTrackerDecisionPop = p;
-      if (pin && pin.focus) { const first = el.querySelector('.ham-decision-act:not([aria-disabled="true"])'); (first || el).focus(); }
+      if (pin && pin.focus) { const first = el.querySelector('.ham-decision-act:not([aria-disabled="true"])'); (first || el).focus({ preventScroll: true }); }
     }
     // The pointer left the trigger or the popover: close after a beat unless
     // it is pinned or the pointer is back over either (rows re-render, so
@@ -2324,7 +2329,7 @@
           n.classList.add('cue-acting');
           if (capEl && capEl.parentNode !== host) { capEl.remove(); capEl = null; }
           if (host && !capEl) { capEl = document.createElement('span'); capEl.className = 'cue-acting-cap'; capEl.setAttribute('role', 'status'); const sp = document.createElement('span'); sp.className = 'toast-spinner cue-acting-spin'; capEl.appendChild(sp); capEl.appendChild(document.createTextNode('')); host.appendChild(capEl); }
-          if (capEl) capEl.lastChild.nodeValue = cap;
+          if (capEl) { capEl.lastChild.nodeValue = cap; capEl.title = cap; capEl.setAttribute('aria-label', cap); capEl.setAttribute('tabindex', '0'); }
         } else {
           n.classList.remove('cue-acting');
           if (capEl) capEl.remove();

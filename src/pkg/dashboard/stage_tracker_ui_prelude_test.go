@@ -212,7 +212,8 @@ const segStates = (html) => Array.from(strip(html).matchAll(/<li class="ham-seg 
 const titles = (html, t) => (html.match(new RegExp('>' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<', 'g')) || []).length;
 const prCol = (html) => Array.from(html.slice(0, html.indexOf('aria-label="Pipeline progress"')).matchAll(/<a class="ham-pr-ref"[^>]*>(.*?)<\/a>/g)).map(m => m[1]);
 const B = 'blank';
-const text = (h) => h.replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+const visibleMarkup = (h) => h.replace(/<span[^>]*class="config-tooltip ham-chevron-tip"[^>]*>[^<]*<\/span>/g, '');
+const text = (h) => visibleMarkup(h).replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
 // The row tooltip rides the issue's #N link on an issue row and the PR link
 // (after "PR title · ") on a PR row; the issue slot of a PR row carries none.
 const tooltip = (row) => (/<a class="ham-ref"[^>]*title="([^"]*)"/.exec(row) || /<a class="ham-pr-ref"[^>]*title="([^"]*)"/.exec(row))[1];

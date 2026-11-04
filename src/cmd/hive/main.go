@@ -458,6 +458,11 @@ const (
 	// HIVE_PROXY_ADVISORY_OK=true). Its own code so a refusing pod's
 	// termination state says "fix the env", not "bug".
 	proxyInjectConfigExitCode = 19
+	// gateRegressionExitCode marks an exit caused by config.refuse_gate_regression
+	// (hivecommons/hive#16438): a previous runtime overlay carried a safety
+	// gate the effective config lacks. Its own code so the termination state
+	// says "restore the gate or the overlay", not "bug".
+	gateRegressionExitCode = 21
 )
 
 // singletonLockPath resolves where the process singleton lock lives. Every
@@ -680,6 +685,24 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		"count", len(b.cfg.RemovedAgents),
 		"agents", b.cfg.RemovedAgents,
 	)
+
+	// Safety-gate regression check (#16438). A boot from the ConfigMap seed
+	// (runtime overlay moved aside, truncated, or never written) silently
+	// dropped review.require_labels on a live hive and the reviewer posted on
+	// unlabelled PRs for hours. Compare the effective config against whatever
+	// previous overlay is still on the PVC and say so, once per gate; refuse
+	// to start when the operator asked for that.
+	b.cfg.GateRegressions = deps.gateRegressions(b.cfg)
+	for _, g := range b.cfg.GateRegressions {
+		b.logger.Warn("safety gate dropped: "+g.String(),
+			"gate", g.Gate, "previous", g.Previous, "effective", g.Effective, "source", g.Source)
+	}
+	if len(b.cfg.GateRegressions) > 0 && b.cfg.ConfigGuard.RefuseGateRegression {
+		err := &config.GateRegressionError{Regressions: b.cfg.GateRegressions}
+		b.logger.Error("refusing to start: safety gate regression (config.refuse_gate_regression is on)", "error", err.Error())
+		deps.exit(gateRegressionExitCode)
+		return false
+	}
 
 	// Surface config provenance: when the persisted runtime config exists, init
 	// containers restore it over the ConfigMap seed on restart, so edits made

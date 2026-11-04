@@ -14,13 +14,13 @@ import (
 // sat on them in muted grey — unreadable — while "Ready for human merge ·
 // untrusted author" still showed beside it, wrapped to four lines. While an
 // action is in flight a lit chevron shows ONE caption, on an opaque plate
-// that meets WCAG AA in both themes, on one line.
+// that meets WCAG AA in both themes, within the shared two-line budget.
 
 const stageTrackerActingHideRule = `.cue-acting > .ham-strip-row > .ham-strip > .ham-seg.active:not(.cap) > :not(.cue-acting-cap) { display: none; }`
 
 // stageTrackerActingPlateRule is the plate: page surface under page text,
-// above the stripes and the pulse overlay, one line with an ellipsis.
-const stageTrackerActingPlateRule = `.ham-seg.active > .cue-acting-cap { display: inline-block; position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }`
+// above the stripes and the pulse overlay, wrapping within two lines.
+const stageTrackerActingPlateRule = `.ham-seg.active > .cue-acting-cap { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: var(--ham-chevron-line-height); overflow: hidden; white-space: normal; overflow-wrap: anywhere; }`
 
 // wcagMinContrastAA is the WCAG 2.x AA ratio for normal text.
 const wcagMinContrastAA = 4.5
@@ -139,8 +139,10 @@ for (const [label, item] of [['merge gate', gateIssue], ['decision', decideIssue
   const lit = (row.match(/<li class="ham-seg active(?! cap)[^"]*"/g) || []).length;
   const reachable = (row.match(chain) || []).length;
   assert.ok(lit > 0 && reachable === lit, label + ': ' + lit + ' lit chevron(s), ' + reachable + ' at row > .ham-strip-row > .ham-strip > .ham-seg.active:\n' + row);
-  // The word is a child of the lit chevron, so the hide rule reaches it.
-  assert.ok(/<li class="ham-seg active[^"]*"[^>]*>(?:<[^l][^>]*>|<svg[\s\S]*?<\/svg>)*?<(?:span|button) class="(?:ham-seg-t|ham-detour|ham-decision-trigger)/.test(row), label + ': the word is a direct child of the lit chevron:\n' + row);
+  // The focusable tooltip/copy wrapper is a direct child, so the hide rule
+  // reaches the complete wrapped word and its reserved glyphs together.
+  assert.ok(/<li class="ham-seg active[^"]*"[^>]*><span class="ham-chevron-info (?:config-info|ham-chevron-decision)"/.test(row), label + ': the hide rule reaches the full content wrapper:\n' + row);
+  assert.ok(row.includes('class="ham-chevron-copy"'), label + ': the original words share the two-line clamp');
 }
 
 // A chevron that carries its word, gate glyph and actor glyph: after the
@@ -159,6 +161,9 @@ const caps = seg.children.filter(c => c.classList.contains('cue-acting-cap'));
 assert.strictEqual(caps.length, 1, 'exactly one caption');
 assert.strictEqual(caps[0].lastChild.nodeValue, 'Queuing for merge…');
 assert.strictEqual(caps[0].getAttribute('role'), 'status');
+assert.strictEqual(caps[0].title, 'Queuing for merge…', 'clamped action caption retains its full hover text');
+assert.strictEqual(caps[0].getAttribute('aria-label'), 'Queuing for merge…');
+assert.strictEqual(caps[0].getAttribute('tabindex'), '0', 'full status remains keyboard accessible');
 const capEls = caps[0].children.filter(c => c.classList); // the stub lists the text node too
 assert.strictEqual(capEls.length, 1, 'spinner + text only'); assert.ok(capEls[0].classList.contains('cue-acting-spin'));
 const shown = seg.children.filter(c => !c.classList.contains('cue-acting-cap'));

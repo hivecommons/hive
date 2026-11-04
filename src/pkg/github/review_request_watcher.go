@@ -299,18 +299,25 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	threadID := strings.TrimSpace(req.ThreadID)
 	// A "comment" that names a thread is an in-thread reply, not a PR review.
 	threadReply := okEvent && apiEvent == "COMMENT" && threadID != ""
-	// Quiet notification mode: a review whose whole body is the clean
-	// acknowledgement ("**Reviewed** — no findings from …") is recorded as
-	// a verdict and never submitted. Submitting it emails the author and
-	// every watcher to say nothing happened; the verdict still reaches the
-	// evidence bundle and the Activity Monitor. The request keeps its
+	// Quiet notification mode: a clean review — the one-line acknowledgement
+	// ("**Reviewed** — no findings from …"), or a narrated body that says it
+	// has no findings while its verdict report approves with none
+	// (review.CleanReview; the plain reviewer lanes write the latter,
+	// hivecommons/hive#16433) — is recorded as a verdict and never
+	// submitted. Submitting it emails the author and every watcher to say
+	// nothing happened; the verdict still reaches the evidence bundle and
+	// the Activity Monitor, and the body is folded into the PR's status
+	// comment below so the reasoning is not lost. The request keeps its
 	// report, so the shape checks below treat it exactly as record_verdict.
 	noFindingsSuppressed := false
 	if okEvent && !recordOnly && !resolveThread && threadID == "" && !req.Revise &&
-		c.notificationsQuiet() && strings.TrimSpace(req.Report) != "" && review.NoFindingsAcknowledgement(req.Body) {
-		recordOnly = true
-		noFindingsSuppressed = true
-		req.Event = ReviewEventRecordVerdict
+		c.notificationsQuiet() && strings.TrimSpace(req.Report) != "" {
+		reports, _ := review.ValidateReportsFor([]byte(strings.TrimSpace(req.Report)), c.perspectives)
+		if review.CleanReview(req.Body, reports) {
+			recordOnly = true
+			noFindingsSuppressed = true
+			req.Event = ReviewEventRecordVerdict
+		}
 	}
 	// Validate shape BEFORE authorizing or touching the API — a hopeless request
 	// must never retry.
@@ -506,6 +513,14 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// Authorized and well-formed, but nothing to post: record and finish
 	// without touching the GitHub API.
 	if recordOnly {
+		if noFindingsSuppressed {
+			// The clean verdict lands in the status comment, edited in
+			// place, instead of a review submission of its own.
+			if _, ferr := c.UpsertPRStatusSection(ctx, req.Repo, req.Number, prstatus.KeyReviewFindingsPrefix+verdictSlug(req.Agent), reviewNoFindingsSection(req)); ferr != nil {
+				c.logger.Warn("review-request watcher: could not fold the clean verdict into the status comment",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", ferr.Error()))
+			}
+		}
 		c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), nil, nowFn())
 		if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 			c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
@@ -970,6 +985,20 @@ func (c *Client) maxReviewsPerHead() int {
 // reviewNoFindingsSuppressedNote is the result-file note for a clean
 // acknowledgement the quiet mode recorded instead of submitting.
 const reviewNoFindingsSuppressedNote = "comment suppressed: no-findings acknowledgement recorded as a verdict (github.notifications.mode: quiet)"
+
+// reviewNoFindingsSection renders a suppressed clean review for the status
+// comment: the verdict on its own line, the reviewer's reasoning folded.
+func reviewNoFindingsSection(req ReviewRequest) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Reviewed** by `%s` — no findings.", strings.TrimSpace(req.Agent))
+	body := strings.TrimSpace(req.Body)
+	if body != "" && !review.NoFindingsAcknowledgement(body) {
+		b.WriteString("\n\n<details><summary>Reviewer notes</summary>\n\n")
+		b.WriteString(body)
+		b.WriteString("\n\n</details>")
+	}
+	return b.String()
+}
 
 // reviewFindingsSection renders a perspective's findings for the status
 // comment: who found them, then the body as written.

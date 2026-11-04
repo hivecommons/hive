@@ -209,7 +209,7 @@ const covered = stageTrackerRowHtml(issue(9, { stage: 40, caption: 'Covered by P
   { number: 92, url: 'https://x/92', title: 'alt', author: 'alice', author_kind: 'human', stage: 50, stage_since: since, caption: 'CI', stage_actor: { kind: 'hive', why: 'review' }, claimant: { kind: 'person', login: 'alice', since, source: 'author' } },
 ] }), stages, ctx);
 const subWords = strips(covered).slice(1).map(s => text((/<li class="ham-seg active[^"]*"[^>]*>([\s\S]*?)<\/li>/.exec(s) || ['', ''])[1]));
-assert.deepStrictEqual(subWords, ['Fixing · fixer', ''], JSON.stringify(subWords));
+assert.deepStrictEqual(subWords, ['Remediating · fixer', ''], JSON.stringify(subWords));
 assert.ok(subs(covered)[1].includes('CI unknown') && subs(covered)[1].includes('Review unknown'), 'the PR owner is not an assigned reviewer');
 assert.ok(subs(covered)[1].includes('Held by: @alice'), 'ownership stays available without implying review activity');
 console.log('claimant chevron ok');

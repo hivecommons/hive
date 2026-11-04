@@ -79,7 +79,7 @@ func mergeTrainHeadState(head *StageTrackerItem, now time.Time) (state, reason s
 	case trackerNumberReviewed, trackerNumberReviewPending:
 		return mergeTrainHeadCI, "waiting for CI", 0, false
 	case trackerNumberFixing, trackerNumberReturned, trackerNumberNeedsAuthor:
-		return mergeTrainHeadFixing, "being fixed by its author", 0, false
+		return mergeTrainHeadFixing, "being remediated by its author", 0, false
 	}
 	if head.Hold != nil || head.NeedsHuman {
 		return mergeTrainHeadNeedsHuman, "waiting for a maintainer", 0, false

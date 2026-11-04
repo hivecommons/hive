@@ -1880,7 +1880,7 @@
       }
       return _statSources;
     }
-    ensureStatSources();
+    dashboardScheduleWork('stat-sources', ensureStatSources).catch(console.error);
 
     /* statSourcesForDialog returns the source catalogue for the agent the
        config dialog is showing. The agent config response carries a catalogue
@@ -2092,4 +2092,3 @@
           <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
         </div>`;
     }
-
