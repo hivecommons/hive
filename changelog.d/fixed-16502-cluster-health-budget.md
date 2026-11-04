@@ -1,0 +1,1 @@
+- Spoke cluster-health collection now stays within the heartbeat budget when the nodes API never responds, and a cancelled collection preserves the node capacity and usage already gathered while leaving disk and pod-derived fields unset ([#16502](https://github.com/hivecommons/hive/issues/16502)).
