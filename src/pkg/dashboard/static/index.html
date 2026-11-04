@@ -61381,11 +61381,11 @@ function burnAreaChart() {
             <label>Fixer agent ${yamlHint('review.fixer_agent')} ${settingHelpMark('review-swarm', 'configuration', 'Fixer agent', `The agent kicked to address reviewer findings before re-review. Use the agent ID (the key in the roster, not its display name). Blank falls back to the PR's authoring agent, then scanner.`)}</label>
             <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="scanner (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">
           </div>
-          <div class="config-field" style="margin-top:10px">
+          <div class="config-field mt-3">
             <label>Fallback fixer agents (comma-separated) ${yamlHint('review.fixer_fallback_agents[]')} ${settingHelpMark('review-swarm', 'configuration', 'Fallback fixer agents', `Ordered agent IDs to try when the primary fixer cannot accept kicks. The first available fallback receives the repair without interrupting another turn. An empty list disables fallback routing.`)}</label>
             <input type="text" value="${esc((rv.fixer_fallback_agents || []).join(', '))}" placeholder="e.g. fixer, scanner-2" spellcheck="false" data-change-action="markDirtyReviewFixerFallbackAgents" data-arg-types="w">
           </div>
-          <div class="config-field" style="margin-top:10px">
+          <div class="config-field mt-3">
             <label>Undeliverable kicks before fallback ${yamlHint('review.fixer_fallback_after_undeliverable')} ${settingHelpMark('review-swarm', 'configuration', 'Undeliverable kicks before fallback', `Consecutive undeliverable kicks before trying a fallback. 0 uses the default of 3. After at least one refusal, a fixer whose transcript exceeds its busy_no_activity_threshold can yield earlier. Requires a non-empty fallback agent list.`)}</label>
             <input type="number" min="0" step="1" value="${esc(String(rv.fixer_fallback_after_undeliverable || ''))}" placeholder="3 (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_fallback_after_undeliverable" data-arg-types="s,s,N">
           </div>
