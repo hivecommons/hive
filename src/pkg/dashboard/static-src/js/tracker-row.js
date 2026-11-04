@@ -19,6 +19,15 @@
       const detour = (!terminal && !pushedBack && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
+      // A bare "Needs human decision" (045 / 085) says why in the chevron
+      // itself — "Needs human · edits CI workflows" — when a short reason
+      // is known (rationguard#480: "what does 'needs human' mean?"). A
+      // word already carrying its why (Blocked · …, Waiting for @x · …,
+      // the train, the sentinel) stands.
+      if (detour && (cur === STAGE_TRACKER_NEEDS_DECISION || cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION) && !detour.sentinel && detour.text === STAGE_TRACKER_ACTIVE_WORD[cur] && typeof stageTrackerNeedsHumanWord === 'function') {
+        const nh = stageTrackerNeedsHumanWord(item);
+        if (nh) detour.text = nh;
+      }
       if (detour && (cur === 71 || cur === 72) && typeof stageTrackerReturnedWord === 'function') {
         detour.text = stageTrackerReturnedWord(item, detour.text);
         detour.sentinelSuffix = stageTrackerSentinelAsSuffix(item);
@@ -88,7 +97,12 @@
           const os = stageTrackerOpenSince(item);
           if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
+        // An issue parked on a blocker whose strip a human's covering PR
+        // drives (via_pr): the issue's own column keeps the blocker in
+        // view — "Blocked · App lacks workflows permission 👤" — rather
+        // than reading as a passed step (hivecommons/docs#612 under #620).
+        const blockerNote = state === 'done' && n === STAGE_TRACKER_ISSUE_DECISION_COLUMN && item.via_pr && item.kind === 'issue' && item.blocker && typeof stageTrackerBlockerWord === 'function' && (item.needs_human === true || (typeof stageTrackerItemNeedsHuman === 'function' && stageTrackerItemNeedsHuman(item))) ? stageTrackerBlockerWord(item) : '';
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, blockerNote, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;

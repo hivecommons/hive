@@ -347,7 +347,10 @@
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
       const humanIcon = actorKind === 'human' || actorKind === 'maintainer';
-      const humanRequired = typeof stageTrackerHumanAttentionOf !== 'function' || !!stageTrackerHumanAttentionOf(item);
+      // A current requirement from the server (human_attention), or a
+      // decision the row carries itself (045 / 085 with decision_needed,
+      // which the server leaves out of human_attention past the gate).
+      const humanRequired = typeof stageTrackerHumanAttentionOf !== 'function' || !!stageTrackerHumanAttentionOf(item) || (typeof stageTrackerNeedsHumanAsk === 'function' && !!stageTrackerNeedsHumanAsk(item));
       const actorIco = actorKind && (!humanIcon || humanRequired) ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
       // Guarded: test harnesses lift this function by name without stageTrackerHumanReason.
@@ -404,7 +407,8 @@
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
         const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const blockerNote = sg.state === 'done' && sg.blockerNote ? String(sg.blockerNote) : '';
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -492,6 +496,14 @@
           // Inactive = icon only (hivecommons/hive#16599): the pushed fix is
           // the green glyph; its caption rides the tooltip.
           inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(pushedTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(pushedTip)}</span></span>`;
+        } else if (blockerNote) {
+          // The issue's own column keeps the blocker in view while the
+          // covering PR's strip runs (hivecommons/docs#612): the word, the
+          // person glyph, and the blocker's detail as the hover.
+          const b = item.blocker || {};
+          const noteTip = [blockerNote, b.detail, item.human_attention && item.human_attention.reason].filter(Boolean).join(' — ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(noteTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(blockerNote)}</span></span>${stageTrackerIcon('human', 'ham-ico ham-actor-ico', 'Next move: human')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(noteTip)}</span></span>`;
         } else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
@@ -707,6 +719,23 @@
       return lines.join('\n');
     }
 
+    // Pure: the one open covering PR an issue's `blocked` pill stands for
+    // when nothing else blocks the issue — no structured blocker, no
+    // blocked_on dependencies, no blocked-on-PR marker, no re-check
+    // deadline — and that PR is parked on a human decision (085). The
+    // pill then reads "decision on #N" rather than a bare "blocked"
+    // (rationguard#431 under #480). null otherwise.
+    function stageTrackerBlockedForDecisionPR(item) {
+      if (!item || item.kind !== 'issue' || item.blocker) return null;
+      if (Array.isArray(item.blocked_on) && item.blocked_on.length) return null;
+      if (typeof stageTrackerBlockedOnPR === 'function' && stageTrackerBlockedOnPR(item)) return null;
+      if (/^blocked until /i.test(String(item.bucket_reason || ''))) return null;
+      const open = (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && (typeof stageTrackerLinkedPROpen !== 'function' || stageTrackerLinkedPROpen(lp, item)));
+      if (open.length !== 1) return null;
+      const lp = open[0];
+      const parked = Number(lp.stage) === STAGE_TRACKER_NEEDS_DECISION || (Array.isArray(lp.modifiers) && lp.modifiers.indexOf('needs-decision') >= 0) || !!(lp.decision_needed && lp.decision_needed.question);
+      return parked ? lp : null;
+    }
     function stageTrackerChipsHtml(item) {
       const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
@@ -726,8 +755,10 @@
       // A row the scheduler withholds for open GitHub "blocked by" dependencies names them (hivecommons/hive#14765);
       // one blocked on a PR (hive:blocked-on marker) names it and links to it (hivecommons/hive#14952).
       const blockedPR = mods[0] === 'blocked' ? stageTrackerBlockedOnPR(item) : null;
+      const decisionPR = mods[0] === 'blocked' && !blockedPR ? stageTrackerBlockedForDecisionPR(item) : null;
       if (mods[0] === 'blocked' && Array.isArray(item.blocked_on) && item.blocked_on.length) text = stageTrackerBlockedTip(item);
       else if (blockedPR) text = 'blocked on ' + blockedPR.short;
+      else if (decisionPR) text = 'decision on #' + Number(decisionPR.number);
       // A blocked row with a hive:recheck-after deadline ("blocked until <RFC3339>") names when the sweep re-checks it.
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
       const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
@@ -739,7 +770,14 @@
       // the regressed pill explains itself; a blocked pill names what it waits on;
       // failing all three, a draft pill does.
       const anyBlockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
+      // A needs-human pill's hover is the full ask (hivecommons/docs#612
+      // showed a bare muted "needs human" with no reason anywhere on the row).
+      const askable = mods[0] === 'needs-human' || mods[0] === 'needs-decision';
+      const ask = (askable && typeof stageTrackerHumanAttentionOf === 'function' && stageTrackerHumanAttentionOf(item))
+        || (askable && typeof stageTrackerNeedsHumanAsk === 'function' && stageTrackerNeedsHumanAsk(item)) || null;
       const tip = (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed
+        || (decisionPR ? 'Blocked only because PR #' + Number(decisionPR.number) + ' waits on a human decision' + (decisionPR.decision_needed && decisionPR.decision_needed.question ? ' — ' + decisionPR.decision_needed.question : '') : '')
+        || (ask ? ask.reason : '')
         || (holdPill && typeof stageTrackerHoldTip === 'function' ? stageTrackerHoldTip(item, Date.now()) : '')
         || (mods.indexOf('blocked') >= 0 && Array.isArray(item.blocked_on) && item.blocked_on.length ? 'Withheld from the scanner until ' + item.blocked_on.join(', ') + (item.blocked_on.length > 1 ? ' close' : ' closes') : '')
         || (anyBlockedPR ? anyBlockedPR.tip : '')
@@ -752,8 +790,12 @@
       // popover (what to decide, who asked, the applicable actions) instead
       // of a native tooltip.
       // A hive-set hold is a decision too (release or keep): its pill opens the same popover.
-      const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision' || (holdPill && item.hold && item.hold.by === 'hive')) && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+      const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision' || decisionPR || (holdPill && item.hold && item.hold.by === 'hive')) && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
       if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-badge ham-badge-mod ' + cls);
+      // No popover to open (the ask is the issue's own while a covering
+      // PR drives the strip): the pill is a button that reveals the row's
+      // "Needs human: …" note line and carries the full reason as its hover.
+      if (ask && typeof stageTrackerItemKey === 'function') return sentinel + `<button type="button" class="ham-badge ham-badge-mod ${esc(cls)} ham-needs-human-pill" data-action="stageTrackerNeedsHumanReveal" data-arg0="${esc(stageTrackerItemKey(item))}" data-stop="1" title="${esc(tip)}" aria-label="${esc(text + ' — ' + ask.reason + '. Click to show why on the row.')}">${inner}</button>`;
       return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${inner}</span>`;
     }
 

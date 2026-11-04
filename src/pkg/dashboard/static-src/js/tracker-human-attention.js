@@ -11,28 +11,99 @@
       if (a.kind === 'pr' && String(a.head || '') !== String(item.head || '')) return null;
       return a;
     }
-    function stageTrackerHumanAttentionLine(item) {
-      const a = stageTrackerHumanAttentionOf(item);
+    // Pure: the decision a row carries itself when the server supplies no
+    // human_attention — a 045 issue or 085 PR with decision_needed, or a
+    // needs-human flag with a blocker (hivecommons/docs#612, rationguard#480).
+    // Same shape as human_attention ({reason, asked_by, question, synthetic})
+    // so the note line reads the same either way. null when the row is not
+    // parked on a person, or when human_attention already says it.
+    function stageTrackerNeedsHumanAsk(item) {
+      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+        || item.superseded_by || item.adopted_by) return null;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      if (stageTrackerHumanAttentionOf(item)) return null;
+      const n = Number(item.stage) || 0;
+      const flagged = item.needs_human === true || mods.indexOf('needs-human') >= 0 || mods.indexOf('needs-decision') >= 0
+        || n === (typeof STAGE_TRACKER_NEEDS_DECISION === 'number' ? STAGE_TRACKER_NEEDS_DECISION : 85)
+        || n === (typeof STAGE_TRACKER_ISSUE_NEEDS_DECISION === 'number' ? STAGE_TRACKER_ISSUE_NEEDS_DECISION : 45);
+      if (!flagged) return null;
+      const d = item.decision_needed || {};
+      const b = item.blocker || {};
+      const actor = item.stage_actor || {};
+      const question = String(d.question || '').trim();
+      const why = String(actor.why || '').trim();
+      const whyClause = why.indexOf(' — ') >= 0 ? why.slice(why.indexOf(' — ') + 3).trim() : '';
+      // Only evidence the server put on the row counts — a parked stage
+      // alone synthesizes nothing (the row may be mid-refresh or hive-owned).
+      const reason = question || String(b.detail || '').trim() || String(d.blocker || '').trim() || String(b.short || '').trim() || (actor.kind === 'human' ? whyClause : '');
+      if (!reason) return null;
+      return { kind: item.kind, number: Number(item.number) || 0, reason, question, asked_by: String(d.asked_by || actor.login && actor.kind === 'hive' && 'the hive' || '').trim() || 'the hive', synthetic: true };
+    }
+    // Pure: "Needs human: <short> — <first sentence of the reason>", the
+    // short reason first so the row names the blocker before explaining it.
+    // A reason that already starts with the short form is not repeated.
+    // whole: keep the whole reason (a decision question is the ask itself).
+    function stageTrackerNeedsHumanReasonText(item, reason, whole) {
+      const full = String(reason || '').trim();
+      const short = typeof stageTrackerNeedsHumanShort === 'function' ? stageTrackerNeedsHumanShort(item) : '';
+      if (!short || full.toLowerCase().indexOf(short.toLowerCase()) === 0) return full;
+      const m = whole ? null : full.match(/^[\s\S]*?[.!?](?=\s|$)/);
+      const first = m ? m[0].trim() : full;
+      return first ? short + ' — ' + first : short;
+    }
+    // Pure: the label of the row's lead action, when a lifted copy has one
+    // (tracker-actions). '' without one, or when the lead is the optional
+    // delegation itself — that is not what the person is asked to do.
+    function stageTrackerNeedsHumanLeadLabel(item, subRows) {
+      if (typeof stageTrackerLeadActionOnRow !== 'function' || typeof stageTrackerActionCtx !== 'function') return '';
+      const ctx = stageTrackerActionCtx(item.repo);
+      if (!ctx) return '';
+      ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
+      const action = stageTrackerLeadActionOnRow(item, ctx, subRows);
+      if (!action || !action.label || action.id === 'decide:delegate' || action.id === 'decide:delegate-all') return '';
+      return String(action.label).replace(/\s*[▸›]\s*$/, '');
+    }
+    // Pure: the one open covering PR a person other than the hive is pushing
+    // for this issue, when exactly one covers it. null otherwise.
+    function stageTrackerNeedsHumanPusher(item) {
+      if (!item || item.kind !== 'issue') return null;
+      if (typeof stageTrackerLinkedPROpen !== 'function') return null;
+      const open = (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && stageTrackerLinkedPROpen(lp, item));
+      if (open.length !== 1) return null;
+      const lp = open[0];
+      const human = (lp.author_kind || '') === 'human' || (lp.author_kind || '') === 'maintainer';
+      return human && lp.author ? lp : null;
+    }
+    function stageTrackerHumanAttentionLine(item, subRows) {
+      const a = stageTrackerHumanAttentionOf(item) || stageTrackerNeedsHumanAsk(item);
       if (!a) return '';
-      const reason = String(a.reason || '').trim() || 'Human decision required; reason unavailable';
+      const reason = stageTrackerNeedsHumanReasonText(item, String(a.reason || '').trim() || 'Human decision required; reason unavailable', !!(a.synthetic && a.question));
       const parts = ['Needs human: ' + reason];
       if (a.owner) parts.push('next move: @' + a.owner);
-      if (a.asked_by) parts.push('requested by ' + a.asked_by);
+      if (a.asked_by) parts.push((a.synthetic ? 'asked by ' : 'requested by ') + a.asked_by);
+      const lead = stageTrackerNeedsHumanLeadLabel(item, subRows);
+      if (lead) parts.push('lead: ' + lead + ' ▸');
+      const pusher = stageTrackerNeedsHumanPusher(item);
+      if (pusher) parts.push('@' + pusher.author + ' is pushing it in #' + Number(pusher.number));
       return parts.join(' · ');
     }
-    function stageTrackerHumanRequirementText(item) {
+    function stageTrackerHumanRequirementText(item, subRows) {
       if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
         (item.modifiers || []).some(m => m === 'draft' || m === 'hold' || m === 'merged')) return '';
-      const human = stageTrackerHumanAttentionLine(item);
+      const human = stageTrackerHumanAttentionLine(item, subRows);
       const d = item && item.decided;
       const review = d && d.current_blocker && String(d.head || '') === String(item.head || '')
         ? 'Current blocker: ' + d.current_blocker + ' · operator approval recorded separately, not review approval or merge readiness' : '';
       return [human, review].filter(Boolean).join(' · ');
     }
-    function stageTrackerHumanContextOf(item, stages) {
+    function stageTrackerHumanContextOf(item, stages, subRows) {
       if (!item) return [];
-      const own = stageTrackerHumanRequirementText(item);
-      const out = own ? [{ item, text: own }] : [];
+      const own = stageTrackerHumanRequirementText(item, subRows);
+      // An issue's own ask is prefixed with its number, like a PR's line,
+      // so a row whose strip a covering PR drives still names the asker.
+      const asks = item.kind === 'issue' && !!(stageTrackerHumanAttentionOf(item) || stageTrackerNeedsHumanAsk(item));
+      const out = own ? [{ item, text: (asks ? '#' + Number(item.number) + ' — ' : '') + own }] : [];
       if (item.kind !== 'issue') return out;
       // Include external drawn_under references, but never walk RFC ancestry
       // or assign one child's requirement to the issue / its other PRs.
@@ -60,7 +131,7 @@
       return `<div class="cue-event ham-human-context"><span>${bodyHtml}</span></div>`;
     }
     function stageTrackerHumanContextHtml(item, stages, nowMs, subRows) {
-      const required = stageTrackerHumanContextOf(item, stages);
+      const required = stageTrackerHumanContextOf(item, stages, subRows);
       const lines = required.map(entry => {
         const it = entry.item;
         const href = it.url || item.url;

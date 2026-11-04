@@ -63,6 +63,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerParkedNestedPRs"),
 		jsFunc(t, html, "stageTrackerDecisionTarget"),
 		jsFunc(t, html, "stageTrackerDelegateTargets"),
+		jsFunc(t, html, "stageTrackerServerDelegate"),
 		jsFunc(t, html, "stageTrackerDecideOptions"),
 		jsFunc(t, html, "stageTrackerSupersederOptions"),
 		jsFunc(t, html, "stageTrackerSupersederDefault"),

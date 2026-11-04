@@ -336,6 +336,13 @@ func humanizeStageReason(reason string) string {
 	if stageengine.ReasonIsPartialCover(r) {
 		return "the PR references it without closing it (partial)"
 	}
+	// "blocked: App lacks workflows permission" (derive_issue.go, a
+	// structured blocker's short text): already prose. The generic replacer
+	// below would turn its ": " into ":  " (hivecommons/docs#612 read
+	// "owed — blocked:  App lacks…").
+	if rest, ok := strings.CutPrefix(r, "blocked: "); ok {
+		return "blocked: " + strings.TrimSpace(rest)
+	}
 	if clause, ok := humanizeCoverReason(r); ok {
 		return clause
 	}
