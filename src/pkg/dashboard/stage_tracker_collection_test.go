@@ -130,8 +130,10 @@ func TestStageTrackerGraphQLCollectionPreservesRequiredProducer(t *testing.T) {
 			}
 			stale := time.Now().Add(-trackerActivityFreshWindow - time.Second)
 			projected.CIActivity.ObservedAt = &stale
-			if activity := stageTrackerCIActivity(projected, time.Now()); activity.Active {
-				t.Fatal("a stale serialized collection snapshot manufactured active CI")
+			// A stale snapshot keeps its observation time for the tooltip;
+			// Active follows the state alone (hivecommons/hive#16643).
+			if activity := stageTrackerCIActivity(projected, time.Now()); activity.Active != (activity.State == "running" || activity.State == "queued") || activity.ObservedAt == nil || !activity.ObservedAt.Equal(stale) {
+				t.Fatalf("a stale serialized collection snapshot changed the activity's fill or lost its age: %+v", activity)
 			}
 			if got.State == "failing" {
 				expectedID := int64(101)

@@ -536,6 +536,27 @@ func TestSignedCommitMessage(t *testing.T) {
 	}
 }
 
+// A signed re-author whose agent commits carried no trailer still publishes
+// a signed-off commit (hivecommons/hive#16619); one that already has a
+// trailer, or an unknown App login, is left as folded.
+func TestEnsureSignedOffBy(t *testing.T) {
+	t.Setenv(signedTrailerDomainEnv, "")
+	want := "Signed-off-by: acme-hive[bot] <acme-hive@hive.kubestellar.io>"
+	if got := ensureSignedOffBy("body one\n\nsecond", "acme-hive[bot]"); got != "body one\n\nsecond\n\n"+want {
+		t.Errorf("unsigned body: got %q", got)
+	}
+	if got := ensureSignedOffBy("", "acme-hive[bot]"); got != want {
+		t.Errorf("empty body: got %q", got)
+	}
+	signed := "body\n\nSigned-off-by: a <a@x>"
+	if got := ensureSignedOffBy(signed, "acme-hive[bot]"); got != signed {
+		t.Errorf("signed body must not gain a second trailer: got %q", got)
+	}
+	if got := ensureSignedOffBy("body", ""); got != "body" {
+		t.Errorf("unknown App login must not invent a trailer: got %q", got)
+	}
+}
+
 func TestGraphQLEndpoint(t *testing.T) {
 	cases := map[string]string{
 		"https://api.github.com/":        "https://api.github.com/graphql",

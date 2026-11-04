@@ -231,9 +231,25 @@ const wordsOnlyWhenActive = (item, s) => Array.from(s.matchAll(/<li class="ham-s
   const words = trackCopyText(m[0]);
   if (/\bactive\b/.test(m[1])) assert.ok(words, 'fixture #' + item.number + ' active track without words: ' + m[0]);
   else assert.strictEqual(words, '', 'fixture #' + item.number + ' inactive track carries words: ' + m[0]);
+  // hivecommons/hive#16643: a text-bearing track is active and nothing
+  // else — no muted / pending / settled class may dim its one amber fill.
+  if (words) assert.ok(/\bactive\b/.test(m[1]) && !/\b(?:pending|todo|done|failing|ham-settled-current)\b/.test(m[1]), 'fixture #' + item.number + ' text-bearing track is not plainly active: ' + m[1]);
 });
+// hivecommons/hive#16643: CI + Review is the only pair that may be active
+// together; a lit stage chevron (PR in progress, Merge queue …) is the row's
+// one active chevron, and it carries no CI / review verdict in its words.
+const stageLitChevrons = (html) => (html.match(/class="ham-seg active(?! [^"]*ham-settled-current)/g) || []).length;
+const onlyTracksPair = (item, s, i) => {
+  const lit = litChevrons(s);
+  if (lit > 1) assert.strictEqual(stageLitChevrons(s), 0, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' lights a stage chevron beside a running track: ' + s);
+  Array.from(s.matchAll(/<li class="ham-seg active(?! [^"]*ham-settled-current)[^"]*"[\s\S]*?<\/li>/g)).forEach(m => {
+    const words = ((/<span class="ham-chevron-copy">([\s\S]*?)<\/span>/.exec(m[0]) || [])[1] || '').replace(/<[^>]+>/g, '');
+    assert.ok(!/\b(CI failing|CI \d+\/\d+|Changes requested)\b/.test(words), 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' stage chevron speaks a track verdict: ' + words);
+  });
+};
 const atMostTwoLit = (item, row) => row.split('aria-label="Pipeline progress"').slice(1).forEach((s, i) => {
   assert.ok(litChevrons(s) <= 2, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' lights ' + litChevrons(s) + ' chevrons: ' + s);
+  onlyTracksPair(item, s, i);
   if (s.includes('aria-current="step"')) assert.ok(filledChevrons(s) >= 1, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' has no filled chevron: ' + s);
   wordsOnlyWhenActive(item, s);
 });
