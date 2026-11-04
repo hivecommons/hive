@@ -847,3 +847,24 @@ func TestAdvisoryVerdictRejectsSiblingReplicaOfAuthor(t *testing.T) {
 		t.Fatalf("sibling-replica self-approval verdict was recorded: %v", matches)
 	}
 }
+
+func TestLogVerdictDispatchRefusalLevel(t *testing.T) {
+	tests := []struct {
+		reason    string
+		wantLevel string
+	}{
+		{"author_self_approval", "level=INFO"},
+		{"non_reviewer_without_dispatch", "level=WARN"},
+		{"dispatch_state_unavailable", "level=WARN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			c := &Client{logger: slog.New(slog.NewTextHandler(&logBuf, nil))}
+			c.logVerdictDispatchRefusal(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer"}, review.PerspectiveReport{}, tt.reason)
+			if !strings.Contains(logBuf.String(), tt.wantLevel) {
+				t.Fatalf("log = %q, want %s", logBuf.String(), tt.wantLevel)
+			}
+		})
+	}
+}
