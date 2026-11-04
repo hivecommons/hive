@@ -16729,10 +16729,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: the in-flight caption for a recorded decision — from the
     // server's projection when it has one, else from the result's action.
     const STAGE_TRACKER_DECIDED_ACTING = { adopted: 'Adopting · opening hive copy…', approved: 'Approving…', directed: 'Sending back…', closed: 'Closing…', merged: 'Merging…', 'queued-for-merge': 'Queuing for merge…', recommended: 'Recommendation recorded' };
+    // A park-keeping verdict by what it recorded: a recommendation only
+    // when there is one (recommend-only); owner-only / operator-action hand
+    // the decision back, so the caption says so (hivecommons/hive#16572).
+    const STAGE_TRACKER_PARK_KEPT_ACTING = { 'recommend-only': 'Recommendation recorded', 'owner-only': 'Your decision needed · owner sign-off', 'operator-action': 'Your action needed · operator step' };
     function stageTrackerDecidedActing(result, item) {
       const d = item && item.decided;
       if (d && d.acting) return d.acting;
-      return STAGE_TRACKER_DECIDED_ACTING[result && result.action] || 'Hive decided…';
+      const action = result && result.action;
+      if (action === 'recommended') return STAGE_TRACKER_PARK_KEPT_ACTING[result.verdict] || 'Your decision needed';
+      return STAGE_TRACKER_DECIDED_ACTING[action] || 'Hive decided…';
     }
     // Pure: the ✓ badge's first line for a decided row: the decision name
     // and who / what triggered it — "you · Let hive decide · hive chose
@@ -18173,8 +18179,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'approved': return count + ' approved';
         case 'changes_requested': return count + ' · changes requested';
         // The hive on the repair (adopted / remediating) is not a human
-        // decision: the findings are the changes requested.
-        case 'human_decision': return count + (stageTrackerHiveOwnsRepair(item) ? ' · changes requested' : ' · awaiting human decision');
+        // decision: the findings are the changes requested. Otherwise the
+        // reviews are done and a person's sign-off is what is left — the
+        // viewer's when the ask names them, else the owner's. Never
+        // "awaiting human" to the human it waits on (hivecommons/hive#16572:
+        // "why does review say awaiting humans if 5/5 reviews are good?").
+        case 'human_decision': {
+          if (stageTrackerHiveOwnsRepair(item)) return count + ' · changes requested';
+          const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
+          const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
+          const mine = !!me && q.indexOf('@' + me) >= 0;
+          return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
+        }
         case 'reviewing': case 'adjudicating': return count + ' · ' + (actor ? actor + ' reviewing' : 'reviewing');
         case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued');
         case 'unassigned': return count + ' · swarm requested';
@@ -18255,7 +18271,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
-      const blocker = matches && a.blocker ? ' · ' + a.blocker : '';
+      let blocker = matches && a.blocker ? ' · ' + a.blocker : '';
+      // A sign-off ask: the tooltip carries the question itself (who should
+      // decide what, and why — "workflow change from a fork") when the
+      // review evidence did not already quote it.
+      const ask = matches && state === 'human_decision' && item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question) : '';
+      if (ask && blocker.indexOf(ask) < 0) blocker += ' · ' + ask;
       // The backend's plain-language sentence behind the caption rides in
       // the tooltip only; the chevron clamps the caption.
       const detail = matches && a.detail ? ' · ' + a.detail : '';

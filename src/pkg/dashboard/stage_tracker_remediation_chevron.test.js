@@ -116,7 +116,7 @@ test('adopted row: a complete review verdict is done-style, and a human-decision
 
   const parked = cells(redPR({ stage: 85, display_column: 85, needs_human: true, review_activity: decision }))[5];
   assert.match(parked, /class="ham-seg ham-activity-track done decided"/, 'parked on a person is settled, still not amber');
-  assert.match(parked, /Review 5\/5 · awaiting human decision</, 'genuinely parked: the human word stands');
+  assert.match(parked, /Review 5\/5 · needs owner sign-off</, 'genuinely parked: the sign-off word stands');
 
   const changes = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: { ...decision, state: 'changes_requested' } }))[5];
   assert.match(changes, /class="ham-seg ham-activity-track failing"/);

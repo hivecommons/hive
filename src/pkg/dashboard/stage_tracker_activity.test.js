@@ -763,7 +763,13 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   const review = (state, extra = {}, item = {}) => word({ head: 'h', ...item, review_activity: { head: 'h', state, perspectives_done: 3, perspectives_total: 5, ...extra } }, 'review', true);
   assert.equal(review('approved', { perspectives_done: 5 }), 'Review 5/5 approved');
   assert.equal(review('changes_requested'), 'Review 3/5 · changes requested');
-  assert.equal(review('human_decision'), 'Review 3/5 · awaiting human decision');
+  assert.equal(review('human_decision'), 'Review 3/5 · needs owner sign-off', 'reviews done; the sign-off is what is left, never "awaiting human"');
+  assert.equal(review('human_decision', {}, { decision_needed: { question: '@clubanderson should decide whether to accept this workflow change from a fork.' } }), 'Review 3/5 · needs owner sign-off', 'no viewer known: the owner');
+  globalThis.window = { _hiveUser: 'ClubAnderson' };
+  try {
+    assert.equal(review('human_decision', {}, { decision_needed: { question: '@clubanderson should decide whether to accept this workflow change from a fork.' } }), 'Review 3/5 · needs your sign-off', 'the ask names the viewer');
+    assert.equal(review('human_decision', {}, { decision_needed: { question: '@someone-else should decide.' } }), 'Review 3/5 · needs owner sign-off');
+  } finally { delete globalThis.window; }
   assert.equal(review('reviewing', { actor: 'reviewer-2' }), 'Review 3/5 · reviewer-2 reviewing');
   assert.equal(review('adjudicating', { actor: 'adjudicator' }), 'Review 3/5 · adjudicator reviewing');
   assert.equal(review('assigned', { actor: 'reviewer' }), 'Review 3/5 · reviewer queued');

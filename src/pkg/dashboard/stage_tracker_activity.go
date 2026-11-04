@@ -463,7 +463,7 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 				out.State, out.Caption = "changes_requested", "Review findings · awaiting author"
 				out.Blocker = stageTrackerFixerExhaustedSummary(agg)
 			case "requires_human":
-				out.State, out.Caption = "human_decision", "Review findings · human decision"
+				out.State, out.Caption = "human_decision", "Review findings · needs owner sign-off"
 				out.Blocker = agg.DecisionQuestion
 			}
 		}

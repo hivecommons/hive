@@ -688,7 +688,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   assert.strictEqual(ci[1], 'done', '11/11 passed is done-style: ' + adoptedRow);
   const parkedRow = stageTrackerRowHtml({ repo: 'acme/console', number: 16510, kind: 'pr', stage: 85, display_column: 85, head: 'f269349', needs_human: true, author: 'thatguywob', author_kind: 'human',
     review_activity: { head: 'f269349', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
-  assert.ok(/<li class="ham-seg ham-activity-track done decided" data-track="review"[^>]*>[\s\S]*?Review 5\/5 · awaiting human decision<\/span>/.test(parkedRow), 'genuinely parked on a person keeps the human word, still not amber: ' + parkedRow);
+  assert.ok(/<li class="ham-seg ham-activity-track done decided" data-track="review"[^>]*>[\s\S]*?Review 5\/5 · needs owner sign-off<\/span>/.test(parkedRow), 'genuinely parked on a person names the sign-off, still not amber: ' + parkedRow);
 }
 // hivecommons/hive#16540 rows. #16509: adopted, CI 7/11 unreported, review
 // decided → one lit chevron. #16268: waiting for the contributor, CI 7/11

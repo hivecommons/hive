@@ -25,6 +25,10 @@ type RowActionResult struct {
 	Next      string          `json:"next"`
 	Rule      string          `json:"rule,omitempty"`
 	AppliedAt *time.Time      `json:"applied_at,omitempty"`
+	// Verdict is the delegate's verdict slug when the hive decided
+	// (owner-only, recommend-only, …), so the row caption can tell a
+	// recorded recommendation from an ask handed back to the person.
+	Verdict string `json:"verdict,omitempty"`
 	// Why is the glossary slug for why a recorded decision has not taken
 	// effect (Action no-effect); Options are the concrete next actions in
 	// the popover's shape (hivecommons/hive#14822). Both additive.
@@ -104,7 +108,7 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 	if in.Kind == delegatedecision.KindPR {
 		kind = rowActionTargetPR
 	}
-	out := RowActionResult{Target: rowActionTarget(in.Repo, kind, in.Number), Rule: d.Rule}
+	out := RowActionResult{Target: rowActionTarget(in.Repo, kind, in.Number), Rule: d.Rule, Verdict: string(d.Verdict)}
 	ruleTag := ""
 	if d.Rule != "" {
 		ruleTag = " (" + delegatedecision.RulePlain(d.Rule) + ")"
