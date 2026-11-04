@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // ci_poll_sweep_test.go pins #14016: the scanner's merge sweep and CI-repair
@@ -202,5 +204,27 @@ func TestRepeatedCIPollCommandLines(t *testing.T) {
 	}
 	if got := repeatedCIPollCommandLines("gh pr checks 1\ngh pr checks 2", nil); len(got) != 0 {
 		t.Fatalf("sweep listed as repeated: %q", got)
+	}
+}
+
+// The stop-polling nudge is the recovery, so the next kick clears the
+// ci_poll_nudge condition rather than leaving it reported as unrecovered (#16588).
+func TestCIPollNudgeClearedOnNextKick(t *testing.T) {
+	m, a := ciPollManager(t, ciPollIdlePane, 2*time.Minute)
+	rec := recordConditions(t, m)
+
+	m.mu.Lock()
+	m.recordDeliveredKickLocked(a, "inspect PRs", "test")
+	m.mu.Unlock()
+	if got := rec.clears(crux.ClassCIPollNudge); len(got) != 0 {
+		t.Fatalf("clear without a nudge: %#v", got)
+	}
+
+	m.mu.Lock()
+	a.ciPollNudgeSent = true
+	m.recordDeliveredKickLocked(a, "inspect PRs", "test")
+	m.mu.Unlock()
+	if got := rec.clears(crux.ClassCIPollNudge); len(got) != 1 || got[0].Key != a.Name {
+		t.Fatalf("clears = %#v, want one for %s", got, a.Name)
 	}
 }
