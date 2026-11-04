@@ -78,12 +78,21 @@
       switch (state) {
         case 'approved': return count + ' approved';
         case 'changes_requested': return count + ' · changes requested';
-        case 'human_decision': return count + ' · awaiting human decision';
+        // The hive on the repair (adopted / remediating) is not a human
+        // decision: the findings are the changes requested.
+        case 'human_decision': return count + (stageTrackerHiveOwnsRepair(item) ? ' · changes requested' : ' · awaiting human decision');
         case 'reviewing': case 'adjudicating': return count + ' · ' + (actor ? actor + ' reviewing' : 'reviewing');
         case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued');
         case 'unassigned': return count + ' · swarm requested';
         default: return count + ' · ' + (newHead ? 're-review pending (new head)' : total && done ? 'perspectives' : 'swarm requested');
       }
+    }
+
+    function stageTrackerHiveOwnsRepair(item) {
+      if (!item || item.needs_human || item.on_hold || item.hold) return false;
+      const code = item.code_activity;
+      const hive = code && code.head === item.head && ['adopted', 'remediating', 'unassigned', 'fix_pushed', 'fixing'].includes(code.state);
+      return !!(hive || item.stage === 74 || item.adopted_by);
     }
 
     // Evidence is supplied independently by the backend. A native 050 label
@@ -113,7 +122,10 @@
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
       const finished = matches && (state === 'passing' || state === 'approved');
       const finding = matches && (state === 'failing' || state === 'changes_requested');
-      const cls = finished ? 'done' : finding ? 'failing' : text ? 'active' : 'todo';
+      // A complete verdict parked on a person is settled, not in progress:
+      // done-style, muted, never the amber fill (hivecommons/hive#16509 row).
+      const settled = matches && state === 'human_decision' && (!known || !a.active);
+      const cls = finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : text ? 'active' : 'todo';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
