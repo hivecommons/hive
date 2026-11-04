@@ -762,6 +762,11 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 			}
 			_, contents, _, err := ghClient.Repositories.GetContents(github.WithRESTCaller(ctx, "hive:acmm_pattern_exists"), owner, repo, parent, nil)
 			if err != nil {
+				// Cache the miss so sibling glob patterns under the same
+				// parent do not each re-issue the failed listing.
+				if dirCache != nil {
+					dirCache[parent] = map[string]bool{}
+				}
 				return false
 			}
 			entries = make(map[string]bool, len(contents))

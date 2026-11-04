@@ -447,6 +447,34 @@ func TestPatternExists_FileGlobCacheAndFallback(t *testing.T) {
 	}
 }
 
+func TestPatternExists_FileGlobMissingParentCachedOnce(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	s := NewServer(0, acmmEvalTestLogger())
+	deps := testDeps(t)
+	deps.GHClient = ghpkg.NewClientForTest(ts.URL, "myorg", []string{"repo1"}, acmmEvalTestLogger())
+	s.RegisterAPI(deps)
+	cache := map[string]map[string]bool{}
+	for _, pattern := range []string{"test*-install*.yml", "test*-boot*.yaml", "*e2e*.yml"} {
+		if s.patternExists(t.Context(), "myorg", "repo1", ".github/workflows/"+pattern, cache) {
+			t.Fatalf("patternExists(%q) = true for missing parent directory", pattern)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("directory API calls = %d, want 1 (missing parent should be cached)", calls)
+	}
+	if s.patternExists(t.Context(), "myorg", "repo1", ".github/workflows/ci.yml", cache) {
+		t.Fatal("literal lookup under cached missing parent should be false")
+	}
+	if calls != 1 {
+		t.Fatalf("directory API calls after literal lookup = %d, want 1", calls)
+	}
+}
+
 func TestCheckCriterion_AnyPatternMatches(t *testing.T) {
 	s := NewServer(0, acmmEvalTestLogger())
 
