@@ -109,7 +109,9 @@
     }
 
     const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
+    // hive:unauthorized reads "hive bot lacks permission", never "unauthorized": the App
+    // installation is missing a permission, nobody did anything illegitimate (hivecommons/hive#16639).
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe', unauthorized: 'hive bot lacks permission' };
     // The draft pill and the Draft chevron explain themselves on hover: no
     // maintainer action is pending, the lanes resume when the author is ready.
     const STAGE_TRACKER_DRAFT_TIP = 'Draft PR — hive review and merge lanes skip drafts until the author marks it ready for review.';
