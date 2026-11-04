@@ -1,0 +1,1 @@
+- The code activity reader reveals caught-up changes without an extra empty request when newer lines are filtered out ([#16530](https://github.com/hivecommons/hive/issues/16530)).
