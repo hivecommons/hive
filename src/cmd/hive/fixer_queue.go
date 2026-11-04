@@ -48,11 +48,7 @@ func fixerQueueKey(org string, k review.DispatchKick) string {
 			}
 		}
 	}
-	repo = strings.TrimSpace(repo)
-	if org != "" && repo != "" && !strings.Contains(repo, "/") {
-		repo = org + "/" + repo
-	}
-	return github.ReviewQueueKey(repo, number)
+	return github.ReviewQueueKey(github.ReviewQueueFullRepo(repo, org), number)
 }
 
 func reconcileDeferredFixQueue(gov *governor.Governor, org string, actionable *github.ActionableResult) {
@@ -65,10 +61,7 @@ func reconcileDeferredFixQueue(gov *governor.Governor, org string, actionable *g
 			if strings.EqualFold(pr.State, "closed") || !pr.ClosedAt.IsZero() || !pr.MergedAt.IsZero() {
 				continue
 			}
-			repo := pr.Repo
-			if org != "" && !strings.Contains(repo, "/") {
-				repo = org + "/" + repo
-			}
+			repo := github.ReviewQueueFullRepo(pr.Repo, org)
 			open[github.ReviewQueueKey(repo, pr.Number)] = true
 		}
 	}
