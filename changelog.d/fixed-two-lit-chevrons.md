@@ -1,0 +1,1 @@
+- Activity Monitor: a row never lights more than two chevrons. CI and Review are amber only while a check-run or a review perspective is actually running on the current head; unreported checks, unknown evidence and rows waiting on a person render as pending words. When both tracks run, the stage chevron is settled-current (words, no amber, no pulse) (#16540).

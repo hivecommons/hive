@@ -27,7 +27,7 @@ const STAGE_TRACKER_NEEDS_DECISION = 85, STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45
 const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10, STAGE_TRACKER_TRIAGE_NEEDED = 15, STAGE_TRACKER_POSSIBLY_EXISTS = 17;
 const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
 `;
-const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
+const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const segments = new Function('stageTrackerAnchor', globals + `
 const STAGE_TRACKER_ACTIVE_WORD = {70: 'Fixing'};
@@ -44,7 +44,7 @@ function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
 function stageTrackerIcon(n) { return '<svg data-icon="' + n + '"></svg>'; }
-` + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track);
+` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track);
 
 const stages = [{ number: 70, branch_from: 50 }, { number: 71, branch_from: 50 }, { number: 72, branch_from: 50 }];
 const now = Date.parse('2026-11-04T02:45:00Z');
@@ -138,4 +138,57 @@ test('#16494 keeps: review perspectives still running stay amber beside running 
   assert.match(c[4], /CI 4\/11/);
   assert.match(c[5], /ham-activity-track active ham-current/);
   assert.match(c[5], /Review 2\/5 · reviewer-2 reviewing</);
+});
+
+// hivecommons/hive#16540: never three lit chevrons. Amber = the stage
+// chevron's active fill (minus settled-current) plus any track in the
+// active class.
+const litCount = html => (html.match(/class="ham-seg active(?! [^"]*ham-settled-current)|class="ham-seg ham-activity-track active\b/g) || []).length;
+const seen = '2026-11-04T02:44:00Z';
+
+test('#16509 row: adopted, CI 7/11 unreported, review 5/5 decided → one amber chevron', () => {
+  const item = redPR({ stage: 74, display_column: 30,
+    code_activity: { head: 'abc1234def', state: 'adopted', caption: 'Adopted by hive · activity', source: 'adoption', observed_at: seen },
+    ci_activity: { head: 'abc1234def', state: 'missing', caption: 'CI waiting · required check "test" hasn\'t reported for this head yet', checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen },
+    review_activity: { head: 'abc1234def', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } });
+  const c = cells(item);
+  assert.match(c[3], /class="ham-seg active detoured"/, 'the stage chevron is the one lit chevron');
+  assert.match(c[4], /class="ham-seg ham-activity-track pending"/, 'unreported checks are not motion');
+  assert.match(c[4], /CI 7\/11 · test not reported</);
+  assert.match(c[5], /class="ham-seg ham-activity-track done decided"/);
+  assert.equal(litCount(c.join('')), 1);
+});
+
+test('#16268 row: waiting for the contributor, CI 7/11 unreported, review approved → exactly one amber chevron', () => {
+  const owner = { head: 'abc1234def', state: 'waiting_owner', caption: 'Waiting for @hanthor · not observed coding', actor: 'hanthor', source: 'native-author-wait', observed_at: seen };
+  const ci = { head: 'abc1234def', state: 'missing', caption: 'CI waiting · required check "test" hasn\'t reported for this head yet', checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen };
+  const approved = { head: 'abc1234def', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen };
+  const c = cells(redPR({ stage: 71, display_column: 30, author: 'hanthor', author_kind: 'human', code_activity: owner, ci_activity: ci, review_activity: approved }));
+  assert.match(c[3], /class="ham-seg active detoured"/);
+  assert.match(c[4], /class="ham-seg ham-activity-track pending"[^]*CI 7\/11 · test not reported</);
+  assert.match(c[5], /class="ham-seg ham-activity-track done"[^]*Review 5\/5 approved</);
+  assert.equal(litCount(c.join('')), 1);
+  // Even a queued check does not light CI while the row waits on a person.
+  const queued = cells(redPR({ stage: 71, display_column: 30, author: 'hanthor', author_kind: 'human', code_activity: owner, ci_activity: { ...ci, state: 'queued' }, review_activity: approved }));
+  assert.match(queued[4], /class="ham-seg ham-activity-track pending"/);
+  assert.equal(litCount(queued.join('')), 1);
+});
+
+test('three qualify: CI and review running on a lit PR in progress → tracks win, stage chevron settled-current', () => {
+  const running = {
+    code_activity: { head: 'abc1234def', state: 'remediating', caption: 'Remediating · scanner · 4m', actor: 'scanner', active: true, source: 'fix-dispatch', since: '2026-11-04T02:41:00Z', observed_at: seen },
+    ci_activity: { head: 'abc1234def', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: 'abc1234def', state: 'reviewing', active: true, actor: 'reviewer-2', caption: 'Review working', perspectives_done: 2, perspectives_total: 5, source: 'dispatch', observed_at: seen } };
+  const both = cells(redPR({ display_column: 30, ...running }));
+  assert.match(both[3], /class="ham-seg active ham-settled-current ham-remediation-remediating detoured"/);
+  assert.doesNotMatch(both[3], /data-motion=/);
+  assert.match(both[3], /Remediating · scanner · 4m/, 'the words stay');
+  assert.match(both[3], /Waiting on CI and review, both running/);
+  assert.match(both[4], /ham-activity-track active"[^]*data-motion="active"/);
+  assert.match(both[5], /ham-activity-track active"[^]*data-motion="active"/);
+  assert.equal(litCount(both.join('')), 2);
+  // One track running: the stage chevron keeps its own fill and pulse.
+  const one = cells(redPR({ display_column: 30, ...running, review_activity: { ...running.review_activity, state: 'changes_requested', active: false } }));
+  assert.match(one[3], /class="ham-seg active ham-remediation-remediating detoured"[^>]*data-motion="active"/);
+  assert.equal(litCount(one.join('')), 2);
 });
