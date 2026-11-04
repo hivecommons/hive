@@ -11,10 +11,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -225,47 +227,84 @@ func TestSelectTask_MintFailureRollsBackClaim(t *testing.T) {
 // disconnect path finds no task to "release" and books no cooldown on an issue
 // the contributor never saw, and no rate slot or lease is spent on it.
 func TestHandleReady_SendFailureRollsBackClaim(t *testing.T) {
-	hub, s := covK2Hub(t)
-	oneActionableIssue(s)
-	s.deps.GHAppAuth = newSucceedingAppAuth(t, "ghs_7775_dead_socket")
+	for _, tc := range []struct {
+		name      string
+		closeSent bool
+		level     string
+	}{
+		{name: "close frame already sent", closeSent: true, level: "INFO"},
+		{name: "other write failure", level: "WARN"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s := covK2Hub(t)
+			var logs lockedBuffer
+			hub.logger = slog.New(slog.NewTextHandler(&logs, nil))
+			oneActionableIssue(s)
+			s.deps.GHAppAuth = newSucceedingAppAuth(t, "ghs_7775_dead_socket")
 
-	server, client := wsPipe(t)
-	conn := lockScopeConn(hub, "erin", "c-erin")
-	conn.ws = server
-	// The peer is gone and the hub's own side is closed — the shape the
-	// heartbeat loop leaves behind after a missed pong.
-	client.Close()
-	server.Close()
+			server, client := wsPipe(t)
+			t.Cleanup(func() { server.Close() })
+			conn := lockScopeConn(hub, "erin", "c-erin")
+			conn.ws = server
+			if tc.closeSent {
+				// Leave TCP open after sending Close so the next data write returns
+				// gorilla's ErrCloseSent, matching the #16496 diagnostics.
+				if err := server.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "closing"),
+					time.Now().Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				// Other write failures must retain warning visibility.
+				client.Close()
+				server.Close()
+			}
 
-	sess := &wsSession{h: hub, conn: server, contributor: conn}
-	if stop := sess.handleReady(WSMessage{Type: "ready", Seq: 1}); !stop {
-		t.Fatalf("a failed task_assign send must stop the session")
-	}
+			sess := &wsSession{h: hub, conn: server, contributor: conn}
+			if stop := sess.handleReady(WSMessage{Type: "ready", Seq: 1}); !stop {
+				t.Fatalf("a failed task_assign send must stop the session")
+			}
 
-	conn.mu.Lock()
-	task := conn.currentTask
-	conn.mu.Unlock()
-	if task != nil {
-		t.Fatalf("#7775: an assignment whose task_assign never left the hub was left on the dead connection: %+v", task)
-	}
-	if got := len(hub.leases); got != 0 {
-		t.Fatalf("#7775: a lease survived the undeliverable assignment: %d lease(s)", got)
-	}
-	if hour, day := hub.rateWindowCounts(identityOf(conn), time.Now()); hour != 0 || day != 0 {
-		t.Fatalf("#7775: the undeliverable assignment still occupies a rate-window slot: hour=%d day=%d", hour, day)
-	}
+			var failureLine string
+			for _, line := range strings.Split(logs.String(), "\n") {
+				if strings.Contains(line, "failed to send task_assign; releasing the undelivered claim") {
+					failureLine = line
+					break
+				}
+			}
+			if !strings.Contains(failureLine, "level="+tc.level) || !strings.Contains(failureLine, "task=") || !strings.Contains(failureLine, "error=") {
+				t.Fatalf("want %s assignment failure with task and error details, got: %s", tc.level, logs.String())
+			}
+			if tc.closeSent && !strings.Contains(failureLine, websocket.ErrCloseSent.Error()) {
+				t.Fatalf("expected ErrCloseSent, got: %s", failureLine)
+			}
 
-	// releaseOnDisconnect now runs, as it does for every socket that closes. It
-	// must find nothing to release: no cooldown on #101, and the issue offerable
-	// to the next contributor at once.
-	sess.releaseOnDisconnect()
-	if hub.isTaskInFailureCooldown("myorg/repo1", 101) {
-		t.Fatalf("#7775: the disconnect path booked a release cooldown on an issue the contributor never received")
-	}
-	next := lockScopeConn(hub, "frank", "c-frank")
-	again := hub.selectTask(next)
-	if again == nil || again.Type != "task_assign" || again.Number != 101 {
-		t.Fatalf("the issue must be offerable again after the undeliverable assignment, got %+v", again)
+			conn.mu.Lock()
+			task := conn.currentTask
+			conn.mu.Unlock()
+			if task != nil {
+				t.Fatalf("#7775: an assignment whose task_assign never left the hub was left on the dead connection: %+v", task)
+			}
+			if got := len(hub.leases); got != 0 {
+				t.Fatalf("#7775: a lease survived the undeliverable assignment: %d lease(s)", got)
+			}
+			if hour, day := hub.rateWindowCounts(identityOf(conn), time.Now()); hour != 0 || day != 0 {
+				t.Fatalf("#7775: the undeliverable assignment still occupies a rate-window slot: hour=%d day=%d", hour, day)
+			}
+
+			// releaseOnDisconnect now runs, as it does for every socket that closes. It
+			// must find nothing to release: no cooldown on #101, and the issue offerable
+			// to the next contributor at once.
+			sess.releaseOnDisconnect()
+			if hub.isTaskInFailureCooldown("myorg/repo1", 101) {
+				t.Fatalf("#7775: the disconnect path booked a release cooldown on an issue the contributor never received")
+			}
+			next := lockScopeConn(hub, "frank", "c-frank")
+			again := hub.selectTask(next)
+			if again == nil || again.Type != "task_assign" || again.Number != 101 {
+				t.Fatalf("the issue must be offerable again after the undeliverable assignment, got %+v", again)
+			}
+		})
 	}
 }
 
