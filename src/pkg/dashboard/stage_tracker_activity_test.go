@@ -374,3 +374,102 @@ func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
 		t.Fatalf("no-evidence caption: %+v", got)
 	}
 }
+
+func TestStageTrackerActivityCICheckCounts(t *testing.T) {
+	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
+	required := func(names ...string) []github.PRRequiredCheck {
+		out := make([]github.PRRequiredCheck, 0, len(names))
+		for _, n := range names {
+			out = append(out, github.PRRequiredCheck{Name: n, AppKnown: true})
+		}
+		return out
+	}
+	pr := github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{
+		Head: "head", Source: "github-check-runs", ObservedAt: &now, RequiredKnown: true, StatusesKnown: true,
+		Required: []string{"build", "lint", "test"}, RequiredSource: "protection", RequiredChecks: required("build", "lint", "test"),
+		Checks: []github.PRActivityCheck{
+			{Name: "build", State: "completed", Conclusion: "success"},
+			{Name: "lint", State: "completed", Conclusion: "failure"},
+			{Name: "test", State: "in_progress"},
+			{Name: "optional", State: "completed", Conclusion: "failure"},
+		},
+	}}
+	got := stageTrackerCIActivity(pr, now)
+	if got.ChecksPassed != 1 || got.ChecksTotal != 3 || got.ChecksFailed != 1 || strings.Join(got.ChecksFailing, ",") != "lint" {
+		t.Fatalf("required counts = %d/%d failed %d %v, want 1/3 failed 1 [lint] (optional checks do not count): %+v", got.ChecksPassed, got.ChecksTotal, got.ChecksFailed, got.ChecksFailing, got)
+	}
+	// Every required check green: the count is complete and no name is red.
+	pr.CIActivity.Checks = []github.PRActivityCheck{
+		{Name: "build", State: "completed", Conclusion: "success"}, {Name: "lint", State: "completed", Conclusion: "success"}, {Name: "test", State: "completed", Conclusion: "success"},
+	}
+	if got := stageTrackerCIActivity(pr, now); got.State != "passing" || got.ChecksPassed != 3 || got.ChecksTotal != 3 || got.ChecksFailed != 0 {
+		t.Fatalf("green counts = %+v", got)
+	}
+	// A required check with no run yet still counts in the total, not in passed.
+	pr.CIActivity.Checks = pr.CIActivity.Checks[:2]
+	if got := stageTrackerCIActivity(pr, now); got.State != "missing" || got.ChecksPassed != 2 || got.ChecksTotal != 3 {
+		t.Fatalf("missing counts = %+v", got)
+	}
+	// Required set unknown (an unprotected base such as v6): count every
+	// check run observed on the head, one per name, latest run decides.
+	earlier, later := now.Add(-2*time.Minute), now.Add(-time.Minute)
+	pr.CIActivity.RequiredKnown, pr.CIActivity.Required, pr.CIActivity.RequiredChecks = false, nil, nil
+	pr.CIActivity.Checks = []github.PRActivityCheck{
+		{Name: "build", State: "completed", Conclusion: "success"},
+		{Name: "flaky", State: "completed", Conclusion: "failure", Since: &earlier},
+		{Name: "flaky", State: "completed", Conclusion: "success", Since: &later},
+		{Name: "test", State: "queued"},
+		{Name: "other-head", State: "completed", Conclusion: "success", Head: "old-head"},
+	}
+	got = stageTrackerCIActivity(pr, now)
+	if got.State != "unknown" || got.ChecksTotal != 3 || got.ChecksPassed != 1 || got.ChecksFailed != 1 || strings.Join(got.ChecksFailing, ",") != "flaky" {
+		t.Fatalf("head-wide counts = %d/%d failed %d %v (state %s), want 1/3 failed 1 [flaky] unknown: a red run of a name stays red", got.ChecksPassed, got.ChecksTotal, got.ChecksFailed, got.ChecksFailing, got.State)
+	}
+	// No evidence for the head at all: no count ("CI ?/?").
+	pr.CIActivity.Checks = nil
+	if got := stageTrackerCIActivity(pr, now); got.ChecksTotal != 0 || got.ChecksPassed != 0 {
+		t.Fatalf("empty head produced a count: %+v", got)
+	}
+}
+
+func TestStageTrackerActivityReviewPerspectiveCounts(t *testing.T) {
+	now := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
+	pr, dispatch, status := trackerActivityFixture(now)
+	qualify := stageTrackerRepoQualifier(status)
+	expected := stageTrackerExpectedPerspectives(nil)
+	if len(expected) != len(review.DefaultPerspectives) {
+		t.Fatalf("nil config did not fall back to the built-in set: %v", expected)
+	}
+	count := func(bundle *evidence.Bundle, agg *review.Aggregate, d review.DispatchState) *StageTrackerActivity {
+		out := stageTrackerReviewActivity(pr, bundle, agg, d, status, now)
+		stageTrackerCountPerspectives(out, pr, bundle, agg, d, qualify, expected)
+		return out
+	}
+	// Swarm requested, nothing reported yet: 0 of the expected set.
+	if got := count(nil, nil, dispatch); got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("fresh dispatch counts = %d/%d, want 0/%d: %+v", got.PerspectivesDone, got.PerspectivesTotal, len(expected), got)
+	}
+	// Three of five reported on the current head.
+	agg := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: "changes_requested",
+		Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: "approve", review.PerspectiveSecurity: "approve", review.PerspectiveStyle: "changes_requested"}}
+	bundle := &evidence.Bundle{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, UpdatedAt: now, Verdicts: []evidence.Verdict{
+		{Perspective: string(review.PerspectiveCorrectness), Backend: "b", Model: "m", Verdict: "approve", RecordedAt: now},
+		{Perspective: string(review.PerspectiveSecurity), Backend: "b", Model: "m", Verdict: "approve", RecordedAt: now},
+		{Perspective: string(review.PerspectiveStyle), Backend: "b", Model: "m", Verdict: "changes_requested", RecordedAt: now},
+	}}
+	if got := count(bundle, agg, dispatch); got.PerspectivesDone != 3 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("partial counts = %d/%d (%s), want 3/%d", got.PerspectivesDone, got.PerspectivesTotal, got.State, len(expected))
+	}
+	// A perspective outside the configured set that was dispatched or reported
+	// for this head widens the total rather than vanishing.
+	dispatch.Pending = append(dispatch.Pending, review.PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: "plan-match", Agent: "reviewer-2", Dispatched: now})
+	if got := count(bundle, agg, dispatch); got.PerspectivesTotal != len(expected)+1 || got.PerspectivesDone != 3 {
+		t.Fatalf("extra dispatched perspective counts = %d/%d, want 3/%d", got.PerspectivesDone, got.PerspectivesTotal, len(expected)+1)
+	}
+	// Evidence for another head counts nothing for this one.
+	agg.HeadSHA, bundle.HeadSHA = "old-head", "old-head"
+	dispatch.Pending = nil
+	if got := count(bundle, agg, dispatch); got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("old-head evidence leaked into counts: %d/%d", got.PerspectivesDone, got.PerspectivesTotal)
+	}
+}

@@ -36,12 +36,64 @@
       return { track: 'ci', waitingOn: 'CI', newHead };
     }
 
+    // Pure: the chevron's primary words — the count grammar the operator
+    // asked for (hivecommons/hive#16484): "CI 12/14 passed", "CI 11/14 · 1
+    // failing (lint)", "CI 0/14 · queued", "CI ?/? · no checks reported
+    // yet"; "Review 3/5 perspectives", "Review 5/5 approved", "Review 0/5 ·
+    // re-review pending (new head)", "Review 2/5 · awaiting human
+    // decision". '' means the track has not started on this head (the
+    // chevron shows its glyph alone). current: column 50 is the row's
+    // active phase, so even absent evidence is "in progress" there.
+    function stageTrackerTrackWord(item, kind, current) {
+      const a = item && item[kind + '_activity'];
+      const matches = !!(a && item.head && a.head === item.head);
+      const state = matches ? a.state || 'unknown' : 'unknown';
+      if (state === 'unknown' && !current) return '';
+      const n = k => matches ? Number(a[k]) || 0 : 0;
+      if (kind === 'ci') {
+        const total = n('checks_total');
+        const passed = n('checks_passed');
+        const failed = n('checks_failed');
+        const names = matches && Array.isArray(a.checks_failing) ? a.checks_failing : [];
+        const count = 'CI ' + (total ? passed + '/' + total : '?/?');
+        const failing = failed ? failed + ' failing' + (names.length ? ' (' + names.slice(0, 2).join(', ') + (names.length > 2 ? ', …' : '') + ')' : '') : '';
+        const blocker = matches && a.blocker ? String(a.blocker) : '';
+        switch (state) {
+          case 'passing': return count + ' passed';
+          case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + blocker + ')' : ''));
+          case 'running': return count + ' · running' + (failing ? ' · ' + failing : '');
+          case 'queued': return count + ' · queued' + (failing ? ' · ' + failing : '');
+          case 'skipped': return count + ' · ' + (blocker ? blocker + ' skipped' : 'skipped');
+          case 'missing': return count + ' · ' + (passed ? (blocker ? blocker + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
+          default: return count + ' · ' + (total ? 'no verdict yet' : 'no checks reported yet');
+        }
+      }
+      const total = n('perspectives_total');
+      const done = n('perspectives_done');
+      const count = 'Review' + (total ? ' ' + done + '/' + total : '');
+      const actor = matches && a.actor ? String(a.actor) : '';
+      const code = item.code_activity;
+      const push = item.push;
+      const newHead = !!((code && code.head === item.head && code.state === 'pushed') || (push && push.state === 'pushed' && push.sha === item.head));
+      switch (state) {
+        case 'approved': return count + ' approved';
+        case 'changes_requested': return count + ' · changes requested';
+        case 'human_decision': return count + ' · awaiting human decision';
+        case 'reviewing': case 'adjudicating': return count + ' · ' + (actor ? actor + ' reviewing' : 'reviewing');
+        case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued');
+        case 'unassigned': return count + ' · swarm requested';
+        default: return count + ' · ' + (newHead ? 're-review pending (new head)' : total && done ? 'perspectives' : 'swarm requested');
+      }
+    }
+
     // Evidence is supplied independently by the backend. A native 050 label
     // cannot say who reviews, whether checks run, or whether an author codes.
-    // The chevron always carries a state word beside its glyph: unknown or
-    // stale evidence says so in words ("· seen 14m ago"), it never shrinks
-    // to a bare icon (hivecommons/hive#16484). Freshness still gates the
-    // pulse and the green fill, not the text.
+    // The chevron wears its glyph plus the count words from
+    // stageTrackerTrackWord (hivecommons/hive#16484). Style follows the
+    // track's own state on the current head: in progress = the full active
+    // fill (both tracks may be lit at once; the words disambiguate), done =
+    // the passed-stage style, a finding = the failing style, not started =
+    // the empty chevron with the glyph alone. Freshness gates only the pulse.
     function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';
@@ -57,7 +109,11 @@
       const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
       const active = known && a.active;
       if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
-      const cls = known && (state === 'passing' || state === 'approved') ? 'done' : active ? 'active' : 'todo';
+      const ownsPR = item.kind === 'pr' || item.via_pr;
+      const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
+      const finished = matches && (state === 'passing' || state === 'approved');
+      const finding = matches && (state === 'failing' || state === 'changes_requested');
+      const cls = finished ? 'done' : finding ? 'failing' : text ? 'active' : 'todo';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
@@ -66,7 +122,6 @@
       // the tooltip only; the chevron clamps the caption.
       const detail = matches && a.detail ? ' · ' + a.detail : '';
       let tip = caption + blocker + detail + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
-      const ownsPR = item.kind === 'pr' || item.via_pr;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
@@ -77,34 +132,21 @@
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
       if (!codeFresh) decided = decided.replace(/>(?:Fixing|Remediating)(?=\s|<)/g, '>Fix requested');
       const sha7 = item.head ? String(item.head).slice(0, 7) : '';
-      let seen = '';
-      if (matches && !known && state !== 'unknown') {
-        if (!Number.isFinite(observed)) seen = ' · observation time unknown';
-        else if (observed > clock) seen = ' · observation ahead of clock';
-        else {
-          const m = Math.floor((clock - observed) / 60000);
-          const h = Math.floor(m / 60);
-          seen = ' · seen ' + (m < 1 ? 'under a minute' : m < 60 ? m + 'm' : h < 48 ? h + 'h' : Math.floor(h / 24) + 'd') + ' ago';
-        }
-      }
-      let text = !matches ? name + ' unknown · no evidence for ' + (sha7 || 'this head') : (a.caption || name + ' ' + state) + seen;
       const lead = current && ownsPR && typeof stageTrackerTrackLead === 'function' ? stageTrackerTrackLead(item) : null;
-      if (lead && lead.track === kind && lead.newHead && kind === 'ci' && sha7) text += ' · new head ' + sha7;
-      else if (lead && lead.track !== kind && !(state === 'passing' || state === 'approved' || state === 'failing' || state === 'changes_requested')) text += ' · waiting on ' + lead.waitingOn;
       const word = esc(text);
       const evidenceURL = matches && /^https?:\/\//i.test(String(a.url || '')) ? a.url : '';
       const icon = stageTrackerIcon(kind === 'ci' ? 'ci' : 50, 'ham-ico', name);
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
       const hold = item.hold;
-      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + tip +
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text ? text + ' · ' : '') + tip +
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
         (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
-      const linkedIcon = `<span class="ham-chevron-copy ham-track-state">${evidenceLink}</span>`;
-      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${linkedIcon}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
+      const copy = `<span class="ham-chevron-copy ham-track-state">${evidenceLink}</span>`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}" data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an

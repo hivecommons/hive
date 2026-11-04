@@ -362,16 +362,17 @@
        layerize pass of the page every vsync (#13764). ::after is the
        movement effects' (flash / ripple / wash). */
     .ham-seg.active { background: var(--amber); color: var(--surface-0); }
-    /* Position is independent of observed work: queued, held and unknown
-       tracks keep a steady current-phase tint (a muted amber fill, full
-       opacity, no dimming ring), never a work pulse; only fresh observed
-       work earns the lit .active fill. */
+    /* A CI / Review track wears its own state on the current head
+       (hivecommons/hive#16484): in progress = the full .active fill, done =
+       .done, a finding (red CI, changes requested) = .failing in the error
+       colour, not started = .todo with the glyph alone. No muted
+       "current-phase" tint: the operator reads the words, not the shade.
+       Only fresh observed work earns the pulse. */
     .ham-activity-track.ham-current { opacity: 1; box-shadow: none; }
-    .ham-activity-track.ham-current:not(.active) { background: color-mix(in srgb, var(--amber) 28%, var(--panel)); color: var(--text); }
-    /* Findings (red CI, changes requested) are an amber-tinted chevron with
-       amber words — full opacity, still not the hive's own work; the finding
-       outranks the current-phase tint when both apply. */
-    .ham-seg.ham-activity-track[data-activity-state="failing"], .ham-seg.ham-activity-track[data-activity-state="changes_requested"] { background: color-mix(in srgb, var(--amber) 18%, var(--panel)); color: var(--amber); box-shadow: none; opacity: 1; }
+    .ham-seg.ham-activity-track.failing { background: var(--status-error); color: var(--surface-0); box-shadow: none; opacity: 1; }
+    .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }
+    /* The count words stay on one line and ellipsize instead of wrapping. */
+    .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
