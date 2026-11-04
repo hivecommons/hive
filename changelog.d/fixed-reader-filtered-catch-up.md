@@ -1,1 +1,0 @@
-- `/api/matrix/lines` reports `more` only when another line the caller may see remains, so clients paging a filtered backlog can stop without an empty follow-up request ([#16530](https://github.com/hivecommons/hive/issues/16530)).
