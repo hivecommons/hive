@@ -799,7 +799,7 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 	// The engine re-derives the stage from the labels left behind, so a kept
 	// park label (a person's or a lifecycle bot's `needs-human`) re-parks the
 	// issue at the same stage (hivecommons/hive#12715).
-	stayingStage := unparkStageThatStays(displayRepo, number, labels, removed, stageLabels)
+	stayingStage := unparkStageThatStays(displayRepo, number, labels, removed, stageLabels, acknowledge)
 	if acknowledge && !labelPresent(labels, HumanAckLabel) {
 		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanAckLabel}); err != nil {
 			return false, fmt.Errorf("adding %s to %s/%s#%d: %w", HumanAckLabel, owner, repo, number, err)
@@ -838,13 +838,21 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 }
 
 // unparkStageThatStays returns the stage label among stageLabels that the
-// issue still derives once the un-park has removed removed and applied
-// approved-direction, or "" when the park lifts.
-func unparkStageThatStays(displayRepo string, number int, labels, removed, stageLabels []string) string {
+// issue still derives once the un-park has removed removed and, when
+// acknowledge is set, applied approved-direction, or "" when the park
+// lifts. The ack is only counted when it is really applied: a kept
+// `needs-human` withholds it, and the engine reads a plain `needs-human`
+// as a 045 park but a `needs-human` beside the ack as held human work
+// (hivecommons/hive#16579), so seeding the ack unconditionally would
+// misreport a kept park as lifted.
+func unparkStageThatStays(displayRepo string, number int, labels, removed, stageLabels []string, acknowledge bool) string {
 	if len(stageLabels) == 0 {
 		return ""
 	}
-	after := []string{HumanAckLabel}
+	var after []string
+	if acknowledge {
+		after = append(after, HumanAckLabel)
+	}
 	for _, label := range labels {
 		if !labelPresent(removed, label) && !labelPresent(stageLabels, label) {
 			after = append(after, label)
