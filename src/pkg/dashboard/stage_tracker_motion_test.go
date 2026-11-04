@@ -217,10 +217,7 @@ assert.strictEqual(stageTrackerAnimateMove(strip, 4, 4, 'wash'), false, 'no colu
 assert.deepStrictEqual(trace, []);
 assert.strictEqual(timers.length, 0);
 `
-	cmd := exec.Command(node, "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("node movement sequence fixture failed: %v\n%s", err, out)
-	}
+	runMotionScript(t, node, script, "motion_sequence.js", "movement sequence")
 }
 
 func tokensCSS(t *testing.T) string {
@@ -371,10 +368,7 @@ assert.strictEqual(stageTrackerMotionEffect('bogus', false), 'wash');
 assert.deepStrictEqual(STAGE_TRACKER_MOTIONS.map(m => m.id), ['none', 'puck', 'ripple', 'ghost', 'comet', 'bump', 'wash']);
 assert.deepStrictEqual(STAGE_TRACKER_MOTIONS.map(m => m.key), ['', 'A', 'B', 'C', 'D', 'E', 'F']);
 `
-	cmd := exec.Command(node, "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("node movement detector fixture failed: %v\n%s", err, out)
-	}
+	runMotionScript(t, node, script, "motion_detector.js", "movement detector")
 }
 
 // TestStageTrackerMotionRowStamp runs the real row builder: the moved strip's
@@ -495,10 +489,7 @@ assert.deepStrictEqual(ols(stageTrackerRowHtml(next[2], stages, ctx)), [''], 'an
 assert.deepStrictEqual(ols(stageTrackerRowHtml(next[1], stages, ctx)), ['', ' data-ham-prev-col="4" data-ham-col="6"', ''], 'only the nested PR that moved is stamped (sub-rows sort furthest first)');
 assert.deepStrictEqual(ols(stageTrackerRowHtml(next[0], stages, { nowMs: now })), [''], 'no moves in ctx → no stamp');
 `
-	cmd := exec.Command(node, "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("node row stamp fixture failed: %v\n%s", err, out)
-	}
+	runMotionScript(t, node, script, "motion_row_stamp.js", "row stamp")
 }
 
 // The settings-modal preview is one real tracker row, rebuilt in place on
@@ -697,15 +688,22 @@ assert.deepStrictEqual(animated, [[claimed, review, 'wash'], [review, claimed, '
 // a re-render after clicks picks up where the preview left off
 assert.strictEqual(activeShort(stageTrackerMotionSectionHtml('wash', stages)), 'CI + Review');
 `
-	// The lifted strip exceeds Linux's single-argument limit, so the script
-	// goes through a file rather than -e.
-	path := filepath.Join(t.TempDir(), "motion_preview_sample.js")
+	runMotionScript(t, node, script, "motion_preview_sample.js", "motion preview sample")
+}
+
+// runMotionScript writes script to a temp file and runs it with node. The
+// lifted dashboard functions push the concatenated source past Linux's
+// single-argument limit (E2BIG), so the script goes through a file rather
+// than -e.
+func runMotionScript(t *testing.T, node, script, name, label string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(node, path)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("node motion preview sample fixture failed: %v\n%s", err, out)
+		t.Fatalf("node %s fixture failed: %v\n%s", label, err, out)
 	}
 }
 
@@ -904,8 +902,5 @@ assert.notStrictEqual(stageTrackerRowSrcKey(R(1, 4, '2m').html), R(1, 4).html);
 assert.strictEqual(stageTrackerRowHasMove(R(1, 4, '1m', [2, 4]).html), true);
 assert.strictEqual(stageTrackerRowHasMove(R(1, 4).html), false);
 `
-	cmd := exec.Command(node, "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("node reconcile fixture failed: %v\n%s", err, out)
-	}
+	runMotionScript(t, node, script, "motion_reconcile.js", "reconcile")
 }
