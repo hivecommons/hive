@@ -571,7 +571,7 @@ test('current-phase styling is steady and undimmed, including compact/reduced-mo
     assert.doesNotMatch(block, /clip-path|border(?!-radius)|box-shadow: inset/, block);
   }
   assert.match(css, /\.ham-seg\.ham-activity-track\.failing \{ background: var\(--status-error\); color: var\(--surface-0\);/, 'a finding wears the error colour at full strength');
-  assert.match(css, /\.ham-chevron-copy\.ham-track-state \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis;/, 'count words stay on one line');
+  assert.doesNotMatch(css, /\.ham-track-state \{[^}]*white-space: nowrap/, 'count words wrap to the strip-wide two-line budget like every other chevron, never ellipsised mid-count');
   const current = css.match(/\.ham-activity-track\.ham-current \{([^}]*)\}/)[1];
   assert.doesNotMatch(current, /animation|data-motion/);
   assert.ok(css.indexOf('.ham-activity-track.ham-current {') > css.indexOf('.ham-seg.todo {'), 'current occupancy overrides generic upcoming-track dimming');

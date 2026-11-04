@@ -204,7 +204,12 @@
       }
       if (cell.dataset.displayState === 'unknown') {
         coverage.unknown++;
-        assert(cell.innerText.trim() === '', name + 'unknown track is icon-only');
+        // #16493: a track in the current phase always carries count words
+        // ("CI ?/? · no checks reported yet"); only a not-started track is
+        // the glyph alone.
+        const words = cell.querySelector('.ham-track-state')?.innerText.trim() || '';
+        if (cell.classList.contains('todo')) assert(words === '', name + 'not-started track is icon-only');
+        else assert(/^(CI|Review)\b/.test(words), name + 'lit unknown track carries count words, never a bare glyph: ' + JSON.stringify(words));
         assert(!!cell.querySelector('svg'), name + 'unknown track retains the column glyph');
         assert(!cell.hasAttribute('data-motion'), name + 'unknown cannot animate as observed work');
       }
