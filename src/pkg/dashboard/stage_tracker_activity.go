@@ -253,13 +253,6 @@ func stageTrackerWorkflowApprovalBlocker(n int) string {
 	return fmt.Sprintf("%s%d", stageTrackerWorkflowApprovalBlockerPrefix, n)
 }
 
-func pluralVerb(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
-}
-
 // stageTrackerCountHeadChecks fills the check counts from every check run
 // observed on the head when the required set is not known: one entry per
 // check name, red if any run of that name is red, green only if its latest
