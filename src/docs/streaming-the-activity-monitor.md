@@ -296,21 +296,10 @@ full-screen Activity Monitor.
 
 ## Code activity (separate channel)
 
-The Activity Monitor topbar shows one **Code activity** entry when
-`dashboard.matrix.enabled` is set. It opens the [reader](dashboard.md#code-activity-reader)
-at `?kiosk=1&view=reader` in a new tab. Code activity supersedes the Matrix
-code view: rain, cascade, ghost, terminal and all `mx.*` presentation settings
-are retired. Saved `?kiosk=1&view=matrix` display URLs are a deprecated alias
-that opens the same reader; new links should use `view=reader`.
-
-The source remains default-off and limited to pushed published PR checkpoints
-from positively identified Hive/clanker authors in explicitly allowlisted public
-repositories. Complete admitted add/remove regions are shown with `Pushed PR`
-provenance and observed time; opening backlog is labelled a buffered snapshot.
-There is no workspace or pre-push capture. The internal `dashboard.matrix.*`
-configuration and `/api/matrix/lines` names are deprecated but remain supported.
-Existing read authorization, path exclusions and whole-region scrub/drop filters
-still apply. Dashboard authentication alone does not authorize broadcasting.
+The separate Code activity channel uses the
+[Code activity reader](dashboard.md#code-activity-reader); see that section for
+its display, source restrictions, compatibility and access policy.
+Dashboard authentication alone does not authorize broadcasting.
 
 [`overlays/hive-hosted-matrix/`](../deploy/stream/overlays/hive-hosted-matrix/kustomization.yaml)
 reuses the streamer image and base as a separate instance. It renders Deployment,

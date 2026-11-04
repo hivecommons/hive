@@ -216,3 +216,69 @@ test('adoption absence is not a refusal; ownership policy and actual capability 
     assert.equal(c.stageTrackerAdoptionChipText(item), word);
   }
 });
+
+// hivecommons/docs#612 / rationguard#480: the row states why a human is
+// needed in its own note line — blocker first, the ask's first sentence, who
+// asked, the lead move, and who is pushing a covering PR.
+function needsHumanContext() {
+  const c = load();
+  for (const name of ['STAGE_TRACKER_NEEDS_HUMAN_SHORT', 'STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX', 'STAGE_TRACKER_NEEDS_HUMAN_WORD']) {
+    const text = source('tracker-words-core');
+    const m = text.match(new RegExp('const ' + name + ' = [\\s\\S]*?;\\n'));
+    assert.ok(m, name);
+    vm.runInContext(m[0], c);
+  }
+  vm.runInContext(fn('tracker-words-core', 'stageTrackerNeedsHumanShort'), c);
+  c.stageTrackerLeadActionOnRow = item => item.blocker ? { id: 'open:app-settings', label: 'Grant the App workflows: write' } : (item.decision_needed ? { id: 'decide:delegate', label: 'Let hive decide' } : null);
+  return c;
+}
+const why612 = "Hive can't do this one: the GitHub App has no `workflows` permission, so it cannot push changes to .github/workflows/*. Options: (a) grant the App workflows: write, (b) apply by hand.";
+function issue612() {
+  const pr620 = { kind: 'pr', repo: 'hivecommons/docs', number: 620, stage: 50, state: 'open', head: 'h620', author: 'bob', author_kind: 'human',
+    title: 'ci: opt in', url: 'https://github.com/hivecommons/docs/pull/620', stage_actor: { kind: 'hive' } };
+  return { kind: 'issue', repo: 'hivecommons/docs', number: 612, stage: 45, state: 'open', modifiers: ['needs-human'], needs_human: true,
+    title: 'Opt docs refresh into hive', url: 'https://github.com/hivecommons/docs/issues/612', linked_pr: 620, linked_prs: [pr620],
+    human_attention: { kind: 'issue', number: 612, reason: why612, asked_by: 'the hive' },
+    blocker: { kind: 'capability:workflows-permission', short: 'App lacks workflows permission' },
+    decision_needed: { question: 'Grant the permission or close as partial?', options: [{ action: 'decide:delegate', enabled: false, reason_if_disabled: 'No decision grants the App the permission' }] } };
+}
+
+test('covered issue on a capability blocker names the blocker, the ask, the asker, the lead move and who is pushing the PR', () => {
+  const c = needsHumanContext();
+  const html = c.stageTrackerRowHtml(issue612(), [], { nowMs: 1 });
+  assert.match(html, /#612 — Needs human: App lacks workflows permission — Hive can&#39;t do this one: the GitHub App has no `workflows` permission, so it cannot push changes to \.github\/workflows\/\*\./);
+  assert.match(html, /· requested by the hive · lead: Grant the App workflows: write ▸ · @bob is pushing it in #620/);
+  assert.doesNotMatch(html, /Options: \(a\)/, 'only the first sentence of the ask rides on the row');
+  // The line is unchanged when the strip is the issue's own.
+  const alone = issue612(); alone.linked_prs = []; delete alone.linked_pr;
+  assert.doesNotMatch(c.stageTrackerHumanContextHtml(alone, [], 1), /is pushing it/);
+  assert.match(c.stageTrackerHumanContextHtml(alone, [], 1), /App lacks workflows permission/);
+  // A hive-authored covering PR is not "pushed by" anyone on the line.
+  const hive = issue612(); hive.linked_prs[0].author_kind = 'hive'; hive.linked_prs[0].author = 'hive-bot';
+  assert.doesNotMatch(c.stageTrackerHumanContextHtml(hive, [], 1), /is pushing it/);
+});
+
+test('085 PR without human_attention still states the decision question from decision_needed', () => {
+  const c = needsHumanContext();
+  const item = { kind: 'pr', repo: 'hivecommons/rationguard', number: 480, stage: 85, state: 'open', head: 'h480', modifiers: ['needs-decision'],
+    title: 'ci: pin runners', url: 'https://github.com/hivecommons/rationguard/pull/480', human_reason: 'workflow path',
+    stage_actor: { kind: 'human', why: 'a human decision is owed — workflow path', human_reason: 'workflow path' },
+    decision_needed: { question: 'The hive never merges this by itself (it edits CI workflow files). Approve it for a maintainer to merge, give direction, or close it?',
+      blocker: 'The hive never merges this by itself. After approval, a maintainer merges.', asked_by: 'the hive' } };
+  const ask = c.stageTrackerNeedsHumanAsk(item);
+  assert.ok(ask && ask.synthetic, JSON.stringify(ask));
+  assert.equal(ask.reason, item.decision_needed.question);
+  const html = c.stageTrackerHumanContextHtml(item, [], 1);
+  assert.match(html, /Needs human: edits CI workflows — The hive never merges this by itself \(it edits CI workflow files\)\./);
+  assert.match(html, /Approve it for a maintainer to merge, give direction, or close it\?/, 'the full question stays on the line');
+  assert.match(html, /· asked by the hive/);
+  assert.doesNotMatch(html, /lead: Let hive decide/, 'the optional delegation is not the person\'s move');
+  // Human attention from the server wins over the synthesized ask; a parked
+  // stage with no evidence synthesizes nothing.
+  assert.equal(c.stageTrackerNeedsHumanAsk({ ...item, human_attention: { kind: 'pr', number: 480, head: 'h480', reason: 'x' } }), null);
+  assert.equal(c.stageTrackerNeedsHumanAsk({ ...item, decision_needed: null, stage_actor: { kind: 'hive' } }), null);
+  for (const mutate of [it => { it.state = 'closed'; }, it => { it.modifiers = ['draft']; }, it => { it.hold = { by: 'owner' }; }]) {
+    const changed = plain(item); mutate(changed);
+    assert.equal(c.stageTrackerNeedsHumanAsk(changed), null);
+  }
+});

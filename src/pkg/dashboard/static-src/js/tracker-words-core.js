@@ -88,6 +88,44 @@
       const short = String((b && b.short) || '').trim();
       return short ? STAGE_TRACKER_BLOCKED_WORD + ' · ' + short : '';
     }
+    // Why a person is needed, in a few words, for the row itself to say
+    // (hivecommons/docs#612, rationguard#480: "it's not clear reading the
+    // row why a human is needed"). The structured blocker's short text
+    // first; else the server's reason key (stage_actor.human_reason, the
+    // human-merge reason, the clause after "—" in stage_actor.why) through
+    // a small map of known reasons; else that clause's first sentence.
+    const STAGE_TRACKER_NEEDS_HUMAN_SHORT = {
+      'workflow path': 'edits CI workflows',
+      'hive signoff attribution': 'hive signoff attribution',
+      'high-risk review': 'high-risk review',
+      'optional check failing': 'optional check failing',
+      'capability:workflows-permission': 'App lacks workflows permission',
+    };
+    const STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX = 48;
+    const STAGE_TRACKER_NEEDS_HUMAN_WORD = 'Needs human';
+    function stageTrackerNeedsHumanShort(item) {
+      if (!item) return '';
+      const b = item.blocker;
+      if (b && String(b.short || '').trim()) return String(b.short).trim();
+      if (b && STAGE_TRACKER_NEEDS_HUMAN_SHORT[String(b.kind || '').trim()]) return STAGE_TRACKER_NEEDS_HUMAN_SHORT[String(b.kind || '').trim()];
+      const sa = item.stage_actor || {};
+      const afterDash = s => { const t = String(s || ''); const i = t.indexOf(' — '); return i >= 0 ? t.slice(i + 3) : ''; };
+      const keys = [sa.human_reason, item.human_merge_reason, afterDash(sa.why), afterDash(item.caption), item.reason];
+      for (const k of keys) {
+        const key = String(k || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (key && STAGE_TRACKER_NEEDS_HUMAN_SHORT[key]) return STAGE_TRACKER_NEEDS_HUMAN_SHORT[key];
+      }
+      const clause = String(afterDash(sa.why) || sa.human_reason || '').replace(/\s+/g, ' ').trim().split(/[;.](?:\s|$)/)[0].trim();
+      if (!clause) return '';
+      return clause.length > STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX ? clause.slice(0, STAGE_TRACKER_NEEDS_HUMAN_SHORT_MAX - 1).replace(/\s+\S*$/, '') + '…' : clause;
+    }
+    // The lit 045 / 085 chevron's caption: "Needs human · edits CI
+    // workflows" rather than a bare "Needs human decision". '' when no
+    // short reason is known (the plain stage word stands).
+    function stageTrackerNeedsHumanWord(item) {
+      const short = stageTrackerNeedsHumanShort(item);
+      return short ? STAGE_TRACKER_NEEDS_HUMAN_WORD + ' · ' + short : '';
+    }
     // A decomposed parent at 010 (server `open_children` > 0, hive#16481)
     // reads "Tracking · 3/4" (children known) or "Tracking · 1 open child",
     // never "Actionable": the scanner leaves it to its children, so the

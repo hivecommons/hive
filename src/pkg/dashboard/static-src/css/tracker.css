@@ -355,6 +355,12 @@
        done-style step that keeps its word (stage_tracker_remediation.go). */
     .ham-seg.active.ham-remediation-unassigned { background: color-mix(in srgb, var(--amber) 70%, var(--red)); }
     .ham-seg.done.ham-fix-pushed { color: var(--green); }
+/* A done decision column that still names the blocker a person must
+   clear while a covering PR drives the strip (hivecommons/docs#612). */
+.ham-seg.done.ham-blocker-note { color: var(--amber); opacity: 1; }
+/* The "needs human" pill is a button: click scrolls to the Needs human line. */
+.ham-needs-human-pill { cursor: pointer; font: inherit; }
+.ham-needs-human-pill:hover, .ham-needs-human-pill:focus-visible { text-decoration: underline; }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.blank { visibility: hidden; }
     .ham-sub { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
