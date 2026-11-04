@@ -41,6 +41,12 @@
     document.body.classList.add('matrix-mode');
     document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
   }
+  // Code activity reader (#16475): same opt-in data as Matrix, read as paragraphs.
+  window.HIVE_READER = kiosk && view === 'reader';
+  if(window.HIVE_READER){
+    document.body.classList.add('reader-mode');
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveReaderStart === 'function' && hiveReaderStart(); });
+  }
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
   window.HIVE_DISPLAY=display&&!kiosk;

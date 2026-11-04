@@ -1,0 +1,1 @@
+- Deferred PR fix kicks now retain their queue position until delivery or closure; the governor API exposes the queue and the dashboard review queue shows “fixer queued, N ahead” ([#16537](https://github.com/hivecommons/hive/issues/16537)).
