@@ -65,7 +65,7 @@ func TestClassifyDecisionQuestion(t *testing.T) {
 		},
 		{
 			name: "auto_merge config change in a patch is a sign-off",
-			in: green("Confirm the lane should merge its own PRs.", DecisionQuestionFile{Path: "deploy/hive.yaml.dashboard",
+			in: green("Confirm the lane should merge its own PRs.", DecisionQuestionFile{Path: "deploy/overlays/prod/governor.yaml",
 				Patch: "@@ -1,3 +1,4 @@\n repos:\n   hive:\n+    auto_merge: true\n"}),
 			want: DecisionQuestionPolicySignOff, reason: "changes auto_merge",
 		},
