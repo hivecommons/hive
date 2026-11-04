@@ -1004,6 +1004,7 @@ func runEvalCycle(
 		"agents_skipped", agentsSkipped,
 	)
 
+	reconcilePlannedFixQueue(gov, actionable, reviewPlan.FixKicks)
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {
 		if !gov.AgentEligibleForCELKick(k.Agent) || agentMgr.IsPaused(k.Agent) {

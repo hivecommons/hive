@@ -48,3 +48,17 @@ func reconcileDeferredFixQueue(gov *governor.Governor, org string, actionable *g
 	}
 	gov.ReconcileFixerQueue(open)
 }
+
+// reconcilePlannedFixQueue drops deferred fixes the current plan no longer
+// kicks (new head, review passed, lane reassigned away) for PRs that stay
+// open; otherwise they would sit in the queue and inflate every "ahead".
+func reconcilePlannedFixQueue(gov *governor.Governor, actionable *github.ActionableResult, fixKicks []review.DispatchKick) {
+	if actionable == nil {
+		return // no plan was built, so nothing says the fix is no longer needed
+	}
+	planned := map[string]bool{}
+	for _, k := range fixKicks {
+		planned[strings.ToLower(strings.TrimSpace(k.PRRef))] = true
+	}
+	gov.ReconcileFixerQueue(planned)
+}
