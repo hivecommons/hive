@@ -130,29 +130,55 @@
       }
       return `<div class="cue-event ham-human-context"><span>${bodyHtml}</span></div>`;
     }
-    function stageTrackerHumanContextHtml(item, stages, nowMs, subRows) {
+    /* ---- One note line per row -----------------------------------------
+       Owner (2026-11-05): "we don't need 2 hive comments — there should
+       always be only one." A row used to stack its "Needs human: …" line
+       over the "Hive: moved to …" stage note. Now every candidate is
+       ranked — needs-human / decision (0) > blocker (1) > next move /
+       claim (2) > optional delegation (3) > stage-transition note (4) —
+       and the row renders the winner alone. Same-rank human asks (an
+       issue's and its PR's) share the line, " · " apart, each with its
+       View link. A lower line's facts ride along as a trailing clause
+       only when they say something the row does not already: a stage
+       note that merely restates the lit chevron ("moved to Needs human
+       decision" under a strip lit at Needs human decision) is dropped. */
+    const STAGE_TRACKER_NOTE_RANK_HUMAN = 0;
+    const STAGE_TRACKER_NOTE_RANK_BLOCKER = 1;
+    const STAGE_TRACKER_NOTE_RANK_NEXT = 2;
+    const STAGE_TRACKER_NOTE_RANK_OPTIONAL = 3;
+    // Mod-change words (tracker-motion) a "Needs human:" line already says.
+    const STAGE_TRACKER_NOTE_HUMAN_RESTATES = ['waiting on a person', 'waiting on a decision'];
+    function stageTrackerNoteRankOf(text) {
+      const t = String(text || '');
+      if (/(^|— )Needs human:|decision context unavailable/.test(t)) return STAGE_TRACKER_NOTE_RANK_HUMAN;
+      if (/Current blocker:/.test(t)) return STAGE_TRACKER_NOTE_RANK_BLOCKER;
+      if (/^Optional delegation:/.test(t)) return STAGE_TRACKER_NOTE_RANK_OPTIONAL;
+      return STAGE_TRACKER_NOTE_RANK_NEXT;
+    }
+    // Pure: the candidate human lines for the row, each { body, text, rank }.
+    function stageTrackerHumanContextEntries(item, stages, nowMs, subRows) {
       const required = stageTrackerHumanContextOf(item, stages, subRows);
-      const lines = required.map(entry => {
-        const it = entry.item;
+      const entry = (body, text) => ({ body, text, rank: stageTrackerNoteRankOf(text) });
+      const lines = required.map(e => {
+        const it = e.item;
         const href = it.url || item.url;
         const view = href ? 'View ' + (it.kind === 'pr' ? 'PR' : 'issue') + ' #' + Number(it.number) : '';
-        const body = esc(entry.text) + (view ? ` <a href="${esc(href)}" target="_blank" rel="noopener">${view}</a>` : '');
-        return stageTrackerHumanContextLine(item, body, entry.text + (view ? ' · ' + view : ''), nowMs);
+        return entry(esc(e.text) + (view ? ` <a href="${esc(href)}" target="_blank" rel="noopener">${view}</a>` : ''), e.text + (view ? ' · ' + view : ''));
       });
-      if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines.join('');
+      if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines;
       const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
       const staleLinks = item.kind === 'issue' ? (item.linked_prs || []).filter(lp =>
         stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
       if (stale || staleLinks.length) {
         const refs = staleLinks.length ? staleLinks.map(lp => 'PR #' + lp.number).join(', ') : item.kind === 'pr' ? 'PR #' + item.number : 'Issue #' + item.number;
         const text = refs + ' · decision context unavailable for the displayed identity/head';
-        return stageTrackerHumanContextLine(item, esc(text) + (item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''), text, nowMs);
+        return [entry(esc(text) + (item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''), text)];
       }
       const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
       if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
-        stageTrackerLinkedPROpen(lp, item) && stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp)))) return '';
+        stageTrackerLinkedPROpen(lp, item) && stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp)))) return [];
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged') || item.superseded_by) return '';
+      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged') || item.superseded_by) return [];
       const actor = item.stage_actor;
       const actorHuman = actor && (actor.kind === 'human' || actor.kind === 'maintainer');
       const claimant = item.claimant;
@@ -163,10 +189,10 @@
         const prNumber = item.kind === 'issue' && (item.linked_pr || ((item.linked_prs || []).length === 1 && item.linked_prs[0].number));
         const target = prNumber ? ' on PR #' + prNumber : '';
         const text = 'Next move: ' + who + target + (actor.why ? ' — ' + actor.why : ' · action reason unavailable');
-        lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
+        lines.push(entry(esc(text), text));
       } else if (claimant && claimant.kind === 'person' && claimant.login) {
         const text = 'Claimed by @' + claimant.login + ' · claim ownership, not a human decision request';
-        lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
+        lines.push(entry(esc(text), text));
       }
       if (typeof stageTrackerLeadActionOnRow === 'function' && typeof stageTrackerActionCtx === 'function') {
         const ctx = stageTrackerActionCtx(item.repo);
@@ -176,9 +202,60 @@
           const action = stageTrackerLeadActionOnRow(item, ctx, subRows);
           if (action && (action.id === 'decide:delegate' || action.id === 'decide:delegate-all')) {
             const text = 'Optional delegation: Let hive decide is available; it does not itself mean human input is required.';
-            lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
+            lines.push(entry(esc(text), text));
           }
         }
       }
-      return lines.join('');
+      return lines;
+    }
+    // Pure: the row's current stage as the chevron names it ('' unknown).
+    function stageTrackerNoteStageName(item, stages) {
+      if (!item) return '';
+      const sg = (Array.isArray(stages) ? stages : []).find(x => Number(x.number) === (Number(item.stage) || 0));
+      if (typeof stageTrackerStageName === 'function') return stageTrackerStageName(sg) || stageTrackerStageName({ label: item.stage_label || '', short: '' });
+      return sg ? String(sg.short || sg.label || '') : String(item.stage_label || '');
+    }
+    // Pure: the stage note's words worth keeping under a human line, or
+    // '' when the line (or the lit chevron) already says it.
+    function stageTrackerNoteFoldText(evText, lineText, item, stages) {
+      const t = String(evText || '').trim();
+      if (!t) return '';
+      const line = String(lineText || '').toLowerCase();
+      if (line.indexOf(t.toLowerCase()) >= 0) return '';
+      if (/needs human:/i.test(line) && STAGE_TRACKER_NOTE_HUMAN_RESTATES.indexOf(t) >= 0) return '';
+      const m = /^(?:moved to|fell back to) (.+)$/.exec(t);
+      if (m) {
+        const name = stageTrackerNoteStageName(item, stages).toLowerCase();
+        const said = m[1].split(' — ')[0].trim().toLowerCase();
+        if (name && said === name && m[1].indexOf(' — ') < 0) return '';
+      }
+      return t;
+    }
+    // ctx / key (the row's events map and its key) let the human line
+    // absorb the row's stage note so the row shows one line, not two.
+    function stageTrackerHumanContextHtml(item, stages, nowMs, subRows, ctx, key) {
+      let entries = stageTrackerHumanContextEntries(item, stages, nowMs, subRows);
+      if (!entries.length) return '';
+      const best = Math.min.apply(null, entries.map(e => e.rank));
+      // "Let hive decide is available" is a control the row shows anyway;
+      // it only earns the line when nothing else wants it.
+      if (best < STAGE_TRACKER_NOTE_RANK_OPTIONAL) entries = entries.filter(e => e.rank < STAGE_TRACKER_NOTE_RANK_OPTIONAL);
+      entries.sort((a, b) => a.rank - b.rank);
+      let body = entries.map(e => e.body).join(' · ');
+      let text = entries.map(e => e.text).join(' · ');
+      const ev = ctx && ctx.events && key ? ctx.events[key] : null;
+      const fold = ev ? stageTrackerNoteFoldText(ev.text, text, item, stages) : '';
+      if (fold) {
+        const who = ev.who === 'you' ? 'You: ' : ev.who === 'merge' ? 'Merge: ' : '';
+        body += ' · ' + esc(who + fold); text += ' · ' + who + fold;
+      }
+      return stageTrackerHumanContextLine(item, body, text, nowMs);
+    }
+    // Pure: ctx without the row's stage note once the human line has
+    // taken it (folded or dropped), so the event slot stays empty.
+    function stageTrackerNoteTakenCtx(ctx, key) {
+      if (!ctx || !ctx.events || !key || !ctx.events[key]) return ctx;
+      const events = Object.assign({}, ctx.events);
+      delete events[key];
+      return Object.assign({}, ctx, { events });
     }
