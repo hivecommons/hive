@@ -302,6 +302,16 @@ type Input struct {
 	ReviewerRequiresHuman bool
 	ReviewerFinding       string
 	SecurityFinding       bool
+	// ChangesRequestedBy are the maintainers whose standing GitHub review
+	// asks for changes: their latest opinionated review is
+	// CHANGES_REQUESTED, the request that keeps GitHub's reviewDecision at
+	// CHANGES_REQUESTED and blocks the merge. The hive's own reviews are
+	// not listed; HeadReviewVerdict carries the swarm's.
+	ChangesRequestedBy []string
+	// HeadReviewVerdict is the review swarm's aggregate verdict on the
+	// current head ("changes_requested", "requires_human", …); "" when the
+	// head has none recorded.
+	HeadReviewVerdict string
 	// HiveSuperseding: the hive App's own superseding copy of another PR
 	// (hive-authored, body declares `Supersedes #N`). The owner's rule is
 	// that it auto-merges with no operator decision; HiveSupersederHardStop
@@ -314,6 +324,31 @@ type Input struct {
 // CIRed reports a head that is not green because a check failed (or none
 // ever reported), as opposed to one still waiting on running checks.
 func (in Input) CIRed() bool { return !in.CIGreen && !in.CIPending }
+
+// Swarm verdicts on the head that hold it back from the merge queue.
+const (
+	headVerdictChangesRequested = "changes_requested"
+	headVerdictRequiresHuman    = "requires_human"
+)
+
+// ChangeRequest names the standing request for changes on the PR, in
+// plain words: a maintainer's GitHub review, else the swarm's verdict on
+// the current head. "" when nothing asks for changes.
+func (in Input) ChangeRequest() string {
+	if len(in.ChangesRequestedBy) > 0 {
+		return "the changes @" + strings.Join(in.ChangesRequestedBy, ", @") + " requested on GitHub"
+	}
+	if strings.EqualFold(strings.TrimSpace(in.HeadReviewVerdict), headVerdictChangesRequested) {
+		return "the changes the hive's review requested on this head"
+	}
+	return ""
+}
+
+// HeadNeedsPerson: the swarm's verdict on the current head is
+// requires_human, a question for a person rather than a change request.
+func (in Input) HeadNeedsPerson() bool {
+	return strings.EqualFold(strings.TrimSpace(in.HeadReviewVerdict), headVerdictRequiresHuman)
+}
 
 // RuleAdoptNow is the rule name of the grace-elapsed Adopt now decision;
 // the dashboard runs it as a forced adoption (Adopt now), not a queued one.
@@ -733,12 +768,7 @@ func decidePR(in Input) Decision {
 		return d
 	}
 	if fix := fixList(in); len(fix) > 0 {
-		text := strings.Join(fix, ", ") + "; keep the smallest reversible change, then it merges"
-		return Decision{
-			Verdict: VerdictDirection, Rule: "fix-then-merge", Text: text,
-			Rationale: "the head is not mergeable yet; the direction names the fix and nothing else",
-			Actions:   []Action{decisionComment(text)},
-		}
+		return fixThenMerge(fix)
 	}
 	if in.IsSmall() || in.LowRiskPaths {
 		return releasePR("small-low-risk", "approve "+ref+": small, necessary, low-risk change on a green head", "small low-risk changes (CI pins, read-only RBAC, warning text, workflow hygiene) are approved once checked")
@@ -964,6 +994,17 @@ func decideReturnToAuthor(in Input, ref string) (Decision, bool) {
 		Rationale: "a person pushed this PR themselves, so the hive asks that person instead of adopting the work (hivecommons/hive#15202)",
 		Actions:   []Action{decisionComment(text)},
 	}, true
+}
+
+// fixThenMerge is the direction for a head that is not mergeable yet: it
+// names the fix and nothing else.
+func fixThenMerge(fix []string) Decision {
+	text := strings.Join(fix, ", ") + "; keep the smallest reversible change, then it merges"
+	return Decision{
+		Verdict: VerdictDirection, Rule: "fix-then-merge", Text: text,
+		Rationale: "the head is not mergeable yet; the direction names the fix and nothing else",
+		Actions:   []Action{decisionComment(text)},
+	}
 }
 
 func releasePR(rule, text, rationale string) Decision {

@@ -182,7 +182,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			m.merges = append(m.merges, body)
 			_, _ = io.WriteString(w, `{"sha":"0ddba11","merged":true,"message":"Pull Request successfully merged"}`)
-		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/8/reviews"):
+		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/pulls/8/reviews") || strings.HasSuffix(path, "/pulls/9/reviews")):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/pulls/8/reviews"):
 			var body map[string]any
