@@ -16,7 +16,9 @@ import (
 // is the viewer's now renders its lead action as a real button in the chip
 // slot: the ⋯ menu's `lead` entry, else the first Decide… option, else
 // Adopt; the same id, hint and enable/disable reason, run down the same
-// runRowAction path. One button only; everything else stays in ⋯.
+// runRowAction path. One button only — plus "Let hive decide" beside the
+// server's lead on a row parked on a human decision; everything else
+// stays in ⋯.
 
 func TestStageTrackerLeadActionInline(t *testing.T) {
 	html := indexHTML(t)
@@ -27,6 +29,10 @@ func TestStageTrackerLeadActionInline(t *testing.T) {
 		`stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')`,
 		`stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '')`,
 		`.ham-lead-act[aria-disabled="true"]`,
+		`.ham-lead-act::after { content: '▸';`,
+		`.ham-lead-act.ham-act-secondary {`,
+		`.ham-lead-act.ham-menu-danger { --ham-act-fill: var(--red);`,
+		`.ham-lead-act[aria-disabled="true"]::after { content: none; }`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html lacks %q", want)
@@ -48,7 +54,7 @@ assert.strictEqual(lead.id, 'accept-triage');
 let h = stageTrackerLeadActionHtml(fresh, ctx);
 assert.strictEqual(buttons(h), 1, 'one inline button only: ' + h);
 assert.strictEqual(labelOf(h), 'Accept triage');
-assert.ok(h.startsWith('<button type="button" class="ham-lead-act" data-ham-act="accept-triage"'), h);
+assert.ok(h.startsWith('<button type="button" class="ham-lead-act ham-act-primary" data-ham-act="accept-triage"'), h);
 assert.ok(!h.includes('aria-disabled'), 'enabled for a writer');
 assert.ok(h.includes('title="adds &#96;triage/accepted&#96; as @octo; the hive takes it on its next pass (≈10 min)"'), 'the menu entry\'s hint is the hover: ' + h);
 assert.ok(h.includes('aria-label="Accept triage — o/r#15437"'), h);
@@ -68,14 +74,55 @@ assert.strictEqual(labelOf(h), 'Let hive decide');
 const human = { repo: 'o/r', kind: 'pr', number: 104, title: 'Hand-made', url: 'https://github.com/o/r/pull/104', stage: 85, actor: 'maintainer', modifiers: ['needs-decision'],
   decision_needed: { question: 'Merge it?', options: [{ action: 'decide:merge-now', label: 'Merge now', enabled: true, consequence: 'merges as you' }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
 h = stageTrackerLeadActionHtml(human, ctx);
-assert.strictEqual(buttons(h), 1);
+// Parked on a human decision: the server's lead AND "Let hive decide" stand
+// inline, lead first (hivecommons/hive#16265 / #16456: a row showed only
+// "Re-author"; the owner asked where "Let hive decide" went).
+assert.strictEqual(buttons(h), 2, 'lead + Let hive decide inline: ' + h);
 assert.strictEqual(labelOf(h), 'Merge now', h);
 assert.ok(h.includes('data-ham-act="decide:merge-now"'), h);
+assert.ok(h.indexOf('data-ham-act="decide:merge-now"') < h.indexOf('data-ham-act="decide:delegate"'), 'lead first: ' + h);
+assert.ok(h.includes('class="ham-lead-act ham-act-secondary" data-ham-act="decide:delegate"'), 'delegate wears the pill, neutral-filled: ' + h);
+assert.ok(h.includes('data-ham-act="decide:delegate" title="The hive decides for you under its policy and rails; recorded as your decision with an audit marker."'), 'delegate explains itself on hover, not "delegate": ' + h);
+assert.ok(h.includes('>Let hive decide</button>'), h);
+let leads = stageTrackerLeadActionsOnRow(human, ctx);
+assert.strictEqual(leads.length, 2);
+assert.strictEqual(leads[1].id, 'decide:delegate');
+assert.strictEqual(leads[1].target, human, 'delegate carries the decide target');
+assert.strictEqual(leads[1].enabled, true);
+// The parked issue whose lead already is delegate: one pill, never two.
+assert.strictEqual(stageTrackerLeadActionsOnRow(parked, ctx).length, 1);
+// A Re-author lead (the #16456 row): both pills, delegate disabled with its
+// reason for a reader.
+const reauthor = { ...human, number: 16456, decision_needed: { question: 'Changes requested', options: [{ action: 'decide:re-author', label: 'Re-author', enabled: true, lead: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
+h = stageTrackerLeadActionHtml(reauthor, ctx);
+assert.strictEqual(buttons(h), 2, h);
+assert.strictEqual(labelOf(h), 'Re-author', h);
+assert.ok(h.includes('data-ham-act="decide:delegate"'), h);
+// Owner on that row: "Re-author" read as a record of what happened — the
+// action pills and the record pills ("adopted from #N", the base branch)
+// wore the same outline. Inline actions are <button>s with the filled
+// action class (primary / secondary / danger), never the record class;
+// a record pill never carries the action class. The server's
+// consequence is the lead's hover text; a lead without one gets the
+// client's clause for its verb.
+assert.ok(h.includes('<button type="button" class="ham-lead-act ham-act-primary" data-ham-act="decide:re-author" title="The hive opens a fresh PR for the same issue from the current base and closes this one as superseded."'), 'lead: filled primary button with the consequence tooltip: ' + h);
+assert.ok(!h.includes('ham-badge'), 'action pills never wear the record class: ' + h);
+assert.strictEqual((h.match(/<button type="button" class="ham-lead-act ham-act-(primary|secondary)"/g) || []).length, 2, h);
+const withConsequence = { ...reauthor, decision_needed: { question: 'Changes requested', options: [{ action: 'decide:re-author', label: 'Re-author', enabled: true, lead: true, consequence: 'Hive opens a fresh PR for the issue and closes this one as superseded' }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
+assert.ok(stageTrackerLeadActionHtml(withConsequence, ctx).includes('title="Hive opens a fresh PR for the issue and closes this one as superseded"'), 'the server consequence wins');
+const closeLead = { ...human, decision_needed: { question: 'Superseded?', options: [{ action: 'decide:close-superseded', label: 'Close as superseded by #9', enabled: true, lead: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
+h = stageTrackerLeadActionHtml(closeLead, ctx);
+assert.ok(h.includes('class="ham-lead-act ham-menu-danger" data-ham-act="decide:close-superseded"'), 'a destructive lead fills red: ' + h);
+assert.ok(h.includes('class="ham-lead-act ham-act-secondary" data-ham-act="decide:delegate"'), h);
+h = stageTrackerLeadActionHtml(reauthor, { ...ctx, user: false, canHold: false });
+assert.strictEqual(buttons(h), 2, h);
+assert.ok((h.match(/aria-disabled="true"/g) || []).length === 2, 'both greyed for a reader: ' + h);
 // Ready for human merge without a merger role: the merge option is greyed
-// with its reason, never hidden.
+// with its reason, never hidden; delegate stays enabled beside it.
 h = stageTrackerLeadActionHtml(human, { ...ctx, canHuman: false });
-assert.strictEqual(buttons(h), 1);
-assert.ok(h.includes('aria-disabled="true"'), h);
+assert.strictEqual(buttons(h), 2);
+assert.ok(h.includes('data-ham-act="decide:merge-now" aria-disabled="true"'), h);
+assert.ok(!h.includes('data-ham-act="decide:delegate" aria-disabled="true"'), h);
 
 // A returned contributor PR whose adoption is due leads with Adopt.
 const returned = { repo: 'o/r', kind: 'pr', number: 101, title: 'Fix redirect', url: 'https://github.com/o/r/pull/101', stage: 72, actor: 'karibhou', modifiers: [], adoption: { due: true, action: 'decide:adopt' } };
@@ -205,7 +252,12 @@ for (const it of rows) {
   const lead = stageTrackerLeadAction(it, ctx);
   if (!lead || !lead.enabled) missing.push(it.kind + '#' + it.number + ' (' + it.caption + ') → ' + JSON.stringify(lead));
   const h = stageTrackerLeadActionHtml(it, ctx);
-  assert.strictEqual((h.match(/<button\b/g) || []).length, 1, 'one button on ' + it.kind + '#' + it.number + ': ' + h);
+  // One pill — two on a row parked on a human decision (a Decide… target)
+  // whose lead is not itself "Let hive decide" (the delegate pill stands
+  // beside it). A triage row's accept-triage stays alone.
+  const human = !!stageTrackerDecisionTarget(it) && !!(it.decision_needed && it.decision_needed.question) && lead && lead.id !== 'decide:delegate';
+  assert.strictEqual((h.match(/<button\b/g) || []).length, human ? 2 : 1, (human ? 'lead + delegate' : 'one button') + ' on ' + it.kind + '#' + it.number + ': ' + h);
+  if (human) assert.ok(h.indexOf('data-ham-act="decide:delegate"') > h.indexOf('data-ham-act="' + lead.id + '"'), 'lead first on ' + it.kind + '#' + it.number);
 }
 assert.deepStrictEqual(missing, [], 'maintainer-moved rows without an enabled lead action');
 `)

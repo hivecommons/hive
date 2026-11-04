@@ -765,15 +765,21 @@
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
     .ham-decision-act.ham-decision-more { color: var(--text-muted); }
-    /* The row's inline lead action (the ⋯ menu's lead entry, in sight): a
-       small primary pill in the chip slot, the popover lead's recipe, the
-       row's cue colour; dashed and faint with its reason when the viewer
-       may not take it. */
-    .ham-lead-act { padding: 0 var(--sp-3); border: var(--line-width) solid var(--cue-state, var(--accent)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cue-state, var(--accent)) 10%, transparent); color: var(--cue-state, var(--accent)); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.4; cursor: pointer; white-space: nowrap; }
-    .ham-lead-act:hover, .ham-lead-act:focus-visible { background: color-mix(in srgb, var(--cue-state, var(--accent)) 22%, transparent); outline: none; }
-    .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
-    .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
-    .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
+    /* The row's inline action pills (the ⋯ menu's lead entry, and "Let hive
+       decide" beside it on a row parked on a human decision): real buttons
+       that must not pass for the record pills in the same slot ("adopted
+       from #N", the base branch — muted outlines, no hover). So: a filled
+       chip, a trailing ▸ glyph, pointer cursor, hover lift and focus ring.
+       Primary (the lead) fills amber; secondary (delegate) fills neutral;
+       danger (a server-led close) fills red. Dashed, faint and glyph-less
+       with its reason when the viewer may not take it. */
+    .ham-lead-act { --ham-act-fill: var(--amber); --ham-act-ink: var(--bg); display: inline-flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-3); border: var(--line-width) solid var(--ham-act-fill); border-radius: var(--r-pill); background: var(--ham-act-fill); color: var(--ham-act-ink); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.5; cursor: pointer; white-space: nowrap; transition: filter 120ms ease, box-shadow 120ms ease; }
+    .ham-lead-act::after { content: '▸'; opacity: 0.85; }
+    .ham-lead-act.ham-act-secondary { --ham-act-fill: var(--panel-strong); --ham-act-ink: var(--text); border-color: var(--line-strong); }
+    .ham-lead-act.ham-menu-danger { --ham-act-fill: var(--red); --ham-act-ink: var(--bg); }
+    .ham-lead-act:hover, .ham-lead-act:focus-visible { filter: brightness(1.12); outline: none; box-shadow: 0 0 0 var(--line-width) var(--bg), 0 0 0 calc(var(--line-width) * 3) var(--ham-act-fill); }
+    .ham-lead-act[aria-disabled="true"] { --ham-act-fill: transparent; --ham-act-ink: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; filter: none; box-shadow: none; }
+    .ham-lead-act[aria-disabled="true"]::after { content: none; }
     /* Busy (Let hive decide gathering its preview) also sets aria-disabled, so this
        compound rule sits after the disabled one and wins: the working colour, not faint/dashed. */
     .ham-lead-act[aria-busy="true"][aria-disabled="true"] { cursor: progress; opacity: 1; border-style: solid; border-color: var(--cue-work); background: color-mix(in srgb, var(--cue-work) 10%, transparent); color: var(--cue-work); }
