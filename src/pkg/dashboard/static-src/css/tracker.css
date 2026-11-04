@@ -375,9 +375,21 @@
        "current-phase" tint: the operator reads the words, not the shade.
        Only fresh observed work earns the pulse. */
     .ham-activity-track.ham-current { opacity: 1; box-shadow: none; }
-    .ham-seg.ham-activity-track.failing { background: var(--status-error); color: var(--surface-0); box-shadow: none; opacity: 1; }
+    /* A FILLED chevron means "this is where the item is / what moves now"
+       (hivecommons/hive#16540). A CI / Review track is filled only while it
+       runs (.active, amber). Every other state is words on the muted field
+       with the semantic colour on text and glyph only: green for passed /
+       approved, red for a finding, muted for pending, decided or not started. */
+    .ham-seg.ham-activity-track.done { background: var(--panel-strong); color: var(--green); box-shadow: none; opacity: 1; }
+    .ham-seg.ham-activity-track.failing { background: var(--panel-strong); color: var(--status-error); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }
-    .ham-seg.ham-activity-track.done.decided { background: var(--surface-3); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
+    /* Words without motion (checks not reported, unknown evidence, a row
+       parked on a person): current-phase text on a muted field, never amber. */
+    .ham-seg.ham-activity-track.pending { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
+    /* The stage chevron while both tracks run: bright words, no amber, no pulse. */
+    .ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); animation: none; }
+    .ham-seg.active.ham-settled-current::before { display: none; }
+    .ham-seg.ham-activity-track.done.decided { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
     /* The count words stay on one line and ellipsize instead of wrapping. */
     .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
