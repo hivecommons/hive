@@ -644,16 +644,23 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
-	if personAuthored(obs, policy) {
+	person := personAuthored(obs, policy)
+	if person && !forced {
 		// A person's own PR (hivecommons/hive#15202): no contributor hive
-		// can be offline for it, and neither an operator request nor a
-		// forced adoption changes who should fix it. Recorded so the
-		// tracker row says why.
+		// can be offline for it, and an operator's adoption request does
+		// not change who should fix it. Recorded so the tracker row says
+		// why. Only an explicit Adopt now (forced) takes it over.
 		store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedAuthorPerson, now)
 		c.info("stage labels: adoption refused, a person pushed this PR themselves; asking the author instead", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "author_kind", obs.AuthorKind.String(), "reason", reason, "requested", requested, "forced", forced)
 		return 0, nil
 	}
 	if forced {
+		if person {
+			// An operator may take over anyone's PR, owners and
+			// maintainers included: the click is the decision, logged
+			// with the actor so the takeover stays attributable.
+			c.info("stage labels: operator-forced adoption over a person-authored PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "author_kind", obs.AuthorKind.String(), "head", obs.HeadSHA, "by", forcedBy)
+		}
 		c.info("stage labels: operator forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "online", presence.Online, "policy", policy.maintainerPolicy())
 	} else if c.adoptionRefusedByAdmission(ctx, store, key, obs, requested, now) {
 		return 0, nil
@@ -1559,7 +1566,9 @@ func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, 
 
 // personAuthored: the PR was pushed by a person — author/human, or one of
 // this hive's owners — rather than by a clanker or a registered contributor
-// relay. Such a PR is never adopted (hivecommons/hive#15202).
+// relay. Such a PR is never adopted on the hive's own initiative
+// (hivecommons/hive#15202); only an operator's explicit Adopt now takes it
+// over.
 func personAuthored(obs stageObservation, policy StageLabelPolicy) bool {
 	if obs.AuthorKind == authorkind.Human {
 		return true

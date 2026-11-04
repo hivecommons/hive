@@ -39,7 +39,7 @@ test('header has visibly separate aligned CI and Review columns without serial s
 });
 
 test('both tracks can be active on one PR and preserve their actual actors and sources', () => {
-  const item = { kind: 'pr', head: 'head', ci_activity: activity('running', 'CI running', true), review_activity: activity('reviewing', 'Review working · reviewer', true) };
+  const item = { kind: 'pr', head: 'head', ci_activity: activity('running', 'CI running · 1/2 checks done', true), review_activity: activity('reviewing', 'Review working · reviewer', true) };
   const html = ['ci', 'review'].map(kind => track(item, kind, {}, false, now)).join('');
   assert.equal((html.match(/data-motion="active"/g) || []).length, 2);
   assert.match(html, /data-track="ci"/);
@@ -50,10 +50,10 @@ test('both tracks can be active on one PR and preserve their actual actors and s
 });
 
 test('CI green/review findings and review approved/CI red remain independent', () => {
-  const item = { head: 'head', ci_activity: activity('passing', 'CI passed'), review_activity: activity('changes_requested', 'Review findings · awaiting author') };
+  const item = { head: 'head', ci_activity: activity('passing', 'CI green · all 2 required checks passed'), review_activity: activity('changes_requested', 'Review findings · awaiting author') };
   assert.match(track(item, 'ci', {}, false, now), /ham-activity-track done/);
   assert.match(track(item, 'review', {}, false, now), /data-activity-state="changes_requested"/);
-  item.ci_activity = activity('failing', 'CI failing · build');
+  item.ci_activity = activity('failing', 'CI failing · "build" red');
   item.review_activity = activity('approved', 'Review approved');
   assert.match(track(item, 'ci', {}, false, now), /data-activity-state="failing"/);
   assert.match(track(item, 'review', {}, false, now), /ham-activity-track done/);
@@ -90,7 +90,7 @@ test('repair display projection returns to PR progress then current-head tracks;
 test('linked PRs carry independent evidence and hidden issue columns stay aligned', () => {
   const layout = fs.readFileSync(path.join(root, 'tracker-row-layout.js'), 'utf8');
   const linked = new Function('stageTrackerLinkedPROpen', 'STAGE_TRACKER_TERMINAL', fn(layout, 'stageTrackerLinkedPRItem') + ';return stageTrackerLinkedPRItem;')(() => true, 110);
-  const lp = { number: 7, head: 'head', stage: 70, display_column: 30, ci_activity: activity('running', 'CI running', true), review_activity: activity('reviewing', 'Review working · reviewer', true), code_activity: activity('fixing', 'Fixing · fixer', true) };
+  const lp = { number: 7, head: 'head', stage: 70, display_column: 30, ci_activity: activity('running', 'CI running · 1/2 checks done', true), review_activity: activity('reviewing', 'Review working · reviewer', true), code_activity: activity('fixing', 'Fixing · fixer', true) };
   const item = linked({ repo: 'org/repo', number: 1, linked_prs: [lp, { number: 8 }] }, lp);
   assert.equal(item.number, 7);
   assert.equal(item.display_column, 30);
@@ -448,7 +448,7 @@ test('browser probes require a dedicated preview and cannot count offscreen head
 });
 
 test('Hotshot #344 shape: queued CI and approved review retain current phase without pretending work runs', () => {
-  const item = livePR({ stage: 60, ci_activity: activity('queued', 'CI queued'), review_activity: activity('approved', 'Review approved') });
+  const item = livePR({ stage: 60, ci_activity: activity('queued', 'CI queued · "build" waiting for a runner'), review_activity: activity('approved', 'Review approved') });
   const before = JSON.stringify(item);
   const cells = physicalTracks(item);
   assert.match(cells.ci, /ham-activity-track todo ham-current/);
@@ -465,7 +465,7 @@ test('Hive #16434 shape: missing current-head CI and review stay unknown but vis
   const cells = physicalTracks(livePR({
     display_column: 50,
     code_activity: { head: 'head', state: 'pushed', caption: 'New head pushed · CI and re-review', source: 'recorded-push' },
-    ci_activity: { head: 'head', state: 'unknown', caption: 'CI unknown · required checks not observed', source: 'unavailable' },
+    ci_activity: { head: 'head', state: 'unknown', caption: 'CI unknown · no check results observed for this head yet', source: 'unavailable' },
     review_activity: { head: 'head', state: 'unknown', caption: 'Review unknown · current-head evidence unavailable', source: 'unavailable' },
   }));
   for (const cell of [cells.ci, cells.review]) {
@@ -481,7 +481,7 @@ test('Hive #16268 shape: held native Fixing waits for a fixer in the CI/Review p
   const item = livePR({
     stage: 70, modifiers: ['hold'], hold: { by: 'hanthor', reason: 'Maintainer hold' }, display_column: 50,
     code_activity: { head: 'head', state: 'waiting_fixer', caption: 'Waiting for fixer · no code work observed', source: 'native-fix-request' },
-    ci_activity: activity('missing', 'CI waiting · test not observed'),
+    ci_activity: activity('missing', 'CI waiting · required check "test" hasn\'t reported for this head yet'),
     review_activity: activity('approved', 'Review approved'),
   });
   const cells = physicalTracks(item);
@@ -496,24 +496,24 @@ test('Hive #16268 shape: held native Fixing waits for a fixer in the CI/Review p
 
 test('current phase, running activity, failure and successful completion are independent dimensions', () => {
   for (const [state, caption, running, cls] of [
-    ['failing', 'CI failing · build', false, 'todo'],
-    ['running', 'CI running', true, 'active'],
-    ['passing', 'CI passed', false, 'done'],
-    ['skipped', 'CI skipped · build', false, 'todo'],
+    ['failing', 'CI failing · "build" red', false, 'todo'],
+    ['running', 'CI running · 1/2 checks done', true, 'active'],
+    ['passing', 'CI green · all 2 required checks passed', false, 'done'],
+    ['skipped', 'CI skipped · check "build" skipped', false, 'todo'],
   ]) {
     const cells = physicalTracks(livePR({ ci_activity: activity(state, caption, running) }));
     assert.ok(cells.ci.includes('ham-activity-track ' + cls + ' ham-current'));
     assert.equal(cells.ci.includes('data-motion="active"'), running);
     assert.match(cells.review, /todo ham-current[^]*data-activity-state="unknown"/);
   }
-  const admitted = physicalTracks(livePR({ stage: 80, ci_activity: activity('passing', 'CI passed'), review_activity: activity('approved', 'Review approved') }));
+  const admitted = physicalTracks(livePR({ stage: 80, ci_activity: activity('passing', 'CI green · all 2 required checks passed'), review_activity: activity('approved', 'Review approved') }));
   assert.doesNotMatch(admitted.ci + admitted.review, /ham-current|aria-current/);
   assert.match(admitted.cells[6], /aria-current="step"/, 'merge gate keeps its own current position');
 });
 
 test('old-head or stale observations cannot fabricate running/completion, but do not erase current position', () => {
   for (const mode of ['old-head', 'stale', 'missing-time']) {
-    const ci = activity('running', 'CI running', true);
+    const ci = activity('running', 'CI running · 1/2 checks done', true);
     const review = activity('approved', 'Review approved');
     for (const observation of [ci, review]) {
       if (mode === 'old-head') observation.head = 'old-head';
@@ -616,7 +616,7 @@ function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
 ` + anchor + fn(row, 'stageTrackerSegments') + fn(strip, 'stageTrackerActivityTrackHtml') + fn(strip, 'stageTrackerStripItems');
   const render = new Function('esc', definitions + ';return stageTrackerStripItems;')(esc);
   const item = { kind: 'pr', stage: 70, head: 'head', display_column: 30,
-    ci_activity: activity('running', 'CI running', true),
+    ci_activity: activity('running', 'CI running · 1/2 checks done', true),
     review_activity: activity('reviewing', 'Review working · reviewer', true),
     code_activity: activity('fixing', 'Fixing · fixer', true),
   };
@@ -648,7 +648,7 @@ test('stale activity is visibly unknown and old green observations cannot look l
 });
 
 test('current-head evidence links are accessible and never retained across a new head', () => {
-  const item = { kind: 'pr', head: 'head', ci_activity: {...activity('failing', 'CI failing · build'), url: 'https://github.com/org/repo/actions/runs/1'} };
+  const item = { kind: 'pr', head: 'head', ci_activity: {...activity('failing', 'CI failing · "build" red'), url: 'https://github.com/org/repo/actions/runs/1'} };
   assert.match(track(item, 'ci', {state: 'active'}, false, now), /aria-label="Open current-head CI evidence"/);
   assert.match(track(item, 'ci', {state: 'active'}, false, now), /aria-current="step"/);
   item.head = 'new-head';
@@ -661,8 +661,8 @@ test('a fix request or CI-only wait is visible without manufacturing source work
   const waiting = track(item, 'review', {state:'active'}, false, now);
   assert.match(waiting, /role="tooltip">[^]*Waiting for fixer/);
   assert.doesNotMatch(waiting, /data-motion/);
-  item.code_activity = activity('waiting_ci', 'Fix task waiting on CI · not observed coding');
-  assert.match(track(item, 'ci', {}, false, now), /waiting on CI · not observed coding/);
+  item.code_activity = activity('waiting_ci', 'Fix task idle · agent waiting for CI before coding');
+  assert.match(track(item, 'ci', {}, false, now), /Fix task idle · agent waiting for CI before coding/);
   assert.equal(getAnchor(70, stages, 'pr', item), 50);
 });
 
@@ -684,4 +684,14 @@ test('linked movement uses current-head repair evidence while native sort stays 
   pr.code_activity = {head:'new-head',state:'pushed'};
   const pushed = map(items, stages);
   assert.deepEqual(moves(fixed, pushed), {'issue#1':{from:3,to:4}, 'pr#7':{from:3,to:4}});
+});
+
+test('the backend detail sentence rides in the track tooltip, not on the chevron', () => {
+  const detail = 'Branch protection requires a check named "test", but no check run or commit status with that name exists for the PR\'s current commit.';
+  const item = livePR({ ci_activity: { ...activity('missing', 'CI waiting · required check "test" hasn\'t reported for this head yet'), detail } });
+  const html = track(item, 'ci', { state: 'active' }, false, now);
+  const panel = html.match(/aria-describedby="[^"]+">([^]*?)<span id="[^"]+" class="config-tooltip/)[1];
+  assert.ok(!panel.includes('Branch protection'), 'the chevron shows only the compact word');
+  assert.match(html, /role="tooltip">[^]*hasn't reported for this head yet · Branch protection requires a check named &quot;test&quot;/);
+  assert.match(html, /title="[^"]*Branch protection requires a check named &quot;test&quot;, but no check run/);
 });

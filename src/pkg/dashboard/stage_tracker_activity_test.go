@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -329,5 +330,47 @@ func TestStageTrackerActivitySelectsObservedReviewer(t *testing.T) {
 	dispatch.Pending[0].Decision = true
 	if got := stageTrackerReviewActivity(pr, nil, nil, dispatch, status, now); got.State != "adjudicating" {
 		t.Fatalf("adjudication was described as an independent reviewer: %+v", got)
+	}
+}
+
+func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
+	now := time.Date(2026, 11, 3, 23, 0, 0, 0, time.UTC)
+	pr, _, _ := trackerActivityFixture(now)
+	ci := func(checks ...github.PRActivityCheck) github.PullRequest {
+		pr.CIActivity = &github.PRCIActivity{Head: pr.HeadSHA, Source: "github-check-runs", ObservedAt: &now, StatusesKnown: true,
+			RequiredSource: "protection", RequiredChecks: []github.PRRequiredCheck{{Name: "build", AppKnown: true}, {Name: "lint", AppKnown: true}, {Name: "test", AppKnown: true}},
+			RequiredKnown: true, Required: []string{"build", "lint", "test"}, Checks: checks}
+		return pr
+	}
+	chk := func(name, state, conclusion string) github.PRActivityCheck {
+		return github.PRActivityCheck{Name: name, State: state, Conclusion: conclusion}
+	}
+	done := func(name string) github.PRActivityCheck { return chk(name, "completed", "success") }
+	cases := []struct {
+		name          string
+		pr            github.PullRequest
+		state, want   string
+		detailMention string
+	}{
+		{"missing", ci(done("build"), done("lint")), "missing", `CI waiting · required check "test" hasn't reported for this head yet`, `check named "test"`},
+		{"running counts", ci(done("build"), chk("lint", "in_progress", ""), chk("test", "in_progress", "")), "running", "CI running · 1/3 checks done", "1 of the 3 required checks"},
+		{"queued", ci(done("build"), done("lint"), chk("test", "queued", "")), "queued", `CI queued · "test" waiting for a runner`, "not started"},
+		{"failing", ci(done("build"), chk("lint", "completed", "failure"), done("test")), "failing", `CI failing · "lint" red`, `"lint" finished without success`},
+		{"skipped", ci(done("build"), done("lint"), chk("test", "completed", "skipped")), "skipped", `CI skipped · check "test" skipped`, "does not count as a pass"},
+		{"ambiguous", ci(done("build"), done("lint"), done("test"), chk("test", "completed", "failure")), "unknown", `CI unknown · "test" reported but with no conclusion`, "several runs share the name"},
+		{"green", ci(done("build"), done("lint"), done("test")), "passing", "CI green · all 3 required checks passed", "reported success"},
+	}
+	for _, tc := range cases {
+		got := stageTrackerCIActivity(tc.pr, now)
+		if got.State != tc.state || got.Caption != tc.want || !strings.Contains(got.Detail, tc.detailMention) {
+			t.Fatalf("%s: want %s %q (detail mentioning %q), got %+v", tc.name, tc.state, tc.want, tc.detailMention, got)
+		}
+	}
+	mixed := ci(done("build"), chk("lint", "completed", "failure"), chk("test", "in_progress", ""))
+	if got := stageTrackerCIActivity(mixed, now); got.Caption != `CI failing · "lint" red · other checks still running` {
+		t.Fatalf("mixed red+running caption: %+v", got)
+	}
+	if got := stageTrackerCIActivity(github.PullRequest{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA}, now); got.Caption != "CI unknown · no check results observed for this head yet" || got.Detail == "" {
+		t.Fatalf("no-evidence caption: %+v", got)
 	}
 }
