@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -209,6 +209,32 @@ func inferenceBlockedStall(r slog.Record) bool {
 		return true
 	})
 	return blocked
+}
+
+// automergeMergeGuardSkip reports whether r is an automerge sweep lane
+// (queued, trusted-author or contributor) declining to refresh a PR's base
+// while a merge to that destination is already in flight (reason
+// base-refresh:merge-guard). The guard is self-limiting and the PR is retried
+// next tick (hivecommons/hive#16520). Any other sweep skip stays reportable.
+func automergeMergeGuardSkip(r slog.Record) bool {
+	switch strings.TrimSpace(r.Message) {
+	case "automerge sweep skipped PR",
+		"trusted-author automerge sweep skipped PR",
+		"contributor-lane automerge sweep skipped PR":
+	default:
+		return false
+	}
+	reason, err := "", ""
+	r.Attrs(func(a slog.Attr) bool {
+		switch a.Key {
+		case "reason":
+			reason = a.Value.String()
+		case "error":
+			err = a.Value.String()
+		}
+		return true
+	})
+	return reason == "base-refresh:merge-guard" && strings.Contains(err, "destination merge already in progress")
 }
 
 // failClosedStatus500 reports whether r is one of the two gates that fail
