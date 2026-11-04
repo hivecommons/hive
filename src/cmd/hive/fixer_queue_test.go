@@ -119,15 +119,67 @@ func TestReconcilePlannedFixQueueDropsPRsNoLongerPlanningAFix(t *testing.T) {
 	gov := &governor.Governor{}
 	gov.RecordFixKickDeferred("org/repo#1", time.Now())
 	gov.RecordFixKickDeferred("org/repo#2", time.Now().Add(time.Minute))
-	reconcilePlannedFixQueue(gov, nil, nil)
+	reconcilePlannedFixQueue(gov, "org", nil, nil)
 	if len(gov.FixerQueue()) != 2 {
 		t.Fatal("missing enumeration cleared queue")
 	}
 	// #1 stays open but its fix is no longer planned; #2 still needs one.
-	reconcilePlannedFixQueue(gov, &github.ActionableResult{}, []review.DispatchKick{{Kind: "fix", PRRef: "Org/Repo#2"}})
+	reconcilePlannedFixQueue(gov, "org", &github.ActionableResult{}, []review.DispatchKick{{Kind: "fix", PRRef: "Org/Repo#2"}})
 	queue := gov.FixerQueue()
 	second := queue["org/repo#2"]
 	if len(queue) != 1 || second.FixerQueuePosition != 1 || second.FixerQueueAhead == nil || *second.FixerQueueAhead != 0 {
 		t.Fatalf("planned queue = %+v", queue)
+	}
+}
+
+// Regression for hivecommons/hive#16537: dispatch plans carry the bare repo
+// name from config, so a deferred fix recorded as "repo#N" used to be evicted
+// by the next enumeration reconcile (keyed "org/repo#N") and never matched the
+// dashboard's ReviewQueueKey lookup. Every path must agree on the qualified key.
+func TestFixerQueueBareRepoKicksSurviveReconcileAndMatchDashboardKey(t *testing.T) {
+	gov := &governor.Governor{}
+	msg := scheduler.KickMessage{Agent: "scanner", Message: "fix bare"}
+	kick := review.DispatchKick{Kind: "fix", PRRef: "Repo#7", Repo: "Repo", Number: 7}
+	q := reviewFixKickQueue{governor: gov, org: "Org", kicks: map[string]review.DispatchKick{reviewKickKey(msg): kick}}
+	r := newKickDispatchRecorder()
+	r.sendErr["scanner"] = fmt.Errorf("prompt wait: %w", crux.ErrAgentBusy)
+	deps := r.deps()
+	deps.onDeferred = q.Deferred
+	deps.onReviewDelivered = q.Delivered
+	dispatchAgentKicks([]scheduler.KickMessage{msg}, false, deps, discardLogger())
+
+	want := github.ReviewQueueKey("org/repo", 7)
+	if got := fixerQueueKey("Org", kick); got != want {
+		t.Fatalf("fixerQueueKey = %q, want %q", got, want)
+	}
+	if got := fixerQueueKey("Org", review.DispatchKick{Kind: "fix", PRRef: "Repo#7"}); got != want {
+		t.Fatalf("fixerQueueKey from PRRef only = %q, want %q", got, want)
+	}
+	if got := fixerQueueKey("Org", review.DispatchKick{Kind: "fix", PRRef: "other/repo#7"}); got != "other/repo#7" {
+		t.Fatalf("already-qualified repo must not be re-prefixed: %q", got)
+	}
+	if queue := gov.FixerQueue(); queue[want].FixerQueuePosition != 1 {
+		t.Fatalf("deferred bare-repo fix not recorded under %q: %+v", want, queue)
+	}
+
+	// Several enumeration + plan cycles while the fixer stays busy must keep
+	// the entry (and its first-deferral position) rather than evicting it.
+	for i := 0; i < 3; i++ {
+		reconcileDeferredFixQueue(gov, "Org", &github.ActionableResult{PRs: github.PRResult{
+			Items: []github.PullRequest{{Repo: "Repo", Number: 7, State: "open"}},
+		}})
+		reconcilePlannedFixQueue(gov, "Org", &github.ActionableResult{}, []review.DispatchKick{kick})
+		dispatchAgentKicks([]scheduler.KickMessage{msg}, false, deps, discardLogger())
+	}
+	queue := gov.FixerQueue()
+	if len(queue) != 1 || queue[want].FixerQueuePosition != 1 {
+		t.Fatalf("bare-repo deferred fix evicted across cycles: %+v", queue)
+	}
+
+	// Delivery clears it under the same key.
+	delete(r.sendErr, "scanner")
+	dispatchAgentKicks([]scheduler.KickMessage{msg}, false, deps, discardLogger())
+	if len(gov.FixerQueue()) != 0 {
+		t.Fatalf("delivered bare-repo fix still queued: %+v", gov.FixerQueue())
 	}
 }

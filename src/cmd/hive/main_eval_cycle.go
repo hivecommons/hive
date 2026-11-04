@@ -1004,7 +1004,7 @@ func runEvalCycle(
 		"agents_skipped", agentsSkipped,
 	)
 
-	reconcilePlannedFixQueue(gov, actionable, reviewPlan.FixKicks)
+	reconcilePlannedFixQueue(gov, cfg.Project.Org, actionable, reviewPlan.FixKicks)
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {
 		if !gov.AgentEligibleForCELKick(k.Agent) || agentMgr.IsPaused(k.Agent) {
@@ -1142,7 +1142,7 @@ func runEvalCycle(
 	// previously unreachable without a tmux session and a live governor.
 	var deliveredReviewKicks []review.DispatchKick
 	var deliveredKicks []scheduler.KickMessage
-	fixQueue := reviewFixKickQueue{governor: gov, kicks: reviewKickByMessage}
+	fixQueue := reviewFixKickQueue{governor: gov, org: cfg.Project.Org, kicks: reviewKickByMessage}
 	if len(messages) > 0 {
 		// governor.kick wraps the whole dispatch pass; each delivered kick
 		// still gets its own agent.kick child via startKickSpan below.
