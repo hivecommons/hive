@@ -676,6 +676,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 			return in, fmt.Errorf("reading checks for %s#%d: %w", repoFull, number, err)
 		}
 		in.CIGreen, in.CIPending = ci.green, ci.pending
+		if in.ChangesRequestedBy, err = s.delegatedChangesRequestedBy(ctx, api, owner, repoName, number); err != nil {
+			return in, fmt.Errorf("reading reviews for %s#%d: %w", repoFull, number, err)
+		}
 		s.gatherDelegatedRecordedPark(repoFull, number, pr.GetHead().GetSHA(), &in)
 		in.SentinelReason = s.delegatedSentinelReason(repoFull, number, pr.GetHead().GetSHA(), req.SentinelReason)
 		if files, _, err := api.PullRequests.ListFiles(ctx, owner, repoName, number, &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}); err == nil && len(files) > 0 {
@@ -805,6 +808,51 @@ func delegatedHeadCI(ctx context.Context, api *gh.Client, owner, repoName string
 	return delegatedHeadCIState{green: summary.Pending == 0 && summary.Green > 0, pending: summary.Pending > 0}, nil
 }
 
+// delegatedChangesRequestedBy lists the maintainers whose standing review
+// on the PR asks for changes: GitHub's reviewDecision is CHANGES_REQUESTED
+// while one stands, and the merge stays blocked whatever the hive
+// approves. Only a login's latest opinionated review counts (APPROVED,
+// CHANGES_REQUESTED, DISMISSED), so a dismissal or a later approval
+// clears it, as latestTrustedHumanReview reads it; only a maintainer's
+// (owner, member, collaborator) request blocks the merge. The hive's own
+// review is the swarm's verdict, read from the review artifact instead.
+func (s *Server) delegatedChangesRequestedBy(ctx context.Context, api *gh.Client, owner, repoName string, number int) ([]string, error) {
+	latest := map[string]*gh.PullRequestReview{}
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := api.PullRequests.ListReviews(ctx, owner, repoName, number, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, rv := range reviews {
+			login := strings.TrimSpace(rv.GetUser().GetLogin())
+			switch strings.ToUpper(strings.TrimSpace(rv.GetState())) {
+			case "APPROVED", "CHANGES_REQUESTED", "DISMISSED":
+				if login != "" {
+					latest[strings.ToLower(login)] = rv
+				}
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	var by []string
+	for _, rv := range latest {
+		login := rv.GetUser().GetLogin()
+		if !strings.EqualFold(rv.GetState(), "CHANGES_REQUESTED") || s.deps.GHClient.IsHiveAuthorLogin(login) {
+			continue
+		}
+		switch strings.ToUpper(rv.GetAuthorAssociation()) {
+		case "OWNER", "MEMBER", "COLLABORATOR":
+			by = append(by, login)
+		}
+	}
+	sort.Strings(by)
+	return by, nil
+}
+
 // gatherDelegatedRecordedPark reads what the stage engine recorded about
 // the PR — the reason it parked it, whether the hive adopted it in place,
 // and the reviewer verdict on its head — so the delegate decides on the
@@ -833,6 +881,17 @@ func (s *Server) gatherDelegatedRecordedPark(repoFull string, number int, head s
 	art, err := review.LoadArtifact("")
 	if err != nil {
 		return
+	}
+	// The swarm's verdict on exactly this head, with no fallback to an
+	// older head: a change request on it holds the head back from the
+	// merge queue (delegatedecision.Input.ChangeRequest).
+	atHead := stageTrackerVerdictLookup(&art)
+	if a, ok := atHead(repoFull, number, head); ok {
+		in.HeadReviewVerdict = string(a.Verdict)
+	} else if _, short, _ := strings.Cut(repoFull, "/"); short != "" {
+		if a, ok := atHead(short, number, head); ok {
+			in.HeadReviewVerdict = string(a.Verdict)
+		}
 	}
 	lookup := stageTrackerDecisionVerdictLookup(&art)
 	agg, ok := lookup(repoFull, number, head, in.ReviewerRequiresHuman)
