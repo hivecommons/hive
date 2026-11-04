@@ -125,3 +125,7 @@ hub:
 ```
 
 If the list is empty, Hive uses the safe default: `scanner`, `quality`, and `outreach`. Privileged roles must be both listed here and granted on the contributor profile. The owner UI exposes these grants as chips/check boxes; assigning a privileged role auto-preserves the matching grant so reconnects keep working.
+
+### Making the contributor the primary worker (`contributor_first`)
+
+A delegated role runs **in parallel** with the hive's resident agent by default: the relay takes issues from the role's lane while the governor keeps kicking the resident agent, so the hive's own inference budget is still spent on that lane. To let contributors take the load *first*, set `contributor_first: true` on the agent. While at least one connected, healthy relay is acting as that role, the governor withholds the resident agent's kicks; once no relay has covered the role for `contributor_first_grace` (default 10m) the resident agent resumes on its normal cadence. The role must be delegatable (listed in `hub.contribute_delegatable_roles`, or one of the defaults), or the hive refuses to load. Budget pause and standby are unchanged — a covered lane is never reported as paused for budget. Details and the exact rules are in [Contributor-first lanes](agent-configuration.md#contributor-first-lanes-contributor_first).

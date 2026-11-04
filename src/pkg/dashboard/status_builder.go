@@ -2162,6 +2162,7 @@ func buildGovernorWithLaneDepths(state governor.State, cfg *config.Config, laneD
 		SuppressedLanes:  cloneStringSlice(state.SuppressedLanes),
 		LaneQueueDepths:  cloneStatusIntMap(laneDepths),
 		LanePauseReasons: cloneStringStringMap(state.LanePauseReasons),
+		CoveredLanes:     frontendLaneCoverage(state.CoveredLanes),
 		NextKickAt:       nextKickAt,
 		NextKickIn:       nextKickIn,
 		NextAgents:       append([]string(nil), state.PendingKicks...),

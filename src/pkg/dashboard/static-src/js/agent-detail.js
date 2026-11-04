@@ -767,6 +767,7 @@
           ${fleetRunStripHtml()}
           <div class="gov-metric" title="${esc((window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + (h.review_class ? ' [' + h.review_class + ']' : '') + ': ' + h.title).join('\n') || 'No items on hold')}"><span class="gm-label">on hold</span><span class="gm-val">${window._lastStatus?.hold?.total || 0}</span></div>
           ${standbyPauseFactsHtml(gov)}
+          ${contributorFirstFactsHtml(gov)}
           ${(() => {
             const plan = window._lastStatus?.planning || {};
             // Planning only runs at ACMM >= 5 (architect scheduled); hide the tile
