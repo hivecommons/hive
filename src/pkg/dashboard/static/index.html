@@ -1782,7 +1782,7 @@
        line is centred under the first rather than ragged-left. */
     .ham-chevron-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-height: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em); flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: normal; overflow-wrap: anywhere; text-align: center; }
     .ham-chevron-copy :is(.ham-seg-t, .ham-detour, .ham-holder, .ham-gate-detail) { display: inline; white-space: normal; overflow-wrap: anywhere; }
-    .ham-chevron-copy > .ham-decision-trigger { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
+    .ham-chevron-copy > .ham-decision-trigger { min-height: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
     .config-tooltip.ham-chevron-tip { overflow-wrap: anywhere; max-width: calc(100vw - var(--sp-8)); max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------

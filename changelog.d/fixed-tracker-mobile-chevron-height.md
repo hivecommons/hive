@@ -1,0 +1,1 @@
+- Keep Activity tracker chevrons compact on mobile while preserving their caption and icon alignment.
