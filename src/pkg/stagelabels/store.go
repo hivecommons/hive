@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +100,20 @@ type Record struct {
 	SupersededBy   int       `json:"superseded_by,omitempty"`
 	SupersededAt   time.Time `json:"superseded_at,omitempty"`
 	SupersededOpen bool      `json:"superseded_open,omitempty"`
+	// ReauthorIssue / ReauthorHead / ReauthorAttempts / ReauthoredAt record
+	// that the hive re-authored this PR itself after its fixer gave up on
+	// ReauthorHead (hivecommons/hive: "we should not need a re-author pill
+	// on a hive agent's PR"): the PR was closed as superseded and a fresh
+	// hive PR for ReauthorIssue is opened from the current base. One
+	// record per issue — the dashboard reads the fresh PR's lineage from
+	// it and the engine refuses a second automatic re-author.
+	ReauthorIssue    int       `json:"reauthor_issue,omitempty"`
+	ReauthorHead     string    `json:"reauthor_head,omitempty"`
+	ReauthorAttempts int       `json:"reauthor_attempts,omitempty"`
+	ReauthoredAt     time.Time `json:"reauthored_at,omitempty"`
+	// ReauthorNoted is true once the close note was posted on the
+	// re-authored PR; the close itself may be retried, the note never.
+	ReauthorNoted bool `json:"reauthor_noted,omitempty"`
 	// SupersededClosedFirst is true while the original was closed at
 	// adoption time, before its copy merged (close-first supersession,
 	// hivecommons/hive#15135). The reconciler keeps polling the copy
@@ -1983,6 +1998,66 @@ func (s *Store) MarkSuperseded(key string, by int, open bool, now time.Time) {
 	r.SupersededBy, r.SupersededOpen = by, open
 	s.items[key] = r
 	s.dirty = true
+}
+
+// MarkReauthored records that the hive re-authored key itself for issue
+// after its fixer gave up on head after attempts tries. Idempotent per key.
+func (s *Store) MarkReauthored(key string, issue int, head string, attempts int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || issue <= 0 {
+		return
+	}
+	if r.ReauthorIssue == issue && r.ReauthorHead == head {
+		return
+	}
+	r.ReauthorIssue, r.ReauthorHead, r.ReauthorAttempts, r.ReauthoredAt = issue, head, attempts, now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkReauthorNoted records that the re-author close note was posted.
+func (s *Store) MarkReauthorNoted(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.ReauthorNoted {
+		return
+	}
+	r.ReauthorNoted = true
+	s.items[key] = r
+	s.dirty = true
+}
+
+// Reauthored reports whether the hive re-authored this PR itself.
+func (r Record) Reauthored() bool {
+	return r.ReauthorIssue > 0
+}
+
+// ReauthoredFor returns, over the store, the PR the hive already
+// re-authored for repo's issue (the record's own number), or 0 when the
+// issue has not been re-authored. One automatic re-author per issue.
+func (s *Store) ReauthoredFor(repo string, issue int) int {
+	if s == nil || issue <= 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	best := 0
+	for key, r := range s.items {
+		if r.ReauthorIssue != issue {
+			continue
+		}
+		rec, numText, found := strings.Cut(key, "#")
+		if !found || !strings.EqualFold(rec, repo) {
+			continue
+		}
+		if n, err := strconv.Atoi(numText); err == nil && n > 0 && (best == 0 || n < best) {
+			best = n
+		}
+	}
+	return best
 }
 
 // MarkSupersederMergedNoted records that the diverged-head note was posted

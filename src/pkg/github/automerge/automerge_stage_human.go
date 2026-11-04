@@ -772,12 +772,12 @@ func (c *Engine) fixDispatchStatusFor(obs stageObservation, pass *stageengine.PR
 
 // fixerExhaustedRoute is the 085 route (and so the entry comment, once per
 // head) for a hive PR whose fixer gave up (hivecommons/hive#15744).
-func (c *Engine) fixerExhaustedRoute(obs stageObservation, fixer review.FixDispatchStatus) stagelabels.Route {
+func (c *Engine) fixerExhaustedRoute(obs stageObservation, fixer review.FixDispatchStatus, reauthoredFrom int) stagelabels.Route {
 	v := obs.Detail.Verdict
 	if !obs.Detail.VerdictKnown {
 		v = c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)
 	}
-	return stagelabels.FixerExhaustedRoute(obs.HeadSHA, fixer.Attempts, fixerExhaustedSummary(v, obs.LaneReason))
+	return stagelabels.FixerExhaustedRoute(obs.HeadSHA, fixer.Attempts, fixerExhaustedSummary(v, obs.LaneReason), reauthoredFrom)
 }
 
 // fixerExhaustedSummary is the reviewer's one-line reason the fixer kept
