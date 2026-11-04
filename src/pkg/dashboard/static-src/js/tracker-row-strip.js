@@ -43,12 +43,12 @@
     // re-review pending (new head)", "Review 2/5 · awaiting human
     // decision". '' means the track has not started on this head (the
     // chevron shows its glyph alone). current: column 50 is the row's
-    // active phase, so even absent evidence is "in progress" there.
+    // current phase, so absent evidence still gets explanatory words there.
     function stageTrackerTrackWord(item, kind, current) {
       const a = item && item[kind + '_activity'];
       const matches = !!(a && item.head && a.head === item.head);
       const state = matches ? a.state || 'unknown' : 'unknown';
-      if (state === 'unknown' && !current) return '';
+      if (state === 'unknown' && !current && !(kind === 'ci' && matches && (Number(a.checks_running) > 0 || Number(a.checks_queued) > 0))) return '';
       const n = k => matches ? Number(a[k]) || 0 : 0;
       if (kind === 'ci') {
         const total = n('checks_total');
@@ -95,14 +95,37 @@
       return !!(hive || item.stage === 74 || item.adopted_by);
     }
 
+    // Only observed current-head work earns amber. Ownership waits suppress
+    // both tracks, even if their last observation still says running.
+    function stageTrackerActivityState(item, nowMs) {
+      const code = item.code_activity;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const ownerWait = !code && [71, 72].includes(Number(item.stage)) &&
+        !(item.push && ['pushed', 'checking'].includes(item.push.state));
+      const waitingOnPerson = !!(item.hold || item.on_hold || item.needs_human ||
+        mods.some(m => ['hold', 'needs-human', 'needs-decision', 'unauthorized'].includes(m)) ||
+        (code && code.head === item.head && code.state === 'waiting_owner') ||
+        ownerWait || [45, 85, 90].includes(Number(item.stage)));
+      const clock = Number(nowMs) || Date.now();
+      const running = kind => {
+        const a = item[kind + '_activity'];
+        const observed = Date.parse(a && a.observed_at || '');
+        if (Number(item.stage) >= 110 || waitingOnPerson || !a || !item.head || a.head !== item.head ||
+          !Number.isFinite(observed) || observed > clock || clock - observed > 2 * 60 * 1000) return false;
+        return kind === 'ci'
+          ? !!(a.active || Number(a.checks_running) > 0 || Number(a.checks_queued) > 0 || ['running', 'queued'].includes(a.state))
+          : ['reviewing', 'adjudicating', 'assigned'].includes(a.state);
+      };
+      return { waitingOnPerson, ci: running('ci'), review: running('review') };
+    }
+
     // Evidence is supplied independently by the backend. A native 050 label
     // cannot say who reviews, whether checks run, or whether an author codes.
     // The chevron wears its glyph plus the count words from
     // stageTrackerTrackWord (hivecommons/hive#16484). Style follows the
-    // track's own state on the current head: in progress = the full active
-    // fill (both tracks may be lit at once; the words disambiguate), done =
-    // the passed-stage style, a finding = the failing style, not started =
-    // the empty chevron with the glyph alone. Freshness gates only the pulse.
+    // track's own state on the current head: running/queued = active, done =
+    // the passed-stage style, a finding = failing, missing = pending with
+    // its words. Stale work keeps its words without claiming current motion.
     function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';
@@ -116,7 +139,9 @@
       const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
       const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
-      const active = known && a.active;
+      const activity = stageTrackerActivityState(item, nowMs);
+      const running = activity[kind];
+      const active = running && known && a.active;
       if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
       const ownsPR = item.kind === 'pr' || item.via_pr;
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
@@ -124,8 +149,8 @@
       const finding = matches && (state === 'failing' || state === 'changes_requested');
       // A complete verdict parked on a person is settled, not in progress:
       // done-style, muted, never the amber fill (hivecommons/hive#16509 row).
-      const settled = matches && state === 'human_decision' && (!known || !a.active);
-      const cls = finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : text ? 'active' : 'todo';
+      const settled = matches && (state === 'human_decision' || activity.waitingOnPerson);
+      const cls = running ? 'active' : finished ? 'done' : settled ? 'done decided' : finding ? 'failing' : text ? 'pending' : 'todo';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
@@ -168,6 +193,18 @@
     // whose move it is); passed and upcoming chevrons have none.
     function stageTrackerStripItems(item, stages, range, nowMs, ctx) {
       const segs = stageTrackerSegments(item, stages, nowMs, ctx);
+      const activity = stageTrackerActivityState(item, nowMs);
+      // A held repair belongs to PR in progress, even if an older payload
+      // projected its wait onto the CI / Review phase.
+      const phase = segs.find(sg => sg.number === 50 && sg.state === 'active');
+      if (activity.waitingOnPerson && phase) {
+        const progress = segs.find(sg => sg.number === 30);
+        Object.assign(progress, { state: 'active', short: 'PR in progress', detour: phase.detour });
+        phase.state = 'todo';
+        phase.detour = null;
+      }
+      const tracksVisible = (!range || range.from == null || range.from <= 50) && (!range || range.to == null || range.to >= 50);
+      const stageSettled = tracksVisible && activity.ci && activity.review;
       const trains = ctx && ctx.trains;
       const curStage = Number(item.stage) || 0;
       const from = range && range.from != null ? range.from : -Infinity;
@@ -222,7 +259,7 @@
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
         const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', fixPushed ? 'ham-fix-pushed' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state === 'active' && stageSettled ? 'settled-current' : sg.state, sg.cap ? 'cap' : '', fixPushed ? 'ham-fix-pushed' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -308,7 +345,7 @@
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(pushedTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(code.caption)}</span></span><span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(pushedTip)}</span></span>`;
         } else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
+        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap || stageSettled ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
 

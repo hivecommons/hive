@@ -31,10 +31,14 @@ type StageTrackerActivity struct {
 	Blocker    string     `json:"blocker,omitempty"`
 	URL        string     `json:"url,omitempty"`
 	Active     bool       `json:"active,omitempty"`
-	// Check counts on the current head for the CI track (hivecommons/hive#16484):
-	// over the required checks when branch protection is known, otherwise
-	// over every check run observed on the head. ChecksTotal == 0 means no
-	// count could be made ("CI ?/?").
+	// Motion counts cover observed checks on this head, independently of the
+	// aggregate verdict: a missing or failed required check can coexist with
+	// a queued/running check. Missing checks never count as motion.
+	ChecksRunning int `json:"checks_running,omitempty"`
+	ChecksQueued  int `json:"checks_queued,omitempty"`
+	// Verdict counts use required checks when branch protection is known,
+	// otherwise every check run observed on the head. ChecksTotal == 0 means
+	// no count could be made ("CI ?/?").
 	ChecksPassed  int      `json:"checks_passed,omitempty"`
 	ChecksTotal   int      `json:"checks_total,omitempty"`
 	ChecksFailed  int      `json:"checks_failed,omitempty"`
@@ -61,6 +65,17 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		return out
 	}
 	out.Source, out.ObservedAt = a.Source, a.ObservedAt
+	for _, check := range a.Checks {
+		if check.Head != "" && !strings.EqualFold(check.Head, pr.HeadSHA) {
+			continue
+		}
+		switch check.State {
+		case "in_progress":
+			out.ChecksRunning++
+		case "queued", "waiting", "pending", "requested":
+			out.ChecksQueued++
+		}
+	}
 	if a.RequiredSource != "" {
 		out.Source += "+required-" + a.RequiredSource
 	}

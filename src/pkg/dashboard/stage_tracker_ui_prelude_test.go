@@ -96,6 +96,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSoakLeft"),
 		jsFunc(t, html, "stageTrackerHiveOwnsRepair"),
 		jsFunc(t, html, "stageTrackerTrackWord"),
+		jsFunc(t, html, "stageTrackerActivityState"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
@@ -197,7 +198,15 @@ var _stageTracker = { stages };
 // fixture pairing it with 050/060 would draw a contradictory row.
 const rebaseCoherent = (it) => { if ((it.modifiers || []).includes('needs-rebase')) assert.ok(![50, 60].includes(Number(it.stage)), 'fixture #' + it.number + ' pairs needs-rebase with stage ' + it.stage); (it.linked_prs || []).forEach(rebaseCoherent); };
 const rawRowHtml = stageTrackerRowHtml;
-stageTrackerRowHtml = (item, stages, ctx) => { rebaseCoherent(item); return rawRowHtml(item, stages, ctx); };
+stageTrackerRowHtml = (item, stages, ctx) => {
+  rebaseCoherent(item);
+  const row = rawRowHtml(item, stages, ctx);
+  for (const strip of row.matchAll(/<ol class="ham-strip" aria-label="Pipeline progress">([\s\S]*?)<\/ol>/g)) {
+    const active = [...strip[1].matchAll(/<li class="([^"]*)"/g)].filter(m => m[1].split(' ').includes('active'));
+    assert.ok(active.length <= 2, 'row fixture exceeds two active chevrons: ' + JSON.stringify(item));
+  }
+  return row;
+};
 // A row is a title line, its strip, then zero or more nested PR sub-rows.
 const strips = (row) => row.split('aria-label="Pipeline progress"').slice(1);
 const strip = (row) => strips(row)[0].split('<div class="ham-sub"')[0];

@@ -368,12 +368,10 @@
        layerize pass of the page every vsync (#13764). ::after is the
        movement effects' (flash / ripple / wash). */
     .ham-seg.active { background: var(--amber); color: var(--surface-0); }
-    /* A CI / Review track wears its own state on the current head
-       (hivecommons/hive#16484): in progress = the full .active fill, done =
-       .done, a finding (red CI, changes requested) = .failing in the error
-       colour, not started = .todo with the glyph alone. No muted
-       "current-phase" tint: the operator reads the words, not the shade.
-       Only fresh observed work earns the pulse. */
+    /* Amber means observed running/queued work. Pending tracks retain their
+       count words; a stage waiting on both tracks stays bright and still. */
+    .ham-seg.settled-current { background: var(--panel-strong); color: var(--text); opacity: 1; box-shadow: none; }
+    .ham-seg.ham-activity-track.pending { background: var(--surface-3); color: var(--muted); opacity: 1; box-shadow: none; }
     .ham-activity-track.ham-current { opacity: 1; box-shadow: none; }
     .ham-seg.ham-activity-track.failing { background: var(--status-error); color: var(--surface-0); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }

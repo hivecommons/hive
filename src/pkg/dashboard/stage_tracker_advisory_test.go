@@ -233,6 +233,7 @@ func TestStageTrackerAdvisoryChipAndAction(t *testing.T) {
 		jsFunc(t, html, "stageTrackerActorTip"),
 		jsFunc(t, html, "stageTrackerHeadline"),
 		jsFunc(t, html, "stageTrackerSegments"),
+		jsFunc(t, html, "stageTrackerActivityState"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerItemOnHold"),

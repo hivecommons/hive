@@ -27,7 +27,7 @@ const STAGE_TRACKER_NEEDS_DECISION = 85, STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45
 const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10, STAGE_TRACKER_TRIAGE_NEEDED = 15, STAGE_TRACKER_POSSIBLY_EXISTS = 17;
 const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
 `;
-const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
+const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityState') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const segments = new Function('stageTrackerAnchor', globals + `
 const STAGE_TRACKER_ACTIVE_WORD = {70: 'Fixing'};
@@ -44,12 +44,16 @@ function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
 function stageTrackerIcon(n) { return '<svg data-icon="' + n + '"></svg>'; }
-` + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track);
+` + fn(strip, 'stageTrackerActivityState') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track);
 
 const stages = [{ number: 70, branch_from: 50 }, { number: 71, branch_from: 50 }, { number: 72, branch_from: 50 }];
 const now = Date.parse('2026-11-04T02:45:00Z');
 const red = '2026-11-04T02:05:00Z';
-const cells = item => [...renderStrip(item, stages, null, now, {}).matchAll(/<li\b[^]*?<\/li>/g)].map(m => m[0]);
+const cells = item => {
+  const result = [...renderStrip(item, stages, null, now, {}).matchAll(/<li\b[^]*?<\/li>/g)].map(m => m[0]);
+  assert.ok(result.filter(cell => cell.match(/<li class="([^"]*)"/)[1].split(' ').includes('active')).length <= 2, 'every row fixture has at most two active chevrons');
+  return result;
+};
 const redPR = extra => ({
   kind: 'pr', repo: 'org/repo', number: 7, head: 'abc1234def', stage: 70, modifiers: [],
   ci_activity: { head: 'abc1234def', state: 'passing', caption: 'CI 11/11 passed', source: 'checks', observed_at: '2026-11-04T02:44:00Z' },
@@ -138,4 +142,51 @@ test('#16494 keeps: review perspectives still running stay amber beside running 
   assert.match(c[4], /CI 4\/11/);
   assert.match(c[5], /ham-activity-track active ham-current/);
   assert.match(c[5], /Review 2\/5 · reviewer-2 reviewing</);
+});
+
+const activeCells = rendered => rendered.filter(cell => cell.match(/<li class="([^"]*)"/)[1].split(' ').includes('active'));
+test('#16268: owner wait, partially reported CI and approved review light only PR in progress', () => {
+  const item = redPR({ number: 16268, stage: 71, display_column: 30,
+    hold: { by: 'hanthor', reason: 'Maintainer hold' }, modifiers: ['hold'],
+    code_activity: { head: 'abc1234def', state: 'waiting_owner', caption: 'Waiting for @hanthor · not coding' },
+    ci_activity: { head: 'abc1234def', state: 'missing', checks_passed: 7, checks_total: 11, blocker: 'test', observed_at: '2026-11-04T02:44:00Z' },
+    review_activity: { head: 'abc1234def', state: 'approved', perspectives_done: 5, perspectives_total: 5, observed_at: '2026-11-04T02:44:00Z' },
+  });
+  const c = cells(item);
+  assert.equal(activeCells(c).length, 1);
+  assert.match(c[3], /ham-seg active[^]*Waiting for @hanthor/);
+  assert.match(c[4], /ham-activity-track done decided[^]*CI 7\/11 · test not reported/);
+  assert.match(c[5], /ham-activity-track done[^]*Review 5\/5 approved/);
+  assert.doesNotMatch(c[4] + c[5], /data-motion=/);
+});
+
+test('row invariant across stages, track states, head freshness and human waits', () => {
+  const ciStates = ['unknown', 'missing', 'skipped', 'passing', 'failing', 'running', 'queued'];
+  const reviewStates = ['unknown', 'unassigned', 'approved', 'human_decision', 'changes_requested', 'reviewing', 'assigned'];
+  for (const stage of [30, 50, 70, 71, 72, 74, 85, 110]) {
+    for (const ci of ciStates) for (const review of reviewStates) {
+      for (const wait of ['none', 'owner', 'held', 'needs-human']) for (const age of ['fresh', 'stale', 'old-head']) {
+        const observation = { head: age === 'old-head' ? 'older' : 'abc1234def', observed_at: age === 'stale' ? red : '2026-11-04T02:44:00Z', active: true };
+        const item = redPR({ stage, display_column: 30, modifiers: wait === 'held' ? ['hold'] : [],
+          needs_human: wait === 'needs-human',
+          code_activity: { head: 'abc1234def', state: wait === 'owner' ? 'waiting_owner' : 'fixing', caption: 'Source work', active: true, source: 'fix-dispatch+successful-edit+verified-git-worktree', observed_at: '2026-11-04T02:44:00Z' },
+          ci_activity: { ...observation, state: ci, active: ci === 'running' },
+          review_activity: { ...observation, state: review },
+        });
+        const c = cells(item);
+        if (wait !== 'none') assert.doesNotMatch(c[4] + c[5], /ham-activity-track active|data-motion=/);
+      }
+    }
+  }
+});
+
+test('#16509: adopted repair with missing checks and a complete review has one active chevron', () => {
+  const c = cells(redPR({ stage: 74, display_column: 30,
+    code_activity: { head: 'abc1234def', state: 'adopted', caption: 'Adopted by hive · activity' },
+    ci_activity: { head: 'abc1234def', state: 'missing', checks_passed: 7, checks_total: 11, blocker: 'test', observed_at: '2026-11-04T02:44:00Z' },
+    review_activity: { head: 'abc1234def', state: 'human_decision', perspectives_done: 5, perspectives_total: 5, active: true, observed_at: '2026-11-04T02:44:00Z' },
+  }));
+  assert.equal(activeCells(c).length, 1);
+  assert.match(c[4], /ham-activity-track pending[^]*CI 7\/11 · test not reported/);
+  assert.match(c[5], /ham-activity-track done decided[^]*Review 5\/5 · changes requested/);
 });

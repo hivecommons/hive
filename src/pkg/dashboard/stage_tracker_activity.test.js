@@ -22,7 +22,7 @@ const STAGE_TRACKER_NEEDS_DECISION = 85, STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45
 const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10, STAGE_TRACKER_TRIAGE_NEEDED = 15, STAGE_TRACKER_POSSIBLY_EXISTS = 17;
 const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
 `;
-const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
+const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityState') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const header = new Function('esc', 'stageTrackerIcon', globals + fn(strip, 'stageTrackerHeaderHtml') + ';return stageTrackerHeaderHtml;')(esc, () => '');
 const now = Date.parse('2026-11-02T21:00:00Z');
@@ -116,12 +116,13 @@ function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
 function stageTrackerIcon(n) { return '<svg data-icon="' + n + '"></svg>'; }
-` + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track, ...Object.values(helpers));
+` + fn(strip, 'stageTrackerActivityState') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track, ...Object.values(helpers));
 const renderStrip = makeStripRenderer();
 
 function physicalTracks(item) {
   const rendered = renderStrip(item, stages, null, now, {});
   const cells = [...rendered.matchAll(/<li\b[^]*?<\/li>/g)].map(match => match[0]);
+  assert.ok(cells.filter(cell => cell.match(/<li class="([^"]*)"/)[1].split(' ').includes('active')).length <= 2, 'every row fixture has at most two active chevrons');
   assert.equal(cells.length, 8, 'actual strip expands native 050 into two physical tracks plus history');
   assert.match(cells[4], /data-track="ci"/);
   assert.match(cells[5], /data-track="review"/);
@@ -161,6 +162,7 @@ test('12:01 screenshot density preserves physical tracks for issue-only, one-to-
       const range = item === row && linked.length > 1 ? { to: 20 } : item !== row && linked.length > 1 ? { from: 30 } : null;
       const rendered = renderStrip(item, fixtureStages, range, clock, {});
       const cells = [...rendered.matchAll(/<li\b[^]*?<\/li>/g)].map(match => match[0]);
+      assert.ok(cells.filter(cell => cell.match(/<li class="([^"]*)"/)[1].split(' ').includes('active')).length <= 2, 'every density fixture has at most two active chevrons');
       assert.equal(cells.length, 8, 'all row structures retain seven lanes plus history');
       if (range?.from) {
         assert.ok(cells.slice(0, 3).every(cell => /class="ham-seg blank"/.test(cell)), 'nested PRs reserve the physical Open–Claimed slots');
@@ -474,7 +476,7 @@ test('Hive #16434 shape: missing current-head CI and review stay unknown but vis
     review_activity: { head: 'head', state: 'unknown', caption: 'Review unknown · current-head evidence unavailable', source: 'unavailable' },
   }));
   for (const cell of [cells.ci, cells.review]) {
-    assert.match(cell, /ham-activity-track active ham-current/, 'absent evidence in the current phase is still in progress: lit, with words');
+    assert.match(cell, /ham-activity-track pending ham-current/, 'absent evidence retains words without claiming work');
     assert.match(cell, /data-activity-state="unknown"/);
     assert.match(cell, /data-display-state="unknown"/);
     assert.doesNotMatch(cell, /data-motion=|ham-activity-track done/);
@@ -484,7 +486,7 @@ test('Hive #16434 shape: missing current-head CI and review stay unknown but vis
   assert.doesNotMatch(cells.cells[3], /aria-current|data-motion/);
 });
 
-test('Hive #16268 shape: held native Fixing waits for a fixer in the CI/Review phase, not observed coding', () => {
+test('held native Fixing lights the stage while tracks remain settled', () => {
   const item = livePR({
     stage: 70, modifiers: ['hold'], hold: { by: 'hanthor', reason: 'Maintainer hold' }, display_column: 50,
     code_activity: { head: 'head', state: 'waiting_fixer', caption: 'Waiting for fixer · no code work observed', source: 'native-fix-request' },
@@ -492,11 +494,12 @@ test('Hive #16268 shape: held native Fixing waits for a fixer in the CI/Review p
     review_activity: activity('approved', 'Review approved'),
   });
   const cells = physicalTracks(item);
-  assert.match(cells.ci, /active ham-current/);
+  assert.match(cells.ci, /done decided/);
+  assert.match(cells.cells[3], /class="ham-seg active/);
   assert.match(cells.ci, /CI \?\/\? · no checks reported yet</);
-  assert.match(cells.review, /done ham-current/);
+  assert.match(cells.review, /ham-activity-track done/);
   assert.match(cells.review, /Review approved</);
-  assert.match(cells.review, /Waiting for fixer · no code work observed/);
+  assert.match(cells.cells[3], /Waiting for fixer · no code work observed/);
   assert.match(cells.review, /Held by @hanthor · Maintainer hold/);
   assert.doesNotMatch(cells.rendered, /data-motion=|>(?:Fixing|Remediating) ·/);
   assert.equal(item.stage, 70);
@@ -508,12 +511,12 @@ test('current phase, running activity, failure and successful completion are ind
     ['failing', 'CI failing · "build" red', false, 'failing'],
     ['running', 'CI running · 1/2 checks done', true, 'active'],
     ['passing', 'CI green · all 2 required checks passed', false, 'done'],
-    ['skipped', 'CI skipped · check "build" skipped', false, 'active'],
+    ['skipped', 'CI skipped · check "build" skipped', false, 'pending'],
   ]) {
     const cells = physicalTracks(livePR({ ci_activity: activity(state, caption, running) }));
     assert.ok(cells.ci.includes('ham-activity-track ' + cls + ' ham-current'), state + ' → ' + cls);
     assert.equal(cells.ci.includes('data-motion="active"'), running);
-    assert.match(cells.review, /active ham-current[^]*data-activity-state="unknown"/);
+    assert.match(cells.review, /pending ham-current[^]*data-activity-state="unknown"/);
   }
   const admitted = physicalTracks(livePR({ stage: 80, ci_activity: activity('passing', 'CI green · all 2 required checks passed'), review_activity: activity('approved', 'Review approved') }));
   assert.doesNotMatch(admitted.ci + admitted.review, /ham-current|aria-current/);
@@ -536,10 +539,10 @@ test('old-head or stale observations cannot fabricate running/completion, but do
     }
     if (mode === 'old-head') {
       assert.match(cells.review, /data-activity-state="unknown"/);
-      assert.match(cells.ci, /active ham-current[^]*CI \?\/\? · no checks reported yet</, 'old-head evidence counts for nothing on this head');
+      assert.match(cells.ci, /pending ham-current[^]*CI \?\/\? · no checks reported yet</, 'old-head evidence counts for nothing on this head');
       assert.doesNotMatch(cells.review, /ham-activity-track done/);
     } else {
-      assert.match(cells.ci, /active ham-current[^]*CI \?\/\? · running</, mode + ': the last observed state still reads in words');
+      assert.match(cells.ci, /pending ham-current[^]*CI \?\/\? · running</, mode + ': the last observed state still reads in words');
       assert.match(cells.review, /done ham-current[^]*Review approved</, mode + ': an approval of this head stays done, freshness only in the tooltip');
       assert.match(cells.review, mode === 'stale' ? /stale · / : /observation time unknown/);
     }
@@ -621,7 +624,7 @@ test('known and original chevrons keep full long text inside a shared one-line c
   assert.match(css, /\.ham-row > \.ham-strip-row, \.ham-sub > \.ham-strip-row, \.ham-cols > \.ham-strip-row \{ overflow-x: auto; \}/);
 });
 
-test('real source repair can show three concurrent activities without naming a generic worker as reviewer', () => {
+test('both running tracks take priority over source repair without losing its words', () => {
   const row = fs.readFileSync(path.join(root, 'tracker-row.js'), 'utf8');
   const definitions = globals + `
 const STAGE_TRACKER_HUMAN_GATED = 85, STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90, STAGE_TRACKER_ADOPTED_BY_HIVE = 74;
@@ -632,7 +635,7 @@ function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return 'active'; }
 function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
-` + anchor + fn(row, 'stageTrackerSegments') + fn(strip, 'stageTrackerActivityTrackHtml') + fn(strip, 'stageTrackerStripItems');
+` + anchor + fn(row, 'stageTrackerSegments') + fn(strip, 'stageTrackerActivityState') + fn(strip, 'stageTrackerActivityTrackHtml') + fn(strip, 'stageTrackerStripItems');
   const render = new Function('esc', definitions + ';return stageTrackerStripItems;')(esc);
   const item = { kind: 'pr', stage: 70, head: 'head', display_column: 30,
     ci_activity: activity('running', 'CI running · 1/2 checks done', true),
@@ -641,7 +644,9 @@ function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
   };
   const html = render(item, [{ number: 30, short: 'PR in progress' }, { number: 50, short: 'CI / Review' }, { number: 70, short: 'Fixing', branch_from: 50 }], null, now, {});
   assert.equal((html.match(/<li /g) || []).length, 8, 'one PR strip, seven visible columns plus history');
-  assert.equal((html.match(/data-motion="active"/g) || []).length, 3);
+  assert.equal((html.match(/data-motion="active"/g) || []).length, 2);
+  assert.equal([...html.matchAll(/<li class="([^"]*)"/g)].filter(m => m[1].split(' ').includes('active')).length, 2);
+  assert.match(html, /class="ham-seg settled-current detoured"/);
   assert.match(html, /ham-detour[^>]*>Remediating · fixer/);
   assert.match(html, /data-track="review"[^]*Review working · reviewer/);
   item.code_activity.observed_at = new Date(now - 300000).toISOString();
@@ -661,7 +666,7 @@ test('stale activity is visibly unknown in the tooltip, never pulses, and still 
   assert.match(html, /activity unknown · last observed reviewing/);
   assert.doesNotMatch(html, /data-motion/);
   assert.match(html, /data-display-state="unknown"/);
-  assert.match(html, /ham-activity-track active"[^]*ham-chevron-copy ham-track-state"><svg [^>]*><\/svg>Review 1\/5 · reviewer reviewing</, 'stale in-progress evidence keeps the lit fill and its count words');
+  assert.match(html, /ham-activity-track pending"[^]*ham-chevron-copy ham-track-state"><svg [^>]*><\/svg>Review 1\/5 · reviewer reviewing</, 'stale evidence keeps its count words without claiming current motion');
   item.review_activity = { ...activity('approved', 'Review approved'), perspectives_done: 5, perspectives_total: 5 };
   assert.match(track(item, 'review', {}, false, now + 300000), /ham-activity-track done"[^]*Review 5\/5 approved</, 'an approval of this head stays done when stale');
 });
@@ -749,30 +754,30 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   assert.equal(word({ head: 'h' }, 'review', false), '');
 });
 
-test('#16484: the three screenshot rows — both tracks lit with counts, swarm requested, red CI beside a done review', () => {
+test('#16484 screenshot counts survive pending tracks and owner waits', () => {
   const head = 'd3c0824304d4c97b8ee76a267fb1e91f6d4c79a4';
   const fresh = (state, extra = {}) => ({ head, state, caption: state, source: 'cache', observed_at: new Date(now).toISOString(), ...extra });
   const text = cell => cell.match(/aria-describedby="[^"]+">([^]*?)<span id=/)[1].replace(/<[^>]*>/g, '');
   const cls = cell => cell.match(/class="ham-seg ham-activity-track ([a-z]+)/)[1];
-  // #16456: CI running on the new head while the re-review is pending → BOTH lit, counts disambiguate.
+  // #16456: CI runs on the new head while the re-review is pending; only CI is amber.
   let cells = physicalTracks(livePR({ head, stage: 70, display_column: 50, push: { state: 'pushed', sha: head, next: 're-review' },
     code_activity: { head, state: 'pushed', caption: 'New head pushed · CI and re-review', source: 'recorded-push' },
     ci_activity: fresh('running', { checks_passed: 9, checks_total: 14, active: true }), review_activity: fresh('unknown', { perspectives_done: 0, perspectives_total: 5 }) }));
   assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 9/14 · running');
   assert.match(cells.ci, /data-motion="active"/);
-  assert.equal(cls(cells.review), 'active'); assert.equal(text(cells.review), 'Review 0/5 · re-review pending (new head)');
+  assert.equal(cls(cells.review), 'pending'); assert.equal(text(cells.review), 'Review 0/5 · re-review pending (new head)');
   assert.doesNotMatch(cells.review, /data-motion/);
   assert.match(cells.review, /hive is waiting on CI for new head d3c0824/, 'the tooltip still says which track leads');
   // #16491: review swarm requested, no bundle yet; CI shows its count.
   cells = physicalTracks(livePR({ head, stage: 50, display_column: 50,
     ci_activity: fresh('running', { checks_passed: 2, checks_total: 14 }), review_activity: fresh('unassigned', { perspectives_done: 0, perspectives_total: 5, blocker: 'no reviewer free' }) }));
-  assert.equal(cls(cells.review), 'active'); assert.equal(text(cells.review), 'Review 0/5 · swarm requested');
+  assert.equal(cls(cells.review), 'pending'); assert.equal(text(cells.review), 'Review 0/5 · swarm requested');
   assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 2/14 · running');
   // #16268: CI failed native-queue-policy, review approved, held.
   cells = physicalTracks(livePR({ head, stage: 70, display_column: 50, modifiers: ['hold'], hold: { by: 'hanthor', pill: 'Held by @hanthor' },
     ci_activity: fresh('failing', { checks_passed: 13, checks_total: 14, checks_failed: 1, checks_failing: ['native-queue-policy'], blocker: 'native-queue-policy' }),
     review_activity: fresh('approved', { perspectives_done: 5, perspectives_total: 5 }) }));
-  assert.equal(cls(cells.ci), 'failing'); assert.equal(text(cells.ci), 'CI 13/14 · 1 failing (native-queue-policy)');
+  assert.equal(cls(cells.ci), 'done'); assert.equal(text(cells.ci), 'CI 13/14 · 1 failing (native-queue-policy)');
   assert.equal(cls(cells.review), 'done'); assert.equal(text(cells.review), 'Review 5/5 approved');
   assert.match(cells.review, /Held by @hanthor/);
   // Not started: a PR still being written (column 30) with no evidence shows the glyph alone, never lit.
@@ -782,4 +787,31 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
     assert.equal(text(cell), '');
     assert.match(cell, /<svg /);
   }
+});
+
+test('mixed CI verdicts retain observed motion and only one running track can accompany source work', () => {
+  for (const state of ['missing', 'failing', 'unknown']) for (const motion of ['checks_queued', 'checks_running']) {
+    const item = livePR({ stage: 70, display_column: 30,
+      code_activity: activity('fixing', 'Fixing · fixer', true),
+      ci_activity: { ...activity(state, 'CI partially reported'), [motion]: 1, checks_passed: 7, checks_total: 11, blocker: 'test' },
+      review_activity: activity('approved', 'Review approved'),
+    });
+    const c = physicalTracks(item);
+    assert.match(c.cells[3], /class="ham-seg active/);
+    assert.match(c.ci, /ham-activity-track active/);
+    assert.match(c.review, /ham-activity-track done/);
+    assert.doesNotMatch(c.ci, /data-motion=/, 'motion counts do not invent a worker pulse');
+  }
+});
+
+test('a pending CI track stays muted beside the only running review track', () => {
+  const c = physicalTracks(livePR({ stage: 70, display_column: 30,
+    code_activity: activity('fixing', 'Fixing · fixer', true),
+    ci_activity: { ...activity('missing', 'CI waiting'), checks_passed: 7, checks_total: 11, blocker: 'test' },
+    review_activity: activity('assigned', 'Review queued · reviewer'),
+  }));
+  assert.match(c.cells[3], /class="ham-seg active/);
+  assert.match(c.ci, /ham-activity-track pending[^]*CI 7\/11 · test not reported/);
+  assert.match(c.review, /ham-activity-track active/);
+  assert.doesNotMatch(c.review, /data-motion=/);
 });

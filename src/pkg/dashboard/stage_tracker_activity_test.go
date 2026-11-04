@@ -473,3 +473,32 @@ func TestStageTrackerActivityReviewPerspectiveCounts(t *testing.T) {
 		t.Fatalf("old-head evidence leaked into counts: %d/%d", got.PerspectivesDone, got.PerspectivesTotal)
 	}
 }
+
+// A leading missing/failing verdict must not hide other checks in motion.
+func TestStageTrackerCIMotionCounts(t *testing.T) {
+	now := time.Date(2026, 11, 4, 2, 45, 0, 0, time.UTC)
+	for _, known := range []bool{false, true} {
+		pr := github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{
+			Head: "head", ObservedAt: &now, StatusesKnown: true,
+			RequiredKnown: known, RequiredSource: "branch-protection",
+			Required: []string{"test"}, RequiredChecks: []github.PRRequiredCheck{{Name: "test", AppKnown: true}},
+			Checks: []github.PRActivityCheck{
+				{Name: "build", Head: "head", State: "in_progress"},
+				{Name: "lint", Head: "head", State: "queued"},
+				{Name: "old", Head: "previous-head", State: "in_progress"},
+			},
+		}}
+		got := stageTrackerCIActivity(pr, now)
+		if got.ChecksRunning != 1 || got.ChecksQueued != 1 {
+			t.Fatalf("known=%v: lost current-head motion: %+v", known, got)
+		}
+		if known && got.State != "missing" {
+			t.Fatalf("motion counts replaced the missing verdict: %+v", got)
+		}
+		pr.CIActivity.Checks = nil
+		got = stageTrackerCIActivity(pr, now)
+		if got.ChecksRunning != 0 || got.ChecksQueued != 0 || got.Active {
+			t.Fatalf("unreported checks fabricated motion: %+v", got)
+		}
+	}
+}

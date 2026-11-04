@@ -1,0 +1,1 @@
+- Activity Monitor rows light at most two chevrons: only running or queued CI/review tracks turn amber, unreported checks stay muted, and rows waiting on a person light only their stage.
