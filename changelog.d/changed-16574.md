@@ -1,0 +1,1 @@
+- Document why dashboard matrix authentication failures also receive `Cache-Control: no-store`.
