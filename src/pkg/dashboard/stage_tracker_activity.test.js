@@ -766,7 +766,7 @@ test('the backend detail sentence rides in the track tooltip, not on the chevron
 });
 
 test('#16484: count grammar — CI passed/total and Review done/total across every state', () => {
-  const word = new Function(trackConsts + '\n' + fn(strip, 'stageTrackerWorkflowApprovalPending') + fn(strip, 'stageTrackerQueueAheadWord') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + ';return stageTrackerTrackWord;')();
+  const word = new Function(trackConsts + '\n' + fn(strip, 'stageTrackerWorkflowApprovalPending') + fn(strip, 'stageTrackerQueueAheadWord') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerTrackWord') + ';return stageTrackerTrackWord;')();
   const ci = (state, extra = {}) => word({ head: 'h', ci_activity: { head: 'h', state, ...extra } }, 'ci', true);
   assert.equal(ci('passing', { checks_passed: 14, checks_total: 14 }), 'CI 14/14 passed');
   assert.equal(ci('failing', { checks_passed: 11, checks_total: 14, checks_failed: 1, checks_failing: ['lint'] }), 'CI 11/14 · 1 failing (lint)');
@@ -779,7 +779,7 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   assert.equal(ci('missing', { checks_passed: 13, checks_total: 14, blocker: 'test' }), 'CI 13/14 · test not reported');
   assert.equal(ci('skipped', { checks_passed: 13, checks_total: 14, blocker: 'build' }), 'CI 13/14 · build skipped');
   assert.equal(ci('unknown'), 'CI ?/? · no checks reported yet');
-  assert.equal(ci('unknown', { checks_passed: 51, checks_total: 68 }), 'CI 51/68 · no verdict yet', 'unprotected base: head-wide counts without a required verdict');
+  assert.equal(ci('unknown', { checks_passed: 51, checks_total: 68 }), 'CI 51/68 · running', 'unprotected base: an unfinished head-wide ring is still running (#16631)');
   assert.equal(word({ head: 'h' }, 'ci', true), 'CI ?/? · no checks reported yet', 'no evidence at all in the current phase');
   assert.equal(word({ head: 'h' }, 'ci', false), '', 'no evidence outside the current phase: not started, glyph alone');
   assert.equal(word({ head: 'h', ci_activity: { head: 'old', state: 'passing', checks_passed: 14, checks_total: 14 } }, 'ci', true), 'CI ?/? · no checks reported yet', 'old-head evidence counts for nothing');

@@ -48,7 +48,7 @@
       const a = item && item[kind + '_activity'];
       const matches = !!(a && item.head && a.head === item.head);
       const state = matches ? a.state || 'unknown' : 'unknown';
-      if (state === 'unknown' && !current) return '';
+      if (state === 'unknown' && !current && !stageTrackerTrackRunning(item, kind)) return '';
       const n = k => matches ? Number(a[k]) || 0 : 0;
       if (kind === 'ci') {
         const total = n('checks_total');
@@ -68,7 +68,9 @@
             if (stageTrackerWorkflowApprovalPending(a) > 0) return count + ' · waiting on workflow approval' + (failing ? ' · ' + failing : '');
             return count + ' · ' + (passed ? (blocker ? blocker + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
           }
-          default: return count + ' · ' + (total ? 'no verdict yet' : 'no checks reported yet');
+          // An unfinished ring with no settled word is still running
+          // (hivecommons/hive#16631).
+          default: return count + ' · ' + (total ? (passed + failed < total ? 'running' + (failing ? ' · ' + failing : '') : 'no verdict yet') : 'no checks reported yet');
         }
       }
       const total = n('perspectives_total');
@@ -222,7 +224,19 @@
       if (!a || !item.head || a.head !== item.head) return false;
       if (stageTrackerWaitingOnPerson(item)) return false;
       const moving = kind === 'ci' ? ['running', 'queued'] : ['reviewing', 'adjudicating', 'assigned'];
-      return !!(a.active || moving.includes(a.state));
+      if (a.active || moving.includes(a.state)) return true;
+      // A CI ring that is not full is a running ring: checks counted on
+      // the head but not yet passed or failed are still in motion unless
+      // the track has settled on a word of its own (a finding, a pass, a
+      // skip, an unreported required check, a person's decision)
+      // (hivecommons/hive#16631).
+      if (kind !== 'ci') return false;
+      // Inferred motion only; a row parked on a person's decision is not
+      // waiting on checks, whatever its cached counts say.
+      if ((item.decision_needed && item.decision_needed.question) || item.human_attention) return false;
+      const total = Number(a.checks_total) || 0, done = (Number(a.checks_passed) || 0) + (Number(a.checks_failed) || 0);
+      const settledWords = ['passing', 'failing', 'skipped', 'missing', 'human_decision'];
+      return total > 0 && done < total && !settledWords.includes(a.state);
     }
 
     // Evidence is supplied independently by the backend. A native 050 label
