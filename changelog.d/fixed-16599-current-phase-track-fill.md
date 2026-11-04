@@ -1,0 +1,1 @@
+Activity Monitor: a CI/Review chevron that is the row's current phase but has not run yet (CI unknown on a review-pending row, Review queued beside running CI) keeps a muted fill with its glyph instead of rendering transparent, so every row's current location stays visible. Refs #16599.

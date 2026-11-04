@@ -211,7 +211,7 @@
       if (cell.dataset.routeState?.split(' ').includes('active')) {
         assert(cell.classList.contains('ham-current'), name + 'current phase remains highlighted independently of work');
         const style = getComputedStyle(cell);
-        assert(Number(style.opacity) >= 0.9 && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent', name + 'queued/unknown/assigned/completed current tracks retain a visible steady fill');
+        assert(Number(style.opacity) >= 0.9 && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent', name + 'queued/unknown/assigned/completed current tracks retain a visible steady fill: ' + JSON.stringify({ cls: cell.className, track: cell.dataset.track, state: cell.dataset.activityState, bg: style.backgroundColor, opacity: style.opacity, label: cell.getAttribute('aria-label')?.slice(0, 80) }));
       }
       if (cell.dataset.track) {
         // CI / Review lanes are chevrons like their neighbours: same notch
