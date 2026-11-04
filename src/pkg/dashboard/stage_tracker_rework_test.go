@@ -207,6 +207,10 @@ func TestStageTrackerReworkJS(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_REWORK_WORDS"),
 		jsFunc(t, html, "stageTrackerReworkOf"),
 		jsFunc(t, html, "stageTrackerReworkWord"),
+		jsConstLine(t, html, "STAGE_TRACKER_REWORK_OWED_BY_HIVE"),
+		jsFunc(t, html, "stageTrackerReReviewOwedByHive"),
+		jsFunc(t, html, "stageTrackerReReviewWord"),
+		jsFunc(t, html, "stageTrackerHiveReviewerChipText"),
 		jsFunc(t, html, "stageTrackerReworkSuffix"),
 		jsFunc(t, html, "stageTrackerReworkTip"),
 		jsFunc(t, html, "stageTrackerReworkJoinTip"),
@@ -240,12 +244,14 @@ assert.strictEqual(stageTrackerPresenceChipText(requested), 'waiting on @Danatha
 assert.strictEqual(stageTrackerPresenceChipText(queued), 'waiting on @Danathar · queued');
 assert.strictEqual(stageTrackerPresenceChipText(acked), 'waiting on @Danathar · acknowledged');
 assert.strictEqual(stageTrackerPresenceChipText(working), 'waiting on @Danathar · working');
-assert.strictEqual(stageTrackerPresenceChipText(pushed), 'waiting on @Danathar · re-review pending');
+// A pushed head with nothing against it waits on the hive's reviewer (hivecommons/hive#16615).
+assert.strictEqual(stageTrackerPresenceChipText(pushed), 'waiting on 🐝 hive reviewer · re-review of bbb');
+assert.strictEqual(stageTrackerPresenceChipText(w(Object.assign({}, pushed.rework, { owed_by: 'author' }))), 'waiting on @Danathar · re-review pending', 'the server says the author still owes it');
 assert.match(stageTrackerReworkTip(requested, NOW), /^rework requested 1 hour ago \(\S+ .*\) · no response from @Danathar yet$/);
 assert.match(stageTrackerReworkTip(queued, NOW), /^rework queued for @Danathar's clanker · 2 ahead · queued 10 min ago \(/);
 assert.match(stageTrackerReworkTip(acked, NOW), /^@Danathar acknowledged · activity on the PR 20 min ago \(/);
 assert.match(stageTrackerReworkTip(working, NOW), /^@Danathar's clanker picked up the rework 5 min ago \(.*\) \(spawn\)$/);
-assert.match(stageTrackerReworkTip(pushed, NOW), /^@Danathar pushed a new head 1 min ago \(.*\) · re-review pending$/);
+assert.match(stageTrackerReworkTip(pushed, NOW), /^@Danathar pushed a new head 1 min ago \(.*\) · hive reviewer owes the re-review of bbb$/);
 // The pill keeps its class, dot and login; title and aria carry the rework line after the presence line.
 const chip = stageTrackerPresenceChipHtml(acked);
 assert.ok(/^<span class="ham-badge ham-badge-waiting" title="Waiting on @Danathar&#39;s clanker \(online, last seen 2 min ago\) — hive is waiting for them · @Danathar acknowledged · activity on the PR 20 min ago[^"]*" aria-label="Waiting on @Danathar&#39;s clanker[^"]*acknowledged[^"]*">waiting on <span class="ham-presence ham-presence-online ham-presence-clanker"[^>]*>[\s\S]*<\/span>@Danathar · acknowledged<\/span>$/.test(chip), chip);
@@ -270,4 +276,65 @@ const lk = Object.keys(states([issue])).find(k => k.endsWith('#14989'));
 assert.strictEqual(states([issue])[lk].rework, 'acknowledged');
 `}, "\n")
 	runStageTrackerRowActionsScript(t, script)
+}
+
+// hivecommons/hive#16615: @thatguywob's clanker pushed d88928e; every check
+// on it is green and no findings stand against it. "re-review pending" is
+// the HIVE reviewer's debt, so the row says so (`owed_by`) and the pill
+// stops naming the author. The author keeps the pill only when the pushed
+// head asks them for something.
+func TestStageTrackerReworkOwedBy16615(t *testing.T) {
+	const head = "d88928e16f21ab6e653e5d06f137926bc0db1c0d"
+	base := func() StageTrackerItem {
+		return StageTrackerItem{Kind: "pr", Number: 16615, Head: head, Author: "thatguywob", AuthorKind: "clanker", Stage: 72,
+			Rework:         &StageTrackerRework{State: reworkStatePushed, Actor: "thatguywob", Evidence: reworkEvidenceCommit, Head: head},
+			CIActivity:     &StageTrackerActivity{Head: head, State: "passing", ChecksPassed: 11, ChecksTotal: 11},
+			ReviewActivity: &StageTrackerActivity{Head: head, State: "unknown", PerspectivesTotal: 5}}
+	}
+	it := base()
+	stageTrackerApplyReworkOwedBy(&it)
+	if it.Rework.OwedBy != reworkOwedByHiveReviewer {
+		t.Fatalf("green pushed head: owed_by = %q, want %q", it.Rework.OwedBy, reworkOwedByHiveReviewer)
+	}
+	raw, _ := json.Marshal(it.Rework)
+	if !strings.Contains(string(raw), `"owed_by":"hive-reviewer"`) {
+		t.Fatalf("payload lacks owed_by: %s", raw)
+	}
+
+	for name, mutate := range map[string]func(*StageTrackerItem){
+		"red CI on the pushed head":           func(it *StageTrackerItem) { it.CIActivity.State = "failing" },
+		"findings on the pushed head":         func(it *StageTrackerItem) { it.ReviewActivity.State = "changes_requested" },
+		"conflict nobody in the hive rebases": func(it *StageTrackerItem) { it.Reason = "conflicting" },
+	} {
+		it := base()
+		mutate(&it)
+		stageTrackerApplyReworkOwedBy(&it)
+		if it.Rework.OwedBy != reworkOwedByAuthor {
+			t.Fatalf("%s: owed_by = %q, want %q so the author keeps the pill", name, it.Rework.OwedBy, reworkOwedByAuthor)
+		}
+	}
+	// The hive rebasing the conflict is the hive's move.
+	it = base()
+	it.Reason, it.Rebase = "conflicting", &StageTrackerRebase{Attempt: 1, Max: 2}
+	stageTrackerApplyReworkOwedBy(&it)
+	if it.Rework.OwedBy != reworkOwedByHiveReviewer {
+		t.Fatalf("hive rebasing: owed_by = %q, want %q", it.Rework.OwedBy, reworkOwedByHiveReviewer)
+	}
+	// Red CI on an OLDER head says nothing about the pushed one.
+	it = base()
+	it.CIActivity = &StageTrackerActivity{Head: "6384f9b", State: "failing"}
+	stageTrackerApplyReworkOwedBy(&it)
+	if it.Rework.OwedBy != reworkOwedByHiveReviewer {
+		t.Fatalf("stale red CI: owed_by = %q, want %q", it.Rework.OwedBy, reworkOwedByHiveReviewer)
+	}
+	// Before the push the author owes the rework; nothing to attribute.
+	it = base()
+	it.Rework.State = reworkStateAcknowledged
+	stageTrackerApplyReworkOwedBy(&it)
+	if it.Rework.OwedBy != "" {
+		t.Fatalf("acknowledged: owed_by = %q, want empty", it.Rework.OwedBy)
+	}
+	var none *StageTrackerItem
+	stageTrackerApplyReworkOwedBy(none)
+	stageTrackerApplyReworkOwedBy(&StageTrackerItem{})
 }
