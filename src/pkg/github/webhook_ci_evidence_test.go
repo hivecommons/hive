@@ -23,7 +23,7 @@ func ciTestCheckRunBody(number int, head, name, status, conclusion string, at ti
 		status, len(name)*100+number, name, len(name), head, name, status, conclusion, name, at.Add(-time.Minute).Format(time.RFC3339), completed, number))
 }
 
-type ciTestTimer struct{ fired bool }
+type ciTestTimer struct{}
 
 func (t *ciTestTimer) Stop() bool { return true }
 
