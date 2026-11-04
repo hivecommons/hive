@@ -166,6 +166,29 @@ func TestCheckpointPolicyClearsSharedQueue(t *testing.T) {
 
 }
 
+func TestCheckpointConcurrentObserversNotDropped(t *testing.T) {
+	m := newMatrixSource(matrixTestConfig(), nil)
+	// Another observer in flight holds the shared side of the policy lock.
+	m.policyMu.RLock()
+	defer m.policyMu.RUnlock()
+	done := make(chan struct{})
+	go func() {
+		m.Observe(matrixObs(1, "h", sentinel.File{Path: "a.go", Patch: checkpointPatch("concurrent code")}))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("observer blocked on a concurrent observer")
+	}
+	if got := m.Dropped(); got != 0 {
+		t.Fatalf("Dropped() = %d, want 0: concurrent observer discarded", got)
+	}
+	if len(m.in) != 1 {
+		t.Fatal("concurrent observation did not enter queue")
+	}
+}
+
 func TestCheckpointWholeBounds(t *testing.T) {
 	c := newCheckpointSource(matrixTestConfig())
 	now := time.Now()

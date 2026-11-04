@@ -62,7 +62,10 @@ type matrixQueuedObservation struct {
 // matrixSource owns the shared observer queue and its legacy line projection.
 type matrixSource struct {
 	checkpoints *checkpointSource
-	policyMu    sync.Mutex
+	// policyMu is held exclusively by setConfig and shared by observers, so
+	// concurrent Observe calls never contend with each other; only a policy
+	// update in flight makes an observer back off.
+	policyMu    sync.RWMutex
 	queuedEpoch atomic.Pointer[string]
 	cfg         atomic.Pointer[config.MatrixConfig]
 	in          chan matrixQueuedObservation
@@ -146,14 +149,16 @@ func (m *matrixSource) admits(obs github.SentinelPatchObservation) bool {
 }
 
 // Observe is the sentinel PatchObserver. It gates the observation, then hands
-// it off without blocking: when the ingest channel is full the observation
-// is dropped and counted.
+// it off without blocking: when a policy update is in flight or the ingest
+// channel is full the observation is dropped and counted. Observers hold the
+// policy read lock, so sweeps running many observers at once do not drop
+// each other.
 func (m *matrixSource) Observe(obs github.SentinelPatchObservation) {
-	if !m.policyMu.TryLock() {
+	if !m.policyMu.TryRLock() {
 		m.dropped.Add(1)
 		return
 	}
-	defer m.policyMu.Unlock()
+	defer m.policyMu.RUnlock()
 	if !m.admits(obs) {
 		return
 	}
