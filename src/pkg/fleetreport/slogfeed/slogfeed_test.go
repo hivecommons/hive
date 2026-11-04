@@ -729,19 +729,27 @@ func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
 // #16507: using last-good stats after a bounded collect timeout is the
 // liveness safeguard working, not another defect distinct from the timeout.
 func TestHubHeartbeatCachedFallbackLogsWithoutFleetReport(t *testing.T) {
-	logger, seen, out := newFeed(t)
-	const msg = "hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green"
-	for i := 0; i < 8; i++ {
-		logger.Warn(msg)
-	}
-	if len(*seen) != 0 {
-		t.Fatalf("cached fallback produced observations: %+v", *seen)
-	}
-	if n := strings.Count(out.String(), "\n"); n != 8 {
-		t.Errorf("wrapped handler saw %d records, want 8", n)
-	}
-	if !strings.Contains(out.String(), msg) {
-		t.Error("cached fallback warning missing from local logs")
+	for _, msg := range []string{
+		"hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect timed out with no cached payload — sending MINIMAL liveness beat (identity only, no stats) so the hub keeps this hive online; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect timed out and hive identity not yet known — skipping this beat; loop keeps ticking so liveness stays green",
+		"hub heartbeat fresh stats collect timed out; sending stale cached stats without fresh agent overlay",
+	} {
+		t.Run(msg, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn(msg)
+			}
+			if len(*seen) != 0 {
+				t.Fatalf("outcome notice produced observations: %+v", *seen)
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+			if !strings.Contains(out.String(), msg) {
+				t.Error("outcome notice missing from local logs")
+			}
+		})
 	}
 
 	// Preserve the underlying timeout diagnostics and actual heartbeat failures.
@@ -750,6 +758,7 @@ func TestHubHeartbeatCachedFallbackLogsWithoutFleetReport(t *testing.T) {
 		"hub heartbeat collect budget exceeded — slowest collectors (in-flight = still running at timeout)",
 		"hub heartbeat collect panicked",
 		"hub heartbeat fresh stats collect panicked",
+		"hub heartbeat fresh stats collect timed out",
 		"hub heartbeat failed",
 		"hub heartbeat rejected",
 	} {
