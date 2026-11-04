@@ -189,6 +189,32 @@ func TestCheckpointConcurrentObserversNotDropped(t *testing.T) {
 	}
 }
 
+func TestCheckpointUnchangedPolicyDoesNotBlockObservers(t *testing.T) {
+	m := newMatrixSource(matrixTestConfig(), nil)
+	epoch := m.checkpoints.policyEpoch()
+	// An observer in flight holds the shared side of the policy lock; the
+	// reader poll re-applying the same policy must not wait for or evict it.
+	m.policyMu.RLock()
+	defer m.policyMu.RUnlock()
+	done := make(chan struct{})
+	go func() { m.setConfig(matrixTestConfig()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("unchanged policy refresh took the exclusive policy lock")
+	}
+	if m.checkpoints.policyEpoch() != epoch {
+		t.Fatal("unchanged policy refresh rotated the epoch")
+	}
+	m.Observe(matrixObs(1, "h", sentinel.File{Path: "a.go", Patch: checkpointPatch("polled code")}))
+	if got := m.Dropped(); got != 0 {
+		t.Fatalf("Dropped() = %d, want 0: observer dropped during an unchanged policy refresh", got)
+	}
+	if len(m.in) != 1 {
+		t.Fatal("observation did not enter queue")
+	}
+}
+
 func TestCheckpointWholeBounds(t *testing.T) {
 	c := newCheckpointSource(matrixTestConfig())
 	now := time.Now()
