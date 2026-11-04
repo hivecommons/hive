@@ -604,6 +604,44 @@ The **Hive activity monitor** section (sidebar, Dashboard group; expanded by def
 
 The endpoint returns `stages` (the stage table with `short`, `branch_from`, configured dwell and `falls_to` — the lower same-kind stages a move to which is a regression per the stage engine, so the event line says "fell back to" only for those; 015 → 010 triage accepted, 085 → 080 decision made and 072 → 070 author resuming read "moved to"), `items` (one per open issue/PR represented by the status snapshot, including actionable and held items plus display-only non-actionable issues, drafts, and exempt PRs: `labels`, `created_at`, `updated_at`, `bucket`, `bucket_reason`, stage, `stage_since`, humanised `reason`/`caption`, `actor`, `modifiers`, `author_kind` + `author_kind_source` (`label`, `inferred`, or `registry` — the author has a contributor-hub profile on this hive, so their clanker pushed it; the row icon, tooltip and claimant all read this one value), `lane`, `tier`, `linked_pr`, `linked_prs` (number, title, url, author, author kind, stage, `stage_since`, `caption` and `modifiers` of each open covering PR — enough to draw the nested sub-row without a second lookup), `nested_under` (on a PR: the issue it is listed under), nudge info and the last eight `history` hops from the stage store) and `author_kind_labels`. It answers `{"status":"initializing"}` until the first scan.
 
+## Code activity reader
+
+The code activity reader is a kiosk view at `?kiosk=1&view=reader` that shows
+pushed changes as readable paragraphs. It is the planned successor to the
+Matrix code view ([#16137](https://github.com/hivecommons/hive/issues/16137)).
+Until the cutover, both views are available. The reader uses the same opt-in
+setting and authorized `GET /api/matrix/lines` endpoint as Matrix, so it has
+the same `dashboard.matrix` repository allowlist, author restriction and
+scrub/path filters. When `dashboard.matrix.enabled` is set, the header shows a
+**Reader** tab next to **Matrix**. Without that setting, the endpoint answers
+404 and the view says it is not enabled. The reader adds no permission and no
+anonymous access.
+
+- **Cards.** Consecutive lines from one file at one PR head form one card,
+  which shows that contiguous changed region in order. Indentation, blank lines
+  and repeated lines are kept. Additions start with a green `+`, and removals
+  start with a red `−` when the source provides them. Long lines wrap at a
+  fixed font size and are never truncated. Every card shows the repository
+  and PR number, the file, the source stage (`pushed`), and when hive
+  observed the change. The repository links to the real pull request. Code is
+  always shown as text and is never parsed as HTML.
+- **Pacing.** One card is read at a time. A card stays in focus for a few
+  seconds plus a little more for each line, up to 30 seconds, and then the
+  next card scrolls into view. New work waits behind the paragraph being read.
+  When the reader is caught up, it holds quietly. It has no replay, filler,
+  typing effect or sound.
+- **Pause.** Press **P**, press **Space**, or use the **Pause** button to pause
+  or resume. Scrolling with the wheel, touch, arrow keys, Page Up/Page Down,
+  Home or End also pauses the reader so you can inspect the text. The feed is
+  native, scrollable text.
+- **Motion.** With `prefers-reduced-motion`, every card is shown at once and
+  nothing scrolls by itself. In a hidden tab, the reader stops advancing until
+  the tab is visible again.
+
+The feed currently carries pushed added lines, as shown in Matrix. Removal lines
+and whole published-checkpoint regions come from the published-checkpoint
+source ([#16476](https://github.com/hivecommons/hive/issues/16476)).
+
 ## PR review and link signals
 
 PR pills also carry GitHub's own review state and conversation evidence
