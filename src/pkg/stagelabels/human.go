@@ -341,7 +341,38 @@ const (
 	// attempt count (hivecommons/hive#15744). Before this the PR sat at 070
 	// reading "Fixing" with nobody on it (#15308, 13h).
 	LaneReasonFixerExhaustedPrefix = "fixer-exhausted:"
+	// LaneReasonReauthoringPrefix opens the 070 reason for a hive-authored
+	// PR whose fixer gave up and which the hive is re-authoring itself
+	// ("re-authoring:16265"): the suffix is the issue a fresh PR is being
+	// opened for; this PR is closed as superseded. The hive re-authors
+	// once per issue; a second exhaustion parks at 085 without the option.
+	LaneReasonReauthoringPrefix = "re-authoring:"
+	// LabelReauthored is the durable once-per-issue marker the automatic
+	// re-author leaves on the ISSUE: a later hive PR for the same issue
+	// whose fixer is exhausted again is parked for a person instead of
+	// being re-authored a second time.
+	LabelReauthored = "hive/re-authored"
 )
+
+// ReauthoringReason renders the 070 reason for a hive PR being re-authored
+// for issue.
+func ReauthoringReason(issue int) string {
+	return LaneReasonReauthoringPrefix + strconv.Itoa(issue)
+}
+
+// ParseReauthoring reads the issue number out of a re-authoring reason;
+// ok is false for any other reason.
+func ParseReauthoring(reason string) (issue int, ok bool) {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, LaneReasonReauthoringPrefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(reason, LaneReasonReauthoringPrefix))
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
 
 // FixerExhaustedReason renders the 085 reason for a PR whose fixer gave up
 // after attempts tries.
@@ -760,13 +791,19 @@ func DecisionComment(r Route) string {
 // FixerExhaustedRoute is the 085 route for a hive-authored PR whose fix
 // dispatcher refused another fix because the re-engagement cap is spent
 // (hivecommons/hive#15744). summary is the reviewer's one-line finding the
-// fixer never cleared ("" when unknown). The comment lists the three
-// answers the tracker offers: re-author from scratch (the lead action),
-// hand it to a person, or close it as not planned.
-func FixerExhaustedRoute(head string, attempts int, summary string) Route {
+// fixer never cleared ("" when unknown). The hive re-authors its own PR
+// automatically on the first exhaustion (ReauthoringReason), so this
+// route is reached only when it cannot (no issue, or the issue was
+// already re-authored once: reauthoredFrom names that earlier PR) and
+// lists the answers left: give direction, hand it to a person, or close
+// it as not planned. Re-authoring is never offered as a human choice.
+func FixerExhaustedRoute(head string, attempts int, summary string, reauthoredFrom int) Route {
 	reasons := []string{"the hive's fixer gave up after " + strconv.Itoa(attempts) + " attempts on `" + ShortSHA(head) + "`; no fix job is running"}
 	if summary = strings.TrimSpace(summary); summary != "" {
 		reasons = append(reasons, "last reviewer finding: "+summary)
+	}
+	if reauthoredFrom > 0 {
+		reasons = append(reasons, "this PR is already the hive's re-author of #"+strconv.Itoa(reauthoredFrom)+"; the hive re-authors an issue once and does not try a third time on its own")
 	}
 	return Route{
 		Stage:          NeedsDecision,
@@ -775,8 +812,8 @@ func FixerExhaustedRoute(head string, attempts int, summary string) Route {
 		SelfAuthored:   true,
 		ActionsHeading: "Your options:",
 		Actions: []string{
-			"**Re-author from scratch** — *Re-author* in the tracker (or add the `adoption/supersede` label): the hive opens a fresh PR for the same issue from the current base and closes this one as superseded.",
-			"**Hand it to a person** — reply `/hive decision <who or what to change>` or push to the branch yourself; the hive steps back while a human owns it.",
+			"**Give direction** — reply `/hive decision <what to change>` (or *Give direction* in the tracker); the hive's fixer gets one more run with your note.",
+			"**Hand it to a person** — push to the branch yourself or say who takes it; the hive steps back while a human owns it.",
 			"**Close as not planned** — close the PR (or *Close as not planned* under Decide… in the tracker) when the change is no longer wanted.",
 		},
 	}

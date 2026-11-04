@@ -840,8 +840,10 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		}
 		if step, _ := stageTrackerUnauthorized(reason); step != "" {
 			// hivecommons/hive#14589: not a decision but a step only a
-			// person may take; the gate cell says the same.
-			return joinClause("Awaiting human: "+step, clause), "maintainer"
+			// person may take; the PR in progress chevron says the same
+			// (hive#16524: it is the person's move on the PR, not a
+			// merge-queue matter).
+			return joinClause("Waiting for a maintainer · "+step+" on GitHub", clause), "maintainer"
 		}
 		if c := stageTrackerMergeTrainCaption(reason); c != "" {
 			return c, "maintainer"

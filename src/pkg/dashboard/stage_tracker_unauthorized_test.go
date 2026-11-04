@@ -66,7 +66,7 @@ func TestStageTrackerUnauthorizedPayload(t *testing.T) {
 	if it.Stage != 85 || !hasMod(it, modUnauthorized) || it.UnauthorizedStep != "approve workflow runs" || !strings.Contains(it.Unauthorized, "`actions: write`") {
 		t.Fatalf("row = stage %d mods %v step %q tip %q", it.Stage, it.Modifiers, it.UnauthorizedStep, it.Unauthorized)
 	}
-	if !strings.Contains(it.Caption, "not permitted to approve workflow runs") || it.Actor != "maintainer" {
+	if !strings.HasPrefix(it.Caption, "Waiting for a maintainer · approve workflow runs on GitHub") || !strings.Contains(it.Caption, "not permitted to approve workflow runs") || it.Actor != "maintainer" {
 		t.Fatalf("caption %q actor %q", it.Caption, it.Actor)
 	}
 	raw, err := json.Marshal(it)
@@ -82,7 +82,7 @@ func TestStageTrackerUnauthorizedPayload(t *testing.T) {
 }
 
 // The frontend: the pill is muted and explains itself on hover, it counts
-// under Needs attention, and the 085 chevron reads "Awaiting human: <step>".
+// under Needs attention, and the 085 chevron reads "Waiting for @who · <step> on GitHub".
 func TestStageTrackerUnauthorizedJS(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
@@ -129,7 +129,9 @@ assert.ok(stageTrackerNeedsAttention(item));
 assert.ok(stageTrackerChipsHtml({ stage: 85, modifiers: ['needs-decision', 'unauthorized'] }).includes('>unauthorized +1<'));
 assert.ok(stageTrackerChipsHtml({ stage: 10, modifiers: ['unauthorized', 'hold'] }).includes('>hold +1<'));
 // The 085 chevron names the human step owed; without a step the generic word stays.
-assert.strictEqual(stageTrackerUnauthorizedWord(item), 'Awaiting human: approve workflow runs');
+assert.strictEqual(stageTrackerUnauthorizedWord(item), 'Waiting for a maintainer · approve workflow runs on GitHub');
+assert.strictEqual(stageTrackerUnauthorizedWord(Object.assign({ author: 'clubanderson', author_kind: 'human' }, item)), 'Waiting for @clubanderson · approve workflow runs on GitHub');
+assert.strictEqual(stageTrackerUnauthorizedWord(Object.assign({ author: 'hive-bot', author_kind: 'hive' }, item)), 'Waiting for a maintainer · approve workflow runs on GitHub');
 assert.strictEqual(stageTrackerUnauthorizedWord({ stage: 85, modifiers: ['unauthorized'] }), '');
 assert.strictEqual(STAGE_TRACKER_HUMAN_GATED, 85);
 `
