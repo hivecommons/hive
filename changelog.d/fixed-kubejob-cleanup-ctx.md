@@ -1,0 +1,1 @@
+- Completed Kubernetes Jobs are now immediately deleted even if the caller's context expires during pod log collection, preventing them from lingering for the full TTL ([#16547](https://github.com/hivecommons/hive/issues/16547)).
