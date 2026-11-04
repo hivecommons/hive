@@ -1,0 +1,1 @@
+- Code activity supersedes the Matrix code view with one topbar entry opening the published-checkpoint reader in a new tab; decorative renderers and settings are retired, display links are updated, and deprecated internal Matrix API/config names remain supported with capture and broadcasting still off by default.

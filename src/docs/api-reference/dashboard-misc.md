@@ -138,3 +138,10 @@ eligible region is always returned whole, even if larger than the budget.
 Code buffers are bounded and memory-only, so this is not an audit history.
 Clear retained browser code on epoch changes and failed/disabled/unauthorized
 pulls. An empty response says nothing about work outside the admitted source.
+
+The internal `/api/matrix/lines` and `dashboard.matrix.*` names are deprecated
+but remain supported for compatibility. The sole code display is now **Code activity**
+at `?kiosk=1&view=reader`; the Matrix renderers and their `mx.*`
+settings are retired. Activation remains explicitly opt-in and default-off;
+only pushed, published PR checkpoints are admitted, never workspace or pre-push
+content. The cutover grants no anonymous access or broadcast authorization.

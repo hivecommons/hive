@@ -31,7 +31,7 @@ patches:
         value: http://hive.hive-hosted-hosted-available-oke-11-placeholder-r05x.svc.cluster.local:3002
       - op: replace
         path: /data/DASHBOARD_PATH
-        value: /?kiosk=1&view=matrix&sound=off
+        value: /?kiosk=1&view=reader&sound=off
       - op: replace
         path: /data/STREAM_AUDIO
         value: silent

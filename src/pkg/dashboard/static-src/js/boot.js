@@ -36,12 +36,7 @@
 (function(){
   var kiosk=false, popout=false, display=false, view='', sound=true, density='', shift=false;
   try { var u=new URL(window.location.href); kiosk=u.searchParams.get('kiosk')==='1'; view=u.searchParams.get('view'); popout=u.searchParams.get('popout')==='1'; display=u.searchParams.get('display')==='1'; density=u.searchParams.get('density')==='tv'?'tv':''; shift=u.searchParams.get('shift')==='1'; sound=new URL(window.location.href).searchParams.get('sound')!=='off'; } catch(e) {}
-  window.HIVE_MATRIX = kiosk && view === 'matrix';
-  if(window.HIVE_MATRIX){
-    document.body.classList.add('matrix-mode');
-    document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
-  }
-  // Code activity reader (#16475): same opt-in data as Matrix, read as paragraphs.
+  // Code activity is the sole opt-in code display; legacy Matrix effects are retired.
   window.HIVE_READER = kiosk && view === 'reader';
   if(window.HIVE_READER){
     document.body.classList.add('reader-mode');
