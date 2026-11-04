@@ -5,13 +5,17 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 
 `GET /api/stage-tracker` adds independent PR `ci_activity`, `review_activity`
 and `code_activity` observations, also copied to `linked_prs[]`. Each is
-`{head, state, caption, actor?, source, observed_at?, since?, blocker?, url?, active?}`.
+`{head, state, caption, detail?, actor?, source, observed_at?, since?, blocker?, url?, active?, checks_passed?, checks_total?, checks_failed?, checks_failing?, checks_pending?, perspectives_done?, perspectives_total?, perspectives?}`.
 These are display evidence, **not merge authorization**. An absent timestamp
 means unknown freshness; a different head invalidates the observation.
-CI is classified only against the resolved required set from the existing
-check snapshot. Review assignment comes from dispatch, current work additionally
-requires its actual worker, and approval/findings require verified current-head
-review evidence. Authors and claimants are not inferred reviewers.
+`detail?` is the longer, plain-language sentence behind caption. `checks_failing?`
+and `checks_pending?` are string lists of check names; `perspectives?` list
+per-perspective verdicts on the head. CI is classified against the resolved
+required set when branch protection is known, otherwise against every check run
+observed on the head (checks_total == 0 means no count could be made). Review
+assignment comes from dispatch, current work additionally requires its actual
+worker, and approval/findings require verified current-head review evidence.
+Authors and claimants are not inferred reviewers.
 `display_column` may be `30` (source repair or explicit owner/adoption wait)
 or `50` (CI and re-review), without changing native stage identities, counts,
 filters or routing. Consumers must not turn either display field into a gate.
