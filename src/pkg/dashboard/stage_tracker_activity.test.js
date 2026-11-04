@@ -769,6 +769,8 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   try {
     assert.equal(review('human_decision', {}, { decision_needed: { question: '@clubanderson should decide whether to accept this workflow change from a fork.' } }), 'Review 3/5 · needs your sign-off', 'the ask names the viewer');
     assert.equal(review('human_decision', {}, { decision_needed: { question: '@someone-else should decide.' } }), 'Review 3/5 · needs owner sign-off');
+    for (const q of ['@clubanderson-bot should decide.', '@clubandersonx should decide.']) assert.equal(review('human_decision', {}, { decision_needed: { question: q } }), 'Review 3/5 · needs owner sign-off', 'a longer login is not the viewer: ' + q);
+    for (const q of ['@clubanderson', 'ping @clubanderson, please decide.', 'ok @ClubAnderson?']) assert.equal(review('human_decision', {}, { decision_needed: { question: q } }), 'Review 3/5 · needs your sign-off', 'the viewer handle ends at punctuation or the end: ' + q);
   } finally { delete globalThis.window; }
   assert.equal(review('reviewing', { actor: 'reviewer-2' }), 'Review 3/5 · reviewer-2 reviewing');
   assert.equal(review('adjudicating', { actor: 'adjudicator' }), 'Review 3/5 · adjudicator reviewing');

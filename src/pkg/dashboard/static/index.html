@@ -18188,7 +18188,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (stageTrackerHiveOwnsRepair(item)) return count + ' · changes requested';
           const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
           const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
-          const mine = !!me && q.indexOf('@' + me) >= 0;
+          const mine = !!me && new RegExp('@' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])').test(q);
           return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
         }
         case 'reviewing': case 'adjudicating': return count + ' · ' + (actor ? actor + ' reviewing' : 'reviewing');
