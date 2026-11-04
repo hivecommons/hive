@@ -45,7 +45,7 @@ func TestReaderUIWiring(t *testing.T) {
 	}
 	css := read("css/reader.css")
 	// Long text wraps at a fixed size and the feed scrolls natively.
-	for _, want := range []string{"white-space: pre-wrap; overflow-wrap: anywhere;", "body.reader-mode .reader-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto;", "font: 20px/1.5 monospace;"} {
+	for _, want := range []string{"white-space: pre-wrap; overflow-wrap: anywhere;", "body.reader-mode .reader-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto;", "font: 20px/1.5 monospace;", "body.reader-mode .reader-context { color: var(--reader-text); }"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("reader.css missing %q", want)
 		}
@@ -98,16 +98,18 @@ const reader = fs.readFileSync('static-src/js/reader.js', 'utf8');
 const boot = fs.readFileSync('static-src/js/boot.js', 'utf8').split('})();')[0] + '})();';
 const at = '2026-11-03T12:00:00Z';
 const first = [
-  {seq: 1, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '<script>alert(1)</script>', at},
+  {seq: 1, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '<script>alert(1)</script>', op: '+', at},
   {seq: 2, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '', at},
   {seq: 3, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '\tx := 1', at},
   {seq: 4, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '\tx := 1', at},
   {seq: 5, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '    old()', op: '-', at},
-  {seq: 6, repo: 'org/other', pr: 7, head: 'def', path: 'README.md', line: 'a very long line '.repeat(40), pr_url: 'https://github.com/org/other/pull/7', at},
+  {seq: 6, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '\tunchanged()', op: ' ', at},
+  {seq: 7, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '', op: ' ', at},
+  {seq: 8, repo: 'org/other', pr: 7, head: 'def', path: 'README.md', line: 'a very long line '.repeat(40), pr_url: 'https://github.com/org/other/pull/7', at},
 ];
 async function scenario(query, opts = {}) {
   const docEvents = {}, timers = new Map(), requests = [], scrolls = [], sse = {};
-  let id = 0, status = opts.status || 200, seq = 6, lines = first;
+  let id = 0, status = opts.status || 200, seq = 8, lines = first;
   const elements = [];
   function el(tag) { const e = {tagName: tag.toUpperCase(), children: [], listeners: {}, attrs: {}, className: '',
     textContent: '', hidden: false, scrollTop: 0, offsetHeight: 10, classList: {add(){}},
@@ -186,9 +188,10 @@ async function scenario(query, opts = {}) {
 
   const checkFirst = card => {
     // One contiguous region: blank, indented and repeated lines kept as text.
-    assert.deepEqual(rows(card), ['+ <script>alert(1)</script>\n', '+ \n', '+ \tx := 1\n', '+ \tx := 1\n', '\u2212     old()\n']);
+    // Context retains its space prefix and stays neutral, including blank lines.
+    assert.deepEqual(rows(card), ['+ <script>alert(1)</script>\n', '+ \n', '+ \tx := 1\n', '+ \tx := 1\n', '\u2212     old()\n', '  \tunchanged()\n', '  \n']);
     assert.equal(card.children[1].tagName, 'PRE');
-    assert.deepEqual(card.children[1].children.map(r => r.className), ['reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-del']);
+    assert.deepEqual(card.children[1].children.map(r => r.className), ['reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-del', 'reader-line reader-context', 'reader-line reader-context']);
     const [repo, file, stage, delivery, time] = meta(card);
     assert.equal(repo.tagName, 'A'); assert.equal(repo.textContent, 'org/repo #2');
     assert.equal(repo.href, 'https://github.com/org/repo/pull/2'); assert.equal(repo.attrs.rel, 'noopener noreferrer');
@@ -206,7 +209,7 @@ async function scenario(query, opts = {}) {
     // Static and scrollable: everything shown at once, nothing scheduled or scrolled.
     assert.equal(feed.children.length, 2); assert.equal(timers.size, 0); assert.equal(scrolls.length, 0);
     checkFirst(feed.children[0]); checkSecond(feed.children[1]);
-    lines = [{seq: 7, repo: 'org/repo', pr: 2, head: 'abc', path: 'b.go', line: 'next', at}]; seq = 7;
+    lines = [{seq: 9, repo: 'org/repo', pr: 2, head: 'abc', path: 'b.go', line: 'next', at}]; seq = 9;
     sse['code-lines'](); await flush();
     assert.equal(feed.children.length, 3); assert.equal(timers.size, 0); assert.equal(scrolls.length, 0);
     return;
@@ -216,9 +219,9 @@ async function scenario(query, opts = {}) {
   assert.equal(timers.size, 1); assert.equal(scrolls.at(-1).behavior, 'smooth');
   assert(statusEl.textContent.includes('1 change waiting'));
   // Incoming work queues behind the paragraph being read.
-  lines = [{seq: 7, repo: 'org/repo', pr: 2, head: 'abc', path: 'b.go', line: 'next', at}]; seq = 7;
+  lines = [{seq: 9, repo: 'org/repo', pr: 2, head: 'abc', path: 'b.go', line: 'next', at}]; seq = 9;
   sse['code-lines'](); await flush();
-  assert.equal(requests.at(-1), '/api/matrix/lines?since=6&format=regions');
+  assert.equal(requests.at(-1), '/api/matrix/lines?since=8&format=regions');
   assert.equal(feed.children.length, 1); assert.equal(timers.size, 1);
   // P pauses and resumes; the button mirrors it.
   key('p'); assert.equal(timers.size, 0); assert.equal(button.textContent, 'Resume');

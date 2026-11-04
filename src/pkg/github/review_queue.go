@@ -324,7 +324,9 @@ func ReviewQueueKey(fullRepo string, number int) string {
 	return strings.ToLower(fmt.Sprintf("%s#%d", fullRepo, number))
 }
 
-func reviewQueueFullRepo(repo, org string) string {
+// ReviewQueueFullRepo qualifies a bare repo name with org for queue identities.
+// It trims whitespace and leaves empty or already-qualified repo names unchanged.
+func ReviewQueueFullRepo(repo, org string) string {
 	repo = strings.TrimSpace(repo)
 	org = strings.TrimSpace(org)
 	if repo == "" || strings.Contains(repo, "/") || org == "" {
@@ -361,7 +363,7 @@ func BuildReviewQueue(prs []PullRequest, opts ReviewQueueOptions) []ReviewQueueE
 	seen := make(map[string]bool, len(prs))
 	entries := make([]ReviewQueueEntry, 0, len(prs))
 	for _, pr := range prs {
-		full := reviewQueueFullRepo(pr.Repo, opts.Org)
+		full := ReviewQueueFullRepo(pr.Repo, opts.Org)
 		if full == "" || pr.Number <= 0 {
 			continue
 		}
@@ -605,7 +607,7 @@ func ReviewQueueFromActionable(actionable *ActionableResult, opts ReviewQueueOpt
 		held[k] = v
 	}
 	for _, pr := range actionable.PRs.Held {
-		held[ReviewQueueKey(reviewQueueFullRepo(pr.Repo, opts.Org), pr.Number)] = true
+		held[ReviewQueueKey(ReviewQueueFullRepo(pr.Repo, opts.Org), pr.Number)] = true
 	}
 	opts.Held = held
 	return BuildReviewQueue(prs, opts)
@@ -628,7 +630,7 @@ func StampReviewQueue(actionable *ActionableResult, opts ReviewQueueOptions) []R
 	}
 	stamp := func(prs []PullRequest) {
 		for i := range prs {
-			e, ok := byKey[ReviewQueueKey(reviewQueueFullRepo(prs[i].Repo, opts.Org), prs[i].Number)]
+			e, ok := byKey[ReviewQueueKey(ReviewQueueFullRepo(prs[i].Repo, opts.Org), prs[i].Number)]
 			if !ok {
 				continue
 			}

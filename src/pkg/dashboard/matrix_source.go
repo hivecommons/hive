@@ -383,13 +383,15 @@ func (m *matrixSource) removeLocked(key string) {
 // Since returns up to limit backlog lines with Seq > seq, oldest first, and the
 // latest sequence number. limit <= 0 means a default page.
 func (m *matrixSource) Since(seq uint64, limit int) ([]matrixLine, uint64) {
-	return m.SinceMatching(seq, limit, nil)
+	lines, latest, _ := m.SinceMatching(seq, limit, nil)
+	return lines, latest
 }
 
 // SinceMatching is Since restricted to lines keep accepts (nil keeps all).
 // limit counts only kept lines, so a page is never emptied by lines the caller
 // may not see while kept lines remain past it (hivecommons/hive#15979).
-func (m *matrixSource) SinceMatching(seq uint64, limit int, keep func(matrixLine) bool) ([]matrixLine, uint64) {
+// The final result reports whether another kept line remains after this page.
+func (m *matrixSource) SinceMatching(seq uint64, limit int, keep func(matrixLine) bool) ([]matrixLine, uint64, bool) {
 	if limit <= 0 {
 		limit = matrixDefaultSinceMax
 	}
@@ -397,13 +399,16 @@ func (m *matrixSource) SinceMatching(seq uint64, limit int, keep func(matrixLine
 	defer m.mu.Unlock()
 	n := len(m.ring)
 	out := make([]matrixLine, 0, min(limit, n))
-	for i := 0; i < n && len(out) < limit; i++ {
+	for i := 0; i < n; i++ {
 		l := m.ring[(m.next+i)%n]
 		if l.Seq > seq && (keep == nil || keep(l)) {
+			if len(out) == limit {
+				return out, m.seq, true
+			}
 			out = append(out, l)
 		}
 	}
-	return out, m.seq
+	return out, m.seq, false
 }
 
 // Latest is the sequence number of the newest accepted line; 0 when none.
