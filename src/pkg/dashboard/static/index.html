@@ -1728,6 +1728,11 @@
     .ham-seg.ham-activity-track.done { background: var(--panel-strong); color: var(--green); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing { background: var(--panel-strong); color: var(--status-error); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }
+    /* A not-yet-run track in the current phase (CI unknown on a 050 row,
+       Review queued beside running CI) keeps the same muted field as its
+       done / failing neighbours — the glyph alone, neutral — so the current
+       phase stays a visibly filled location (hivecommons/hive#16599). */
+    .ham-seg.ham-activity-track.todo.ham-current { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; }
     /* Words without motion (checks not reported, unknown evidence, a row
        parked on a person): current-phase text on a muted field, never amber. */
     .ham-seg.ham-activity-track.pending { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
