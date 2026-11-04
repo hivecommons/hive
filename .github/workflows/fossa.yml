@@ -20,7 +20,7 @@ jobs:
   fossa:
     name: FOSSA license scan
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
     steps:
@@ -33,10 +33,27 @@ jobs:
         if: env.FOSSA_API_KEY == ''
         run: echo "FOSSA_API_KEY secret not set; skipping FOSSA scan." >> "$GITHUB_STEP_SUMMARY"
 
+      # The key must be a push-only token from the *CNCF* FOSSA organization so
+      # the project lands in the CNCF instance (cncf/sandbox#545). `team` takes
+      # the team NAME, not the numeric id, and is honored only on the very first
+      # upload that creates the project (fossa-cli docs/references/files/fossa-yml.md).
+      # With `run-tests: true` the action runs ONLY `fossa test` (no analyze)
+      # and forwards `team`/`branch` to it, which `fossa test` rejects. So:
+      # always analyze (upload), then on PRs run the policy test separately.
       - name: Run FOSSA scan
         if: env.FOSSA_API_KEY != ''
         uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
-          run-tests: ${{ github.event_name == 'pull_request' }}
+          project: hivecommons/hive
+          team: Hive Commons
+          branch: ${{ github.head_ref || github.ref_name }}
+
+      - name: Run FOSSA policy test
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          project: hivecommons/hive
+          run-tests: true
           test-diff-revision: ${{ github.event.pull_request.base.sha }}
