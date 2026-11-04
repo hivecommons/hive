@@ -373,6 +373,11 @@ func cloneCIActivity(a *PRCIActivity) *PRCIActivity {
 	out.Required = append([]string(nil), a.Required...)
 	out.RequiredChecks = append([]PRRequiredCheck(nil), a.RequiredChecks...)
 	out.Checks = append([]PRActivityCheck(nil), a.Checks...)
+	if a.WorkflowApproval != nil {
+		wa := *a.WorkflowApproval
+		wa.RunIDs = append([]int64(nil), a.WorkflowApproval.RunIDs...)
+		out.WorkflowApproval = &wa
+	}
 	return &out
 }
 
