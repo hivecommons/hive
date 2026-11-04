@@ -7831,6 +7831,12 @@ type ReviewConfig struct {
 	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
 	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
 	FixerAgent         string   `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
+	// FixerFallbackAgents opts into routing repairs around an undeliverable
+	// fixer, in list order. Empty preserves the historical delivery behavior.
+	FixerFallbackAgents []string `yaml:"fixer_fallback_agents,omitempty" json:"fixer_fallback_agents,omitempty"`
+	// FixerFallbackAfterUndeliverable is the consecutive refusal threshold;
+	// zero uses 3, only when FixerFallbackAgents is non-empty.
+	FixerFallbackAfterUndeliverable int `yaml:"fixer_fallback_after_undeliverable,omitempty" json:"fixer_fallback_after_undeliverable,omitempty"`
 	// PostComments tells review-swarm reviewers to publish their verdict as a
 	// PR comment via the `hive-review` relay, in addition to returning the
 	// JSON aggregate. Opt-in: the zero value keeps the verdict internal, which

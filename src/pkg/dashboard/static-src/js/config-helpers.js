@@ -48,6 +48,10 @@
       markDirty('review', 'require_labels', parseReviewRequireLabels(text));
     }
 
+    function markDirtyReviewFixerFallbackAgents(text) {
+      markDirty('review', 'fixer_fallback_agents', String(text || '').split(',').map(s => s.trim()).filter(Boolean));
+    }
+
     // Reviewer agents pick-list (Settings → Features → Review Gate →
     // Reviewers, #13460). The checked rows become review.reviewer_agents; an
     // empty selection means "keyword scan", mirroring the server.
