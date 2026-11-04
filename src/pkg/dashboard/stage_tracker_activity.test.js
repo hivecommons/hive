@@ -28,7 +28,7 @@ function constLine(source, name) {
   return match[0];
 }
 const trackConsts = ['STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER', 'STAGE_TRACKER_WORKFLOW_APPROVAL_TIP', 'STAGE_TRACKER_RING_SEGMENT_GAP_MAX', 'STAGE_TRACKER_RING_RADIUS', 'STAGE_TRACKER_RING_GAP_DEG'].map(name => constLine(strip, name)).join('\n');
-const trackFns = ['stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
+const trackFns = ['stageTrackerHiveOwesReReview', 'stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
 const track = new Function('esc', 'stageTrackerIcon', trackConsts + '\n' + trackFns + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const header = new Function('esc', 'stageTrackerIcon', globals + fn(strip, 'stageTrackerHeaderHtml') + ';return stageTrackerHeaderHtml;')(esc, () => '');
@@ -493,7 +493,7 @@ test('Hive #16434 shape: missing current-head CI and review stay unknown but vis
   assert.match(cells.ci, /title="Current pipeline phase · CI: CI \?\/\? · no checks reported yet · /);
   assert.doesNotMatch(cells.ci, /no checks reported yet</);
   assert.match(cells.review, /ham-activity-track active ham-current/);
-  assert.match(cells.review, /Review · re-review pending \(new head\)</);
+  assert.match(cells.review, /Review · re-review of head</);
   assert.doesNotMatch(cells.cells[3], /aria-current|data-motion/);
 });
 
@@ -687,12 +687,14 @@ function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
   const html = render(item, [{ number: 30, short: 'PR in progress' }, { number: 50, short: 'CI / Review' }, { number: 70, short: 'Fixing', branch_from: 50 }], null, now, {});
   assert.equal((html.match(/<li /g) || []).length, 8, 'one PR strip, seven visible columns plus history');
   // Three qualify, two may light (#16540): CI and review running win; the
-  // stage chevron is settled-current — words kept, no pulse.
+  // stage chevron is settled-current — icon only, its words in the
+  // tooltip, no pulse (hivecommons/hive#16643).
   assert.equal((html.match(/data-motion="active"/g) || []).length, 2);
   assert.match(html, /class="ham-seg active ham-settled-current detoured"/);
   assert.doesNotMatch(html, /ham-settled-current[^>]*data-motion/);
   assert.match(html, /Waiting on CI and review, both running — /);
-  assert.match(html, /ham-detour[^>]*>Remediating · fixer/);
+  assert.match(html, /aria-label="[^"]*Remediating · fixer/);
+  assert.doesNotMatch(html, /ham-detour[^>]*>Remediating · fixer/, 'a deferred stage chevron carries no words');
   assert.match(html, /data-track="review"[^]*Review working · reviewer/);
   item.code_activity.observed_at = new Date(now - 300000).toISOString();
   const stale = render(item, stages, null, now, {});
@@ -766,7 +768,7 @@ test('the backend detail sentence rides in the track tooltip, not on the chevron
 });
 
 test('#16484: count grammar — CI passed/total and Review done/total across every state', () => {
-  const word = new Function(trackConsts + '\n' + fn(strip, 'stageTrackerWorkflowApprovalPending') + fn(strip, 'stageTrackerQueueAheadWord') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + ';return stageTrackerTrackWord;')();
+  const word = new Function(trackConsts + '\n' + fn(strip, 'stageTrackerWorkflowApprovalPending') + fn(strip, 'stageTrackerQueueAheadWord') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerTrackWord') + ';return stageTrackerTrackWord;')();
   const ci = (state, extra = {}) => word({ head: 'h', ci_activity: { head: 'h', state, ...extra } }, 'ci', true);
   assert.equal(ci('passing', { checks_passed: 14, checks_total: 14 }), 'CI 14/14 passed');
   assert.equal(ci('failing', { checks_passed: 11, checks_total: 14, checks_failed: 1, checks_failing: ['lint'] }), 'CI 11/14 · 1 failing (lint)');
@@ -779,7 +781,7 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   assert.equal(ci('missing', { checks_passed: 13, checks_total: 14, blocker: 'test' }), 'CI 13/14 · test not reported');
   assert.equal(ci('skipped', { checks_passed: 13, checks_total: 14, blocker: 'build' }), 'CI 13/14 · build skipped');
   assert.equal(ci('unknown'), 'CI ?/? · no checks reported yet');
-  assert.equal(ci('unknown', { checks_passed: 51, checks_total: 68 }), 'CI 51/68 · no verdict yet', 'unprotected base: head-wide counts without a required verdict');
+  assert.equal(ci('unknown', { checks_passed: 51, checks_total: 68 }), 'CI 51/68 · running', 'unprotected base: an unfinished head-wide ring is still running (#16631)');
   assert.equal(word({ head: 'h' }, 'ci', true), 'CI ?/? · no checks reported yet', 'no evidence at all in the current phase');
   assert.equal(word({ head: 'h' }, 'ci', false), '', 'no evidence outside the current phase: not started, glyph alone');
   assert.equal(word({ head: 'h', ci_activity: { head: 'old', state: 'passing', checks_passed: 14, checks_total: 14 } }, 'ci', true), 'CI ?/? · no checks reported yet', 'old-head evidence counts for nothing');
@@ -802,7 +804,7 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   assert.equal(review('unassigned', { perspectives_done: 0 }), 'Review 0/5 · queued');
   assert.equal(review('unassigned', { perspectives_done: 0, queue_ahead: 3 }), 'Review 0/5 · queued, 3 ahead');
   assert.equal(review('unknown', { perspectives_done: 0 }), 'Review 0/5 · queued');
-  assert.equal(review('unknown', { perspectives_done: 0 }, { push: { state: 'pushed', sha: 'h', next: 're-review' } }), 'Review 0/5 · re-review pending (new head)');
+  assert.equal(review('unknown', { perspectives_done: 0 }, { push: { state: 'pushed', sha: 'h', next: 're-review' } }), 'Review 0/5 · re-review of h');
   assert.equal(review('unknown'), 'Review 3/5 · perspectives', 'partial verdicts with no aggregate verdict yet');
   assert.equal(word({ head: 'h', review_activity: { head: 'h', state: 'approved' } }, 'review', true), 'Review approved', 'older servers without counts');
   assert.equal(word({ head: 'h' }, 'review', false), '');
@@ -822,7 +824,7 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
   // #16599: the pending re-review is not in motion and not the stage's own
   // track (070) → glyph alone, its words in the tooltip.
   assert.equal(cls(cells.review), 'todo', 'a pending re-review is an inactive glyph (#16599)'); assert.equal(text(cells.review), '');
-  assert.match(cells.review, /aria-label="[^"]*Review: Review 0\/5 · re-review pending \(new head\) · /);
+  assert.match(cells.review, /aria-label="[^"]*Review: Review 0\/5 · re-review of d3c0824 · /);
   assert.doesNotMatch(cells.review, /data-motion/);
   assert.match(cells.review, /hive is waiting on CI for new head d3c0824/, 'the tooltip still says which track leads');
   // #16491: review swarm requested, no bundle yet; CI shows its count.
@@ -854,4 +856,28 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
     assert.equal(text(cell), '');
     assert.match(cell, /<svg /);
   }
+});
+
+test('#16615: CI green on the pushed head + re-review owed by the hive → Review lit with the head, CI a green ring', () => {
+  const head = 'd88928e16f21ab6e653e5d06f137926bc0db1c0d';
+  const fresh = (state, extra = {}) => ({ head, state, caption: state, source: 'github-check-runs', observed_at: new Date(now).toISOString(), ...extra });
+  const text = cell => cell.match(/aria-describedby="[^"]+">([^]*?)<span id=/)[1].replace(/<[^>]*>/g, '');
+  const cls = cell => cell.match(/class="ham-seg ham-activity-track ([a-z -]+?)(?: ham-current)?"/)[1];
+  const item = livePR({ head, stage: 72, display_column: 50, author: 'thatguywob', author_kind: 'clanker',
+    push: { state: 'waiting', login: 'thatguywob' },
+    code_activity: { head, state: 'fix_pushed', caption: 'Fix pushed d88928e · re-review pending', actor: '@thatguywob', source: 'rework-commit' },
+    rework: { state: 'pushed', actor: 'thatguywob', evidence: 'commit', head, owed_by: 'hive-reviewer' },
+    ci_activity: fresh('passing', { checks_passed: 11, checks_total: 11, caption: 'CI green' }),
+    review_activity: fresh('unknown', { perspectives_done: 0, perspectives_total: 5 }) });
+  const cells = physicalTracks(item);
+  assert.equal(cls(cells.ci), 'done', 'CI complete: icon only'); assert.equal(text(cells.ci), '');
+  assert.match(cells.ci, /data-verdict="pass"/, 'green ring');
+  assert.match(cls(cells.review), /^active/, 'the owed re-review is the lit chevron');
+  assert.equal(text(cells.review), 'Review 0/5 · re-review of d88928e');
+  assert.match(cells.review, /hive is waiting on review for new head d88928e/);
+  assert.equal((cells.ci + cells.review).match(/ham-activity-track active/g).length, 1, 'exactly one active track');
+  // While CI still runs on the pushed head, CI is the lit one and Review waits as a glyph.
+  const running = physicalTracks({ ...item, ci_activity: fresh('running', { checks_passed: 7, checks_total: 11, active: true }) });
+  assert.equal(cls(running.ci), 'active'); assert.equal(text(running.ci), 'CI 7/11 · running');
+  assert.equal(cls(running.review), 'todo'); assert.equal(text(running.review), '');
 });

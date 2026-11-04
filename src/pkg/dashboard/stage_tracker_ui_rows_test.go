@@ -461,7 +461,15 @@ assert.ok(!row.includes('ham-issue-refs-chip'), 'closing link draws no refs chip
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Tracker', stage: 40, claim_reference: true, is_tracker: true, children: { total: 3, completed: 1 }, linked_prs: [{ number: 203, title: 'Draft work', stage: 10, base_ref: 'v6' }] }, stages, ctx);
 assert.ok(row.includes('<span class="ham-badge ham-issue-refs-chip" title="' + STAGE_TRACKER_SOFT_LINK_TIP + '">refs</span>'), 'issue refs chip: ' + row);
 assert.ok(row.includes('<span class="ham-badge">tracker 1/3</span>'), 'tracker progress: ' + row);
-assert.ok(row.includes('<span class="ham-badge">v6</span>'), 'covering PR base: ' + row);
+// The base pill sits at the row head by the repo chip, before the issue #N,
+// with the PR it describes in its tooltip — not in the PR column's cluster.
+assert.ok(row.includes('<span class="ham-base-pill" title="PR #203 targets v6">v6</span>'), 'covering PR base pill: ' + row);
+assert.ok(row.indexOf('ham-base-pill') < row.indexOf('>#9</a>'), 'base pill precedes the issue ref: ' + row);
+assert.ok(!row.includes('<span class="ham-badge">v6</span>'), 'base no longer a right-hand badge: ' + row);
+assert.ok(!row.slice(row.indexOf('ham-head-pr'), row.indexOf('ham-since')).includes('>v6<'), 'base absent from the PR column: ' + row);
+// No PR, no pill; a PR row carries its own base.
+assert.ok(!stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', title: 'Bare', stage: 10 }, stages, ctx).includes('ham-base-pill'), 'no PR → no base pill');
+assert.ok(stageTrackerRowHtml({ repo: 'acme/console', number: 204, kind: 'pr', title: 'Own row', stage: 60, base_ref: 'v5' }, stages, ctx).includes('<span class="ham-base-pill" title="PR #204 targets v5">v5</span>'), 'PR row base pill');
 
 // 040 shares the PR in progress column with 030; the chevron tooltip names the real stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Ordering drifts', stage: 40, linked_prs: [{ number: 103, title: 'Backport', author_kind: 'clanker', stage: 30 }, { number: 102, title: 'Fix it', url: 'u', author_kind: 'human', stage: 70, stage_since: new Date(now - 3600000).toISOString(), modifiers: ['needs-rebase'], caption: 'Rebasing onto main' }] }, stages, ctx);
@@ -493,23 +501,24 @@ sr = subs(row);
   const cell = (head.match(/<li class="ham-seg ham-head-pr"[^>]*>([\s\S]*?)<\/li>/) || [])[1] || '';
   assert.ok(cell, 'sub-row header has one PR cell: ' + head);
   assert.ok(!/<br|<div|<p\b/.test(cell), 'no block-level element inside the PR cell: ' + cell);
-  const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"'), cell.lastIndexOf('<span class="ham-badge">v5</span>')];
-  assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, PR link, lineage chip, base pill in that order as siblings: ' + cell);
-  assert.ok(cell.indexOf('<span class="ham-badge">v5</span>') > cell.indexOf('</a>', cell.indexOf('<a class="ham-pr-ref"')), 'the base pill is a sibling after the PR link, not inside it: ' + cell);
+  const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<span class="ham-base-pill" title="PR #15343 targets v5">v5</span>'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"')];
+  assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, base pill, PR link, lineage chip in that order as siblings: ' + cell);
+  assert.ok(!cell.includes('<span class="ham-badge">v5</span>'), 'the base is no longer a trailing badge: ' + cell);
   assert.ok(/<a class="ham-pr-ref"[^>]*title="docs: remove duplicate README run routes · /.test(cell), 'the PR link hover starts with the full title: ' + cell);
   assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<span class="ham-badges">'), 'the lineage chip rides the PR cell ahead of the modifier chips, not the chip toolbar: ' + head);
   assert.strictEqual((head.match(/ham-lineage/g) || []).length, 1, 'the lineage chip is drawn once');
 }
 // The same order on an issue row with a single covering PR: lineage chip
-// before the base pill, both after the PR link.
+// after the PR link; the base pill leads the row by the repo chip instead.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'One PR', stage: 40, linked_prs: [{ number: 15343, title: 'T', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted', from_number: 15226 } }] }, stages, ctx);
 {
   const cell = prCell(row);
-  assert.ok(cell.indexOf('<a class="ham-pr-ref"') < cell.indexOf('ham-lineage') && cell.indexOf('ham-lineage') < cell.indexOf('<span class="ham-badge">v5</span>'), 'PR link, lineage, base pill: ' + cell);
+  assert.ok(cell.indexOf('<a class="ham-pr-ref"') < cell.indexOf('ham-lineage') && !cell.includes('>v5</span>'), 'PR link, lineage; no base pill in the PR cell: ' + cell);
+  assert.ok(row.indexOf('<span class="ham-base-pill" title="PR #15343 targets v5">v5</span>') < row.indexOf('>#9</a>'), 'base pill ahead of the issue ref: ' + row);
 }
 // An incomplete lineage has no chip and must not add an extra separator.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Empty lineage', stage: 40, linked_prs: [{ number: 15343, title: 'T', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted' } }] }, stages, ctx);
-assert.match(prCell(row), /<\/a> <span class="ham-badge">v5<\/span>/, 'empty lineage leaves one separator before the base pill');
+assert.match(prCell(row), /<\/a><span class="ham-badges">/, 'empty lineage leaves no stray separator after the PR link');
 assert.ok(!prCell(row).includes('ham-lineage'), 'empty lineage renders no chip');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', stage: 30 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'kick running, no PR yet: the issue lights PR in progress and draws the steps ahead');
@@ -719,7 +728,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   // chevron; CI 11/11 is green words (done), the review finding red words
   // (failing), neither a fill.
   const changes = stageTrackerRowHtml({ repo: 'acme/console', number: 16456, kind: 'pr', stage: 70, display_column: 30, head: 'f269349', author: 'hive[bot]', author_kind: 'hive',
-    code_activity: { head: 'f269349', state: 'unassigned', caption: 'Changes requested · unassigned · next: scanner', source: 'no-pickup-evidence', since: seen, observed_at: seen },
+    code_activity: { head: 'f269349', state: 'unassigned', caption: 'Unassigned · next: scanner', source: 'no-pickup-evidence', since: seen, observed_at: seen },
     ci_activity: { head: 'f269349', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'f269349', state: 'changes_requested', caption: 'Review findings · changes requested', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } }, stages, ctx);
   assert.strictEqual(lit(changes), 1, 'changes requested in PR in progress: one filled chevron: ' + strip(changes));

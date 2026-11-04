@@ -8,7 +8,7 @@ type ACMMCriterion struct {
 	Level    int    // 0, 2, 3, 4, 5, 6
 	Category string
 	Name     string
-	Patterns []string // file paths to check (pass if ANY exists)
+	Patterns []string // paths or file-basename globs (pass if ANY exists)
 }
 
 // acmmLevelNames maps numeric ACMM levels to human-readable names. Levels
@@ -35,7 +35,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:prereq-test-suite", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Test suite",
 		Patterns: []string{"vitest.config.ts", "vitest.config.js", "jest.config.js", "jest.config.ts", "go.mod", "pytest.ini", "pyproject.toml", "test/", "tests/", "__tests__/", "spec/"}},
 	{ID: "acmm:prereq-e2e", Source: "acmm", Level: 0, Category: "prerequisite", Name: "E2E tests",
-		Patterns: []string{"playwright.config.ts", "playwright.config.js", "cypress.config.ts", "e2e/", "web/e2e/", "web/playwright.config.ts", "web/playwright.config.js", "test/e2e/", "tests/e2e/"}},
+		Patterns: []string{"playwright.config.ts", "playwright.config.js", "cypress.config.ts", "e2e/", "web/e2e/", "web/playwright.config.ts", "web/playwright.config.js", "test/e2e/", "tests/e2e/", ".github/workflows/test*-install*.yml", ".github/workflows/test*-install*.yaml", ".github/workflows/test*-boot*.yml", ".github/workflows/test*-boot*.yaml", ".github/workflows/*e2e*.yml", ".github/workflows/*e2e*.yaml"}},
 	{ID: "acmm:prereq-cicd", Source: "acmm", Level: 0, Category: "prerequisite", Name: "CI/CD pipeline",
 		Patterns: []string{".github/workflows/", ".gitlab-ci.yml", "Jenkinsfile", ".circleci/"}},
 	{ID: "acmm:prereq-pr-template", Source: "acmm", Level: 0, Category: "prerequisite", Name: "PR template",
