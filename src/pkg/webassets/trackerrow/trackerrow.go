@@ -12,8 +12,8 @@
 // The files are plain function declarations with no side effects. A host page
 // supplies what they call: the STAGE_TRACKER_* stage constants
 // (tracker-words-core.js and agent-now.js on the spoke) and esc(). The anchor
-// calls stageTrackerUnderRepair and stageTrackerMergeRefusalFromRaw only when
-// they are defined.
+// calls stageTrackerUnderRepair, stageTrackerMergeRefusalFromRaw and
+// stageTrackerPersonActsOnPR only when they are defined.
 package trackerrow
 
 import "embed"
