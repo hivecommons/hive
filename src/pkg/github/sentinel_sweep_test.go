@@ -859,7 +859,8 @@ func sentinelClearedFixture(t *testing.T, remover string, filesB []map[string]an
 // reviewed: the clearance carries over, no label and no new alert, and the
 // hive's marker comment is rewritten as the cleared alert for hB so the next
 // pass (a fresh client, as after a restart) stays quiet too. A later push that
-// changes the flagged file re-alerts.
+// changes the flagged file re-alerts, rewriting the hive's one comment for
+// the new head (#16433) rather than stamping the PR again.
 func TestSweepSentinelClearanceCarriesOverUnchangedFlaggedChanges(t *testing.T) {
 	filesB := []map[string]any{{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatch}}
 	f, client := sentinelClearedFixture(t, "danathar", filesB)
@@ -888,15 +889,15 @@ func TestSweepSentinelClearanceCarriesOverUnchangedFlaggedChanges(t *testing.T) 
 	f.checkSuites["hC"] = []string{"2026-10-25T04:00:00Z"}
 	f.mu.Unlock()
 	res, err := client().SweepSentinel(context.Background(), defaultSentinelOpts(nil))
-	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 2 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hC") {
-		t.Fatalf("a changed flagged file must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 2 || len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], SentinelMarker+" hC") {
+		t.Fatalf("a changed flagged file must re-alert by rewriting the hive's comment: res=%+v err=%v labels=%v comments=%v", res, err, f.labels[9], f.comments[9])
 	}
 }
 
 // The carry-over needs the same flagged content and a human's removal. A
 // changed patch, an added flagged file, a flagged file GitHub returns with
 // no patch, and a removal by a bot each leave the existing behaviour: hB is
-// alerted on and labelled.
+// alerted on and labelled, the hive's hA alert rewritten for hB (#16433).
 func TestSweepSentinelClearanceCarryOverRejected(t *testing.T) {
 	owners := map[string]any{"filename": "OWNERS", "status": "modified", "patch": sentinelOwnersPatch}
 	cases := []struct {
@@ -919,8 +920,8 @@ func TestSweepSentinelClearanceCarryOverRejected(t *testing.T) {
 			if got := f.labels[9]; len(got) != 2 {
 				t.Fatalf("label must be applied again: %v", got)
 			}
-			if len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hB") {
-				t.Fatalf("a fresh alert for hB must be posted: %v", f.comments[9])
+			if len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], SentinelMarker+" hB") || strings.Contains(f.comments[9][0], SentinelMarker+" hA") {
+				t.Fatalf("the hA alert must be rewritten for hB, not duplicated: %v", f.comments[9])
 			}
 		})
 	}
