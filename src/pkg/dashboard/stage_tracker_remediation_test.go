@@ -223,3 +223,43 @@ func TestStageTrackerRemediationJavaScript(t *testing.T) {
 		t.Fatalf("remediation chevron JavaScript: %v\n%s", err, output)
 	}
 }
+
+// hive#16509 shape: the review swarm asked for a human decision, then the
+// hive adopted the PR (074). Back in PR in progress the review word is the
+// verdict's substance — changes requested — not "awaiting human decision",
+// and the track is no longer active.
+func TestStageTrackerAdoptedRowRewordsHumanDecision(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		mutate   func(*StageTrackerItem)
+		rewarded bool
+	}{
+		{"adopted 074", func(it *StageTrackerItem) { it.Stage = trackerNumberAdopted }, true},
+		{"fixing 070", func(it *StageTrackerItem) { it.Stage = trackerNumberFixing }, true},
+		{"adopted but needs human", func(it *StageTrackerItem) { it.Stage = trackerNumberAdopted; it.NeedsHuman = true }, false},
+		{"adopted but on hold", func(it *StageTrackerItem) { it.Stage = trackerNumberAdopted; it.OnHold = true }, false},
+		{"parked at 085", func(it *StageTrackerItem) { it.Stage = trackerNumberNeedsDecision }, false},
+		{"older head", func(it *StageTrackerItem) { it.Stage = trackerNumberAdopted; it.ReviewActivity.Head = "old" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			it := &StageTrackerItem{Repo: "org/repo", Kind: "pr", Number: 9, Head: "abc1234def",
+				ReviewActivity: &StageTrackerActivity{Head: "abc1234def", State: "human_decision", Caption: "Review findings · human decision",
+					Blocker: "Should the API break?", Active: true, PerspectivesDone: 5, PerspectivesTotal: 5, Source: "verified-review-bundle"}}
+			tc.mutate(it)
+			stageTrackerAdoptHumanDecision(it)
+			a := it.ReviewActivity
+			if !tc.rewarded {
+				if a.State != "human_decision" || !a.Active {
+					t.Fatalf("human parking must keep the decision word: %+v", a)
+				}
+				return
+			}
+			if a.State != "changes_requested" || a.Caption != "Review findings · changes requested" || a.Active {
+				t.Fatalf("adopted row should carry the verdict as changes requested, inactive: %+v", a)
+			}
+			if !strings.Contains(a.Detail, "asked for a human decision") || !strings.Contains(a.Detail, "Should the API break?") || !strings.HasSuffix(a.Source, "+adopted-decision") {
+				t.Fatalf("the decision question and provenance ride in the detail/source: %q %q", a.Detail, a.Source)
+			}
+		})
+	}
+}

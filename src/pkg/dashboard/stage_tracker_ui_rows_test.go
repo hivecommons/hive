@@ -670,6 +670,26 @@ assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Not yet admitted to
 assert.ok(row.includes('aria-label="human · @cy"') && !row.includes('<title>'), 'author icon label is aria-only: ' + row);
 // Since cells are untouched: plain text, no title.
 assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/ham-since[^>]*title=/.test(golden), 'since cells unchanged');
+// hive#16509 row: adopted by hive with a finished review (5/5, human
+// decision asked). The Review track is done-style and muted — never the amber
+// in-progress fill — and reads the verdict, not "awaiting human decision";
+// 11/11 passed CI is done-style too.
+{
+  const seen = new Date(now - 60000).toISOString();
+  const adoptedRow = stageTrackerRowHtml({ repo: 'acme/console', number: 16509, kind: 'pr', stage: 74, display_column: 30, head: 'f269349', author: 'thatguywob', author_kind: 'human',
+    code_activity: { head: 'f269349', state: 'adopted', caption: 'Adopted by hive · activity', source: 'adoption', observed_at: seen },
+    ci_activity: { head: 'f269349', state: 'passing', caption: 'CI 11/11 passed', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: 'f269349', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
+  const review = /<li class="ham-seg ham-activity-track ([^"]*)" data-track="review"[^>]*>[\s\S]*?<\/li>/.exec(adoptedRow);
+  assert.ok(review, 'review track present: ' + adoptedRow);
+  assert.strictEqual(review[1], 'done decided', 'a finished review back in PR in progress is settled, not amber: ' + review[0]);
+  assert.ok(review[0].includes('Review 5/5 · changes requested</span>') && !review[0].includes('awaiting human') && !review[0].includes('data-motion='), review[0]);
+  const ci = /<li class="ham-seg ham-activity-track ([^"]*)" data-track="ci"/.exec(adoptedRow);
+  assert.strictEqual(ci[1], 'done', '11/11 passed is done-style: ' + adoptedRow);
+  const parkedRow = stageTrackerRowHtml({ repo: 'acme/console', number: 16510, kind: 'pr', stage: 85, display_column: 85, head: 'f269349', needs_human: true, author: 'thatguywob', author_kind: 'human',
+    review_activity: { head: 'f269349', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
+  assert.ok(/<li class="ham-seg ham-activity-track done decided" data-track="review"[^>]*>[\s\S]*?Review 5\/5 · awaiting human decision<\/span>/.test(parkedRow), 'genuinely parked on a person keeps the human word, still not amber: ' + parkedRow);
+}
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
 assert.ok(/<li class="ham-seg active cap merged" title="Merged — [^"]*" aria-current="step">/.test(row) && titled(strip(row)).length === 1, row);
