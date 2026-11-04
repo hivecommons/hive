@@ -1,0 +1,1 @@
+- Fixer queue keys and deferred-fix reconciliation now use the same repository qualification as the review queue, including whitespace trimming and empty-repository handling ([#16571](https://github.com/hivecommons/hive/pull/16571)).
