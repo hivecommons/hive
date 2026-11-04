@@ -7106,7 +7106,6 @@ body.reader-mode #hive-reader {
   --reader-text: #e8f5eb;
   --reader-muted: #b8ccbb;
   --reader-add: #7ee2a0;
-  --reader-del: #ff9a9a;
   --reader-tail: 10rem;
   position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column;
   background: var(--reader-bg); color: var(--reader-text); font: 20px/1.5 monospace;
@@ -7121,7 +7120,6 @@ body.reader-mode .reader-repo { color: var(--reader-text); font-weight: 600; }
 body.reader-mode a.reader-repo { text-decoration: underline; }
 body.reader-mode .reader-diff { margin: .5rem 0 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 body.reader-mode .reader-add { color: var(--reader-add); }
-body.reader-mode .reader-del { color: var(--reader-del); }
 body.reader-mode #hive-reader [hidden] { display: none !important; }
 body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
@@ -7544,13 +7542,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           return;
         }
         pending.push({key: regionKey(line), repo: line.repo, pr: Number(line.pr) || 0, path: line.path,
-          prURL: line.pr_url, stage: stage, lines: [line], lastSeq: seq, at: line.at});
+          stage: stage, lines: [line], lastSeq: seq, at: line.at});
       });
       if (pending.length > MAX_PENDING) pending = pending.slice(-MAX_PENDING);
     }
+    // The pull payload carries only repo and PR number; the link is derived.
     function prLink(region){
-      var url = typeof region.prURL === 'string' ? region.prURL : '';
-      if (/^https:\/\/[^\s"'<>]+\/pull\/\d+$/.test(url)) return url;
       if (/^[\w.-]+\/[\w.-]+$/.test(region.repo || '') && region.pr > 0) {
         return 'https://github.com/' + region.repo + '/pull/' + region.pr;
       }
@@ -7581,10 +7578,10 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       var time = element('time', 'reader-time', when.text, meta);
       if (when.iso) time.setAttribute('datetime', when.iso);
       var diff = element('pre', 'reader-diff', '', article);
+      // The source emits accepted added lines only.
       region.lines.forEach(function(line){
-        var removed = line.op === '-';
-        var row = element('span', 'reader-line ' + (removed ? 'reader-del' : 'reader-add'), '', diff);
-        row.textContent = (removed ? '\u2212 ' : '+ ') + line.line + '\n';
+        var row = element('span', 'reader-line reader-add', '', diff);
+        row.textContent = '+ ' + line.line + '\n';
       });
       return article;
     }
@@ -7673,14 +7670,23 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           if (!data) return;
           var seq = Number(data.seq) || 0;
           // A restarted hive can reset its sequence; start over cleanly.
-          if (seq < lastSeq) { stop(); pending = []; current = null; feed.replaceChildren(); }
-          var incoming = (Array.isArray(data.lines) ? data.lines : []).filter(function(line){
+          if (seq < lastSeq) { stop(); pending = []; current = null; lastSeq = 0; feed.replaceChildren(); }
+          var raw = Array.isArray(data.lines) ? data.lines : [];
+          var incoming = raw.filter(function(line){
             return line && typeof line.line === 'string' && typeof line.repo === 'string' && typeof line.path === 'string';
           });
           var source = typeof data.source === 'string' ? data.source : '';
           group(incoming, STAGES[source] || source || 'pushed');
-          lastSeq = seq;
+          // data.seq is the newest line the hive holds, not the last one in
+          // this page: the server caps a page, so resume from the last line
+          // returned and pull again until the page reaches the newest seq.
+          var returned = raw.length ? Number(raw[raw.length - 1] && raw[raw.length - 1].seq) || 0 : 0;
+          var more = returned > 0 && returned < seq;
+          lastSeq = more ? returned : seq;
           enabled = true; problem = '';
+          // Hold the reveal while catching up so a region split across
+          // pages still arrives as one paragraph.
+          if (more) { again = true; updateStatus(); return; }
           schedule(false);
         }).catch(function(){ problem = 'Code activity unavailable · retrying'; updateStatus(); })
         .finally(function(){ loading = false; if (again) pull(); });

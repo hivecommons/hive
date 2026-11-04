@@ -54,13 +54,12 @@
           return;
         }
         pending.push({key: regionKey(line), repo: line.repo, pr: Number(line.pr) || 0, path: line.path,
-          prURL: line.pr_url, stage: stage, lines: [line], lastSeq: seq, at: line.at});
+          stage: stage, lines: [line], lastSeq: seq, at: line.at});
       });
       if (pending.length > MAX_PENDING) pending = pending.slice(-MAX_PENDING);
     }
+    // The pull payload carries only repo and PR number; the link is derived.
     function prLink(region){
-      var url = typeof region.prURL === 'string' ? region.prURL : '';
-      if (/^https:\/\/[^\s"'<>]+\/pull\/\d+$/.test(url)) return url;
       if (/^[\w.-]+\/[\w.-]+$/.test(region.repo || '') && region.pr > 0) {
         return 'https://github.com/' + region.repo + '/pull/' + region.pr;
       }
@@ -91,10 +90,10 @@
       var time = element('time', 'reader-time', when.text, meta);
       if (when.iso) time.setAttribute('datetime', when.iso);
       var diff = element('pre', 'reader-diff', '', article);
+      // The source emits accepted added lines only.
       region.lines.forEach(function(line){
-        var removed = line.op === '-';
-        var row = element('span', 'reader-line ' + (removed ? 'reader-del' : 'reader-add'), '', diff);
-        row.textContent = (removed ? '\u2212 ' : '+ ') + line.line + '\n';
+        var row = element('span', 'reader-line reader-add', '', diff);
+        row.textContent = '+ ' + line.line + '\n';
       });
       return article;
     }
@@ -183,14 +182,23 @@
           if (!data) return;
           var seq = Number(data.seq) || 0;
           // A restarted hive can reset its sequence; start over cleanly.
-          if (seq < lastSeq) { stop(); pending = []; current = null; feed.replaceChildren(); }
-          var incoming = (Array.isArray(data.lines) ? data.lines : []).filter(function(line){
+          if (seq < lastSeq) { stop(); pending = []; current = null; lastSeq = 0; feed.replaceChildren(); }
+          var raw = Array.isArray(data.lines) ? data.lines : [];
+          var incoming = raw.filter(function(line){
             return line && typeof line.line === 'string' && typeof line.repo === 'string' && typeof line.path === 'string';
           });
           var source = typeof data.source === 'string' ? data.source : '';
           group(incoming, STAGES[source] || source || 'pushed');
-          lastSeq = seq;
+          // data.seq is the newest line the hive holds, not the last one in
+          // this page: the server caps a page, so resume from the last line
+          // returned and pull again until the page reaches the newest seq.
+          var returned = raw.length ? Number(raw[raw.length - 1] && raw[raw.length - 1].seq) || 0 : 0;
+          var more = returned > 0 && returned < seq;
+          lastSeq = more ? returned : seq;
           enabled = true; problem = '';
+          // Hold the reveal while catching up so a region split across
+          // pages still arrives as one paragraph.
+          if (more) { again = true; updateStatus(); return; }
           schedule(false);
         }).catch(function(){ problem = 'Code activity unavailable · retrying'; updateStatus(); })
         .finally(function(){ loading = false; if (again) pull(); });
