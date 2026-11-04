@@ -82,7 +82,7 @@ At 090 the row explains why: `· workflow files`, `· tests removed`, `· manual
 
 A verified merge from the canonical merge ledger is terminal whether Hive, a maintainer or another bot performed it. The last known root or linked PR model reaches **Merged** during the existing short terminal/pin window, even without an earlier queue observation. The comment names the actual recorded merger; an unknown actor stays unknown. This does not invent an earlier queue/admission state or close a merely related issue. A stale open refresh cannot undo a verified merge, and repeated delivery or later actor enrichment does not replay the merge or restart its window. Terminal visibility does not re-enable closed-PR actions.
 
-A failing external PR without a recorded Hive stage actor remains **CI failing · author-owned** when its PR author is known, **CI failing · owner recorded** for an observed claimant, or **CI failing · owner unknown** otherwise. Its work activity is unknown; missing internal worker evidence is not evidence that nobody is working. Inline and nested rows use the PR author or claimant, not the related issue's filer or holder. Explicit unclaimed Hive/bot routing and real CI failures remain unchanged.
+A failing external PR without a recorded Hive stage actor remains **Fix owed · author-owned** when its PR author is known, **Fix owed · owner recorded** for an observed claimant, or **Fix owed · owner unknown** otherwise (the red verdict itself is the CI chevron's word, never this lane's). Its work activity is unknown; missing internal worker evidence is not evidence that nobody is working. Inline and nested rows use the PR author or claimant, not the related issue's filer or holder. Explicit unclaimed Hive/bot routing and real CI failures remain unchanged.
 
 - With no covering PR, an issue has a full strip lit at Open, Actionable or Claimed.
 - With exactly one covering PR, issue and PR share one continuous strip; early issue steps are passed and the PR supplies the current stage, chip, tooltip and age.
@@ -430,6 +430,15 @@ E.g. `At Merge queue — waiting on CI.` / `You chose Approve · 15:55 (5 min ag
 The *state pill* says where the item is and what it is waiting on (`hold`, `needs human`, `stage ↓` …). The *working* cue on the lit chevron says Hive is doing something in that stage now; its tooltip explains the work. The *decision badge* (history mark with count) says a person acted here and what followed. These are separate signals: a recorded decision does not mean the requested effect happened.
 
 Plain words throughout — working / waiting on X / set back by Y / merged — nothing else blinks.
+
+#### Chevron activation — the canonical rules
+
+An *active* chevron is filled amber and carries words; an inactive one is its icon alone (CI / Review: the ring, green when the last run on this head passed, red when it failed, neutral when not yet run), with the counts in its tooltip. On every strip:
+
+1. **1 ≤ active ≤ 2.** At least one chevron is active — the column where the item is or where it is stuck.
+2. **CI and Review resolve first.** A track is active only while it genuinely runs on the current head (a check-run in progress or queued, a ring not yet full; a reviewer running or queued). If either runs, the PR is waiting on it: the stage chevron (PR in progress, Merge queue …) renders settled-current — filled but still, icon only, its words in the tooltip — and nothing else is active.
+3. **CI + Review is the only pair.** Two chevrons are active together only when both tracks run at once; every other combination is exactly one active chevron. The stage chevron is the ≥ 1 fallback: active only when no track is in motion.
+4. **The PR in progress chevron speaks the PR's lifecycle** — draft, pushed, rebasing, *Unassigned · next: scanner*, *Waiting for @author · fix owed* — never a CI or review verdict. *CI failing*, *CI 4/11 · 1 failing* and *changes requested* are the CI and Review chevrons' words; the PR in progress tooltip keeps the red reason as detail.
 
 #### The row's lead action, inline
 
