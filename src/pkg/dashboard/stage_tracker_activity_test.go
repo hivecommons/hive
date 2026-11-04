@@ -363,12 +363,12 @@ func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
 		state, want   string
 		detailMention string
 	}{
-		{"missing", ci(done("build"), done("lint")), "missing", `CI waiting · required check "test" hasn't reported for this head yet`, `check named "test"`},
-		{"running counts", ci(done("build"), chk("lint", "in_progress", ""), chk("test", "in_progress", "")), "running", "CI running · 1/3 checks done", "1 of the 3 required checks"},
-		{"queued", ci(done("build"), done("lint"), chk("test", "queued", "")), "queued", `CI queued · "test" waiting for a runner`, "not started"},
-		{"failing", ci(done("build"), chk("lint", "completed", "failure"), done("test")), "failing", `CI failing · "lint" red`, `"lint" finished without success`},
-		{"skipped", ci(done("build"), done("lint"), chk("test", "completed", "skipped")), "skipped", `CI skipped · check "test" skipped`, "does not count as a pass"},
-		{"ambiguous", ci(done("build"), done("lint"), done("test"), chk("test", "completed", "failure")), "unknown", `CI unknown · "test" reported but with no conclusion`, "several runs share the name"},
+		{"missing", ci(done("build"), done("lint")), "missing", `CI waiting · required check 'test' hasn't reported for this head yet`, `check named 'test'`},
+		{"running counts", ci(done("build"), chk("lint", "in_progress", ""), chk("test", "in_progress", "")), "running", `CI running · 'lint', 'test' pending`, "1 of the 3 required checks"},
+		{"queued", ci(done("build"), done("lint"), chk("test", "queued", "")), "queued", `CI queued · 'test' waiting for a runner`, "not started"},
+		{"failing", ci(done("build"), chk("lint", "completed", "failure"), done("test")), "failing", `CI failing · 'lint' red`, `'lint' finished without success`},
+		{"skipped", ci(done("build"), done("lint"), chk("test", "completed", "skipped")), "skipped", `CI skipped · check 'test' skipped`, "does not count as a pass"},
+		{"ambiguous", ci(done("build"), done("lint"), done("test"), chk("test", "completed", "failure")), "unknown", `CI unknown · 'test' reported but with no conclusion`, "several runs share the name"},
 		{"green", ci(done("build"), done("lint"), done("test")), "passing", "CI green · all 3 required checks passed", "reported success"},
 	}
 	for _, tc := range cases {
@@ -384,8 +384,8 @@ func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
 		pr   github.PullRequest
 		want string
 	}{
-		{"red+running", ci(done("build"), chk("lint", "completed", "failure"), chk("test", "in_progress", "")), "CI running · 2/3 checks done · 1 failing"},
-		{"missing+running", ci(done("build"), chk("lint", "in_progress", "")), "CI running · 1/3 checks done"},
+		{"red+running", ci(done("build"), chk("lint", "completed", "failure"), chk("test", "in_progress", "")), `CI running · 'test' pending · 1 failing`},
+		{"missing+running", ci(done("build"), chk("lint", "in_progress", "")), `CI running · 'lint', 'test' pending`},
 	}
 	for _, tc := range motion {
 		got := stageTrackerCIActivity(tc.pr, now)
@@ -393,7 +393,7 @@ func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
 			t.Fatalf("%s: want running %q active, got %+v", tc.name, tc.want, got)
 		}
 	}
-	if got := stageTrackerCIActivity(ci(done("build"), done("lint"), done("lint"), chk("test", "queued", "")), now); got.State != "queued" || got.Caption != `CI queued · "test" waiting for a runner` {
+	if got := stageTrackerCIActivity(ci(done("build"), done("lint"), done("lint"), chk("test", "queued", "")), now); got.State != "queued" || got.Caption != `CI queued · 'test' waiting for a runner` {
 		t.Fatalf("ambiguous+queued: a waiting runner keeps the ring queued, not unknown: %+v", got)
 	}
 	if got := stageTrackerCIActivity(ci(done("build"), chk("lint", "completed", "failure"), done("test")), now); got.State != "failing" || got.Active {
@@ -538,7 +538,7 @@ func TestStageTrackerActivityCIPartialRingIsRunning(t *testing.T) {
 			Required: required, RequiredSource: "protection", RequiredChecks: bindings, Checks: checks}}
 	}
 	got := stageTrackerCIActivity(build(13, 6), now)
-	if got.State != "running" || !got.Active || got.ChecksPassed != 13 || got.ChecksTotal != 19 || got.Caption != "CI running · 13/19 checks done" {
+	if got.State != "running" || !got.Active || got.ChecksPassed != 13 || got.ChecksTotal != 19 || got.Caption != "CI running · 6 checks pending" {
 		t.Fatalf("13/19 with 6 pending must be an active running track: %+v", got)
 	}
 	full := stageTrackerCIActivity(build(19, 0), now)
@@ -548,7 +548,126 @@ func TestStageTrackerActivityCIPartialRingIsRunning(t *testing.T) {
 	// Required set unknown: the head-wide count still reads motion.
 	loose := build(13, 6)
 	loose.CIActivity.RequiredKnown, loose.CIActivity.Required, loose.CIActivity.RequiredChecks = false, nil, nil
-	if got := stageTrackerCIActivity(loose, now); got.State != "running" || !got.Active || got.Caption != "CI running · 13/16 checks done" {
+	if got := stageTrackerCIActivity(loose, now); got.State != "running" || !got.Active || got.Caption != "CI running · 3 checks pending" {
 		t.Fatalf("head-wide count with checks in progress must run: %+v", got)
+	}
+}
+
+// hivecommons/hive#16630: a head with checks still reporting is running,
+// never "activity unknown" or "no check results observed"; the unreported
+// required check is one sentence in Detail, and "no verdict yet" / "no
+// check results observed" are reserved for a head with zero check runs.
+func TestStageTrackerActivityCIRunningWhileChecksPending(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	t1, t2, t3 := now.Add(-9*time.Minute), now.Add(-6*time.Minute), now.Add(-3*time.Minute)
+	name := func(i int) string { return fmt.Sprintf("check-%02d", i) }
+	run := func(n string, state, conclusion string, at *time.Time) github.PRActivityCheck {
+		return github.PRActivityCheck{Name: n, State: state, Conclusion: conclusion, Since: at}
+	}
+	// Row A: 11 required checks, 7 green, 3 in progress, "test" has no run yet.
+	rowA := func() github.PullRequest {
+		var required []github.PRRequiredCheck
+		var names []string
+		var checks []github.PRActivityCheck
+		for i := 0; i < 7; i++ {
+			required, names = append(required, github.PRRequiredCheck{Name: name(i), AppKnown: true}), append(names, name(i))
+			checks = append(checks, run(name(i), "completed", "success", &t1))
+		}
+		for i := 7; i < 10; i++ {
+			required, names = append(required, github.PRRequiredCheck{Name: name(i), AppKnown: true}), append(names, name(i))
+			checks = append(checks, run(name(i), "in_progress", "", &t3))
+		}
+		required, names = append(required, github.PRRequiredCheck{Name: "test", AppKnown: true}), append(names, "test")
+		return github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{Head: "head", Source: "github-check-runs", ObservedAt: &t2, StatusesKnown: true,
+			RequiredKnown: true, Required: names, RequiredSource: "protection", RequiredChecks: required, Checks: checks}}
+	}
+	// Row B: required set unknown, 66 check runs observed, 12 green, 54 running.
+	rowB := func() github.PullRequest {
+		var checks []github.PRActivityCheck
+		for i := 0; i < 12; i++ {
+			checks = append(checks, run(name(i), "completed", "success", &t1))
+		}
+		for i := 12; i < 66; i++ {
+			checks = append(checks, run(name(i), "in_progress", "", &t3))
+		}
+		return github.PullRequest{HeadSHA: "head", CIActivity: &github.PRCIActivity{Head: "head", Source: "github-check-runs", ObservedAt: &t2, Checks: checks}}
+	}
+	twoLeft := rowA()
+	twoLeft.CIActivity.Checks = twoLeft.CIActivity.Checks[:7]
+	twoLeft.CIActivity.Checks = append(twoLeft.CIActivity.Checks, run(name(7), "completed", "success", &t2), run(name(8), "completed", "success", &t2), run(name(9), "in_progress", "", &t3))
+	queuedOnly := rowA()
+	for i := 7; i < 10; i++ {
+		queuedOnly.CIActivity.Checks[i].State = "queued"
+	}
+	settledMissing := rowA()
+	settledMissing.CIActivity.Checks = settledMissing.CIActivity.Checks[:7]
+	empty := rowB()
+	empty.CIActivity.Checks = nil
+	cases := []struct {
+		name             string
+		pr               github.PullRequest
+		state, caption   string
+		passed, total    int
+		pending          int
+		since            *time.Time
+		detailHas        string
+		detailLacks      string
+		blocker          string
+		captionForbidden []string
+	}{
+		{"row A required: 7/11 with 3 running and test unreported", rowA(), "running", "CI running · 4 checks pending", 7, 11, 4, &t3,
+			`Required check 'test' has not reported for this head yet.`, "Branch protection requires", "", []string{"unknown", "waiting", "not reported"}},
+		{"row A with two left names them", twoLeft, "running", `CI running · 'check-09', 'test' pending`, 9, 11, 2, &t3,
+			`'test' has not reported`, "", "", []string{"unknown"}},
+		{"row A with only queued runs is queued, not missing", queuedOnly, "queued", "CI queued · 4 checks pending", 7, 11, 4, &t3,
+			`'test' has not reported`, "", "", []string{"unknown", "waiting"}},
+		{"row A with every run final keeps the missing verdict", settledMissing, "missing", `CI waiting · required check 'test' hasn't reported for this head yet`, 7, 11, 4, nil,
+			`check named 'test'`, "", "test", nil},
+		{"row B head-wide: 12/66 with 54 running", rowB(), "running", "CI running · 54 checks pending", 12, 66, 54, &t3,
+			"12 of the 66 checks observed on the head have a final result", "no check results observed", "", []string{"unknown", "no verdict", "no check results"}},
+		{"row B with zero runs is the only unknown", empty, "unknown", stageTrackerCINoDataCaption("head"), 0, 0, 0, nil,
+			"has not yet seen", "", "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stageTrackerCIActivity(tc.pr, now)
+			if got.State != tc.state || got.Caption != tc.caption {
+				t.Fatalf("state/caption = %s %q, want %s %q (%+v)", got.State, got.Caption, tc.state, tc.caption, got)
+			}
+			if got.ChecksPassed != tc.passed || got.ChecksTotal != tc.total || len(got.ChecksPending) != tc.pending || got.ChecksFailed != 0 {
+				t.Fatalf("counts = %d/%d pending %v failed %d, want %d/%d pending %d", got.ChecksPassed, got.ChecksTotal, got.ChecksPending, got.ChecksFailed, tc.passed, tc.total, tc.pending)
+			}
+			if !strings.Contains(got.Detail, tc.detailHas) || (tc.detailLacks != "" && strings.Contains(got.Detail, tc.detailLacks)) {
+				t.Fatalf("detail = %q, want mention of %q and none of %q", got.Detail, tc.detailHas, tc.detailLacks)
+			}
+			if strings.Count(got.Detail, "test") > 1 && tc.state != "missing" {
+				t.Fatalf("detail repeats the unreported check: %q", got.Detail)
+			}
+			if got.Blocker != tc.blocker {
+				t.Fatalf("blocker = %q, want %q", got.Blocker, tc.blocker)
+			}
+			if (tc.since == nil) != (got.Since == nil) || (tc.since != nil && !got.Since.Equal(*tc.since)) {
+				t.Fatalf("since = %v, want %v (latest check-run timestamp on the head)", got.Since, tc.since)
+			}
+			for _, word := range tc.captionForbidden {
+				if strings.Contains(strings.ToLower(got.Caption), word) {
+					t.Fatalf("caption %q must not say %q while checks are pending", got.Caption, word)
+				}
+			}
+		})
+	}
+	// Row B with a red check and runs still pending: motion leads the red
+	// neighbour (hivecommons/hive#16631); the caption carries both.
+	red := rowB()
+	red.CIActivity.Checks[0] = run(name(0), "completed", "failure", &t1)
+	if got := stageTrackerCIActivity(red, now); got.State != "running" || got.Caption != "CI running · 54 checks pending · 1 failing" || got.ChecksFailed != 1 || got.Blocker != "" {
+		t.Fatalf("red head-wide: %+v", got)
+	}
+	// Running is active whatever the poll's age, in the head-wide path too
+	// (hivecommons/hive#16643): the observation time rides the tooltip.
+	for _, pr := range []github.PullRequest{rowB(), func() github.PullRequest { fresh := rowB(); fresh.CIActivity.ObservedAt = &now; return fresh }()} {
+		if got := stageTrackerCIActivity(pr, now); !got.Active {
+			t.Fatalf("running head-wide should be active: %+v", got)
+		}
 	}
 }
