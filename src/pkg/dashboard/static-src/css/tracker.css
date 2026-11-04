@@ -329,7 +329,13 @@
     .ham-badge-reroute .ham-presence-dot { width: 0.5em; height: 0.5em; border-radius: var(--r-pill); background: var(--text-faint); flex: 0 0 auto; }
     .ham-badge-reroute.ham-reroute-online .ham-presence-dot { background: var(--status-ok); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; --ham-visible-columns: 7; }
-    .ham-strip:not(.ham-head-cols) { display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; }
+    /* The chevron strips (and the column header) are a grid; the title
+       line's strip is not — its lead / PR / cap cells size by flex. The
+       ham-head-cols class sits on the strip's row, not on the strip, so
+       the exclusion is spelled on the row: on the strip itself it matched
+       every strip and put the title line's cap chips in one chevron-wide
+       column, where wide chips spilled left over the PR title. */
+    .ham-strip-row:not(.ham-head-cols) > .ham-strip { display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-activity-track { clip-path: none; border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); flex-direction: column; align-items: flex-start; padding: var(--sp-1) var(--sp-2); white-space: normal; }
     .ham-track-name { font-weight: var(--fw-semibold); }
