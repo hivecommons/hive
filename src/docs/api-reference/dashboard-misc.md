@@ -119,3 +119,22 @@ PR writes. Push and same-head retry observations do not inherit an old fixer,
 owner or worker observation timestamp. Review completion uses the dispatch
 ledger's own agent/review-head/decision receipt and aggregate participation;
 another agent's same-perspective bundle verdict cannot settle that assignment.
+
+### Published-checkpoint regions
+
+`GET /api/matrix/lines?format=regions&since=<seq>&max=<lines>` selects whole
+changed regions from the existing authorized sentinel observer. Authentication
+and dashboard read permission are required, including in kiosk mode; responses
+use `Cache-Control: no-store`. Disabled capture returns 404. An active cold
+source returns 200 with an empty `regions` array and null `last_ingest_at`.
+
+The response contains continuation `seq`, source high-water mark `latest`, policy
+`epoch`, source label `Pushed PR`, stage `pushed-checkpoint`, `last_ingest_at`,
+`next_ingest_in_s`, and `regions`. Each region has its own sequence, repo, actual
+PR number and `pr_url`, head, path, stage, observed `at`, and ordered `lines`
+(`op` is `+` or `-`, `line` is untrimmed text). Follow response `seq`, not
+`latest`, until caught up. `max` is a line budget (1–500, default 200); the first
+eligible region is always returned whole, even if larger than the budget.
+Code buffers are bounded and memory-only, so this is not an audit history.
+Clear retained browser code on epoch changes and failed/disabled/unauthorized
+pulls. An empty response says nothing about work outside the admitted source.
