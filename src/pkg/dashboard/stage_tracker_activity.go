@@ -69,6 +69,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	}
 	if !a.RequiredKnown || a.RequiredSource == "" || len(a.RequiredChecks) == 0 || len(a.Required) == 0 {
 		stageTrackerCountHeadChecks(out, a)
+		stageTrackerHeadChecksMotion(out, a, now)
 		return out
 	}
 	type requiredObservation struct {
@@ -104,6 +105,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		}
 		if !found {
 			stageTrackerCountHeadChecks(out, a)
+			stageTrackerHeadChecksMotion(out, a, now)
 			return out
 		}
 	}
@@ -111,7 +113,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	// Per required-check name: the leading state across its observations,
 	// for the passed / failed counts.
 	perName := map[string]string{}
-	running := false
+	running, queued, queuedName := false, false, ""
 	// Per required-check name: which have a final result, for the running count.
 	settled := map[string]bool{}
 	for _, name := range a.Required {
@@ -134,6 +136,8 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			}
 		case check.State == "queued" || check.State == "waiting" || check.State == "pending" || check.State == "requested":
 			state = "queued"
+			queued = true
+			queuedName = name
 		case check.State == "in_progress":
 			state = "running"
 			running = true
@@ -170,6 +174,17 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	if statusesMissing {
 		out.State, out.Blocker = "unknown", "commit statuses not observed"
 	}
+	// Motion on the head leads every settled word: while any required
+	// check still runs or waits for a runner the track is running, however
+	// red, unreported or ambiguous its neighbours are — a ring that is not
+	// yet full is a running ring, so the chevron stays active with its
+	// count (hivecommons/hive#16631). The red names ride in ChecksFailing.
+	switch {
+	case running:
+		out.State, out.Blocker = "running", ""
+	case queued && out.State != "queued":
+		out.State, out.Blocker = "queued", queuedName
+	}
 	done := 0
 	for _, name := range a.Required {
 		if settled[name] {
@@ -197,7 +212,11 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Detail = "Required check " + check + " finished without success (failed, timed out, was cancelled, or needs action) on the PR's current commit. A fix or a re-run has to turn it green before CI can pass."
 	case "running":
 		out.Caption = fmt.Sprintf("CI running · %d/%d checks done", done, total)
-		out.Detail = fmt.Sprintf("%d of the %s have a final result; the rest are still executing on the PR's current commit.", done, plural(total, "required check"))
+		out.Detail = fmt.Sprintf("%d of the %s have a final result; the rest are still executing or waiting for a runner on the PR's current commit.", done, plural(total, "required check"))
+		if out.ChecksFailed > 0 {
+			out.Caption += fmt.Sprintf(" · %d failing", out.ChecksFailed)
+			out.Detail += fmt.Sprintf(" %s already red: %s.", plural(out.ChecksFailed, "required check"), strings.Join(out.ChecksFailing, ", "))
+		}
 	case "queued":
 		out.Caption = "CI queued · " + check + " waiting for a runner"
 		out.Detail = "Required check " + check + " has been requested for the PR's current commit but has not started executing yet."
@@ -231,10 +250,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Caption = "CI skipped · check " + check + " skipped"
 		out.Detail = "Required check " + check + " finished as skipped or neutral on the PR's current commit, which branch protection does not count as a pass."
 	}
-	out.Active = running && a.ObservedAt != nil && !a.ObservedAt.After(now) && now.Sub(*a.ObservedAt) <= trackerActivityFreshWindow
-	if running && out.State != "running" {
-		out.Caption += " · other checks still running"
-	}
+	out.Active = out.State == "running" && a.ObservedAt != nil && !a.ObservedAt.After(now) && now.Sub(*a.ObservedAt) <= trackerActivityFreshWindow
 	return out
 }
 
@@ -298,6 +314,37 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 			out.ChecksPassed++
 		}
 	}
+}
+
+// stageTrackerHeadChecksMotion turns the required-set-unknown count into a
+// running track while any check run on the head is still executing or
+// queued: the ring is not full, so the chevron must be active with its
+// count rather than a silent part-green glyph (hivecommons/hive#16631).
+func stageTrackerHeadChecksMotion(out *StageTrackerActivity, a *github.PRCIActivity, now time.Time) {
+	moving := 0
+	for _, check := range a.Checks {
+		if check.Head != "" && !strings.EqualFold(check.Head, a.Head) {
+			continue
+		}
+		switch check.State {
+		case "in_progress", "queued", "waiting", "pending", "requested":
+			moving++
+		}
+	}
+	if moving == 0 {
+		return
+	}
+	done := out.ChecksTotal - moving
+	if done < 0 {
+		done = 0
+	}
+	out.State, out.Blocker = "running", ""
+	out.Caption = fmt.Sprintf("CI running · %d/%d checks done", done, out.ChecksTotal)
+	out.Detail = fmt.Sprintf("%d of the %s observed on the PR's current commit have a final result; the rest are still executing or waiting for a runner. Which of them branch protection requires is not yet known.", done, plural(out.ChecksTotal, "check"))
+	if out.ChecksFailed > 0 {
+		out.Caption += fmt.Sprintf(" · %d failing", out.ChecksFailed)
+	}
+	out.Active = a.ObservedAt != nil && !a.ObservedAt.After(now) && now.Sub(*a.ObservedAt) <= trackerActivityFreshWindow
 }
 
 // stageTrackerExpectedPerspectives is the swarm's perspective set for this
