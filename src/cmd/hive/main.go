@@ -3440,6 +3440,10 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	// re-reads the issue into the cached snapshot and the Activity Monitor
 	// the way an inbound label webhook does (hivecommons/hive#14952).
 	github.SetItemRefreshHook(b.dashSrv.RefreshSelfEditedItem)
+	// A check/status delivery applied to a head's check set, or the
+	// coalesced re-read it scheduled, re-derives the Activity Monitor row
+	// at once (hivecommons/hive#16521).
+	github.SetCIEvidenceHook(b.dashSrv.RefreshCIEvidence)
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }

@@ -18,6 +18,9 @@ import (
 func TestStageTrackerRESTCheckPaginationMustCompleteBeforeProjection(t *testing.T) {
 	for _, mode := range []string{"complete", "partial", "malformed"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each mode observes the same head; the shared per-head CI
+			// evidence store must not carry one mode's listing into the next.
+			t.Cleanup(github.ResetCIEvidenceForTest(nil))
 			reads := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
