@@ -230,6 +230,9 @@ const wordsOnlyWhenActive = (item, s) => Array.from(s.matchAll(/<li class="ham-s
   const words = trackCopyText(m[0]);
   if (/\bactive\b/.test(m[1])) assert.ok(words, 'fixture #' + item.number + ' active track without words: ' + m[0]);
   else assert.strictEqual(words, '', 'fixture #' + item.number + ' inactive track carries words: ' + m[0]);
+  // hivecommons/hive#16643: a text-bearing track is active and nothing
+  // else — no muted / pending / settled class may dim its one amber fill.
+  if (words) assert.ok(/\bactive\b/.test(m[1]) && !/\b(?:pending|todo|done|failing|ham-settled-current)\b/.test(m[1]), 'fixture #' + item.number + ' text-bearing track is not plainly active: ' + m[1]);
 });
 // hivecommons/hive#16643: CI + Review is the only pair that may be active
 // together; a lit stage chevron (PR in progress, Merge queue …) is the row's

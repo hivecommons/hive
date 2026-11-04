@@ -287,3 +287,30 @@ test('#16628 shape: CI 13/19 with pending checks + review in progress → both t
   assert.match(full[4], /data-ring-done="19" data-ring-failed="0"/);
   assert.equal(litCount(full.join('')), 1, 'only Review is in motion');
 });
+
+// hivecommons/hive#16643: an active track has exactly one fill. The stalled
+// blocker track (#16567: CI waiting on workflow approval, nothing moving)
+// is plainly active — same class, same amber — with a stale poll conveyed
+// in the tooltip, never by dimming.
+test('a stalled or stale-polled text-bearing track is plainly active: one amber fill, no muted class', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
+  const rules = Array.from(css.matchAll(/([^{}]+)\{([^}]*)\}/g)).filter(m => /ham-activity-track[^,{]*\.active|\.active[^,{]*ham-activity-track/.test(m[1]) && /background/.test(m[2]));
+  assert.deepEqual(rules.map(m => m[1].trim()), [], 'no selector restyles the active track fill beyond .ham-seg.active: ' + rules.map(m => m[1].trim()).join(' | '));
+  assert.match(css, /\.ham-seg\.active \{ background: var\(--amber\); color: var\(--surface-0\); \}/);
+  const stalled = cells(redPR({ display_column: 50, stage: 50,
+    ci_activity: { head: 'abc1234def', state: 'missing', caption: 'CI waiting · 1 workflow run needs approval on GitHub', blocker: 'workflow-approval-required:1', checks_passed: 1, checks_total: 11, source: 'checks', observed_at: '2026-11-04T01:00:00Z' },
+    review_activity: { head: 'abc1234def', state: 'approved', caption: 'Review 5/5 approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }));
+  assert.match(stalled[4], /class="ham-seg ham-activity-track active ham-stalled ham-current"[^]*CI 1\/11 · waiting on workflow approval</);
+  assert.match(stalled[4], /title="[^"]*stale · 2026-11-04T01:00:00\.000Z/, 'the poll age rides the tooltip');
+  const old = cells(redPR({ display_column: 50, stage: 50,
+    ci_activity: { head: 'abc1234def', state: 'running', active: true, caption: 'CI running', checks_passed: 14, checks_total: 67, source: 'checks', observed_at: '2026-11-04T01:00:00Z' },
+    review_activity: { head: 'abc1234def', state: 'reviewing', active: true, caption: 'Review 0/5 · in progress', perspectives_done: 0, perspectives_total: 5, source: 'dispatch', observed_at: seen } }));
+  assert.match(old[4], /class="ham-seg ham-activity-track active ham-current"[^]*CI 14\/67 · running</, 'a stale poll of running CI is still plainly active');
+  for (const li of [...stalled, ...old]) {
+    const m = /<li class="([^"]*)"[^]*?<span class="ham-chevron-copy[^"]*">([^]*?)<\/span>/.exec(li);
+    const words = m ? m[2].replace(/<[^>]+>/g, '').trim() : '';
+    if (words) assert.ok(/\bactive\b/.test(m[1]) && !/\b(pending|todo|done|failing|ham-settled-current)\b/.test(m[1]), 'text without the one active fill: ' + m[1]);
+  }
+});
