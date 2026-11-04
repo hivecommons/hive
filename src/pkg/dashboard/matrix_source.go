@@ -2,11 +2,8 @@ package dashboard
 
 import (
 	"crypto/sha256"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"log/slog"
-	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -30,19 +27,7 @@ const (
 	matrixMaxFilesPerObs  = 300
 	matrixMaxPatchBytes   = 512 << 10
 	matrixDefaultSinceMax = 200
-	// matrixPersistLines is how many of the newest lines survive a restart
-	// (#16276): enough to refill the kiosk's 120-line window with headroom,
-	// small enough that each write is a few tens of kilobytes.
-	matrixPersistLines = 500
 )
-
-// matrixPersistFile is the on-disk shape of the backlog. Seq is the newest
-// sequence number so the counter continues across restarts and a kiosk
-// never sees seq go backwards (matrix.js resets on that).
-type matrixPersistFile struct {
-	Seq   uint64       `json:"seq"`
-	Lines []matrixLine `json:"lines"`
-}
 
 // matrixMaxDedupHashes caps dedup hashes across every tracked PR; a var so
 // tests can exercise the bound without 100k lines.
@@ -67,15 +52,27 @@ type matrixPRState struct {
 	touched   time.Time
 }
 
+type matrixQueuedObservation struct {
+	observation github.SentinelPatchObservation
+	epoch       string
+}
+
 // matrixSource turns sentinel patch observations into a bounded, scrubbed,
-// de-duplicated in-memory backlog. Observe never blocks; one goroutine does
-// all the parsing. Nothing is written to disk.
+// de-duplicated in-memory backlog. It owns the shared observer queue and its
+// legacy line projection. Observe never blocks; one goroutine does all the
+// parsing. Nothing is written to disk.
 type matrixSource struct {
-	cfg     atomic.Pointer[config.MatrixConfig]
-	in      chan github.SentinelPatchObservation
-	dropped atomic.Uint64
-	logger  *slog.Logger
-	now     func() time.Time
+	checkpoints *checkpointSource
+	// policyMu is held exclusively by setConfig and shared by observers, so
+	// concurrent Observe calls never contend with each other; only a policy
+	// update in flight makes an observer back off.
+	policyMu    sync.RWMutex
+	queuedEpoch atomic.Pointer[string]
+	cfg         atomic.Pointer[config.MatrixConfig]
+	in          chan matrixQueuedObservation
+	dropped     atomic.Uint64
+	logger      *slog.Logger
+	now         func() time.Time
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -99,11 +96,6 @@ type matrixSource struct {
 	// /api/matrix/lines so the kiosk can tell "no pushes" from "no ingest".
 	ingestAt    atomic.Int64
 	ingestEvery atomic.Int64
-
-	// persistPath, when set, receives the newest matrixPersistLines lines
-	// and the sequence counter after every ingest that added lines and on
-	// reset; restore reads it back on construction.
-	persistPath string
 }
 
 func newMatrixSource(cfg config.MatrixConfig, logger *slog.Logger) *matrixSource {
@@ -111,7 +103,7 @@ func newMatrixSource(cfg config.MatrixConfig, logger *slog.Logger) *matrixSource
 		logger = slog.Default()
 	}
 	m := &matrixSource{
-		in:     make(chan github.SentinelPatchObservation, matrixIngestCap),
+		in:     make(chan matrixQueuedObservation, matrixIngestCap),
 		logger: logger,
 		now:    time.Now,
 		stop:   make(chan struct{}),
@@ -119,15 +111,50 @@ func newMatrixSource(cfg config.MatrixConfig, logger *slog.Logger) *matrixSource
 		ring:   make([]matrixLine, 0, matrixBacklogCap),
 		prs:    make(map[string]*matrixPRState),
 	}
+	m.checkpoints = newCheckpointSource(cfg)
 	m.setConfig(cfg)
 	return m
 }
 
+// samePolicy reports whether cfg matches the policy already in force. The
+// reader poll refreshes the policy on every GET, so an unchanged policy must
+// not take the exclusive lock that makes observers back off.
+func (m *matrixSource) samePolicy(cfg config.MatrixConfig) bool {
+	cur := m.cfg.Load()
+	return cur != nil && m.queuedEpoch.Load() != nil && cur.Enabled == cfg.Enabled &&
+		slices.Equal(cur.Repos, cfg.Repos) && slices.Equal(cur.ExcludePaths, cfg.ExcludePaths)
+}
+
 func (m *matrixSource) setConfig(cfg config.MatrixConfig) {
+	if m.samePolicy(cfg) {
+		return
+	}
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+	if m.samePolicy(cfg) {
+		return
+	}
 	c := cfg
 	c.Repos = append([]string(nil), cfg.Repos...)
 	c.ExcludePaths = append([]string(nil), cfg.ExcludePaths...)
 	m.cfg.Store(&c)
+	if m.checkpoints != nil {
+		epoch := m.checkpoints.policyEpoch()
+		m.checkpoints.configure(c)
+		nextEpoch := m.checkpoints.policyEpoch()
+		m.queuedEpoch.Store(&nextEpoch)
+		if epoch != nextEpoch {
+			m.reset()
+			// Drop queued code as well as admitted code on policy changes.
+			for {
+				select {
+				case <-m.in:
+				default:
+					return
+				}
+			}
+		}
+	}
 }
 
 // admits applies the observation-level gates: Matrix active, hive-identified
@@ -138,14 +165,21 @@ func (m *matrixSource) admits(obs github.SentinelPatchObservation) bool {
 }
 
 // Observe is the sentinel PatchObserver. It gates the observation, then hands
-// it off without blocking: when the ingest channel is full the observation
-// is dropped and counted.
+// it off without blocking: when a policy update is in flight or the ingest
+// channel is full the observation is dropped and counted. Observers hold the
+// policy read lock, so sweeps running many observers at once do not drop
+// each other.
 func (m *matrixSource) Observe(obs github.SentinelPatchObservation) {
+	if !m.policyMu.TryRLock() {
+		m.dropped.Add(1)
+		return
+	}
+	defer m.policyMu.RUnlock()
 	if !m.admits(obs) {
 		return
 	}
 	select {
-	case m.in <- obs:
+	case m.in <- matrixQueuedObservation{observation: obs, epoch: *m.queuedEpoch.Load()}:
 	default:
 		m.dropped.Add(1)
 	}
@@ -168,11 +202,38 @@ func (m *matrixSource) run() {
 		select {
 		case <-m.stop:
 			return
-		case obs := <-m.in:
-			if m.safeIngest(obs) > 0 {
-				m.persist()
+		case queued := <-m.in:
+			if queued.epoch != m.checkpoints.policyEpoch() {
+				// Queued under a policy that no longer applies: neither
+				// projection ingests it. setConfig already reset the
+				// legacy backlog for the same change, so admitting the
+				// stale observation there would leak code the new policy
+				// never saw.
+				continue
+			}
+			before := m.Latest()
+			added := m.checkpoints.ingest(queued.observation, queued.epoch, m.now())
+			m.safeIngest(queued.observation)
+			if added > 0 && m.Latest() == before {
+				// Deletion-only checkpoints also wake the reader. The frame
+				// contains only the legacy sequence hint, never code.
+				m.nudgeCheckpoint()
 			}
 		}
+	}
+}
+
+func (m *matrixSource) nudgeCheckpoint() {
+	defer func() {
+		if recover() != nil {
+			m.logger.Warn("checkpoint notification failed")
+		}
+	}()
+	m.mu.Lock()
+	seq, notify := m.seq, m.notify
+	m.mu.Unlock()
+	if notify != nil {
+		notify(seq)
 	}
 }
 
@@ -180,100 +241,10 @@ func (m *matrixSource) safeIngest(obs github.SentinelPatchObservation) (added in
 	defer func() {
 		if r := recover(); r != nil {
 			added = 0
-			m.logger.Warn("matrix line source dropped an observation after a panic", "repo", obs.Repo, "number", obs.Number, "panic", fmt.Sprint(r))
+			m.logger.Warn("matrix line source dropped an observation after a panic", "repo", obs.Repo, "number", obs.Number)
 		}
 	}()
 	return m.ingest(obs)
-}
-
-// restore loads the persisted backlog: the lines refill the ring oldest
-// first, the sequence counter resumes from the file, and each line's hash
-// re-enters its PR's dedup set so re-observing the same head after a
-// restart adds nothing. A missing file is the normal first boot; a
-// malformed one is logged and ignored.
-func (m *matrixSource) restore() {
-	if m.persistPath == "" {
-		return
-	}
-	raw, err := os.ReadFile(m.persistPath)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			m.logger.Warn("matrix line source: state file unreadable; starting empty", "path", m.persistPath, "error", err)
-		}
-		return
-	}
-	var f matrixPersistFile
-	if err := json.Unmarshal(raw, &f); err != nil {
-		m.logger.Warn("matrix line source: state file malformed; starting empty", "path", m.persistPath, "error", err)
-		return
-	}
-	if len(f.Lines) > matrixPersistLines {
-		f.Lines = f.Lines[len(f.Lines)-matrixPersistLines:]
-	}
-	now := m.now()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var last uint64
-	for _, l := range f.Lines {
-		if l.Line == "" || l.Seq <= last {
-			continue
-		}
-		last = l.Seq
-		m.appendLocked(l)
-		key := l.Repo + "#" + strconv.Itoa(l.PR)
-		st := m.prs[key]
-		if st == nil {
-			st = &matrixPRState{hashes: make(map[[sha256.Size]byte]time.Time)}
-			m.prs[key] = st
-		}
-		st.touched = now
-		if st.head != l.Head {
-			st.head = l.Head
-			st.headCount = 0
-		}
-		h := sha256.Sum256([]byte(l.Path + "\x00" + l.Line))
-		if _, dup := st.hashes[h]; !dup {
-			m.totalHashes++
-		}
-		st.hashes[h] = l.At
-		st.headCount++
-	}
-	m.seq = max(f.Seq, last)
-	if m.seq > 0 {
-		m.logger.Info("matrix line source restored", "lines", len(m.ring), "seq", m.seq)
-	}
-}
-
-// persist writes the newest matrixPersistLines lines and the sequence
-// counter to persistPath atomically. It snapshots under the lock and writes
-// outside it; no path is a no-op.
-func (m *matrixSource) persist() {
-	if m.persistPath == "" {
-		return
-	}
-	m.mu.Lock()
-	n := len(m.ring)
-	start := 0
-	if n > matrixPersistLines {
-		start = n - matrixPersistLines
-	}
-	f := matrixPersistFile{Seq: m.seq, Lines: make([]matrixLine, 0, n-start)}
-	for i := start; i < n; i++ {
-		f.Lines = append(f.Lines, m.ring[(m.next+i)%n])
-	}
-	m.mu.Unlock()
-	raw, err := json.Marshal(f)
-	if err != nil {
-		return
-	}
-	tmp := m.persistPath + ".tmp"
-	err = os.WriteFile(tmp, raw, 0o644)
-	if err == nil {
-		err = os.Rename(tmp, m.persistPath)
-	}
-	if err != nil {
-		m.logger.Warn("matrix line source: state file write failed", "path", m.persistPath, "error", err)
-	}
 }
 
 // ingest filters one observation into the backlog and returns how many lines
@@ -446,12 +417,12 @@ func (m *matrixSource) Latest() uint64 {
 // never sees a sequence number reused.
 func (m *matrixSource) reset() {
 	m.mu.Lock()
+	clear(m.ring)
 	m.ring = m.ring[:0]
 	m.next = 0
 	m.prs = make(map[string]*matrixPRState)
 	m.totalHashes = 0
 	m.mu.Unlock()
-	m.persist()
 }
 
 // recordIngest notes that an ingest pass finished at `at` and the next one
@@ -505,8 +476,6 @@ func (s *Server) MatrixObserver(cfg config.MatrixConfig) func(github.SentinelPat
 	}
 	if s.matrix == nil {
 		s.matrix = newMatrixSource(cfg, s.logger)
-		s.matrix.persistPath = s.matrixPersistPath
-		s.matrix.restore()
 		s.matrix.setNotify(s.nudgeMatrixLines)
 		s.matrix.start()
 	} else {
@@ -531,25 +500,4 @@ func (s *Server) RecordMatrixIngest(at time.Time, every time.Duration) {
 		return
 	}
 	m.recordIngest(at, every)
-}
-
-// SetMatrixPersistPath names the file the Matrix line source keeps its
-// newest lines and sequence counter in (#16276), so a restart refills the
-// kiosk instead of showing it empty until the next sweep. It must be called
-// before the first active MatrixObserver; empty keeps the source in-memory.
-func (s *Server) SetMatrixPersistPath(path string) {
-	if s == nil {
-		return
-	}
-	s.matrixMu.Lock()
-	defer s.matrixMu.Unlock()
-	s.matrixPersistPath = path
-	// A source that already exists but has nothing yet can still take the
-	// backlog; one with lines keeps them and only persists from here on.
-	if s.matrix != nil && s.matrix.persistPath == "" && path != "" {
-		s.matrix.persistPath = path
-		if s.matrix.Latest() == 0 {
-			s.matrix.restore()
-		}
-	}
 }
