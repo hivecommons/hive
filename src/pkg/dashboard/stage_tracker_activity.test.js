@@ -597,7 +597,7 @@ test('unknown tracks wear the canonical column glyph beside their caption, prese
   }
 });
 
-test('known and original chevrons keep full long text inside a shared two-line copy with complete hover/focus metadata', () => {
+test('known and original chevrons keep full long text inside a shared one-line clamped copy with complete hover/focus metadata', () => {
   const handle = '@' + 'verylongunbrokenhandle'.repeat(12);
   const caption = 'Waiting for ' + handle + ' · not observed coding';
   const owner = physicalTracks(livePR({
@@ -612,10 +612,10 @@ test('known and original chevrons keep full long text inside a shared two-line c
   assert.match(known, /ham-chevron-copy ham-track-state"><a href=/);
   assert.ok(known.match(/role="tooltip">([^]*?)<\/span>/)[1].includes(handle));
   const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
-  assert.match(css, /--ham-chevron-text-lines: 2;/);
+  assert.match(css, /--ham-chevron-text-lines: 1;/);
   assert.match(css, /\.ham-chevron-copy \{[^}]*-webkit-line-clamp: var\(--ham-chevron-text-lines\);[^}]*white-space: normal; overflow-wrap: anywhere;/);
   assert.doesNotMatch(css, /\.ham-(?:seg-t|detour)\.ham-has-holder[^}]*white-space: nowrap/);
-  assert.match(css, /padding: var\(--sp-2\) calc\(var\(--ham-notch\) \+ var\(--sp-2\)\)/);
+  assert.match(css, /padding: var\(--sp-1\) calc\(var\(--ham-notch\) \+ var\(--sp-2\)\)/);
   assert.match(css, /\.config-tooltip\.ham-chevron-tip \{[^}]*pointer-events: auto/);
   assert.match(css, /#activity-monitor-panel \{ --ham-compact-min-width: 60em; \}/);
   assert.match(css, /\.ham-row > \.ham-strip-row, \.ham-sub > \.ham-strip-row, \.ham-cols > \.ham-strip-row \{ overflow-x: auto; \}/);
