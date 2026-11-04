@@ -18189,7 +18189,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Only settled verdicts outlive the freshness window; every other
       // state (running, queued, unassigned, waiting_ci, ...) implies motion.
       const settledState = ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing'].includes(state);
-      const moving = !settledState && state !== 'unknown';
       const fresh = Number.isFinite(observed) && !stale;
       const known = matches && state !== 'unknown' && (settledState || fresh);
       const active = known && fresh && a.active;
@@ -18227,7 +18226,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const age = Math.max(0, Math.floor((clock - observed) / 60000));
       const ago = age < 1 ? 'just now' : age < 60 ? age + 'm ago' : age < 1440 ? Math.floor(age / 60) + 'h ago' : Math.floor(age / 1440) + 'd ago';
-      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : observed > clock ? 'observation time in future · ' + new Date(observed).toISOString() : 'observed ' + ago + (stale && moving ? ' · stale' : '') + ' · ' + new Date(observed).toISOString();
+      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : observed > clock ? 'observation time in future · ' + new Date(observed).toISOString() : 'observed ' + ago + (stale ? ' · stale' : '') + ' · ' + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
       let blocker = matches && a.blocker && !caption.includes(a.blocker) ? ' · ' + a.blocker : '';
       // A sign-off ask: the tooltip carries the question itself (who should
