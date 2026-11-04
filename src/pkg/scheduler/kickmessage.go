@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/promptsrc"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
 )
 
@@ -140,6 +141,11 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 			strings.Join(labels, ","), title))
 		if diff := s.upstreamPortDiffURL(issue); diff != "" {
 			b.WriteString(fmt.Sprintf("    ↳ upstream patch: %s — read it first, then port the change to this fork by hand; do not cherry-pick across repos\n", diff))
+		}
+		if hasIssueLabel(issue.Labels, stagelabels.LabelReauthored) {
+			// The hive closed its own earlier PR for this issue after its
+			// fixer gave up; the fresh PR is this kick's to open.
+			b.WriteString("    ↳ re-authoring: the hive's earlier PR for this issue was closed as superseded after its fixer gave up; open a FRESH PR from the current base (do not reuse the old branch) and write `Supersedes #<old PR>` in the body\n")
 		}
 		if issue.ClaimContext != nil && issue.ClaimContext.Decision == github.ClaimDecisionReopenedAfterMerge {
 			prRef := fmt.Sprintf("%s#%d", issue.ClaimContext.PRRepo, issue.ClaimContext.PRNumber)

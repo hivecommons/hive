@@ -286,6 +286,13 @@ type PRPassFacts struct {
 	// stagelabels.FixerExhaustedReason(n) so a person decides instead of
 	// the row claiming "Fixing" with nobody on it (hivecommons/hive#15744).
 	FixerExhausted int
+	// Reauthoring is the issue the hive is re-authoring this PR for after
+	// its fixer gave up: the PR is closed as superseded and a fresh hive
+	// PR opens for that issue from the current base, so the PR stays on
+	// its fixing stage with stagelabels.ReauthoringReason(issue) rather
+	// than parking at 085 (a hive agent's PR needs no re-author pill).
+	// Zero when no re-author is under way.
+	Reauthoring int
 	// RecoveryUnauthorized is an observed exact-head CI recovery permission
 	// refusal. It parks the item without treating infrastructure as source work.
 	RecoveryUnauthorized string
