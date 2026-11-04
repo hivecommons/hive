@@ -176,7 +176,12 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 	// Rung 2 — mergeable as-is: the merge queue takes it; no adoption. An
 	// adoption that already stalled on a lane blocker (changes requested,
 	// attribution) is not one the gate would take on a green head alone.
-	if !in.Conflicting && in.CIGreen && !in.DCOMissing && !in.ReporterTrustHold && !in.AdoptionStalled {
+	// Nor is a head with a standing change request or a reviewer question
+	// on it: GitHub keeps a requested change blocking whatever the hive
+	// approves, and the review found something wrong with exactly this
+	// code (projectbluefin/testsuite#1057: approved "as it is" over a
+	// maintainer's CHANGES_REQUESTED on the head).
+	if !in.Conflicting && in.CIGreen && !in.DCOMissing && !in.ReporterTrustHold && !in.AdoptionStalled && in.ChangeRequest() == "" && !in.HeadNeedsPerson() {
 		d := releasePR(RuleMergeableAsIs, "approve "+ref+": the head is mergeable and green, so it goes to the merge queue as it is", "a mergeable, green head needs no adoption; the merge queue takes it (hivecommons/hive#15289)")
 		return out(d, "mergeable and green; handed to the merge queue")
 	}
@@ -241,6 +246,12 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		}
 		return out(d, in.OfflineWording()+"; adopted in supersede mode")
 	}
+	// A standing change request alone is not one rung 5 adopts over: the
+	// direction names it, and the record says why rung 2 did not approve.
+	if cr := in.ChangeRequest(); cr != "" {
+		skip(RuleContributorOffline, "nothing but "+cr+" holds the head back")
+		return out(fixThenMerge(fixList(in)), cr+" still stand; the direction names them")
+	}
 	return Decision{}, false
 }
 
@@ -294,6 +305,12 @@ func mergeBlockers(in Input) string {
 	if in.AdoptionStalled {
 		b = append(b, "adoption stalled on a lane blocker")
 	}
+	if cr := in.ChangeRequest(); cr != "" {
+		b = append(b, cr+" still stand")
+	}
+	if in.HeadNeedsPerson() {
+		b = append(b, "the hive's review on this head asks a person")
+	}
 	if len(b) == 0 {
 		return "not mergeable"
 	}
@@ -311,6 +328,11 @@ func fixList(in Input) []string {
 	}
 	if in.CIRed() {
 		fix = append(fix, "make CI green without widening scope")
+	}
+	// A standing change request is work, not a question: the decision
+	// names it rather than releasing the head over it.
+	if cr := in.ChangeRequest(); cr != "" {
+		fix = append(fix, "address "+cr)
 	}
 	return fix
 }
