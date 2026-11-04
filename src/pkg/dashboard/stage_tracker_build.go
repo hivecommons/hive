@@ -524,7 +524,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// A push projection can advance the head ahead of the cached PR list.
 		// Never leave old-head approval/check verdicts on the projected item.
 		if it.CIActivity == nil || !strings.EqualFold(it.CIActivity.Head, it.Head) {
-			it.CIActivity = trackerUnknownActivity(it.Head, "CI unknown · current-head checks not observed")
+			it.CIActivity = trackerUnknownActivity(it.Head, "CI unknown · no check results observed for this head yet")
 		}
 		if it.ReviewActivity == nil || !strings.EqualFold(it.ReviewActivity.Head, it.Head) {
 			currentPR := github.PullRequest{Repo: activityItem.Repo, Number: it.Number, HeadSHA: it.Head, Author: it.Author}

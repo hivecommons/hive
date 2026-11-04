@@ -37,7 +37,10 @@
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
       const blocker = matches && a.blocker ? ' · ' + a.blocker : '';
-      let tip = caption + blocker + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
+      // The backend's plain-language sentence behind the caption rides in
+      // the tooltip only; the chevron clamps the caption.
+      const detail = matches && a.detail ? ' · ' + a.detail : '';
+      let tip = caption + blocker + detail + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
       const ownsPR = item.kind === 'pr' || item.via_pr;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
