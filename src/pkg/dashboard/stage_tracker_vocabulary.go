@@ -133,10 +133,13 @@ func stageTrackerMergeReadyEvidence(it *StageTrackerItem) bool {
 }
 
 // stageTrackerNotMergeReadyEvidence: a track on the current head says the
-// PR is short of merge-ready (review not approved, CI not green).
+// PR is short of merge-ready (review not approved, CI not green). CI that
+// is queued or running on the same head is a re-run, not a regression, so
+// it does not count.
 func stageTrackerNotMergeReadyEvidence(it *StageTrackerItem) bool {
 	return (stageTrackerActivityOnHead(it, it.ReviewActivity) && it.ReviewActivity.State != "approved") ||
-		(stageTrackerActivityOnHead(it, it.CIActivity) && it.CIActivity.State != "passing")
+		(stageTrackerActivityOnHead(it, it.CIActivity) && it.CIActivity.State != "passing" &&
+			it.CIActivity.State != "queued" && it.CIActivity.State != "running")
 }
 
 // stageTrackerStagePhrase is the stage as a lowercase clause for the

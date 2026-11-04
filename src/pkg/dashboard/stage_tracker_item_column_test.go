@@ -167,6 +167,12 @@ func TestStageTrackerPersonActsOnPRColumn(t *testing.T) {
 		{"decision with CI red, review approved", func(it *StageTrackerItem) {
 			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", ci("failing"), review("approved")
 		}, trackerColumnPR},
+		{"approved decision with CI running on the head keeps the gate", func(it *StageTrackerItem) {
+			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", ci("running"), review("approved")
+		}, trackerColumnMergeGate},
+		{"approved decision with CI queued on the head keeps the gate", func(it *StageTrackerItem) {
+			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", ci("queued"), review("approved")
+		}, trackerColumnMergeGate},
 		{"bare 085 decision keeps the gate (#14821)", func(it *StageTrackerItem) {
 			it.Reason, it.UnauthorizedStep, it.CIActivity, it.ReviewActivity = "", "", nil, nil
 		}, trackerColumnMergeGate},
