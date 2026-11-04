@@ -78,7 +78,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			verb = "needs"
 		}
 		out.Caption = fmt.Sprintf("CI waiting · %s %s approval on GitHub", plural(wa.Pending, "workflow run"), verb)
-		out.Detail = "GitHub is holding workflow runs for this commit behind Approve and run workflows."
+		out.Detail = "GitHub is holding workflow runs for this commit until a maintainer can approve workflows on GitHub."
 		if wa.PermissionDenied {
 			out.Caption = "CI waiting · needs workflow approval on GitHub"
 			out.Detail = "The App was refused workflow approval (actions: write is required). A maintainer must click Approve and run workflows on GitHub."
