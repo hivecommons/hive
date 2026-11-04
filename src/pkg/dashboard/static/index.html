@@ -18193,6 +18193,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const known = matches && state !== 'unknown' && (settledState || fresh);
       const active = known && fresh && a.active;
       const perspectives = known && kind === 'review' && Array.isArray(a.perspectives) ? a.perspectives : [];
+      // Mirrors trackerPerspectiveFindingLine in stage_tracker_activity.go:
+      // the dedupe below is an exact string match, so glyph and separator
+      // changes must land on both sides.
       const perspectiveMark = verdict => verdict === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(verdict) ? '✗' : verdict === 'requires_human' ? 'requires human' : verdict || '?';
       const perspectiveLine = p => String(p.name || 'Perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
       // A repair projection can rewrite the generic caption; keep its first
@@ -18488,7 +18491,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const clock = Number(nowMs) || Date.now();
         const fresh = Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
         if ((a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state)) && !fresh) return name + ' activity unknown · last observed ' + (a.state || 'unknown');
-        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · stale observation' : '');
+        // A settled verdict on the current head does not go stale: age it
+        // the way the chevron tooltip does ("observed 15m ago · stale").
+        const age = Math.max(0, Math.floor((clock - observed) / 60000));
+        const ago = age < 1 ? 'just now' : age < 60 ? age + 'm ago' : age < 1440 ? Math.floor(age / 60) + 'h ago' : Math.floor(age / 1440) + 'd ago';
+        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : observed > clock ? ' · observation time in future' : !fresh ? ' · observed ' + ago + ' · stale' : '');
       }).join(' · ') : '';
       return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
     }
