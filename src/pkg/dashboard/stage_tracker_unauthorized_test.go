@@ -31,11 +31,11 @@ func TestStageTrackerUnauthorizedFromReason(t *testing.T) {
 	for _, tc := range []struct {
 		name, reason, wantStep, wantTip string
 	}{
-		{name: "approve workflow runs", reason: approve, wantStep: "approve workflow runs", wantTip: "`actions: write`"},
+		{name: "approve workflow runs", reason: approve, wantStep: "approve workflow runs", wantTip: "'actions: write'"},
 		{name: "human-approved suffix is stripped", reason: approve + ":human-approved@pat", wantStep: "approve workflow runs", wantTip: "Approve and run"},
-		{name: "another step", reason: prstage.StageReasonUnauthorizedPrefix + "update-branch", wantStep: "update branch", wantTip: "permission to update branch"},
-		{name: "label without a reason", reason: "contributor-lane:soaking(1h)", wantTip: "lacks a permission for the next step"},
-		{name: "empty", reason: "", wantTip: "lacks a permission for the next step"},
+		{name: "another step", reason: prstage.StageReasonUnauthorizedPrefix + "update-branch", wantStep: "update branch", wantTip: "permission needed to update branch"},
+		{name: "label without a reason", reason: "contributor-lane:soaking(1h)", wantTip: "missing a permission needed for the next step"},
+		{name: "empty", reason: "", wantTip: "missing a permission needed for the next step"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			step, tip := stageTrackerUnauthorized(tc.reason)
@@ -63,7 +63,7 @@ func TestStageTrackerUnauthorizedPayload(t *testing.T) {
 	s.statusMu.Unlock()
 	resp := s.buildStageTracker(s.status, store, now)
 	it := trackerItem(t, resp, "pr", 130)
-	if it.Stage != 85 || !hasMod(it, modUnauthorized) || it.UnauthorizedStep != "approve workflow runs" || !strings.Contains(it.Unauthorized, "`actions: write`") {
+	if it.Stage != 85 || !hasMod(it, modUnauthorized) || it.UnauthorizedStep != "approve workflow runs" || !strings.Contains(it.Unauthorized, "'actions: write'") {
 		t.Fatalf("row = stage %d mods %v step %q tip %q", it.Stage, it.Modifiers, it.UnauthorizedStep, it.Unauthorized)
 	}
 	if !strings.HasPrefix(it.Caption, "Waiting for a maintainer · approve workflow runs on GitHub") || !strings.Contains(it.Caption, "not permitted to approve workflow runs") || it.Actor != "maintainer" {
@@ -73,7 +73,7 @@ func TestStageTrackerUnauthorizedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"unauthorized_step":"approve workflow runs"`) || !strings.Contains(string(raw), `"unauthorized":"The hive's GitHub App lacks`) {
+	if !strings.Contains(string(raw), `"unauthorized_step":"approve workflow runs"`) || !strings.Contains(string(raw), `"unauthorized":"The hive bot's GitHub App is missing`) {
 		t.Fatalf("payload lacks the unauthorized fields: %s", raw)
 	}
 	if clean := trackerItem(t, resp, "pr", 101); clean.UnauthorizedStep != "" || clean.Unauthorized != "" || hasMod(clean, modUnauthorized) {
@@ -118,15 +118,15 @@ func TestStageTrackerUnauthorizedJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 	}, "\n") + `
-const tip = "The hive's GitHub App lacks \u0060actions: write\u0060, so it cannot approve the workflow runs.";
+const tip = "The hive bot's GitHub App is missing the 'actions: write' permission needed to approve the workflow runs.";
 const item = { kind: 'pr', stage: 85, modifiers: ['unauthorized'], unauthorized_step: 'approve workflow runs', unauthorized: tip };
 const pill = stageTrackerChipsHtml(item);
-assert.ok(pill.includes('ham-mod-unauthorized') && pill.includes('>unauthorized<'), pill);
+assert.ok(pill.includes('ham-mod-unauthorized') && pill.includes('>hive bot lacks permission<'), pill);
 assert.ok(pill.includes('title="' + esc(tip) + '"'), pill);
 assert.ok(STAGE_TRACKER_HUMAN_MODS.includes('unauthorized') && STAGE_TRACKER_MOTION_HUMAN_MODS.includes('unauthorized'));
 assert.ok(stageTrackerNeedsAttention(item));
 // unauthorized outranks the needs-* chips but yields to hold, a human instruction.
-assert.ok(stageTrackerChipsHtml({ stage: 85, modifiers: ['needs-decision', 'unauthorized'] }).includes('>unauthorized +1<'));
+assert.ok(stageTrackerChipsHtml({ stage: 85, modifiers: ['needs-decision', 'unauthorized'] }).includes('>hive bot lacks permission +1<'));
 assert.ok(stageTrackerChipsHtml({ stage: 10, modifiers: ['unauthorized', 'hold'] }).includes('>hold +1<'));
 // The 085 chevron names the human step owed; without a step the generic word stays.
 assert.strictEqual(stageTrackerUnauthorizedWord(item), 'Waiting for a maintainer · approve workflow runs on GitHub');

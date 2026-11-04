@@ -8395,7 +8395,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         <input id="activity-monitor-q" class="ham-input" type="search" placeholder="Search # or title…" autocomplete="off" spellcheck="false" aria-label="Search by number or title" data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w">
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
-        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, unauthorized, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
+        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, hive bot lacks permission, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
         <button type="button" class="ham-chip ham-chip--waiting" id="activity-monitor-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="false" title="Only items parked on you: a decision asked at 045 / 085, a PR ready for a human merge at 090, an approval the hive cannot give, or a contributor offline past their grace so you are the fallback. Same rows as the sidebar's orange badge and the topbar's Waiting on you pill">Waiting on you</button>
         <label class="ham-repo-filter"><span>Decisions</span><select id="activity-monitor-acted" class="ham-select" data-change-action="hamFilter" data-arg0="acted" data-arg-types="s,v" aria-label="Filter by whether you acted on the row" title="Awaiting my decision: parked on a person, no action recorded yet. I acted: an action was recorded from this dashboard (history badge). Acted, still stuck: acted, but the item has not moved past that stage (amber history badge)"><option value="any">Any</option><option value="awaiting">Awaiting my decision</option><option value="acted">I acted</option><option value="stuck">Acted, still stuck</option></select></label>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
@@ -15383,7 +15383,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // "workflow-files" / "untrusted-author" / "branch-protection", falling
     // back to "policy"); the tooltip carries the payload's one-sentence
     // human_merge_reason_text (hivecommons/hive#14658).
-    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'hive bot lacks permission', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
     // 090 under the breaking-change rule (human_merge_reason
     // "breaking-change": a ⚠️ title or needs-owner-merge label,
     // hivecommons/hive#15442): no approval lets the hive merge it, so the
@@ -16262,7 +16262,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_NEEDS_HUMAN_STAGES = [15, 45, 85, 90];
     const STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES = [71, 72];
     const STAGE_TRACKER_NEEDS_HUMAN_MODS = ['needs-human', 'needs-decision', 'unauthorized'];
-    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, or a needs-human / unauthorized pill';
+    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, or a needs-human / hive-bot-lacks-permission pill';
     const STAGE_TRACKER_ON_HOLD_TIP = 'Paused on purpose with a hold label — waiting on nobody; remove the hold to resume';
     // Label families a chip row is built from, in display order; other
     // labels follow when at least two items carry them.
@@ -17653,7 +17653,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
+    // hive:unauthorized reads "hive bot lacks permission", never "unauthorized": the App
+    // installation is missing a permission, nobody did anything illegitimate (hivecommons/hive#16639).
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe', unauthorized: 'hive bot lacks permission' };
     // The draft pill and the Draft chevron explain themselves on hover: no
     // maintainer action is pending, the lanes resume when the author is ready.
     const STAGE_TRACKER_DRAFT_TIP = 'Draft PR — hive review and merge lanes skip drafts until the author marks it ready for review.';
@@ -18582,7 +18584,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
-      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Unauthorized: ' + item.unauthorized);
+      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Hive bot lacks permission: ' + item.unauthorized);
       if (mods.indexOf('hold') >= 0 && typeof stageTrackerHoldPill === 'function' && stageTrackerHoldPill(item)) lines.push(stageTrackerHoldPill(item));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
@@ -18685,7 +18687,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The regressed pill (lead or folded into "+1") explains itself on
       // hover; failing that, a draft pill (lead or folded) does.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      // An unauthorized pill names the missing App permission and the human step;
+      // A hive-bot-lacks-permission pill names the missing App permission and the human step;
       // the regressed pill explains itself; a blocked pill names what it waits on;
       // failing all three, a draft pill does.
       const anyBlockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
