@@ -61382,6 +61382,14 @@ function burnAreaChart() {
             <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="scanner (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
+            <label>Fallback fixer agents (comma-separated) ${yamlHint('review.fixer_fallback_agents[]')} ${settingHelpMark('review-swarm', 'configuration', 'Fallback fixer agents', `Ordered agent IDs to try when the primary fixer cannot accept kicks. The first available fallback receives the repair without interrupting another turn. An empty list disables fallback routing.`)}</label>
+            <input type="text" value="${esc((rv.fixer_fallback_agents || []).join(', '))}" placeholder="e.g. fixer, scanner-2" spellcheck="false" data-change-action="markDirtyReviewFixerFallbackAgents" data-arg-types="w">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Undeliverable kicks before fallback ${yamlHint('review.fixer_fallback_after_undeliverable')} ${settingHelpMark('review-swarm', 'configuration', 'Undeliverable kicks before fallback', `Consecutive undeliverable kicks before trying a fallback. 0 uses the default of 3. After at least one refusal, a fixer whose transcript exceeds its busy_no_activity_threshold can yield earlier. Requires a non-empty fallback agent list.`)}</label>
+            <input type="number" min="0" step="1" value="${esc(String(rv.fixer_fallback_after_undeliverable || ''))}" placeholder="3 (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_fallback_after_undeliverable" data-arg-types="s,s,N">
+          </div>
+          <div class="config-field" style="margin-top:10px">
             <label>Human decision label ${yamlHint('review.human_decision_label')} ${settingHelpMark('review-swarm', 'configuration', 'Human decision label', `An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.`)}</label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
           </div>
@@ -63788,6 +63796,10 @@ function burnAreaChart() {
     }
     function markDirtyReviewRequireLabels(text) {
       markDirty('review', 'require_labels', parseReviewRequireLabels(text));
+    }
+
+    function markDirtyReviewFixerFallbackAgents(text) {
+      markDirty('review', 'fixer_fallback_agents', String(text || '').split(',').map(s => s.trim()).filter(Boolean));
     }
 
     // Reviewer agents pick-list (Settings → Features → Review Gate →

@@ -78,6 +78,8 @@ func TestReviewSettingsRenderEveryKey(t *testing.T) {
 		{"review.confidence_score", `data-section="review" data-key="confidence_score"`},
 		{"review.priority_labels", `data-section="review" data-key="priority_labels"`},
 		{"review.fixer_agent", `data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w"`},
+		{"review.fixer_fallback_agents[]", `data-change-action="markDirtyReviewFixerFallbackAgents" data-arg-types="w"`},
+		{"review.fixer_fallback_after_undeliverable", `data-arg0="review" data-arg1="fixer_fallback_after_undeliverable" data-arg-types="s,s,N"`},
 		{"review.human_decision_label", `data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w"`},
 		{"review.self_authored_decision_policy", `data-arg0="review" data-arg1="self_authored_decision_policy" data-arg-types="s,s,v"`},
 		{"review.max_reviews_per_head", `data-arg0="review" data-arg1="max_reviews_per_head" data-arg-types="s,s,N"`},
