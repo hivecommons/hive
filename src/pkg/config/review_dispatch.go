@@ -237,3 +237,27 @@ func (r ReviewConfig) ValidateDeltaMaxAge() error {
 	}
 	return nil
 }
+
+// EffectiveFixerFallbackAfterUndeliverable is zero while fallback routing is
+// disabled, so setting a threshold alone cannot change existing behavior.
+func (r ReviewConfig) EffectiveFixerFallbackAfterUndeliverable() int {
+	if len(r.EffectiveFixerFallbackAgents()) == 0 {
+		return 0
+	}
+	if r.FixerFallbackAfterUndeliverable > 0 {
+		return r.FixerFallbackAfterUndeliverable
+	}
+	return 3
+}
+
+// EffectiveFixerFallbackAgents returns the ordered, non-empty agent names.
+func (r ReviewConfig) EffectiveFixerFallbackAgents() []string {
+	return trimmedNonEmpty(r.FixerFallbackAgents)
+}
+
+func (r ReviewConfig) ValidateFixerFallback() error {
+	if r.FixerFallbackAfterUndeliverable < 0 {
+		return fmt.Errorf("review: fixer_fallback_after_undeliverable must be >= 0")
+	}
+	return nil
+}
