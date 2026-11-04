@@ -722,6 +722,7 @@
     .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
     .merge-banner-head { font-weight: var(--fw-semibold); }
     .merge-banner-head .merge-banner-num { color: var(--amber); font-variant-numeric: tabular-nums; }
+    .merge-banner-head .merge-banner-by { font-weight: 500; }
     .merge-banner-text { margin-top: var(--sp-1); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .merge-banner-links { margin-top: var(--sp-2); display: flex; gap: var(--sp-4); font-size: var(--fs-xs); }
     .merge-banner-links button, .merge-banner-links a { border: 0; padding: 0; background: transparent; color: var(--accent); cursor: pointer; font: inherit; text-decoration: none; }
