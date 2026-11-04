@@ -64,6 +64,31 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	}
 }
 
+// #16510: polling an exhausted rebase episode must keep warning locally
+// without turning the intentional handoff into a repeated runtime defect.
+func TestRebaseAttemptsExhaustedLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "rebase attempts exhausted; leaving the conflict to a person"
+	for i := 0; i < 10; i++ {
+		logger.Warn(msg, "repo", "projectbluefin/fsdk-containers", "number", 491,
+			"head", "c0ad5df0927de888c373ccf9b5caead751ef9a6f", "attempts", 2,
+			"max", 2, "timed_out", 2, "mergeable_state", "dirty")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected rebase handoff produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	if !strings.Contains(out.String(), msg) || !strings.Contains(out.String(), `"timed_out":2`) {
+		t.Fatal("local logs lost the warning or its diagnostics")
+	}
+	logger.Warn("rebase failed", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("rebase failure must remain reportable: %+v", *seen)
+	}
+}
+
 func TestHandlerWithAttrsCarriesBoundAttrsIntoDiagnostics(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.With("agent", "quality").WithGroup("req").Warn("ledger write failed", "path", "/data/x.json")

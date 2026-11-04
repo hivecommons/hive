@@ -3329,7 +3329,13 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 			// the disconnect path finds nothing to release: no release cooldown
 			// on an issue the contributor never received, no lease left to
 			// expire, no rate-window slot spent on a task that never shipped.
-			h.logger.Warn("[contribute-ws] failed to send task_assign; releasing the undelivered claim", "error", err, "task", task.TaskID)
+			// A Close frame can win the race with selection's GitHub calls.
+			// ErrCloseSent is then expected teardown, not a hub defect (#16496).
+			level := slog.LevelWarn
+			if errors.Is(err, websocket.ErrCloseSent) {
+				level = slog.LevelInfo
+			}
+			h.logger.Log(context.Background(), level, "[contribute-ws] failed to send task_assign; releasing the undelivered claim", "error", err, "task", task.TaskID)
 			h.rollbackAssignment(s.contributor, task.TaskID)
 			return true
 		}

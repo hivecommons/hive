@@ -883,6 +883,12 @@ func IsGitHubUpstreamUnavailable(s string) bool {
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// The bounded rebase loop hands an unresolved conflict to a person after
+	// its attempt cap. Repeated polls of that same handoff are expected, not
+	// a runtime defect (#16510). Keep other rebase failures reportable.
+	if strings.TrimSpace(m) == "rebase attempts exhausted; leaving the conflict to a person" {
+		return true
+	}
 	// A moved held branch requires fresh review: this is the hold guard
 	// enforcing merge safety, not a runtime defect (#16100). Match only the
 	// successful refusal; provenance, comment and re-hold failures stay reportable.

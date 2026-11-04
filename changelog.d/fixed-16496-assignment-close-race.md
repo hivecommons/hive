@@ -1,0 +1,1 @@
+- Contributor assignments that race with an already-sent WebSocket close frame still release their undelivered claim, but now log at INFO instead of triggering repeated-error self-reports.
