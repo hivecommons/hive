@@ -1,0 +1,25 @@
+body.reader-mode #hive-dashboard-root { display: none !important; }
+body.reader-mode #hive-reader {
+  --reader-bg: #0b0f0c;
+  --reader-surface: #121a14;
+  --reader-text: #e8f5eb;
+  --reader-muted: #b8ccbb;
+  --reader-add: #7ee2a0;
+  --reader-del: #ff8f8f;
+  --reader-tail: 10rem;
+  position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column;
+  background: var(--reader-bg); color: var(--reader-text); font: 20px/1.5 monospace;
+}
+body.reader-mode .reader-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-3) var(--sp-5); color: var(--reader-muted); font-size: var(--fs-touch); overflow-wrap: anywhere; }
+body.reader-mode .reader-status { flex: 1 1 auto; color: var(--reader-text); }
+body.reader-mode .reader-pause { font: inherit; color: var(--reader-text); background: var(--reader-surface); border: 1px solid var(--reader-muted); border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-6); cursor: pointer; }
+body.reader-mode .reader-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--sp-0) var(--sp-5) var(--reader-tail); }
+body.reader-mode .reader-card { max-width: 80rem; margin: 0 auto 1.5rem; padding: var(--sp-3) var(--sp-5); background: var(--reader-surface); border-radius: var(--radius); }
+body.reader-mode .reader-meta { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--reader-muted); font-size: var(--fs-touch); overflow-wrap: anywhere; }
+body.reader-mode .reader-repo { color: var(--reader-text); font-weight: 600; }
+body.reader-mode a.reader-repo { text-decoration: underline; }
+body.reader-mode .reader-diff { margin: .5rem 0 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+body.reader-mode .reader-add { color: var(--reader-add); }
+body.reader-mode .reader-del { color: var(--reader-del); }
+body.reader-mode #hive-reader [hidden] { display: none !important; }
+body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }

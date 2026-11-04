@@ -34,9 +34,11 @@ css/review-campaigns.css
 css/kiosk.css
 css/popout.css
 css/matrix.css
+css/reader.css
 css/variables.css
 glue/style-close-body-open.html
 js/matrix.js
+js/reader.js
 js/boot.js
 glue/boot-script-close.html
 html/auth.html
