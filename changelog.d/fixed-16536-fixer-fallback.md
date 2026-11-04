@@ -1,0 +1,1 @@
+- Add opt-in ordered fixer fallback agents, configurable in Settings, so review fixes and stale red-PR repairs can bypass an undeliverable primary without interrupting its turn ([#16536](https://github.com/hivecommons/hive/issues/16536)).

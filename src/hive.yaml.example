@@ -857,6 +857,11 @@ governor:
 #                               # perspective; shared review boilerplate is sent once instead of once
 #                               # per perspective. Verdicts stay per-perspective. Default false.
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
+#   fixer_fallback_agents: [] # opt-in ordered repair lanes, e.g. [fixer, scanner-2]
+#   fixer_fallback_after_undeliverable: 3 # consecutive refusals before rerouting;
+#                       # 0 defaults to 3 only when the fallback list is non-empty.
+#                       # A busy fixer silent past its busy_no_activity_threshold
+#                       # (default 30m) also yields. No turn is interrupted.
 #   pending_ttl: 45m    # re-dispatch a review whose kick posted no verdict after this long
 #                       # (Go duration; default 45m; negative disables expiry)
 #   pending_fix_ttl: 2h # dispatch the next bounded fix attempt when a fixer turn has
