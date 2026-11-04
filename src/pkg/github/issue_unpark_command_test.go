@@ -1269,3 +1269,12 @@ func TestParseUnparkCommandKeepsDecisionTextAfterFirstLine(t *testing.T) {
 		t.Fatalf("single-line decision = %+v", single)
 	}
 }
+
+func TestHasIssueParkingLabelHeldAfterDecision(t *testing.T) {
+	if hasIssueParkingLabel([]string{"needs-human", HumanAckLabel}) {
+		t.Fatal("needs-human + approved-direction without a park stage is held, not parked")
+	}
+	if !hasIssueParkingLabel([]string{"needs-human", HumanAckLabel, NeedsDecisionStageLabel}) {
+		t.Fatal("a stage/045 park label keeps the issue parked")
+	}
+}
