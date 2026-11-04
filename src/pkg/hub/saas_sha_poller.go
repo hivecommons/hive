@@ -1103,15 +1103,18 @@ func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger
 	return msg
 }
 
-// commitMsgThrottleWait derives the global back-off from X-RateLimit-Reset,
-// then Retry-After, falling back to commitMsgBackoff; capped at
-// commitMsgGlobalBackoffMax.
+// commitMsgThrottleWait derives the global back-off from Retry-After first,
+// then X-RateLimit-Reset, falling back to commitMsgBackoff; capped at
+// commitMsgGlobalBackoffMax. Retry-After wins because GitHub sends
+// X-RateLimit-Reset on every response, so a secondary-rate-limit 403 with
+// Retry-After: 60 must park fetches for ~60s, not until the primary window
+// resets.
 func commitMsgThrottleWait(h http.Header, now time.Time) time.Duration {
 	wait := commitMsgBackoff
-	if reset, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil && time.Unix(reset, 0).After(now) {
-		wait = time.Unix(reset, 0).Sub(now)
-	} else if secs, err := strconv.Atoi(h.Get("Retry-After")); err == nil && secs > 0 {
+	if secs, err := strconv.Atoi(h.Get("Retry-After")); err == nil && secs > 0 {
 		wait = time.Duration(secs) * time.Second
+	} else if reset, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil && time.Unix(reset, 0).After(now) {
+		wait = time.Unix(reset, 0).Sub(now)
 	}
 	if wait > commitMsgGlobalBackoffMax {
 		wait = commitMsgGlobalBackoffMax

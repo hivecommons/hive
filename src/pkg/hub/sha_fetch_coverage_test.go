@@ -431,6 +431,31 @@ func TestFetchCommitMessageThrottleBacksOffAllSHAs(t *testing.T) {
 	}
 }
 
+func TestCommitMsgThrottleWaitPrefersRetryAfter(t *testing.T) {
+	now := time.Now()
+	h := http.Header{}
+	h.Set("X-RateLimit-Reset", strconv.FormatInt(now.Add(50*time.Minute).Unix(), 10))
+	h.Set("Retry-After", "60")
+	if got := commitMsgThrottleWait(h, now); got != 60*time.Second {
+		t.Errorf("wait with Retry-After and X-RateLimit-Reset = %v, want 60s", got)
+	}
+
+	h.Del("Retry-After")
+	if got := commitMsgThrottleWait(h, now); got != 50*time.Minute {
+		t.Errorf("wait with only X-RateLimit-Reset = %v, want 50m", got)
+	}
+
+	h.Set("X-RateLimit-Reset", strconv.FormatInt(now.Add(-time.Minute).Unix(), 10))
+	if got := commitMsgThrottleWait(h, now); got != commitMsgBackoff {
+		t.Errorf("wait with stale reset = %v, want %v", got, commitMsgBackoff)
+	}
+
+	h.Set("Retry-After", strconv.Itoa(int((commitMsgGlobalBackoffMax+time.Hour)/time.Second)))
+	if got := commitMsgThrottleWait(h, now); got != commitMsgGlobalBackoffMax {
+		t.Errorf("wait above cap = %v, want %v", got, commitMsgGlobalBackoffMax)
+	}
+}
+
 func TestFetchCommitMessage404DoesNotParkOtherSHAs(t *testing.T) {
 	resetSHACaches(t)
 	githubWarnMu.Lock()
