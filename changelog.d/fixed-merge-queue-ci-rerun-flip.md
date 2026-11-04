@@ -1,0 +1,1 @@
+- A human-gated (085) PR that is approved on its current head now stays in the Merge queue column while CI on that head is queued or re-running, instead of flipping to PR in progress and back as checks cycle; failing CI or an unapproved review still moves it out ([#16595](https://github.com/hivecommons/hive/issues/16595)).
