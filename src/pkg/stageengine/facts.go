@@ -162,9 +162,11 @@ type IssueFacts struct {
 	BlockerShort string
 	// ApprovedDirectionLabel is the `approved-direction` label the issue
 	// wears (a recorded /hive approve|decision), "" when absent. Next to
-	// `needs-human` it is the stale one — the un-park that applied it
-	// removed the park label, so a surviving `needs-human` came later —
-	// and the writer clears it (hivecommons/hive#15099).
+	// `needs-human` and a structured Blocker it is the stale one and the
+	// writer clears it (hivecommons/hive#15099); next to a plain
+	// `needs-human` the decision stands and the remainder is held for a
+	// person out of the pipeline, not re-parked at 045
+	// (hivecommons/hive#16579).
 	ApprovedDirectionLabel string
 	// UmbrellaLabel is the never-claim label the issue carries
 	// (governor.claims.never_claim_labels, default `epic`).
