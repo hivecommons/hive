@@ -178,6 +178,8 @@
     .ham-repo-tint-4 { --ham-repo-tint: var(--ham-repo-tint-4); }
     .ham-repo-tint-5 { --ham-repo-tint: var(--ham-repo-tint-5); }
     .ham-repo-chip.ham-repo-primary { --ham-repo-tint: var(--text-muted); }
+    /* The PR's base branch: same height and type as the repo chip it follows, muted border, no tint. */
+    .ham-base-pill { flex: 0 0 auto; display: inline-block; font: inherit; font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.5; padding: 0 var(--sp-2); border-radius: var(--r-sm); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: baseline; }
     .ham-pr-line { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; }
     /* Group-by-repo header row: sticky under the column header while its
        rows scroll, caret toggle, chip, owner/repo, counts, and a mini

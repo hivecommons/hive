@@ -1518,6 +1518,8 @@
     .ham-repo-tint-4 { --ham-repo-tint: var(--ham-repo-tint-4); }
     .ham-repo-tint-5 { --ham-repo-tint: var(--ham-repo-tint-5); }
     .ham-repo-chip.ham-repo-primary { --ham-repo-tint: var(--text-muted); }
+    /* The PR's base branch: same height and type as the repo chip it follows, muted border, no tint. */
+    .ham-base-pill { flex: 0 0 auto; display: inline-block; font: inherit; font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.5; padding: 0 var(--sp-2); border-radius: var(--r-sm); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: baseline; }
     .ham-pr-line { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; }
     /* Group-by-repo header row: sticky under the column header while its
        rows scroll, caret toggle, chip, owner/repo, counts, and a mini
@@ -19424,9 +19426,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
       return stageTrackerLeadActionHtml(item, ctx, subRows);
     }
-    // PR link, then the lineage chip (null = none), then the base pill.
-    function stageTrackerPRPillsHtml(ref, lineage, baseRef) {
-      return ref + (lineage == null ? '' : ' ' + lineage) + (baseRef ? ` <span class="ham-badge">${esc(baseRef)}</span>` : '');
+    // PR link, then the lineage chip (null = none). The base pill sits by
+    // the repo chip at the row's head (stageTrackerBasePillHtml), not here.
+    function stageTrackerPRPillsHtml(ref, lineage) {
+      return ref + (lineage == null ? '' : ' ' + lineage);
+    }
+    // Pure: the PR's base branch as a quiet sibling of the repo chip —
+    // `[hive][v5] #16603 …` — so the target reads with the repo, not in the
+    // right-hand modifier cluster. '' when the row has no PR (or no base).
+    function stageTrackerBasePillHtml(baseRef, prNumber) {
+      if (!baseRef) return '';
+      const tip = (Number(prNumber) ? 'PR #' + Number(prNumber) + ' targets ' : 'Targets ') + baseRef;
+      return `<span class="ham-base-pill" title="${esc(tip)}">${esc(baseRef)}</span>`;
     }
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
@@ -19438,9 +19449,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // A superseded original wears neither pill — it closes as superseded,
       // not as the closer of anything.
       const lineage = superseded ? '' : ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : ''));
-      const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
+      const chip = (ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '') + stageTrackerBasePillHtml(lp.base_ref, pr.number);
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
-      ref = stageTrackerPRPillsHtml(ref, !superseded && typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref);
+      ref = stageTrackerPRPillsHtml(ref, !superseded && typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null));
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       if (superseded) {
         // The adopted original: one muted line, no chevron track, no row
@@ -19697,9 +19708,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nowMs = Number(ctx.nowMs) || Date.now();
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
-      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '';
+      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '', basePill = '';
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
+        // The primary (first-sorted) PR's base; an issue with no PR shows none.
+        if (linked.length) basePill = stageTrackerBasePillHtml(linked[0].base_ref, linked[0].number);
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
@@ -19707,7 +19720,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           prTargetKey = stageTrackerItemKey(pr);
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null))];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
@@ -19733,8 +19746,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // as one (hivecommons/hive#15232) — and the PR stays in the PR column
       // rather than taking the issue slot. A not-planned close adds a chip
       // saying the PR may be moot.
-      // The repo chip (when on) leads the row, before the issue slot's #N.
-      const chip = ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '';
+      // The repo chip (when on) leads the row, before the issue slot's #N;
+      // the PR's base pill follows it as a quieter sibling.
+      if (!isIssue) basePill = stageTrackerBasePillHtml(item.base_ref, item.number);
+      const chip = (ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '') + basePill;
       let leadHtml;
       if (isIssue) {
         leadHtml = `<div class="ham-head-main">
