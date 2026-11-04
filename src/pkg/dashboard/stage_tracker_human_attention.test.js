@@ -32,7 +32,7 @@ function load() {
     stageTrackerChipsHtml: () => '', stageTrackerMoveAttrs: () => '', stageTrackerSinceHtml: () => '',
     stageTrackerStripItems: it => `<li data-stage="${it.stage}"></li>`,
     stageTrackerCurrentStageHtml: it => `<span class="ham-current-stage">${it.stage}</span>`,
-    stageTrackerEventHtml: (key, ctx) => `<p class="cue-event cue-event-tuckable" data-cue-key="${esc(key)}">${esc(ctx && ctx.note || 'live note')}<button>Reopen</button></p>`,
+    stageTrackerEventHtml: (key, ctx) => ctx && ctx.events && ctx.events[key] ? `<p class="cue-event cue-event-tuckable" data-cue-key="${esc(key)}">Hive: ${esc(ctx.events[key].text)}<button>Reopen</button></p>` : '',
     stageTrackerActionCtx: () => ({ user: 'viewer' }),
     stageTrackerLeadActionOnRow: item => item.optionalAction ? { id: 'decide:delegate', label: 'Let hive decide' } : null,
   });
@@ -59,12 +59,16 @@ function issue(linked) {
 
 test('covered issue shows the exact PR requirement/requester in visible prose without overriding its actual stage', () => {
   const c = load(), child = pr(), item = issue([child]), before = plain(item);
-  const html = c.stageTrackerRowHtml(item, [], { nowMs: 1, note: 'review comment' });
+  const html = c.stageTrackerRowHtml(item, [], { nowMs: 1, events: { 'hivecommons/hive/issue#15937': { who: 'hive', text: 'review comment', at: 1 } } });
   assert.match(html, /data-ham-kind="issue".*data-ham-stage="40"/);
   assert.match(html, /data-stage="85"/);
   assert.match(html, /PR #15985 — Needs human: Confirm the compatibility policy · next move: @maintainer · requested by a reviewer/);
   assert.match(html, />View PR #15985<\/a>/);
-  assert.match(html, /cue-event-tuckable.*data-cue-key=.*review comment.*Reopen/);
+  // One note line: the hive's stage note rides the human line as a
+  // trailing clause instead of a second "Hive: …" line.
+  assert.equal((html.match(/class="cue-event/g) || []).length, 1);
+  assert.match(html, /requested by a reviewer <a[^>]*>View PR #15985<\/a> · review comment/);
+  assert.doesNotMatch(html, /Hive: review comment/);
   assert.doesNotMatch(html, /Needs you|ham-preparation-head|<section/);
   assert.deepEqual(plain(item), before);
 });
