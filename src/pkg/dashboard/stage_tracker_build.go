@@ -552,7 +552,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
 		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
-		it.CodeActivity, it.Remediation, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.DisplayColumn, activityItem.Caption
+		it.CodeActivity, it.Remediation, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
 	}
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)

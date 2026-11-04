@@ -557,12 +557,50 @@
       const sub = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : null;
       return sub && stageTrackerLeadAction(sub, ctx) ? null : a;
     }
-    // The inline lead button for a row: a real <button> carrying the same
-    // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
+    // Pure: the second inline pill of a row parked on a human decision —
+    // the Decide… submenu's "Let hive decide" (decide:delegate), carrying
+    // the decide target and enable reason the way stageTrackerLeadAction's
+    // fallback does — when the server's lead is another verb (Re-author,
+    // Merge now…). A row saw only "Re-author" and asked where "Let hive
+    // decide" went (hivecommons/hive#16265 / #16456): the ⋯ menu is
+    // invisible, so both stand on the row. null when the lead already is
+    // delegate, the row has no human decision, or the lead is a passive chip.
+    function stageTrackerLeadCompanion(item, ctx, lead) {
+      if (!item || !lead || lead.passive || lead.id === 'decide:delegate') return null;
+      const dec = typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+      const human = !!(dec && dec.item && dec.item.decision_needed) || (item.stage_actor && item.stage_actor.kind === 'human') || (Number(item.stage) || 0) === 85;
+      if (!human) return null;
+      const decide = stageTrackerRowActions(item, ctx).find(a => a.id === 'decide');
+      const o = decide && Array.isArray(decide.submenu) ? decide.submenu.find(x => x && x.id === 'decide:delegate') : null;
+      if (!o) return null;
+      const enabled = !!decide.enabled && !!o.enabled;
+      return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why), hint: STAGE_TRACKER_ACTION_CONSEQUENCES['decide:delegate'], companion: true });
+    }
+    // Pure: the inline pills a row renders — its lead, then (a row parked
+    // on a human decision whose lead is not delegate) "Let hive decide".
+    function stageTrackerLeadActionsOnRow(item, ctx, subRows) {
+      const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
+      if (!a) return [];
+      const companion = stageTrackerLeadCompanion(item, ctx, a);
+      return companion ? [a, companion] : [a];
+    }
+    // The inline lead button(s) for a row: real <button>s carrying the same
+    // id, hint and enable/disable reason as the ⋯ menu entries they mirror;
     // '' when the row has no lead. Click handling is delegated in
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
-      const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
+      return stageTrackerLeadActionsOnRow(item, ctx, subRows).map(a => stageTrackerLeadPillHtml(item, a)).join('');
+    }
+    // The hover text of an inline pill when the server sent no
+    // `consequence`: what happens when it is pressed, in one clause.
+    const STAGE_TRACKER_ACTION_CONSEQUENCES = { 'decide:delegate': 'The hive decides for you under its policy and rails; recorded as your decision with an audit marker.', 'decide:re-author': 'The hive opens a fresh PR for the same issue from the current base and closes this one as superseded.', 'decide:adopt': 'The hive takes the PR over: a hive copy on its own branch; the original is closed as superseded.', 'accept-triage': 'Marks the issue accepted; the hive takes it on its next pass.' };
+    // A row's inline pills are buttons and must read as buttons beside the
+    // record pills they share a slot with ("adopted from #N", the base
+    // branch): a filled chip — ham-act-primary (the lead), ham-act-secondary
+    // ("Let hive decide" beside it) or ham-menu-danger — with a trailing
+    // glyph (tracker.css ::after). Owner on #16456: "Re-author" in the
+    // outlined pill read as a record of what happened, not a verb.
+    function stageTrackerLeadPillHtml(item, a) {
       if (!a) return '';
       // The covering PR has its own row (or is drawn under another listed
       // issue): the decision — whatever its lead (Let hive decide, Merge
@@ -577,10 +615,11 @@
         return `<button type="button" class="ham-badge ham-decision-pending" data-ham-scroll-to="${esc(to)}"${via} title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on ' + where + '. Click to go there.')}">decision pending on #${Number(a.passive) || 0}</button>`;
       }
       const label = String(a.label || a.id);
-      const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
+      const tip = a.enabled ? String(a.hint || a.note || a.consequence || STAGE_TRACKER_ACTION_CONSEQUENCES[a.id] || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
       const state = a.enabled ? (tip ? ` title="${esc(tip)}"` : '') : ` aria-disabled="true" title="${esc(tip)}"`;
-      return `<button type="button" class="ham-lead-act${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
+      const tone = a.danger ? ' ham-menu-danger' : (a.companion ? ' ham-act-secondary' : ' ham-act-primary');
+      return `<button type="button" class="ham-lead-act${tone}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
     }
     // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
     // the server lists them in decision_needed.options (a capability gap

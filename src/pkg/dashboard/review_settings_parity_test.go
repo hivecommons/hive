@@ -78,6 +78,8 @@ func TestReviewSettingsRenderEveryKey(t *testing.T) {
 		{"review.confidence_score", `data-section="review" data-key="confidence_score"`},
 		{"review.priority_labels", `data-section="review" data-key="priority_labels"`},
 		{"review.fixer_agent", `data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w"`},
+		{"review.fixer_fallback_agents[]", `data-change-action="markDirtyReviewFixerFallbackAgents" data-arg-types="w"`},
+		{"review.fixer_fallback_after_undeliverable", `data-arg0="review" data-arg1="fixer_fallback_after_undeliverable" data-arg-types="s,s,N"`},
 		{"review.human_decision_label", `data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w"`},
 		{"review.self_authored_decision_policy", `data-arg0="review" data-arg1="self_authored_decision_policy" data-arg-types="s,s,v"`},
 		{"review.max_reviews_per_head", `data-arg0="review" data-arg1="max_reviews_per_head" data-arg-types="s,s,N"`},
@@ -97,5 +99,39 @@ func TestReviewSettingsRenderEveryKey(t *testing.T) {
 		if !strings.Contains(body, c.control) {
 			t.Errorf("%s has no Features control (%s)", c.yaml, c.control)
 		}
+	}
+}
+
+func TestReviewFixerFallbackConfigPut(t *testing.T) {
+	s := covApiServer(t)
+	if rec := doPut(s, "/api/config/review", map[string]any{
+		"fixer_fallback_agents":              []string{" fixer ", "", "spare"},
+		"fixer_fallback_after_undeliverable": 4,
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	rc := s.deps.Config.Review
+	if len(rc.FixerFallbackAgents) != 2 || rc.FixerFallbackAgents[0] != "fixer" || rc.FixerFallbackAgents[1] != "spare" || rc.FixerFallbackAfterUndeliverable != 4 {
+		t.Fatalf("fallback settings did not round-trip: %+v", rc)
+	}
+	if rec := doPut(s, "/api/config/review", map[string]any{
+		"fixer_fallback_agents": []string{}, "fixer_fallback_after_undeliverable": -1,
+	}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative threshold: %d", rec.Code)
+	}
+	if len(s.deps.Config.Review.FixerFallbackAgents) != 2 {
+		t.Fatal("rejected PUT mutated fallback settings")
+	}
+	if rec := doPut(s, "/api/config/review", map[string]any{"fixer_agent": "scanner"}); rec.Code != http.StatusOK {
+		t.Fatalf("partial PUT: %d", rec.Code)
+	}
+	if s.deps.Config.Review.FixerFallbackAfterUndeliverable != 4 || len(s.deps.Config.Review.FixerFallbackAgents) != 2 {
+		t.Fatal("partial PUT changed fallback settings")
+	}
+	if rec := doPut(s, "/api/config/review", map[string]any{"fixer_fallback_agents": []string{}}); rec.Code != http.StatusOK {
+		t.Fatalf("clear PUT: %d", rec.Code)
+	}
+	if s.deps.Config.Review.EffectiveFixerFallbackAfterUndeliverable() != 0 {
+		t.Fatal("empty list did not disable fallback routing")
 	}
 }
