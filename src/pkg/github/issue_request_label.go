@@ -208,34 +208,41 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 // the agent what to do instead: follow the decision, or — when it reserves
 // the work for people — add `needs-human` and unclaim. A lookup failure is
 // returned so the caller retries rather than reading "unknown" as allowed.
-func (c *Client) reparkDecisionRefusal(ctx context.Context, repo string, number int, add []string) (string, bool, error) {
+//
+// superseded is true when the park is allowed through on that newer,
+// different decision: the issue still wears `approved-direction` for the
+// old one, and the stage engine must read the ack as stale
+// (FactSink.ReparkedOnNewDecision) rather than as a standing decision the
+// agent is standing down on (hivecommons/hive#16579), or the park never
+// lands.
+func (c *Client) reparkDecisionRefusal(ctx context.Context, repo string, number int, add []string) (reason string, refused, superseded bool, err error) {
 	if number <= 0 || !containsDecisionParkLabel(add, c.needsDecisionLabel()) {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	owner, name := c.splitRepo(repo)
 	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
 	if err != nil {
-		return "", false, fmt.Errorf("checking issue park labels: %w", err)
+		return "", false, false, fmt.Errorf("checking issue park labels: %w", err)
 	}
 	labels := extractLabels(issue.Labels)
 	if !labelPresent(labels, HumanAckLabel) {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	comments, err := c.listIssueComments(ctx, owner, name, number)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	decision, at, ok := c.lastRecordedUnparkDecision(comments)
 	if !ok {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	if hasNewerDifferentDecisionCommand(comments, at, decision) {
-		return "", false, nil
+		return "", false, true, nil
 	}
 	return fmt.Sprintf("a maintainer already decided on %s#%d (recorded by Hive: %q) and `%s` is applied; "+
 		"re-parking it on `%s` asks for a decision that has been given. Follow the decision. "+
 		"If it reserves the work for people, add `%s` through this relay and `/unclaim` instead.",
-		repo, number, decision, HumanAckLabel, c.needsDecisionLabel(), issueNeedsHumanLabel), true, nil
+		repo, number, decision, HumanAckLabel, c.needsDecisionLabel(), issueNeedsHumanLabel), true, false, nil
 }
 
 func containsDecisionParkLabel(labels []string, configured string) bool {

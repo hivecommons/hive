@@ -480,10 +480,8 @@
         _lastStatusSeq = data.statusSeq;
       }
       if (typeof data.matrixEnabled === 'boolean') {
-        const matrixTab = document.getElementById('oc-matrix-tab');
-        if (matrixTab) matrixTab.hidden = !data.matrixEnabled;
-        const readerTab = document.getElementById('oc-reader-tab');
-        if (readerTab) readerTab.hidden = !data.matrixEnabled;
+        const codeActivityTab = document.getElementById('oc-matrix-tab');
+        if (codeActivityTab) codeActivityTab.hidden = !data.matrixEnabled;
       }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
       const scrollAnchor = captureScrollAnchor();

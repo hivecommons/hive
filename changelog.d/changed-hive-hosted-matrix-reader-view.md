@@ -1,0 +1,1 @@
+- hive-hosted-matrix stream overlay opens the dashboard with `view=reader` instead of the deprecated `view=matrix` alias (#16612).

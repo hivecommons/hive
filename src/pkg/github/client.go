@@ -2560,6 +2560,12 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	incidents := map[string]bool{}
 	for i := range prs {
 		reported := c.enrichPRCI(ctx, &prs[i])
+		// Unreported checks may be workflow runs waiting on GitHub's
+		// approve-workflows gate (dependabot, forks); only a pending head
+		// pays for the extra listing (hivecommons/hive#16599).
+		if prs[i].CIStatus == "pending" && prs[i].CIActivity != nil {
+			prs[i].CIActivity.WorkflowApproval = c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA)
+		}
 		if prs[i].CIStatus == "failure" {
 			prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], incidents)
 		}
