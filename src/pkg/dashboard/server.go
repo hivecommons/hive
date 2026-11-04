@@ -1979,7 +1979,7 @@ code{color:#e6edf3}
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/matrix/lines" {
-			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Cache-Control", "no-store") // Cover 401 responses that never reach handleMatrixLines' no-store header.
 		}
 		directRouteAuthz := s.directRouteAuthzEnabled()
 
