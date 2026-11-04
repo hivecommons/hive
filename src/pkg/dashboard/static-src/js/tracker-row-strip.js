@@ -102,7 +102,9 @@
       if (!item) return false;
       if (item.needs_human || item.on_hold || item.hold) return true;
       const stage = Number(item.stage);
-      if (stage === 71 || stage === 72) return true;
+      // A freshly pushed head is in motion: checks run on it, matching
+      // tracker-row-anchor's column-50 anchor (hivecommons/hive#16552).
+      if ((stage === 71 || stage === 72) && !(item.push && ['pushed', 'checking'].includes(item.push.state))) return true;
       const code = item.code_activity;
       return !!(code && code.head === item.head && code.state === 'waiting_owner');
     }
