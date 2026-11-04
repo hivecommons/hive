@@ -288,8 +288,8 @@ func adoptionCloses(body string) []string {
 	return out
 }
 
-func adoptionNeedsDCORehome(obs stageObservation, canPushInPlace bool) bool {
-	return adoptionDCORepairMode(obs, canPushInPlace) == stagelabels.AdoptModeSupersede
+func adoptionNeedsDCORehome(obs stageObservation, canPushInPlace, hiveAuthored bool) bool {
+	return adoptionDCORepairMode(obs, canPushInPlace, hiveAuthored) == stagelabels.AdoptModeSupersede
 }
 
 // adoptionDCORepairMode decides how a DCO-red head gets its sign-off:
@@ -298,14 +298,32 @@ func adoptionNeedsDCORehome(obs stageObservation, canPushInPlace bool) bool {
 // base repository — a fork branch is pushable by an agent's git but not by
 // the App's REST token, so a fork head re-homes (AdoptModeSupersede) even
 // when every unsigned commit is the hive's (hivecommons/hive#14666).
-func adoptionDCORepairMode(obs stageObservation, canPushInPlace bool) string {
+//
+// A hive-authored PR (hiveAuthored: the App bot or project.ai_author opened
+// it) is never re-homed: every commit on it is the hive's to sign, so a
+// pushable base-repo head is amended in place and any other head keeps its
+// PR number, approvals and CI history and waits for a person (""),
+// rather than restarting as a copy (hivecommons/hive#16619).
+func adoptionDCORepairMode(obs stageObservation, canPushInPlace, hiveAuthored bool) string {
 	if obs.Detail.DCO != stagelabels.DCONo || obs.Detail.DCOUnsigned <= 0 {
 		return ""
 	}
-	if canPushInPlace && headInBaseRepo(obs) && obs.Detail.DCOUnsignedHive == obs.Detail.DCOUnsigned && obs.Detail.DCOUnsignedOther == 0 {
+	if canPushInPlace && headInBaseRepo(obs) && (hiveAuthored || (obs.Detail.DCOUnsignedHive == obs.Detail.DCOUnsigned && obs.Detail.DCOUnsignedOther == 0)) {
 		return stagelabels.AdoptModeInPlace
 	}
+	if hiveAuthored {
+		return ""
+	}
 	return stagelabels.AdoptModeSupersede
+}
+
+// adoptionHeadApproved reports whether a trusted human's APPROVED review
+// stands on the observed head. Such a head is never re-homed onto a copy:
+// the copy would restart CI and drop the approval (hivecommons/hive#16619).
+// The one exception is a fork branch the hive cannot push to
+// (AdoptReasonPushRehome), which the caller decides.
+func adoptionHeadApproved(obs stageObservation) bool {
+	return obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanApprover) != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA
 }
 
 // headInBaseRepo reports whether the PR head lives in the base repository
@@ -317,8 +335,8 @@ func headInBaseRepo(obs stageObservation) bool {
 // adoptedHeadNeedsDCORepair decides, for an in-place-adopted PR, whether the
 // unsigned commits are the hive's own on a base-repo branch it rewrites in
 // place with its sign-off.
-func adoptedHeadNeedsDCORepair(obs stageObservation, rec stagelabels.Record, canPushInPlace bool) bool {
-	return adoptedHeadDCORed(obs, rec) && adoptionDCORepairMode(obs, canPushInPlace) == stagelabels.AdoptModeInPlace
+func adoptedHeadNeedsDCORepair(obs stageObservation, rec stagelabels.Record, canPushInPlace, hiveAuthored bool) bool {
+	return adoptedHeadDCORed(obs, rec) && adoptionDCORepairMode(obs, canPushInPlace, hiveAuthored) == stagelabels.AdoptModeInPlace
 }
 
 // adoptedHeadDCORed reports whether an in-place-adopted PR's head carries
@@ -330,8 +348,8 @@ func adoptedHeadDCORed(obs stageObservation, rec stagelabels.Record) bool {
 // adoptedHeadNeedsDCORehome decides, for an in-place-adopted PR, whether the
 // unsigned commits can be rewritten on the contributor branch (all App-linked
 // and the branch still pushable) or the work must be re-homed.
-func adoptedHeadNeedsDCORehome(obs stageObservation, rec stagelabels.Record, canPushInPlace bool) bool {
-	return adoptedHeadDCORed(obs, rec) && adoptionDCORepairMode(obs, canPushInPlace) == stagelabels.AdoptModeSupersede
+func adoptedHeadNeedsDCORehome(obs stageObservation, rec stagelabels.Record, canPushInPlace, hiveAuthored bool) bool {
+	return adoptedHeadDCORed(obs, rec) && adoptionDCORepairMode(obs, canPushInPlace, hiveAuthored) == stagelabels.AdoptModeSupersede
 }
 
 func adoptionRehomeCommitMessage(obs stageObservation) string {
@@ -696,7 +714,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	if policy.AdoptInPlace && !requested && !forced {
 		canPushInPlace = c.canPushToPRBranch(ctx, obs)
 	}
-	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)
+	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace, hiveAuthoredPR(obs, policy, appLogin))
 	// Record the attempt first: whatever happens below, this head is tried once.
 	store.MarkAdopted(key, obs.HeadSHA, 0, now)
 	store.NoteAdoptDiffFence(key, fence)
@@ -1344,10 +1362,17 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	}
 	if adoptedHeadDCORed(obs, rec) {
 		canPushInPlace := c.canPushToPRBranch(ctx, obs)
-		if adoptedHeadNeedsDCORepair(obs, rec, canPushInPlace) {
+		hiveAuthored := hiveAuthoredPR(obs, policy, c.transport.AppBotLogin())
+		if adoptedHeadNeedsDCORepair(obs, rec, canPushInPlace, hiveAuthored) {
 			return c.repairAdoptedDCOInPlace(ctx, store, key, obs, rec)
 		}
-		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace) {
+		if hiveAuthored && !adoptionHeadApproved(obs) && obs.Detail.DCOUnsigned > 0 {
+			// The hive's own PR on a head it cannot rewrite over REST:
+			// it keeps its number, approvals and CI; the unsigned head
+			// is the hive's agent's to re-sign on the same branch.
+			c.info("stage labels: hive-authored adopted PR has unsigned commits on a head the sweep cannot rewrite; keeping it in place", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "head_repo", obs.HeadRepo, "can_push", canPushInPlace)
+		}
+		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace, hiveAuthored) {
 			fence, err := c.adoptionDiffRefusal(ctx, obs)
 			if fence != "" && (err != nil || adoptionFenceDefers(fence)) {
 				// Not a verdict: the head moved, or its file list is
@@ -1954,7 +1979,18 @@ func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy St
 	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead || adoptedHeadDCORed(obs, rec) || adoptionBlocked(obs.Labels) != "" || verdictNeedsHuman(obs.Detail) {
 		return ""
 	}
+	if adoptionHeadApproved(obs) {
+		// A copy restarts CI and drops the approval; the head stays where
+		// the approval is. Only a fork the hive cannot push to re-homes
+		// (AdoptReasonPushRehome, decided by the caller).
+		return ""
+	}
 	if adoptedHeadSignoffUnfixable(obs, rec) {
+		if hiveAuthoredPR(obs, policy, "") {
+			// The squash attributes the hive's commits to the hive's own
+			// author: nothing to re-home (hivecommons/hive#16619).
+			return ""
+		}
 		return AdoptReasonSignoffRehome
 	}
 	if humanConflictReasons[obs.Reason] || humanConflictReasons[obs.LaneReason] || hasLabelFold(obs.Labels, "needs-rebase") {
@@ -1992,7 +2028,7 @@ func adoptionStalledReasonWith(obs stageObservation, rec stagelabels.Record, pol
 	if rec.AdoptionAttemptedNothingOpened(obs.HeadSHA) {
 		return stagelabels.LaneReasonAdoptionStalledPrefix + "supersede-failed:" + nonEmpty(rec.AdoptReason, obs.Reason)
 	}
-	if adoptedHeadSignoffUnfixable(obs, rec) {
+	if adoptedHeadSignoffUnfixable(obs, rec) && !hiveAuthoredPR(obs, policy, "") {
 		return stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonHiveSignoffAttribution
 	}
 	if adoptionOptionalCheckOnly(obs) || !adoptionStale(obs, rec, policy, now) {
@@ -2020,6 +2056,15 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		rec, _ = store.Get(key)
 	}
 	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now, c.inPlaceRebaseExhausted(obs, rec))
+	if rehomeReason == AdoptReasonSignoffRehome && hiveAuthoredPR(obs, policy, c.transport.AppBotLogin()) {
+		rehomeReason = ""
+	}
+	if rehomeReason != "" && c.operatorAdmission(ctx, obs.Owner, obs.Repo, obs.Number, obs.HeadSHA) != "" {
+		// An operator admitted this head: a copy would drop that and
+		// restart CI. Only a fork the hive cannot push to re-homes.
+		c.info("stage labels: in-place adoption keeps its approved head; not superseding", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "would_rehome", rehomeReason)
+		rehomeReason = ""
+	}
 	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && c.pushAccessLost(ctx, obs) {
 		rehomeReason = AdoptReasonPushRehome
 	}
