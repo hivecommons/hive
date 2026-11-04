@@ -13,8 +13,8 @@ import (
 // and commit provenance: every commit behind the head must have a trusted
 // author login, a committer that is GitHub itself (web-flow) or a trusted
 // login, and a GitHub-verified signature (#16399). It does not prove upstream
-// review (separate gates handle that). The hive-merge relay does not yet apply
-// it (#16265).
+// review (separate gates handle that). The hive-merge relay applies the same
+// policy through Client.SetHumanMergePinOnly (#16265).
 type PinOnlyException struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
 	Paths          []string `yaml:"paths" json:"paths"`
