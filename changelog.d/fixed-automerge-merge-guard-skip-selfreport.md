@@ -1,0 +1,1 @@
+- The fleet selfreport feed no longer files the automerge sweep's `base-refresh:merge-guard` skip ("destination merge already in progress") as an `unclassified_error_repeated` issue; it is an expected, self-limiting outcome and stays in local logs (#16520).

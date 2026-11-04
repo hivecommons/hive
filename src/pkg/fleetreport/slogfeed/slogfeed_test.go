@@ -700,6 +700,36 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #16520: the base-refresh merge guard is a self-limiting skip, not a defect.
+func TestAutomergeMergeGuardSkipLogsWithoutFleetReport(t *testing.T) {
+	cases := []struct {
+		name string
+		args []any
+		want int
+	}{
+		{"merge guard", []any{"repo", "hive", "pr", 16511, "reason", "base-refresh:merge-guard", "error", "destination merge already in progress"}, 0},
+		{"other reason", []any{"repo", "hive", "pr", 16511, "reason", "base-refresh", "error", "update branch: 422 conflict"}, 8},
+		{"guard reason other error", []any{"repo", "hive", "pr", 16511, "reason", "base-refresh:merge-guard", "error", "boom"}, 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn("automerge sweep skipped PR", tc.args...)
+			}
+			if tc.want == 0 && len(*seen) != 0 {
+				t.Errorf("produced observations: %+v", *seen)
+			}
+			if tc.want != 0 && len(*seen) == 0 {
+				t.Errorf("must remain reportable")
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+		})
+	}
+}
+
 // #15789: a hub that is restarting answers the heartbeat 5xx and the spoke
 // retries on the next beat; auth rejections stay reportable.
 func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
