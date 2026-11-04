@@ -20,7 +20,7 @@ type DecisionQuestionClass string
 
 const (
 	// DecisionQuestionPolicySignOff: the ask stays a person's. The PR edits
-	// workflows from a fork, touches secrets / permissions / OWNERS /
+	// workflows, touches secrets / permissions / OWNERS /
 	// security-labelled paths, changes the auto-merge or human-merge
 	// policy, or the reviewer names an owner-only guard outright.
 	DecisionQuestionPolicySignOff DecisionQuestionClass = "policy-sign-off"
@@ -75,8 +75,8 @@ var decisionPolicyPaths = []string{
 	"**/.env*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/secrets*",
 }
 
-// decisionWorkflowPaths are the CI-automation paths a fork may not edit
-// without a person's sign-off (the App cannot push them either).
+// decisionWorkflowPaths are CI-automation paths whose edits require a
+// person's sign-off, regardless of where the PR originates.
 var decisionWorkflowPaths = []string{".github/workflows/**", "**/.github/workflows/**", ".github/actions/**"}
 
 // decisionPolicyConfigKeys are hive config keys whose change in a patch is
@@ -115,8 +115,8 @@ func ClassifyDecisionQuestion(in DecisionQuestionInput) (DecisionQuestionClass, 
 		if p == "" {
 			continue
 		}
-		if in.FromFork && intent.PathMatchesAny(p, decisionWorkflowPaths) {
-			return DecisionQuestionPolicySignOff, "fork PR edits workflow path " + p
+		if intent.PathMatchesAny(p, decisionWorkflowPaths) {
+			return DecisionQuestionPolicySignOff, "PR edits workflow path " + p
 		}
 		if intent.PathMatchesAny(p, decisionPolicyPaths) {
 			return DecisionQuestionPolicySignOff, "PR touches policy path " + p
