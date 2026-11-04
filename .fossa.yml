@@ -1,0 +1,32 @@
+# FOSSA CLI configuration for hivecommons/hive.
+# Reference: https://github.com/fossas/fossa-cli/blob/master/docs/references/files/fossa-yml.md
+version: 3
+
+project:
+  # Stable project name in the CNCF FOSSA org (the action's `project:` input
+  # mirrors this so UI and CI agree).
+  name: hivecommons/hive
+  # Team NAME in the CNCF FOSSA org (team id 207492). Only applied when the
+  # project is first created; later changes must be made in the FOSSA UI.
+  team: Hive Commons
+  url: https://github.com/hivecommons/hive
+  link: https://hivecommons.dev
+
+# The Go workspace lives under src/ (src/go.work: root module + src/crux).
+# FOSSA auto-discovers both go.mod files plus the dashboard's Node manifests;
+# list them explicitly so a future re-layout does not silently drop a module.
+targets:
+  only:
+    - type: gomod
+      path: src
+    - type: gomod
+      path: src/crux
+    - type: npm
+      path: dashboard
+
+paths:
+  exclude:
+    - src/test
+    - src/examples
+    - examples
+    - docs
