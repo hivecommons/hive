@@ -102,8 +102,8 @@ const first = [
   {seq: 2, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '', at},
   {seq: 3, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '\tx := 1', at},
   {seq: 4, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '\tx := 1', at},
-  {seq: 5, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '    old()', at},
-  {seq: 6, repo: 'org/other', pr: 7, head: 'def', path: 'README.md', line: 'a very long line '.repeat(40), at},
+  {seq: 5, repo: 'org/repo', pr: 2, head: 'abc', path: 'main.go', line: '    old()', op: '-', at},
+  {seq: 6, repo: 'org/other', pr: 7, head: 'def', path: 'README.md', line: 'a very long line '.repeat(40), pr_url: 'https://example.test/review/7', at},
 ];
 async function scenario(query, opts = {}) {
   const docEvents = {}, timers = new Map(), requests = [], scrolls = [], sse = {};
@@ -147,9 +147,9 @@ async function scenario(query, opts = {}) {
   const meta = card => card.children[0].children, rows = card => card.children[1].children.map(r => r.textContent);
   const checkFirst = card => {
     // One contiguous region: blank, indented and repeated lines kept as text.
-    assert.deepEqual(rows(card), ['+ <script>alert(1)</script>\n', '+ \n', '+ \tx := 1\n', '+ \tx := 1\n', '+     old()\n']);
+    assert.deepEqual(rows(card), ['+ <script>alert(1)</script>\n', '+ \n', '+ \tx := 1\n', '+ \tx := 1\n', '\u2212     old()\n']);
     assert.equal(card.children[1].tagName, 'PRE');
-    assert.deepEqual(card.children[1].children.map(r => r.className), Array(5).fill('reader-line reader-add'));
+    assert.deepEqual(card.children[1].children.map(r => r.className), ['reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-add', 'reader-line reader-del']);
     const [repo, file, stage, time] = meta(card);
     assert.equal(repo.tagName, 'A'); assert.equal(repo.textContent, 'org/repo #2');
     assert.equal(repo.href, 'https://github.com/org/repo/pull/2'); assert.equal(repo.attrs.rel, 'noopener noreferrer');
@@ -158,7 +158,7 @@ async function scenario(query, opts = {}) {
     assert(time.textContent.startsWith('observed '));
   };
   const checkSecond = card => {
-    assert.equal(meta(card)[0].href, 'https://github.com/org/other/pull/7');
+    assert.equal(meta(card)[0].href, 'https://example.test/review/7');
     assert.equal(meta(card)[1].textContent, 'README.md');
     assert.equal(rows(card)[0], '+ ' + 'a very long line '.repeat(40) + '\n');
   };

@@ -54,12 +54,13 @@
           return;
         }
         pending.push({key: regionKey(line), repo: line.repo, pr: Number(line.pr) || 0, path: line.path,
-          stage: stage, lines: [line], lastSeq: seq, at: line.at});
+          stage: stage, prUrl: line.pr_url, lines: [line], lastSeq: seq, at: line.at});
       });
       if (pending.length > MAX_PENDING) pending = pending.slice(-MAX_PENDING);
     }
-    // The pull payload carries only repo and PR number; the link is derived.
+    // Prefer an https pr_url from the source; otherwise derive the link from repo and PR number.
     function prLink(region){
+      if (typeof region.prUrl === 'string' && /^https:\/\/[^\s<>"']+$/.test(region.prUrl)) return region.prUrl;
       if (/^[\w.-]+\/[\w.-]+$/.test(region.repo || '') && region.pr > 0) {
         return 'https://github.com/' + region.repo + '/pull/' + region.pr;
       }
@@ -90,10 +91,10 @@
       var time = element('time', 'reader-time', when.text, meta);
       if (when.iso) time.setAttribute('datetime', when.iso);
       var diff = element('pre', 'reader-diff', '', article);
-      // The source emits accepted added lines only.
       region.lines.forEach(function(line){
-        var row = element('span', 'reader-line reader-add', '', diff);
-        row.textContent = '+ ' + line.line + '\n';
+        var del = line.op === '-';
+        var row = element('span', 'reader-line ' + (del ? 'reader-del' : 'reader-add'), '', diff);
+        row.textContent = (del ? '\u2212' : line.op || '+') + ' ' + line.line + '\n';
       });
       return article;
     }

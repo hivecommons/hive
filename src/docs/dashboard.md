@@ -619,11 +619,12 @@ anonymous access.
 
 - **Cards.** Consecutive lines from one file at one PR head form one card,
   which shows that contiguous changed region in order. Indentation, blank lines
-  and repeated lines are kept. The source emits accepted added lines only, so
-  every line starts with a green `+`. Long lines wrap at a fixed font size and
+  and repeated lines are kept. Added lines start with a green `+` and
+  removed lines (`op: "-"`) with a red `−`. Long lines wrap at a fixed font size and
   are never truncated. Every card shows the repository
   and PR number, the file, the source stage (`pushed`), and when hive
-  observed the change. The repository links to the real pull request. Code is
+  observed the change. The repository links to the pull request, using the source's
+  `pr_url` when it is an https URL and otherwise the derived GitHub link. Code is
   always shown as text and is never parsed as HTML.
 - **Pacing.** One card is read at a time. A card stays in focus for a few
   seconds plus a little more for each line, up to 30 seconds, and then the
