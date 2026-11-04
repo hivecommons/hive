@@ -137,5 +137,3 @@ The reference is organized into the sections below. Existing links to this page 
 - [Red-main circuit breaker](operator-reference/v6-controls.md#red-main-circuit-breaker-red_main_threshold)
 <a id="open-held-pr-cap-max_open_held_prs"></a>
 - [Open held PR cap](operator-reference/v6-controls.md#open-held-pr-cap-max_open_held_prs)
-<a id="dco-provider-unavailable-on-large-forward-merges"></a>
-- [DCO provider unavailable on large forward merges](operator-reference/dco-provider-unavailable.md)
