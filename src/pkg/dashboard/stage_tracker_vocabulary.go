@@ -88,7 +88,55 @@ func stageTrackerItemColumn(it *StageTrackerItem) int {
 			return trackerColumnMergeGate
 		}
 	}
+	if stageTrackerPersonActsOnPR(it) {
+		return trackerColumnPR
+	}
 	return stageTrackerColumn(st)
+}
+
+// stageTrackerPersonActsOnPR: a PR parked at 085 because a person has to
+// act ON THE PR — rerun CI, approve workflow runs, resolve a permission
+// (reason `unauthorized:<step>`), or answer review findings / red checks
+// still open on its head — is not queued, merging or merge-ready, so its
+// chevron lights PR in progress, never Merge queue. The Merge queue
+// column is only for rows actually queued / merging / merged, or a
+// merge-ready PR (review approved, CI green) parked on a merge decision.
+// A bare 085 with no track evidence keeps the gate: the person decides
+// there (hive#14821). Hive's own #16524 read "Awaiting human: rerun
+// shared ci" under Merge queue with CI unknown and review findings open.
+func stageTrackerPersonActsOnPR(it *StageTrackerItem) bool {
+	if it == nil || it.Kind != "pr" || stageByNumber(it.Stage) != stagelabels.NeedsDecision {
+		return false
+	}
+	if mg := it.MergeGate; mg != nil && mg.State != "" {
+		return false
+	}
+	if mt := it.MergeTrain; mt != nil && mt.State != "" {
+		return false
+	}
+	if step, _ := stageTrackerUnauthorized(it.Reason); step != "" {
+		return !stageTrackerMergeReadyEvidence(it)
+	}
+	return stageTrackerNotMergeReadyEvidence(it)
+}
+
+func stageTrackerActivityOnHead(it *StageTrackerItem, a *StageTrackerActivity) bool {
+	return a != nil && (a.Head == "" || it.Head == "" || strings.EqualFold(a.Head, it.Head))
+}
+
+// stageTrackerMergeReadyEvidence: review approved and CI green on the
+// row's current head — the only state in which a human-gated PR may sit
+// in the Merge queue column.
+func stageTrackerMergeReadyEvidence(it *StageTrackerItem) bool {
+	return stageTrackerActivityOnHead(it, it.ReviewActivity) && it.ReviewActivity.State == "approved" &&
+		stageTrackerActivityOnHead(it, it.CIActivity) && it.CIActivity.State == "passing"
+}
+
+// stageTrackerNotMergeReadyEvidence: a track on the current head says the
+// PR is short of merge-ready (review not approved, CI not green).
+func stageTrackerNotMergeReadyEvidence(it *StageTrackerItem) bool {
+	return (stageTrackerActivityOnHead(it, it.ReviewActivity) && it.ReviewActivity.State != "approved") ||
+		(stageTrackerActivityOnHead(it, it.CIActivity) && it.CIActivity.State != "passing")
 }
 
 // stageTrackerStagePhrase is the stage as a lowercase clause for the

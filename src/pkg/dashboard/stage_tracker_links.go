@@ -338,6 +338,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.AdmittedBy, lp.DCOUnsigned, lp.DCOTotal = pr.AdmittedBy, pr.DCOUnsigned, pr.DCOTotal
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
+				lp.UnauthorizedStep = pr.UnauthorizedStep
 				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
 				lp.MergeTrain, lp.LeftTrain, lp.Overlap = pr.MergeTrain, pr.LeftTrain, pr.Overlap
 				lp.Preparation = pr.Preparation
