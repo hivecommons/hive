@@ -51,7 +51,7 @@
     function group(regions){
       regions.forEach(function(region){
         if (!region || !Array.isArray(region.lines) || !region.lines.length) return;
-        if (!region.lines.every(function(line){ return line && typeof line.line === 'string' && (line.op === '+' || line.op === '-'); })) return;
+        if (!region.lines.every(function(line){ return line && typeof line.line === 'string' && (line.op === '+' || line.op === '-' || line.op === ' '); })) return;
         var size = region.lines.reduce(function(n, line){ return n + line.line.length * 2; }, 0);
         if (region.lines.length > MAX_LINES || size > MAX_BYTES) return;
         var item = {repo: region.repo, pr: region.pr, path: region.path, prURL: region.pr_url,
@@ -104,9 +104,9 @@
       if (when.iso) time.setAttribute('datetime', when.iso);
       var diff = element('pre', 'reader-diff', '', article);
       region.lines.forEach(function(line){
-        var removed = line.op === '-';
-        var row = element('span', 'reader-line ' + (removed ? 'reader-del' : 'reader-add'), '', diff);
-        row.textContent = (removed ? '\u2212 ' : '+ ') + line.line + '\n';
+        var removed = line.op === '-', context = line.op === ' ';
+        var row = element('span', 'reader-line ' + (removed ? 'reader-del' : context ? 'reader-context' : 'reader-add'), '', diff);
+        row.textContent = (removed ? '\u2212 ' : context ? '  ' : '+ ') + line.line + '\n';
       });
       return article;
     }

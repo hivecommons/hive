@@ -21,5 +21,6 @@ body.reader-mode a.reader-repo { text-decoration: underline; }
 body.reader-mode .reader-diff { margin: .5rem 0 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 body.reader-mode .reader-add { color: var(--reader-add); }
 body.reader-mode .reader-del { color: var(--reader-del); }
+body.reader-mode .reader-context { color: var(--reader-text); }
 body.reader-mode #hive-reader [hidden] { display: none !important; }
 body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }
