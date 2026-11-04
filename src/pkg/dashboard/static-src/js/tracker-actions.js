@@ -261,7 +261,11 @@
       const out = [];
       // First: the hive decides as the owner's delegate (policy + rails on
       // the server; recorded as a human decision with an audit marker).
-      out.push({ id: 'decide:delegate', label: 'Let hive decide', hint: 'delegate', enabled, why });
+      // The server may rule delegation out for this row (a capability gap
+      // no decision closes — hivecommons/docs#612); its reason wins.
+      const served = stageTrackerServerDelegate(item);
+      const delegateOff = !!served && served.enabled === false;
+      out.push({ id: 'decide:delegate', label: 'Let hive decide', hint: 'delegate', enabled: enabled && !delegateOff, why: delegateOff ? (served.reason_if_disabled || 'The hive cannot decide this one') : why });
       if (item.kind === 'pr') {
         out.push({ id: 'decide:approve', label: 'Approve (/lgtm + /approve)', enabled, why });
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
@@ -274,6 +278,11 @@
       out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
+    }
+    // Pure: the server's decide:delegate option on the row, or null.
+    function stageTrackerServerDelegate(item) {
+      const opts = item && item.decision_needed && Array.isArray(item.decision_needed.options) ? item.decision_needed.options : [];
+      return opts.find(o => o && o.action === 'decide:delegate') || null;
     }
     // Pure: the operator note for labels the row's stage has outrun
     // (stale_labels: a needs-triage still on a claimed issue, which the
@@ -487,6 +496,15 @@
       if (lead) return lead;
       const decide = actions.find(a => a.id === 'decide');
       const safe = decide && Array.isArray(decide.submenu) ? decide.submenu.filter(x => x && !x.danger) : [];
+      // The server ruled delegation out (a capability gap): the first
+      // enabled, non-destructive blocker option leads instead — the
+      // person's actual move (open App settings, re-check permissions),
+      // not a greyed "Let hive decide" (hivecommons/docs#612).
+      const served = stageTrackerServerDelegate(item);
+      if (served && served.enabled === false) {
+        const b = stageTrackerBlockerActions(item, ctx).find(x => x.enabled && !x.danger);
+        if (b) return Object.assign({}, b, { target: (decide && decide.target) || { kind: item.kind, number: item.number, repo: item.repo } });
+      }
       if (safe.length) {
         const o = safe.find(x => x.enabled) || safe[0];
         const enabled = !!decide.enabled && !!o.enabled;
@@ -570,7 +588,7 @@
     function stageTrackerLeadCompanion(item, ctx, lead) {
       if (!item || !lead || lead.passive || lead.id === 'decide:delegate') return null;
       const dec = typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
-      const human = !!(dec && dec.item && dec.item.decision_needed) || (item.stage_actor && item.stage_actor.kind === 'human') || (Number(item.stage) || 0) === 85;
+      const human = !!(dec && dec.item && dec.item.decision_needed) || !!item.decision_needed || (item.stage_actor && item.stage_actor.kind === 'human') || (Number(item.stage) || 0) === 85;
       if (!human) return null;
       const decide = stageTrackerRowActions(item, ctx).find(a => a.id === 'decide');
       const o = decide && Array.isArray(decide.submenu) ? decide.submenu.find(x => x && x.id === 'decide:delegate') : null;
