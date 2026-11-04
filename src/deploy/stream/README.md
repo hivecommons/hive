@@ -13,7 +13,7 @@ Twitch stream. Operator guide, Twitch-side setup, and troubleshooting:
 | `docker-compose.yaml`, `.env.example` | Run the same image from a laptop. |
 | `k8s/` | Kustomize base: Namespace `hive-stream`, ConfigMap, Deployment (1 replica, non-root, 512 Mi `/dev/shm`, 1–3 CPU / 3–6 Gi), NetworkPolicy (DNS, dashboard Service, public RTMP/HTTPS only). `secret.yaml` is a **template** and is not in the kustomization. |
 | `overlays/hive-hosted/` | hive's own hosted spoke on `hive-oke`. |
-| `overlays/hive-hosted-matrix/` | Inactive, silent Matrix instance for `twitch.tv/hivecommonsmatrix`: separate namespace and identity, `twitch-stream-matrix` secret reference, zero replicas; owner-only activation. |
+| `overlays/hive-hosted-matrix/` | Inactive, silent Code activity instance (formerly Matrix; `view=matrix` is a deprecated alias for the reader) for `twitch.tv/hivecommonsmatrix`: separate namespace and identity, `twitch-stream-matrix` secret reference, zero replicas; owner-only activation. |
 | `fleet/` | Standalone, **disabled-by-default** Kustomize base for the hub-wide monitor on `twitch.tv/hivecommonsfleet` (#15966): namespace `hive-stream-fleet`, `replicas: 0`, `STREAM_PROFILE=public-safe`, stream-key Secret `twitch-stream-hivecommonsfleet` (name only; `secret.yaml` is a template), no dashboard credential, public egress only. Shares no resource with `k8s/` or `overlays/`. |
 | `public-safe-gate.sh` | Run by `entrypoint.sh` before any process. No-op unless `STREAM_PROFILE=public-safe`; then it exits unless the owner enabled the stream, acknowledged the public-safe policy, set a real `https://` source, left `DASHBOARD_TOKEN` unset and installed a stream key. |
 
