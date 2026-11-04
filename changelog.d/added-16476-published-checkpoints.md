@@ -1,0 +1,1 @@
+- Feed the Code activity reader whole pushed PR diff regions, including removals, through the existing authorized sentinel observer, with whole-region secret filtering, bounded memory-only history, policy reset, visible freshness, buffered-snapshot labels and explicit replay; stop restoring or writing the legacy Matrix code-history file.

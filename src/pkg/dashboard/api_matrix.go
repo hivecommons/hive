@@ -97,6 +97,11 @@ func (s *Server) handleMatrixLines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Query().Get("format") == "regions" {
+		s.handleCheckpointRegions(w, r)
+		return
+	}
+
 	src, cfg := s.matrixActiveSource()
 	if src == nil || cfg == nil || !cfg.Active() {
 		jsonError(w, "matrix mode disabled", http.StatusNotFound)

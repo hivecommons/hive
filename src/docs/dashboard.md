@@ -617,30 +617,57 @@ scrub/path filters. When `dashboard.matrix.enabled` is set, the header shows a
 404 and the view says it is not enabled. The reader adds no permission and no
 anonymous access.
 
-- **Cards.** Consecutive lines from one file at one PR head form one card,
-  which shows that contiguous changed region in order. Indentation, blank lines
+- **Cards.** Each card is a complete contiguous add/remove region from a
+  validated unified-diff hunk at an actual published PR head. Indentation, blank lines
   and repeated lines are kept. Additions start with a green `+`, and removals
-  start with a red `−` when the source provides them. Long lines wrap at a
+  start with a red `−`. Long lines wrap at a
   fixed font size and are never truncated. Every card shows the repository
-  and PR number, the file, the source stage (`pushed`), and when hive
+  and PR number, the file, the source label (`Pushed PR`), and when hive
   observed the change. The repository links to the real pull request. Code is
   always shown as text and is never parsed as HTML.
 - **Pacing.** One card is read at a time. A card stays in focus for a few
   seconds plus a little more for each line, up to 30 seconds, and then the
   next card scrolls into view. New work waits behind the paragraph being read.
-  When the reader is caught up, it holds quietly. It has no replay, filler,
-  typing effect or sound.
+  When the reader is caught up, it holds quietly. Opening backlog is labelled
+  **Buffered snapshot**. **Replay buffered snapshot** explicitly replays only
+  the retained regions with a replay label; automatic replay is off. There is
+  no filler, typing effect or sound.
 - **Pause.** Press **P**, press **Space**, or use the **Pause** button to pause
   or resume. Scrolling with the wheel, touch, arrow keys, Page Up/Page Down,
   Home or End also pauses the reader so you can inspect the text. The feed is
   native, scrollable text.
 - **Motion.** With `prefers-reduced-motion`, every card is shown at once and
-  nothing scrolls by itself. In a hidden tab, the reader stops advancing until
-  the tab is visible again.
+  nothing scrolls by itself. Hiding the tab clears buffered browser code;
+  returning obtains a new buffered snapshot.
 
-The feed currently carries pushed added lines, as shown in Matrix. Removal lines
-and whole published-checkpoint regions come from the published-checkpoint
-source ([#16476](https://github.com/hivecommons/hive/issues/16476)).
+The reader requests `GET /api/matrix/lines?format=regions&since=<seq>` through
+existing dashboard read authorization. The sentinel's existing optional patch
+observer feeds this memory-only projection; no new poller or workspace collector
+is installed. Only positively identified Hive/clanker PRs from explicitly
+allowlisted, verified-public repositories are eligible. Private or unknown
+visibility fails closed. The source reports its last completed ingest pass and
+next expected pass; a cold empty feed does **not** mean no work happened. Its
+freshness is bounded by sentinel polling, unchanged-head suppression and budgets,
+not a live editor stream.
+
+Changed regions preserve both signs, indentation, blanks and repeated lines.
+An unsafe addition **or removal** drops its entire region. Built-in path denies
+and configured exclusions still apply. Admission, pagination, deduplication and
+eviction operate on whole regions. Limits are 4,096 runes per line, 16 KiB per
+region, 200 changed lines per head, 600 per minute, and 2,000 lines / 512 KiB of
+server text. Browser history holds at most 1,200 lines / 256 KiB of UTF-16 text
+and 32 visible cards, evicting whole regions. These are text bounds, not total
+process-memory measurements. Secret filtering remains heuristic.
+
+Policy changes clear server buffers and rotate a policy epoch. The browser
+clears its retained code and replay history on a changed epoch, disabled or
+unauthorized response, failed pull, or hidden tab. A 30-second authorized pull
+recovers missed sequence-only SSE nudges; code is never sent on SSE or logged.
+Buffers no longer persist across restarts, including the legacy Matrix line
+projection. Existing `/data/matrix-lines.json` files are neither restored nor
+updated; operators may remove such historical files according to their own
+retention policy. The sentinel evaluated-head map remains separate and persists.
+There is no `dashboard.matrix.workspaces` setting or pre-push capture.
 
 ## PR review and link signals
 
