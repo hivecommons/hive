@@ -16,6 +16,7 @@
 
 <p align="center">
   <a href="https://www.twitch.tv/hivecommons"><img src="https://img.shields.io/twitch/status/hivecommons?style=flat&logo=twitch&label=live" alt="Watch the hive live on Twitch"></a>
+  <a href="https://app.fossa.com/projects/custom%2B162%2Fhivecommons%2Fhive?ref=badge_shield&issueType=license"><img src="https://app.fossa.com/api/projects/custom%2B162%2Fhivecommons%2Fhive.svg?type=shield&issueType=license" alt="FOSSA license scan status"></a>
 </p>
 
 ---
