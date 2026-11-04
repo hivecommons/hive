@@ -812,7 +812,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     ci_activity: { head: '9bdf058', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: '9bdf058', state: 'adjudicating', active: true, caption: 'Review 5/5 · verdicts in · aggregating', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(both), 2, 'CI running + adjudicating: both tracks, no third: ' + strip(both));
-  assert.ok(both.includes('CI 4/11 · running</span>') && both.includes('Review 5/5 · adjudicating</span>'), both);
+  assert.ok(both.includes('CI 4/11 · 7 running</span>') && both.includes('Review 5/5 · adjudicating</span>'), both);
 }
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);

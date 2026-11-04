@@ -27,7 +27,7 @@ function constLine(source, name) {
   assert.ok(match, name);
   return match[0];
 }
-const trackConsts = ['STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER', 'STAGE_TRACKER_WORKFLOW_APPROVAL_TIP', 'STAGE_TRACKER_RING_SEGMENT_GAP_MAX', 'STAGE_TRACKER_RING_RADIUS', 'STAGE_TRACKER_RING_GAP_DEG'].map(name => constLine(strip, name)).join('\n');
+const trackConsts = ['STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER', 'STAGE_TRACKER_PENDING_CHECKS_NAMED', 'STAGE_TRACKER_WORKFLOW_APPROVAL_TIP', 'STAGE_TRACKER_RING_SEGMENT_GAP_MAX', 'STAGE_TRACKER_RING_RADIUS', 'STAGE_TRACKER_RING_GAP_DEG'].map(name => constLine(strip, name)).join('\n');
 const trackFns = ['stageTrackerHiveOwesReReview', 'stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerAgoWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
 const track = new Function('esc', 'stageTrackerIcon', trackConsts + '\n' + trackFns + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
@@ -764,8 +764,37 @@ test('the backend detail sentence rides in the track tooltip, not on the chevron
   const html = track(item, 'ci', { state: 'active' }, false, now);
   const panel = html.match(/aria-describedby="[^"]+">([^]*?)<span id="[^"]+" class="config-tooltip/)[1];
   assert.ok(!panel.includes('Branch protection'), 'the chevron shows only the compact word');
-  assert.match(html, /role="tooltip">[^]*hasn't reported for this head yet · Branch protection requires a check named &quot;test&quot;/);
+  assert.match(html, /role="tooltip">Current pipeline phase · CI: CI \?\/\? · no checks reported yet · Branch protection requires a check named &quot;test&quot;/);
   assert.match(html, /title="[^"]*Branch protection requires a check named &quot;test&quot;, but no check run/);
+  // The detail sentence is the caption spelled out: the caption does not
+  // repeat beside it, and the blocker is not a third mention (#16630).
+  assert.doesNotMatch(html, /hasn't reported for this head yet/);
+  assert.equal((html.match(/role="tooltip">([^<]*?) · head /)[1].match(/test/g) || []).length, 1, 'the unreported check is named once in the tooltip');
+});
+
+test('#16630: a head with checks still reporting is running, never "activity unknown", and the tooltip states each fact once', () => {
+  const stale = now + 10 * 60 * 1000;
+  const detail = '7 of the 11 required checks have a final result; the rest are still executing on the PR\'s current commit. Required check "test" has not reported for this head yet.';
+  const item = livePR({ ci_activity: { ...activity('running', 'CI running · 4 checks pending', true), detail, checks_passed: 7, checks_total: 11, checks_pending: ['a', 'b', 'c', 'test'] } });
+  const html = track(item, 'ci', { state: 'active' }, false, stale);
+  const tip = html.match(/role="tooltip">([^<]*)/)[1];
+  assert.equal(tip, 'Current pipeline phase · CI: CI 7/11 · 4 running · ' + esc(detail) + ' · head head · observed-test-source · stale · 2026-11-02T21:00:00.000Z (10m ago) · since 2026-11-02T20:59:00.000Z · hive is waiting on CI');
+  assert.doesNotMatch(html, /activity unknown|last observed running|no verdict yet|no check results observed/);
+  assert.match(html, /ham-activity-track active ham-current/, 'a stale poll of a counted running head keeps the lit fill');
+  assert.doesNotMatch(html, /data-motion/, 'but does not pulse');
+  // Row B: the required set unknown, 12/66 reported — the unfinished count, not "no verdict yet".
+  const rowB = livePR({ ci_activity: { ...activity('running', 'CI running · 54 checks pending', true), detail: '12 of the 66 checks observed on the head have a final result; the rest are still executing.', checks_passed: 12, checks_total: 66 } });
+  const b = track(rowB, 'ci', { state: 'active' }, false, now);
+  assert.match(b, /ham-chevron-copy ham-track-state"><svg [^]*?<\/svg>CI 12\/66 · 54 running</);
+  assert.doesNotMatch(b, /no verdict yet|no check results observed|CI unknown/);
+  // A genuinely unreported check on a head with nothing running keeps its
+  // own words, once: the count word names it, the detail explains it.
+  const missing = livePR({ ci_activity: { ...activity('missing', 'CI waiting · required check "test" hasn\'t reported for this head yet'), blocker: 'test', detail: 'Branch protection requires a check named "test", but no check run or commit status with that name exists for the PR\'s current commit.', checks_passed: 7, checks_total: 11 } });
+  const m = track(missing, 'ci', { state: 'active' }, false, stale);
+  const mt = m.match(/role="tooltip">([^<]*)/)[1];
+  assert.match(mt, /^Current pipeline phase · CI: CI 7\/11 · test not reported · Branch protection requires a check named &quot;test&quot;, but no check run[^·]*·( \S+ ago ·)? head head/);
+  assert.doesNotMatch(mt, /activity unknown|last observed missing|CI waiting/);
+  assert.equal((mt.split(' · head ')[0].match(/test/g) || []).length, 2, 'count word + detail: not caption, blocker and detail again');
 });
 
 test('#16484: count grammar — CI passed/total and Review done/total across every state', () => {
@@ -775,14 +804,21 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   assert.equal(ci('failing', { checks_passed: 11, checks_total: 14, checks_failed: 1, checks_failing: ['lint'] }), 'CI 11/14 · 1 failing (lint)');
   assert.equal(ci('failing', { checks_passed: 10, checks_total: 14, checks_failed: 3, checks_failing: ['lint', 'test', 'e2e'] }), 'CI 10/14 · 3 failing (lint, test, …)');
   assert.equal(ci('failing', { blocker: 'native-queue-policy' }), 'CI ?/? · failing (native-queue-policy)', 'older servers without counts still name the red check');
-  assert.equal(ci('running', { checks_passed: 3, checks_total: 14 }), 'CI 3/14 · running');
-  assert.equal(ci('running', { checks_passed: 3, checks_total: 14, checks_failed: 1, checks_failing: ['lint'] }), 'CI 3/14 · running · 1 failing (lint)');
-  assert.equal(ci('queued', { checks_passed: 0, checks_total: 14 }), 'CI 0/14 · queued');
+  assert.equal(ci('running', { checks_passed: 3, checks_total: 14 }), 'CI 3/14 · 11 running');
+  assert.equal(ci('running', { checks_passed: 3, checks_total: 14, checks_failed: 1, checks_failing: ['lint'] }), 'CI 3/14 · 10 running · 1 failing (lint)');
+  assert.equal(ci('running', { checks_passed: 9, checks_total: 11, checks_pending: ['check-09', 'test'] }), 'CI 9/11 · check-09, test running', 'the last one or two unfinished checks are named (#16630)');
+  assert.equal(ci('running', { checks_passed: 7, checks_total: 11, checks_pending: ['a', 'b', 'c', 'test'] }), 'CI 7/11 · 4 running');
+  assert.equal(ci('queued', { checks_passed: 0, checks_total: 14 }), 'CI 0/14 · 14 queued');
+  assert.equal(ci('queued', { checks_passed: 13, checks_total: 14, checks_pending: ['test'] }), 'CI 13/14 · test queued');
   assert.equal(ci('missing', { checks_passed: 0, checks_total: 14, blocker: 'test' }), 'CI 0/14 · no checks reported yet');
   assert.equal(ci('missing', { checks_passed: 13, checks_total: 14, blocker: 'test' }), 'CI 13/14 · test not reported');
   assert.equal(ci('skipped', { checks_passed: 13, checks_total: 14, blocker: 'build' }), 'CI 13/14 · build skipped');
   assert.equal(ci('unknown'), 'CI ?/? · no checks reported yet');
-  assert.equal(ci('unknown', { checks_passed: 51, checks_total: 68 }), 'CI 51/68 · running', 'unprotected base: an unfinished head-wide ring is still running (#16631)');
+  assert.equal(ci('unknown', { checks_passed: 51, checks_total: 68 }), 'CI 51/68 · 17 running', 'unprotected base: the unfinished count, never "no verdict yet" (#16630)');
+  assert.equal(ci('unknown', { checks_passed: 11, checks_total: 66, checks_failed: 1, checks_failing: ['flaky'] }), 'CI 11/66 · 1 failing (flaky) · 54 running');
+  assert.equal(ci('unknown', { checks_passed: 12, checks_total: 12 }), 'CI 12/12 · required set unknown');
+  assert.equal(ci('unknown', { checks_passed: 2, checks_total: 3, blocker: 'test' }), 'CI 2/3 · test unclear');
+  assert.equal(ci('unknown', { checks_passed: 3, checks_total: 3, blocker: 'commit statuses not observed' }), 'CI 3/3 · commit statuses not observed');
   assert.equal(word({ head: 'h' }, 'ci', true), 'CI ?/? · no checks reported yet', 'no evidence at all in the current phase');
   assert.equal(word({ head: 'h' }, 'ci', false), '', 'no evidence outside the current phase: not started, glyph alone');
   assert.equal(word({ head: 'h', ci_activity: { head: 'old', state: 'passing', checks_passed: 14, checks_total: 14 } }, 'ci', true), 'CI ?/? · no checks reported yet', 'old-head evidence counts for nothing');
@@ -820,7 +856,7 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
   let cells = physicalTracks(livePR({ head, stage: 70, display_column: 50, push: { state: 'pushed', sha: head, next: 're-review' },
     code_activity: { head, state: 'pushed', caption: 'New head pushed · CI and re-review', source: 'recorded-push' },
     ci_activity: fresh('running', { checks_passed: 9, checks_total: 14, active: true }), review_activity: fresh('unknown', { perspectives_done: 0, perspectives_total: 5 }) }));
-  assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 9/14 · running');
+  assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 9/14 · 5 running');
   assert.match(cells.ci, /data-motion="active"/);
   // #16599: the pending re-review is not in motion and not the stage's own
   // track (070) → glyph alone, its words in the tooltip.
@@ -835,7 +871,7 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
   // words even while only queued; CI runs beside it (two lit).
   assert.equal(cls(cells.review), 'active'); assert.equal(text(cells.review), 'Review 0/5 · queued');
   assert.doesNotMatch(cells.review, /data-motion/, 'queued is lit but still');
-  assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 2/14 · running');
+  assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 2/14 · 12 running');
   // #16268: CI failed native-queue-policy, review approved, held.
   cells = physicalTracks(livePR({ head, stage: 70, display_column: 50, modifiers: ['hold'], hold: { by: 'hanthor', pill: 'Held by @hanthor' },
     ci_activity: fresh('failing', { checks_passed: 13, checks_total: 14, checks_failed: 1, checks_failing: ['native-queue-policy'], blocker: 'native-queue-policy' }),
@@ -879,7 +915,7 @@ test('#16615: CI green on the pushed head + re-review owed by the hive → Revie
   assert.equal((cells.ci + cells.review).match(/ham-activity-track active/g).length, 1, 'exactly one active track');
   // While CI still runs on the pushed head, CI is the lit one and Review waits as a glyph.
   const running = physicalTracks({ ...item, ci_activity: fresh('running', { checks_passed: 7, checks_total: 11, active: true }) });
-  assert.equal(cls(running.ci), 'active'); assert.equal(text(running.ci), 'CI 7/11 · running');
+  assert.equal(cls(running.ci), 'active'); assert.equal(text(running.ci), 'CI 7/11 · 4 running');
   assert.equal(cls(running.review), 'todo'); assert.equal(text(running.review), '');
 });
 

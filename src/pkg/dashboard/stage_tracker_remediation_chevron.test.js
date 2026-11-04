@@ -274,7 +274,7 @@ test('#16628 shape: CI 13/19 with pending checks + review in progress → both t
       ci_activity: { head: 'abc1234def', state, caption: 'CI ' + state, checks_passed: 13, checks_total: 19, source: 'checks', observed_at: seen },
       review_activity: review }));
     assert.match(c[4], /class="ham-seg ham-activity-track active ham-current"/, state + ': a part-filled ring is lit');
-    assert.match(c[4], /CI 13\/19 · (running|queued)</, state + ': words carry the count');
+    assert.match(c[4], /CI 13\/19 · 6 (running|queued)</, state + ': words carry the count');
     assert.match(c[5], /class="ham-seg ham-activity-track active ham-current"[^]*Review 0\/5 · in progress</);
     assert.equal(litCount(c.join('')), 2, state + ': CI and Review both in motion');
   }
@@ -307,7 +307,7 @@ test('a stalled or stale-polled text-bearing track is plainly active: one amber 
   const old = cells(redPR({ display_column: 50, stage: 50,
     ci_activity: { head: 'abc1234def', state: 'running', active: true, caption: 'CI running', checks_passed: 14, checks_total: 67, source: 'checks', observed_at: '2026-11-04T01:00:00Z' },
     review_activity: { head: 'abc1234def', state: 'reviewing', active: true, caption: 'Review 0/5 · in progress', perspectives_done: 0, perspectives_total: 5, source: 'dispatch', observed_at: seen } }));
-  assert.match(old[4], /class="ham-seg ham-activity-track active ham-current"[^]*CI 14\/67 · running</, 'a stale poll of running CI is still plainly active');
+  assert.match(old[4], /class="ham-seg ham-activity-track active ham-current"[^]*CI 14\/67 · 53 running</, 'a stale poll of running CI is still plainly active');
   for (const li of [...stalled, ...old]) {
     const m = /<li class="([^"]*)"[^]*?<span class="ham-chevron-copy[^"]*">([^]*?)<\/span>/.exec(li);
     const words = m ? m[2].replace(/<[^>]+>/g, '').trim() : '';
