@@ -618,6 +618,11 @@ test('known and original chevrons keep full long text inside a shared one-line c
   assert.ok(known.match(/role="tooltip">([^]*?)<\/span>/)[1].includes(handle));
   const css = fs.readFileSync(path.join(__dirname, 'static-src/css/tracker.css'), 'utf8');
   assert.match(css, /--ham-chevron-text-lines: 1;/);
+  // responsive.css gives every .config-info a 40px --tap-target floor on
+  // phones; the chevron's info wrapper must undo it or each chevron becomes
+  // a 44px box (hivecommons/hive#16551).
+  assert.match(css, /\.ham-chevron-info\.config-info, \.ham-chevron-info\.ham-chevron-decision \{[^}]*min-height: 0;/);
+  assert.match(css, /\.ham-chevron-info\.config-info::before \{ content: none; \}/);
   assert.match(css, /\.ham-chevron-copy \{[^}]*-webkit-line-clamp: var\(--ham-chevron-text-lines\);[^}]*white-space: normal; overflow-wrap: anywhere;/);
   assert.doesNotMatch(css, /\.ham-(?:seg-t|detour)\.ham-has-holder[^}]*white-space: nowrap/);
   assert.match(css, /padding: var\(--sp-1\) calc\(var\(--ham-notch\) \+ var\(--sp-2\)\)/);
