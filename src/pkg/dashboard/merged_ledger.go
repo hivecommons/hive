@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,14 +296,43 @@ func (l *MergedLedger) persistLocked() {
 	if err != nil {
 		return
 	}
-	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := writeFileAtomicUnique(l.path, data); err != nil {
 		slog.Error("merged ledger write failed", "error", err)
-		return
 	}
-	if err := os.Rename(tmp, l.path); err != nil {
-		slog.Error("merged ledger rename failed", "error", err)
+}
+
+// writeFileAtomicUnique writes data to a uniquely named temp file beside
+// path and renames it into place. A fixed ".tmp" name let two writers (two
+// ledgers on one path, or a restart overlapping a roll) rename each other's
+// file away, failing with ENOENT (hivecommons/hive#16629).
+func writeFileAtomicUnique(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Summary computes the API block at now in loc (nil → UTC). "Today" rolls
