@@ -160,9 +160,12 @@ func TestAdoptNowTakesOverOwnerAuthoredPR(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#16489: the adoption/supersede label queued with Adopt now
-// is consumed with the forced mark, so later sweeps do not re-read it as a
-// plain request and refuse an owner's PR every pass.
+// hivecommons/hive#16489: Adopt now queues the adoption/supersede label along
+// with the forced mark. A labelled PR, whatever its stage, is handled by the
+// delegated-request block in ApplyStageLabels, which removes the label once
+// the attempt is recorded — so later sweeps do not re-read it as a plain
+// request and refuse an owner's PR every pass. Regression guard for a PR
+// parked at 072 when the forced adoption lands.
 func TestAdoptNowConsumesSupersedeLabelOn072(t *testing.T) {
 	policy := adoptPolicy()
 	policy.OwnerAuthor = func(login string) bool { return login == "mallory" }
