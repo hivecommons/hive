@@ -2567,6 +2567,9 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		// The listing is the head's complete observation; checks delivered
 		// by webhook since then are laid over it (hivecommons/hive#16521).
 		owner, name := c.splitRepo(prs[i].Repo)
+		if prs[i].CIStatus == "success" {
+			CIFailureSignals().forgetGreenHead(owner+"/"+name, prs[i].Number, prs[i].HeadSHA)
+		}
 		sharedCIEvidence().recordListed(owner+"/"+name, prs[i].HeadSHA, prs[i].CIActivity)
 		prs[i].CIActivity = sharedCIEvidence().merged(owner+"/"+name, prs[i].HeadSHA, prs[i].CIActivity)
 	}

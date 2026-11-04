@@ -250,16 +250,71 @@ func (s *CIFailureSignalStore) filter(keep func(CIFailureSignal) bool) []CIFailu
 // Forget drops every signal for repo#number (the PR merged, closed, or its
 // head moved on to a new SHA that is not this one).
 func (s *CIFailureSignalStore) Forget(repo string, number int) {
+	canon := canonicalPRDetailRepo(repo)
+	s.forgetMatching(func(sig CIFailureSignal) bool {
+		return canonicalPRDetailRepo(sig.Repo) == canon && sig.Number == number
+	})
+}
+
+func (s *CIFailureSignalStore) forgetMatching(match func(CIFailureSignal) bool) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	canon := canonicalPRDetailRepo(repo)
 	for k, sig := range s.signals {
-		if k.repo == canon && sig.Number == number {
+		if match(sig) {
 			delete(s.signals, k)
 		}
+	}
+}
+
+// forgetGreenHead removes only this observed head, preserving failures from a
+// newer head that may have arrived while enrichment was in progress.
+func (s *CIFailureSignalStore) forgetGreenHead(repo string, number int, head string) {
+	canon := canonicalPRDetailRepo(repo)
+	s.forgetMatching(func(sig CIFailureSignal) bool {
+		return canonicalPRDetailRepo(sig.Repo) == canon && sig.Number == number && strings.EqualFold(sig.HeadSHA, head)
+	})
+}
+
+// forgetResolvedWebhook drops resolved checks even when the detail cache has
+// already been invalidated by the failure delivery. A suite success only
+// resolves that suite's signal; other producers may still have failing checks.
+func (s *CIFailureSignalStore) forgetResolvedWebhook(event string, p webhookEventPayload) {
+	repo := canonicalPRDetailRepo(p.Repository.FullName)
+	if hint := webhookItemHint(event, p); hint != nil && hint.IsPR && hint.Closed() {
+		s.Forget(repo, hint.Number)
+		return
+	}
+	if event == "pull_request" && p.Action == "synchronize" && p.PullRequest != nil && p.PullRequest.Head.SHA != "" {
+		s.forgetMatching(func(sig CIFailureSignal) bool {
+			return canonicalPRDetailRepo(sig.Repo) == repo && sig.Number == p.PullRequest.Number && !strings.EqualFold(sig.HeadSHA, p.PullRequest.Head.SHA)
+		})
+		return
+	}
+	head, check := "", ""
+	switch event {
+	case "check_run":
+		if p.CheckRun != nil && p.Action == "completed" && p.CheckRun.Conclusion == "success" {
+			head, check = p.CheckRun.HeadSHA, p.CheckRun.Name
+		}
+	case "check_suite":
+		if p.CheckSuite != nil && p.Action == "completed" && p.CheckSuite.Conclusion == "success" {
+			head, check = p.CheckSuite.HeadSHA, "check suite"
+			if app := strings.TrimSpace(p.CheckSuite.App.Name); app != "" {
+				check = app + " check suite"
+			}
+		}
+	case "status":
+		if p.State == "success" {
+			head, check = p.SHA, p.Context
+		}
+	}
+	if strings.TrimSpace(head) != "" {
+		s.forgetMatching(func(sig CIFailureSignal) bool {
+			return canonicalPRDetailRepo(sig.Repo) == repo && strings.EqualFold(sig.HeadSHA, strings.TrimSpace(head)) && strings.TrimSpace(sig.Check) == strings.TrimSpace(check)
+		})
 	}
 }
 

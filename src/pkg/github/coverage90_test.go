@@ -159,6 +159,10 @@ func TestEnrichCIStatus_ActionRequired(t *testing.T) {
 }
 
 func TestEnrichCIStatus_AllDoneSuccess(t *testing.T) {
+	t.Cleanup(ResetCIFailureSignalsForTest(nil))
+	store := CIFailureSignals()
+	store.Record(CIFailureSignal{Repo: "org/repo", Number: 1, HeadSHA: "abc123", Check: "build"})
+	store.Record(CIFailureSignal{Repo: "org/repo", Number: 1, HeadSHA: "new-head", Check: "build"})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_count": 1,
@@ -174,6 +178,9 @@ func TestEnrichCIStatus_AllDoneSuccess(t *testing.T) {
 	c.EnrichCIStatus(context.Background(), prs)
 	if prs[0].CIStatus != "success" {
 		t.Errorf("CIStatus = %q, want success", prs[0].CIStatus)
+	}
+	if remaining := store.ForPR("org/repo", 1); len(remaining) != 1 || remaining[0].HeadSHA != "new-head" {
+		t.Fatalf("green enrichment must forget only the observed head: %+v", remaining)
 	}
 }
 
