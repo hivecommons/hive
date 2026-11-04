@@ -1,1 +1,0 @@
-The inference translator's "unidentified caller refused" warning now records why the caller was unidentified (no UID map, unresolved socket, or unmapped UID), the socket owner UID, and whether an `x-api-key` was sent. The refusal itself is unchanged.
