@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -298,6 +299,7 @@ func resetSHACaches(t *testing.T) {
 	// -shuffle=on.
 	commitMsgBackoffMu.Lock()
 	commitMsgBackoffUntil = map[string]time.Time{}
+	commitMsgGlobalBackoffUntil = time.Time{}
 	commitMsgBackoffMu.Unlock()
 }
 
@@ -345,7 +347,8 @@ func TestFetchCommitMessageBacksOffPerSHA(t *testing.T) {
 
 // TestFetchCommitMessageWarnsOncePerDistinctSHA pins the contract the
 // sha_poll_commit_message_unavailable fleet-report class relies on
-// (src/docs/fleet-report.md): the WARN is deduped per (SHA, status), so the
+// (src/docs/fleet-report.md): the WARN is deduped per (SHA, status) for
+// per-SHA failures such as 404 (403/429 are client-wide, see below), so the
 // class's 5-in-10-min threshold is only reachable when five distinct commits
 // fail, never by one commit failing repeatedly.
 func TestFetchCommitMessageWarnsOncePerDistinctSHA(t *testing.T) {
@@ -358,7 +361,7 @@ func TestFetchCommitMessageWarnsOncePerDistinctSHA(t *testing.T) {
 	t.Cleanup(func() { githubWarnNow = time.Now })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 	var buf bytes.Buffer
@@ -380,5 +383,101 @@ func TestFetchCommitMessageWarnsOncePerDistinctSHA(t *testing.T) {
 	}
 	if n := strings.Count(buf.String(), "level=WARN"); n != 5 {
 		t.Fatalf("warns for 5 distinct SHAs = %d, want 5", n)
+	}
+}
+
+func TestFetchCommitMessageThrottleBacksOffAllSHAs(t *testing.T) {
+	resetSHACaches(t)
+	githubWarnMu.Lock()
+	githubWarnLast = map[string]time.Time{}
+	githubWarnMu.Unlock()
+	now := time.Now()
+	githubWarnNow = func() time.Time { return now }
+	t.Cleanup(func() { githubWarnNow = time.Now })
+
+	hits := 0
+	reset := now.Add(20 * time.Minute)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := clientTo(t, srv)
+
+	for _, sha := range []string{"1111111aaaa", "2222222bbbb", "3333333cccc"} {
+		fetchCommitMessage(c, sha, logger)
+	}
+	if hits != 1 {
+		t.Errorf("server hits across distinct SHAs = %d, want 1", hits)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Errorf("warns across distinct SHAs = %d, want 1", n)
+	}
+
+	// Past the per-SHA back-off but before X-RateLimit-Reset: still parked.
+	now = now.Add(commitMsgBackoff + time.Second)
+	fetchCommitMessage(c, "4444444dddd", logger)
+	if hits != 1 {
+		t.Errorf("server hits before reset = %d, want 1", hits)
+	}
+
+	now = reset.Add(time.Second)
+	fetchCommitMessage(c, "4444444dddd", logger)
+	if hits != 2 {
+		t.Errorf("server hits after reset = %d, want 2", hits)
+	}
+}
+
+func TestCommitMsgThrottleWaitPrefersRetryAfter(t *testing.T) {
+	// X-RateLimit-Reset is whole epoch seconds, so keep now second-aligned.
+	now := time.Now().Truncate(time.Second)
+	h := http.Header{}
+	h.Set("X-RateLimit-Reset", strconv.FormatInt(now.Add(50*time.Minute).Unix(), 10))
+	h.Set("Retry-After", "60")
+	if got := commitMsgThrottleWait(h, now); got != 60*time.Second {
+		t.Errorf("wait with Retry-After and X-RateLimit-Reset = %v, want 60s", got)
+	}
+
+	h.Del("Retry-After")
+	if got := commitMsgThrottleWait(h, now); got != 50*time.Minute {
+		t.Errorf("wait with only X-RateLimit-Reset = %v, want 50m", got)
+	}
+
+	h.Set("X-RateLimit-Reset", strconv.FormatInt(now.Add(-time.Minute).Unix(), 10))
+	if got := commitMsgThrottleWait(h, now); got != commitMsgBackoff {
+		t.Errorf("wait with stale reset = %v, want %v", got, commitMsgBackoff)
+	}
+
+	h.Set("Retry-After", strconv.Itoa(int((commitMsgGlobalBackoffMax+time.Hour)/time.Second)))
+	if got := commitMsgThrottleWait(h, now); got != commitMsgGlobalBackoffMax {
+		t.Errorf("wait above cap = %v, want %v", got, commitMsgGlobalBackoffMax)
+	}
+}
+
+func TestFetchCommitMessage404DoesNotParkOtherSHAs(t *testing.T) {
+	resetSHACaches(t)
+	githubWarnMu.Lock()
+	githubWarnLast = map[string]time.Time{}
+	githubWarnMu.Unlock()
+	now := time.Now()
+	githubWarnNow = func() time.Time { return now }
+	t.Cleanup(func() { githubWarnNow = time.Now })
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	c := clientTo(t, srv)
+
+	fetchCommitMessage(c, "1111111aaaa", logger)
+	fetchCommitMessage(c, "2222222bbbb", logger)
+	if hits != 2 {
+		t.Errorf("server hits for two SHAs on 404 = %d, want 2", hits)
 	}
 }

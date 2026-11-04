@@ -321,6 +321,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.None && !(ok && rec.Stage != stagelabels.None) {
 			stage = bucketStage(bucket)
 		}
+		// Triage accepted on the labels but no stage anywhere yet: 010, not
+		// 000-new, until the engine's next pass (hivecommons/hive#16652).
+		stage = s.stageTrackerAcceptedTriageStage(stage, rec, ok, issue.Labels)
 		// A held issue is "Open · on hold" whatever stage label or store
 		// record the hold caught it with; the reconciler drops both on its
 		// next cycle (hivecommons/hive#13012).

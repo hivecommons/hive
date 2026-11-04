@@ -156,17 +156,20 @@ func TestRepoItemAcceptTriageAuthorizationAndLabels(t *testing.T) {
 	if !resp.OK || resp.AlreadyAccepted || resp.AcceptLabel != "triage/accepted" {
 		t.Fatalf("response = %+v", resp)
 	}
-	if got := strings.Join(mock.added, ","); got != "triage/accepted" {
-		t.Fatalf("added = %q, want triage/accepted", got)
+	if got := strings.Join(mock.added, ","); got != "triage/accepted,stage/010-actionable" {
+		t.Fatalf("added = %q, want triage/accepted and the 010 stage label", got)
 	}
-	if got := strings.Join(mock.created, ","); got != "triage/accepted" {
-		t.Fatalf("created = %q, want the accept label ensured", got)
+	if got := strings.Join(mock.created, ","); got != "triage/accepted,stage/010-actionable" {
+		t.Fatalf("created = %q, want the accept and stage labels ensured", got)
 	}
 	if got := strings.Join(mock.removed, ","); got != "needs-triage,stage/015-triage-needed" {
 		t.Fatalf("removed = %q, want needs-triage and the 015 stage label", got)
 	}
-	if strings.Join(resp.Removed, ",") != "needs-triage,stage/015-triage-needed" || strings.Join(resp.Added, ",") != "triage/accepted" {
+	if strings.Join(resp.Removed, ",") != "needs-triage,stage/015-triage-needed" || strings.Join(resp.Added, ",") != "triage/accepted,stage/010-actionable" {
 		t.Fatalf("response labels = %+v", resp)
+	}
+	if got := labelStage(mock.issueLabels); got != stagelabels.Actionable {
+		t.Fatalf("issue stage after accept = %v labels=%v, want 010 and exactly one stage label", got, mock.issueLabels)
 	}
 
 	var audited bool
@@ -195,13 +198,79 @@ func TestRepoItemAcceptTriageAuthorizationAndLabels(t *testing.T) {
 	if w := postAcceptTriage(t, srv, "", true); w.Code != http.StatusOK {
 		t.Fatalf("owner: code=%d body=%s", w.Code, w.Body.String())
 	}
-	if strings.Join(mock.added, ",") != "triage/accepted" {
+	if strings.Join(mock.added, ",") != "triage/accepted,stage/010-actionable" {
 		t.Fatalf("owner added = %v", mock.added)
 	}
 }
 
+// An issue the reporter-trust gate parked at 000-new (no awaiting label, no
+// stage label — hivecommons/hive#16652) leaves "New" in the same request:
+// the handler writes stage/010-actionable with the accept label instead of
+// waiting for the engine's next pass. A stage further along is never
+// regressed.
+func TestRepoItemAcceptTriageAdvancesStage(t *testing.T) {
+	mock := &acceptTriageMock{permission: "write", issueLabels: []string{"bug", "help wanted"}}
+	srv := newAcceptTriageServer(t, mock)
+	w := postAcceptTriage(t, srv, "writer", false)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoAcceptTriageResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if strings.Join(mock.added, ",") != "triage/accepted,stage/010-actionable" || len(mock.removed) != 0 {
+		t.Fatalf("000-new issue: added=%v removed=%v", mock.added, mock.removed)
+	}
+	if resp.AlreadyAccepted || strings.Join(resp.Added, ",") != "triage/accepted,stage/010-actionable" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Result == nil || resp.Result.Action != rowActionTriaged || !strings.Contains(resp.Result.Outcome, "`stage/010-actionable` added") {
+		t.Fatalf("result = %+v", resp.Result)
+	}
+
+	// Accept label already on but no stage label (the state #16652 was left
+	// in): a retry adds only the stage label and is not a no-op.
+	mock.added, mock.removed, mock.created = nil, nil, nil
+	mock.issueLabels = []string{"bug", "triage/accepted"}
+	w = postAcceptTriage(t, srv, "writer", false)
+	if w.Code != http.StatusOK {
+		t.Fatalf("retry: code=%d body=%s", w.Code, w.Body.String())
+	}
+	resp = repoAcceptTriageResponse{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if strings.Join(mock.added, ",") != "stage/010-actionable" || len(mock.removed) != 0 || resp.AlreadyAccepted {
+		t.Fatalf("retry: added=%v removed=%v resp=%+v", mock.added, mock.removed, resp)
+	}
+	if resp.Result == nil || resp.Result.Action != rowActionTriaged || !strings.HasPrefix(resp.Result.Outcome, "Triage already accepted: `stage/010-actionable` added") {
+		t.Fatalf("retry result = %+v", resp.Result)
+	}
+
+	// Accepted and already 010: a true no-op.
+	mock.added, mock.removed = nil, nil
+	mock.issueLabels = []string{"bug", "triage/accepted", "stage/010-actionable"}
+	w = postAcceptTriage(t, srv, "writer", false)
+	resp = repoAcceptTriageResponse{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if w.Code != http.StatusOK || !resp.AlreadyAccepted || len(mock.added)+len(mock.removed) != 0 {
+		t.Fatalf("already 010: code=%d resp=%+v added=%v removed=%v", w.Code, resp, mock.added, mock.removed)
+	}
+
+	// Claimed (020) is further along than 010: only the triage labels move.
+	mock.added, mock.removed = nil, nil
+	mock.issueLabels = []string{"needs-triage", "stage/020-claimed"}
+	w = postAcceptTriage(t, srv, "writer", false)
+	if w.Code != http.StatusOK {
+		t.Fatalf("claimed: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Join(mock.added, ",") != "triage/accepted" || strings.Join(mock.removed, ",") != "needs-triage" {
+		t.Fatalf("claimed: added=%v removed=%v, must not regress 020", mock.added, mock.removed)
+	}
+	if got := labelStage(mock.issueLabels); got != stagelabels.Claimed {
+		t.Fatalf("claimed stage after accept = %v labels=%v", got, mock.issueLabels)
+	}
+}
+
 func TestRepoItemAcceptTriageIdempotentAndIssuesOnly(t *testing.T) {
-	mock := &acceptTriageMock{permission: "maintain", issueLabels: []string{"bug", "triage/accepted"}}
+	mock := &acceptTriageMock{permission: "maintain", issueLabels: []string{"bug", "triage/accepted", "stage/010-actionable"}}
 	srv := newAcceptTriageServer(t, mock)
 
 	w := postAcceptTriage(t, srv, "writer", false)
@@ -222,13 +291,14 @@ func TestRepoItemAcceptTriageIdempotentAndIssuesOnly(t *testing.T) {
 		}
 	}
 
-	// Accepted label on, but the awaiting label lingers: only the removal happens.
+	// Accepted label on, but the awaiting label lingers: the removal happens
+	// and the stage-less issue is advanced to 010.
 	mock.issueLabels = []string{"triage/accepted", "needs-triage"}
 	w = postAcceptTriage(t, srv, "writer", false)
 	if w.Code != http.StatusOK {
 		t.Fatalf("lingering awaiting: code=%d body=%s", w.Code, w.Body.String())
 	}
-	if len(mock.added) != 0 || strings.Join(mock.removed, ",") != "needs-triage" {
+	if strings.Join(mock.added, ",") != "stage/010-actionable" || strings.Join(mock.removed, ",") != "needs-triage" {
 		t.Fatalf("lingering awaiting: added=%v removed=%v", mock.added, mock.removed)
 	}
 	resp = repoAcceptTriageResponse{}
@@ -282,8 +352,8 @@ func TestRepoItemAcceptTriageUsesConfiguredLabels(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
-	if strings.Join(mock.added, ",") != "triage/ok" {
-		t.Fatalf("added = %v, want the first configured accept label", mock.added)
+	if strings.Join(mock.added, ",") != "triage/ok,stage/010-actionable" {
+		t.Fatalf("added = %v, want the first configured accept label and the 010 stage", mock.added)
 	}
 	if strings.Join(mock.removed, ",") != "awaiting-maintainer,needs-triage" {
 		t.Fatalf("removed = %v", mock.removed)
@@ -318,6 +388,42 @@ func TestRepoItemAcceptTriagePlanAndStalenessRule(t *testing.T) {
 		t.Fatal("only a 015 record is retired")
 	}
 
+	// The stage advance the handler writes: 010 for a stage-less or 015
+	// issue, nothing for one further along.
+	if got := acceptTriageStageAdvance([]string{"bug"}, "h1", labelStage); got != "stage/010-actionable" {
+		t.Fatalf("stage-less advance = %q", got)
+	}
+	if got := acceptTriageStageAdvance([]string{"stage/015-triage-needed"}, "h1", labelStage); got != "stage/010-actionable" {
+		t.Fatalf("015 advance = %q", got)
+	}
+	for _, l := range []string{"stage/010-actionable", "stage/020-claimed", "stage/040-covered-by-pr", "hold", "hive-pause/h1"} {
+		if got := acceptTriageStageAdvance([]string{l}, "h1", labelStage); got != "" {
+			t.Fatalf("%s advance = %q, want none", l, got)
+		}
+	}
+
+	// Tracker derivation: triage/accepted with no stage label and no engine
+	// record is 010, not 000-new (hivecommons/hive#16652); an awaiting label
+	// still on, or a record / label stage, is left alone.
+	none := stagelabels.Record{}
+	if got := srv.stageTrackerAcceptedTriageStage(stagelabels.None, none, false, []string{"bug", "triage/accepted"}); got != stagelabels.Actionable {
+		t.Fatalf("accepted without stage = %v, want 010", got)
+	}
+	if got := srv.stageTrackerAcceptedTriageStage(stagelabels.None, none, true, []string{"triage/accepted"}); got != stagelabels.Actionable {
+		t.Fatalf("accepted with a None record = %v, want 010", got)
+	}
+	if got := srv.stageTrackerAcceptedTriageStage(stagelabels.None, none, false, []string{"triage/accepted", "needs-triage"}); got != stagelabels.None {
+		t.Fatalf("awaiting label still on = %v, want none", got)
+	}
+	if got := srv.stageTrackerAcceptedTriageStage(stagelabels.None, none, false, []string{"bug"}); got != stagelabels.None {
+		t.Fatalf("not accepted = %v, want none", got)
+	}
+	if got := srv.stageTrackerAcceptedTriageStage(stagelabels.Claimed, none, false, []string{"triage/accepted"}); got != stagelabels.Claimed {
+		t.Fatalf("label stage kept = %v", got)
+	}
+	if got := srv.stageTrackerAcceptedTriageStage(stagelabels.None, stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, true, []string{"triage/accepted"}); got != stagelabels.None {
+		t.Fatalf("record stage wins = %v", got)
+	}
 }
 
 // The result's "next" line carries the governor's next pass when one is
@@ -411,7 +517,7 @@ func TestAcceptTriageRefreshesWorkAndRetryAfterReload(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if strings.Join(mock.added, ",") != "triage/accepted" || strings.Join(mock.removed, ",") != "needs-triage" {
+	if strings.Join(mock.added, ",") != "triage/accepted,stage/010-actionable" || strings.Join(mock.removed, ",") != "needs-triage" {
 		t.Fatalf("retry repeated label writes: added=%v removed=%v", mock.added, mock.removed)
 	}
 }
@@ -425,7 +531,7 @@ func TestAcceptTriageHandoffFailuresAndConcurrentGates(t *testing.T) {
 		wantErrorText string
 	}{
 		{name: "read failure after write", mock: acceptTriageMock{issueLabels: []string{"needs-triage"}, failRead: 2}, wantStatus: http.StatusBadGateway, wantErrorText: "labels were saved"},
-		{name: "read failure on retry", mock: acceptTriageMock{issueLabels: []string{"triage/accepted"}, failRead: 2}, wantStatus: http.StatusBadGateway, wantErrorText: "already accepted"},
+		{name: "read failure on retry", mock: acceptTriageMock{issueLabels: []string{"triage/accepted", "stage/010-actionable"}, failRead: 2}, wantStatus: http.StatusBadGateway, wantErrorText: "already accepted"},
 		{name: "revoked during refresh", mock: acceptTriageMock{issueLabels: []string{"triage/accepted"}, refreshLabels: []string{"needs-triage"}}, wantStatus: http.StatusBadGateway, wantErrorText: "issue changed"},
 		{name: "label removal failed", mock: acceptTriageMock{issueLabels: []string{"needs-triage"}, failRemove: true}, wantStatus: http.StatusBadGateway},
 		{name: "hold remains", mock: acceptTriageMock{issueLabels: []string{"needs-triage", "hold"}}, wantStatus: http.StatusOK, wantBucket: github.WebhookBucketHeld},
@@ -453,6 +559,15 @@ func TestAcceptTriageHandoffFailuresAndConcurrentGates(t *testing.T) {
 			}
 			if strings.Join(tc.mock.removed, ",") != "needs-triage" {
 				t.Fatalf("triage removed a hold/human gate: %v", tc.mock.removed)
+			}
+			// A held issue is "on hold" whatever its stage: no stage label
+			// is written for the reconciler to strip again.
+			wantAdded := "triage/accepted,stage/010-actionable"
+			if tc.wantBucket == github.WebhookBucketHeld {
+				wantAdded = "triage/accepted"
+			}
+			if got := strings.Join(tc.mock.added, ","); got != wantAdded {
+				t.Fatalf("added = %q, want %q", got, wantAdded)
 			}
 		})
 	}
