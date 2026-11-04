@@ -254,6 +254,7 @@ type Governor struct {
 	modeHistory                   []ModeChange
 	evalHistory                   []EvalSnapshot
 	kickHistory                   []KickRecord
+	deferredFixKicks              []deferredFixKick
 	agentReports                  map[string]AgentReportRecord
 	kickOutcomes                  map[string]KickOutcomeRecord
 	budget                        BudgetInfo

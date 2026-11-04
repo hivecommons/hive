@@ -43340,6 +43340,14 @@ function burnAreaChart() {
       return Math.floor(h / 24) + 'd';
     }
 
+    function fixerQueueHint(e) {
+      var position = Number(e && e.fixer_queue_position);
+      if (!Number.isInteger(position) || position < 1) return '';
+      var ahead = Number(e.fixer_queue_ahead);
+      if (!Number.isInteger(ahead) || ahead < 0) ahead = position - 1;
+      return 'fixer queued, ' + ahead + ' ahead';
+    }
+
     function renderReviewQueueEntry(e) {
       var meta = reviewQueuePriorityMeta(e.priority);
       var title = String(e.title || '');
@@ -43355,6 +43363,8 @@ function burnAreaChart() {
       if (e.confidence_band) metaBits.push(esc(String(e.confidence_band)));
       metaBits.push(reviewQueueAgeLabel(e.age_hours) + ' old');
       if (e.held) metaBits.push('held');
+      var fixerHint = fixerQueueHint(e);
+      if (fixerHint) metaBits.push('<span class="hf-label hf-label-hold">' + esc(fixerHint) + '</span>');
       // Hive-owned stage/author labels (#12429) tell at a glance where the
       // PR sits in the pipeline; other labels stay out of the meta line.
       // stage/stalled means "no activity by anyone but the hive for the
