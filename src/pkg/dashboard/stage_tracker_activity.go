@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -30,6 +31,20 @@ type StageTrackerActivity struct {
 	Blocker    string     `json:"blocker,omitempty"`
 	URL        string     `json:"url,omitempty"`
 	Active     bool       `json:"active,omitempty"`
+	// Check counts on the current head for the CI track (hivecommons/hive#16484):
+	// over the required checks when branch protection is known, otherwise
+	// over every check run observed on the head. ChecksTotal == 0 means no
+	// count could be made ("CI ?/?").
+	ChecksPassed  int      `json:"checks_passed,omitempty"`
+	ChecksTotal   int      `json:"checks_total,omitempty"`
+	ChecksFailed  int      `json:"checks_failed,omitempty"`
+	ChecksFailing []string `json:"checks_failing,omitempty"`
+	// Perspective counts on the current head for the Review track: Total is
+	// the swarm's expected set for this PR (configured perspectives plus any
+	// extra one dispatched or reported for the head), Done the ones with a
+	// verdict for the current head.
+	PerspectivesDone  int `json:"perspectives_done,omitempty"`
+	PerspectivesTotal int `json:"perspectives_total,omitempty"`
 }
 
 const trackerActivityFreshWindow = 2 * time.Minute
@@ -53,6 +68,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Source += "+github-commit-statuses"
 	}
 	if !a.RequiredKnown || a.RequiredSource == "" || len(a.RequiredChecks) == 0 || len(a.Required) == 0 {
+		stageTrackerCountHeadChecks(out, a)
 		return out
 	}
 	type requiredObservation struct {
@@ -87,10 +103,14 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			}
 		}
 		if !found {
+			stageTrackerCountHeadChecks(out, a)
 			return out
 		}
 	}
 	out.State, out.Caption = "passing", "CI green"
+	// Per required-check name: the leading state across its observations,
+	// for the passed / failed counts.
+	perName := map[string]string{}
 	running := false
 	// Per required-check name: which have a final result, for the running count.
 	settled := map[string]bool{}
@@ -132,6 +152,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		}
 		// A red required check leads, then missing/unknown, then running/queued.
 		rank := map[string]int{"passing": 0, "queued": 1, "running": 2, "skipped": 3, "unknown": 4, "missing": 5, "failing": 6}
+		if previous, seen := perName[name]; !seen || rank[state] >= rank[previous] {
+			perName[name] = state
+		}
 		if rank[state] >= rank[out.State] {
 			out.State, out.Since, out.URL = state, check.Since, check.URL
 			out.ObservedAt = a.ObservedAt
@@ -154,6 +177,16 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		}
 	}
 	total := len(a.Required)
+	out.ChecksTotal = total
+	for _, name := range a.Required {
+		switch perName[name] {
+		case "passing":
+			out.ChecksPassed++
+		case "failing":
+			out.ChecksFailed++
+			out.ChecksFailing = append(out.ChecksFailing, name)
+		}
+	}
 	check := fmt.Sprintf("%q", out.Blocker)
 	switch out.State {
 	case "passing":
@@ -188,6 +221,113 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Caption += " · other checks still running"
 	}
 	return out
+}
+
+// stageTrackerCountHeadChecks fills the check counts from every check run
+// observed on the head when the required set is not known: one entry per
+// check name, red if any run of that name is red, green only if its latest
+// run succeeded.
+func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivity) {
+	type tally struct {
+		passing, failing bool
+		since            time.Time
+	}
+	byName := map[string]*tally{}
+	var order []string
+	for _, check := range a.Checks {
+		if check.Head != "" && !strings.EqualFold(check.Head, a.Head) {
+			continue
+		}
+		t := byName[check.Name]
+		if t == nil {
+			t = &tally{}
+			byName[check.Name] = t
+			order = append(order, check.Name)
+		}
+		at := time.Time{}
+		if check.Since != nil {
+			at = *check.Since
+		}
+		red := check.State == "completed" && (check.Conclusion == "failure" || check.Conclusion == "timed_out" || check.Conclusion == "cancelled" || check.Conclusion == "action_required" || check.Conclusion == "startup_failure" || check.Conclusion == "stale")
+		if red {
+			t.failing = true
+		}
+		if !at.Before(t.since) {
+			t.since, t.passing = at, check.State == "completed" && check.Conclusion == "success"
+		}
+	}
+	out.ChecksTotal = len(order)
+	for _, name := range order {
+		t := byName[name]
+		switch {
+		case t.failing:
+			out.ChecksFailed++
+			out.ChecksFailing = append(out.ChecksFailing, name)
+		case t.passing:
+			out.ChecksPassed++
+		}
+	}
+}
+
+// stageTrackerExpectedPerspectives is the swarm's perspective set for this
+// hive: the configured list (built-ins when empty), falling back to the
+// built-ins when the configuration cannot be resolved.
+func stageTrackerExpectedPerspectives(cfg *config.Config) []review.Perspective {
+	var names []string
+	var prompts map[string]string
+	if cfg != nil {
+		names, prompts = cfg.Review.Perspectives, cfg.Review.PerspectivePrompts
+	}
+	if set, err := review.NewPerspectiveSet(names, prompts); err == nil && set.Len() > 0 {
+		return set.List()
+	}
+	return append([]review.Perspective(nil), review.DefaultPerspectives...)
+}
+
+// stageTrackerCountPerspectives fills the Review track's done / total
+// perspective counts for the PR's current head: total is the expected set
+// plus any extra perspective dispatched or reported for the head; done the
+// perspectives with a verdict for the head (the aggregate's, or the latest
+// verified bundle verdict).
+func stageTrackerCountPerspectives(out *StageTrackerActivity, pr github.PullRequest, bundle *evidence.Bundle, agg *review.Aggregate, dispatch review.DispatchState, qualify func(string) string, expected []review.Perspective) {
+	if out == nil || pr.HeadSHA == "" {
+		return
+	}
+	total := map[review.Perspective]bool{}
+	done := map[review.Perspective]bool{}
+	for _, p := range expected {
+		total[p] = true
+	}
+	if agg != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, agg.Repo, agg.Number, agg.HeadSHA) {
+		for p, v := range agg.Perspectives {
+			total[p] = true
+			if v != "" {
+				done[p] = true
+			}
+		}
+	}
+	if bundle != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, bundle.Repo, bundle.Number, bundle.HeadSHA) {
+		for _, verdict := range trackerLatestBundleVerdicts(bundle) {
+			if verdict.Perspective == "" {
+				continue
+			}
+			total[review.Perspective(verdict.Perspective)] = true
+			if verdict.Verdict != "" {
+				done[review.Perspective(verdict.Perspective)] = true
+			}
+		}
+	}
+	for _, pending := range dispatch.Pending {
+		if pending.Perspective != "" && !pending.Decision && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, qualify(pending.Repo), pending.Number, pending.HeadSHA) {
+			total[pending.Perspective] = true
+		}
+	}
+	out.PerspectivesTotal, out.PerspectivesDone = len(total), 0
+	for p := range done {
+		if total[p] {
+			out.PerspectivesDone++
+		}
+	}
 }
 
 func trackerHeadMatches(repo string, number int, head, observedRepo string, observedNumber int, observedHead string) bool {
