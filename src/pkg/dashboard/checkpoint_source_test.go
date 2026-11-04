@@ -240,15 +240,27 @@ func TestCheckpointAPIAuthColdAndEpoch(t *testing.T) {
 		t.Fatalf("cold response %d %s", rr.Code, rr.Body.String())
 	}
 	// Feed the real observer queue, including a deletion-only checkpoint.
+	// Wait for the nudge frame rather than the ingest: the observer goroutine
+	// reads the matrix config while broadcasting, so the policy edits below
+	// must not start until that frame has been delivered.
+	frames := make(chan []byte, 8)
+	s.sseMu.Lock()
+	s.sseClients[frames] = struct{}{}
+	s.sseMu.Unlock()
 	s.MatrixObserver(cfg)(matrixObs(1, "real-head", sentinel.File{Path: "a.go", Patch: "@@ -1,2 +0,0 @@\n-old\n-old\n"}))
-	deadline := time.After(2 * time.Second)
-	for len(s.matrix.checkpoints.since(0, 1).Regions) == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("observer did not feed checkpoint source")
-		default:
-			time.Sleep(time.Millisecond)
+	select {
+	case frame := <-frames:
+		if string(frame) != matrixCodeLinesSSEFrame(0) {
+			t.Fatalf("unexpected frame %q", frame)
 		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("observer did not feed checkpoint source")
+	}
+	s.sseMu.Lock()
+	delete(s.sseClients, frames)
+	s.sseMu.Unlock()
+	if len(s.matrix.checkpoints.since(0, 1).Regions) == 0 {
+		t.Fatal("checkpoint source empty after nudge")
 	}
 	s.RecordMatrixIngest(time.Now().UTC(), time.Minute)
 	rr = request("Bearer checkpoint-test-token", "")

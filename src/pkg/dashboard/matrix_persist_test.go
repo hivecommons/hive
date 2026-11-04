@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
@@ -26,15 +25,7 @@ func TestMatrixCodeHistoryIsMemoryOnly(t *testing.T) {
 		t.Fatal("legacy persistent code restored")
 	}
 	observe(matrixObs(1, "h", sentinel.File{Path: "a.go", Patch: checkpointPatch("fresh checkpoint")}))
-	deadline := time.After(2 * time.Second)
-	for s.matrix.Latest() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("observer did not ingest")
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
+	waitFor(t, func() bool { return s.matrix.Latest() != 0 }, "observer ingest")
 	s.SetMatrixPersistPath(path)
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != string(seed) {
