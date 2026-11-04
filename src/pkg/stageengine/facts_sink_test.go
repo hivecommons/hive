@@ -73,7 +73,12 @@ func TestFactSinkBuildsMinimalFacts(t *testing.T) {
 			}
 		}},
 		{"parked issue", func() error { return sink.Parked(ctx, issue, " needs-human ") }, func(t *testing.T, f Facts) {
-			if !f.Park.NeedsHuman || f.Park.DecisionLabel != "needs-human" || f.Issue.Bucket != BucketFiltered || f.Issue.FilteredReason != "needs-human" || len(f.Labels) != 1 {
+			if !f.Park.NeedsHuman || f.Park.DecisionSuperseded || f.Park.DecisionLabel != "needs-human" || f.Issue.Bucket != BucketFiltered || f.Issue.FilteredReason != "needs-human" || len(f.Labels) != 1 {
+				t.Fatalf("%+v %+v", f.Park, f.Issue)
+			}
+		}},
+		{"reparked on new decision", func() error { return sink.ReparkedOnNewDecision(ctx, issue, "stage/045-needs-decision") }, func(t *testing.T, f Facts) {
+			if !f.Park.DecisionSuperseded || f.Park.DecisionLabel != "stage/045-needs-decision" || f.Issue.Bucket != BucketFiltered || f.Issue.FilteredReason != "stage/045-needs-decision" {
 				t.Fatalf("%+v %+v", f.Park, f.Issue)
 			}
 		}},

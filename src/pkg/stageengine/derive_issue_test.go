@@ -164,6 +164,18 @@ func TestDeriveIssueBlockerAndApprovedDirection(t *testing.T) {
 	if d.Stage != stagelabels.None || d.Reason != "decided; remaining work held for a person: needs-human" || len(d.Clear) != 0 {
 		t.Fatalf("a plain needs-human after a decision keeps the ack out of 045 (#16579): %+v", d)
 	}
+	// A newer, different `/hive decision` is pending (the label relay let
+	// an agent's park through on it): the ack is stale again, the issue
+	// re-parks at 045 and the writer clears it.
+	d = DeriveIssue(derivedIssueFacts(func(f *Facts) {
+		f.Issue.Bucket = BucketFiltered
+		f.Park.NeedsHuman = true
+		f.Park.DecisionSuperseded = true
+		f.Issue.ApprovedDirectionLabel = "approved-direction"
+	}))
+	if d.Stage != stagelabels.IssueNeedsDecision || d.Reason != "held for a person: needs-human" || len(d.Clear) != 1 || d.Clear[0] != "approved-direction" {
+		t.Fatalf("a park on a newer decision outranks the stale ack: %+v", d)
+	}
 	d = DeriveIssue(derivedIssueFacts(func(f *Facts) { blocked(f); f.Issue.BlockerShort = "" }))
 	if d.Reason != "blocked: capability:workflows-permission" {
 		t.Fatalf("blocker without short falls back to the kind: %+v", d)

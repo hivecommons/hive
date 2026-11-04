@@ -420,7 +420,9 @@ func TestNormalizeLabelList(t *testing.T) {
 // With `approved-direction` applied and Hive's own un-park reply recording
 // the decision, the re-park is refused and the agent is told to add
 // `needs-human` and unclaim instead. A newer `/hive decision` with different
-// text means direction is changing, and the park goes through.
+// text means direction is changing, and the park goes through — as a
+// ReparkedOnNewDecision fact, so the stale ack does not read as a standing
+// decision that would hold the issue out of 045 (hivecommons/hive#16579).
 func TestIssueRequestWatcher_LabelRefusesReparkOnRecordedDecision(t *testing.T) {
 	const decision = "Agents stand down; owner/Console owners handle this"
 	reply := unparkWireComment{
@@ -456,8 +458,14 @@ func TestIssueRequestWatcher_LabelRefusesReparkOnRecordedDecision(t *testing.T) 
 
 			resp := readIssueResultFile(t, reqPath)
 			if tc.wantAdded {
-				if !resp.OK || len(rec.added[12680]) != 1 {
+				if !resp.OK || len(rec.added[12680]) != 1 || rec.added[12680][0] != NeedsDecisionStageLabel {
 					t.Fatalf("expected the park to go through, resp=%+v added=%v", resp, rec.added[12680])
+				}
+				// Direction is changing, so the old `approved-direction`
+				// is stale: the park re-derives 045 with it cleared rather
+				// than standing down on the old decision (#16579).
+				if got := strings.Join(rec.removed[12680], ","); !strings.Contains(got, HumanAckLabel) {
+					t.Fatalf("expected the stale %s cleared with the re-park, removed=%v", HumanAckLabel, rec.removed[12680])
 				}
 				return
 			}
@@ -489,11 +497,11 @@ func TestReparkDecisionRefusalRecognizesRetiredDecisionLabels(t *testing.T) {
 			server, _ := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, nil)
 			c := newTestClient(t, server, "org", []string{"repo"})
 
-			reason, refused, err := c.reparkDecisionRefusal(context.Background(), "org/repo", 12680, []string{label})
+			reason, refused, superseded, err := c.reparkDecisionRefusal(context.Background(), "org/repo", 12680, []string{label})
 			if err != nil {
 				t.Fatalf("reparkDecisionRefusal: %v", err)
 			}
-			if !refused || !strings.Contains(reason, "already decided") || !strings.Contains(reason, issueNeedsHumanLabel) {
+			if !refused || superseded || !strings.Contains(reason, "already decided") || !strings.Contains(reason, issueNeedsHumanLabel) {
 				t.Fatalf("label %q refused=%v reason=%q, want recorded-decision refusal", label, refused, reason)
 			}
 		})

@@ -99,11 +99,13 @@ func deriveIssue(f Facts) Decision {
 }
 
 // issueParkClear reconciles `needs-human` against `approved-direction` on
-// an issue parked at 045 (hivecommons/hive#15099). That happens only for a
-// structured blocker — no decision grants the App a permission, so the ack
-// is the stale one and the writer clears it. A plain `needs-human` next to
-// the ack derives out of the pipeline instead and keeps the ack
-// (hivecommons/hive#16579), so nothing is cleared for it.
+// an issue parked at 045 (hivecommons/hive#15099). That happens for a
+// structured blocker — no decision grants the App a permission — and for a
+// park let through because a newer, different `/hive decision` is pending
+// (Park.DecisionSuperseded): either way the ack is the stale one and the
+// writer clears it. A plain `needs-human` next to a standing ack derives
+// out of the pipeline instead and keeps it (hivecommons/hive#16579), so
+// nothing is cleared for it.
 func issueParkClear(f Facts, stage stagelabels.Stage) []string {
 	is := f.Issue
 	label := strings.TrimSpace(is.ApprovedDirectionLabel)
@@ -173,8 +175,12 @@ func issueStage(f Facts) (stage stagelabels.Stage, covered bool, reason string) 
 		// re-applied the same old decision: a bounce loop
 		// (hivecommons/hive#16579, seen on hivecommons/dibs#567). The
 		// issue is held out of the pipeline like a hold and keeps the ack;
-		// a person who wants to decide again removes `approved-direction`.
-		if strings.TrimSpace(is.ApprovedDirectionLabel) != "" {
+		// a person who wants to decide again removes `approved-direction`
+		// — or posts a new `/hive decision`: the label relay lets an
+		// agent's park through on that newer, different decision
+		// (Park.DecisionSuperseded), the ack is stale again, and the issue
+		// re-parks at 045 with it cleared until the un-park sweep answers.
+		if strings.TrimSpace(is.ApprovedDirectionLabel) != "" && !f.Park.DecisionSuperseded {
 			return stagelabels.None, false, reasonIssueDecidedHumanWork + is.NeedsHumanLabel
 		}
 		return stagelabels.IssueNeedsDecision, false, "held for a person: " + is.NeedsHumanLabel
