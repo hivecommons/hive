@@ -726,6 +726,43 @@ func TestHubHeartbeatUnavailableLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #16507: using last-good stats after a bounded collect timeout is the
+// liveness safeguard working, not another defect distinct from the timeout.
+func TestHubHeartbeatCachedFallbackLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green"
+	for i := 0; i < 8; i++ {
+		logger.Warn(msg)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("cached fallback produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 8 {
+		t.Errorf("wrapped handler saw %d records, want 8", n)
+	}
+	if !strings.Contains(out.String(), msg) {
+		t.Error("cached fallback warning missing from local logs")
+	}
+
+	// Preserve the underlying timeout diagnostics and actual heartbeat failures.
+	for _, failure := range []string{
+		"hub heartbeat collect timed out; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect budget exceeded — slowest collectors (in-flight = still running at timeout)",
+		"hub heartbeat collect panicked",
+		"hub heartbeat fresh stats collect panicked",
+		"hub heartbeat failed",
+		"hub heartbeat rejected",
+	} {
+		t.Run(failure, func(t *testing.T) {
+			logger, seen, _ := newFeed(t)
+			logger.Warn(failure)
+			if len(*seen) != 1 || (*seen)[0].message != failure {
+				t.Fatalf("heartbeat failure must remain reportable: %+v", *seen)
+			}
+		})
+	}
+}
+
 // #16100: branch drift is an expected safety refusal, even when an own-only
 // write-back gate leaves the snapshot in place and it repeats every poll.
 func TestHoldGuardDriftLogsWithoutFleetReport(t *testing.T) {
