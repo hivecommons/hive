@@ -219,9 +219,18 @@
       ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
       return stageTrackerLeadActionHtml(item, ctx, subRows);
     }
-    // PR link, then the lineage chip (null = none), then the base pill.
-    function stageTrackerPRPillsHtml(ref, lineage, baseRef) {
-      return ref + (lineage == null ? '' : ' ' + lineage) + (baseRef ? ` <span class="ham-badge">${esc(baseRef)}</span>` : '');
+    // PR link, then the lineage chip (null = none). The base pill sits by
+    // the repo chip at the row's head (stageTrackerBasePillHtml), not here.
+    function stageTrackerPRPillsHtml(ref, lineage) {
+      return ref + (lineage == null ? '' : ' ' + lineage);
+    }
+    // Pure: the PR's base branch as a quiet sibling of the repo chip —
+    // `[hive][v5] #16603 …` — so the target reads with the repo, not in the
+    // right-hand modifier cluster. '' when the row has no PR (or no base).
+    function stageTrackerBasePillHtml(baseRef, prNumber) {
+      if (!baseRef) return '';
+      const tip = (Number(prNumber) ? 'PR #' + Number(prNumber) + ' targets ' : 'Targets ') + baseRef;
+      return `<span class="ham-base-pill" title="${esc(tip)}">${esc(baseRef)}</span>`;
     }
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
@@ -233,9 +242,9 @@
       // A superseded original wears neither pill — it closes as superseded,
       // not as the closer of anything.
       const lineage = superseded ? '' : ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : ''));
-      const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
+      const chip = (ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '') + stageTrackerBasePillHtml(lp.base_ref, pr.number);
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
-      ref = stageTrackerPRPillsHtml(ref, !superseded && typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref);
+      ref = stageTrackerPRPillsHtml(ref, !superseded && typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null));
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       if (superseded) {
         // The adopted original: one muted line, no chevron track, no row
