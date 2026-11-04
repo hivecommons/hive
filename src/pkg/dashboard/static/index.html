@@ -7062,15 +7062,16 @@ body.reader-mode #hive-reader {
   --reader-muted: #b8ccbb;
   --reader-add: #7ee2a0;
   --reader-del: #ff9a9a;
+  --reader-tail: 10rem;
   position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column;
   background: var(--reader-bg); color: var(--reader-text); font: 20px/1.5 monospace;
 }
-body.reader-mode .reader-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-3) var(--sp-5); color: var(--reader-muted); font-size: 16px; overflow-wrap: anywhere; }
+body.reader-mode .reader-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-3) var(--sp-5); color: var(--reader-muted); font-size: var(--fs-touch); overflow-wrap: anywhere; }
 body.reader-mode .reader-status { flex: 1 1 auto; color: var(--reader-text); }
-body.reader-mode .reader-pause { font: inherit; color: var(--reader-text); background: var(--reader-surface); border: 1px solid var(--reader-muted); border-radius: 4px; padding: .25rem .9rem; cursor: pointer; }
-body.reader-mode .reader-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--sp-5) 10rem; }
-body.reader-mode .reader-card { max-width: 80rem; margin: 0 auto 1.5rem; padding: var(--sp-3) var(--sp-5); background: var(--reader-surface); border-radius: 6px; }
-body.reader-mode .reader-meta { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--reader-muted); font-size: 16px; overflow-wrap: anywhere; }
+body.reader-mode .reader-pause { font: inherit; color: var(--reader-text); background: var(--reader-surface); border: 1px solid var(--reader-muted); border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-6); cursor: pointer; }
+body.reader-mode .reader-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--sp-0) var(--sp-5) var(--reader-tail); }
+body.reader-mode .reader-card { max-width: 80rem; margin: 0 auto 1.5rem; padding: var(--sp-3) var(--sp-5); background: var(--reader-surface); border-radius: var(--radius); }
+body.reader-mode .reader-meta { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--reader-muted); font-size: var(--fs-touch); overflow-wrap: anywhere; }
 body.reader-mode .reader-repo { color: var(--reader-text); font-weight: 600; }
 body.reader-mode a.reader-repo { text-decoration: underline; }
 body.reader-mode .reader-diff { margin: .5rem 0 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
