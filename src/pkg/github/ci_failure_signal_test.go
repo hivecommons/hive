@@ -1,6 +1,7 @@
 package github
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,47 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 )
+
+func TestHandleWebhookEvent_ForgetsResolvedCIFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, event, content string
+		remaining            int
+	}{
+		{"green check", "check_run", `"action":"completed","check_run":{"head_sha":"old","name":"build","conclusion":"success"}`, 4},
+		{"green status", "status", `"sha":"old","context":"build","state":"success"`, 4},
+		{"green suite", "check_suite", `"action":"completed","check_suite":{"head_sha":"old","conclusion":"success","app":{"name":"Actions"}}`, 4},
+		{"pending", "status", `"sha":"old","context":"build","state":"pending"`, 5},
+		{"closed", "pull_request", `"action":"closed","pull_request":{"number":7,"state":"closed"}`, 1},
+		{"merged", "pull_request", `"action":"closed","pull_request":{"number":7,"merged":true}`, 1},
+		{"new head", "pull_request", `"action":"synchronize","pull_request":{"number":7,"head":{"sha":"new"}}`, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := setupWebhookCacheTest(t)
+			t.Cleanup(ResetCIFailureSignalsForTest(nil))
+			t.Cleanup(ResetCIEvidenceForTest(nil))
+			store := CIFailureSignals()
+			for _, sig := range []CIFailureSignal{
+				{Repo: "org/repo", Number: 7, HeadSHA: "old", Check: "build"},
+				{Repo: "org/repo", Number: 7, HeadSHA: "old", Check: "lint"},
+				{Repo: "org/repo", Number: 7, HeadSHA: "old", Check: "Actions check suite"},
+				{Repo: "org/repo", Number: 7, HeadSHA: "new", Check: "build"},
+				{Repo: "org/repo", Number: 8, HeadSHA: "other", Check: "build"},
+			} {
+				store.Record(sig)
+			}
+			payload := []byte(fmt.Sprintf(`{"repository":{"full_name":"org/repo"},%s}`, tc.content))
+			if _, err := c.HandleWebhookEvent(tc.event, payload); err != nil {
+				t.Fatal(err)
+			}
+			if got := store.Snapshot().Count; got != tc.remaining {
+				t.Fatalf("signals remaining=%d, want %d", got, tc.remaining)
+			}
+			if got := store.ForPR("org/repo", 8); len(got) != 1 {
+				t.Fatalf("unrelated PR signals changed: %+v", got)
+			}
+		})
+	}
+}
 
 func TestWebhookCIFailure_EventsAndConclusions(t *testing.T) {
 	cases := []struct {
@@ -74,14 +116,7 @@ func TestWebhookCIFailure_EventsAndConclusions(t *testing.T) {
 	}
 }
 
-type checkRunPayload = struct {
-	HeadSHA      string         `json:"head_sha"`
-	Name         string         `json:"name"`
-	Conclusion   string         `json:"conclusion"`
-	DetailsURL   string         `json:"details_url"`
-	HTMLURL      string         `json:"html_url"`
-	PullRequests []webhookPRRef `json:"pull_requests"`
-}
+type checkRunPayload = webhookCheckRunPayload
 
 type checkSuitePayload = struct {
 	HeadSHA      string         `json:"head_sha"`

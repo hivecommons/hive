@@ -29,6 +29,7 @@
       const source = new EventSource('/api/events');
       _eventSource = source;
       if (window.HIVE_MATRIX) window.hiveMatrixAttach(source);
+      if (window.HIVE_READER) window.hiveReaderAttach(source);
       _sseOpenedAtMs = Date.now();
       _sseLastFrameAtMs = 0;
       const conn = document.getElementById('conn');

@@ -235,8 +235,52 @@ func agentAvailability(cfg *config.Config, mgr crux.Runtime) func(string) bool {
 		if mgr != nil && mgr.IsPaused(name) {
 			return false
 		}
-		return cfg == nil || cadenceReachable(cfg, name)
+		if cfg != nil && !cadenceReachable(cfg, name) {
+			return false
+		}
+		// Keep the old reachability contract unless fallback routing is opted
+		// into. In particular, a busy primary still receives kick attempts when
+		// the list is unset, even if a threshold was configured on its own.
+		if cfg == nil || cfg.Review.EffectiveFixerFallbackAfterUndeliverable() == 0 {
+			return true
+		}
+		ac, ok := cfg.Agents[name]
+		if !ok || !ac.Enabled || ac.Paused || ac.OnDemand || !ac.UsesGovernorKick() {
+			return false
+		}
+		if mgr == nil {
+			return true
+		}
+		st, err := mgr.GetStatusFast(name)
+		if err != nil || st == nil || st.ProviderErrorBackoffUntil.After(time.Now()) {
+			return false
+		}
+		// A fallback already refusing input cannot pick up another repair.
+		if name != redPRFixOwner(cfg.Review.FixerAgent) && slices.Contains(cfg.Review.EffectiveFixerFallbackAgents(), name) && st.KicksUndeliverable > 0 {
+			return false
+		}
+		return !fixerUndeliverable(cfg.Review, st, time.Now())
 	}
+}
+
+// fixerUndeliverable only reads the busy episode; it never interrupts the
+// agent's turn. Old transcript activity alone must not disqualify an idle
+// agent, and a missing transcript is unknown rather than proof of silence.
+func fixerUndeliverable(cfg config.ReviewConfig, st *crux.Process, now time.Time) bool {
+	threshold := cfg.EffectiveFixerFallbackAfterUndeliverable()
+	if threshold == 0 || st == nil || st.KicksUndeliverable == 0 {
+		return false
+	}
+	return st.KicksUndeliverable >= threshold ||
+		(!st.LastTranscriptActivity.IsZero() && now.Sub(st.LastTranscriptActivity) >= st.Config.EffectiveBusyNoActivityThreshold())
+}
+
+// reviewFixerAvailability adds runtime liveness only for opted-in hives.
+func reviewFixerAvailability(cfg *config.Config, mgr crux.Runtime) func(string) bool {
+	if cfg.Review.EffectiveFixerFallbackAfterUndeliverable() == 0 {
+		return nil
+	}
+	return agentAvailability(cfg, mgr)
 }
 
 // cadenceReachable reports whether ANY governor mode gives the agent a cadence
@@ -284,11 +328,13 @@ func ownerReEngageCooldown(cfg *config.Config, name string) time.Duration {
 
 // resolveRedPRFixer picks the agent a stuck red PR's fix kick should go to: its
 // owner, else the configured review fixer agent, else the fleet's default
-// fixer — the same chain the review-fix kick uses (src/docs/review-swarm.md).
+// fixer, then the optional fallback list. Busy candidates are excluded by
+// agentAvailability only when that list is configured.
 // It returns "" when no candidate is reachable, which tells the caller to leave
 // the PR alone rather than spend budget nobody can answer.
 func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) bool) string {
 	candidates := []string{redPRFixOwner(owner), strings.TrimSpace(cfg.Review.FixerAgent), review.DefaultFixerAgent}
+	candidates = append(candidates, cfg.Review.EffectiveFixerFallbackAgents()...)
 	for _, c := range candidates {
 		if c == "" {
 			continue
@@ -432,6 +478,10 @@ func deliverReEngagement(
 				"repo", o.Repo, "pr", o.Number, "agent", fixer, "error", err)
 		}
 		return false
+	}
+	if logger != nil && fixer != redPRFixOwner(o.Agent) {
+		logger.Info("re-engagement routed to fallback fixer", "repo", o.Repo, "pr", o.Number,
+			"owner", redPRFixOwner(o.Agent), "agent", fixer)
 	}
 	store.RecordReEngagement(o.Repo, o.Number)
 	return true
@@ -1866,12 +1916,17 @@ func issueReopenedHookFor(ledger *github.ClaimLedger, logger *slog.Logger) githu
 }
 
 // claimingPRRedStale builds the Fix #3 release predicate: given a claiming PR
-// (prRepo, prNumber), report whether it is red on a required check AND stale.
-// It looks up the PR's live CI state + head SHA from this pass's enumeration and
-// consults the shared staleness clock. A PR not found in the enumeration, or one
-// that is green/pending, or one whose red head only just appeared, returns false
-// — so a HEALTHY claiming PR still suppresses its issue. Returns a nil func when
-// escalation is disabled, preserving the original unconditional-suppress
+// (prRepo, prNumber), report whether it is red on a required check AND the
+// hive has given up repairing it (escalation.Store.AbandonedRed: stale, and
+// escalated / re-engagement budget spent / red for the whole re-engagement
+// window). It looks up the PR's live CI state + head SHA from this pass's
+// enumeration and consults the shared staleness clock. A PR not found in the
+// enumeration, one that is green/pending, one whose red head only just
+// appeared, or one the reaper is still re-engaging returns false — so a
+// HEALTHY or still-being-fixed claiming PR keeps suppressing its issue, and
+// the issue stays 040-covered-by-pr while the PR reads 070-fixing instead of
+// falling to 010 under a live PR (hivecommons/hive#16522). Returns a nil func
+// when escalation is disabled, preserving the original unconditional-suppress
 // behavior. GENERIC: keys only off check state + staleness.
 func claimingPRRedStale(cfg *config.Config, actionable *github.ActionableResult) github.RedStaleFunc {
 	if cfg.Escalation.Disabled || actionable == nil {
@@ -1904,7 +1959,7 @@ func claimingPRRedStale(cfg *config.Config, actionable *github.ActionableResult)
 		if !ok || !st.red {
 			return false // not enumerated, or healthy → keep suppressing
 		}
-		return store.StaleRed(st.repo, prNumber, st.headSHA)
+		return store.AbandonedRed(st.repo, prNumber, st.headSHA)
 	}
 }
 
@@ -2539,6 +2594,8 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		CombinedPerspectives: cfg.Review.CombinedPerspectives,
 		ReviewerAgents:       cfg.Review.ReviewerAgents,
 		FixerAgent:           cfg.Review.FixerAgent,
+		FixerFallbackAgents:  cfg.Review.EffectiveFixerFallbackAgents(),
+		FixerAvailable:       reviewFixerAvailability(cfg, agentMgr),
 		PostComments:         cfg.Review.PostComments,
 		WritingGuideSection:  cfg.Project.WritingGuideSection(),
 		FixHumanPRs:          cfg.Review.FixHumanPRsEnabled(),
@@ -2563,6 +2620,12 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		DeltaTrivialLines:     cfg.Review.EffectiveDeltaTrivialLines(),
 		DeltaMaxAge:           cfg.Review.EffectiveDeltaMaxAge(),
 	})
+	for _, k := range plan.FixKicks {
+		if slices.Contains(cfg.Review.EffectiveFixerFallbackAgents(), k.Agent) {
+			logger.Info("review fix routed to fallback fixer", "repo", k.Repo, "pr", k.Number,
+				"primary", cfg.Review.FixerAgent, "agent", k.Agent)
+		}
+	}
 	recordReviewDeltaRestamps(plan, logger)
 	pendingRecords, pendingAgents, confirmedAgents := review.PendingReviewerOccupancy(plan.State)
 	if pendingRecords > 0 || plan.SettledReviews > 0 {

@@ -252,6 +252,13 @@ func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult, de
 	if !s.webhookTrackerRefreshEnabled() {
 		return 0
 	}
+	if res.CIEvidence != nil && res.CIEvidence.Applied > 0 {
+		// The payload itself moved the row's CI evidence
+		// (hivecommons/hive#16521); the PR object did not change, so the
+		// re-read would only spend a request to confirm labels and title.
+		s.invalidateStageTrackerForWebhook()
+		return 0
+	}
 	keys := webhookTrackerKeys(res)
 	if len(keys) == 0 {
 		return 0
@@ -259,6 +266,17 @@ func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult, de
 	s.invalidateStageTrackerForWebhook()
 	s.trackerRefresher().enqueue(keys, deliveryID)
 	return len(keys)
+}
+
+// RefreshCIEvidence is the github.CIEvidenceHook: a check delivery or a
+// coalesced check-run re-read changed the CI evidence for repo's head, so
+// the tracker payload is dropped and the page nudged over SSE; the next GET
+// re-derives the row's counts from the merged evidence.
+func (s *Server) RefreshCIEvidence(repo, head string) {
+	if s == nil {
+		return
+	}
+	s.invalidateStageTrackerForWebhook()
 }
 
 // selfEditDeliveryID tags the re-reads the hive's own GitHub edits ask for,
@@ -804,6 +822,9 @@ func patchWorkPRAny(raw any, snap github.WebhookItemSnapshot) (any, bool) {
 	w.Title = snap.Title
 	w.Labels = append([]string(nil), snap.Labels...)
 	w.Draft = snap.Draft
+	if snap.HeadSHA != "" {
+		w.HeadSHA = snap.HeadSHA
+	}
 	if !snap.UpdatedAt.IsZero() {
 		w.UpdatedAt = snap.UpdatedAt
 	}

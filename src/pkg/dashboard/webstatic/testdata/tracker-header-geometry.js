@@ -271,8 +271,12 @@
           assert(Math.abs((text.left + text.right) / 2 - (bounds.left + bounds.right) / 2) <= glyphTolerance, name + 'caption text is horizontally centred within its copy box: ' +
             JSON.stringify({ text, copy: { left: bounds.left, right: bounds.right } }));
         }
+        // A `display: contents` wrapper (.ham-active-ico-wrap) has no box of
+        // its own: its children are the flex items that take space, so the
+        // union measures them, not the box-less wrapper.
+        const boxes = el => getComputedStyle(el).display === 'contents' ? [...el.children].flatMap(boxes) : [el];
         const group = copy.parentElement === info
-          ? [...info.children].filter(child => visible(child) && !child.classList.contains('config-tooltip')).map(rect)
+          ? [...info.children].flatMap(boxes).filter(child => visible(child) && !child.classList.contains('config-tooltip')).map(rect)
           : [bounds];
         const union = { left: Math.min(...group.map(box => box.left)), right: Math.max(...group.map(box => box.right)),
           top: Math.min(...group.map(box => box.top)), bottom: Math.max(...group.map(box => box.bottom)) };

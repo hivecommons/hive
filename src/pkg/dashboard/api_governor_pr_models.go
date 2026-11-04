@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
@@ -21,12 +22,13 @@ const (
 )
 
 type governorPRModelsResponse struct {
-	Window       string                       `json:"window"`
-	MinMergedPRs int                          `json:"min_merged_prs"`
-	Total        int                          `json:"total"`
-	Buckets      []governorPRModelBucket      `json:"buckets"`
-	Unknown      int                          `json:"unknown"`
-	MostReworked []governorPRMostReworkedItem `json:"most_reworked,omitempty"`
+	Window       string                               `json:"window"`
+	MinMergedPRs int                                  `json:"min_merged_prs"`
+	Total        int                                  `json:"total"`
+	Buckets      []governorPRModelBucket              `json:"buckets"`
+	Unknown      int                                  `json:"unknown"`
+	MostReworked []governorPRMostReworkedItem         `json:"most_reworked,omitempty"`
+	FixerQueue   map[string]governor.FixerQueueStatus `json:"fixer_queue,omitempty"`
 }
 
 // governorPRModelBucket is one canonical model (modelfamily.Canonical folds
@@ -111,6 +113,7 @@ func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) 
 	minMergedPRs := effectiveModelsMinMergedPRs()
 	actionable := s.lastActionableForPRModels()
 	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, window, time.Now())
+	resp.FixerQueue = s.governorFixerQueue()
 	runs, _, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
 	effective := aggregateEffectiveModelsFromPRAggregation(resp, aggregateEffectiveRunStats(runs, effectiveModelsFilterAll), effectiveModelsFilterAll, minMergedPRs)
 	applyGovernorPRModelEffectiveness(&resp, effective, minMergedPRs)

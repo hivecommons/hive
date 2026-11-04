@@ -97,6 +97,10 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTrainIconHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
+		jsFunc(t, html, "stageTrackerWaitingOnPerson"),
+		jsFunc(t, html, "stageTrackerTrackRunning"),
+		jsFunc(t, html, "stageTrackerHiveOwnsRepair"),
+		jsFunc(t, html, "stageTrackerTrackWord"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
@@ -197,8 +201,13 @@ var _stageTracker = { stages };
 // needs-rebase always lands a PR in 070/071/072 (automerge_stage_labels.go), so a
 // fixture pairing it with 050/060 would draw a contradictory row.
 const rebaseCoherent = (it) => { if ((it.modifiers || []).includes('needs-rebase')) assert.ok(![50, 60].includes(Number(it.stage)), 'fixture #' + it.number + ' pairs needs-rebase with stage ' + it.stage); (it.linked_prs || []).forEach(rebaseCoherent); };
+// hivecommons/hive#16540: no strip ever lights more than two chevrons. Lit =
+// the stage chevron's active fill (a settled-current one is not amber) or a
+// CI / Review track in the active class. Checked on every fixture rendered.
+const litChevrons = (html) => (html.match(/class="ham-seg active(?! [^"]*ham-settled-current)|class="ham-seg ham-activity-track active\b/g) || []).length;
+const atMostTwoLit = (item, row) => row.split('aria-label="Pipeline progress"').slice(1).forEach((s, i) => assert.ok(litChevrons(s) <= 2, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' lights ' + litChevrons(s) + ' chevrons: ' + s));
 const rawRowHtml = stageTrackerRowHtml;
-stageTrackerRowHtml = (item, stages, ctx) => { rebaseCoherent(item); return rawRowHtml(item, stages, ctx); };
+stageTrackerRowHtml = (item, stages, ctx) => { rebaseCoherent(item); const row = rawRowHtml(item, stages, ctx); atMostTwoLit(item, row); return row; };
 // A row is a title line, its strip, then zero or more nested PR sub-rows.
 const strips = (row) => row.split('aria-label="Pipeline progress"').slice(1);
 const strip = (row) => strips(row)[0].split('<div class="ham-sub"')[0];

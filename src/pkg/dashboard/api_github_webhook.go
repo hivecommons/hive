@@ -136,6 +136,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if reactions := s.reactToCIFailure(res); len(reactions) > 0 {
 		resp["ci_failure"] = reactions
 	}
+	if res.CIEvidence != nil {
+		resp["ci_evidence"] = res.CIEvidence
+	}
 	if n, ok := sentinelPREventTarget(event, body); ok && s.deps.SentinelPREvent != nil {
 		s.deps.SentinelPREvent(res.ConfiguredRepo, n)
 		resp["sentinel"] = n

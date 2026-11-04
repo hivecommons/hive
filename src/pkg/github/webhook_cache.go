@@ -31,6 +31,17 @@ type WebhookHealth struct {
 	// deliveries and refreshes caused.
 	TargetedRefreshes1h    int `json:"targeted_refreshes_1h"`
 	TrackerInvalidations1h int `json:"tracker_invalidations_1h"`
+	// CI deliveries (check_run, check_suite, status, workflow_run,
+	// workflow_job) for managed repositories (hivecommons/hive#16521):
+	// when the last one arrived, how many in the window, how many check
+	// observations they applied to a head's set without a GitHub call, and
+	// how many coalesced check-run re-reads they caused. A nil
+	// LastCIEventAt with webhooks otherwise healthy means the App or the
+	// relay does not deliver check events.
+	LastCIEventAt     *time.Time `json:"last_ci_event_at"`
+	CIEvents1h        int        `json:"ci_events_1h"`
+	CIEventsApplied1h int        `json:"ci_events_applied_1h"`
+	CIRefetches1h     int        `json:"ci_refetches_1h"`
 	// WebhookModeStatus is the reconcile cadence the health drives:
 	// `mode` webhook|polling and `since` (hivecommons/hive#13381).
 	WebhookModeStatus
@@ -79,6 +90,10 @@ type WebhookEventResult struct {
 	// reported a failed check (failure / timed_out / error) on a head SHA,
 	// with the open PRs that head resolved to.
 	CIFailure *WebhookCIFailure `json:"ci_failure,omitempty"`
+	// CIEvidence reports what a check_run / check_suite / status /
+	// workflow_run / workflow_job delivery did to the head's check set
+	// (hivecommons/hive#16521).
+	CIEvidence *WebhookCIEvidence `json:"ci_evidence,omitempty"`
 }
 
 // WebhookItemHint is the state a webhook payload reports for the item it
@@ -112,6 +127,10 @@ type webhookTracker struct {
 	invalidations []time.Time
 	refreshes     []time.Time
 	trackerDrops  []time.Time
+	ciEvents      []time.Time
+	ciApplied     []time.Time
+	ciRefetches   []time.Time
+	lastCIEvent   time.Time
 	wasHealthy    bool
 	// lastActivity is the newest GitHub `updated_at` a poll listed and
 	// lastFailure the newest delivery that failed verification; both feed
@@ -212,6 +231,18 @@ func RecordWebhookTrackerInvalidations(n int) {
 	t := sharedWebhookTracker()
 	t.recordStamped(&t.trackerDrops, n)
 }
+
+func (t *webhookTracker) recordCIEvent() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	t.lastCIEvent = now
+	t.ciEvents = append(pruneWebhookTimes(t.ciEvents, now), now)
+}
+
+func (t *webhookTracker) recordCIApplied(n int) { t.recordStamped(&t.ciApplied, n) }
+
+func (t *webhookTracker) recordCIRefetches(n int) { t.recordStamped(&t.ciRefetches, n) }
 
 func (t *webhookTracker) recordStamped(dst *[]time.Time, n int) {
 	if n <= 0 {
@@ -364,13 +395,21 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	t.invalidations = pruneWebhookTimes(t.invalidations, now)
 	t.refreshes = pruneWebhookTimes(t.refreshes, now)
 	t.trackerDrops = pruneWebhookTimes(t.trackerDrops, now)
+	t.ciEvents = pruneWebhookTimes(t.ciEvents, now)
+	t.ciApplied = pruneWebhookTimes(t.ciApplied, now)
+	t.ciRefetches = pruneWebhookTimes(t.ciRefetches, now)
 	healthy, latest := t.healthyLocked(now)
 	out := WebhookHealth{Healthy: healthy, Events1h: len(t.events), Invalidations1h: len(t.invalidations),
 		TargetedRefreshes1h: len(t.refreshes), TrackerInvalidations1h: len(t.trackerDrops),
+		CIEvents1h: len(t.ciEvents), CIEventsApplied1h: len(t.ciApplied), CIRefetches1h: len(t.ciRefetches),
 		WebhookModeStatus: t.mode.status(t.window, now)}
 	if !latest.IsZero() {
 		at := latest.UTC()
 		out.LastEventAt = &at
+	}
+	if !t.lastCIEvent.IsZero() {
+		at := t.lastCIEvent.UTC()
+		out.LastCIEventAt = &at
 	}
 	return out
 }
@@ -425,6 +464,39 @@ type webhookPRRef struct {
 	Number int `json:"number"`
 }
 
+// webhookCheckRunPayload is the `check_run` object of a check_run delivery.
+type webhookCheckRunPayload struct {
+	ID           int64          `json:"id"`
+	NodeID       string         `json:"node_id"`
+	HeadSHA      string         `json:"head_sha"`
+	Name         string         `json:"name"`
+	Status       string         `json:"status"`
+	Conclusion   string         `json:"conclusion"`
+	DetailsURL   string         `json:"details_url"`
+	HTMLURL      string         `json:"html_url"`
+	StartedAt    *time.Time     `json:"started_at"`
+	CompletedAt  *time.Time     `json:"completed_at"`
+	PullRequests []webhookPRRef `json:"pull_requests"`
+	App          *struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"app"`
+}
+
+// webhookWorkflowJobPayload is the `workflow_job` object: one GitHub Actions
+// job, which is its check run as the Actions App reports it.
+type webhookWorkflowJobPayload struct {
+	ID          int64      `json:"id"`
+	NodeID      string     `json:"node_id"`
+	HeadSHA     string     `json:"head_sha"`
+	Name        string     `json:"name"`
+	Status      string     `json:"status"`
+	Conclusion  string     `json:"conclusion"`
+	HTMLURL     string     `json:"html_url"`
+	StartedAt   *time.Time `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at"`
+}
+
 type webhookEventPayload struct {
 	Repository struct {
 		FullName string `json:"full_name"`
@@ -472,23 +544,23 @@ type webhookEventPayload struct {
 			Name string `json:"name"`
 		} `json:"app"`
 	} `json:"check_suite"`
-	CheckRun *struct {
-		HeadSHA      string         `json:"head_sha"`
-		Name         string         `json:"name"`
-		Conclusion   string         `json:"conclusion"`
-		DetailsURL   string         `json:"details_url"`
-		HTMLURL      string         `json:"html_url"`
-		PullRequests []webhookPRRef `json:"pull_requests"`
-	} `json:"check_run"`
+	CheckRun    *webhookCheckRunPayload `json:"check_run"`
 	WorkflowRun *struct {
 		HeadSHA      string         `json:"head_sha"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
 	} `json:"workflow_run"`
-	SHA       string `json:"sha"`
-	State     string `json:"state"`
-	Context   string `json:"context"`
-	TargetURL string `json:"target_url"`
-	Branches  []struct {
+	// WorkflowJob is one GitHub Actions job: its check run, as the Actions
+	// App reports it, without the check_run envelope.
+	WorkflowJob *webhookWorkflowJobPayload `json:"workflow_job"`
+	ID          int64                      `json:"id"`
+	NodeID      string                     `json:"node_id"`
+	SHA         string                     `json:"sha"`
+	State       string                     `json:"state"`
+	Context     string                     `json:"context"`
+	TargetURL   string                     `json:"target_url"`
+	CreatedAt   *time.Time                 `json:"created_at"`
+	UpdatedAt   *time.Time                 `json:"updated_at"`
+	Branches    []struct {
 		Name string `json:"name"`
 	} `json:"branches"`
 	Ref string `json:"ref"`
@@ -579,15 +651,20 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		sharedCIReportingCache.invalidate(p.Repository.FullName, res.HeadSHA)
 	}
 	numbers := webhookInvalidationTargets(event, p, aliases)
+	if IsWebhookCIEvent(event) && res.HeadSHA != "" {
+		numbers = sharedCIEvidence().resolvePRs(p.Repository.FullName, res.HeadSHA, numbers)
+	}
 	// Capture the failed-check identity and the PRs it resolved to BEFORE
 	// invalidation drops their cache entries: the receiver reacts to a red
 	// check on the event rather than on the next sweep.
 	res.CIFailure = c.webhookCIFailureResult(event, p, aliases, numbers)
+	CIFailureSignals().forgetResolvedWebhook(event, p)
 	for _, n := range numbers {
 		c.invalidateWebhookPR(aliases, n)
 	}
 	sharedWebhookTracker().recordInvalidations(len(numbers))
 	res.Invalidated = numbers
+	res.CIEvidence = c.applyWebhookCIEvidence(event, p, configured, numbers)
 	return res, nil
 }
 
@@ -732,6 +809,10 @@ func webhookHeadSHA(event string, p webhookEventPayload) string {
 		if p.WorkflowRun != nil {
 			return strings.TrimSpace(p.WorkflowRun.HeadSHA)
 		}
+	case "workflow_job":
+		if p.WorkflowJob != nil {
+			return strings.TrimSpace(p.WorkflowJob.HeadSHA)
+		}
 	}
 	return ""
 }
@@ -788,6 +869,10 @@ func webhookInvalidationTargets(event string, p webhookEventPayload, aliases []s
 		if p.WorkflowRun != nil {
 			addRefs(p.WorkflowRun.PullRequests)
 			bySHA(p.WorkflowRun.HeadSHA)
+		}
+	case "workflow_job":
+		if p.WorkflowJob != nil {
+			bySHA(p.WorkflowJob.HeadSHA)
 		}
 	case "push":
 		if ref, ok := strings.CutPrefix(p.Ref, "refs/heads/"); ok && ref != "" {

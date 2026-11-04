@@ -466,6 +466,18 @@ func TestStageTrackerActivityReviewPerspectiveCounts(t *testing.T) {
 	if got := count(bundle, agg, dispatch); got.PerspectivesTotal != len(expected)+1 || got.PerspectivesDone != 3 {
 		t.Fatalf("extra dispatched perspective counts = %d/%d, want 3/%d", got.PerspectivesDone, got.PerspectivesTotal, len(expected)+1)
 	}
+	// hive#16539: five verdicts exist for the head but the swarm is queued
+	// again (a wait, no reviewer free): this round has not started, so the
+	// word is "Review 0/5 · swarm requested", never "5/5 · swarm requested".
+	full := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: "approve",
+		Perspectives: map[review.Perspective]review.Verdict{}}
+	for _, p := range expected {
+		full.Perspectives[p] = "approve"
+	}
+	waiting := review.DispatchState{GeneratedAt: now, Waits: []review.ReviewWaitRecord{{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: "no-free-reviewer", FirstAt: now.Add(-8 * time.Minute), LastAt: now}}}
+	if got := count(bundle, full, waiting); got.State != "unassigned" || got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
+		t.Fatalf("queued swarm counts = %d/%d (%s), want 0/%d unassigned", got.PerspectivesDone, got.PerspectivesTotal, got.State, len(expected))
+	}
 	// Evidence for another head counts nothing for this one.
 	agg.HeadSHA, bundle.HeadSHA = "old-head", "old-head"
 	dispatch.Pending = nil

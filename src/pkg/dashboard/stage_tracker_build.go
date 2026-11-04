@@ -458,6 +458,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		stageTrackerApplyFixerStatus(&it, review.FixDispatchStatusFor(dispatchState, qualifyRepo(repoName), pr.Number, pr.HeadSHA), workers)
 		activityPR := pr
 		activityPR.Repo = qualifyRepo(repoName)
+		// Checks delivered by webhook since the last listing, laid over it;
+		// a head the cycle never listed counts from the deliveries alone
+		// (hivecommons/hive#16521).
+		activityPR.CIActivity = github.HeadCIActivity(activityPR.Repo, pr.HeadSHA, pr.CIActivity)
 		it.CIActivity = stageTrackerCIActivity(activityPR, now)
 		var bundle *evidence.Bundle
 		if evidenceVerifier != nil && pr.HeadSHA != "" {
@@ -503,7 +507,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			default:
 				w := it.WorkPR
 				addPR(repoName, repo.Ownership, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
-					AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, BaseRef: w.BaseRef, LinkedIssues: w.LinkedIssues, ReferencedIssues: w.ReferencedIssues}, nil, w.Bucket, w.Reason)
+					AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, BaseRef: w.BaseRef, HeadSHA: w.HeadSHA, LinkedIssues: w.LinkedIssues, ReferencedIssues: w.ReferencedIssues}, nil, w.Bucket, w.Reason)
 			}
 		}
 	}
@@ -547,8 +551,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
 			stageTrackerCountPerspectives(it.ReviewActivity, currentPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 		}
+		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
-		it.CodeActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.DisplayColumn, activityItem.Caption
+		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
+		it.CodeActivity, it.Remediation, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
 	}
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)

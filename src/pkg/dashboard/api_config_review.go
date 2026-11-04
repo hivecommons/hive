@@ -100,16 +100,18 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		RequireApproval    *bool     `json:"require_approval"`
-		Shadow             *bool     `json:"shadow"` // hive.yaml review.shadow
-		FanOut             *bool     `json:"fan_out"`
-		MaxParallelReviews *int      `json:"max_parallel_reviews"`
-		MaxPerspectives    *int      `json:"max_perspectives_per_pr"`
-		ReviewerAgents     *[]string `json:"reviewer_agents"`
-		FixerAgent         *string   `json:"fixer_agent"`
-		AllAuthors         *bool     `json:"all_authors"`
-		FixHumanPRs        *bool     `json:"fix_human_prs"`
-		ContributorPRs     *struct {
+		RequireApproval                 *bool     `json:"require_approval"`
+		Shadow                          *bool     `json:"shadow"` // hive.yaml review.shadow
+		FanOut                          *bool     `json:"fan_out"`
+		MaxParallelReviews              *int      `json:"max_parallel_reviews"`
+		MaxPerspectives                 *int      `json:"max_perspectives_per_pr"`
+		ReviewerAgents                  *[]string `json:"reviewer_agents"`
+		FixerAgent                      *string   `json:"fixer_agent"`
+		FixerFallbackAgents             *[]string `json:"fixer_fallback_agents"`
+		FixerFallbackAfterUndeliverable *int      `json:"fixer_fallback_after_undeliverable"`
+		AllAuthors                      *bool     `json:"all_authors"`
+		FixHumanPRs                     *bool     `json:"fix_human_prs"`
+		ContributorPRs                  *struct {
 			BaseSync *bool `json:"base_sync"`
 		} `json:"contributor_prs"`
 		AcknowledgeNoFind  *bool   `json:"acknowledge_no_findings"`
@@ -216,6 +218,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		name string
 	}{
 		{body.MaxRedispatch, "max_redispatch"},
+		{body.FixerFallbackAfterUndeliverable, "fixer_fallback_after_undeliverable"},
 		{body.HeadMaxRetries, "head_max_retries"},
 		{body.MaxOutOfScopeBacklogIssues, "max_out_of_scope_backlog_issues"},
 	} {
@@ -471,6 +474,12 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.FixerAgent != nil {
 		cfg.Review.FixerAgent = strings.TrimSpace(*body.FixerAgent)
+	}
+	if body.FixerFallbackAgents != nil {
+		cfg.Review.FixerFallbackAgents = (config.ReviewConfig{FixerFallbackAgents: *body.FixerFallbackAgents}).EffectiveFixerFallbackAgents()
+	}
+	if body.FixerFallbackAfterUndeliverable != nil {
+		cfg.Review.FixerFallbackAfterUndeliverable = *body.FixerFallbackAfterUndeliverable
 	}
 	if body.AllAuthors != nil {
 		cfg.Review.AllAuthors = *body.AllAuthors

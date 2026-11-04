@@ -158,4 +158,9 @@ func TestAdoptNowTakesOverOwnerAuthoredPR(t *testing.T) {
 	if _, forced := rec.AdoptionForced(); forced || rec.AdoptionBlocked("aaa") != "" {
 		t.Fatalf("forced mark or person block survived the adoption: %+v", rec)
 	}
+	// hivecommons/hive#16489: adoption/supersede label is consumed and removed
+	// after the forced adoption is recorded.
+	if !containsLabel(h.api.removed, "adoption/supersede") {
+		t.Fatalf("request label kept after the forced adoption was consumed: removed=%v", h.api.removed)
+	}
 }

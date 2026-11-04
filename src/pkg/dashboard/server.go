@@ -121,10 +121,9 @@ type Server struct {
 
 	// matrix is the dashboard.matrix line source (matrix_source.go); nil
 	// until MatrixObserver is called with an active config.
-	matrixMu          sync.Mutex
-	matrix            *matrixSource
-	matrixNudge       stageTrackerNudger
-	matrixPersistPath string
+	matrixMu    sync.Mutex
+	matrix      *matrixSource
+	matrixNudge stageTrackerNudger
 
 	port         int
 	authToken    string
@@ -2158,6 +2157,9 @@ code{color:#e6edf3}
 // empty role and never block a read-only viewer's writes.)
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/matrix/lines" {
+			w.Header().Set("Cache-Control", "no-store") // Cover 401 responses that never reach handleMatrixLines' no-store header.
+		}
 		directRouteAuthz := s.directRouteAuthzEnabled()
 
 		// FAIL CLOSED: a spoke with an authorized_users allowlist (direct-route)

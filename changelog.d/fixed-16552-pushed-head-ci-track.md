@@ -1,0 +1,1 @@
+- The Activity Monitor keeps the CI track lit on a 071/072 row whose pushed or checking head has checks running, instead of muting it as waiting on the contributor ([#16552](https://github.com/hivecommons/hive/issues/16552)).

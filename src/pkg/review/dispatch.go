@@ -176,8 +176,12 @@ type DispatchOptions struct {
 	CombinedPerspectives bool
 	ReviewerAgents       []string
 	FixerAgent           string
-	ProjectOrg           string
-	AIAuthor             string
+	FixerFallbackAgents  []string
+	// FixerAvailable optionally filters repair candidates by runtime liveness.
+	// Nil preserves the existing capability-only selection.
+	FixerAvailable func(string) bool
+	ProjectOrg     string
+	AIAuthor       string
 	// PostComments carries config.ReviewConfig.PostComments into the prompt
 	// builder, so reviewers are told to publish their verdict on the PR.
 	PostComments bool
@@ -1618,7 +1622,14 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 	agent := selectFixerAgent(pr, opts)
 	if agent == "" {
 		p.recordFixExclusion(pr, FixDispatchExcludedNoEnabledFixer, attempts)
-		p.addHuman(pr, "no enabled kick-capable fixer agent is available", now)
+		// Temporary runtime backpressure must remain retryable rather than
+		// becoming a maintainer decision. Preserve the configuration hold only
+		// when no candidate is capable even without the liveness filter.
+		capabilityOnly := opts
+		capabilityOnly.FixerAvailable = nil
+		if selectFixerAgent(pr, capabilityOnly) == "" {
+			p.addHuman(pr, "no enabled kick-capable fixer agent is available", now)
+		}
 		return
 	}
 	attempts++
@@ -1690,8 +1701,9 @@ func hasLabelFold(labels []string, want string) bool {
 
 func selectFixerAgent(pr PullRequest, opts DispatchOptions) string {
 	candidates := []string{strings.TrimSpace(opts.FixerAgent), strings.TrimSpace(pr.Lane), DefaultFixerAgent}
+	candidates = append(candidates, opts.FixerFallbackAgents...)
 	for _, candidate := range candidates {
-		if candidate == "" {
+		if candidate == "" || (opts.FixerAvailable != nil && !opts.FixerAvailable(candidate)) {
 			continue
 		}
 		for _, a := range opts.Agents {

@@ -296,7 +296,7 @@ full-screen Activity Monitor.
 
 ## Matrix mode (separate channel)
 
-When `dashboard.matrix.enabled` is set, the Activity Monitor header also shows a **Matrix** tab that opens `?kiosk=1&view=matrix` in the same window.
+When `dashboard.matrix.enabled` is set, the Activity Monitor header also shows a **Matrix** tab that opens `?kiosk=1&view=matrix` in the same window. It also shows a **Reader** tab that opens the [code activity reader](dashboard.md#code-activity-reader) at `?kiosk=1&view=reader`. The reader uses the same lines, shown as readable paragraphs.
 
 Matrix is an experimental, default-off code display for a separate channel,
 [`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).

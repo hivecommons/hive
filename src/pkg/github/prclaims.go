@@ -1850,11 +1850,13 @@ func (l *ClaimLedger) Save() error {
 }
 
 // RedStaleFunc reports whether the claiming PR (prRepo, prNumber) is red on a
-// required check AND stale (its red head SHA unchanged past the staleness
-// threshold). Fix #3 uses it to DECIDE NOT to suppress a claimed issue: a
-// healthy claiming PR (green/pending, or a freshly-changed head) still
-// suppresses its issue, but a red+stale one releases the issue so the work can
-// be re-taken. It is supplied by the caller so this package stays free of the
+// required check AND abandoned (its red head SHA unchanged past the staleness
+// threshold and the hive's fix loop done with it: escalated, re-engagement
+// budget spent, or red for the whole re-engagement window). Fix #3 uses it to
+// DECIDE NOT to suppress a claimed issue: a healthy claiming PR (green/pending,
+// or a freshly-changed head) or one the reaper is still re-engaging keeps
+// suppressing its issue, but an abandoned red one releases the issue so the
+// work can be re-taken (hivecommons/hive#16522). It is supplied by the caller so this package stays free of the
 // escalation-store dependency; a nil func means "never release" (old behavior).
 // GENERIC: the predicate keys only off check state + commit staleness.
 type RedStaleFunc func(prRepo string, prNumber int) bool

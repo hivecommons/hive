@@ -1691,6 +1691,12 @@
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
+    /* Evidence-based remediation on the PR in progress chevron: a red PR
+       nobody has picked up is bright and still; a pushed fix head is a
+       done-style step that keeps its word (stage_tracker_remediation.go). */
+    .ham-seg.active.ham-remediation-unassigned { background: color-mix(in srgb, var(--amber) 70%, var(--red)); }
+    .ham-seg.done.ham-fix-pushed { color: var(--green); }
+    .ham-seg.done.ham-fix-pushed .ham-seg-t::before { content: '✓'; margin-right: var(--sp-1); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.blank { visibility: hidden; }
     .ham-sub { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
@@ -1710,8 +1716,21 @@
        "current-phase" tint: the operator reads the words, not the shade.
        Only fresh observed work earns the pulse. */
     .ham-activity-track.ham-current { opacity: 1; box-shadow: none; }
-    .ham-seg.ham-activity-track.failing { background: var(--status-error); color: var(--surface-0); box-shadow: none; opacity: 1; }
+    /* A FILLED chevron means "this is where the item is / what moves now"
+       (hivecommons/hive#16540). A CI / Review track is filled only while it
+       runs (.active, amber). Every other state is words on the muted field
+       with the semantic colour on text and glyph only: green for passed /
+       approved, red for a finding, muted for pending, decided or not started. */
+    .ham-seg.ham-activity-track.done { background: var(--panel-strong); color: var(--green); box-shadow: none; opacity: 1; }
+    .ham-seg.ham-activity-track.failing { background: var(--panel-strong); color: var(--status-error); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }
+    /* Words without motion (checks not reported, unknown evidence, a row
+       parked on a person): current-phase text on a muted field, never amber. */
+    .ham-seg.ham-activity-track.pending { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
+    /* The stage chevron while both tracks run: bright words, no amber, no pulse. */
+    .ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); animation: none; }
+    .ham-seg.active.ham-settled-current::before { display: none; }
+    .ham-seg.ham-activity-track.done.decided { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
     /* The count words stay on one line and ellipsize instead of wrapping. */
     .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
@@ -1754,7 +1773,12 @@
        focus exposes the same full text. */
     .ham-strip[aria-label="Pipeline progress"] { grid-auto-rows: minmax(calc(var(--ham-chevron-line-height) * 1em + 2 * var(--sp-1) + 2 * var(--line-width)), auto); }
     .ham-strip[aria-label="Pipeline progress"] > .ham-seg { box-sizing: border-box; align-self: stretch; line-height: var(--ham-chevron-line-height); padding: var(--sp-1) calc(var(--ham-notch) + var(--sp-2)); }
-    .ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); width: 100%; height: 100%; min-width: 0; flex-shrink: 1; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; position: static; }
+    /* min-height: 0 and no ::before ring: on phones / coarse pointers
+       responsive.css turns every .config-info into a --tap-target (40px)
+       square with a drawn ring; the chevron's info wrapper is not that
+       icon, and its 40px floor made every chevron a 44px box. */
+    .ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); width: 100%; height: 100%; min-width: 0; min-height: 0; flex-shrink: 1; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; position: static; }
+    .ham-chevron-info.config-info::before { content: none; }
     .ham-chevron-info.config-info:hover { background: transparent; border: 0; color: inherit; }
     .ham-chevron-info:focus-visible, .ham-chevron-decision:focus-within { outline: var(--line-width) solid currentColor; outline-offset: var(--sp-1); }
     /* The copy shrink-wraps its text (flex 0 1 auto) so the words, with
@@ -1762,7 +1786,7 @@
        line is centred under the first rather than ragged-left. */
     .ham-chevron-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-height: calc(var(--ham-chevron-text-lines) * var(--ham-chevron-line-height) * 1em); flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: normal; overflow-wrap: anywhere; text-align: center; }
     .ham-chevron-copy :is(.ham-seg-t, .ham-detour, .ham-holder, .ham-gate-detail) { display: inline; white-space: normal; overflow-wrap: anywhere; }
-    .ham-chevron-copy > .ham-decision-trigger { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
+    .ham-chevron-copy > .ham-decision-trigger { min-height: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--ham-chevron-text-lines); line-clamp: var(--ham-chevron-text-lines); max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
     .config-tooltip.ham-chevron-tip { overflow-wrap: anywhere; max-width: calc(100vw - var(--sp-8)); max-height: calc(100vh - var(--sp-8)); overflow-y: auto; pointer-events: auto; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------
@@ -2099,15 +2123,21 @@
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
     .ham-decision-act.ham-decision-more { color: var(--text-muted); }
-    /* The row's inline lead action (the ⋯ menu's lead entry, in sight): a
-       small primary pill in the chip slot, the popover lead's recipe, the
-       row's cue colour; dashed and faint with its reason when the viewer
-       may not take it. */
-    .ham-lead-act { padding: 0 var(--sp-3); border: var(--line-width) solid var(--cue-state, var(--accent)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cue-state, var(--accent)) 10%, transparent); color: var(--cue-state, var(--accent)); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.4; cursor: pointer; white-space: nowrap; }
-    .ham-lead-act:hover, .ham-lead-act:focus-visible { background: color-mix(in srgb, var(--cue-state, var(--accent)) 22%, transparent); outline: none; }
-    .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
-    .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
-    .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
+    /* The row's inline action pills (the ⋯ menu's lead entry, and "Let hive
+       decide" beside it on a row parked on a human decision): real buttons
+       that must not pass for the record pills in the same slot ("adopted
+       from #N", the base branch — muted outlines, no hover). So: a filled
+       chip, a trailing ▸ glyph, pointer cursor, hover lift and focus ring.
+       Primary (the lead) fills amber; secondary (delegate) fills neutral;
+       danger (a server-led close) fills red. Dashed, faint and glyph-less
+       with its reason when the viewer may not take it. */
+    .ham-lead-act { --ham-act-fill: var(--amber); --ham-act-ink: var(--bg); display: inline-flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-3); border: var(--line-width) solid var(--ham-act-fill); border-radius: var(--r-pill); background: var(--ham-act-fill); color: var(--ham-act-ink); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.5; cursor: pointer; white-space: nowrap; transition: filter 120ms ease, box-shadow 120ms ease; }
+    .ham-lead-act::after { content: '▸'; opacity: 0.85; }
+    .ham-lead-act.ham-act-secondary { --ham-act-fill: var(--panel-strong); --ham-act-ink: var(--text); border-color: var(--line-strong); }
+    .ham-lead-act.ham-menu-danger { --ham-act-fill: var(--red); --ham-act-ink: var(--bg); }
+    .ham-lead-act:hover, .ham-lead-act:focus-visible { filter: brightness(1.12); outline: none; box-shadow: 0 0 0 var(--line-width) var(--bg), 0 0 0 calc(var(--line-width) * 3) var(--ham-act-fill); }
+    .ham-lead-act[aria-disabled="true"] { --ham-act-fill: transparent; --ham-act-ink: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; filter: none; box-shadow: none; }
+    .ham-lead-act[aria-disabled="true"]::after { content: none; }
     /* Busy (Let hive decide gathering its preview) also sets aria-disabled, so this
        compound rule sits after the disabled one and wins: the working colour, not faint/dashed. */
     .ham-lead-act[aria-busy="true"][aria-disabled="true"] { cursor: progress; opacity: 1; border-style: solid; border-color: var(--cue-work); background: color-mix(in srgb, var(--cue-work) 10%, transparent); color: var(--cue-work); }
@@ -7377,6 +7407,32 @@ body.matrix-mode .matrix-list pre { white-space: pre-wrap; overflow-wrap: anywhe
 body.matrix-mode .matrix-list small { color: var(--matrix-muted); }
 body.matrix-mode #hive-matrix [hidden] { display: none !important; }
 body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }
+body.reader-mode #hive-dashboard-root { display: none !important; }
+body.reader-mode #hive-reader {
+  --reader-bg: #0b0f0c;
+  --reader-surface: #121a14;
+  --reader-text: #e8f5eb;
+  --reader-muted: #b8ccbb;
+  --reader-add: #7ee2a0;
+  --reader-del: #ff8f8f;
+  --reader-tail: 10rem;
+  position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column;
+  background: var(--reader-bg); color: var(--reader-text); font: 20px/1.5 monospace;
+}
+body.reader-mode .reader-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-3) var(--sp-5); color: var(--reader-muted); font-size: var(--fs-touch); overflow-wrap: anywhere; }
+body.reader-mode .reader-status { flex: 1 1 auto; color: var(--reader-text); }
+body.reader-mode .reader-pause { font: inherit; color: var(--reader-text); background: var(--reader-surface); border: 1px solid var(--reader-muted); border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-6); cursor: pointer; }
+body.reader-mode .reader-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--sp-0) var(--sp-5) var(--reader-tail); }
+body.reader-mode .reader-card { max-width: 80rem; margin: 0 auto 1.5rem; padding: var(--sp-3) var(--sp-5); background: var(--reader-surface); border-radius: var(--radius); }
+body.reader-mode .reader-meta { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--reader-muted); font-size: var(--fs-touch); overflow-wrap: anywhere; }
+body.reader-mode .reader-repo { color: var(--reader-text); font-weight: 600; }
+body.reader-mode a.reader-repo { text-decoration: underline; }
+body.reader-mode .reader-diff { margin: .5rem 0 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+body.reader-mode .reader-add { color: var(--reader-add); }
+body.reader-mode .reader-del { color: var(--reader-del); }
+body.reader-mode .reader-context { color: var(--reader-text); }
+body.reader-mode #hive-reader [hidden] { display: none !important; }
+body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: 100001; opacity: .85; }
     .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
     .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
     .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
@@ -7741,6 +7797,254 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     }
   };
 })();
+// Code activity reader (#16475): changed regions as readable paragraphs on
+// the kiosk. Opt-in like Matrix and fed by the same authorized pull endpoint
+// (the shared SSE stream only nudges). Code is always set with textContent.
+(function(){
+  'use strict';
+  var pull = function(){};
+  window.hiveReaderAttach = function(source){
+    if (!window.HIVE_READER) return;
+    source.addEventListener('code-lines', function(){ pull(); });
+    source.addEventListener('open', function(){ pull(); });
+  };
+  window.hiveReaderStart = function(){
+    if (!window.HIVE_READER || document.getElementById('hive-reader')) return;
+    // Cards kept on screen, regions waiting to be read, and how long one
+    // paragraph stays in focus before the next arrives.
+    var MAX_CARDS = 32, MAX_LINES = 1200, MAX_BYTES = 256 * 1024, BASE_DWELL = 5000, LINE_DWELL = 600, MAX_DWELL = 30000;
+    var NAV_KEYS = ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'];
+    var root = document.createElement('main');
+    root.id = 'hive-reader';
+    root.setAttribute('aria-label', 'Code activity reader');
+    document.body.appendChild(root);
+    function element(tag, className, text, parent){
+      var el = document.createElement(tag);
+      el.className = className;
+      if (text) el.textContent = text;
+      (parent || root).appendChild(el);
+      return el;
+    }
+    var bar = element('div', 'reader-bar');
+    element('span', 'reader-source', 'Source: changes pushed by hive · public allowlisted repos', bar);
+    var status = element('span', 'reader-status', 'Waiting for pushed changes…', bar);
+    status.setAttribute('role', 'status');
+    var button = element('button', 'reader-pause', 'Pause', bar);
+    button.setAttribute('type', 'button');
+    button.setAttribute('aria-pressed', 'false');
+    button.setAttribute('title', 'Pause or resume (P / Space)');
+    var replay = element('button', 'reader-pause reader-replay', 'Replay buffered snapshot', bar);
+    replay.setAttribute('type', 'button');
+    replay.setAttribute('title', 'Explicit replay of retained changes; off by default');
+    var freshness = element('span', 'reader-freshness', 'Source has not completed an ingest pass', bar);
+    var scroller = element('div', 'reader-scroll');
+    scroller.setAttribute('tabindex', '0');
+    var feed = element('div', 'reader-feed', '', scroller);
+    var motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    var pending = [], current = null, readUntil = 0, timer = 0, lastSeq = 0;
+    var retained = [], retainedLines = 0, retainedBytes = 0, epoch = '', snapshotThrough = null, contentGeneration = 0;
+    var enabled = false, manualPause = false, loading = false, again = false, problem = '';
+    function paused(){ return manualPause || document.hidden; }
+    // The source supplies indivisible regions. Never infer a paragraph from
+    // neighbouring sequence numbers or merge across context/page boundaries.
+    function group(regions){
+      regions.forEach(function(region){
+        if (!region || !Array.isArray(region.lines) || !region.lines.length) return;
+        if (!region.lines.every(function(line){ return line && typeof line.line === 'string' && (line.op === '+' || line.op === '-' || line.op === ' '); })) return;
+        var size = region.lines.reduce(function(n, line){ return n + line.line.length * 2; }, 0);
+        if (region.lines.length > MAX_LINES || size > MAX_BYTES) return;
+        var item = {repo: region.repo, pr: region.pr, path: region.path, prURL: region.pr_url,
+          stage: 'Pushed PR', at: region.at, lines: region.lines, size: size,
+          delivery: Number(region.seq) <= snapshotThrough ? 'Buffered snapshot' : 'Newly received checkpoint'};
+        retained.push(item); pending.push(item);
+        retainedLines += item.lines.length; retainedBytes += size;
+        while (retainedLines > MAX_LINES || retainedBytes > MAX_BYTES) {
+          var victim = retained.findIndex(function(r){ return r !== current; });
+          var old = retained.splice(victim, 1)[0];
+          retainedLines -= old.lines.length; retainedBytes -= old.size;
+          pending = pending.filter(function(r){ return r !== old; });
+          if (old.node) { feed.removeChild(old.node); old.node = null; }
+          if (current === old) current = null;
+        }
+      });
+    }
+    function prLink(region){
+      var url = typeof region.prURL === 'string' ? region.prURL : '';
+      if (/^https:\/\/[^\s"'<>]+\/pull\/\d+$/.test(url)) return url;
+      if (/^[\w.-]+\/[\w.-]+$/.test(region.repo || '') && region.pr > 0) {
+        return 'https://github.com/' + region.repo + '/pull/' + region.pr;
+      }
+      return '';
+    }
+    function observed(at){
+      var ms = Date.parse(at);
+      if (!Number.isFinite(ms)) return {iso: '', text: 'observed time unknown'};
+      var d = new Date(ms);
+      // The shared helper honours the dashboard time-zone preference.
+      var shown = typeof formatDashboardDateTime === 'function' ? formatDashboardDateTime(d) : d.toISOString();
+      return {iso: d.toISOString(), text: 'observed ' + shown};
+    }
+    function card(region){
+      var article = document.createElement('article');
+      article.className = 'reader-card';
+      var meta = element('header', 'reader-meta', '', article);
+      var href = prLink(region);
+      var repo = element(href ? 'a' : 'span', 'reader-repo', region.repo + (region.pr > 0 ? ' #' + region.pr : ''), meta);
+      if (href) {
+        repo.href = href;
+        repo.setAttribute('target', '_blank');
+        repo.setAttribute('rel', 'noopener noreferrer');
+      }
+      element('span', 'reader-file', region.path, meta);
+      element('span', 'reader-stage', region.stage, meta);
+      element('span', 'reader-delivery', region.delivery, meta);
+      var when = observed(region.at);
+      var time = element('time', 'reader-time', when.text, meta);
+      if (when.iso) time.setAttribute('datetime', when.iso);
+      var diff = element('pre', 'reader-diff', '', article);
+      region.lines.forEach(function(line){
+        var removed = line.op === '-', context = line.op === ' ';
+        var row = element('span', 'reader-line ' + (removed ? 'reader-del' : context ? 'reader-context' : 'reader-add'), '', diff);
+        row.textContent = (removed ? '\u2212 ' : context ? '  ' : '+ ') + line.line + '\n';
+      });
+      return article;
+    }
+    function dwell(region){ return Math.min(MAX_DWELL, BASE_DWELL + region.lines.length * LINE_DWELL); }
+    // Drop the oldest cards and keep the visible text where it was.
+    function trim(){
+      while (feed.children.length > MAX_CARDS) {
+        var first = feed.children[0], height = first.offsetHeight || 0;
+        feed.removeChild(first);
+        retained.forEach(function(r){ if (r.node === first) r.node = null; });
+        scroller.scrollTop = Math.max(0, (scroller.scrollTop || 0) - height);
+      }
+    }
+    function reveal(region, scroll){
+      region.node = card(region);
+      feed.appendChild(region.node);
+      trim();
+      current = region;
+      readUntil = Date.now() + dwell(region);
+      if (scroll && region.node.scrollIntoView) region.node.scrollIntoView({block: 'start', behavior: motion.matches ? 'auto' : 'smooth'});
+    }
+    function updateStatus(){
+      var text = problem;
+      if (!text && enabled) {
+        if (pending.length) text = pending.length + (pending.length === 1 ? ' change' : ' changes') + ' waiting';
+        else text = current ? 'Caught up with available checkpoints · holding' : 'No buffered checkpoints · source may still be warming or filtering';
+      }
+      if (paused()) text = 'paused' + (text ? ' · ' + text : '');
+      status.textContent = text;
+      button.textContent = manualPause ? 'Resume' : 'Pause';
+      button.setAttribute('aria-pressed', manualPause ? 'true' : 'false');
+    }
+    function stop(){ clearTimeout(timer); timer = 0; }
+    function advance(){
+      timer = 0;
+      if (!enabled || paused() || motion.matches) return;
+      // Quiet hold when caught up: no replay, no filler, nothing scheduled.
+      if (pending.length) {
+        reveal(pending.shift(), true);
+        timer = setTimeout(advance, dwell(current));
+      }
+      updateStatus();
+    }
+    // Starts the next reveal once the current paragraph's dwell ends; never
+    // restarts a running dwell, so incoming work cannot interrupt reading.
+    function schedule(fresh){
+      if (timer || !enabled || paused()) { updateStatus(); return; }
+      if (motion.matches) {
+        // Static and scrollable: everything is shown, nothing scrolls by itself.
+        while (pending.length) reveal(pending.shift(), false);
+        updateStatus();
+        return;
+      }
+      if (fresh && current) {
+        readUntil = Date.now() + dwell(current);
+        if (current.node && current.node.scrollIntoView) current.node.scrollIntoView({block: 'start', behavior: 'smooth'});
+      }
+      var wait = readUntil - Date.now();
+      if (pending.length && wait <= 0) { advance(); return; }
+      if (pending.length) timer = setTimeout(advance, wait);
+      updateStatus();
+    }
+    function setPaused(value){
+      if (manualPause === value) return;
+      manualPause = value;
+      stop();
+      if (!manualPause) schedule(true);
+      updateStatus();
+    }
+    function inspect(){ setPaused(true); }
+    function clearContent(message){
+      contentGeneration++;
+      stop();
+      enabled = false; pending = []; retained = []; retainedLines = 0; retainedBytes = 0;
+      current = null; lastSeq = 0; snapshotThrough = null; problem = message;
+      feed.replaceChildren();
+      updateStatus();
+    }
+    pull = function(){
+      if (document.hidden) return;
+      if (loading) { again = true; return; }
+      loading = true; again = false;
+      var requestGeneration = contentGeneration;
+      fetch('/api/matrix/lines?since=' + lastSeq + '&format=regions', {cache: 'no-store', credentials: 'same-origin'})
+        .then(function(response){
+          if (requestGeneration !== contentGeneration || document.hidden) return null;
+          if (response.status === 404) { clearContent('The code activity reader is not enabled on this hive'); return null; }
+          if (response.status === 401 || response.status === 403) { clearContent('Sign in with permission to read code activity'); return null; }
+          if (!response.ok) throw new Error('reader pull failed');
+          return response.json();
+        }).then(function(data){
+          if (!data || requestGeneration !== contentGeneration || document.hidden) return;
+          var seq = Number(data.seq) || 0;
+          if (data.epoch !== epoch || seq < lastSeq) {
+            clearContent(''); epoch = data.epoch;
+          }
+          if (snapshotThrough === null) snapshotThrough = Number(data.latest) || 0;
+          group(Array.isArray(data.regions) ? data.regions : []);
+          freshness.textContent = data.last_ingest_at
+            ? 'Last source pass: ' + data.last_ingest_at + ' · next expected in ' + (data.next_ingest_in_s || 0) + 's'
+            : 'Source has not completed an ingest pass · empty does not mean no work';
+          if (seq < Number(data.latest)) again = true;
+          lastSeq = seq;
+          enabled = true; problem = '';
+          schedule(false);
+        }).catch(function(){ clearContent('Code activity unavailable · retrying'); })
+        .finally(function(){ loading = false; if (again) pull(); });
+    };
+    replay.addEventListener('click', function(){
+      if (!enabled || !retained.length) return;
+      stop(); feed.replaceChildren(); current = null; readUntil = 0;
+      retained.forEach(function(r){ r.node = null; r.delivery = 'Replay · buffered snapshot'; });
+      pending = retained.slice(); schedule(false);
+    });
+    button.addEventListener('click', function(){ setPaused(!manualPause); });
+    scroller.addEventListener('wheel', inspect, {passive: true});
+    scroller.addEventListener('touchstart', inspect, {passive: true});
+    document.addEventListener('visibilitychange', function(){
+      if (document.hidden) { clearContent('Hidden · buffered code cleared'); return; }
+      pull();
+    });
+    document.addEventListener('keydown', function(event){
+      var target = event.target || {};
+      if (event.ctrlKey || event.metaKey || event.altKey ||
+          /INPUT|TEXTAREA|SELECT/.test(target.tagName) || target.isContentEditable) return;
+      if (NAV_KEYS.indexOf(event.key) >= 0) { inspect(); return; }
+      if (event.repeat) return;
+      if (event.key === 'p' || event.key === 'P' || (event.code === 'Space' && target.tagName !== 'BUTTON')) {
+        event.preventDefault(); setPaused(!manualPause);
+      }
+    });
+    motion.addEventListener('change', function(){ stop(); schedule(false); });
+    updateStatus(); pull();
+    // Recover from missed nudges, endpoint activation and transient failures.
+    if (typeof dashboardSetInterval === 'function') {
+      dashboardSetInterval('reader-poll', function(){ if (!document.hidden) pull(); }, 30000);
+    }
+  };
+})();
 // Apply layout immediately; keep the shell visible while live data loads.
 // NOTE: only body classes are set here — the .layout-toggle buttons do NOT
 // exist in the DOM yet at this point, so any label write here is a no-op.
@@ -7783,6 +8087,12 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   if(window.HIVE_MATRIX){
     document.body.classList.add('matrix-mode');
     document.addEventListener('DOMContentLoaded', function(){ typeof hiveMatrixStart === 'function' && hiveMatrixStart(); });
+  }
+  // Code activity reader (#16475): same opt-in data as Matrix, read as paragraphs.
+  window.HIVE_READER = kiosk && view === 'reader';
+  if(window.HIVE_READER){
+    document.body.classList.add('reader-mode');
+    document.addEventListener('DOMContentLoaded', function(){ typeof hiveReaderStart === 'function' && hiveReaderStart(); });
   }
   window.HIVE_KIOSK=kiosk;
   window.HIVE_POPOUT=popout&&!kiosk;
@@ -8307,6 +8617,7 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="submit" title="Report a bug or request a feature" aria-label="Report a bug or request a feature"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
       <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <a class="nav-chip nav-chip--action" id="oc-matrix-tab" href="?kiosk=1&amp;view=matrix" title="Matrix display — opt-in code rain" aria-label="Matrix display" hidden><span class="nav-chip__label">Matrix</span></a>
+      <a class="nav-chip nav-chip--action" id="oc-reader-tab" href="?kiosk=1&amp;view=reader" title="Code activity reader — pushed changes as readable paragraphs" aria-label="Code activity reader" hidden><span class="nav-chip__label">Reader</span></a>
       <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
@@ -9047,7 +9358,7 @@ body.matrix-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 </div><!-- /#hive-dashboard-root -->
 <!-- Kiosk call-to-action badge (#16236). The server replaces this comment
      with pkg/webassets/kioskcta markup at start-up; it sits outside
-     #hive-dashboard-root because the Matrix view hides the root. Visible
+     #hive-dashboard-root because the Matrix and reader views hide the root. Visible
      only with body.kiosk-cta-on (kiosk=1 and not cta=off, see js/boot.js). -->
 <!-- hive-kiosk-cta -->
 
@@ -18312,7 +18623,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (state) {
         case 'approved': return count + ' approved';
         case 'changes_requested': return count + ' · changes requested';
-        case 'human_decision': return count + ' · awaiting human decision';
+        // The hive on the repair (adopted / remediating) is not a human
+        // decision: the findings are the changes requested.
+        case 'human_decision': return count + (stageTrackerHiveOwnsRepair(item) ? ' · changes requested' : ' · awaiting human decision');
         case 'reviewing': case 'adjudicating': return count + ' · ' + (actor ? actor + ' reviewing' : 'reviewing');
         case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued');
         case 'unassigned': return count + ' · swarm requested';
@@ -18320,14 +18633,50 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
     }
 
+    function stageTrackerHiveOwnsRepair(item) {
+      if (!item || item.needs_human || item.on_hold || item.hold) return false;
+      const code = item.code_activity;
+      const hive = code && code.head === item.head && ['adopted', 'remediating', 'unassigned', 'fix_pushed', 'fixing'].includes(code.state);
+      return !!(hive || item.stage === 74 || item.adopted_by);
+    }
+
+    // A row parked on a person: the contributor's move (071/072 or a
+    // waiting_owner code word), a hold, or a human decision. Nothing of
+    // the hive's is in motion on it, so no CI / Review track is amber.
+    function stageTrackerWaitingOnPerson(item) {
+      if (!item) return false;
+      if (item.needs_human || item.on_hold || item.hold) return true;
+      const stage = Number(item.stage);
+      // A freshly pushed head is in motion: checks run on it, matching
+      // tracker-row-anchor's column-50 anchor (hivecommons/hive#16552).
+      if ((stage === 71 || stage === 72) && !(item.push && ['pushed', 'checking'].includes(item.push.state))) return true;
+      const code = item.code_activity;
+      return !!(code && code.head === item.head && code.state === 'waiting_owner');
+    }
+
+    // A CI / Review track is in motion only on concrete evidence on the
+    // current head: a check-run in_progress / queued, or a reviewer
+    // running / queued (or the backend's own active flag). Checks that
+    // have not reported, unknown evidence and settled verdicts are not
+    // motion (hivecommons/hive#16540).
+    function stageTrackerTrackRunning(item, kind) {
+      const a = item && item[kind + '_activity'];
+      if (!a || !item.head || a.head !== item.head) return false;
+      if (stageTrackerWaitingOnPerson(item)) return false;
+      const moving = kind === 'ci' ? ['running', 'queued'] : ['reviewing', 'adjudicating', 'assigned'];
+      return !!(a.active || moving.includes(a.state));
+    }
+
     // Evidence is supplied independently by the backend. A native 050 label
     // cannot say who reviews, whether checks run, or whether an author codes.
     // The chevron wears its glyph plus the count words from
     // stageTrackerTrackWord (hivecommons/hive#16484). Style follows the
-    // track's own state on the current head: in progress = the full active
-    // fill (both tracks may be lit at once; the words disambiguate), done =
-    // the passed-stage style, a finding = the failing style, not started =
-    // the empty chevron with the glyph alone. Freshness gates only the pulse.
+    // track's own state on the current head: running = the full active
+    // fill (both tracks may be lit at once; the words disambiguate); done,
+    // a finding, pending and decided are words in their colour on the muted
+    // field — only a running track is filled (hivecommons/hive#16540); not
+    // started = the empty chevron with the glyph alone. Freshness gates only
+    // the pulse.
     function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';
@@ -18347,7 +18696,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
       const finished = matches && (state === 'passing' || state === 'approved');
       const finding = matches && (state === 'failing' || state === 'changes_requested');
-      const cls = finished ? 'done' : finding ? 'failing' : text ? 'active' : 'todo';
+      // A complete verdict parked on a person is settled, not in progress:
+      // done-style, muted, never the amber fill (hivecommons/hive#16509 row).
+      const settled = matches && state === 'human_decision' && (!known || !a.active);
+      // At most two chevrons on a row are ever amber: a track is active
+      // only while it is running; words without motion are pending.
+      const running = stageTrackerTrackRunning(item, kind);
+      const cls = finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : running ? 'active' : text ? 'pending' : 'todo';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
@@ -18429,13 +18784,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (code && !codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_STATIC;
       if (motion === STAGE_TRACKER_MOTION_ACTIVE && !worker) motion = STAGE_TRACKER_MOTION_STATIC;
       if (codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
+      // Evidence-based remediation (stage_tracker_remediation.go): the PR in
+      // progress chevron pulses only while somebody is KNOWN to be on a red
+      // PR (kick / claim); "unassigned" is bright but still; a fix head
+      // pushed after the red signal is done-style with its word.
+      const codeOnHead = code && String(code.head || '') === String(item.head || '');
+      const remediation = codeOnHead && ['unassigned', 'remediating', 'fix_pushed'].includes(code.state) ? code.state : '';
+      if (remediation === 'remediating' && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
+      const evidence = item.remediation && item.remediation.kind ? 'evidence: ' + item.remediation.kind + (item.remediation.actor ? ' by ' + item.remediation.actor : '') + (item.remediation.since ? ' since ' + item.remediation.since : '') + (item.remediation.source ? ' (' + item.remediation.source + ')' : '') : '';
+      // Both tracks running: the PR waits on them, nobody works it. The
+      // stage chevron is settled-current (bright words, no amber, no pulse)
+      // so the row never lights three chevrons (hivecommons/hive#16540).
+      const tracksRunning = ['ci', 'review'].filter(kind => stageTrackerTrackRunning(item, kind)).length;
+      const waitingOnTracks = tracksRunning === 2;
+      if (waitingOnTracks) motion = STAGE_TRACKER_MOTION_STATIC;
       const motionAttr = motion === STAGE_TRACKER_MOTION_STATIC ? '' : ` data-motion="${motion}"`;
       return segs.map(sg => {
         if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs)).join('');
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -18475,9 +18845,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!sg.cap && typeof stageTrackerCueLead === 'function') tip = stageTrackerCueLead(item, worker, nowMs) + tip;
           if (sg.number === 30 && item.code_activity && Number(item.display_column) === 30) {
             tip = (codeWorking ? code.caption : sg.detour ? sg.detour.text : 'Code activity unknown') + ' · head ' + (item.head || 'unknown') + ' · ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown');
+            if (code.detail) tip += ' · ' + code.detail;
+            if (evidence) tip += ' · ' + evidence;
             if (code.blocker) tip += ' · ' + code.blocker;
             if (claimant) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
           }
+          if (waitingOnTracks && !sg.cap) tip = 'Waiting on CI and review, both running — ' + tip;
         }
         let inner;
         // A lit chevron on a row parked on a person ("Needs human decision",
@@ -18514,8 +18887,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const content = `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
           // A decision's dialog is its sole hover/focus detail surface.
           inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
+        } else if (fixPushed) {
+          const pushedTip = [code.caption, code.detail, evidence, item.head ? 'head ' + item.head : '', code.since ? 'since ' + code.since : ''].filter(Boolean).join(' · ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(pushedTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(code.caption)}</span></span><span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(pushedTip)}</span></span>`;
         } else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
+        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
 
@@ -22614,12 +22991,50 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sub = typeof stageTrackerLinkedPRItem === 'function' ? stageTrackerLinkedPRItem(item, lp) : null;
       return sub && stageTrackerLeadAction(sub, ctx) ? null : a;
     }
-    // The inline lead button for a row: a real <button> carrying the same
-    // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
+    // Pure: the second inline pill of a row parked on a human decision —
+    // the Decide… submenu's "Let hive decide" (decide:delegate), carrying
+    // the decide target and enable reason the way stageTrackerLeadAction's
+    // fallback does — when the server's lead is another verb (Re-author,
+    // Merge now…). A row saw only "Re-author" and asked where "Let hive
+    // decide" went (hivecommons/hive#16265 / #16456): the ⋯ menu is
+    // invisible, so both stand on the row. null when the lead already is
+    // delegate, the row has no human decision, or the lead is a passive chip.
+    function stageTrackerLeadCompanion(item, ctx, lead) {
+      if (!item || !lead || lead.passive || lead.id === 'decide:delegate') return null;
+      const dec = typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+      const human = !!(dec && dec.item && dec.item.decision_needed) || (item.stage_actor && item.stage_actor.kind === 'human') || (Number(item.stage) || 0) === 85;
+      if (!human) return null;
+      const decide = stageTrackerRowActions(item, ctx).find(a => a.id === 'decide');
+      const o = decide && Array.isArray(decide.submenu) ? decide.submenu.find(x => x && x.id === 'decide:delegate') : null;
+      if (!o) return null;
+      const enabled = !!decide.enabled && !!o.enabled;
+      return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why), hint: STAGE_TRACKER_ACTION_CONSEQUENCES['decide:delegate'], companion: true });
+    }
+    // Pure: the inline pills a row renders — its lead, then (a row parked
+    // on a human decision whose lead is not delegate) "Let hive decide".
+    function stageTrackerLeadActionsOnRow(item, ctx, subRows) {
+      const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
+      if (!a) return [];
+      const companion = stageTrackerLeadCompanion(item, ctx, a);
+      return companion ? [a, companion] : [a];
+    }
+    // The inline lead button(s) for a row: real <button>s carrying the same
+    // id, hint and enable/disable reason as the ⋯ menu entries they mirror;
     // '' when the row has no lead. Click handling is delegated in
     // stageTrackerWireRowActions and runs runRowAction, the menu's path.
     function stageTrackerLeadActionHtml(item, ctx, subRows) {
-      const a = stageTrackerLeadActionOnRow(item, ctx, subRows);
+      return stageTrackerLeadActionsOnRow(item, ctx, subRows).map(a => stageTrackerLeadPillHtml(item, a)).join('');
+    }
+    // The hover text of an inline pill when the server sent no
+    // `consequence`: what happens when it is pressed, in one clause.
+    const STAGE_TRACKER_ACTION_CONSEQUENCES = { 'decide:delegate': 'The hive decides for you under its policy and rails; recorded as your decision with an audit marker.', 'decide:re-author': 'The hive opens a fresh PR for the same issue from the current base and closes this one as superseded.', 'decide:adopt': 'The hive takes the PR over: a hive copy on its own branch; the original is closed as superseded.', 'accept-triage': 'Marks the issue accepted; the hive takes it on its next pass.' };
+    // A row's inline pills are buttons and must read as buttons beside the
+    // record pills they share a slot with ("adopted from #N", the base
+    // branch): a filled chip — ham-act-primary (the lead), ham-act-secondary
+    // ("Let hive decide" beside it) or ham-menu-danger — with a trailing
+    // glyph (tracker.css ::after). Owner on #16456: "Re-author" in the
+    // outlined pill read as a record of what happened, not a verb.
+    function stageTrackerLeadPillHtml(item, a) {
       if (!a) return '';
       // The covering PR has its own row (or is drawn under another listed
       // issue): the decision — whatever its lead (Let hive decide, Merge
@@ -22634,10 +23049,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return `<button type="button" class="ham-badge ham-decision-pending" data-ham-scroll-to="${esc(to)}"${via} title="${esc('The decision is on PR #' + a.passive + ' — ' + String(a.label || a.id) + ' lives on ' + where + '. Click to go there.')}">decision pending on #${Number(a.passive) || 0}</button>`;
       }
       const label = String(a.label || a.id);
-      const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
+      const tip = a.enabled ? String(a.hint || a.note || a.consequence || STAGE_TRACKER_ACTION_CONSEQUENCES[a.id] || '') : String(a.why || '');
       const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
       const state = a.enabled ? (tip ? ` title="${esc(tip)}"` : '') : ` aria-disabled="true" title="${esc(tip)}"`;
-      return `<button type="button" class="ham-lead-act${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
+      const tone = a.danger ? ' ham-menu-danger' : (a.companion ? ' ham-act-secondary' : ' ham-act-primary');
+      return `<button type="button" class="ham-lead-act${tone}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
     }
     // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
     // the server lists them in decision_needed.options (a capability gap
@@ -45752,6 +46168,14 @@ function burnAreaChart() {
       return Math.floor(h / 24) + 'd';
     }
 
+    function fixerQueueHint(e) {
+      var position = Number(e && e.fixer_queue_position);
+      if (!Number.isInteger(position) || position < 1) return '';
+      var ahead = Number(e.fixer_queue_ahead);
+      if (!Number.isInteger(ahead) || ahead < 0) ahead = position - 1;
+      return 'fixer queued, ' + ahead + ' ahead';
+    }
+
     function renderReviewQueueEntry(e) {
       var meta = reviewQueuePriorityMeta(e.priority);
       var title = String(e.title || '');
@@ -45767,6 +46191,8 @@ function burnAreaChart() {
       if (e.confidence_band) metaBits.push(esc(String(e.confidence_band)));
       metaBits.push(reviewQueueAgeLabel(e.age_hours) + ' old');
       if (e.held) metaBits.push('held');
+      var fixerHint = fixerQueueHint(e);
+      if (fixerHint) metaBits.push('<span class="hf-label hf-label-hold">' + esc(fixerHint) + '</span>');
       // Hive-owned stage/author labels (#12429) tell at a glance where the
       // PR sits in the pipeline; other labels stay out of the meta line.
       // stage/stalled means "no activity by anyone but the hive for the
@@ -47319,6 +47745,8 @@ function burnAreaChart() {
       if (typeof data.matrixEnabled === 'boolean') {
         const matrixTab = document.getElementById('oc-matrix-tab');
         if (matrixTab) matrixTab.hidden = !data.matrixEnabled;
+        const readerTab = document.getElementById('oc-reader-tab');
+        if (readerTab) readerTab.hidden = !data.matrixEnabled;
       }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
       const scrollAnchor = captureScrollAnchor();
@@ -54135,6 +54563,7 @@ function burnAreaChart() {
       const source = new EventSource('/api/events');
       _eventSource = source;
       if (window.HIVE_MATRIX) window.hiveMatrixAttach(source);
+      if (window.HIVE_READER) window.hiveReaderAttach(source);
       _sseOpenedAtMs = Date.now();
       _sseLastFrameAtMs = 0;
       const conn = document.getElementById('conn');
@@ -65034,6 +65463,14 @@ function burnAreaChart() {
             <label>Fixer agent ${yamlHint('review.fixer_agent')} ${settingHelpMark('review-swarm', 'configuration', 'Fixer agent', `The agent kicked to address reviewer findings before re-review. Use the agent ID (the key in the roster, not its display name). Blank falls back to the PR's authoring agent, then scanner.`)}</label>
             <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="scanner (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">
           </div>
+          <div class="config-field mt-3">
+            <label>Fallback fixer agents (comma-separated) ${yamlHint('review.fixer_fallback_agents[]')} ${settingHelpMark('review-swarm', 'configuration', 'Fallback fixer agents', `Ordered agent IDs to try when the primary fixer cannot accept kicks. The first available fallback receives the repair without interrupting another turn. An empty list disables fallback routing.`)}</label>
+            <input type="text" value="${esc((rv.fixer_fallback_agents || []).join(', '))}" placeholder="e.g. fixer, scanner-2" spellcheck="false" data-change-action="markDirtyReviewFixerFallbackAgents" data-arg-types="w">
+          </div>
+          <div class="config-field mt-3">
+            <label>Undeliverable kicks before fallback ${yamlHint('review.fixer_fallback_after_undeliverable')} ${settingHelpMark('review-swarm', 'configuration', 'Undeliverable kicks before fallback', `Consecutive undeliverable kicks before trying a fallback. 0 uses the default of 3. After at least one refusal, a fixer whose transcript exceeds its busy_no_activity_threshold can yield earlier. Requires a non-empty fallback agent list.`)}</label>
+            <input type="number" min="0" step="1" value="${esc(String(rv.fixer_fallback_after_undeliverable || ''))}" placeholder="3 (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_fallback_after_undeliverable" data-arg-types="s,s,N">
+          </div>
           <div class="config-field" style="margin-top:10px">
             <label>Human decision label ${yamlHint('review.human_decision_label')} ${settingHelpMark('review-swarm', 'configuration', 'Human decision label', `An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.`)}</label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
@@ -67630,6 +68067,10 @@ function burnAreaChart() {
     }
     function markDirtyReviewRequireLabels(text) {
       markDirty('review', 'require_labels', parseReviewRequireLabels(text));
+    }
+
+    function markDirtyReviewFixerFallbackAgents(text) {
+      markDirty('review', 'fixer_fallback_agents', String(text || '').split(',').map(s => s.trim()).filter(Boolean));
     }
 
     // Reviewer agents pick-list (Settings → Features → Review Gate →

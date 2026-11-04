@@ -2637,10 +2637,6 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
-	// The Matrix backlog survives a restart so the kiosk never blanks
-	// (#16276); the paired sentinel head map is set in
-	// applyGitHubClientConfigHooks.
-	b.dashSrv.SetMatrixPersistPath(matrixLinesStatePath)
 	b.dashSrv.SetIntegrationExecutionEvaluators(b.integrationPreparationEligibility, b.integrationEligibility)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
@@ -3656,6 +3652,10 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	// re-reads the issue into the cached snapshot and the Activity Monitor
 	// the way an inbound label webhook does (hivecommons/hive#14952).
 	github.SetItemRefreshHook(b.dashSrv.RefreshSelfEditedItem)
+	// A check/status delivery applied to a head's check set, or the
+	// coalesced re-read it scheduled, re-derives the Activity Monitor row
+	// at once (hivecommons/hive#16521).
+	github.SetCIEvidenceHook(b.dashSrv.RefreshCIEvidence)
 	spekCloneAuth := lazySpektacularCloneAuth(func() pushbroker.TokenMinter {
 		if b.appAuth == nil {
 			return nil

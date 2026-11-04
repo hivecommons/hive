@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -33,7 +34,7 @@ var errNoAgentRuntime = errors.New("agent runtime not available")
 // off the webhook goroutine so GitHub gets its 200 at once.
 type ciFailureKicker struct {
 	cfg       func() *config.Config
-	gov       *governor.Governor
+	gov       func() *governor.Governor
 	isPaused  func(agent string) bool
 	message   func(agent string, sig github.CIFailureSignal) string
 	attribute func(repo string, number int) string
@@ -42,12 +43,17 @@ type ciFailureKicker struct {
 	ctx       context.Context
 	// spawn runs the kick delivery; tests swap in a synchronous runner.
 	spawn func(func())
+
+	mu      sync.Mutex
+	pending map[ciFailurePendingKey]*ciFailurePending
+	now     func() time.Time
+	wait    func(context.Context, time.Duration) bool
 }
 
 func (b *boot) newCIFailureKicker() *ciFailureKicker {
 	k := &ciFailureKicker{
 		cfg:       func() *config.Config { return b.cfg },
-		gov:       b.gov,
+		gov:       func() *governor.Governor { return b.gov },
 		attribute: github.AuthorAgentForPR,
 		logger:    b.logger,
 		ctx:       b.ctx,
@@ -73,18 +79,14 @@ func (b *boot) newCIFailureKicker() *ciFailureKicker {
 
 // ciFailureKickFunc is the dashboard.Dependencies.CIFailureKick hook.
 func (b *boot) ciFailureKickFunc() func(sig github.CIFailureSignal) dashboard.CIFailureKickOutcome {
-	k := b.newCIFailureKicker()
-	return k.React
+	b.ciFailureKicker = b.newCIFailureKicker()
+	return b.ciFailureKicker.React
 }
 
 // React decides and, when every gate passes, dispatches the kick.
 func (k *ciFailureKicker) React(sig github.CIFailureSignal) dashboard.CIFailureKickOutcome {
 	if k == nil {
 		return dashboard.CIFailureKickOutcome{Reason: "no kicker"}
-	}
-	logger := k.logger
-	if logger == nil {
-		logger = slog.Default()
 	}
 	cfg := k.cfg()
 	if cfg == nil {
@@ -101,25 +103,8 @@ func (k *ciFailureKicker) React(sig github.CIFailureSignal) dashboard.CIFailureK
 		agent = ciFailureKickDefaultAgent
 	}
 	out := dashboard.CIFailureKickOutcome{Agent: agent}
-	ac, ok := cfg.Agents[agent]
-	if !ok {
-		out.Reason = "unknown agent"
-		return out
-	}
-	if !ac.Enabled || ac.Paused {
-		out.Reason = "agent paused"
-		return out
-	}
-	if k.isPaused != nil && k.isPaused(agent) {
-		out.Reason = "agent paused"
-		return out
-	}
-	if cfg.IsRepoPaused(sig.Repo) {
-		out.Reason = "repo paused"
-		return out
-	}
-	if k.gov != nil && !k.gov.AgentEligibleForCELKick(agent) {
-		out.Reason = "governor gated"
+	if reason := k.gate(sig, agent); reason != "" {
+		out.Reason = reason
 		return out
 	}
 	// Attribute before rendering so the fix-before-new builder lists the
@@ -134,34 +119,54 @@ func (k *ciFailureKicker) React(sig github.CIFailureSignal) dashboard.CIFailureK
 		out.Reason = "nothing to repair"
 		return out
 	}
-	if !github.CIFailureSignals().AllowKick(sig.Repo, sig.Number, sig.HeadSHA, cfg.CIFailureKickCooldown()) {
-		out.Reason = "cooldown"
-		return out
-	}
 	if k.send == nil {
 		out.Reason = "no kick sender"
 		return out
 	}
-	out.Kicked = true
-	spawn := k.spawn
-	if spawn == nil {
-		spawn = func(fn func()) { go fn() }
+	p, reason := k.reserve(sig, message)
+	if reason != "" {
+		out.Reason = reason
+		return out
 	}
-	spawn(func() {
-		parent := k.ctx
-		if parent == nil {
-			parent = context.Background()
-		}
-		ctx, cancel := context.WithTimeout(parent, ciFailureKickSendTimeout)
-		defer cancel()
-		if err := k.send(ctx, agent, message); err != nil {
-			logger.Warn("ci failure webhook kick failed", "agent", agent, "repo", sig.Repo, "number", sig.Number, "check", sig.Check, "error", err)
-			return
-		}
-		if k.gov != nil {
-			k.gov.RecordKickForRepo(agent, sig.Repo)
-		}
-		logger.Info("ci failure webhook kick delivered", "agent", agent, "repo", sig.Repo, "number", sig.Number, "check", sig.Check)
-	})
+	if !github.CIFailureSignals().AllowKick(sig.Repo, sig.Number, sig.HeadSHA, cfg.CIFailureKickCooldown()) {
+		k.remove(p)
+		out.Reason = "cooldown"
+		return out
+	}
+	out.Kicked = true
+	k.dispatch(p, ciFailureKickImmediateAttempts)
 	return out
+}
+
+// gate is rechecked before deferred delivery, so a queued kick never bypasses
+// a pause, config change or governor budget gate that landed during backoff.
+func (k *ciFailureKicker) gate(sig github.CIFailureSignal, agent string) string {
+	cfg := k.cfg()
+	if cfg == nil {
+		return "no config"
+	}
+	if !cfg.CIFailureWebhookKick() {
+		return "disabled"
+	}
+	ac, ok := cfg.Agents[agent]
+	if !ok {
+		return "unknown agent"
+	}
+	if !ac.Enabled || ac.Paused || (k.isPaused != nil && k.isPaused(agent)) {
+		return "agent paused"
+	}
+	if cfg.IsRepoPaused(sig.Repo) {
+		return "repo paused"
+	}
+	if gov := k.governor(); gov != nil && !gov.AgentEligibleForCELKick(agent) {
+		return "governor gated"
+	}
+	return ""
+}
+
+func (k *ciFailureKicker) governor() *governor.Governor {
+	if k.gov != nil {
+		return k.gov()
+	}
+	return nil
 }

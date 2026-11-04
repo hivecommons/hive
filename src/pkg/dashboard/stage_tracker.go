@@ -279,6 +279,9 @@ type StageTrackerItem struct {
 	CIActivity     *StageTrackerActivity `json:"ci_activity,omitempty"`
 	ReviewActivity *StageTrackerActivity `json:"review_activity,omitempty"`
 	CodeActivity   *StageTrackerActivity `json:"code_activity,omitempty"`
+	// Remediation is the pickup evidence behind a red PR's code activity
+	// (stage_tracker_remediation.go); absent while nobody has picked it up.
+	Remediation *StageTrackerRemediation `json:"remediation,omitempty"`
 	// DisplayColumn is presentation only; native stages, filters and merge gates remain unchanged.
 	DisplayColumn int                           `json:"display_column,omitempty"`
 	Preparation   *StageTrackerPreparation      `json:"preparation,omitempty"`

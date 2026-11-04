@@ -72,7 +72,7 @@ The monitor renders CI and Review concurrently on one shared PR row; see
 
 
 
-| `GET` | `/api/matrix/lines` | Dashboard auth/session | Matrix Lines: serve bounded backlog of pushed lines behind dashboard.matrix with repo allowlist filtering. `max` counts only lines the repo allowlist admits, so a page is never emptied by filtered-out lines. A client paging with `max` should use the last returned line's `seq` as its next `since`, not the top-level `seq`, which is the source's latest sequence number and would skip lines still past the page. | `pkg/dashboard/api.go:204` |
+| `GET` | `/api/matrix/lines` | Dashboard auth/session | Matrix Lines: serve bounded backlog of pushed lines behind dashboard.matrix with repo allowlist filtering. `max` counts only lines the repo allowlist admits, so a page is never emptied by filtered-out lines. A client paging with `max` should use the last returned line's `seq` as its next `since`, not the top-level `seq`, which is the source's latest sequence number and would skip lines still past the page. `more` is true only while another line the caller may see remains past the page; stop paging when it is false. | `pkg/dashboard/api.go:204` |
 | `GET` | `/api/leaderboard/battle-log` | Public | Scrubbed public Battle Log activity feed for leaderboard widgets. | `pkg/dashboard/battle_log.go:108` |
 | `GET` | `/api/leaderboard/hive-of-week` | Public | Featured weekly project metadata, configured render URLs (empty when none), gource source URL, and embed snippets. | `pkg/dashboard/battle_log.go:109` |
 | `GET` | `/api/leaderboard/gource-log` | Public | Gource custom log source for a project/week, derived from public hive event data. | `pkg/dashboard/battle_log.go:110` |
@@ -83,7 +83,7 @@ The monitor renders CI and Review concurrently on one shared PR row; see
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:389` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:390` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:391` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1838` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1837` |
 
 ### Activity observation provenance
 

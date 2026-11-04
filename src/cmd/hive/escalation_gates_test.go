@@ -214,8 +214,8 @@ func TestClaimingPRRedStale(t *testing.T) {
 		}
 	})
 
-	t.Run("release only for red AND stale claiming PRs", func(t *testing.T) {
-		_, clock := newTestEscalationStore(t)
+	t.Run("release only for red AND abandoned claiming PRs", func(t *testing.T) {
+		store, clock := newTestEscalationStore(t)
 		cfg := escalationTestConfig()
 		green := redPR("widgets", 9, "hive-agent", "ggg")
 		green.FailingChecks = nil
@@ -239,11 +239,43 @@ func TestClaimingPRRedStale(t *testing.T) {
 			t.Error("a freshly-red claiming PR must keep suppressing (false)")
 		}
 		*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
+		if pred("widgets", 7) {
+			// hivecommons/hive#16522: #16475 fell to 010-actionable under a
+			// live #16492 the reaper was re-engaging a minute later.
+			t.Error("a stale red claiming PR the reaper is still re-engaging must keep suppressing (false)")
+		}
+		for i := 0; i < escalation.MaxReEngagements; i++ {
+			store.RecordReEngagement("acme/widgets", 7)
+		}
 		if !pred("widgets", 7) {
-			t.Error("a red claiming PR stale past the threshold must release (true)")
+			t.Error("a stale red claiming PR with its re-engagement budget spent must release (true)")
 		}
 		if !pred("acme/widgets", 7) {
 			t.Error("the predicate must resolve owner-prefixed claim repos too")
+		}
+	})
+
+	t.Run("escalated or long-abandoned red claiming PRs release", func(t *testing.T) {
+		store, clock := newTestEscalationStore(t)
+		cfg := escalationTestConfig()
+		actionable := actionableWith(
+			redPR("widgets", 7, "hive-agent", "abc"),
+			redPR("widgets", 8, "hive-agent", "def"),
+		)
+		recordRedStaleness(cfg, actionable)
+		pred := claimingPRRedStale(cfg, actionable)
+
+		*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
+		store.MarkEscalated("acme/widgets", 7)
+		if !pred("widgets", 7) {
+			t.Error("a stale red claiming PR handed to a human must release (true)")
+		}
+		if pred("widgets", 8) {
+			t.Error("a stale red claiming PR still inside the re-engagement window must keep suppressing (false)")
+		}
+		*clock = clock.Add(escalation.ClaimReleaseAfter)
+		if !pred("widgets", 8) {
+			t.Error("a red claiming PR untouched for the whole re-engagement window must release (true)")
 		}
 	})
 }
