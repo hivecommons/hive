@@ -112,6 +112,10 @@
         case 'adjudicating': return count + ' · ' + (actor ? actor + ' adjudicating' : 'adjudicating');
         case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued') + stageTrackerQueueAheadWord(a);
         case 'unassigned': return count + ' · queued' + stageTrackerQueueAheadWord(a);
+        // Derived from the PR's own state when no reviewer has touched the
+        // head (stage_tracker_review_fallback.go): the words are the
+        // statement itself (hivecommons/hive#16661).
+        case 'waiting_ci': case 'not_started': case 'not_requested': case 'closed': case 'unverified': return a.caption || count;
         default: return count + ' · ' + (newHead ? reReview : total && done ? 'perspectives' : 'queued');
       }
     }
@@ -266,32 +270,38 @@
       const name = kind === 'ci' ? 'CI' : 'Review';
       const a = item && item[kind + '_activity'];
       const matches = a && item.head && a.head === item.head;
-      let caption = matches ? a.caption || name + ' unknown' : name + ' unknown';
+      // No evidence for the head is still a statement with a next step —
+      // never "activity unknown" (hivecommons/hive#16661).
+      const noData = name + ' · no data for head ' + (item.head ? String(item.head).slice(0, 7) : 'unknown') + ' yet · refreshing';
+      let caption = matches ? a.caption || noData : noData;
+      // A legacy "CI unknown · reason" caption keeps its reason behind the statement.
+      caption = caption.replace(/^(CI|Review) unknown(?= ·|$)/, noData);
       const observed = matches && a.observed_at ? Date.parse(a.observed_at) : NaN;
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
+      // "12m ago" beside a timestamp (kept local: harnesses lift this function alone).
+      const agoWord = (atMs, nowMs) => { const mins = Math.floor((nowMs - atMs) / 60000); return !Number.isFinite(mins) || mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago' : mins < 1440 ? Math.floor(mins / 60) + 'h ago' : Math.floor(mins / 1440) + 'd ago'; };
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
       const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      // Only settled verdicts outlive the freshness window; every other
-      // state (running, queued, unassigned, waiting_ci, ...) implies motion.
-      const settledState = ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing'].includes(state);
+      // A settled verdict on the head stays known as its observation
+      // ages; only motion needs a fresh observation (hivecommons/hive#16617).
+      const settledState = ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing', 'waiting_ci', 'not_started', 'not_requested', 'closed', 'unverified'].includes(state);
       const fresh = Number.isFinite(observed) && !stale;
       const known = matches && state !== 'unknown' && (settledState || fresh);
       const active = known && fresh && a.active;
       const perspectives = known && kind === 'review' && Array.isArray(a.perspectives) ? a.perspectives : [];
-      // Mirrors trackerPerspectiveFindingLine in stage_tracker_activity.go:
-      // the dedupe below is an exact string match, so glyph and separator
-      // changes must land on both sides.
-      const perspectiveMark = verdict => verdict === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(verdict) ? '✗' : verdict === 'requires_human' ? 'requires human' : verdict || '?';
-      const perspectiveLine = p => String(p.name || 'Perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
+      const perspectiveMark = v => v === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(v) ? '✗' : v === 'requires_human' ? 'requires human' : String(v || '?');
+      const perspectiveLine = p => String(p.name || 'perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
       // A repair projection can rewrite the generic caption; keep its first
       // finding visible without changing the backend's settled verdict.
+      // Mirrors trackerPerspectiveFindingLine in stage_tracker_activity.go:
+      // the dedupe is an exact string match, so glyph and separator changes
+      // must land on both sides.
       if (['changes_requested', 'human_decision'].includes(state)) {
         const firstFinding = perspectives.find(p => ['changes_requested', 'reject', 'requires_human'].includes(p.verdict));
         if (firstFinding && !caption.includes(perspectiveLine(firstFinding))) caption += ' · ' + perspectiveLine(firstFinding);
       }
-      if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
       const ownsPR = item.kind === 'pr' || item.via_pr;
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
       const finished = matches && (state === 'passing' || state === 'approved');
@@ -314,9 +324,7 @@
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
-      const age = Math.max(0, Math.floor((clock - observed) / 60000));
-      const ago = age < 1 ? 'just now' : age < 60 ? age + 'm ago' : age < 1440 ? Math.floor(age / 60) + 'h ago' : Math.floor(age / 1440) + 'd ago';
-      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : observed > clock ? 'observation time in future · ' + new Date(observed).toISOString() : 'observed ' + ago + (stale ? ' · stale' : '') + ' · ' + new Date(observed).toISOString();
+      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString() + ' (' + agoWord(observed, clock) + ')';
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
       let blocker = matches && a.blocker && !caption.includes(a.blocker) ? ' · ' + a.blocker : '';
       // A sign-off ask: the tooltip carries the question itself (who should
@@ -327,13 +335,15 @@
       // The backend's plain-language sentence behind the caption rides in
       // the tooltip only; the chevron clamps the caption.
       const detail = matches && a.detail ? ' · ' + a.detail : '';
-      const perspectiveLines = perspectives.map(perspectiveLine);
-      let tip = [caption + blocker + detail, ...perspectiveLines, 'head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since].join('\n');
+      const sinceAgo = matches && a.since && Number.isFinite(Date.parse(a.since)) && settledState ? ' · ' + agoWord(Date.parse(a.since), clock) : '';
+      let tip = caption + blocker + detail + sinceAgo + (perspectives.length ? ' · ' + perspectives.map(perspectiveLine).join(' · ') : '') + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
       if (codeNote) tip += ' · code source ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown') + (code.blocker ? ' · ' + code.blocker : '');
-      const contextWord = kind === 'review' && sg.state === 'active' && !codeNote && sg.detour ? sg.detour.text : '';
+      // The detour's words ride along, minus the code lane's "activity unknown"
+      // (the Review tooltip states what is observed, hivecommons/hive#16661).
+      const contextWord = kind === 'review' && sg.state === 'active' && !codeNote && sg.detour ? String(sg.detour.text || '').replace(/ · activity unknown$/, ' · no fix work observed yet').replace(/^Code activity unknown$/, 'no code work observed yet') : '';
       let decided = kind === 'review' && sg.state === 'active' && item.decided && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
       const codeObserved = Date.parse(code && code.observed_at || '');
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
@@ -355,15 +365,14 @@
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
       const hold = item.hold;
-      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text ? text + ' · ' : '') + tip +
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text && text !== caption ? text + ' · ' : '') + tip +
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
         (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
       const copy = `<span class="ham-chevron-copy ham-track-state${lit ? '' : ' ham-track-verdict'}">${evidenceLink}</span>${personIco}`;
-      const tipHtml = fullTip.split('\n').map(esc).join('<br>');
-      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${tipHtml}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -572,17 +581,15 @@
       const tracks = (item.kind === 'pr' || item.via_pr) && item.head ? ['ci', 'review'].map(kind => {
         const a = item[kind + '_activity'];
         const name = kind === 'ci' ? 'CI' : 'Review';
-        if (!a || a.head !== item.head) return name + ' unknown';
+        const noData = name + ' · no data for head ' + String(item.head).slice(0, 7) + ' yet · refreshing';
+        if (!a || a.head !== item.head) return noData;
         const observed = Date.parse(a.observed_at || '');
         const activityFreshMS = 2 * 60 * 1000;
         const clock = Number(nowMs) || Date.now();
         const fresh = Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
-        if ((a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state)) && !fresh) return name + ' activity unknown · last observed ' + (a.state || 'unknown');
-        // A settled verdict on the current head does not go stale: age it
-        // the way the chevron tooltip does ("observed 15m ago · stale").
-        const age = Math.max(0, Math.floor((clock - observed) / 60000));
-        const ago = age < 1 ? 'just now' : age < 60 ? age + 'm ago' : age < 1440 ? Math.floor(age / 60) + 'h ago' : Math.floor(age / 1440) + 'd ago';
-        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : observed > clock ? ' · observation time in future' : !fresh ? ' · observed ' + ago + ' · stale' : '');
+        const agoWord = (atMs, nowMs) => { const mins = Math.floor((nowMs - atMs) / 60000); return !Number.isFinite(mins) || mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago' : mins < 1440 ? Math.floor(mins / 60) + 'h ago' : Math.floor(mins / 1440) + 'd ago'; };
+        const moving = a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state);
+        return (a.caption || noData).replace(/^(CI|Review) unknown(?= ·|$)/, noData) + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · last observed ' + agoWord(observed, clock) + (moving ? ' · refreshing' : '') : '');
       }).join(' · ') : '';
       return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
     }

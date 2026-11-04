@@ -870,6 +870,25 @@ func TestSentinelAlertLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestSentinelPacingSkipLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const detail = `website: list PRs: listing open PRs for supersession sweep in projectbluefin/website: Get "https://api.github.com/repos/projectbluefin/website/pulls?per_page=100&state=open": github pacing: slot would miss request deadline: context deadline exceeded`
+	for range 16 {
+		logger.Warn("sentinel sweep: PR skipped", "detail", detail)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("pacing skips produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 16 {
+		t.Fatalf("wrapped handler saw %d records, want 16", n)
+	}
+	logger.Warn("sentinel sweep: PR skipped", "detail", "website: permission denied")
+	logger.Warn("another warning", "detail", detail)
+	if len(*seen) != 2 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #15906: the per-head review cap suppressing a duplicate comment is expected.
 func TestReviewCommentCappedLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)

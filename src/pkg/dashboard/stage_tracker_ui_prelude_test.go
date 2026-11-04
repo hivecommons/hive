@@ -247,11 +247,18 @@ const onlyTracksPair = (item, s, i) => {
     assert.ok(!/\b(CI failing|CI \d+\/\d+|Changes requested)\b/.test(words), 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' stage chevron speaks a track verdict: ' + words);
   });
 };
+// hivecommons/hive#16661: a CI / Review tooltip states what the track waits
+// on; "activity unknown" / "CI unknown" / "Review unknown" never appear.
+const neverActivityUnknown = (item, s, i) => Array.from(s.matchAll(/<li class="ham-seg ham-activity-track [^"]*"[\s\S]*?<\/li>/g)).forEach(m => {
+  const tip = ((/role="tooltip">([\s\S]*?)<\/span>/.exec(m[0]) || [])[1] || '').replace(/<[^>]+>/g, '');
+  assert.ok(!/activity unknown|\b(?:CI|Review) unknown\b/.test(tip), 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' track tooltip says unknown: ' + tip);
+});
 const atMostTwoLit = (item, row) => row.split('aria-label="Pipeline progress"').slice(1).forEach((s, i) => {
   assert.ok(litChevrons(s) <= 2, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' lights ' + litChevrons(s) + ' chevrons: ' + s);
   onlyTracksPair(item, s, i);
   if (s.includes('aria-current="step"')) assert.ok(filledChevrons(s) >= 1, 'fixture ' + (item.repo || '') + '#' + item.number + ' strip ' + i + ' has no filled chevron: ' + s);
   wordsOnlyWhenActive(item, s);
+  neverActivityUnknown(item, s, i);
 });
 const rawRowHtml = stageTrackerRowHtml;
 stageTrackerRowHtml = (item, stages, ctx) => { rebaseCoherent(item); const row = rawRowHtml(item, stages, ctx); atMostTwoLit(item, row); return row; };

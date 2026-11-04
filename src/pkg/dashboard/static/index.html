@@ -15560,7 +15560,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //                              progress", "checks unreadable", "soak 30m
     //                              remaining"); drawn in CI / Review, since it
     //                              can still regress to 070
-    //   080 Ready for auto merge — green and approved; waiting for hive's
+    //   080 Queued for merge     — green and approved; waiting for hive's
     //                              merge pass: "next pass in 42s"
     //   095 Soaking              — admitted; the soak window runs: "7m left"
     //   100 Merging              — admitted and soaked; the merge is being
@@ -15570,14 +15570,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (stageTrackerGateCueHtml) says the same in a tooltip + aria-label.
     // STAGE_TRACKER_ACTIVE_WORD repeats the words literally (fixtures lift
     // it alone); stage_tracker_merge_gate_test.go pins the two equal.
-    const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
+    // One word for every "nothing left but the merge itself" state
+    // (hivecommons/hive#16653): 080, a merge-train seat, a recorded
+    // approval and a retryable refusal all read "Queued for merge · <why
+    // not yet>" so three adjacent approved rows do not read three ways.
+    // Spelled out in each table (tests lift the lines one at a time);
+    // Go's stageTrackerQueuedForMergeWord is the same string.
+    const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Queued for merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
     // merge_gate.merge_path (the merge call's issuer) in words (#15245).
     // A merge call (or a sweep's pass on a soaked PR) older than this says
     // "waiting for GitHub…" rather than spinning without a reason (#15808).
     const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
     const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
@@ -15635,13 +15641,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
     }
     // Pure: ordinal place words — "1st", "2nd", "3rd", "4th", "11th",
-    // "21st" (the owner's wording for the queue: "Merge queued · 1st").
+    // "21st" (the queue word: "Queued for merge · 1st of 3").
     // Every merge_train / merge_gate train state in words. A slug reaches a
     // chip only through this table (or stageTrackerTrainWord), never raw:
     // hive's own #15406 once read "front" (hivecommons/hive#15395).
-    // Both queue states read "Merge queued"; the place ("· 1st", "· 2nd")
-    // is what tells them apart — the owner could not parse "queued-behind".
-    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Merge queued', 'queued-behind': 'Merge queued', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision', 'duplicate-of': 'Duplicate of' };
+    // Both queue states read "Queued for merge" — the same word as a
+    // queued PR off a train (hivecommons/hive#16653); the place ("· 1st of
+    // 3", "· 2nd of 3") is what tells them apart — the owner could not
+    // parse "queued-behind".
+    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Queued for merge', 'queued-behind': 'Queued for merge', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision', 'duplicate-of': 'Duplicate of' };
     // merge_gate.state of a PR the queue holds because another open PR
     // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
     // / duplicate_issue carry the numbers).
@@ -15709,9 +15717,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The blocker headline for a provisional train member, by stage —
     // the same words the stage column shows (stageTrackerShort in Go), so
     // the chevron and the caption name one blocker (hive's own #15577 read
-    // "Merge queued · 1st" while its caption said "check build-and-test
+    // "Queued for merge · 1st" while its caption said "check build-and-test
     // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
-    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Remediating', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    // 080 flagged provisional by the server (the slot is held ahead of
+    // readiness) reads the pre-admission word, never "Queued for merge ·
+    // queued 1st once ready" (hivecommons/hive#16653).
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Remediating', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive', 80: 'Review passed' };
     // Pure: true when the row's queue slot is a forecast — the server says
     // so (merge_train.provisional), or, from an older server, the row's
     // own stage is short of the merge gate.
@@ -15843,7 +15854,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return STAGE_TRACKER_TRAIN_STALLED_LEAD + what + (dur ? ' · ' + dur : '');
     }
     // The chevron word for a train member ('' for a row not in a train).
-    // The queued word is the place with the queue length — "Merge queued
+    // The queued word is the place with the queue length — "Queued for merge
     // · 2nd of 3" — so it reads the same with the merge sweep on or off
     // (#15395); never the state slug, never "front" or "queued-behind",
     // and never '' for a state this table does not know: an unmapped slug
@@ -16716,7 +16727,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Pure: the merge-failed pill. A refusal because required checks have
     // not reported is not a failure — the sweep called too early — so the
-    // chip reads "Waiting for CI · 4 checks"; a sweep retrying now reads
+    // chip reads "Queued for merge · after CI" (the check count rides the
+    // hover, the chip stays ≤ 5 words); a moved head or
+    // a pending protection rule reads "Queued for merge · needs rebase" /
+    // "· branch protection pending"; a sweep retrying now reads
     // "Merge failed · retrying"; otherwise "Merge failed · <short reason>".
     // The chip is a fixed short phrase (≤ 5 words); the tooltip carries the
     // plain sentence and GitHub's raw text after "Details:".
@@ -16734,12 +16748,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const details = why ? ' Details: ' + why : '';
       if (kind === 'checks-pending') {
         const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? '; hive is on it now' : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
-        return { state, word: 'Waiting for CI', detail: checks > 0 ? checks + ' check' + (checks === 1 ? '' : 's') : '', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
+        return { state, word: 'Queued for merge', detail: 'after CI', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
       }
       const word = STAGE_TRACKER_MERGE_GATE_WORD[state];
       const sentence = 'hive tried to merge this' + when + ' and GitHub refused' + (text ? ' — ' + text : '') + '.';
       if (mg.sweep_running) {
         return { state, word, detail: 'retrying', tip: sentence + ' hive is retrying it now.' + lastSeen + details, cue: 'running', until: 0 };
+      }
+      // Refusals the lane clears on its own next pass (the head moved, a
+      // protection rule still has something pending) are not failures the
+      // reader must fix: the chip stays "Queued for merge · <qualifier>"
+      // (hivecommons/hive#16653); the hover still says GitHub refused.
+      const queuedDetail = { 'head-moved': 'needs rebase', protection: 'branch protection pending' }[kind];
+      if (queuedDetail) {
+        return { state, word: 'Queued for merge', detail: queuedDetail, tip: sentence + ' Still queued: the lane retries it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
       }
       return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
     }
@@ -16766,7 +16788,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!line) return 'GitHub refused the merge';
       return line.length > STAGE_TRACKER_MERGE_FAILED_SHORT_MAX ? line.slice(0, STAGE_TRACKER_MERGE_FAILED_SHORT_MAX - 1).trimEnd() + '…' : line;
     }
-    // Pure: the pill word with its live detail — "Ready for auto merge ·
+    // Pure: the pill word with its live detail — "Queued for merge ·
     // next pass in 42s". The detail span carries data-ham-until so the
     // countdown ticks in place.
     function stageTrackerMergeGateWordHtml(item, nowMs, trains) {
@@ -18025,6 +18047,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'adjudicating': return count + ' · ' + (actor ? actor + ' adjudicating' : 'adjudicating');
         case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued') + stageTrackerQueueAheadWord(a);
         case 'unassigned': return count + ' · queued' + stageTrackerQueueAheadWord(a);
+        // Derived from the PR's own state when no reviewer has touched the
+        // head (stage_tracker_review_fallback.go): the words are the
+        // statement itself (hivecommons/hive#16661).
+        case 'waiting_ci': case 'not_started': case 'not_requested': case 'closed': case 'unverified': return a.caption || count;
         default: return count + ' · ' + (newHead ? reReview : total && done ? 'perspectives' : 'queued');
       }
     }
@@ -18179,32 +18205,38 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const name = kind === 'ci' ? 'CI' : 'Review';
       const a = item && item[kind + '_activity'];
       const matches = a && item.head && a.head === item.head;
-      let caption = matches ? a.caption || name + ' unknown' : name + ' unknown';
+      // No evidence for the head is still a statement with a next step —
+      // never "activity unknown" (hivecommons/hive#16661).
+      const noData = name + ' · no data for head ' + (item.head ? String(item.head).slice(0, 7) : 'unknown') + ' yet · refreshing';
+      let caption = matches ? a.caption || noData : noData;
+      // A legacy "CI unknown · reason" caption keeps its reason behind the statement.
+      caption = caption.replace(/^(CI|Review) unknown(?= ·|$)/, noData);
       const observed = matches && a.observed_at ? Date.parse(a.observed_at) : NaN;
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
+      // "12m ago" beside a timestamp (kept local: harnesses lift this function alone).
+      const agoWord = (atMs, nowMs) => { const mins = Math.floor((nowMs - atMs) / 60000); return !Number.isFinite(mins) || mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago' : mins < 1440 ? Math.floor(mins / 60) + 'h ago' : Math.floor(mins / 1440) + 'd ago'; };
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
       const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      // Only settled verdicts outlive the freshness window; every other
-      // state (running, queued, unassigned, waiting_ci, ...) implies motion.
-      const settledState = ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing'].includes(state);
+      // A settled verdict on the head stays known as its observation
+      // ages; only motion needs a fresh observation (hivecommons/hive#16617).
+      const settledState = ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing', 'waiting_ci', 'not_started', 'not_requested', 'closed', 'unverified'].includes(state);
       const fresh = Number.isFinite(observed) && !stale;
       const known = matches && state !== 'unknown' && (settledState || fresh);
       const active = known && fresh && a.active;
       const perspectives = known && kind === 'review' && Array.isArray(a.perspectives) ? a.perspectives : [];
-      // Mirrors trackerPerspectiveFindingLine in stage_tracker_activity.go:
-      // the dedupe below is an exact string match, so glyph and separator
-      // changes must land on both sides.
-      const perspectiveMark = verdict => verdict === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(verdict) ? '✗' : verdict === 'requires_human' ? 'requires human' : verdict || '?';
-      const perspectiveLine = p => String(p.name || 'Perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
+      const perspectiveMark = v => v === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(v) ? '✗' : v === 'requires_human' ? 'requires human' : String(v || '?');
+      const perspectiveLine = p => String(p.name || 'perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
       // A repair projection can rewrite the generic caption; keep its first
       // finding visible without changing the backend's settled verdict.
+      // Mirrors trackerPerspectiveFindingLine in stage_tracker_activity.go:
+      // the dedupe is an exact string match, so glyph and separator changes
+      // must land on both sides.
       if (['changes_requested', 'human_decision'].includes(state)) {
         const firstFinding = perspectives.find(p => ['changes_requested', 'reject', 'requires_human'].includes(p.verdict));
         if (firstFinding && !caption.includes(perspectiveLine(firstFinding))) caption += ' · ' + perspectiveLine(firstFinding);
       }
-      if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
       const ownsPR = item.kind === 'pr' || item.via_pr;
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
       const finished = matches && (state === 'passing' || state === 'approved');
@@ -18227,9 +18259,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
-      const age = Math.max(0, Math.floor((clock - observed) / 60000));
-      const ago = age < 1 ? 'just now' : age < 60 ? age + 'm ago' : age < 1440 ? Math.floor(age / 60) + 'h ago' : Math.floor(age / 1440) + 'd ago';
-      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : observed > clock ? 'observation time in future · ' + new Date(observed).toISOString() : 'observed ' + ago + (stale ? ' · stale' : '') + ' · ' + new Date(observed).toISOString();
+      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString() + ' (' + agoWord(observed, clock) + ')';
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
       let blocker = matches && a.blocker && !caption.includes(a.blocker) ? ' · ' + a.blocker : '';
       // A sign-off ask: the tooltip carries the question itself (who should
@@ -18240,13 +18270,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The backend's plain-language sentence behind the caption rides in
       // the tooltip only; the chevron clamps the caption.
       const detail = matches && a.detail ? ' · ' + a.detail : '';
-      const perspectiveLines = perspectives.map(perspectiveLine);
-      let tip = [caption + blocker + detail, ...perspectiveLines, 'head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since].join('\n');
+      const sinceAgo = matches && a.since && Number.isFinite(Date.parse(a.since)) && settledState ? ' · ' + agoWord(Date.parse(a.since), clock) : '';
+      let tip = caption + blocker + detail + sinceAgo + (perspectives.length ? ' · ' + perspectives.map(perspectiveLine).join(' · ') : '') + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
       if (codeNote) tip += ' · code source ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown') + (code.blocker ? ' · ' + code.blocker : '');
-      const contextWord = kind === 'review' && sg.state === 'active' && !codeNote && sg.detour ? sg.detour.text : '';
+      // The detour's words ride along, minus the code lane's "activity unknown"
+      // (the Review tooltip states what is observed, hivecommons/hive#16661).
+      const contextWord = kind === 'review' && sg.state === 'active' && !codeNote && sg.detour ? String(sg.detour.text || '').replace(/ · activity unknown$/, ' · no fix work observed yet').replace(/^Code activity unknown$/, 'no code work observed yet') : '';
       let decided = kind === 'review' && sg.state === 'active' && item.decided && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
       const codeObserved = Date.parse(code && code.observed_at || '');
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
@@ -18268,15 +18300,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
       const hold = item.hold;
-      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text ? text + ' · ' : '') + tip +
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text && text !== caption ? text + ' · ' : '') + tip +
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
         (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
       const copy = `<span class="ham-chevron-copy ham-track-state${lit ? '' : ' ham-track-verdict'}">${evidenceLink}</span>${personIco}`;
-      const tipHtml = fullTip.split('\n').map(esc).join('<br>');
-      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${tipHtml}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -18485,17 +18516,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tracks = (item.kind === 'pr' || item.via_pr) && item.head ? ['ci', 'review'].map(kind => {
         const a = item[kind + '_activity'];
         const name = kind === 'ci' ? 'CI' : 'Review';
-        if (!a || a.head !== item.head) return name + ' unknown';
+        const noData = name + ' · no data for head ' + String(item.head).slice(0, 7) + ' yet · refreshing';
+        if (!a || a.head !== item.head) return noData;
         const observed = Date.parse(a.observed_at || '');
         const activityFreshMS = 2 * 60 * 1000;
         const clock = Number(nowMs) || Date.now();
         const fresh = Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
-        if ((a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state)) && !fresh) return name + ' activity unknown · last observed ' + (a.state || 'unknown');
-        // A settled verdict on the current head does not go stale: age it
-        // the way the chevron tooltip does ("observed 15m ago · stale").
-        const age = Math.max(0, Math.floor((clock - observed) / 60000));
-        const ago = age < 1 ? 'just now' : age < 60 ? age + 'm ago' : age < 1440 ? Math.floor(age / 60) + 'h ago' : Math.floor(age / 1440) + 'd ago';
-        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : observed > clock ? ' · observation time in future' : !fresh ? ' · observed ' + ago + ' · stale' : '');
+        const agoWord = (atMs, nowMs) => { const mins = Math.floor((nowMs - atMs) / 60000); return !Number.isFinite(mins) || mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago' : mins < 1440 ? Math.floor(mins / 60) + 'h ago' : Math.floor(mins / 1440) + 'd ago'; };
+        const moving = a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state);
+        return (a.caption || noData).replace(/^(CI|Review) unknown(?= ·|$)/, noData) + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · last observed ' + agoWord(observed, clock) + (moving ? ' · refreshing' : '') : '');
       }).join(' · ') : '';
       return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
     }
@@ -18847,7 +18876,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'applied': return 'done' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'no-op': return 'nothing changed' + (action.detail ? ': ' + stageTrackerActedPlain(action.detail) : '');
         case 'failed': return 'failed' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
-        case 'pending': return action.action === 'merge-now' ? 'rebasing, then merging…' : (action.action === 'queue-merge' ? 'approved — hive will merge on the next tick once CI is green' : 'the hive is deciding…');
+        case 'pending': return action.action === 'merge-now' ? 'rebasing, then merging…' : (action.action === 'queue-merge' ? 'queued for merge — hive merges it on its next pass once CI is green' : 'the hive is deciding…');
         case 'executing': return (action.detail ? stageTrackerActedPlain(action.detail) : 'decided — the hive is carrying it out…');
         case 'no-effect': return "hasn't taken effect" + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'blocked': return 'blocked' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
@@ -24368,7 +24397,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
-      merged: 'merged', 'queued-for-merge': 'approved — hive will merge on the next tick once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
+      merged: 'merged', 'queued-for-merge': 'queued for merge — hive merges it on its next pass once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };

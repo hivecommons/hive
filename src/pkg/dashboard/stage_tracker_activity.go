@@ -43,18 +43,20 @@ type StageTrackerActivity struct {
 	// the swarm's expected set for this PR (configured perspectives plus any
 	// extra one dispatched or reported for the head), Done the ones with a
 	// verdict for the current head.
-	PerspectivesDone  int                       `json:"perspectives_done,omitempty"`
-	PerspectivesTotal int                       `json:"perspectives_total,omitempty"`
-	Perspectives      []StageTrackerPerspective `json:"perspectives,omitempty"`
+	PerspectivesDone  int `json:"perspectives_done,omitempty"`
+	PerspectivesTotal int `json:"perspectives_total,omitempty"`
+	// Perspectives lists each perspective's latest verdict on the head
+	// (dissent preserved) so the tooltip can explain a settled review
+	// (hivecommons/hive#16617).
+	Perspectives []StageTrackerPerspective `json:"perspectives,omitempty"`
 }
 
-// StageTrackerPerspective describes the latest bundle verdict for one perspective
-// on the current head, preserving dissent across reviewers. Summary is the
-// first finding, when one was reported.
+// StageTrackerPerspective is one perspective's current verdict on the head
+// with its first finding, when it reported one.
 type StageTrackerPerspective struct {
 	Name    string `json:"name"`
 	Verdict string `json:"verdict"`
-	Summary string `json:"summary"`
+	Summary string `json:"summary,omitempty"`
 }
 
 const trackerActivityFreshWindow = 2 * time.Minute
@@ -64,7 +66,7 @@ func trackerUnknownActivity(head, caption string) *StageTrackerActivity {
 }
 
 func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerActivity {
-	out := trackerUnknownActivity(pr.HeadSHA, "CI unknown · no check results observed for this head yet")
+	out := trackerUnknownActivity(pr.HeadSHA, stageTrackerCINoDataCaption(pr.HeadSHA))
 	out.Detail = "hive has not yet seen which checks branch protection requires, or any check run or commit status for the PR's current commit."
 	a := pr.CIActivity
 	if a == nil || pr.HeadSHA == "" || !strings.EqualFold(a.Head, pr.HeadSHA) {
@@ -512,36 +514,6 @@ func trackerLatestBundleVerdicts(bundle *evidence.Bundle) []evidence.Verdict {
 	return out
 }
 
-func trackerReviewPerspectives(bundle *evidence.Bundle) []StageTrackerPerspective {
-	latest := map[string]evidence.Verdict{}
-	for _, verdict := range trackerLatestBundleVerdicts(bundle) {
-		if verdict.Perspective == "" {
-			continue
-		}
-		previous, ok := latest[verdict.Perspective]
-		// Each backend/model has its own current verdict. An approval by
-		// another reviewer must not hide dissent that still blocks the head.
-		if !ok || trackerPrefersVerdict(previous, verdict) {
-			latest[verdict.Perspective] = verdict
-		}
-	}
-	names := make([]string, 0, len(latest))
-	for name := range latest {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	out := make([]StageTrackerPerspective, 0, len(names))
-	for _, name := range names {
-		v := latest[name]
-		p := StageTrackerPerspective{Name: name, Verdict: v.Verdict}
-		if len(v.Findings) > 0 {
-			p.Summary = v.Findings[0].Summary
-		}
-		out = append(out, p)
-	}
-	return out
-}
-
 func trackerBundleApproves(bundle *evidence.Bundle, agg *review.Aggregate) bool {
 	latest := trackerLatestBundleVerdicts(bundle)
 	if len(latest) == 0 || len(agg.Perspectives) == 0 {
@@ -632,7 +604,14 @@ func trackerPerspectiveFindingLine(perspective StageTrackerPerspective) string {
 }
 
 func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, agg *review.Aggregate, dispatch review.DispatchState, status *StatusPayload, now time.Time) *StageTrackerActivity {
-	out := trackerUnknownActivity(pr.HeadSHA, "Review unknown · current-head evidence unavailable")
+	out := trackerUnknownActivity(pr.HeadSHA, stageTrackerReviewNoDataCaption(pr.HeadSHA))
+	unverifiedApproval := false
+	defer func() {
+		if unverifiedApproval && out.State == "unknown" {
+			out.State, out.Caption = reviewStateUnverified, "Review · aggregate approves · evidence not verified"
+			out.Detail = "The review aggregate approves this head but the verified evidence bundle does not establish it (a perspective is missing or dissents, or merge eligibility is withheld); the approval does not count until the evidence agrees."
+		}
+	}()
 	if agg != nil && !trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, agg.Repo, agg.Number, agg.HeadSHA) {
 		agg = nil
 	}
@@ -657,7 +636,13 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 				if agg.MergeEligible && trackerBundleApproves(bundle, agg) {
 					out.State, out.Caption = "approved", "Review approved"
 				} else {
-					out.Caption = "Review unknown · bundle and aggregate do not establish approval"
+					// The aggregate approves but the verified bundle does
+					// not back it (a dissenting or missing perspective, or
+					// merge eligibility withheld). Not an approval and not
+					// "unknown": the statement is that the evidence does
+					// not verify it. A later wait or dispatch on the head
+					// still takes over below.
+					unverifiedApproval = true
 				}
 			case "changes_requested", "reject":
 				out.State, out.Caption = "changes_requested", "Review findings · awaiting author"
@@ -677,6 +662,9 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 					break
 				}
 			}
+		}
+		if detail := stageTrackerReviewVerdictDetail(out, bundle); detail != "" && out.Detail == "" {
+			out.Detail = detail
 		}
 		if out.State != "unknown" && agg != nil {
 			var confirmed time.Time

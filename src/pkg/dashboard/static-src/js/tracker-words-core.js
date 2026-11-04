@@ -165,7 +165,7 @@
     //                              progress", "checks unreadable", "soak 30m
     //                              remaining"); drawn in CI / Review, since it
     //                              can still regress to 070
-    //   080 Ready for auto merge — green and approved; waiting for hive's
+    //   080 Queued for merge     — green and approved; waiting for hive's
     //                              merge pass: "next pass in 42s"
     //   095 Soaking              — admitted; the soak window runs: "7m left"
     //   100 Merging              — admitted and soaked; the merge is being
@@ -175,14 +175,20 @@
     // (stageTrackerGateCueHtml) says the same in a tooltip + aria-label.
     // STAGE_TRACKER_ACTIVE_WORD repeats the words literally (fixtures lift
     // it alone); stage_tracker_merge_gate_test.go pins the two equal.
-    const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
+    // One word for every "nothing left but the merge itself" state
+    // (hivecommons/hive#16653): 080, a merge-train seat, a recorded
+    // approval and a retryable refusal all read "Queued for merge · <why
+    // not yet>" so three adjacent approved rows do not read three ways.
+    // Spelled out in each table (tests lift the lines one at a time);
+    // Go's stageTrackerQueuedForMergeWord is the same string.
+    const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Queued for merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };
     // merge_gate.merge_path (the merge call's issuer) in words (#15245).
     // A merge call (or a sweep's pass on a soaked PR) older than this says
     // "waiting for GitHub…" rather than spinning without a reason (#15808).
     const STAGE_TRACKER_MERGING_SLOW_MS = 60000;
     const STAGE_TRACKER_MERGE_PATH_WORDS = { sweep: 'automerge sweep', dashboard: 'maintainer merge from the dashboard', relay: 'hive-merge relay', forge: 'forge adapter', queue: 'merge queue' };
     const STAGE_TRACKER_MERGE_FAILED_SHORT_MAX = 60;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
     const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
@@ -240,13 +246,15 @@
       return `<svg class="${esc(cls || 'ham-train-icon')}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>${STAGE_TRACKER_TRAIN_ICON_PATH}</svg>`;
     }
     // Pure: ordinal place words — "1st", "2nd", "3rd", "4th", "11th",
-    // "21st" (the owner's wording for the queue: "Merge queued · 1st").
+    // "21st" (the queue word: "Queued for merge · 1st of 3").
     // Every merge_train / merge_gate train state in words. A slug reaches a
     // chip only through this table (or stageTrackerTrainWord), never raw:
     // hive's own #15406 once read "front" (hivecommons/hive#15395).
-    // Both queue states read "Merge queued"; the place ("· 1st", "· 2nd")
-    // is what tells them apart — the owner could not parse "queued-behind".
-    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Merge queued', 'queued-behind': 'Merge queued', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision', 'duplicate-of': 'Duplicate of' };
+    // Both queue states read "Queued for merge" — the same word as a
+    // queued PR off a train (hivecommons/hive#16653); the place ("· 1st of
+    // 3", "· 2nd of 3") is what tells them apart — the owner could not
+    // parse "queued-behind".
+    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Queued for merge', 'queued-behind': 'Queued for merge', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision', 'duplicate-of': 'Duplicate of' };
     // merge_gate.state of a PR the queue holds because another open PR
     // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
     // / duplicate_issue carry the numbers).
@@ -314,9 +322,12 @@
     // The blocker headline for a provisional train member, by stage —
     // the same words the stage column shows (stageTrackerShort in Go), so
     // the chevron and the caption name one blocker (hive's own #15577 read
-    // "Merge queued · 1st" while its caption said "check build-and-test
+    // "Queued for merge · 1st" while its caption said "check build-and-test
     // still running"). Keys below STAGE_TRACKER_MERGE_READY only.
-    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Remediating', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive' };
+    // 080 flagged provisional by the server (the slot is held ahead of
+    // readiness) reads the pre-admission word, never "Queued for merge ·
+    // queued 1st once ready" (hivecommons/hive#16653).
+    const STAGE_TRACKER_PROVISIONAL_STAGE_WORD = { 10: 'Actionable', 20: 'Claimed', 30: 'PR in progress', 40: 'Covered by PR', 45: 'Needs human decision', 50: 'CI / Review', 60: 'Review passed', 70: 'Remediating', 71: 'Needs author', 72: 'Returned to contributor', 74: 'Adopted by hive', 80: 'Review passed' };
     // Pure: true when the row's queue slot is a forecast — the server says
     // so (merge_train.provisional), or, from an older server, the row's
     // own stage is short of the merge gate.
@@ -448,7 +459,7 @@
       return STAGE_TRACKER_TRAIN_STALLED_LEAD + what + (dur ? ' · ' + dur : '');
     }
     // The chevron word for a train member ('' for a row not in a train).
-    // The queued word is the place with the queue length — "Merge queued
+    // The queued word is the place with the queue length — "Queued for merge
     // · 2nd of 3" — so it reads the same with the merge sweep on or off
     // (#15395); never the state slug, never "front" or "queued-behind",
     // and never '' for a state this table does not know: an unmapped slug
