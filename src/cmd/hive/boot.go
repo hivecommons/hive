@@ -110,6 +110,7 @@ type boot struct {
 	ghAuth                        githubAuth
 	ghClient                      *github.Client
 	appAuth                       *github.AppAuth
+	ciFailureKicker               *ciFailureKicker
 	gov                           *governor.Governor
 	sched                         *scheduler.Scheduler
 	notifier                      *notify.Notifier

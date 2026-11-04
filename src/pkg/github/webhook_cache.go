@@ -658,6 +658,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	// invalidation drops their cache entries: the receiver reacts to a red
 	// check on the event rather than on the next sweep.
 	res.CIFailure = c.webhookCIFailureResult(event, p, aliases, numbers)
+	CIFailureSignals().forgetResolvedWebhook(event, p)
 	for _, n := range numbers {
 		c.invalidateWebhookPR(aliases, n)
 	}
