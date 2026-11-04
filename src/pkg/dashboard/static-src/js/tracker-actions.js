@@ -21,15 +21,15 @@
     }
     // Pure: the DCO caveat the merge confirmations print BEFORE acting
     // when the stage record counted unsigned commits on the head (#15136):
-    // merging as-is then fails where DCO is required; re-authoring is the
-    // separate choice.
+    // merging as-is then fails where DCO is required; adopting as a hive
+    // PR is the separate choice.
     function stageTrackerDCOCaveat(items) {
       const rows = (Array.isArray(items) ? items : [items]).filter(it => it && Number(it.dco_unsigned) > 0);
       if (!rows.length) return '';
       const it = rows[0];
       const total = Number(it.dco_total) || 0;
       const of = total > 0 ? ' of ' + total + ' commit' + (total === 1 ? '' : 's') : ' commit' + (Number(it.dco_unsigned) === 1 ? '' : 's');
-      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by (DCO). "Re-author as hive PR" is the separate choice for that; approving does not re-author.';
+      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by (DCO). "Adopt as hive PR" is the separate choice for that; approving does not adopt.';
     }
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
@@ -38,7 +38,6 @@
       'decide:close-issue': 'Close issue',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
-      'decide:re-author': 'Re-author as hive PR',
       'decide:adopt-now': 'Adopt now — hive takes it over', 'decide:reroute': 'Reroute to another clanker',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
@@ -51,8 +50,11 @@
     // merger or owner only, like POST .../queue-automerge.
     const STAGE_TRACKER_MERGE_ACTIONS = ['decide:queue-merge', 'decide:merge-now'];
     // Generic items every row has; a server-named decision option with one
-    // of these ids is not repeated at the top of the menu.
-    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt', 'decide:close-issue'];
+    // of these ids is not repeated at the top of the menu. `decide:adopt`
+    // is not generic: a row offers it either from the nudge (`adoption`)
+    // or as a server decision option (a contributor PR's DCO / fixer
+    // exhaustion, where it replaced "re-author"), never both.
+    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:close-issue'];
     const _stageTrackerCloseIssueBusy = new Set();
     // Accept triage shows on an issue the chevron calls "Triage needed":
     // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
@@ -259,7 +261,11 @@
       const out = [];
       // First: the hive decides as the owner's delegate (policy + rails on
       // the server; recorded as a human decision with an audit marker).
-      out.push({ id: 'decide:delegate', label: 'Let hive decide', hint: 'delegate', enabled, why });
+      // The server may rule delegation out for this row (a capability gap
+      // no decision closes — hivecommons/docs#612); its reason wins.
+      const served = stageTrackerServerDelegate(item);
+      const delegateOff = !!served && served.enabled === false;
+      out.push({ id: 'decide:delegate', label: 'Let hive decide', hint: 'delegate', enabled: enabled && !delegateOff, why: delegateOff ? (served.reason_if_disabled || 'The hive cannot decide this one') : why });
       if (item.kind === 'pr') {
         out.push({ id: 'decide:approve', label: 'Approve (/lgtm + /approve)', enabled, why });
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
@@ -272,6 +278,11 @@
       out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
+    }
+    // Pure: the server's decide:delegate option on the row, or null.
+    function stageTrackerServerDelegate(item) {
+      const opts = item && item.decision_needed && Array.isArray(item.decision_needed.options) ? item.decision_needed.options : [];
+      return opts.find(o => o && o.action === 'decide:delegate') || null;
     }
     // Pure: the operator note for labels the row's stage has outrun
     // (stale_labels: a needs-triage still on a claimed issue, which the
@@ -455,7 +466,7 @@
       // A nudged contributor PR the engine would adopt but for the owner's
       // say-so (maintainer_policy: ask) offers Adopt (hivecommons/hive#14524).
       if (typeof stageTrackerBlockerActions === 'function') for (const a of stageTrackerBlockerActions(item, ctx)) out.push(a);
-      if (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item)) out.push({ id: 'decide:adopt', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt'] + '…', hint: 'adoption', enabled: write && !!ctx.user, why: write && ctx.user ? '' : STAGE_TRACKER_WHY_WRITE });
+      if (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item) && !out.some(a => a.id === 'decide:adopt')) out.push({ id: 'decide:adopt', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt'] + '…', hint: 'adoption', enabled: write && !!ctx.user, why: write && ctx.user ? '' : STAGE_TRACKER_WHY_WRITE });
       // A PR waiting on a contributor's clanker offers Adopt now and Reroute
       // (hivecommons/hive#15038); each disabled with the server's reason.
       if (typeof stageTrackerTakeoverActions === 'function') for (const a of stageTrackerTakeoverActions(item, ctx, ctx.nowMs)) out.push(a);
@@ -485,6 +496,15 @@
       if (lead) return lead;
       const decide = actions.find(a => a.id === 'decide');
       const safe = decide && Array.isArray(decide.submenu) ? decide.submenu.filter(x => x && !x.danger) : [];
+      // The server ruled delegation out (a capability gap): the first
+      // enabled, non-destructive blocker option leads instead — the
+      // person's actual move (open App settings, re-check permissions),
+      // not a greyed "Let hive decide" (hivecommons/docs#612).
+      const served = stageTrackerServerDelegate(item);
+      if (served && served.enabled === false) {
+        const b = stageTrackerBlockerActions(item, ctx).find(x => x.enabled && !x.danger);
+        if (b) return Object.assign({}, b, { target: (decide && decide.target) || { kind: item.kind, number: item.number, repo: item.repo } });
+      }
       if (safe.length) {
         const o = safe.find(x => x.enabled) || safe[0];
         const enabled = !!decide.enabled && !!o.enabled;
@@ -568,7 +588,7 @@
     function stageTrackerLeadCompanion(item, ctx, lead) {
       if (!item || !lead || lead.passive || lead.id === 'decide:delegate') return null;
       const dec = typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
-      const human = !!(dec && dec.item && dec.item.decision_needed) || (item.stage_actor && item.stage_actor.kind === 'human') || (Number(item.stage) || 0) === 85;
+      const human = !!(dec && dec.item && dec.item.decision_needed) || !!item.decision_needed || (item.stage_actor && item.stage_actor.kind === 'human') || (Number(item.stage) || 0) === 85;
       if (!human) return null;
       const decide = stageTrackerRowActions(item, ctx).find(a => a.id === 'decide');
       const o = decide && Array.isArray(decide.submenu) ? decide.submenu.find(x => x && x.id === 'decide:delegate') : null;
@@ -593,7 +613,7 @@
     }
     // The hover text of an inline pill when the server sent no
     // `consequence`: what happens when it is pressed, in one clause.
-    const STAGE_TRACKER_ACTION_CONSEQUENCES = { 'decide:delegate': 'The hive decides for you under its policy and rails; recorded as your decision with an audit marker.', 'decide:re-author': 'The hive opens a fresh PR for the same issue from the current base and closes this one as superseded.', 'decide:adopt': 'The hive takes the PR over: a hive copy on its own branch; the original is closed as superseded.', 'accept-triage': 'Marks the issue accepted; the hive takes it on its next pass.' };
+    const STAGE_TRACKER_ACTION_CONSEQUENCES = { 'decide:delegate': 'The hive decides for you under its policy and rails; recorded as your decision with an audit marker.', 'decide:adopt': 'The hive takes the PR over: a hive copy on its own branch; the original is closed as superseded.', 'accept-triage': 'Marks the issue accepted; the hive takes it on its next pass.' };
     // A row's inline pills are buttons and must read as buttons beside the
     // record pills they share a slot with ("adopted from #N", the base
     // branch): a filled chip — ham-act-primary (the lead), ham-act-secondary
@@ -944,6 +964,13 @@
       if (asking.length !== 1) return null;
       const pr = stageTrackerLinkedPRItem(item, asking[0]);
       return { key: stageTrackerItemKey(pr), item: pr };
+    }
+    // Pure: whether the row's decision card (its own or its one parked
+    // PR's) offers the server option `action`.
+    function stageTrackerServerOption(item, action) {
+      const dec = stageTrackerDecisionOf(item);
+      const d = dec && dec.item && dec.item.decision_needed;
+      return !!(d && Array.isArray(d.options) && d.options.some(o => o && o.action === action));
     }
     // Pure: the trigger — the chevron word or the pill, as a button that
     // owns the popover. No native title: the popover is the hover text.
@@ -1966,10 +1993,6 @@
         }
         case 'decide:queue-merge':
           return (await stageTrackerAsk(id, 'confirm', { title: 'Approve and let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is through its own App on the next tick once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
-        case 'decide:re-author': {
-          const caveat = stageTrackerDCOCaveat(items);
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Re-author as hive PR', message: preface + 'Have the hive re-author ' + refs + ' as ' + who + '?' + (caveat || ' Its head cannot merge as-is.') + ' The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. Nothing is merged as-is, and the author\'s commits stay attributed.', confirmLabel: 'Re-author', danger: true })) ? {} : null;
-        }
         case 'decide:adopt': {
           const why = items.map(it => stageTrackerAdoptionTip(it)).filter(Boolean).join('\n');
           return (await hiveConfirm({ title: 'Adopt pull request' + (items.length > 1 ? 's' : ''), message: (why ? why + '\n\n' : '') + 'Have the hive adopt ' + refs + ' as ' + who + '? The author\'s commits and sign-off are kept; the hive rebases and fixes CI (in place when GitHub allows, else on a superseding hive PR that closes this one when it merges). Recorded as your decision on the PR.', confirmLabel: 'Adopt' })) ? {} : null;
@@ -2077,7 +2100,7 @@
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-issue': 'Closing…',
-      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…', 'decide:re-author': 'Queuing re-authoring…',
+      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
@@ -2096,7 +2119,7 @@
     }
     // The ledger name of a row action id (the inverse of the badge's
     // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
-    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'decide:close-issue': 'close-issue', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
     // A failed or refused action is noted on the row at once, so the
     // history badge turns red and its hover's first line names the reason
     // — the server's ledger only sees 5xx and refused answers, and a
@@ -2442,8 +2465,9 @@
         return { toasts: [], pending: [] };
       }
       if (id === 'decide:adopt') {
-        // Adopt acts on the nudged PR row itself (072, not a decision park).
-        items = items.filter(stageTrackerAdoptOffered);
+        // Adopt acts on the nudged PR row itself (072, not a decision park)
+        // or on the row whose decision card offers it.
+        items = items.filter(it => stageTrackerAdoptOffered(it) || stageTrackerServerOption(it, 'decide:adopt'));
         if (!items.length) return { toasts: [], pending: [] };
       } else if (id === 'decide:delegate-all') {
         // The issue row itself is the request; the server fans out per PR.

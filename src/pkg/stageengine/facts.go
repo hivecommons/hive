@@ -83,6 +83,13 @@ type ParkFacts struct {
 	HumanOnlyReason   string // lane rule unrelated to trust (workflow edits, tests removed, …)
 	ApprovedDirection bool   // /hive approve|decision recorded; un-park keeps needs-human (#12715)
 	DecisionQuestion  string
+	// DecisionSuperseded says a newer `/hive decision` with different text
+	// is on the timeline after the recorded one: direction is changing, so
+	// the `approved-direction` the issue still wears is stale and a
+	// `needs-human` park re-derives 045 with the ack cleared instead of
+	// standing down on it (FactSink.ReparkedOnNewDecision;
+	// hivecommons/hive#16579).
+	DecisionSuperseded bool
 }
 
 // AdoptionFacts is the stage-074 ownership state of a contributor PR.
@@ -162,9 +169,13 @@ type IssueFacts struct {
 	BlockerShort string
 	// ApprovedDirectionLabel is the `approved-direction` label the issue
 	// wears (a recorded /hive approve|decision), "" when absent. Next to
-	// `needs-human` it is the stale one — the un-park that applied it
-	// removed the park label, so a surviving `needs-human` came later —
-	// and the writer clears it (hivecommons/hive#15099).
+	// `needs-human` and a structured Blocker it is the stale one and the
+	// writer clears it (hivecommons/hive#15099); next to a plain
+	// `needs-human` the decision stands and the remainder is held for a
+	// person out of the pipeline, not re-parked at 045
+	// (hivecommons/hive#16579) — unless Park.DecisionSuperseded says a
+	// newer, different decision is pending, when the ack is stale again
+	// and the park re-derives 045 with it cleared.
 	ApprovedDirectionLabel string
 	// UmbrellaLabel is the never-claim label the issue carries
 	// (governor.claims.never_claim_labels, default `epic`).
@@ -296,6 +307,13 @@ type PRPassFacts struct {
 	// stagelabels.FixerExhaustedReason(n) so a person decides instead of
 	// the row claiming "Fixing" with nobody on it (hivecommons/hive#15744).
 	FixerExhausted int
+	// Reauthoring is the issue the hive is re-authoring this PR for after
+	// its fixer gave up: the PR is closed as superseded and a fresh hive
+	// PR opens for that issue from the current base, so the PR stays on
+	// its fixing stage with stagelabels.ReauthoringReason(issue) rather
+	// than parking at 085 (a hive agent's PR needs no re-author pill).
+	// Zero when no re-author is under way.
+	Reauthoring int
 	// RecoveryUnauthorized is an observed exact-head CI recovery permission
 	// refusal. It parks the item without treating infrastructure as source work.
 	RecoveryUnauthorized string

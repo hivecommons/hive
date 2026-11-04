@@ -372,15 +372,15 @@ func TestStageTrackerDecisionForHumanMerge(t *testing.T) {
 	// presses Approve and offers re-authoring as its own choice; once a
 	// person approved, the row says who admitted the head and the second
 	// Approve is no longer offered.
-	t.Run("unsigned commits warn before acting and offer re-author", func(t *testing.T) {
+	t.Run("unsigned commits warn before acting and offer adopt", func(t *testing.T) {
 		agent := it
 		agent.Author, agent.AuthorKind, agent.DCOUnsigned, agent.DCOTotal = "hive[bot]", "hive", 2, 3
 		d := stageTrackerDecisionNeeded(agent, nil, "")
-		if !strings.Contains(d.Detail, "2 of 3 commits have no Signed-off-by") || !strings.Contains(d.Detail, "Re-author as hive PR is the separate choice") {
+		if !strings.Contains(d.Detail, "2 of 3 commits have no Signed-off-by") || !strings.Contains(d.Detail, "Adopt as hive PR is the separate choice") {
 			t.Fatalf("details lack the DCO warning: %q", d.Detail)
 		}
-		if got := []string{d.Options[0].Action, d.Options[1].Action, d.Options[2].Action}; got[2] != decisionActionReauthor || got[0] != decisionActionQueueMerge || got[1] != decisionActionMergeNow {
-			t.Fatalf("options = %v, want queue-merge, merge-now, re-author", got)
+		if got := []string{d.Options[0].Action, d.Options[1].Action, d.Options[2].Action}; got[2] != decisionActionAdopt || got[0] != decisionActionQueueMerge || got[1] != decisionActionMergeNow {
+			t.Fatalf("options = %v, want queue-merge, merge-now, adopt", got)
 		}
 		for _, a := range []string{decisionActionMergeNow, decisionActionQueueMerge} {
 			if o := decisionOptionByAction(t, d, a); !o.Enabled || !strings.Contains(o.Consequence, "no Signed-off-by") {
@@ -388,17 +388,17 @@ func TestStageTrackerDecisionForHumanMerge(t *testing.T) {
 			}
 		}
 		re := d.Options[2]
-		if !re.Enabled || re.Label != "Re-author as hive PR" || !strings.Contains(re.Consequence, "nothing is merged as-is") {
+		if !re.Enabled || re.Label != "Adopt as hive PR" || !strings.Contains(re.Consequence, "nothing is merged as-is") {
 			t.Fatalf("re-author = %+v", re)
 		}
 		human := it
 		human.DCOUnsigned, human.DCOTotal = 1, 1
 		d = stageTrackerDecisionNeeded(human, nil, "")
-		if o := decisionOptionByAction(t, d, decisionActionReauthor); o.Enabled || !strings.Contains(o.ReasonIfDisabled, "@Karibhou to sign off") {
+		if o := decisionOptionByAction(t, d, decisionActionAdopt); o.Enabled || !strings.Contains(o.ReasonIfDisabled, "@Karibhou to sign off") {
 			t.Fatalf("re-author on a person's PR = %+v", o)
 		}
-		if d := stageTrackerDecisionNeeded(it, nil, ""); decisionHasAction(d, decisionActionReauthor) {
-			t.Fatalf("re-author offered without unsigned commits: %+v", d.Options)
+		if d := stageTrackerDecisionNeeded(it, nil, ""); decisionHasAction(d, decisionActionAdopt) {
+			t.Fatalf("adopt offered without unsigned commits: %+v", d.Options)
 		}
 	})
 

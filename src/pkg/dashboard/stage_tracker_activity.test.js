@@ -22,7 +22,14 @@ const STAGE_TRACKER_NEEDS_DECISION = 85, STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45
 const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10, STAGE_TRACKER_TRIAGE_NEEDED = 15, STAGE_TRACKER_POSSIBLY_EXISTS = 17;
 const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
 `;
-const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
+function constLine(source, name) {
+  const match = source.match(new RegExp('const ' + name + ' = [^\\n]*;'));
+  assert.ok(match, name);
+  return match[0];
+}
+const trackConsts = ['STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER', 'STAGE_TRACKER_WORKFLOW_APPROVAL_TIP', 'STAGE_TRACKER_RING_SEGMENT_GAP_MAX', 'STAGE_TRACKER_RING_RADIUS', 'STAGE_TRACKER_RING_GAP_DEG'].map(name => constLine(strip, name)).join('\n');
+const trackFns = ['stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
+const track = new Function('esc', 'stageTrackerIcon', trackConsts + '\n' + trackFns + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const header = new Function('esc', 'stageTrackerIcon', globals + fn(strip, 'stageTrackerHeaderHtml') + ';return stageTrackerHeaderHtml;')(esc, () => '');
 const now = Date.parse('2026-11-02T21:00:00Z');
@@ -116,7 +123,7 @@ function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
 function stageTrackerIcon(n) { return '<svg data-icon="' + n + '"></svg>'; }
-` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track, ...Object.values(helpers));
+` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerStageTrack') + fn(strip, 'stageTrackerStalledTrack') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track, ...Object.values(helpers));
 const renderStrip = makeStripRenderer();
 
 function physicalTracks(item) {
@@ -457,7 +464,8 @@ test('Hotshot #344 shape: queued CI and approved review retain current phase wit
   assert.match(cells.ci, /ham-activity-track active ham-current/, 'queued CI is in progress: the full active fill, no pulse');
   assert.match(cells.ci, /ham-track-state"><svg [^>]*><\/svg>CI \?\/\? · queued</);
   assert.match(cells.review, /ham-activity-track done ham-current/);
-  assert.match(cells.review, /Review approved</);
+  assert.match(cells.review, /data-verdict="pass"[^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/, 'an approved review is the glyph alone');
+  assert.match(cells.review, /Review: Review approved · /, 'the words move to the tooltip');
   for (const cell of [cells.ci, cells.review]) {
     assert.match(cell, /aria-current="step"/);
     assert.match(cell, /aria-label="Current pipeline phase/);
@@ -474,12 +482,17 @@ test('Hive #16434 shape: missing current-head CI and review stay unknown but vis
     review_activity: { head: 'head', state: 'unknown', caption: 'Review unknown · current-head evidence unavailable', source: 'unavailable' },
   }));
   for (const cell of [cells.ci, cells.review]) {
-    assert.match(cell, /ham-activity-track pending ham-current/, 'absent evidence in the current phase is pending: words, no amber (#16540)');
     assert.match(cell, /data-activity-state="unknown"/);
     assert.match(cell, /data-display-state="unknown"/);
     assert.doesNotMatch(cell, /data-motion=|ham-activity-track done/);
   }
-  assert.match(cells.ci, /CI \?\/\? · no checks reported yet</);
+  // #16599: at 050 the Review column is the stage's own track — active
+  // with its words even without evidence; CI is the neutral icon alone,
+  // its words in the tooltip.
+  assert.match(cells.ci, /ham-activity-track todo ham-current/);
+  assert.match(cells.ci, /title="Current pipeline phase · CI: CI \?\/\? · no checks reported yet · /);
+  assert.doesNotMatch(cells.ci, /no checks reported yet</);
+  assert.match(cells.review, /ham-activity-track active ham-current/);
   assert.match(cells.review, /Review · re-review pending \(new head\)</);
   assert.doesNotMatch(cells.cells[3], /aria-current|data-motion/);
 });
@@ -492,10 +505,15 @@ test('Hive #16268 shape: held native Fixing waits for a fixer in the CI/Review p
     review_activity: activity('approved', 'Review approved'),
   });
   const cells = physicalTracks(item);
-  assert.match(cells.ci, /pending ham-current/, 'held: unreported checks are not motion (#16540)');
+  // #16599: nothing moves and the stage's own track (review) has settled,
+  // so the unreported CI is the stalled active track: amber-muted, still,
+  // with its words — the row's one filled chevron.
+  assert.match(cells.ci, /ham-activity-track active ham-stalled ham-current/, 'held: unreported checks are the stalled blocker, not motion');
+  assert.doesNotMatch(cells.ci, /data-motion=/);
   assert.match(cells.ci, /CI \?\/\? · no checks reported yet</);
   assert.match(cells.review, /done ham-current/);
-  assert.match(cells.review, /Review approved</);
+  assert.match(cells.review, /data-verdict="pass"[^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/);
+  assert.match(cells.review, /Review: Review approved · /);
   assert.match(cells.review, /Waiting for fixer · no code work observed/);
   assert.match(cells.review, /Held by @hanthor · Maintainer hold/);
   assert.doesNotMatch(cells.rendered, /data-motion=|>(?:Fixing|Remediating) ·/);
@@ -508,12 +526,13 @@ test('current phase, running activity, failure and successful completion are ind
     ['failing', 'CI failing · "build" red', false, 'failing'],
     ['running', 'CI running · 1/2 checks done', true, 'active'],
     ['passing', 'CI green · all 2 required checks passed', false, 'done'],
-    ['skipped', 'CI skipped · check "build" skipped', false, 'pending'],
+    ['skipped', 'CI skipped · check "build" skipped', false, 'todo'],
   ]) {
     const cells = physicalTracks(livePR({ ci_activity: activity(state, caption, running) }));
-    assert.ok(cells.ci.includes('ham-activity-track ' + cls + ' ham-current'), state + ' → ' + cls);
+    assert.ok(cells.ci.includes('ham-activity-track ' + cls + ' ham-current'), state + ' → ' + cls + ': ' + cells.ci);
     assert.equal(cells.ci.includes('data-motion="active"'), running);
-    assert.match(cells.review, /pending ham-current[^]*data-activity-state="unknown"/);
+    // The stage's own track (review, 050) is active with words (#16599).
+    assert.match(cells.review, /active ham-current[^]*data-activity-state="unknown"/);
   }
   const admitted = physicalTracks(livePR({ stage: 80, ci_activity: activity('passing', 'CI green · all 2 required checks passed'), review_activity: activity('approved', 'Review approved') }));
   assert.doesNotMatch(admitted.ci + admitted.review, /ham-current|aria-current/);
@@ -536,11 +555,12 @@ test('old-head or stale observations cannot fabricate running/completion, but do
     }
     if (mode === 'old-head') {
       assert.match(cells.review, /data-activity-state="unknown"/);
-      assert.match(cells.ci, /pending ham-current[^]*CI \?\/\? · no checks reported yet</, 'old-head evidence counts for nothing on this head');
+      assert.match(cells.ci, /todo ham-current[^]*title="Current pipeline phase · CI: CI \?\/\? · no checks reported yet · /, 'old-head evidence counts for nothing on this head');
+      assert.doesNotMatch(cells.ci, /no checks reported yet</, 'inactive CI is its icon alone (#16599)');
       assert.doesNotMatch(cells.review, /ham-activity-track done/);
     } else {
       assert.match(cells.ci, /active ham-current[^]*CI \?\/\? · running</, mode + ': the last observed state still reads in words');
-      assert.match(cells.review, /done ham-current[^]*Review approved</, mode + ': an approval of this head stays done, freshness only in the tooltip');
+      assert.match(cells.review, /done ham-current[^]*data-verdict="pass"[^]*Review: Review approved · /, mode + ': an approval of this head stays done, freshness only in the tooltip');
       assert.match(cells.review, mode === 'stale' ? /stale · / : /observation time unknown/);
     }
   }
@@ -592,7 +612,10 @@ test('unknown tracks wear the canonical column glyph beside their caption, prese
     const rendered = track(item, kind, { state: 'active' }, false, now);
     const content = rendered.match(/aria-describedby="[^"]+">([^]*?)<span id="[^"]+" class="config-tooltip/)[1];
     assert.match(content, kind === 'ci' ? /<svg [^]*data-icon="ci"/ : /<svg [^]*data-icon="50"/, 'CI and Review wear distinct glyphs');
-    assert.equal(content.replace(/<[^>]*>/g, ''), kind === 'ci' ? 'CI ?/? · no checks reported yet' : 'Review · swarm requested', 'the count words ride beside the glyph, never a bare icon (#16484)');
+    // #16599: at 050 the Review column is the stage's own track and carries
+    // its words; the inactive CI column is its glyph alone, words in the tooltip.
+    assert.equal(content.replace(/<[^>]*>/g, ''), kind === 'ci' ? '' : 'Review · queued', 'words ride only on the active chevron (#16599)');
+    if (kind === 'ci') assert.match(rendered, /aria-label="[^"]*CI: CI \?\/\? · no checks reported yet · /, 'the inactive count words move to the tooltip');
     assert.match(rendered, /role="tooltip">[^]*full precise reason/, 'the precise backend caption stays in the tooltip');
     assert.match(content, /aria-label="Open current-head/);
     assert.match(rendered, /class="ham-chevron-info config-info" tabindex="0"/);
@@ -651,7 +674,7 @@ const STAGE_TRACKER_MOTION_ACTIVE = 'active', STAGE_TRACKER_MOTION_STATIC = 'sta
 function stageTrackerSentinelInLane() { return false; }
 function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
-` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + `
+` + trackConsts + '\n' + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerWorkflowApprovalPending') + fn(strip, 'stageTrackerRingSvg') + fn(strip, 'stageTrackerStageTrack') + fn(strip, 'stageTrackerStalledTrack') + fn(strip, 'stageTrackerQueueAheadWord') + `
 function stageTrackerMotion() { return 'active'; }
 function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
 ` + anchor + fn(row, 'stageTrackerSegments') + fn(strip, 'stageTrackerActivityTrackHtml') + fn(strip, 'stageTrackerStripItems');
@@ -688,9 +711,9 @@ test('stale activity is visibly unknown in the tooltip, never pulses, and still 
   assert.match(html, /activity unknown · last observed reviewing/);
   assert.doesNotMatch(html, /data-motion/);
   assert.match(html, /data-display-state="unknown"/);
-  assert.match(html, /ham-activity-track active"[^]*ham-chevron-copy ham-track-state"><svg [^>]*><\/svg>Review 1\/5 · reviewer reviewing</, 'stale in-progress evidence keeps the lit fill and its count words');
+  assert.match(html, /ham-activity-track active"[^]*ham-chevron-copy ham-track-state"><svg [^]*?<\/svg>Review 1\/5 · reviewer reviewing</, 'stale in-progress evidence keeps the lit fill and its count words');
   item.review_activity = { ...activity('approved', 'Review approved'), perspectives_done: 5, perspectives_total: 5 };
-  assert.match(track(item, 'review', {}, false, now + 300000), /ham-activity-track done"[^]*Review 5\/5 approved</, 'an approval of this head stays done when stale');
+  assert.match(track(item, 'review', {}, false, now + 300000), /ham-activity-track done"[^]*Review: Review 5\/5 approved · [^]*ham-track-verdict"><svg [^]*?<\/svg><\/span>/, 'an approval of this head stays done when stale: glyph alone, count words in the tooltip');
 });
 
 test('current-head evidence links are accessible and never retained across a new head', () => {
@@ -743,7 +766,7 @@ test('the backend detail sentence rides in the track tooltip, not on the chevron
 });
 
 test('#16484: count grammar — CI passed/total and Review done/total across every state', () => {
-  const word = new Function(fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + ';return stageTrackerTrackWord;')();
+  const word = new Function(trackConsts + '\n' + fn(strip, 'stageTrackerWorkflowApprovalPending') + fn(strip, 'stageTrackerQueueAheadWord') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + ';return stageTrackerTrackWord;')();
   const ci = (state, extra = {}) => word({ head: 'h', ci_activity: { head: 'h', state, ...extra } }, 'ci', true);
   assert.equal(ci('passing', { checks_passed: 14, checks_total: 14 }), 'CI 14/14 passed');
   assert.equal(ci('failing', { checks_passed: 11, checks_total: 14, checks_failed: 1, checks_failing: ['lint'] }), 'CI 11/14 · 1 failing (lint)');
@@ -763,13 +786,22 @@ test('#16484: count grammar — CI passed/total and Review done/total across eve
   const review = (state, extra = {}, item = {}) => word({ head: 'h', ...item, review_activity: { head: 'h', state, perspectives_done: 3, perspectives_total: 5, ...extra } }, 'review', true);
   assert.equal(review('approved', { perspectives_done: 5 }), 'Review 5/5 approved');
   assert.equal(review('changes_requested'), 'Review 3/5 · changes requested');
-  assert.equal(review('human_decision'), 'Review 3/5 · awaiting human decision');
+  assert.equal(review('human_decision'), 'Review 3/5 · needs owner sign-off', 'reviews done; the sign-off is what is left, never "awaiting human"');
+  assert.equal(review('human_decision', {}, { decision_needed: { question: '@clubanderson should decide whether to accept this workflow change from a fork.' } }), 'Review 3/5 · needs owner sign-off', 'no viewer known: the owner');
+  globalThis.window = { _hiveUser: 'ClubAnderson' };
+  try {
+    assert.equal(review('human_decision', {}, { decision_needed: { question: '@clubanderson should decide whether to accept this workflow change from a fork.' } }), 'Review 3/5 · needs your sign-off', 'the ask names the viewer');
+    assert.equal(review('human_decision', {}, { decision_needed: { question: '@someone-else should decide.' } }), 'Review 3/5 · needs owner sign-off');
+    for (const q of ['@clubanderson-bot should decide.', '@clubandersonx should decide.']) assert.equal(review('human_decision', {}, { decision_needed: { question: q } }), 'Review 3/5 · needs owner sign-off', 'a longer login is not the viewer: ' + q);
+    for (const q of ['@clubanderson', 'ping @clubanderson, please decide.', 'ok @ClubAnderson?']) assert.equal(review('human_decision', {}, { decision_needed: { question: q } }), 'Review 3/5 · needs your sign-off', 'the viewer handle ends at punctuation or the end: ' + q);
+  } finally { delete globalThis.window; }
   assert.equal(review('reviewing', { actor: 'reviewer-2' }), 'Review 3/5 · reviewer-2 reviewing');
-  assert.equal(review('adjudicating', { actor: 'adjudicator' }), 'Review 3/5 · adjudicator reviewing');
+  assert.equal(review('adjudicating', { actor: 'adjudicator' }), 'Review 3/5 · adjudicator adjudicating');
   assert.equal(review('assigned', { actor: 'reviewer' }), 'Review 3/5 · reviewer queued');
   assert.equal(review('assigned'), 'Review 3/5 · queued');
-  assert.equal(review('unassigned', { perspectives_done: 0 }), 'Review 0/5 · swarm requested');
-  assert.equal(review('unknown', { perspectives_done: 0 }), 'Review 0/5 · swarm requested');
+  assert.equal(review('unassigned', { perspectives_done: 0 }), 'Review 0/5 · queued');
+  assert.equal(review('unassigned', { perspectives_done: 0, queue_ahead: 3 }), 'Review 0/5 · queued, 3 ahead');
+  assert.equal(review('unknown', { perspectives_done: 0 }), 'Review 0/5 · queued');
   assert.equal(review('unknown', { perspectives_done: 0 }, { push: { state: 'pushed', sha: 'h', next: 're-review' } }), 'Review 0/5 · re-review pending (new head)');
   assert.equal(review('unknown'), 'Review 3/5 · perspectives', 'partial verdicts with no aggregate verdict yet');
   assert.equal(word({ head: 'h', review_activity: { head: 'h', state: 'approved' } }, 'review', true), 'Review approved', 'older servers without counts');
@@ -787,20 +819,33 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
     ci_activity: fresh('running', { checks_passed: 9, checks_total: 14, active: true }), review_activity: fresh('unknown', { perspectives_done: 0, perspectives_total: 5 }) }));
   assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 9/14 · running');
   assert.match(cells.ci, /data-motion="active"/);
-  assert.equal(cls(cells.review), 'pending', 'a pending re-review is words without motion (#16540)'); assert.equal(text(cells.review), 'Review 0/5 · re-review pending (new head)');
+  // #16599: the pending re-review is not in motion and not the stage's own
+  // track (070) → glyph alone, its words in the tooltip.
+  assert.equal(cls(cells.review), 'todo', 'a pending re-review is an inactive glyph (#16599)'); assert.equal(text(cells.review), '');
+  assert.match(cells.review, /aria-label="[^"]*Review: Review 0\/5 · re-review pending \(new head\) · /);
   assert.doesNotMatch(cells.review, /data-motion/);
   assert.match(cells.review, /hive is waiting on CI for new head d3c0824/, 'the tooltip still says which track leads');
   // #16491: review swarm requested, no bundle yet; CI shows its count.
   cells = physicalTracks(livePR({ head, stage: 50, display_column: 50,
     ci_activity: fresh('running', { checks_passed: 2, checks_total: 14 }), review_activity: fresh('unassigned', { perspectives_done: 0, perspectives_total: 5, blocker: 'no reviewer free' }) }));
-  assert.equal(cls(cells.review), 'pending'); assert.equal(text(cells.review), 'Review 0/5 · swarm requested');
+  // #16599: at 050 the Review column is the stage's own track → active with
+  // words even while only queued; CI runs beside it (two lit).
+  assert.equal(cls(cells.review), 'active'); assert.equal(text(cells.review), 'Review 0/5 · queued');
+  assert.doesNotMatch(cells.review, /data-motion/, 'queued is lit but still');
   assert.equal(cls(cells.ci), 'active'); assert.equal(text(cells.ci), 'CI 2/14 · running');
   // #16268: CI failed native-queue-policy, review approved, held.
   cells = physicalTracks(livePR({ head, stage: 70, display_column: 50, modifiers: ['hold'], hold: { by: 'hanthor', pill: 'Held by @hanthor' },
     ci_activity: fresh('failing', { checks_passed: 13, checks_total: 14, checks_failed: 1, checks_failing: ['native-queue-policy'], blocker: 'native-queue-policy' }),
     review_activity: fresh('approved', { perspectives_done: 5, perspectives_total: 5 }) }));
-  assert.equal(cls(cells.ci), 'failing'); assert.equal(text(cells.ci), 'CI 13/14 · 1 failing (native-queue-policy)');
-  assert.equal(cls(cells.review), 'done'); assert.equal(text(cells.review), 'Review 5/5 approved');
+  // Nothing runs and the row sits in the CI/Review column, so the failing
+  // CI is the stalled blocker: lit still (amber-muted), words on (#16599);
+  // the settled approval is the glyph alone, its count words in the tooltip.
+  const tip = cell => cell.match(/ aria-label="([^"]*)"/)[1];
+  assert.equal(cls(cells.ci), 'active'); assert.match(cells.ci, /ham-activity-track active ham-stalled/); assert.doesNotMatch(cells.ci, /data-motion/);
+  assert.equal(text(cells.ci), 'CI 13/14 · 1 failing (native-queue-policy)'); assert.match(cells.ci, /data-verdict="fail"/);
+  assert.match(tip(cells.ci), /^(?:Current pipeline phase · )?CI: CI 13\/14 · 1 failing \(native-queue-policy\) · /);
+  assert.equal(cls(cells.review), 'done'); assert.equal(text(cells.review), ''); assert.match(cells.review, /data-verdict="pass"/);
+  assert.match(tip(cells.review), /^(?:Current pipeline phase · )?Review: Review 5\/5 approved · /);
   assert.match(cells.review, /Held by @hanthor/);
   // Not started: a PR still being written (column 30) with no evidence shows the glyph alone, never lit.
   cells = physicalTracks(livePR({ head, stage: 30, display_column: 30 }));

@@ -31,6 +31,7 @@ func stageTrackerDecidedUIJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerGateCueHtml"),
 		jsFunc(t, html, "stageTrackerDecidedOf"),
 		jsConstBlock(t, html, "STAGE_TRACKER_DECIDED_ACTING"),
+		jsConstLine(t, html, "STAGE_TRACKER_PARK_KEPT_ACTING"),
 		jsFunc(t, html, "stageTrackerDecidedActing"),
 		jsFunc(t, html, "stageTrackerDecidedLead"),
 		jsFunc(t, html, "stageTrackerLinkedSupersededText"),

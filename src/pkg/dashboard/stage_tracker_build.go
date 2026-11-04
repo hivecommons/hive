@@ -476,6 +476,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.ReviewActivity = stageTrackerReviewActivity(activityPR, bundle, currentAggregate, dispatchState, status, now)
 		stageTrackerCountPerspectives(it.ReviewActivity, activityPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
+		stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
+		stageTrackerLeadApproveForSignOff(&it)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
 			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
@@ -550,12 +552,14 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
 			stageTrackerCountPerspectives(it.ReviewActivity, currentPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
+			stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
 		}
 		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
 		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
 		it.CodeActivity, it.Remediation, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
 	}
+	stageTrackerApplyReauthor(resp.Items, store, status.GitHubBaseURL, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	resp.WaitingOnHuman = stageTrackerWaitingOnHuman(resp.Items)
 	resp.IntegrationQueues = s.stageTrackerNativeQueues(now)

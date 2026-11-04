@@ -211,7 +211,7 @@
       if (cell.dataset.routeState?.split(' ').includes('active')) {
         assert(cell.classList.contains('ham-current'), name + 'current phase remains highlighted independently of work');
         const style = getComputedStyle(cell);
-        assert(Number(style.opacity) >= 0.9 && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent', name + 'queued/unknown/assigned/completed current tracks retain a visible steady fill');
+        assert(Number(style.opacity) >= 0.9 && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent', name + 'queued/unknown/assigned/completed current tracks retain a visible steady fill: ' + JSON.stringify({ cls: cell.className, track: cell.dataset.track, state: cell.dataset.activityState, bg: style.backgroundColor, opacity: style.opacity, label: cell.getAttribute('aria-label')?.slice(0, 80) }));
       }
       if (cell.dataset.track) {
         // CI / Review lanes are chevrons like their neighbours: same notch
@@ -231,6 +231,10 @@
         // the glyph alone.
         const words = cell.querySelector('.ham-track-state')?.innerText.trim() || '';
         if (cell.classList.contains('todo')) assert(words === '', name + 'not-started track is icon-only');
+        // A settled verdict (passed / failed, approved / changes requested)
+        // is the glyph alone in its colour; its count words ride in the
+        // tooltip and accessible label.
+        else if (cell.dataset.verdict) assert(words === '' && /\b(CI|Review): (CI|Review)\b/.test(cell.getAttribute('aria-label') || ''), name + 'settled verdict is the glyph alone with its words in the label: ' + JSON.stringify(words));
         else assert(/^(CI|Review)\b/.test(words), name + 'lit unknown track carries count words, never a bare glyph: ' + JSON.stringify(words));
         assert(!!cell.querySelector('svg'), name + 'unknown track retains the column glyph');
         assert(!cell.hasAttribute('data-motion'), name + 'unknown cannot animate as observed work');

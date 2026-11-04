@@ -36,7 +36,9 @@ type stageAPI struct {
 	creates  []string
 	lists    int
 	gets     int
-	url      string
+	// issueGets counts GET /issues/N per number.
+	issueGets map[int]int
+	url       string
 	// commits is what GET /pulls/N/commits answers (one message per
 	// commit); a PR not listed has no commits, so its DCO state stays
 	// unknown and the test's label expectations are unaffected.
@@ -121,6 +123,10 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && !strings.Contains(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), "/"):
 			n, _ := strconv.Atoi(strings.TrimPrefix(path, "/repos/acme/widget/issues/"))
 			api.gets++
+			if api.issueGets == nil {
+				api.issueGets = map[int]int{}
+			}
+			api.issueGets[n]++
 			stagePRTruthMu.Lock()
 			labels := make([]map[string]string, 0)
 			for _, l := range stagePRTruth[n] {

@@ -27,7 +27,14 @@ const STAGE_TRACKER_NEEDS_DECISION = 85, STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45
 const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10, STAGE_TRACKER_TRIAGE_NEEDED = 15, STAGE_TRACKER_POSSIBLY_EXISTS = 17;
 const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
 `;
-const track = new Function('esc', 'stageTrackerIcon', fn(strip, 'stageTrackerTrackLead') + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerHiveOwnsRepair') + fn(strip, 'stageTrackerTrackWord') + fn(strip, 'stageTrackerActivityTrackHtml') + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
+function constLine(source, name) {
+  const match = source.match(new RegExp('const ' + name + ' = [^\\n]*;'));
+  assert.ok(match, name);
+  return match[0];
+}
+const trackConsts = ['STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER', 'STAGE_TRACKER_WORKFLOW_APPROVAL_TIP', 'STAGE_TRACKER_RING_SEGMENT_GAP_MAX', 'STAGE_TRACKER_RING_RADIUS', 'STAGE_TRACKER_RING_GAP_DEG'].map(name => constLine(strip, name)).join('\n');
+const trackFns = ['stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
+const track = new Function('esc', 'stageTrackerIcon', trackConsts + '\n' + trackFns + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const segments = new Function('stageTrackerAnchor', globals + `
 const STAGE_TRACKER_ACTIVE_WORD = {70: 'Fixing'};
@@ -44,7 +51,7 @@ function stageTrackerActorKind() { return ''; }
 function stageTrackerActorTip() { return ''; }
 function stageTrackerMotion() { return STAGE_TRACKER_MOTION_STATIC; }
 function stageTrackerIcon(n) { return '<svg data-icon="' + n + '"></svg>'; }
-` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track);
+` + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerStageTrack') + fn(strip, 'stageTrackerStalledTrack') + fn(strip, 'stageTrackerStripItems') + ';return stageTrackerStripItems;')(esc, segments, track);
 
 const stages = [{ number: 70, branch_from: 50 }, { number: 71, branch_from: 50 }, { number: 72, branch_from: 50 }];
 const now = Date.parse('2026-11-04T02:45:00Z');
@@ -111,19 +118,24 @@ test('adopted row: a complete review verdict is done-style, and a human-decision
   const review = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: decision }))[5];
   assert.match(review, /class="ham-seg ham-activity-track done decided"/, 'done-style, muted: not the active fill');
   assert.doesNotMatch(review, /ham-activity-track active|data-motion="active"/);
-  assert.match(review, /Review 5\/5 · changes requested</);
-  assert.doesNotMatch(review, /awaiting human/);
+  // #16599: a settled verdict is the glyph alone; its words ride in the tooltip.
+  assert.match(review, /Review: Review 5\/5 · changes requested · /);
+  assert.doesNotMatch(review, /changes requested<|awaiting human/);
 
   const parked = cells(redPR({ stage: 85, display_column: 85, needs_human: true, review_activity: decision }))[5];
   assert.match(parked, /class="ham-seg ham-activity-track done decided"/, 'parked on a person is settled, still not amber');
-  assert.match(parked, /Review 5\/5 · awaiting human decision</, 'genuinely parked: the human word stands');
+  assert.match(parked, /Review: Review 5\/5 · needs owner sign-off · /, 'genuinely parked: the sign-off word stands (in the tooltip)');
 
   const changes = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: { ...decision, state: 'changes_requested' } }))[5];
-  assert.match(changes, /class="ham-seg ham-activity-track failing"/);
-  assert.match(changes, /Review 5\/5 · changes requested</);
+  // A settled verdict is the glyph alone in the pass / fail colour; its
+  // count words ride in the tooltip.
+  assert.match(changes, /class="ham-seg ham-activity-track failing"[^>]*data-verdict="fail"/);
+  assert.match(changes, /Review: Review 5\/5 · changes requested · /);
+  assert.match(changes, /ham-track-verdict"><svg [^]*?<\/svg><\/span>/);
   const approved = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: { ...decision, state: 'approved' } }))[5];
-  assert.match(approved, /class="ham-seg ham-activity-track done"/);
-  assert.match(approved, /Review 5\/5 approved</);
+  assert.match(approved, /class="ham-seg ham-activity-track done"[^>]*data-verdict="pass"/);
+  assert.match(approved, /Review: Review 5\/5 approved · /);
+  assert.match(approved, /ham-track-verdict"><svg [^]*?<\/svg><\/span>/);
   const ci = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: decision }))[4];
   assert.match(ci, /class="ham-seg ham-activity-track done"/, '11/11 passed is done-style');
 });
@@ -153,8 +165,11 @@ test('#16509 row: adopted, CI 7/11 unreported, review 5/5 decided → one amber 
     review_activity: { head: 'abc1234def', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } });
   const c = cells(item);
   assert.match(c[3], /class="ham-seg active detoured"/, 'the stage chevron is the one lit chevron');
-  assert.match(c[4], /class="ham-seg ham-activity-track pending"/, 'unreported checks are not motion');
-  assert.match(c[4], /CI 7\/11 · test not reported</);
+  // #16599: unreported checks are not motion and not the stage's track →
+  // neutral glyph alone, count words in the tooltip.
+  assert.match(c[4], /class="ham-seg ham-activity-track todo"/, 'unreported checks are not motion');
+  assert.match(c[4], /title="CI: CI 7\/11 · test not reported · /);
+  assert.doesNotMatch(c[4], /test not reported</);
   assert.match(c[5], /class="ham-seg ham-activity-track done decided"/);
   assert.equal(litCount(c.join('')), 1);
 });
@@ -165,12 +180,13 @@ test('#16268 row: waiting for the contributor, CI 7/11 unreported, review approv
   const approved = { head: 'abc1234def', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen };
   const c = cells(redPR({ stage: 71, display_column: 30, author: 'hanthor', author_kind: 'human', code_activity: owner, ci_activity: ci, review_activity: approved }));
   assert.match(c[3], /class="ham-seg active detoured"/);
-  assert.match(c[4], /class="ham-seg ham-activity-track pending"[^]*CI 7\/11 · test not reported</);
-  assert.match(c[5], /class="ham-seg ham-activity-track done"[^]*Review 5\/5 approved</);
+  assert.match(c[4], /class="ham-seg ham-activity-track todo"[^>]*title="CI: CI 7\/11 · test not reported · /);
+  assert.doesNotMatch(c[4], /test not reported</, 'waiting on a person: CI is its glyph alone (#16599)');
+  assert.match(c[5], /class="ham-seg ham-activity-track done"[^]*Review: Review 5\/5 approved · [^]*ham-track-verdict"><svg [^]*?<\/svg><\/span>/);
   assert.equal(litCount(c.join('')), 1);
   // Even a queued check does not light CI while the row waits on a person.
   const queued = cells(redPR({ stage: 71, display_column: 30, author: 'hanthor', author_kind: 'human', code_activity: owner, ci_activity: { ...ci, state: 'queued' }, review_activity: approved }));
-  assert.match(queued[4], /class="ham-seg ham-activity-track pending"/);
+  assert.match(queued[4], /class="ham-seg ham-activity-track todo"/);
   assert.equal(litCount(queued.join('')), 1);
 });
 
@@ -199,14 +215,17 @@ test('#16456 row: PR in progress with changes requested → the stage chevron is
     ci_activity: { head: 'abc1234def', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'abc1234def', state: 'changes_requested', caption: 'Review findings', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: red } }));
   assert.match(c[3], /class="ham-seg active ham-remediation-unassigned detoured"/);
-  assert.match(c[4], /class="ham-seg ham-activity-track done"[^]*CI 11\/11 passed</);
-  assert.match(c[5], /class="ham-seg ham-activity-track failing"[^]*Review 5\/5 · changes requested</);
+  assert.match(c[4], /class="ham-seg ham-activity-track done"[^>]*data-verdict="pass"[^]*CI: CI 11\/11 passed · [^]*ham-track-verdict"><svg [^]*?<\/svg><\/span>/);
+  assert.match(c[4], /ham-ring ham-ring-pass[^>]*data-ring-done="11"/, 'the pass ring is the icon');
+  assert.match(c[5], /class="ham-seg ham-activity-track failing"[^>]*data-verdict="fail"[^]*Review: Review 5\/5 · changes requested · [^]*ham-track-verdict"><svg [^]*?<\/svg><\/span>/);
+  assert.match(c[5], /ham-ring ham-ring-fail/, 'the finding ring is red');
   assert.equal(litCount(c.join('')), 1, 'done / failing tracks are text-colour variants, not fills');
 });
 
-test('#16539 shape: a queued swarm reads 0/5, pending, not filled', () => {
+test('#16539 shape: a queued swarm reads 0/5 and, as the stage\'s own track, is lit still (#16599)', () => {
   const c = cells(redPR({ display_column: 50, stage: 50,
     review_activity: { head: 'abc1234def', state: 'unassigned', caption: 'Review queued · unassigned', blocker: 'no-free-reviewer', perspectives_done: 0, perspectives_total: 5, source: 'review-dispatch-wait', observed_at: seen } }));
-  assert.match(c[5], /class="ham-seg ham-activity-track pending ham-current"[^]*Review 0\/5 · swarm requested</);
-  assert.equal(litCount(c.join('')), 0, 'CI passed and a queued swarm: nothing runs, nothing is filled');
+  assert.match(c[5], /class="ham-seg ham-activity-track active ham-current"[^]*Review 0\/5 · queued</);
+  assert.doesNotMatch(c[5], /data-motion=/, 'queued is lit but still');
+  assert.equal(litCount(c.join('')), 1, 'the Review column is where the item is: the one lit chevron');
 });

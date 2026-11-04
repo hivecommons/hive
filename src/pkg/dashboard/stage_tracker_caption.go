@@ -336,6 +336,13 @@ func humanizeStageReason(reason string) string {
 	if stageengine.ReasonIsPartialCover(r) {
 		return "the PR references it without closing it (partial)"
 	}
+	// "blocked: App lacks workflows permission" (derive_issue.go, a
+	// structured blocker's short text): already prose. The generic replacer
+	// below would turn its ": " into ":  " (hivecommons/docs#612 read
+	// "owed — blocked:  App lacks…").
+	if rest, ok := strings.CutPrefix(r, "blocked: "); ok {
+		return "blocked: " + strings.TrimSpace(rest)
+	}
 	if clause, ok := humanizeCoverReason(r); ok {
 		return clause
 	}
@@ -840,8 +847,10 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		}
 		if step, _ := stageTrackerUnauthorized(reason); step != "" {
 			// hivecommons/hive#14589: not a decision but a step only a
-			// person may take; the gate cell says the same.
-			return joinClause("Awaiting human: "+step, clause), "maintainer"
+			// person may take; the PR in progress chevron says the same
+			// (hive#16524: it is the person's move on the PR, not a
+			// merge-queue matter).
+			return joinClause("Waiting for a maintainer · "+step+" on GitHub", clause), "maintainer"
 		}
 		if c := stageTrackerMergeTrainCaption(reason); c != "" {
 			return c, "maintainer"

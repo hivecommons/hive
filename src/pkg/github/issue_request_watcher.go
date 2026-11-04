@@ -766,10 +766,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 	case "label":
 		// A re-park on a decision a maintainer already gave is refused; a
-		// failed lookup takes the retry path like the claim gate.
+		// failed lookup takes the retry path like the claim gate. One let
+		// through on a newer, different decision is submitted as such so
+		// the stale `approved-direction` does not read as a standing one.
 		var reason string
-		var refused bool
-		reason, refused, err = c.reparkDecisionRefusal(ctx, req.Repo, req.Number, addLabels)
+		var refused, superseded bool
+		reason, refused, superseded, err = c.reparkDecisionRefusal(ctx, req.Repo, req.Number, addLabels)
 		if err != nil {
 			break
 		}
@@ -804,7 +806,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			err = c.StageFacts().Unparked(ctx, c.IssueStageRef(req.Repo, req.Number), req.Agent)
 		}
 		if err == nil && parkLabel != "" {
-			err = c.StageFacts().Parked(ctx, c.IssueStageRef(req.Repo, req.Number), parkLabel)
+			if superseded {
+				err = c.StageFacts().ReparkedOnNewDecision(ctx, c.IssueStageRef(req.Repo, req.Number), parkLabel)
+			} else {
+				err = c.StageFacts().Parked(ctx, c.IssueStageRef(req.Repo, req.Number), parkLabel)
+			}
 			if err == nil {
 				err = c.verifyIssueParkLanded(ctx, req.Repo, req.Number, parkLabel)
 			}

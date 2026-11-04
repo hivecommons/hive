@@ -463,6 +463,11 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	agent.lastTransientNudge = time.Time{}
 	agent.ciPollBaseline = -1
 	agent.ciPollCommandBaseline = nil
+	// The nudge is the recovery: a new kick after one was sent closes the
+	// ci_poll_nudge report as self-recovered instead of leaving it open (#16588).
+	if agent.ciPollNudgeSent {
+		m.clearCondition(crux.ClassCIPollNudge, agent.Name)
+	}
 	agent.ciPollNudgeSent = false
 	agent.AwaitingCI = false
 

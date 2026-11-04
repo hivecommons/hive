@@ -28,16 +28,12 @@ func TestReaderUIWiring(t *testing.T) {
 			t.Errorf("reader.js missing %q", want)
 		}
 	}
-	for _, want := range []string{"window.HIVE_READER = kiosk && view === 'reader';", "document.body.classList.add('reader-mode');", "hiveReaderStart();", "if (window.HIVE_READER) window.hiveReaderAttach(source);", `id="oc-reader-tab" href="?kiosk=1&amp;view=reader"`, "getElementById('oc-reader-tab')"} {
+	for _, want := range []string{"window.HIVE_READER = kiosk && (view === 'reader' || view === 'matrix');", "document.body.classList.add('reader-mode');", "hiveReaderStart();", "if (window.HIVE_READER) window.hiveReaderAttach(source);", `id="oc-matrix-tab" href="?kiosk=1&amp;view=reader"`, "getElementById('oc-matrix-tab')"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("generated page missing %q", want)
 		}
 	}
-	// The Matrix entry point stays until the cutover (#16477).
-	if !strings.Contains(html, `id="oc-matrix-tab"`) || !strings.Contains(html, "window.HIVE_MATRIX = kiosk && view === 'matrix';") {
-		t.Error("generated page lost the Matrix entry point")
-	}
-	start := strings.Index(html, `id="oc-reader-tab"`)
+	start := strings.Index(html, `id="oc-matrix-tab"`)
 	open := html[strings.LastIndex(html[:start], "<a "):]
 	open = open[:strings.Index(open, ">")]
 	if !strings.Contains(open, " hidden") {
@@ -95,6 +91,11 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const reader = fs.readFileSync('static-src/js/reader.js', 'utf8');
+// Follow the actual shipped toolbar link, rather than a separately hard-coded URL.
+const page = fs.readFileSync('static/index.html', 'utf8');
+const toolbar = page.match(/<a [^>]*id="oc-matrix-tab"[^>]*>/)[0];
+assert(toolbar.includes('target="_blank"')); assert(toolbar.includes('rel="noopener"'));
+const toolbarQuery = toolbar.match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&');
 const boot = fs.readFileSync('static-src/js/boot.js', 'utf8').split('})();')[0] + '})();';
 const at = '2026-11-03T12:00:00Z';
 const first = [
@@ -141,6 +142,7 @@ async function scenario(query, opts = {}) {
   for (const fn of docEvents.DOMContentLoaded || []) fn();
   const flush = async () => {for (let i = 0; i < 64; i++) await Promise.resolve()};
   await flush();
+  assert.equal(!!win.HIVE_READER, /[?&]kiosk=1(&|$)/.test(query) && /[?&]view=(reader|matrix)(&|$)/.test(query), query);
   if (!win.HIVE_READER) {assert.equal(requests.length, 0); assert(!doc.getElementById('hive-reader')); return;}
   const byClass = n => elements.find(e => e.className === n);
   const feed = byClass('reader-feed'), statusEl = byClass('reader-status'), button = byClass('reader-pause');
@@ -250,8 +252,10 @@ async function scenario(query, opts = {}) {
   assert.equal(feed.children.length, 0); assert(statusEl.textContent.includes('Sign in'));
 }
 (async () => {
-  await scenario(''); await scenario('?view=reader'); await scenario('?kiosk=1'); await scenario('?kiosk=1&view=matrix');
-  await scenario('?kiosk=1&view=reader');
+  await scenario(''); await scenario('?view=reader'); await scenario('?view=matrix'); await scenario('?kiosk=1');
+  // Saved Matrix display URLs (view=matrix) are a deprecated alias for the reader.
+  await scenario('?kiosk=1&view=matrix&sound=off');
+  await scenario(toolbarQuery);
   await scenario('?kiosk=1&view=reader', {reduced: true});
   const region = {repo: 'org/repo', pr: 2, path: 'main.go', at};
   await scenario('?kiosk=1&view=reader', {reduced: true, boundaries: true, pages: [

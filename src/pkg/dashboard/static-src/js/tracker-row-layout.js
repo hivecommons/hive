@@ -73,7 +73,7 @@
         ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
         state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0,
@@ -129,13 +129,17 @@
       if (l.kind === 'superseded') return Number(l.to_number) > 0 ? 'superseded by #' + Number(l.to_number) + tail : '';
       if (!(Number(l.from_number) > 0)) return '';
       const whose = l.from_author ? '@' + l.from_author + "'s " : '';
-      return (l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : 'adopted from ') + whose + '#' + Number(l.from_number) + tail;
+      // "re-authored from #N" is the hive rewriting its OWN exhausted PR;
+      // "adopted from" is a contributor's PR the hive took over.
+      const verb = l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : l.kind === 're-authored' ? 're-authored from ' : 'adopted from ';
+      return verb + whose + '#' + Number(l.from_number) + tail;
     }
     // Pure: the hover — why the hive took it over, in plain words.
     function stageTrackerLineageTip(item) {
       const l = item && item.lineage;
       if (!l || !l.kind) return '';
       if (l.kind === 'superseded') return 'Hive took this PR over as #' + Number(l.to_number) + '; this original is closed when that merges.';
+      if (l.kind === 're-authored') return "Hive's fixer gave up on its own #" + Number(l.from_number) + ', so the hive closed it as superseded and opened this fresh PR from the current base.' + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
       const who = l.from_author ? '@' + l.from_author : 'the contributor';
       const tip = STAGE_TRACKER_LINEAGE_REASON_TIP[l.reason] || STAGE_TRACKER_LINEAGE_REASON_TIP['ci-red-contributor-offline'];
       return tip.split('@AUTHOR').join(who) + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
@@ -166,7 +170,7 @@
       let l = item && item.lineage;
       if (!l && item && item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length === 1) l = item.linked_prs[0].lineage;
       if (!l || !(Number(l.from_number) > 0) || l.kind === 'superseded') return '';
-      return ' (adopted from #' + Number(l.from_number) + ')';
+      return (l.kind === 're-authored' ? ' (re-authored from #' : ' (adopted from #') + Number(l.from_number) + ')';
     }
     // Pure: the "↳ adopted from #N · you let hive decide 17:51" chip on the
     // hive's copy of an adopted PR (hivecommons/hive#15126).
@@ -245,6 +249,9 @@
           </div>
         </div>`;
       }
+      const subKey = stageTrackerItemKey(pr);
+      const humanNote = typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(pr, stages, nowMs, undefined, ctx, subKey) : '';
+      const noteCtx = humanNote && typeof stageTrackerNoteTakenCtx === 'function' ? stageTrackerNoteTakenCtx(ctx, subKey) : ctx;
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(pr, stages, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
@@ -255,7 +262,7 @@
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
             ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
-          ${typeof stageTrackerHumanContextHtml === 'function' ? stageTrackerHumanContextHtml(pr, stages, nowMs) : ''}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, ctx, stageTrackerItemKey(pr)) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(stageTrackerItemKey(pr), ctx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
+          ${humanNote}${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}${typeof stageTrackerPreparationCommentHtml === 'function' ? stageTrackerPreparationCommentHtml(pr, noteCtx, subKey) : typeof stageTrackerEventHtml === 'function' ? stageTrackerEventHtml(subKey, noteCtx) : ''}${typeof stageTrackerExecutionHtml === 'function' ? stageTrackerExecutionHtml(pr) : ''}
         </div>`;
     }
 

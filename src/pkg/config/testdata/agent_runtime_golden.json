@@ -400,6 +400,7 @@
       "queue_health": {}
     },
     "auto_close_superseded": true,
+    "review": {},
     "project_observability": {},
     "work_source": {
       "type": "",

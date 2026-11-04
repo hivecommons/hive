@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,14 @@ func hiveFixingPR(number int, head string, labels ...string) *gh.PullRequest {
 	return pr
 }
 
+// hiveFixingPRNoIssue is a hive PR that closes no issue: nothing to
+// re-author for, so exhaustion parks it for a person.
+func hiveFixingPRNoIssue(number int, head string, labels ...string) *gh.PullRequest {
+	pr := hiveFixingPR(number, head, labels...)
+	pr.Body = gh.Ptr("Tidy the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	return pr
+}
+
 func decisionComments(api *stageAPI) []string {
 	var out []string
 	for _, c := range api.comments {
@@ -54,7 +63,7 @@ func TestFixerExhaustedParksHivePRAtNeedsDecisionOnce(t *testing.T) {
 
 	// Attempts left: the PR stays on its fixing stage.
 	status[90] = review.FixDispatchStatus{Attempts: 3}
-	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	o.observeSelf(hiveFixingPRNoIssue(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
 	if rec, _ := o.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.Fixing {
 		t.Fatalf("with attempts left = %s (%q)", rec.Stage, rec.Reason)
 	}
@@ -62,7 +71,7 @@ func TestFixerExhaustedParksHivePRAtNeedsDecisionOnce(t *testing.T) {
 	status[90] = review.FixDispatchStatus{Attempts: 6, Reason: review.FixDispatchExcludedAttemptsExhausted}
 	o.api.reset()
 	o.clock.advance(time.Minute)
-	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	o.observeSelf(hiveFixingPRNoIssue(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
 	rec, _ := o.e.stageStoreOrShared().Get(key)
 	if rec.Stage != stagelabels.NeedsDecision || rec.Reason != stagelabels.FixerExhaustedReason(6) {
 		t.Fatalf("after exhaustion = %s (%q)", rec.Stage, rec.Reason)
@@ -74,7 +83,7 @@ func TestFixerExhaustedParksHivePRAtNeedsDecisionOnce(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("decision comments = %d, want 1: %q", len(comments), comments)
 	}
-	for _, want := range []string{"gave up after 6 attempts", "last reviewer finding: handler drops the error from Close()", "Re-author from scratch", "Hand it to a person", "Close as not planned"} {
+	for _, want := range []string{"gave up after 6 attempts", "last reviewer finding: handler drops the error from Close()", "Give direction", "Hand it to a person", "Close as not planned"} {
 		if !strings.Contains(comments[0], want) {
 			t.Fatalf("decision comment lacks %q:\n%s", want, comments[0])
 		}
@@ -85,7 +94,7 @@ func TestFixerExhaustedParksHivePRAtNeedsDecisionOnce(t *testing.T) {
 
 	// Same head, next pass: no second comment.
 	o.clock.advance(5 * time.Minute)
-	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	o.observeSelf(hiveFixingPRNoIssue(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
 	if got := decisionComments(o.api); len(got) != 1 {
 		t.Fatalf("decision comments after second pass = %d, want 1", len(got))
 	}
@@ -95,7 +104,7 @@ func TestFixerExhaustedParksHivePRAtNeedsDecisionOnce(t *testing.T) {
 
 	// A fix in flight on a new head is a fixing stage again.
 	status[90] = review.FixDispatchStatus{Active: true, Agent: "fixer", Attempts: 1}
-	o.observeSelf(hiveFixingPR(90, "ddd", "stage/085-needs-decision"), contributorLaneReasonChangesRequested)
+	o.observeSelf(hiveFixingPRNoIssue(90, "ddd", "stage/085-needs-decision"), contributorLaneReasonChangesRequested)
 	if rec, _ := o.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.Fixing {
 		t.Fatalf("new head with an active fix = %s (%q)", rec.Stage, rec.Reason)
 	}
@@ -111,5 +120,119 @@ func TestFixerExhaustedIgnoresContributorPR(t *testing.T) {
 	}
 	if got := decisionComments(o.api); len(got) != 0 {
 		t.Fatalf("decision comments on a contributor PR = %d", len(got))
+	}
+}
+
+// Owner on #16456: "we should not need a re-author pill on a hive agent's
+// PR." The first exhaustion of a hive PR re-authors it automatically —
+// marker label on the issue, note, superseded label, close, store record,
+// reason re-authoring:<issue> — and never parks at 085. The second
+// exhaustion for the same issue parks with the remaining answers only.
+func TestFixerExhaustedHivePRReauthorsItselfOnce(t *testing.T) {
+	o, done, status := fixerExhaustedHarness(t)
+	defer done()
+	key := stageKey("acme", "widget", 90)
+	setStagePRTruth(12)
+
+	status[90] = review.FixDispatchStatus{Attempts: 6, Reason: review.FixDispatchExcludedAttemptsExhausted}
+	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	rec, _ := o.e.stageStoreOrShared().Get(key)
+	if rec.Stage != stagelabels.Fixing || rec.Reason != stagelabels.ReauthoringReason(12) {
+		t.Fatalf("first exhaustion = %s (%q), want 070 re-authoring:12", rec.Stage, rec.Reason)
+	}
+	if !rec.Reauthored() || rec.ReauthorIssue != 12 || rec.ReauthorHead != "ccc" || rec.ReauthorAttempts != 6 || !rec.ReauthorNoted {
+		t.Fatalf("store record = %+v", rec)
+	}
+	if got := decisionComments(o.api); len(got) != 0 {
+		t.Fatalf("decision comment posted on an auto re-author: %q", got)
+	}
+	var notes []string
+	for _, c := range o.api.comments {
+		if strings.HasPrefix(c, reauthorMarker) {
+			notes = append(notes, c)
+		}
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "gave up on this PR after 6 attempts") || !strings.Contains(notes[0], "fresh PR for #12 from the current `v5`") {
+		t.Fatalf("re-author notes = %q", notes)
+	}
+	added := o.addedLabels()
+	for _, want := range []string{stagelabels.LabelReauthored, "hive/superseded"} {
+		if !slices.Contains(added, want) {
+			t.Fatalf("labels added %q lack %q", added, want)
+		}
+	}
+	if !slices.Contains(o.adopt.prEdits, "90:closed") {
+		t.Fatalf("PR edits = %q, want 90 closed", o.adopt.prEdits)
+	}
+	if got := o.e.stageStoreOrShared().ReauthoredFor("acme/widget", 12); got != 90 {
+		t.Fatalf("ReauthoredFor(12) = %d, want 90", got)
+	}
+
+	// The fresh PR for the same issue exhausts its fixer too: parked at
+	// 085 naming the earlier re-author; no second re-author, no re-author
+	// option in the comment.
+	setStagePRTruth(12, stagelabels.LabelReauthored)
+	o.api.reset()
+	o.adopt.prEdits = nil
+	o.clock.advance(time.Hour)
+	status[91] = review.FixDispatchStatus{Attempts: 6, Reason: review.FixDispatchExcludedAttemptsExhausted}
+	o.observeSelf(hiveFixingPR(91, "ddd", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	rec91, _ := o.e.stageStoreOrShared().Get(stageKey("acme", "widget", 91))
+	if rec91.Stage != stagelabels.NeedsDecision || rec91.Reason != stagelabels.FixerExhaustedReason(6) || rec91.Reauthored() {
+		t.Fatalf("second exhaustion = %s (%q) reauthored=%v, want 085 fixer-exhausted:6", rec91.Stage, rec91.Reason, rec91.Reauthored())
+	}
+	if len(o.adopt.prEdits) != 0 {
+		t.Fatalf("second exhaustion closed a PR: %q", o.adopt.prEdits)
+	}
+	comments := decisionComments(o.api)
+	if len(comments) != 1 {
+		t.Fatalf("decision comments = %d, want 1: %q", len(comments), comments)
+	}
+	for _, want := range []string{"re-author of #90", "Give direction", "Hand it to a person", "Close as not planned"} {
+		if !strings.Contains(comments[0], want) {
+			t.Fatalf("decision comment lacks %q:\n%s", want, comments[0])
+		}
+	}
+	if strings.Contains(comments[0], "Re-author from scratch") || strings.Contains(comments[0], "adoption/supersede") {
+		t.Fatalf("decision comment still offers re-authoring:\n%s", comments[0])
+	}
+}
+
+// Only the issue's marker label (store lost): still no second re-author.
+func TestFixerExhaustedMarkerLabelAloneBlocksReauthor(t *testing.T) {
+	o, done, status := fixerExhaustedHarness(t)
+	defer done()
+	setStagePRTruth(12, stagelabels.LabelReauthored)
+	status[90] = review.FixDispatchStatus{Attempts: 6, Reason: review.FixDispatchExcludedAttemptsExhausted}
+	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	rec, _ := o.e.stageStoreOrShared().Get(stageKey("acme", "widget", 90))
+	if rec.Stage != stagelabels.NeedsDecision || rec.Reauthored() || len(o.adopt.prEdits) != 0 {
+		t.Fatalf("marker label ignored: %s (%q) edits=%q", rec.Stage, rec.Reason, o.adopt.prEdits)
+	}
+}
+
+// A retry pass while the close is pending reuses the stored re-author
+// target instead of reading the closing issue again (hivecommons/hive#16586).
+func TestFixerExhaustedRetryPassSkipsIssueGetWhenStoreHasTarget(t *testing.T) {
+	o, done, status := fixerExhaustedHarness(t)
+	defer done()
+	setStagePRTruth(12)
+
+	status[90] = review.FixDispatchStatus{Attempts: 6, Reason: review.FixDispatchExcludedAttemptsExhausted}
+	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	if rec, _ := o.e.stageStoreOrShared().Get(stageKey("acme", "widget", 90)); !rec.Reauthored() {
+		t.Fatalf("first pass did not record the re-author: %+v", rec)
+	}
+	if o.api.issueGets[12] == 0 {
+		t.Fatal("first pass never read issue 12")
+	}
+
+	o.api.mu.Lock()
+	o.api.issueGets = nil
+	o.api.mu.Unlock()
+	o.clock.advance(time.Hour)
+	o.observeSelf(hiveFixingPR(90, "ccc", "stage/070-fixing"), contributorLaneReasonChangesRequested)
+	if got := o.api.issueGets[12]; got != 0 {
+		t.Fatalf("retry pass read issue 12 %d times, want 0", got)
 	}
 }

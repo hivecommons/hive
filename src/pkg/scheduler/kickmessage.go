@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/promptsrc"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
 )
 
@@ -166,6 +167,11 @@ func (s *Scheduler) formatIssueListWithPolicyForAgent(issues []github.Issue, ref
 		}
 		if s.isUpstreamPortIssue(issue) {
 			b.WriteString(fmt.Sprintf("    ↳ if you merge the upstream branch into this fork instead, title the PR `chore: sync upstream <range>` and label it `%s` so hive lands it as a merge commit, not a squash\n", github.UpstreamSyncLabel))
+		}
+		if hasIssueLabel(issue.Labels, stagelabels.LabelReauthored) {
+			// The hive closed its own earlier PR for this issue after its
+			// fixer gave up; the fresh PR is this kick's to open.
+			b.WriteString("    ↳ re-authoring: the hive's earlier PR for this issue was closed as superseded after its fixer gave up; open a FRESH PR from the current base (do not reuse the old branch) and write `Supersedes #<old PR>` in the body\n")
 		}
 		if issue.ClaimContext != nil && issue.ClaimContext.Decision == github.ClaimDecisionReopenedAfterMerge {
 			prRef := fmt.Sprintf("%s#%d", issue.ClaimContext.PRRepo, issue.ClaimContext.PRNumber)

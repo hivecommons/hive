@@ -26,6 +26,10 @@ const (
 	// reasonIssueOpenPRPartial is 040 under a PR that references the issue
 	// without closing it (ClaimFact.Partial); ReasonIsPartialCover reads it.
 	reasonIssueOpenPRPartial = "open PR addresses part of it (references it without a closing keyword)"
+	// reasonIssueDecidedHumanWork prefixes the reason of an issue whose
+	// direction a person already gave and whose remainder is held for a
+	// person (hivecommons/hive#16579).
+	reasonIssueDecidedHumanWork = "decided; remaining work held for a person: "
 )
 
 // ReasonIsPartialCover reports whether a 040 reason describes a PR that
@@ -94,13 +98,14 @@ func deriveIssue(f Facts) Decision {
 	}
 }
 
-// issueParkClear reconciles `needs-human` against `approved-direction`,
-// which cannot both stand (hivecommons/hive#15099). The un-park that
-// applies the ack removes `needs-human` in the same write, so a
-// `needs-human` found next to the ack was applied after it — the later
-// signal (DecisionLiftsNeedsHuman's own rule), whether an agent parked the
-// issue on a blocker or a person asked again. The ack is the stale one:
-// the issue stays 045 and the writer clears `approved-direction`.
+// issueParkClear reconciles `needs-human` against `approved-direction` on
+// an issue parked at 045 (hivecommons/hive#15099). That happens for a
+// structured blocker — no decision grants the App a permission — and for a
+// park let through because a newer, different `/hive decision` is pending
+// (Park.DecisionSuperseded): either way the ack is the stale one and the
+// writer clears it. A plain `needs-human` next to a standing ack derives
+// out of the pipeline instead and keeps it (hivecommons/hive#16579), so
+// nothing is cleared for it.
 func issueParkClear(f Facts, stage stagelabels.Stage) []string {
 	is := f.Issue
 	label := strings.TrimSpace(is.ApprovedDirectionLabel)
@@ -160,6 +165,23 @@ func issueStage(f Facts) (stage stagelabels.Stage, covered bool, reason string) 
 				short = is.Blocker
 			}
 			return stagelabels.IssueNeedsDecision, false, "blocked: " + short
+		}
+		// A decision is already recorded (`approved-direction`): a
+		// `needs-human` next to it is the agent standing down on work only
+		// a person can do (a cluster rollout, a backup, an out-of-repo
+		// step) — what the re-park refusal tells agents to do — not a new
+		// question. Re-deriving 045 stripped the ack and re-opened the
+		// decision inbox on every scanner pass, and the un-park sweep
+		// re-applied the same old decision: a bounce loop
+		// (hivecommons/hive#16579, seen on hivecommons/dibs#567). The
+		// issue is held out of the pipeline like a hold and keeps the ack;
+		// a person who wants to decide again removes `approved-direction`
+		// — or posts a new `/hive decision`: the label relay lets an
+		// agent's park through on that newer, different decision
+		// (Park.DecisionSuperseded), the ack is stale again, and the issue
+		// re-parks at 045 with it cleared until the un-park sweep answers.
+		if strings.TrimSpace(is.ApprovedDirectionLabel) != "" && !f.Park.DecisionSuperseded {
+			return stagelabels.None, false, reasonIssueDecidedHumanWork + is.NeedsHumanLabel
 		}
 		return stagelabels.IssueNeedsDecision, false, "held for a person: " + is.NeedsHumanLabel
 	}

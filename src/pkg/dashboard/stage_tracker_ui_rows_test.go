@@ -683,12 +683,12 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   const review = /<li class="ham-seg ham-activity-track ([^"]*)" data-track="review"[^>]*>[\s\S]*?<\/li>/.exec(adoptedRow);
   assert.ok(review, 'review track present: ' + adoptedRow);
   assert.strictEqual(review[1], 'done decided', 'a finished review back in PR in progress is settled, not amber: ' + review[0]);
-  assert.ok(review[0].includes('Review 5/5 · changes requested</span>') && !review[0].includes('awaiting human') && !review[0].includes('data-motion='), review[0]);
+  assert.ok(review[0].includes('Review: Review 5/5 · changes requested · ') && !review[0].includes('awaiting human') && !review[0].includes('data-motion=') && review[0].includes('ham-ring-decided'), 'the verdict rides the tooltip; the inactive track is its ring alone: ' + review[0]);
   const ci = /<li class="ham-seg ham-activity-track ([^"]*)" data-track="ci"/.exec(adoptedRow);
   assert.strictEqual(ci[1], 'done', '11/11 passed is done-style: ' + adoptedRow);
   const parkedRow = stageTrackerRowHtml({ repo: 'acme/console', number: 16510, kind: 'pr', stage: 85, display_column: 85, head: 'f269349', needs_human: true, author: 'thatguywob', author_kind: 'human',
     review_activity: { head: 'f269349', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
-  assert.ok(/<li class="ham-seg ham-activity-track done decided" data-track="review"[^>]*>[\s\S]*?Review 5\/5 · awaiting human decision<\/span>/.test(parkedRow), 'genuinely parked on a person keeps the human word, still not amber: ' + parkedRow);
+  assert.ok(/<li class="ham-seg ham-activity-track done decided" data-track="review"[^>]*title="Review: Review 5\/5 · needs owner sign-off · /.test(parkedRow), 'genuinely parked on a person names the sign-off in the tooltip, still not amber: ' + parkedRow);
 }
 // hivecommons/hive#16540 rows. #16509: adopted, CI 7/11 unreported, review
 // decided → one lit chevron. #16268: waiting for the contributor, CI 7/11
@@ -703,13 +703,13 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     code_activity: { head: 'f269349', state: 'adopted', caption: 'Adopted by hive · activity', source: 'adoption', observed_at: seen }, ci_activity: unreported,
     review_activity: { head: 'f269349', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(three), 1, 'adopted + unreported CI + decided review lights one chevron: ' + strip(three));
-  assert.ok(/<li class="ham-seg ham-activity-track pending" data-track="ci"[^>]*>[\s\S]*?CI 7\/11 · test not reported<\/span>/.test(three), 'unreported checks are pending, not amber: ' + three);
+  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · test not reported · /.test(three), 'unreported checks are the neutral icon, words in the tooltip: ' + three);
   const owner = stageTrackerRowHtml({ repo: 'acme/console', number: 16268, kind: 'pr', stage: 71, display_column: 30, head: 'f269349', author: 'hanthor', author_kind: 'human',
     code_activity: { head: 'f269349', state: 'waiting_owner', caption: 'Waiting for @hanthor · not observed coding', actor: 'hanthor', source: 'native-author-wait', observed_at: seen }, ci_activity: unreported,
     review_activity: { head: 'f269349', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(owner), 1, 'with the contributor: only the stage chevron is lit: ' + strip(owner));
   assert.ok(/<li class="ham-seg active detoured"[^>]*aria-current="step"/.test(owner) && owner.includes('Waiting for @hanthor'), owner);
-  assert.ok(/data-track="ci"[^>]*>[\s\S]*?CI 7\/11 · test not reported<\/span>/.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*>[\s\S]*?Review 5\/5 approved<\/span>/.test(owner), owner);
+  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · test not reported · /.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*data-verdict="pass"[^>]*>[\s\S]*?ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg><\/span>[\s\S]*?Review: Review 5\/5 approved · /.test(owner), 'with the contributor both tracks are icons alone, words in the tooltips: ' + owner);
   const busy = stageTrackerRowHtml({ repo: 'acme/console', number: 16456, kind: 'pr', stage: 70, display_column: 30, head: 'f269349', author: 'hive[bot]', author_kind: 'hive',
     code_activity: { head: 'f269349', state: 'remediating', caption: 'Remediating · scanner · 4m', actor: 'scanner', active: true, source: 'fix-dispatch', observed_at: seen },
     ci_activity: { head: 'f269349', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
@@ -723,8 +723,87 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     ci_activity: { head: 'f269349', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'f269349', state: 'changes_requested', caption: 'Review findings · changes requested', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } }, stages, ctx);
   assert.strictEqual(lit(changes), 1, 'changes requested in PR in progress: one filled chevron: ' + strip(changes));
-  assert.ok(/<li class="ham-seg ham-activity-track done" data-track="ci"[^>]*>[\s\S]*?CI 11\/11 passed<\/span>/.test(changes) && /<li class="ham-seg ham-activity-track failing" data-track="review"[^>]*>[\s\S]*?Review 5\/5 · changes requested<\/span>/.test(changes), changes);
+  assert.ok(/<li class="ham-seg ham-activity-track done" data-track="ci"[^>]*data-verdict="pass"[^>]*>[\s\S]*?CI: CI 11\/11 passed · /.test(changes) && /<li class="ham-seg ham-activity-track failing" data-track="review"[^>]*data-verdict="fail"[^>]*>[\s\S]*?Review: Review 5\/5 · changes requested · /.test(changes), changes);
+  assert.ok(!/ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg>(?:CI|Review) /.test(changes), 'settled verdicts carry no words beside the glyph: ' + changes);
   assert.ok(/<li class="ham-seg active ham-settled-current ham-remediation-remediating detoured"/.test(busy) && busy.includes('Remediating · scanner · 4m'), 'the stage chevron is settled-current with its words: ' + busy);
+}
+// hivecommons/hive#16524: 085 under hive:unauthorized (a maintainer must
+// rerun shared CI on GitHub), CI unknown, review findings open. The ask is
+// the person's move ON THE PR, not a merge matter: the chevron lights PR in
+// progress with "Waiting for @clubanderson · rerun shared ci on GitHub"
+// and the person icon; the Merge queue column stays empty. A merge-ready
+// twin (approved + CI green) or a queued one keeps the gate.
+{
+  const seen = new Date(now - 60000).toISOString();
+  const head = '7879a51';
+  const ask = { question: "The hive's GitHub App may not rerun shared ci here. A maintainer has to do that step on GitHub.", asked_by: 'GitHub permissions', since: seen, blocker_reason: 'unauthorized:rerun-shared-ci', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: false }] };
+  const shape = (extra) => Object.assign({ repo: 'hivecommons/hive', number: 16524, kind: 'pr', stage: 85, head, author: 'clubanderson', author_kind: 'human', modifiers: ['unauthorized'],
+    reason: 'unauthorized:rerun-shared-ci', unauthorized_step: 'rerun shared ci', unauthorized: "The hive's GitHub App lacks the permission to rerun shared ci, so only a person can take that step.",
+    caption: 'Waiting for a maintainer · rerun shared ci on GitHub — the hive\'s GitHub App is not permitted to rerun shared ci; a maintainer must', decision_needed: ask,
+    human_attention: { number: 16524, kind: 'pr', head, reason: ask.question, asked_by: 'GitHub permissions' },
+    ci_activity: { head, state: 'unknown', caption: 'CI unknown · no check results observed for this head yet', checks_passed: 34, checks_total: 42, checks_failed: 1, source: 'github-graphql-cache+required-branch', observed_at: seen },
+    review_activity: { head, state: 'changes_requested', caption: 'Review findings · awaiting author', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } }, extra || {});
+  const rerun = stageTrackerRowHtml(shape(), stages, ctx);
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', shape()), 30, 'the ask is the person\'s move on the PR: PR in progress');
+  assert.deepStrictEqual(segStates(rerun), [D, D, D, 'active detoured', T, T, 'todo cap'], 'PR in progress lit, Merge queue empty: ' + strip(rerun));
+  assert.ok(rerun.includes('Waiting for @clubanderson · rerun shared ci on GitHub'), 'the chevron names the person and the step: ' + strip(rerun));
+  assert.ok(!/<li class="ham-seg active[^"]*"[^>]*>[\s\S]*?Awaiting human/.test(strip(rerun)), 'no "Awaiting human" chevron: ' + strip(rerun));
+  const litSeg = /<li class="ham-seg active detoured"[^>]*>([\s\S]*?)<\/li>/.exec(strip(rerun));
+  assert.ok(litSeg && litSeg[1].includes('ham-actor-ico'), 'the person icon stays on the lit chevron: ' + strip(rerun));
+  const mergeSeg = Array.from(strip(rerun).matchAll(/<li class="ham-seg ([^"]*)"[^>]*>([\s\S]*?)<\/li>/g)).filter(m => !m[1].includes('ham-activity-track') && !m[1].includes('ham-head'))[4];
+  assert.ok(mergeSeg && mergeSeg[1] === 'todo' && !/ham-chevron-copy/.test(mergeSeg[2]), 'the merge-queue chevron carries no words: ' + mergeSeg[0]);
+  assert.strictEqual(litChevrons(strip(rerun)), 1, 'one lit chevron: ' + strip(rerun));
+  // Merge-ready (approved + CI green) or queued twins are merge matters: the gate keeps them.
+  const ready = shape({ ci_activity: { head, state: 'passing', caption: 'CI green', checks_passed: 42, checks_total: 42, source: 'checks', observed_at: seen }, review_activity: { head, state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } });
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', ready), 80, 'merge-ready 085 keeps the gate');
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', shape({ merge_train: { id: 'v5#1', state: 'queued-behind', front: 1, position: 2, size: 2 } })), 80, 'a train member keeps the gate');
+  // A bare 085 decision (no track evidence, no step) still decides at the gate (#14821).
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', { kind: 'pr', stage: 85, caption: 'decision requested' }), 80);
+  // A nested PR under its issue follows the same column.
+  const nested = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 16500, kind: 'issue', stage: 40, linked_prs: [shape()] }, stages, ctx);
+  assert.ok(nested.includes('Waiting for @clubanderson · rerun shared ci on GitHub'), 'nested PR carries the word: ' + nested);
+}
+// hivecommons/hive#16599 rows (canonical: active = amber + words, inactive =
+// icon only). #16567 (dependabot, 050, review approved, 10 workflow runs
+// behind GitHub's approve-workflows gate): nothing moves, so the CI column
+// is the stalled active track with the person icon and the words "1/11 ·
+// waiting on workflow approval"; Review is the green ring alone. #427 (050,
+// swarm queued, CI passed): Review is the stage's own track, active even
+// while queued; CI is the green icon only. CI running + swarm adjudicating
+// lights both tracks with words, never a third.
+{
+  const seen = new Date(now - 60000).toISOString();
+  const lit = (html) => litChevrons(strip(html));
+  const gated = stageTrackerRowHtml({ repo: 'acme/console', number: 16567, kind: 'pr', stage: 50, display_column: 50, head: 'b9cd4ba', author: 'dependabot[bot]', author_kind: 'bot',
+    ci_activity: { head: 'b9cd4ba', state: 'missing', caption: 'CI waiting · 10 workflow runs need approval on GitHub', checks_passed: 1, checks_total: 11, blocker: 'workflow-approval-required:10', actor: 'dependabot[bot]', source: 'github-check-runs', observed_at: seen, workflow_approval: { pending: 10 } },
+    review_activity: { head: 'b9cd4ba', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
+  assert.strictEqual(lit(gated), 1, 'the stalled CI column is the one active chevron: ' + strip(gated));
+  assert.ok(/<li class="ham-seg ham-activity-track active ham-stalled ham-current" data-track="ci" data-stalled="true"(?![^>]*data-motion)[^>]*>[\s\S]*?CI 1\/11 · waiting on workflow approval<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Needs a maintainer to approve the workflow runs on GitHub[^"]*"/.test(gated), 'stalled CI is amber-muted, still, names the wait and wears the person icon: ' + gated);
+  assert.ok(/<svg class="ham-ico ham-ring ham-ring-pass" [^>]*aria-label="CI: CI 1\/11 · waiting on workflow approval" data-ring-total="11" data-ring-done="1" data-ring-failed="0">/.test(gated), 'the CI glyph is the 11-step ring with one step done: ' + gated);
+  assert.ok(/<li class="ham-seg ham-activity-track done ham-current" data-track="review"[^>]*data-verdict="pass"[^>]*>[\s\S]*?ham-track-verdict"><svg class="ham-ico ham-ring ham-ring-pass"[^>]*data-ring-done="5"[\s\S]*?<\/svg><\/span><span id=/.test(gated), 'approved review is the green ring alone: ' + gated);
+  assert.ok(gated.includes('10 workflow runs need approval on GitHub'), 'the tooltip keeps the backend sentence: ' + gated);
+  const queued = stageTrackerRowHtml({ repo: 'acme/promptargs', number: 427, kind: 'pr', stage: 50, display_column: 50, head: '9bdf058', author: 'hive[bot]', author_kind: 'hive',
+    ci_activity: { head: '9bdf058', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: '9bdf058', state: 'unassigned', caption: 'Review queued · unassigned', perspectives_done: 0, perspectives_total: 5, source: 'review-dispatch-wait', observed_at: seen } }, stages, ctx);
+  assert.strictEqual(lit(queued), 1, 'the stage\'s own track is active while queued: ' + strip(queued));
+  assert.ok(/<li class="ham-seg ham-activity-track active ham-current" data-track="review"(?![^>]*data-motion)[^>]*>[\s\S]*?Review 0\/5 · queued<\/span>/.test(queued), 'Review 0/5 · queued is amber and steady: ' + queued);
+  assert.ok(/<li class="ham-seg ham-activity-track done ham-current" data-track="ci"[^>]*data-verdict="pass"[^>]*>[\s\S]*?<svg class="ham-ico ham-ring ham-ring-pass"[^>]*data-ring-done="11"[\s\S]*?<\/svg><\/span><span id=/.test(queued) && queued.includes('CI: CI 11/11 passed · '), 'passed CI is the green ring, words in the tooltip: ' + queued);
+  const ahead = stageTrackerRowHtml({ repo: 'acme/promptargs', number: 427, kind: 'pr', stage: 50, display_column: 50, head: '9bdf058', author: 'hive[bot]', author_kind: 'hive',
+    ci_activity: { head: '9bdf058', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: '9bdf058', state: 'unassigned', caption: 'Review queued · unassigned', perspectives_done: 0, perspectives_total: 5, queue_ahead: 3, source: 'review-dispatch-wait', observed_at: seen } }, stages, ctx);
+  assert.ok(ahead.includes('Review 0/5 · queued, 3 ahead</span>'), ahead);
+  const progress = stageTrackerRowHtml({ repo: 'acme/promptargs', number: 427, kind: 'pr', stage: 50, display_column: 50, head: '9bdf058', author: 'hive[bot]', author_kind: 'hive',
+    ci_activity: { head: '9bdf058', state: 'missing', caption: 'CI waiting', checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen },
+    review_activity: { head: '9bdf058', state: 'reviewing', active: true, caption: 'Review 2/5 · in progress', perspectives_done: 2, perspectives_total: 5, source: 'verified-review-bundle+stage-review-pending', observed_at: seen } }, stages, ctx);
+  assert.strictEqual(lit(progress), 1, 'review in progress lights the Review column only: ' + strip(progress));
+  assert.ok(/<li class="ham-seg ham-activity-track active ham-current" data-track="review"[^>]*data-motion="active"[^>]*>[\s\S]*?Review 2\/5 · in progress<\/span>/.test(progress), progress);
+  assert.ok(/<li class="ham-seg ham-activity-track todo ham-current" data-track="ci"[^>]*>[\s\S]*?<svg class="ham-ico ham-ring ham-ring-pass"[^>]*data-ring-done="7"[\s\S]*?<\/svg><\/span><span id=/.test(progress) && progress.includes('CI: CI 7/11 · test not reported · '), 'unreported checks are the neutral ring, words in the tooltip: ' + progress);
+  assert.ok(/<svg class="ham-ico ham-ring ham-ring-live ham-ring-running" [^>]*data-ring-total="5" data-ring-done="2"/.test(progress) && (progress.match(/ham-ring-pulse/g) || []).length === 1, 'the review ring pulses its next step: ' + progress);
+  const both = stageTrackerRowHtml({ repo: 'acme/promptargs', number: 427, kind: 'pr', stage: 50, display_column: 50, head: '9bdf058', author: 'hive[bot]', author_kind: 'hive',
+    ci_activity: { head: '9bdf058', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
+    review_activity: { head: '9bdf058', state: 'adjudicating', active: true, caption: 'Review 5/5 · verdicts in · aggregating', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
+  assert.strictEqual(lit(both), 2, 'CI running + adjudicating: both tracks, no third: ' + strip(both));
+  assert.ok(both.includes('CI 4/11 · running</span>') && both.includes('Review 5/5 · adjudicating</span>'), both);
 }
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
