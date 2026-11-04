@@ -3,6 +3,7 @@ package dashboard
 import (
 	"crypto/sha256"
 	"log/slog"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -115,9 +116,24 @@ func newMatrixSource(cfg config.MatrixConfig, logger *slog.Logger) *matrixSource
 	return m
 }
 
+// samePolicy reports whether cfg matches the policy already in force. The
+// reader poll refreshes the policy on every GET, so an unchanged policy must
+// not take the exclusive lock that makes observers back off.
+func (m *matrixSource) samePolicy(cfg config.MatrixConfig) bool {
+	cur := m.cfg.Load()
+	return cur != nil && m.queuedEpoch.Load() != nil && cur.Enabled == cfg.Enabled &&
+		slices.Equal(cur.Repos, cfg.Repos) && slices.Equal(cur.ExcludePaths, cfg.ExcludePaths)
+}
+
 func (m *matrixSource) setConfig(cfg config.MatrixConfig) {
+	if m.samePolicy(cfg) {
+		return
+	}
 	m.policyMu.Lock()
 	defer m.policyMu.Unlock()
+	if m.samePolicy(cfg) {
+		return
+	}
 	c := cfg
 	c.Repos = append([]string(nil), cfg.Repos...)
 	c.ExcludePaths = append([]string(nil), cfg.ExcludePaths...)
@@ -188,6 +204,11 @@ func (m *matrixSource) run() {
 			return
 		case queued := <-m.in:
 			if queued.epoch != m.checkpoints.policyEpoch() {
+				// Queued under a policy that no longer applies: neither
+				// projection ingests it. setConfig already reset the
+				// legacy backlog for the same change, so admitting the
+				// stale observation there would leak code the new policy
+				// never saw.
 				continue
 			}
 			before := m.Latest()
