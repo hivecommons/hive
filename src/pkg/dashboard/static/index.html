@@ -1422,7 +1422,7 @@
        grid, the slot takes the Merge gate column plus the ✓ cap and
        right-aligns the chip over the gate. It never wraps with the
        filter bar, so the chip stays put whatever the toolbar does. */
-    .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
+    .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-4) var(--sp-2); }
     /* Each entry is fenced by a hairline above it and lights up as a whole
        on hover, so a tall row (wrapped title, ↳ PR line) still reads as one
        block: its chip and age can only belong to the strip they sit beside. */
@@ -1430,9 +1430,12 @@
     .ham-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); border-radius: var(--r-sm); }
     /* Title line = a ghost strip with the same column widths as the chevrons
        below: a lead cell spanning Open..Claimed carries the number + title, a
-       PR cell spanning PR in progress..Merge gate carries "[icon] #N title",
-       modifiers get a separate, full-width right-anchored toolbar line. The since column is
-       an empty spacer (the time on step rides the strip row's since cell).
+       PR cell spanning PR in progress..Merge gate carries "[icon] #N title"
+       with the modifier chips / action buttons right-anchored on that same
+       line (margin-left: auto), wrapping under the PR metadata only when
+       there is no room. No separate toolbar line: the chevrons sit directly
+       under the title line. The since column is an empty spacer (the time on
+       step rides the strip row's since cell).
        Explicit grid spans share the chevrons' tracks, including the two
        concurrent CI/Review tracks, without content changing their widths. */
     .ham-row-head { position: relative; display: flex; align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); min-width: 0; line-height: 1.3; }
@@ -1444,15 +1447,26 @@
     .ham-head-cols .ham-seg.ham-head-pr > .ham-linked-ico { flex: 0 0 auto; }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage, .ham-head-cols .ham-seg.ham-head-pr > .ham-adopted-from { flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-lineage > .ham-author-ico { vertical-align: text-bottom; margin-right: var(--sp-1); }
-    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line { flex: 0 1 auto; }
-    .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; grid-row: 2; min-width: 0; overflow: visible; align-items: flex-end; justify-content: flex-end; padding: 0; }
-    .ham-head-cols .ham-seg.cap:has(> .ham-badges:empty) { display: none; }
-    .ham-head-cols .ham-seg.cap .ham-badges { position: static; flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }
+    /* The PR ref shares the first line with the right-anchored pills: it
+       grows into the free space but keeps a readable floor, so pills wrap
+       under it only when the line is genuinely full. */
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-ref, .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line { flex: 1 1 0; min-width: min(100%, 20em); }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-pr-line > .ham-pr-ref { flex: 1 1 0; min-width: 0; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-badges { position: static; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; min-width: 0; max-width: 100%; }
+    .ham-head-cols .ham-seg.ham-head-pr > .ham-badges:empty { display: none; }
+    .ham-head-cols .ham-seg.ham-head-tools { align-items: flex-start; }
+    .ham-head-cols .ham-seg.ham-head-tools:has(> .ham-badges:empty) { display: none; }
     .ham-head-cols .ham-badges > :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     .ham-head-cols .ham-badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
     .ham-head-main { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--sp-3); min-width: 0; }
     .ham-head-main > .ham-badge { flex: 0 1 auto; }
-    .ham-head-main > .ham-title, .ham-head-pr .ham-pr-title { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+    /* The title fills whatever is left of the first line beside its chips
+       (flex-basis 0) and only wraps its own words when there is no room;
+       with a max-content basis (flex: 0 1 auto) a wrapping flex container
+       drops the whole title onto a second line as soon as it cannot fit
+       entirely, even with half the row free (hivecommons/hive#16454). */
+    .ham-head-main > .ham-title { flex: 1 1 0; min-width: 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+    .ham-head-pr .ham-pr-title { flex: 1 1 0; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
     .ham-head-pr .ham-pr-ref, .ham-head-pr .ham-pr-line { flex-wrap: wrap; overflow: visible; }
     .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
     .ham-pr-ref:hover { color: var(--text); }
@@ -1653,7 +1667,7 @@
     .ham-badge-reroute { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); display: inline-flex; align-items: center; gap: var(--sp-1); }
     .ham-badge-reroute .ham-presence-dot { width: 0.5em; height: 0.5em; border-radius: var(--r-pill); background: var(--text-faint); flex: 0 0 auto; }
     .ham-badge-reroute.ham-reroute-online .ham-presence-dot { background: var(--status-ok); }
-    .ham-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); --ham-notch: 8px; --ham-visible-columns: 7; --ham-chevron-text-lines: 2; --ham-chevron-line-height: 1.3; }
+    .ham-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--ham-visible-columns), minmax(0, 1fr)) 4em; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); --ham-notch: 8px; --ham-visible-columns: 7; --ham-chevron-text-lines: 1; --ham-chevron-line-height: 1.3; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     /* The concurrent CI / Review lanes are chevrons like every other stage
        (same clip-path, padding and height — the boxed card opt-out of
@@ -1725,15 +1739,16 @@
     .ham-gate-ico { display: inline-flex; align-items: center; margin-right: var(--sp-1); cursor: help; }
     .ham-gate-ico .ham-ico { width: 12px; height: 12px; }
     .ham-gate-detail { font-weight: normal; opacity: 0.85; font-variant-numeric: tabular-nums; }
-    /* All physical chevrons share a two-line text budget, but a row is only
-       as tall as its longest caption: one line of text → a one-line chevron,
-       two lines → two (the clamp below caps it there). The grid row sizes
-       to content with a one-line floor so icon-only cells and siblings
-       stretch to the row's tallest chevron, never to a fixed box. The
-       portal tooltip is outside the clipped polygon; keyboard focus
-       exposes the same full text. */
-    .ham-strip[aria-label="Pipeline progress"] { grid-auto-rows: minmax(calc(var(--ham-chevron-line-height) * 1em + 2 * var(--sp-2) + 2 * var(--line-width)), auto); }
-    .ham-strip[aria-label="Pipeline progress"] > .ham-seg { box-sizing: border-box; align-self: stretch; line-height: var(--ham-chevron-line-height); padding: var(--sp-2) calc(var(--ham-notch) + var(--sp-2)); }
+    /* Every physical chevron is one caption line tall (--ham-chevron-text-lines:
+       1, the clamp below ellipsises the rest): the strip rides directly under
+       the title line as a ~20px band, the density the tracker had before
+       hivecommons/hive#16454 doubled it with a two-line budget and sp-2
+       vertical padding. The grid row sizes to content with that one-line
+       floor so icon-only cells and siblings share the row's height, never a
+       fixed box. The portal tooltip is outside the clipped polygon; keyboard
+       focus exposes the same full text. */
+    .ham-strip[aria-label="Pipeline progress"] { grid-auto-rows: minmax(calc(var(--ham-chevron-line-height) * 1em + 2 * var(--sp-1) + 2 * var(--line-width)), auto); }
+    .ham-strip[aria-label="Pipeline progress"] > .ham-seg { box-sizing: border-box; align-self: stretch; line-height: var(--ham-chevron-line-height); padding: var(--sp-1) calc(var(--ham-notch) + var(--sp-2)); }
     .ham-chevron-info.config-info, .ham-chevron-info.ham-chevron-decision { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); width: 100%; height: 100%; min-width: 0; flex-shrink: 1; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; position: static; }
     .ham-chevron-info.config-info:hover { background: transparent; border: 0; color: inherit; }
     .ham-chevron-info:focus-visible, .ham-chevron-decision:focus-within { outline: var(--line-width) solid currentColor; outline-offset: var(--sp-1); }
@@ -2006,7 +2021,7 @@
     .ham-row { position: relative; }
     .ham-row:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: calc(-1 * var(--focus-ring-width)); border-radius: var(--r-sm); }
     .ham-row.ham-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset var(--sp-1) 0 0 var(--accent); border-radius: var(--r-sm); }
-    .ham-row-tools { position: absolute; left: calc(-1 * var(--ham-gutter)); top: var(--sp-5); width: var(--ham-gutter); display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); }
+    .ham-row-tools { position: absolute; left: calc(-1 * var(--ham-gutter)); top: var(--sp-4); width: var(--ham-gutter); display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); }
     /* A nested PR sub-row carries its own gutter (checkbox + ⋯), so each
        PR under an issue is selected and acted on by itself (two PRs under
        one issue, one decision each — the owner's 2026-10-28 report). The
@@ -2114,7 +2129,6 @@
       .ham-head-cols > .ham-strip { display: contents; }
       .ham-head-cols .ham-strip > .ham-seg { grid-column: 1 / -1; grid-row: auto; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
-      .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; min-width: 0; justify-content: flex-end; }
       .ham-head-cols > .ham-since { display: none; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
@@ -18541,15 +18555,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
-    // the given refs. Modifier chips wrap on their own full-width,
-    // right-anchored line rather than overflowing the history cap into titles.
+    // the given refs followed by the modifier chips / action buttons,
+    // right-anchored on that same line (margin-left: auto). The chips ride
+    // the title line rather than a second full-width toolbar line, so the
+    // chevrons sit directly under the title (hivecommons/hive#16454 left a
+    // one-line band between them); when the PR metadata leaves no room the
+    // chips wrap under it, content-driven, never a fixed row. A row without
+    // PR refs still gets the PR cell (ham-head-tools) so its chips sit on
+    // the title line in the PR span, not on a line of their own.
     // The since column is an empty spacer here (same width as the strip
     // row's, which carries the time on step): a wrapped title must not float
     // the age away from the chevrons it describes.
     function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml, prTargetKey) {
       const wide = !(prRefs && prRefs.length);
       const prStart = STAGE_TRACKER_PATH.indexOf(STAGE_TRACKER_PR_COLUMN) + 1;
-      return `<div class="ham-strip-row ham-head-cols" data-ham-pr-start="${prStart}"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr"${prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
+      return `<div class="ham-strip-row ham-head-cols" data-ham-pr-start="${prStart}"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li><li class="ham-seg ham-head-pr${wide ? ' ham-head-tools' : ''}"${!wide && prTargetKey ? ` data-ham-target-key="${esc(prTargetKey)}"` : ''}>${wide ? '' : prRefs.join('')}<span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
