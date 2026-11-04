@@ -332,7 +332,7 @@ assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') &&
 assert.ok(row.includes('data-track="ci"') && row.includes('data-track="review"') && !row.includes('ham-actor-ico'), 'a native stage cannot identify the actual reviewer: ' + row);
 assert.ok(!row.includes('ham-author-ico ham-actor') && !row.includes('ham-actor-ico ham-author-'), 'actor icon must not carry the author colour classes: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 72, author_kind: 'clanker' }, stages, ctx);
-assert.ok(row.includes('Review unknown') && row.includes('CI unknown'), 'legacy author waits do not fabricate observed activity: ' + row);
+assert.ok(row.includes('Review · no data for head') && row.includes('CI · no data for head') && !row.includes('activity unknown'), 'legacy author waits do not fabricate observed activity: ' + row);
 // 071 needs-author: the owner wait returns to PR in progress without pretending coding.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{number:50,slug:'review-pending'},{number:71,slug:'needs-author',from:50}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured', T, T, 'todo cap']);
@@ -563,7 +563,7 @@ for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passe
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   if ([50, 60, 70, 71, 72, 74].includes(st)) {
     assert.ok(r.includes('data-track="ci"') && r.includes('data-track="review"'), 'pre-gate tracks remain separate at ' + st);
-    assert.ok(r.includes('CI unknown') && r.includes('Review unknown'), 'legacy labels alone cannot supply activity at ' + st);
+    assert.ok(r.includes('CI · no data for head') && r.includes('Review · no data for head'), 'legacy labels alone cannot supply activity at ' + st);
     continue;
   }
   const m = /aria-current="step"><span class="ham-chevron-info (?:config-info|ham-chevron-decision)"[^>]*><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-chevron-copy"><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
@@ -660,9 +660,9 @@ expectTitles(row, ['a.ham-ref', 'span.ham-title', 'a.ham-pr-ref'], 'issue with o
 assert.ok(/<a class="ham-pr-ref"[^>]*title="The one PR Author: hive · @hive-bot · linked PR, shown on its issue&#39;s row"/.test(row), 'the PR link also explains the shared row: ' + row);
 // tracker-cues: with no agent on the item the chevron is static (waiting);
 // the pulse and the "Working now" lead need a worker in ctx.workers.
-assert.ok(row.includes('CI unknown') && row.includes('Review unknown') && !strip(row).includes('data-motion='), 'a stage label alone supplies no activity: ' + row);
+assert.ok(row.includes('CI · no data for head') && row.includes('Review · no data for head') && !strip(row).includes('data-motion='), 'a stage label alone supplies no activity: ' + row);
 row = stageTrackerRowHtml(g[1], stages, Object.assign({}, ctx, { workers: { 'g/r#21': { agent: 'scout', action: 'agent_comment_created', at: new Date(now - 120000).toISOString() } } }));
-assert.ok(row.includes('Review unknown') && !strip(row).includes('data-motion='), 'a generic commenter is not a current-head reviewer: ' + row);
+assert.ok(row.includes('Review · no data for head') && !strip(row).includes('data-motion='), 'a generic commenter is not a current-head reviewer: ' + row);
 assert.ok(/class="ham-row cue-working"/.test(row), 'the row carries the working cue: ' + row);
 assert.ok(!/<li class="ham-seg active" data-motion=[^>]*title="Claimed"/.test(stageTrackerRowHtml(g[0], stages, ctx)), 'Claimed is static: no data-motion');
 // Issue with two PRs: #N link + title on the issue line, nothing lit there;

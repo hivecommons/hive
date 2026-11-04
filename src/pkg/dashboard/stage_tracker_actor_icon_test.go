@@ -81,7 +81,7 @@ assert.strictEqual(litTitle(row), '');
 // The server word wins over the heuristic: a hive stage with none → no icon.
 row = stageTrackerRowHtml(pr(506, { stage: 50, caption: 'CI running', stage_actor: { kind: 'none', why: 'CI is still running' } }), stages, ctx);
 assert.strictEqual(actorSvg(row).length, 0, strip(row));
-assert.ok(strip(row).includes('CI unknown') && strip(row).includes('Review unknown'), 'missing evidence remains unknown in both tracks');
+assert.ok(strip(row).includes('CI · no data for head') && strip(row).includes('Review · no data for head') && !strip(row).includes('activity unknown'), 'missing evidence names the head and the refresh in both tracks, never "unknown"');
 assert.strictEqual(litTitle(row), '', 'an aggregate stage alone does not fabricate a reviewer or working chevron');
 
 // An issue riding its one covering PR takes the PR's actor.

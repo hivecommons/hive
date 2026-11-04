@@ -707,10 +707,11 @@ function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
   assert.equal((administration.match(/data-motion="active"/g) || []).length, 2, 'cached generic PR administration cannot animate coding');
 });
 
-test('stale activity is visibly unknown in the tooltip, never pulses, and still reads in words', () => {
+test('stale activity is dated in the tooltip, never pulses, still reads in words, and never says "activity unknown"', () => {
   const item = { kind: 'pr', head: 'head', review_activity: { ...activity('reviewing', 'Review working · reviewer', true), actor: 'reviewer', perspectives_done: 1, perspectives_total: 5 } };
   const html = track(item, 'review', {}, false, now + 300000);
-  assert.match(html, /activity unknown · last observed reviewing/);
+  assert.doesNotMatch(html, /activity unknown/, 'hivecommons/hive#16661');
+  assert.match(html, /stale · 2026-11-02T21:00:00\.000Z \(5m ago\)/);
   assert.doesNotMatch(html, /data-motion/);
   assert.match(html, /data-display-state="unknown"/);
   assert.match(html, /ham-activity-track active"[^]*ham-chevron-copy ham-track-state"><svg [^]*?<\/svg>Review 1\/5 · reviewer reviewing</, 'stale in-progress evidence keeps the lit fill and its count words');
@@ -880,4 +881,53 @@ test('#16615: CI green on the pushed head + re-review owed by the hive → Revie
   const running = physicalTracks({ ...item, ci_activity: fresh('running', { checks_passed: 7, checks_total: 11, active: true }) });
   assert.equal(cls(running.ci), 'active'); assert.equal(text(running.ci), 'CI 7/11 · running');
   assert.equal(cls(running.review), 'todo'); assert.equal(text(running.review), '');
+});
+
+// hivecommons/hive#16661: the Review track never says "activity unknown".
+// With no verdict and no reviewer in flight the backend derives what the
+// head waits on (stage_tracker_review_fallback.go); the UI carries that
+// statement as the words when the column is the stage's own, otherwise in
+// the tooltip behind a neutral icon.
+test('#16661: derived review waits read as statements — words on the stage column, tooltip elsewhere, never "activity unknown"', () => {
+  const head = 'f269349abcdef';
+  const text = cell => cell.match(/aria-describedby="[^"]+">([^]*?)<span id=/)[1].replace(/<[^>]*>/g, '');
+  const cls = cell => cell.match(/class="ham-seg ham-activity-track ([a-z -]+?)(?: ham-current)?"/)[1];
+  const tip = cell => (/role="tooltip">([^]*?)<\/span>/.exec(cell) || [])[1].replace(/<[^>]*>/g, '');
+  const derived = (state, caption, extra = {}) => ({ head, state, caption, source: 'derived-from-pr-state', observed_at: new Date(now).toISOString(), ...extra });
+  const row = (review, stage, column) => track({ kind: 'pr', head, stage, display_column: column, number: 16650, review_activity: review,
+    ci_activity: { head, state: 'running', caption: 'CI 3/11 · running', active: true, checks_passed: 3, checks_total: 11, source: 'github-check-runs', observed_at: new Date(now).toISOString() } },
+    'review', { state: stage === 50 ? 'active' : 'todo' }, false, now);
+  // 040 with CI running: Review is an inactive neutral icon; the tooltip says why.
+  const waiting = row(derived('waiting_ci', 'Review · waiting for CI'), 40, 40);
+  assert.equal(cls(waiting), 'todo'); assert.equal(text(waiting), '');
+  assert.match(tip(waiting), /Review: Review · waiting for CI · head f269349/);
+  assert.doesNotMatch(tip(waiting), /unknown/);
+  // 050 with nobody started yet: the stage's own column carries the statement.
+  const notStarted = row(derived('not_started', 'Review · not started · hive reviewer next'), 50, 50);
+  assert.equal(cls(notStarted), 'active'); assert.equal(text(notStarted), 'Review · not started · hive reviewer next');
+  for (const [state, caption] of [['not_requested', 'Review · draft, not requested'], ['closed', 'Review · n/a (closed)'], ['unverified', 'Review · aggregate approves · evidence not verified']]) {
+    const cell = row(derived(state, caption), 40, 40);
+    assert.equal(text(cell), '', state + ' is not motion');
+    assert.match(tip(cell), new RegExp('Review: ' + caption.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), state);
+    assert.doesNotMatch(tip(cell), /activity unknown|Review unknown/);
+  }
+  // No evidence at all: the head and the next step, not "unknown"; a legacy
+  // "Review unknown · reason" caption from an older spoke is rewritten the same way.
+  const none = row(undefined, 40, 40);
+  assert.match(tip(none), /Review: Review · no data for head f269349 yet · refreshing/);
+  assert.doesNotMatch(tip(none), /Review unknown|activity unknown/);
+  const legacy = row({ head, state: 'unknown', caption: 'Review unknown · current-head evidence unavailable', source: 'unavailable' }, 40, 40);
+  assert.match(tip(legacy), /Review · no data for head f269349 yet · refreshing · current-head evidence unavailable/);
+  assert.doesNotMatch(tip(legacy), /Review unknown|activity unknown/);
+  // A settled verdict explains itself in the tooltip: who, how long ago, and
+  // each perspective's verdict with its first finding (hivecommons/hive#16617),
+  // and it stays known as the observation ages.
+  const settled = row({ head, state: 'changes_requested', caption: 'Review findings · awaiting author', source: 'verified-review-bundle', perspectives_done: 5, perspectives_total: 5,
+    observed_at: new Date(now - 12 * 60000).toISOString(), since: new Date(now - 12 * 60000).toISOString(),
+    detail: 'Changes requested by the hive reviewer: 1 perspective posted findings on this head; the fix is owed before a re-review.',
+    perspectives: [{ name: 'quality', verdict: 'approve' }, { name: 'security', verdict: 'changes_requested', summary: 'token logged' }] }, 40, 40);
+  assert.equal(cls(settled), 'failing'); assert.equal(text(settled), '');
+  assert.match(settled, /data-display-state="known"/, 'a settled verdict stays known past the freshness window');
+  assert.match(tip(settled), /Changes requested by the hive reviewer: 1 perspective posted findings[^]*· 12m ago · quality ✓ · security ✗: token logged · head f269349/);
+  assert.doesNotMatch(tip(settled), /activity unknown/);
 });
