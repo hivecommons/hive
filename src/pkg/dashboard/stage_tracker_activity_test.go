@@ -232,11 +232,13 @@ func TestStageTrackerActivityApprovalRequiresConsistentBundle(t *testing.T) {
 			{Perspective: "quality", Backend: "backend", Model: "model", Verdict: "approve", RecordedAt: now},
 			{Perspective: "security", Backend: "backend", Model: "model", Verdict: "changes_requested", RecordedAt: now},
 		}}
-	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != "unknown" {
+	// Neither an approval nor "unknown": the words say the evidence does
+	// not verify the aggregate (hivecommons/hive#16661).
+	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != reviewStateUnverified || !strings.Contains(got.Caption, "evidence not verified") {
 		t.Fatalf("conflicting bundle became approval: %+v", got)
 	}
 	bundle.Verdicts = bundle.Verdicts[:1]
-	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != "unknown" {
+	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != reviewStateUnverified {
 		t.Fatalf("missing perspective became approval: %+v", got)
 	}
 	bundle.Verdicts = append(bundle.Verdicts, evidence.Verdict{
@@ -249,7 +251,7 @@ func TestStageTrackerActivityApprovalRequiresConsistentBundle(t *testing.T) {
 	}
 	bundle.Verdicts = append(bundle.Verdicts, evidence.Verdict{
 		Perspective: "security", Backend: "backend", Model: "model", Verdict: "reject", RecordedAt: now})
-	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != "unknown" {
+	if got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now); got.State != reviewStateUnverified {
 		t.Fatalf("equal-time conflicting verdict became approval: %+v", got)
 	}
 	agg.HeadSHA = "old-head"
@@ -397,7 +399,7 @@ func TestStageTrackerActivityCICaptionsReadInPlainLanguage(t *testing.T) {
 	if got := stageTrackerCIActivity(ci(done("build"), chk("lint", "completed", "failure"), done("test")), now); got.State != "failing" || got.Active {
 		t.Fatalf("settled red head must not read as running: %+v", got)
 	}
-	if got := stageTrackerCIActivity(github.PullRequest{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA}, now); got.Caption != "CI unknown · no check results observed for this head yet" || got.Detail == "" {
+	if got := stageTrackerCIActivity(github.PullRequest{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA}, now); got.Caption != "CI · no checks observed for head head yet · refreshing" || got.Detail == "" {
 		t.Fatalf("no-evidence caption: %+v", got)
 	}
 }

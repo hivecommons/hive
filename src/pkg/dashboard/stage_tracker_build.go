@@ -475,6 +475,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.ReviewActivity = stageTrackerReviewActivity(activityPR, bundle, currentAggregate, dispatchState, status, now)
 		stageTrackerCountPerspectives(it.ReviewActivity, activityPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 		stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
+		stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(&it, pr, len(expectedPerspectives) > 0))
 		stageTrackerLeadApproveForSignOff(&it)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
@@ -533,7 +534,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// A push projection can advance the head ahead of the cached PR list.
 		// Never leave old-head approval/check verdicts on the projected item.
 		if it.CIActivity == nil || !strings.EqualFold(it.CIActivity.Head, it.Head) {
-			it.CIActivity = trackerUnknownActivity(it.Head, "CI unknown · no check results observed for this head yet")
+			it.CIActivity = trackerUnknownActivity(it.Head, stageTrackerCINoDataCaption(it.Head))
 		}
 		if it.ReviewActivity == nil || !strings.EqualFold(it.ReviewActivity.Head, it.Head) {
 			currentPR := github.PullRequest{Repo: activityItem.Repo, Number: it.Number, HeadSHA: it.Head, Author: it.Author}
@@ -551,6 +552,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
 			stageTrackerCountPerspectives(it.ReviewActivity, currentPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 			stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
+			stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(it, currentPR, len(expectedPerspectives) > 0))
 		}
 		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
