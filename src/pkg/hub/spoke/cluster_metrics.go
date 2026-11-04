@@ -31,9 +31,14 @@ const (
 // before running kubectl again. Prevents running kubectl on every heartbeat.
 const metricsCollectionCacheTTL = 60 * time.Second
 
-// metricsCollectionTimeout bounds how long we wait for each kubectl command
-// during spoke-side metrics collection.
+// metricsCollectionTimeout bounds individual Kubernetes API requests, including
+// callers outside cluster-health collection.
 const metricsCollectionTimeout = 10 * time.Second
+
+// clusterHealthCollectionTimeout is shared by all cluster-health API requests.
+// Leave most of the heartbeat collect budget for its other collectors; granting
+// every node proxy request a fresh timeout can otherwise stall many beats.
+const clusterHealthCollectionTimeout = 3 * time.Second
 
 // nodeHealthWarningInterval prevents a permanently missing/forbidden node API
 // from writing the same warning on every heartbeat.
@@ -75,9 +80,15 @@ func CollectClusterHealth(logger *slog.Logger) *HeartbeatClusterHealthReport {
 }
 
 func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthReport {
+	ctx, cancel := context.WithTimeout(context.Background(), clusterHealthCollectionTimeout)
+	defer cancel()
+	return collectClusterHealthWithContext(ctx, logger)
+}
+
+func collectClusterHealthWithContext(ctx context.Context, logger *slog.Logger) *HeartbeatClusterHealthReport {
 	// Query nodes first. The core Node API has the capacity/allocatable data
 	// needed for useful totals even when metrics-server is absent or forbidden.
-	getOut, err := k8sAPIGet("/api/v1/nodes")
+	getOut, err := k8sAPIGetWithContext(ctx, "/api/v1/nodes")
 	if err != nil {
 		reason := nodeHealthErrorReason("nodes API failed", err)
 		logNodeHealthWarning(logger, reason)
@@ -179,7 +190,7 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	// the hub so the UI can tell operators exactly what to fix.
 	metricsByNode := make(map[string]map[string]string)
 	nodeHealthError := ""
-	topOut, err := k8sAPIGet("/apis/metrics.k8s.io/v1beta1/nodes")
+	topOut, err := k8sAPIGetWithContext(ctx, "/apis/metrics.k8s.io/v1beta1/nodes")
 	if err != nil {
 		nodeHealthError = nodeHealthErrorReason("metrics API failed", err)
 		logNodeHealthWarning(logger, nodeHealthError)
@@ -248,7 +259,7 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		// The node object's ephemeral-storage capacity cannot tell us how full the
 		// disk is. Best-effort per node: a failure leaves usage/percent nil while
 		// retaining capacity above.
-		if rawStats, statsErr := k8sAPIGet(nodeStatsSummaryPath(name)); statsErr != nil {
+		if rawStats, statsErr := k8sAPIGetWithContext(ctx, nodeStatsSummaryPath(name)); statsErr != nil {
 			if logger != nil {
 				logger.Debug("spoke metrics: node disk stats unavailable", "node", name, "error", statsErr)
 			}
@@ -269,7 +280,7 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	// already assigned to a node are missed), so the capacity estimate below
 	// can be marginally optimistic.
 	var cpuRequestedPerNode, memRequestedPerNode map[string]int64
-	podOut, err := k8sAPIGet("/api/v1/pods?fieldSelector=status.phase%3DRunning")
+	podOut, err := k8sAPIGetWithContext(ctx, "/api/v1/pods?fieldSelector=status.phase%3DRunning")
 	if err != nil {
 		if nodeHealthError == "" {
 			nodeHealthError = nodeHealthErrorReason("pods API failed", err)
@@ -515,6 +526,15 @@ func k8sTLSConfig() (*tls.Config, error) {
 }
 
 func k8sAPIGet(path string) ([]byte, error) {
+	return k8sAPIGetWithContext(context.Background(), path)
+}
+
+func k8sAPIGetWithContext(ctx context.Context, path string) ([]byte, error) {
+	// Once the collection budget is exhausted, skip remaining node requests
+	// without repeatedly reading credentials or creating transports.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	token, err := os.ReadFile(k8sTokenPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading service account token: %w", err)
@@ -530,7 +550,7 @@ func k8sAPIGet(path string) ([]byte, error) {
 		Transport: &http.Transport{TLSClientConfig: tlsConfig},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), metricsCollectionTimeout)
+	ctx, cancel := context.WithTimeout(ctx, metricsCollectionTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k8sAPIServer+path, nil)
