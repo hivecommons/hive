@@ -69,7 +69,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	}
 	if !a.RequiredKnown || a.RequiredSource == "" || len(a.RequiredChecks) == 0 || len(a.Required) == 0 {
 		stageTrackerCountHeadChecks(out, a)
-		stageTrackerHeadChecksMotion(out, a, now)
+		stageTrackerHeadChecksMotion(out, a)
 		return out
 	}
 	type requiredObservation struct {
@@ -105,7 +105,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		}
 		if !found {
 			stageTrackerCountHeadChecks(out, a)
-			stageTrackerHeadChecksMotion(out, a, now)
+			stageTrackerHeadChecksMotion(out, a)
 			return out
 		}
 	}
@@ -250,7 +250,10 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Caption = "CI skipped · check " + check + " skipped"
 		out.Detail = "Required check " + check + " finished as skipped or neutral on the PR's current commit, which branch protection does not count as a pass."
 	}
-	out.Active = out.State == "running" && a.ObservedAt != nil && !a.ObservedAt.After(now) && now.Sub(*a.ObservedAt) <= trackerActivityFreshWindow
+	// Running is active, full stop: the chevron has one fill. The poll's
+	// age rides ObservedAt for the tooltip, never a dimmer state
+	// (hivecommons/hive#16643).
+	out.Active = out.State == "running" || out.State == "queued"
 	return out
 }
 
@@ -320,7 +323,7 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 // running track while any check run on the head is still executing or
 // queued: the ring is not full, so the chevron must be active with its
 // count rather than a silent part-green glyph (hivecommons/hive#16631).
-func stageTrackerHeadChecksMotion(out *StageTrackerActivity, a *github.PRCIActivity, now time.Time) {
+func stageTrackerHeadChecksMotion(out *StageTrackerActivity, a *github.PRCIActivity) {
 	moving := 0
 	for _, check := range a.Checks {
 		if check.Head != "" && !strings.EqualFold(check.Head, a.Head) {
@@ -344,7 +347,7 @@ func stageTrackerHeadChecksMotion(out *StageTrackerActivity, a *github.PRCIActiv
 	if out.ChecksFailed > 0 {
 		out.Caption += fmt.Sprintf(" · %d failing", out.ChecksFailed)
 	}
-	out.Active = a.ObservedAt != nil && !a.ObservedAt.After(now) && now.Sub(*a.ObservedAt) <= trackerActivityFreshWindow
+	out.Active = true
 }
 
 // stageTrackerExpectedPerspectives is the swarm's perspective set for this
