@@ -46,12 +46,17 @@ func TestClassifyDecisionQuestion(t *testing.T) {
 			name: "fork PR editing a workflow is a sign-off",
 			in: DecisionQuestionInput{Question: "Should the new job run on pull_request_target?", HiveAuthored: true, CIGreen: true, FromFork: true,
 				Files: []DecisionQuestionFile{{Path: ".github/workflows/ci.yml"}}},
-			want: DecisionQuestionPolicySignOff, reason: "fork PR edits workflow path",
+			want: DecisionQuestionPolicySignOff, reason: "PR edits workflow path",
 		},
 		{
-			name: "same-repo hive PR editing a workflow is still the hive's",
-			in:   green("Should this merge ahead of the docs refresh?", DecisionQuestionFile{Path: ".github/workflows/docs.yml"}),
-			want: DecisionQuestionScope,
+			name: "same-repo hive PR editing a workflow requires sign-off",
+			in:   green("Should permissions: contents be write?", DecisionQuestionFile{Path: ".github/workflows/ci.yml", Patch: "+permissions:\n+  contents: write\n"}),
+			want: DecisionQuestionPolicySignOff, reason: "PR edits workflow path",
+		},
+		{
+			name: "same-repo hive PR editing an action requires sign-off",
+			in:   green("Should this merge ahead of the docs refresh?", DecisionQuestionFile{Path: ".github/actions/build/action.yml"}),
+			want: DecisionQuestionPolicySignOff, reason: "PR edits workflow path",
 		},
 		{
 			name: "OWNERS edit is a sign-off however it is phrased",
