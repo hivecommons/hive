@@ -28,7 +28,7 @@ function constLine(source, name) {
   return match[0];
 }
 const trackConsts = ['STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER', 'STAGE_TRACKER_WORKFLOW_APPROVAL_TIP', 'STAGE_TRACKER_RING_SEGMENT_GAP_MAX', 'STAGE_TRACKER_RING_RADIUS', 'STAGE_TRACKER_RING_GAP_DEG'].map(name => constLine(strip, name)).join('\n');
-const trackFns = ['stageTrackerHiveOwesReReview', 'stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
+const trackFns = ['stageTrackerHiveOwesReReview', 'stageTrackerTrackLead', 'stageTrackerWaitingOnPerson', 'stageTrackerTrackRunning', 'stageTrackerWorkflowApprovalPending', 'stageTrackerRingSvg', 'stageTrackerStalledTrack', 'stageTrackerQueueAheadWord', 'stageTrackerStageTrack', 'stageTrackerHiveOwnsRepair', 'stageTrackerTrackWord', 'stageTrackerAgoWord', 'stageTrackerActivityTrackHtml'].map(name => fn(strip, name)).join('\n');
 const track = new Function('esc', 'stageTrackerIcon', trackConsts + '\n' + trackFns + ';return stageTrackerActivityTrackHtml;')(esc, (n, cls) => `<svg class="${cls}" data-icon="${n}"></svg>`);
 const getAnchor = new Function(globals + anchor + ';return stageTrackerAnchor;')();
 const header = new Function('esc', 'stageTrackerIcon', globals + fn(strip, 'stageTrackerHeaderHtml') + ';return stageTrackerHeaderHtml;')(esc, () => '');
@@ -677,7 +677,7 @@ function stageTrackerActorTip() { return ''; }
 ` + trackConsts + '\n' + fn(strip, 'stageTrackerWaitingOnPerson') + fn(strip, 'stageTrackerTrackRunning') + fn(strip, 'stageTrackerWorkflowApprovalPending') + fn(strip, 'stageTrackerRingSvg') + fn(strip, 'stageTrackerStageTrack') + fn(strip, 'stageTrackerStalledTrack') + fn(strip, 'stageTrackerQueueAheadWord') + `
 function stageTrackerMotion() { return 'active'; }
 function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
-` + anchor + fn(row, 'stageTrackerSegments') + fn(strip, 'stageTrackerActivityTrackHtml') + fn(strip, 'stageTrackerStripItems');
+` + anchor + fn(row, 'stageTrackerSegments') + fn(strip, 'stageTrackerAgoWord') + fn(strip, 'stageTrackerActivityTrackHtml') + fn(strip, 'stageTrackerStripItems');
   const render = new Function('esc', definitions + ';return stageTrackerStripItems;')(esc);
   const item = { kind: 'pr', stage: 70, head: 'head', display_column: 30,
     ci_activity: activity('running', 'CI running · 1/2 checks done', true),

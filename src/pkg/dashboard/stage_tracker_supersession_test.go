@@ -51,7 +51,7 @@ func TestClosedSnapshotIsNeverActionable(t *testing.T) {
 
 func TestSupersededRepairRowHasDecisionActionAndHeadline(t *testing.T) {
 	html := indexHTML(t)
-	script := stageTrackerRowActionsPreamble(t, html) + "\n" + jsFunc(t, html, "stageTrackerHeadline") + "\n" + jsFunc(t, html, "stageTrackerCurrentStageHtml") + `
+	script := stageTrackerRowActionsPreamble(t, html) + "\n" + jsFunc(t, html, "stageTrackerHeadline") + "\n" + jsFunc(t, html, "stageTrackerAgoWord") + "\n" + jsFunc(t, html, "stageTrackerCurrentStageHtml") + `
  const item = {kind:'pr',repo:'o/r',number:12,stage:72,superseded:{closer_pr:22}};
  assert.strictEqual(stageTrackerHeadline(item), 'Superseded by #22 — decide');
  assert.ok(stageTrackerCurrentStageHtml(item, [], null, 0).includes('Superseded by #22'));
