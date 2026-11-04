@@ -631,6 +631,17 @@ test('known and original chevrons keep full long text inside a shared one-line c
   assert.match(css, /\.ham-row > \.ham-strip-row, \.ham-sub > \.ham-strip-row, \.ham-cols > \.ham-strip-row \{ overflow-x: auto; \}/);
 });
 
+test('a 071/072 row with a pushed or checking head keeps its running CI track lit (#16552)', () => {
+  for (const stage of [71, 72]) {
+    for (const state of ['pushed', 'checking']) {
+      const cells = physicalTracks(livePR({ stage, display_column: 50, push: { state }, ci_activity: activity('running', 'CI running · 1/2 checks done', true) }));
+      assert.match(cells.ci, /ham-activity-track active/, stage + '/' + state + ': checks run on the pushed head');
+    }
+    const parked = physicalTracks(livePR({ stage, display_column: 50, ci_activity: activity('running', 'CI running · 1/2 checks done', true) }));
+    assert.doesNotMatch(parked.ci, /ham-activity-track active/, stage + ': no push in flight stays settled, waiting on the contributor');
+  }
+});
+
 test('real source repair can show three concurrent activities without naming a generic worker as reviewer', () => {
   const row = fs.readFileSync(path.join(root, 'tracker-row.js'), 'utf8');
   const definitions = globals + `
