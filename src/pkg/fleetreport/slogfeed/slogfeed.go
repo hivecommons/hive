@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -255,6 +255,15 @@ func hubHeartbeatUnavailable(r slog.Record) bool {
 		return true
 	})
 	return match
+}
+
+// hubHeartbeatCachedFallback is the outcome notice for a bounded collector
+// timeout: sending stale stats is the liveness safeguard working as designed
+// (#16507). Keep the WARN in local logs, but do not file a second defect for
+// the fallback itself. The collector timeout and its slow-section breakdown,
+// collector panics, and heartbeat send failures remain reportable.
+func hubHeartbeatCachedFallback(r slog.Record) bool {
+	return strings.TrimSpace(r.Message) == "hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green"
 }
 
 // reviewCommentCapped reports whether r is the review-request watcher noting
