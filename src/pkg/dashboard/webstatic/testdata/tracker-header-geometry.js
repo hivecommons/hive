@@ -5,7 +5,7 @@
   if (!dedicatedPreview) throw new Error('Use a dedicated published-preview tab, not the user’s live dashboard');
   const tolerance = 1;
   const failures = [];
-  const coverage = { issueOnly: 0, linked: 0, prOnly: 0, nested: 0, multiIssue: 0, unknown: 0, queuedApproved: 0, wrapped: 0, singleLineRows: 0, wrappedRows: 0, controls: 0, controlTargets: 0, hitTested: 0, currentRows: 0, preparation: 0, superseded: 0, states: {} };
+  const coverage = { issueOnly: 0, linked: 0, prOnly: 0, nested: 0, multiIssue: 0, unknown: 0, queuedApproved: 0, wrapped: 0, singleLineRows: 0, clampedRows: 0, controls: 0, controlTargets: 0, hitTested: 0, currentRows: 0, preparation: 0, superseded: 0, states: {} };
   const near = (a, b) => Math.abs(a - b) <= tolerance;
   const visible = el => el && el.getClientRects().length && getComputedStyle(el).display !== 'none';
   const rect = el => el.getBoundingClientRect();
@@ -67,7 +67,10 @@
     const strip = row.querySelector(':scope > .ham-strip-row > ol[aria-label="Pipeline progress"]');
     if (!visible(header) || !visible(strip)) continue;
     const lead = header.querySelector('.ham-head-lead');
-    const pr = header.querySelector('.ham-head-pr');
+    // A row without PR refs still has the PR cell (ham-head-tools) as the
+    // home of its chips; only a cell with refs counts as PR metadata here.
+    const prCell = header.querySelector('.ham-head-pr');
+    const pr = prCell && !prCell.classList.contains('ham-head-tools') ? prCell : null;
     const badges = header.querySelector('.ham-badges');
     const columns = [...strip.children];
     // The renderer emits this boundary from its private canonical lane path.
@@ -82,10 +85,9 @@
     if ([...row.querySelectorAll(':scope > .ham-current-stage, :scope > .ham-human-context')]
       .some(context => /superseded/i.test(context.textContent))) coverage.superseded++;
     if (row.matches('.ham-row') && row.querySelectorAll(':scope > .ham-sub').length > 1) coverage.multiIssue++;
-    // Height is deliberately absent from the cross-row signature: a row is
-    // only as tall as its longest caption (one or two lines), so rows differ
-    // in height by design. Within-row uniformity and the content-driven
-    // height contract are asserted separately below.
+    // Height is deliberately absent from the cross-row signature; within-row
+    // uniformity and the one-line height contract are asserted separately
+    // below.
     const signature = columns.map(cell => ({ left: rect(cell).left - rect(strip).left, width: rect(cell).width }));
     const stripLeft = rect(strip.parentElement).left;
     // Recorded preparation roots retain the existing rail gutter. Compare
@@ -112,10 +114,20 @@
       if (pr) {
         assert(near(rect(pr).left, rect(columns[prStart]).left), name + 'PR starts at PR in progress');
         assert(near(rect(pr).right, rect(columns[lastLane]).right), name + 'PR ends at Merge gate');
-        if (visible(badges) && badges.children.length) {
-          assert(rect(badges).top >= rect(pr).bottom - tolerance, name + 'badges below PR metadata');
+      }
+      if (visible(badges) && badges.children.length) {
+        // Chips ride the PR line (or wrap under its metadata), never a
+        // line of their own between the title block and the chevrons.
+        assert(rect(badges).top >= rect(prCell).top - tolerance && rect(badges).bottom <= rect(prCell).bottom + tolerance, name + 'badges inside the PR cell');
+        const metadata = [...prCell.children].filter(child => child !== badges && visible(child));
+        if (metadata.length) {
+          const metaTop = Math.min(...metadata.map(child => rect(child).top));
+          assert(rect(badges).bottom > metaTop + tolerance, name + 'badges share the PR metadata line or wrap under it, never a line above');
+        } else {
+          assert(near(rect(badges).top, rect(header).top), name + 'badges on the title line');
         }
       }
+      assert(near(rect(strip.parentElement).top - rect(header).bottom, rowGap), name + 'chevrons sit directly under the title block (row gap only)');
     } else if (pr && visible(lead)) {
       assert(rect(pr).top >= rect(lead).bottom - tolerance, name + 'narrow PR below issue');
     }
@@ -133,13 +145,22 @@
       if (badges.children.length) {
         assert(visible(badges), name + 'nonempty action/history toolbar is not hidden');
         coverage.controls++;
+        // The chips are the trailing, right-anchored flex item of the PR
+        // cell: they end where the PR span ends (Merge gate), sit beside
+        // the issue metadata rather than under it, and never overprint the
+        // PR metadata they follow (wrapping under it when space runs out).
         const toolbar = badges.parentElement;
-        const headerStrip = header.querySelector('.ham-strip');
-        const expectedRight = matchMedia('(min-width: 1101px)').matches ? rect(headerStrip).right : rect(header).right;
-        assert(near(rect(toolbar).right, expectedRight), name + 'full-row toolbar reaches the far right');
-        assert(near(rect(badges).right, expectedRight), name + 'controls are right-anchored, not in an issue-side column');
-        assert(rect(toolbar).top >= rect(lead).bottom - tolerance, name + 'toolbar does not intersect issue metadata');
-        if (pr) assert(rect(toolbar).top >= rect(pr).bottom - tolerance, name + 'toolbar does not intersect PR metadata');
+        const desktop = matchMedia('(min-width: 1101px)').matches;
+        const expectedRight = desktop ? rect(toolbar).right : rect(header).right;
+        assert(near(rect(badges).right, expectedRight), name + 'controls are right-anchored at the end of the PR span, not in an issue-side column');
+        if (desktop) assert(rect(badges).left >= rect(lead).right - tolerance, name + 'toolbar does not intersect issue metadata');
+        else assert(rect(toolbar).top >= rect(lead).bottom - tolerance, name + 'narrow toolbar below issue metadata');
+        for (const child of toolbar.children) {
+          if (child === badges || !visible(child)) continue;
+          const box = rect(child), chips = rect(badges);
+          const apart = box.right <= chips.left + tolerance || box.left >= chips.right - tolerance || box.bottom <= chips.top + tolerance || box.top >= chips.bottom - tolerance;
+          assert(apart, name + 'toolbar does not intersect PR metadata: ' + JSON.stringify({ child: child.className, box, chips }));
+        }
         for (const control of badges.querySelectorAll('button, a, [tabindex]')) {
           if (!control.closest('.config-tooltip')) await inspectControl(control, toolbar, name);
         }
@@ -153,10 +174,10 @@
     }
     const heights = columns.map(cell => rect(cell).height);
     assert(Math.max(...heights) - Math.min(...heights) <= tolerance, name + 'all physical chevrons have uniform height');
-    // Content-driven height: the row is exactly as tall as its longest
-    // caption (one or two text lines plus the chevron's own padding and
-    // border), with a one-line floor for icon-only rows — never a fixed
-    // two-line box around one line of text.
+    // Compact height: captions are clamped to one line, so every row is
+    // exactly one text line plus the chevron's own padding and border
+    // (~20px) — the pre-hivecommons/hive#16454 density. Icon-only rows
+    // share the same one-line floor.
     const lineWidth = parseFloat(getComputedStyle(strip).getPropertyValue('--line-width')) || 0;
     const cellBudget = (cell, lines, border) => {
       const style = getComputedStyle(cell);
@@ -172,10 +193,11 @@
         expectedHeight = Math.max(expectedHeight, cellBudget(cell, lines));
       }
     }
-    assert(near(Math.max(...heights), expectedHeight), name + 'chevron height is content-driven (' + (rowLines || 1) + ' text line(s) + padding), not a fixed two-line box: ' +
-      JSON.stringify({ measured: Math.max(...heights), expected: expectedHeight, lines: rowLines }));
-    if (rowLines === 1) coverage.singleLineRows++;
-    if (rowLines === 2) coverage.wrappedRows++;
+    assert(rowLines <= 1, name + 'captions are clamped to a single line: ' + JSON.stringify({ lines: rowLines }));
+    assert(near(Math.max(...heights), expectedHeight), name + 'chevron height is one text line + padding, not a two-line box: ' +
+      JSON.stringify({ measured: Math.max(...heights), expected: expectedHeight }));
+    coverage.singleLineRows++;
+    if (strip.querySelector('.ham-chevron-copy') && [...strip.querySelectorAll('.ham-chevron-copy')].some(c => visible(c) && c.scrollHeight > rect(c).height + tolerance)) coverage.clampedRows++;
     const ci = strip.querySelector('[data-track="ci"]');
     const review = strip.querySelector('[data-track="review"]');
     const current = columns.filter(cell => !cell.classList.contains('cap') &&
@@ -225,8 +247,8 @@
         const lineHeight = parseFloat(style.lineHeight);
         const bounds = rect(copy);
         assert(style.whiteSpace === 'normal' && style.overflowWrap === 'anywhere', name + 'text wraps, including unbroken handles');
-        assert(bounds.height <= lineHeight * 2 + tolerance, name + 'maximum two visible text lines');
-        if (bounds.height > lineHeight + tolerance) coverage.wrapped++;
+        assert(bounds.height <= lineHeight + tolerance, name + 'maximum one visible text line');
+        if (copy.scrollHeight > bounds.height + tolerance) coverage.wrapped++;
         assert(bounds.left >= rect(cell).left + parseFloat(getComputedStyle(cell).paddingLeft) - tolerance, name + 'text clears the left chevron notch');
         assert(bounds.right <= rect(cell).right - parseFloat(getComputedStyle(cell).paddingRight) + tolerance, name + 'text clears the right chevron point');
         // Centred as before the two-line budget: the glyphs sit centred in
@@ -271,8 +293,8 @@
   for (const state of ['queued', 'unknown', 'assigned', 'approved', 'waiting', 'failing', 'passing', 'running']) {
     assert(coverage.states[state] > 0, 'preview must exercise current-head activity state ' + state);
   }
-  assert(coverage.unknown > 0 && coverage.queuedApproved > 0 && coverage.wrapped > 0 && coverage.controls > 0, 'preview must include unknown, queued-CI/approved-review, long wrapped text and action/history controls');
-  assert(coverage.singleLineRows > 0 && coverage.wrappedRows > 0, 'preview must include both a one-line-caption row (one-line-tall chevrons) and a two-line-caption row (two-line-tall chevrons)');
+  assert(coverage.unknown > 0 && coverage.queuedApproved > 0 && coverage.wrapped > 0 && coverage.controls > 0, 'preview must include unknown, queued-CI/approved-review, long clamped text and action/history controls');
+  assert(coverage.singleLineRows > 0 && coverage.clampedRows > 0, 'preview must include a row whose caption overflows its one-line clamp (long text stays a one-line chevron)');
   assert(coverage.controlTargets > 0 && coverage.controlTargets === coverage.hitTested, 'every relevant header control must be hit-tested, never skipped as offscreen');
   if (failures.length) throw new Error(JSON.stringify({ viewport: innerWidth, coverage, failures }));
   return { viewport: innerWidth, coverage, failures };
