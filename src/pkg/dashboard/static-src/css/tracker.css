@@ -774,7 +774,7 @@
        danger (a server-led close) fills red. Dashed, faint and glyph-less
        with its reason when the viewer may not take it. */
     .ham-lead-act { --ham-act-fill: var(--amber); --ham-act-ink: var(--bg); display: inline-flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-3); border: var(--line-width) solid var(--ham-act-fill); border-radius: var(--r-pill); background: var(--ham-act-fill); color: var(--ham-act-ink); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.5; cursor: pointer; white-space: nowrap; transition: filter 120ms ease, box-shadow 120ms ease; }
-    .ham-lead-act::after { content: '▸'; font-size: 0.85em; opacity: 0.85; }
+    .ham-lead-act::after { content: '▸'; opacity: 0.85; }
     .ham-lead-act.ham-act-secondary { --ham-act-fill: var(--panel-strong); --ham-act-ink: var(--text); border-color: var(--line-strong); }
     .ham-lead-act.ham-menu-danger { --ham-act-fill: var(--red); --ham-act-ink: var(--bg); }
     .ham-lead-act:hover, .ham-lead-act:focus-visible { filter: brightness(1.12); outline: none; box-shadow: 0 0 0 var(--line-width) var(--bg), 0 0 0 calc(var(--line-width) * 3) var(--ham-act-fill); }
