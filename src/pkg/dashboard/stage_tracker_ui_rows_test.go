@@ -29,10 +29,12 @@ assert.ok(row.includes('<span class="ham-since">30m</span>'), row);
 // The age and the chip belong to the strip they describe, not to a title line
 // that may wrap: the since text closes the strip row (an empty spacer keeps
 // the title line's width) and the chip is the last thing in the title line's
-// ghost strip, right above the strip's cap.
+// ghost strip — trailing the PR cell (ham-head-tools when there is no PR),
+// right-anchored on the title line, never a toolbar line of its own.
 assert.ok(row.indexOf('<span class="ham-since">30m</span>') > row.indexOf('aria-label="Pipeline progress"'), 'since sits on the strip row, in line with the chevrons');
 assert.ok(/aria-label="Pipeline progress">[\s\S]*?<\/ol>\s*<span class="ham-since">30m<\/span>\s*<\/div>/.test(row), 'the strip row ends with the since cell');
-assert.ok(/<li class="ham-seg cap"><span class="ham-badges">[\s\S]*?<\/span><\/li><\/ol><span class="ham-since"><\/span><\/div>\s*<\/div>\s*<div class="ham-strip-row">/.test(row), 'the chip cell closes the title line, directly above its own strip row');
+assert.ok(/<li class="ham-seg ham-head-pr ham-head-tools"><span class="ham-badges">[\s\S]*?<\/span><\/li><\/ol><span class="ham-since"><\/span><\/div>\s*<\/div>\s*<div class="ham-strip-row">/.test(row), 'the chip cell closes the title line, directly above its own strip row');
+assert.ok(!row.includes('<li class="ham-seg cap">'), 'no separate toolbar line between the title and the chevrons');
 assert.ok(row.indexOf('<div class="ham-row-head">') < row.indexOf('ham-badges') && row.indexOf('ham-badges') < row.indexOf('aria-label="Pipeline progress"'), 'chip and strip share one row container');
 assert.ok(row.includes('ham-kind-ico'), 'kind icon');
 assert.strictEqual((strip(row).match(/<svg class="ham-ico( ham-history-ico)?"/g) || []).length, 7, 'native icons remain; unknown CI and Review each use the existing column glyph');
@@ -495,7 +497,7 @@ sr = subs(row);
   assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, PR link, lineage chip, base pill in that order as siblings: ' + cell);
   assert.ok(cell.indexOf('<span class="ham-badge">v5</span>') > cell.indexOf('</a>', cell.indexOf('<a class="ham-pr-ref"')), 'the base pill is a sibling after the PR link, not inside it: ' + cell);
   assert.ok(/<a class="ham-pr-ref"[^>]*title="docs: remove duplicate README run routes · /.test(cell), 'the PR link hover starts with the full title: ' + cell);
-  assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<li class="ham-seg cap">'), 'the lineage chip rides the PR cell, not the chip cap: ' + head);
+  assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<span class="ham-badges">'), 'the lineage chip rides the PR cell ahead of the modifier chips, not the chip toolbar: ' + head);
   assert.strictEqual((head.match(/ham-lineage/g) || []).length, 1, 'the lineage chip is drawn once');
 }
 // The same order on an issue row with a single covering PR: lineage chip
@@ -520,7 +522,7 @@ assert.deepStrictEqual(segStates(subs(row)[0]), [B, B, B, D, D, D, 'active cap m
 // Title line: lead cell (Open..Claimed) and PR cell (PR in progress..Merge gate) each truncate with an ellipsis; the full title is on the element itself.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 12, kind: 'issue', title: 'A very long issue title that must not wrap', stage: 10 }, stages, ctx);
 // No PR to list: the lead cell widens over the empty PR column so a long title has room before it truncates.
-assert.ok(/<li class="ham-seg ham-head-lead ham-head-wide"><div class="ham-head-main">[\s\S]*?<span class="ham-title" title="A very long issue title that must not wrap">A very long issue title that must not wrap<\/span>[\s\S]*?<\/li><li class="ham-seg cap"><span class="ham-badges"><\/span><\/li>/.test(row), row);
+assert.ok(/<li class="ham-seg ham-head-lead ham-head-wide"><div class="ham-head-main">[\s\S]*?<span class="ham-title" title="A very long issue title that must not wrap">A very long issue title that must not wrap<\/span>[\s\S]*?<\/li><li class="ham-seg ham-head-pr ham-head-tools"><span class="ham-badges"><\/span><\/li>/.test(row), row);
 // Sort key: a covered issue counts as far along as its furthest PR.
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1, stage: 30 }, { number: 2, stage: 90 }] }, stages).anchor, 80);
 // An issue parked on 045 (or a pre-045 085) with no PR sorts at Actionable, not past the merge gate.
