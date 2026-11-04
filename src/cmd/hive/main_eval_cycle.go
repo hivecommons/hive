@@ -869,6 +869,12 @@ func runEvalCycle(
 	// round-trip; self-clears the moment a cadence is set or any kick lands.
 	applyNoCadenceAlert(gov, dashSrv)
 
+	// Contributor-first lanes (agents.<name>.contributor_first): tell the
+	// governor which roles a connected contributor relay is covering right
+	// now, so it withholds those agents' kicks and the hive's own budget is
+	// not spent on work a contributor is already doing.
+	gov.SetContributorCoverage(contributorRoleCoverage(dashSrv, time.Now()))
+
 	agentsDue := gov.EvaluateWithRepoDepths(
 		actionable.Issues.Count,
 		actionable.PRs.Count,

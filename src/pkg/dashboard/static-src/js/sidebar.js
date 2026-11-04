@@ -134,6 +134,28 @@
       return `<div class="gov-metric gm-alert" title="${esc(title)}"><span class="gm-label">standby</span><span class="gm-val">${parts.join('; ')}</span></div>`;
     }
 
+    // Contributor-first lanes (agents.<name>.contributor_first): the governor
+    // is withholding the resident agent's kicks because a connected
+    // contributor relay is acting as that role, so no hive budget is spent on
+    // a lane a contributor already covers. Renders nothing when no lane is
+    // covered; sits next to the standby tile in both governor views.
+    function contributorFirstFactsHtml(gov, variant) {
+      const covered = gov && gov.covered_lanes && typeof gov.covered_lanes === 'object' ? gov.covered_lanes : {};
+      const lanes = Object.keys(covered).sort();
+      if (lanes.length === 0) return '';
+      const parts = lanes.map(lane => {
+        const cov = covered[lane] || {};
+        const who = Array.isArray(cov.contributors) ? cov.contributors.filter(Boolean) : [];
+        if (who.length > 0) return `${lane} covered by ${who.join(', ')}, resident kicks withheld`;
+        const until = cov.grace_until ? Date.parse(cov.grace_until) : NaN;
+        const mins = Number.isFinite(until) ? Math.max(0, Math.round((until - Date.now()) / 60000)) : null;
+        return `${lane} cover ended, resident kicks resume ${mins === null ? 'after grace' : 'in ~' + mins + ' min'} unless a relay returns`;
+      });
+      const title = 'CONTRIBUTOR-FIRST — a contributor relay is the primary worker of these lanes.\n\nWHAT: agents.<name>.contributor_first is set and a connected contributor relay is acting as the role, so the governor withholds the resident agent\'s kicks and spends no hive budget on the lane.\n\nHOW: kicks resume on the normal cadence once no relay has covered the role for contributor_first_grace (default 10m). Budget pause and standby are unaffected.';
+      if (variant === 'stat') return `<div class="gov-stat" id="gov-contributor-first-tile" title="${esc(title)}"><div class="label">contributor-first</div><div class="val starting">${esc(parts.join('; '))}</div></div>`;
+      return `<div class="gov-metric" title="${esc(title)}"><span class="gm-label">contributor-first</span><span class="gm-val">${esc(parts.join('; '))}</span></div>`;
+    }
+
     async function standbyDispatch(btn) {
       const lane = btn?.dataset?.standbyLane || '';
       const key = btn?.dataset?.standbyKey || '';
