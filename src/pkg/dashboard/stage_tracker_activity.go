@@ -478,12 +478,25 @@ func trackerHeadMatches(repo string, number int, head, observedRepo string, obse
 	return number == observedNumber && head != "" && strings.EqualFold(head, observedHead) && strings.EqualFold(repo, observedRepo)
 }
 
+// trackerPrefersVerdict reports whether candidate should replace previous as
+// the current verdict: dissent beats approval, otherwise the newest wins.
+func trackerPrefersVerdict(previous, candidate evidence.Verdict) bool {
+	previousApproves, candidateApproves := previous.Verdict == "approve", candidate.Verdict == "approve"
+	if previousApproves != candidateApproves {
+		return previousApproves
+	}
+	return candidate.RecordedAt.After(previous.RecordedAt)
+}
+
+// trackerLatestBundleVerdicts keeps one verdict per reviewer (perspective,
+// backend, model): the newest recording, with dissent breaking exact ties.
 func trackerLatestBundleVerdicts(bundle *evidence.Bundle) []evidence.Verdict {
 	latest := map[string]evidence.Verdict{}
 	for _, verdict := range bundle.Verdicts {
 		key := verdict.Perspective + "\x00" + verdict.Backend + "\x00" + verdict.Model
-		if previous, ok := latest[key]; !ok || verdict.RecordedAt.After(previous.RecordedAt) ||
-			(verdict.RecordedAt.Equal(previous.RecordedAt) && previous.Verdict == "approve" && verdict.Verdict != "approve") {
+		previous, ok := latest[key]
+		if !ok || verdict.RecordedAt.After(previous.RecordedAt) ||
+			(verdict.RecordedAt.Equal(previous.RecordedAt) && trackerPrefersVerdict(previous, verdict)) {
 			latest[key] = verdict
 		}
 	}
@@ -508,8 +521,7 @@ func trackerReviewPerspectives(bundle *evidence.Bundle) []StageTrackerPerspectiv
 		previous, ok := latest[verdict.Perspective]
 		// Each backend/model has its own current verdict. An approval by
 		// another reviewer must not hide dissent that still blocks the head.
-		if !ok || (previous.Verdict == "approve" && verdict.Verdict != "approve") ||
-			((previous.Verdict == "approve") == (verdict.Verdict == "approve") && verdict.RecordedAt.After(previous.RecordedAt)) {
+		if !ok || trackerPrefersVerdict(previous, verdict) {
 			latest[verdict.Perspective] = verdict
 		}
 	}
@@ -596,6 +608,27 @@ func trackerAssignedCodeWorker(status *StatusPayload, repo string, number int, h
 		return observation
 	}
 	return nil
+}
+
+// trackerPerspectiveFindingLine renders a dissenting perspective as
+// "<name> ✗|requires human[: <summary>]" for the review caption, or "" for
+// anything else. The tracker-row-strip.js perspectiveLine() mirror rebuilds
+// this exact string to avoid repeating the finding; keep the two in step.
+func trackerPerspectiveFindingLine(perspective StageTrackerPerspective) string {
+	var mark string
+	switch perspective.Verdict {
+	case "changes_requested", "reject":
+		mark = "✗"
+	case "requires_human":
+		mark = "requires human"
+	default:
+		return ""
+	}
+	line := perspective.Name + " " + mark
+	if perspective.Summary != "" {
+		line += ": " + perspective.Summary
+	}
+	return line
 }
 
 func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, agg *review.Aggregate, dispatch review.DispatchState, status *StatusPayload, now time.Time) *StageTrackerActivity {
@@ -733,15 +766,8 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 	}
 	if out.State == "changes_requested" || out.State == "human_decision" {
 		for _, perspective := range out.Perspectives {
-			if perspective.Verdict == "changes_requested" || perspective.Verdict == "reject" || perspective.Verdict == "requires_human" {
-				mark := "✗"
-				if perspective.Verdict == "requires_human" {
-					mark = "requires human"
-				}
-				out.Caption += " · " + perspective.Name + " " + mark
-				if perspective.Summary != "" {
-					out.Caption += ": " + perspective.Summary
-				}
+			if line := trackerPerspectiveFindingLine(perspective); line != "" {
+				out.Caption += " · " + line
 				break
 			}
 		}

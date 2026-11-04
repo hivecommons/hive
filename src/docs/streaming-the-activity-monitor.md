@@ -37,7 +37,10 @@ recorded assignment/transition, never an invented return date.
 
 Track tooltips disclose the head, evidence source, observation time, state
 time and blocker where known. A `?` means stale or missing observation time;
-unknown activity has no spinner. Review assignment is read from dispatch, not
+unknown activity has no spinner. A settled verdict on the current head
+(approved, findings, passing, failing) does not go stale: its caption stays
+and the tooltip adds an "observed Nm ago · stale" age, while only motion
+states (running, reviewing, queued, ...) fall back to "activity unknown". Review assignment is read from dispatch, not
 the PR author, claimant, scanner or Prow approval labels. Verified current-head
 review evidence and the current aggregate supply approval/findings; missing
 reviewer identity is left unknown. An assignment is not proof of execution,

@@ -6,6 +6,10 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 `GET /api/stage-tracker` adds independent PR `ci_activity`, `review_activity`
 and `code_activity` observations, also copied to `linked_prs[]`. Each is
 `{head, state, caption, actor?, source, observed_at?, since?, blocker?, url?, active?}`.
+`review_activity` additionally carries `perspectives_done?`, `perspectives_total?`
+and `perspectives?: [{name, verdict, summary}]` — the latest current-head bundle
+verdict per perspective (dissent outranks approval), with `summary` the first
+finding when one was reported.
 These are display evidence, **not merge authorization**. An absent timestamp
 means unknown freshness; a different head invalidates the observation.
 CI is classified only against the resolved required set from the existing
