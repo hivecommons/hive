@@ -531,7 +531,8 @@
         sidebar.classList.toggle('open', open);
         backdrop.classList.toggle('open', open);
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-        toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+        toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+        toggle.title = open ? 'Close navigation' : 'Open navigation';
       }
       function closeDrawer() { if (isOpen()) setOpen(false); }
 
