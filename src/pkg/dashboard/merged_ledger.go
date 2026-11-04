@@ -397,6 +397,41 @@ func (l *MergedLedger) ClosedBy(repo string, issue, exclude int) int {
 	return 0
 }
 
+// Since lists the entries merged at or after since and not after now
+// (plus the minute of clock skew Summary allows), newest first. The stage
+// tracker's recently_merged reads it so a merge GitHub reported — by
+// anyone — is a terminal fact for the SPA as soon as the ledger has it.
+func (l *MergedLedger) Since(since, now time.Time) []MergedLedgerEntry {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []MergedLedgerEntry
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		e := l.entries[i]
+		if e.MergedAt.After(now.Add(time.Minute)) {
+			continue
+		}
+		if e.MergedAt.Before(since) {
+			break
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// Has reports whether the ledger lists repo#number as merged.
+func (l *MergedLedger) Has(repo string, number int) bool {
+	if l == nil || number <= 0 {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.index[mergedLedgerKey(repo, number)]
+	return ok
+}
+
 // Len is the number of listed (unpruned) entries.
 func (l *MergedLedger) Len() int {
 	l.mu.Lock()
