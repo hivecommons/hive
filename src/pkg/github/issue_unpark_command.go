@@ -784,7 +784,13 @@ func isUnparkRemovableLabel(label string) bool {
 }
 
 // hasIssueParkingLabel reports whether the issue is parked on a person.
+// `needs-human` beside the approval label and without a stage/045 park label
+// is an issue held after a human decision: nothing is open to decide, so it is
+// not parked (hivecommons/hive#16591).
 func hasIssueParkingLabel(labels []string) bool {
+	if isHeldAfterDecision(labels) {
+		return false
+	}
 	if hasIssueNeedsHumanLabel(labels) {
 		return true
 	}
@@ -1282,4 +1288,10 @@ func renderUnparkFixedReply(actor, note string, removed []string) string {
 	}
 	b.WriteString("; any `hold` label is left exactly as it was.\n\nIf this was closed by mistake, the reporter or a maintainer can comment `/reopen`.")
 	return b.String()
+}
+
+func isHeldAfterDecision(labels []string) bool {
+	return hasIssueNeedsHumanLabel(labels) && labelPresent(labels, HumanAckLabel) &&
+		!labelPresent(labels, NeedsDecisionStageLabel) && !labelPresent(labels, legacyIssueNeedsDecisionStageLabel) &&
+		!labelPresent(labels, issueNeedsDecisionLabel) && !labelPresent(labels, issueNeedsDirectionLabel)
 }
