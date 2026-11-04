@@ -280,12 +280,21 @@ func hubHeartbeatUnavailable(r slog.Record) bool {
 }
 
 // hubHeartbeatCachedFallback is the outcome notice for a bounded collector
-// timeout: sending stale stats is the liveness safeguard working as designed
-// (#16507). Keep the WARN in local logs, but do not file a second defect for
-// the fallback itself. The collector timeout and its slow-section breakdown,
-// collector panics, and heartbeat send failures remain reportable.
+// timeout: sending stale stats, a minimal liveness beat, skipping a beat before
+// identity is known, or dropping the fresh agent overlay is the liveness
+// safeguard working as designed (#16507, #16516). Keep the WARN in local logs,
+// but do not file a second defect for the fallback itself. The collector
+// timeout and its slow-section breakdown, collector panics, and heartbeat send
+// failures remain reportable.
 func hubHeartbeatCachedFallback(r slog.Record) bool {
-	return strings.TrimSpace(r.Message) == "hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green"
+	switch strings.TrimSpace(r.Message) {
+	case "hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect timed out with no cached payload — sending MINIMAL liveness beat (identity only, no stats) so the hub keeps this hive online; loop keeps ticking so liveness stays green",
+		"hub heartbeat collect timed out and hive identity not yet known — skipping this beat; loop keeps ticking so liveness stays green",
+		"hub heartbeat fresh stats collect timed out; sending stale cached stats without fresh agent overlay":
+		return true
+	}
+	return false
 }
 
 // reviewCommentCapped reports whether r is the review-request watcher noting

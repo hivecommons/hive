@@ -1,0 +1,1 @@
+- Activity Monitor: a row parked on a human decision now shows "Let hive decide" inline beside the server's lead (e.g. "Re-author") instead of hiding it under ⋯ → Decide…, and inline action pills are filled buttons with a ▸ glyph and a consequence tooltip so they no longer pass for record pills like "adopted from #N".
