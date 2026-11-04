@@ -39,6 +39,7 @@ const stubs = {
   sectionCardShell: (opts, body) => body,
   DASHBOARD_SECTION_CARD_CONFIG: { governor: { settingsHtml: '' } },
   applySectionCollapse: () => {},
+  contributorFirstFactsHtml: () => '',
 };
 
 function renderGovernorSection(gov) {
