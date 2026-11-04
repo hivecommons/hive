@@ -543,7 +543,8 @@ test('old-head or stale observations cannot fabricate running/completion, but do
     } else {
       assert.match(cells.ci, /active ham-current[^]*CI \?\/\? · running</, mode + ': the last observed state still reads in words');
       assert.match(cells.review, /done ham-current[^]*data-verdict="pass"[^]*Review: Review approved · /, mode + ': an approval of this head stays done, freshness only in the tooltip');
-      assert.match(cells.review, mode === 'stale' ? /stale · / : /observation time unknown/);
+      assert.match(cells.review, mode === 'stale' ? /observed 5m ago · 2026-11-02T20:55:00\.000Z/ : /observation time unknown/, mode + ': a settled verdict ages into an observed-ago suffix, never "stale" or "unknown"');
+      assert.doesNotMatch(cells.review, /activity unknown|stale/);
     }
   }
 });
@@ -823,4 +824,33 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
     assert.equal(text(cell), '');
     assert.match(cell, /<svg /);
   }
+});
+
+test('hive #16617: a stale changes-requested bundle on the current head stays red, names the failing perspective, and never reads "unknown"', () => {
+  const observed = new Date(now - 36 * 60000).toISOString();
+  const item = { kind: 'pr', head: 'b5c1f96c', review_activity: {
+    head: 'b5c1f96c', state: 'changes_requested', source: 'verified-review-bundle', observed_at: observed, since: new Date(now - 100 * 60000).toISOString(),
+    caption: 'Review findings · awaiting author · correctness ✗: Provenance helpers are a faithful move from the automerge engine',
+    perspectives_done: 5, perspectives_total: 5,
+    perspectives: [
+      { name: 'correctness', verdict: 'changes_requested', summary: 'Provenance helpers are a faithful move from the automerge engine' },
+      { name: 'plan-match', verdict: 'approve' }, { name: 'quality', verdict: 'approve' }, { name: 'security', verdict: 'approve' }, { name: 'style', verdict: 'approve' },
+    ],
+  } };
+  const html = track(item, 'review', { state: 'active' }, false, now);
+  assert.match(html, /ham-activity-track failing/, 'the chevron is red');
+  assert.match(html, /data-display-state="known"/);
+  assert.doesNotMatch(html, /unknown|stale|last observed/, 'a verdict on this head is known however old the observation');
+  const tip = html.match(/title="([^"]*)"/)[1];
+  assert.match(tip, /^Current pipeline phase · Review: Review 5\/5 · changes requested · Review findings · awaiting author · correctness ✗: Provenance/);
+  assert.equal((tip.match(/Review 5\/5 · changes requested/g) || []).length, 1, 'one state, said once');
+  assert.match(tip, /\ncorrectness ✗: Provenance helpers are a faithful move from the automerge engine\nplan-match ✓\nquality ✓\nsecurity ✓\nstyle ✓\nhead b5c1f96c · verified-review-bundle · observed 36m ago · /, 'every perspective on its own line, then head / source / observed / since');
+  assert.doesNotMatch(html, /data-motion/);
+  // Motion, by contrast, does age into unknown: a reviewer last seen working
+  // 36 minutes ago cannot be assumed to still be at it.
+  item.review_activity = { ...activity('reviewing', 'Review working · reviewer', true), head: 'b5c1f96c', observed_at: observed, actor: 'reviewer' };
+  assert.match(track(item, 'review', {}, false, now), /Review activity unknown · last observed reviewing/);
+  // No bundle for the head is the only unknown verdict.
+  item.review_activity = { head: 'other', state: 'changes_requested', caption: 'Review findings · awaiting author', source: 'verified-review-bundle', observed_at: observed };
+  assert.match(track(item, 'review', {}, false, now), /data-activity-state="unknown"/);
 });

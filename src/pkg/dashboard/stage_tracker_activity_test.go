@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -483,5 +484,77 @@ func TestStageTrackerActivityReviewPerspectiveCounts(t *testing.T) {
 	dispatch.Pending = nil
 	if got := count(bundle, agg, dispatch); got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
 		t.Fatalf("old-head evidence leaked into counts: %d/%d", got.PerspectivesDone, got.PerspectivesTotal)
+	}
+}
+
+// hivecommons/hive#16617: a verified bundle on the current head keeps its
+// verdict however long ago it was observed, and names each perspective's
+// verdict so a red chevron can say which perspective failed and why.
+func TestStageTrackerActivityStaleBundleKeepsVerdictAndPerspectives(t *testing.T) {
+	now := time.Date(2026, 11, 4, 16, 30, 0, 0, time.UTC)
+	pr, _, status := trackerActivityFixture(now)
+	dispatch := review.DispatchState{GeneratedAt: now}
+	finding := "Provenance helpers are a faithful move from the automerge engine; relay gate lifts only after author confirms."
+	verdicts := func(observed time.Time, correctness string) []evidence.Verdict {
+		return []evidence.Verdict{
+			{Perspective: "security", Backend: "b", Model: "m", Verdict: "approve", RecordedAt: observed},
+			{Perspective: "correctness", Backend: "b", Model: "m", Verdict: correctness, RecordedAt: observed, Findings: []evidence.Finding{{Summary: finding}}},
+			{Perspective: "style", Backend: "b", Model: "m", Verdict: "approve", RecordedAt: observed},
+		}
+	}
+	for _, tc := range []struct {
+		name            string
+		observed        time.Time
+		aggVerdict      review.Verdict
+		humanSummary    string
+		correctness     string
+		wantState       string
+		wantCaptionPart string
+		wantBlocker     string
+	}{
+		{"fresh changes_requested", now.Add(-30 * time.Second), "changes_requested", "", "changes_requested", "changes_requested", "correctness ✗: " + finding, ""},
+		{"stale changes_requested keeps verdict", now.Add(-90 * time.Minute), "changes_requested", "", "changes_requested", "changes_requested", "correctness ✗: " + finding, ""},
+		{"aggregate blocker restating the finding is said once", now.Add(-90 * time.Minute), "changes_requested", "correctness requires human: " + finding, "requires_human", "changes_requested", "correctness ?: " + finding, ""},
+		{"unrelated aggregate blocker is kept", now.Add(-90 * time.Minute), "changes_requested", "fixer gave up after 3 attempts", "changes_requested", "changes_requested", "correctness ✗: " + finding, "fixer gave up after 3 attempts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bundle := &evidence.Bundle{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, UpdatedAt: tc.observed, Verdicts: verdicts(tc.observed, tc.correctness)}
+			agg := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: tc.aggVerdict, RecordedAt: tc.observed}
+			if tc.humanSummary != "" {
+				agg.HumanSummaries = []string{tc.humanSummary}
+			}
+			got := stageTrackerReviewActivity(pr, bundle, agg, dispatch, status, now)
+			if got.State != tc.wantState || got.Source != "verified-review-bundle" {
+				t.Fatalf("state/source = %s/%s, want %s/verified-review-bundle: %+v", got.State, got.Source, tc.wantState, got)
+			}
+			if !strings.Contains(got.Caption, tc.wantCaptionPart) || strings.Contains(got.Caption, "unknown") {
+				t.Fatalf("caption %q does not name the failing perspective %q", got.Caption, tc.wantCaptionPart)
+			}
+			if got.Blocker != tc.wantBlocker {
+				t.Fatalf("blocker = %q, want %q", got.Blocker, tc.wantBlocker)
+			}
+			if got.ObservedAt == nil || !got.ObservedAt.Equal(tc.observed) {
+				t.Fatalf("observed_at = %v, want %v", got.ObservedAt, tc.observed)
+			}
+			want := []StageTrackerPerspective{
+				{Name: "correctness", Verdict: tc.correctness, Summary: stageTrackerFirstLine(finding)},
+				{Name: "security", Verdict: "approve"},
+				{Name: "style", Verdict: "approve"},
+			}
+			if !reflect.DeepEqual(got.Perspectives, want) {
+				t.Fatalf("perspectives = %+v, want %+v", got.Perspectives, want)
+			}
+		})
+	}
+	// No bundle for the head at all is the only "unknown".
+	if got := stageTrackerReviewActivity(pr, nil, nil, dispatch, status, now); got.State != "unknown" || len(got.Perspectives) != 0 {
+		t.Fatalf("no bundle should be unknown with no perspectives: %+v", got)
+	}
+	// Two models on one perspective: the non-approving one is the one named.
+	bundle := &evidence.Bundle{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, UpdatedAt: now, Verdicts: append(verdicts(now, "approve"),
+		evidence.Verdict{Perspective: "correctness", Backend: "b2", Model: "m2", Verdict: "changes_requested", RecordedAt: now.Add(-time.Minute), Findings: []evidence.Finding{{Summary: "off-by-one"}}})}
+	got := stageTrackerReviewActivity(pr, bundle, nil, dispatch, status, now)
+	if got.State != "changes_requested" || !strings.Contains(got.Caption, "correctness ✗: off-by-one") || got.Perspectives[0].Verdict != "changes_requested" {
+		t.Fatalf("split-model perspective did not name the dissent: %+v", got)
 	}
 }

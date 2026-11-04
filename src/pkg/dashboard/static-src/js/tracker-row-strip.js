@@ -154,8 +154,13 @@
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
       const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
-      const active = known && a.active;
+      // A settled verdict on the current head (a pass / fail, approval,
+      // findings or a sign-off ask from the verified bundle) does not age
+      // into "unknown": only motion does. The chevron colour comes from
+      // the state, so the words must agree with it (hivecommons/hive#16617).
+      const settledVerdict = matches && ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing'].includes(state);
+      const known = matches && state !== 'unknown' && (settledVerdict || (Number.isFinite(observed) && !stale));
+      const active = known && a.active && !stale;
       if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
       const ownsPR = item.kind === 'pr' || item.via_pr;
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
@@ -169,7 +174,11 @@
       const running = stageTrackerTrackRunning(item, kind);
       const cls = finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : running ? 'active' : text ? 'pending' : 'todo';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
-      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
+      const ageMin = Number.isFinite(observed) ? Math.max(0, Math.round((clock - observed) / 60000)) : 0;
+      const ageWord = ageMin < 60 ? ageMin + 'm ago' : ageMin < 48 * 60 ? Math.floor(ageMin / 60) + 'h ago' : Math.floor(ageMin / 1440) + 'd ago';
+      const freshness = !Number.isFinite(observed) ? 'observation time unknown'
+        : stale && settledVerdict ? 'observed ' + ageWord + ' · ' + new Date(observed).toISOString()
+        : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
       let blocker = matches && a.blocker ? ' · ' + a.blocker : '';
       // A sign-off ask: the tooltip carries the question itself (who should
@@ -180,7 +189,14 @@
       // The backend's plain-language sentence behind the caption rides in
       // the tooltip only; the chevron clamps the caption.
       const detail = matches && a.detail ? ' · ' + a.detail : '';
-      let tip = caption + blocker + detail + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
+      // One line per reviewer perspective ("correctness ✗: …", "security
+      // ✓") so a red chevron always names what failed and why.
+      const perspectives = matches && Array.isArray(a.perspectives) ? a.perspectives.filter(p => p && p.name).map(p => {
+        const mark = p.verdict === 'approve' ? '✓' : p.verdict === 'requires_human' ? '?' : '✗';
+        return p.name + ' ' + mark + (p.summary ? ': ' + p.summary : '');
+      }) : [];
+      const perspectiveLines = perspectives.length ? '\n' + perspectives.join('\n') + '\n' : '';
+      let tip = caption + blocker + detail + perspectiveLines + (perspectiveLines ? '' : ' · ') + 'head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
@@ -204,7 +220,7 @@
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
       const hold = item.hold;
-      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text ? text + ' · ' : '') + tip +
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text && tip.indexOf(text) !== 0 ? text + ' · ' : '') + tip +
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
@@ -403,7 +419,9 @@
         const clock = Number(nowMs) || Date.now();
         const fresh = Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
         if ((a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state)) && !fresh) return name + ' activity unknown · last observed ' + (a.state || 'unknown');
-        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · stale observation' : '');
+        const ageMin = Math.max(0, Math.round((clock - observed) / 60000));
+        const ageWord = ageMin < 60 ? ageMin + 'm ago' : ageMin < 48 * 60 ? Math.floor(ageMin / 60) + 'h ago' : Math.floor(ageMin / 1440) + 'd ago';
+        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · observed ' + ageWord : '');
       }).join(' · ') : '';
       return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
     }

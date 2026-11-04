@@ -45,6 +45,100 @@ type StageTrackerActivity struct {
 	// verdict for the current head.
 	PerspectivesDone  int `json:"perspectives_done,omitempty"`
 	PerspectivesTotal int `json:"perspectives_total,omitempty"`
+	// Perspectives are the latest per-perspective verdicts of the verified
+	// bundle on the current head, so a red Review chevron can always name
+	// which perspective failed and why (hivecommons/hive#16617). Empty when
+	// no bundle exists for the head.
+	Perspectives []StageTrackerPerspective `json:"perspectives,omitempty"`
+}
+
+// StageTrackerPerspective is one reviewer perspective's latest verdict on
+// the current head: its name, the verdict word (approve, changes_requested,
+// reject, requires_human) and the first finding's one-line summary.
+type StageTrackerPerspective struct {
+	Name    string `json:"name"`
+	Verdict string `json:"verdict"`
+	Summary string `json:"summary,omitempty"`
+}
+
+// stageTrackerBundlePerspectives folds the bundle's latest verdicts into one
+// entry per perspective: a non-approving verdict wins over an approval from
+// another model, otherwise the most recent one does. Sorted by name.
+func stageTrackerBundlePerspectives(bundle *evidence.Bundle) []StageTrackerPerspective {
+	type pick struct {
+		verdict evidence.Verdict
+		set     bool
+	}
+	picks := map[string]pick{}
+	for _, verdict := range trackerLatestBundleVerdicts(bundle) {
+		if verdict.Perspective == "" {
+			continue
+		}
+		previous := picks[verdict.Perspective]
+		if !previous.set ||
+			(previous.verdict.Verdict == "approve" && verdict.Verdict != "approve") ||
+			(previous.verdict.Verdict == "approve") == (verdict.Verdict == "approve") && verdict.RecordedAt.After(previous.verdict.RecordedAt) {
+			picks[verdict.Perspective] = pick{verdict: verdict, set: true}
+		}
+	}
+	names := make([]string, 0, len(picks))
+	for name := range picks {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	out := make([]StageTrackerPerspective, 0, len(names))
+	for _, name := range names {
+		verdict := picks[name].verdict
+		p := StageTrackerPerspective{Name: name, Verdict: verdict.Verdict}
+		if len(verdict.Findings) > 0 {
+			p.Summary = stageTrackerFirstLine(verdict.Findings[0].Summary)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// stageTrackerFailingPerspective is the caption fragment naming the first
+// perspective that did not approve — "correctness ✗: <summary>" — or the empty string
+// when every perspective approved.
+func stageTrackerFailingPerspective(perspectives []StageTrackerPerspective) string {
+	p := stageTrackerFirstNonApproving(perspectives)
+	if p == nil {
+		return ""
+	}
+	mark := "✗"
+	if p.Verdict == "requires_human" {
+		mark = "?"
+	}
+	if p.Summary == "" {
+		return p.Name + " " + mark
+	}
+	return p.Name + " " + mark + ": " + p.Summary
+}
+
+func stageTrackerFirstNonApproving(perspectives []StageTrackerPerspective) *StageTrackerPerspective {
+	for i := range perspectives {
+		if p := &perspectives[i]; p.Verdict != "approve" && p.Verdict != "" {
+			return p
+		}
+	}
+	return nil
+}
+
+// stageTrackerBlockerRepeats reports whether the aggregate's one-line
+// blocker restates the named perspective's finding (both are first-line
+// truncations of the same reviewer text), so the tooltip says it once.
+func stageTrackerBlockerRepeats(blocker string, perspectives []StageTrackerPerspective) bool {
+	p := stageTrackerFirstNonApproving(perspectives)
+	if p == nil || p.Summary == "" || blocker == "" {
+		return false
+	}
+	const probe = 40
+	key := []rune(strings.TrimSuffix(p.Summary, "…"))
+	if len(key) > probe {
+		key = key[:probe]
+	}
+	return len(key) > 0 && strings.Contains(blocker, string(key))
 }
 
 const trackerActivityFreshWindow = 2 * time.Minute
@@ -440,6 +534,8 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 	qualify := stageTrackerRepoQualifier(status)
 	if bundle != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, bundle.Repo, bundle.Number, bundle.HeadSHA) {
 		out.Source, out.ObservedAt = "verified-review-bundle", timePtr(bundle.UpdatedAt)
+		out.Perspectives = stageTrackerBundlePerspectives(bundle)
+		failing := stageTrackerFailingPerspective(out.Perspectives)
 		for _, verdict := range trackerLatestBundleVerdicts(bundle) {
 			if !verdict.RecordedAt.IsZero() && (out.Since == nil || verdict.RecordedAt.After(*out.Since)) {
 				at := verdict.RecordedAt
@@ -462,6 +558,12 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 			case "changes_requested", "reject":
 				out.State, out.Caption = "changes_requested", "Review findings · awaiting author"
 				out.Blocker = stageTrackerFixerExhaustedSummary(agg)
+				if failing != "" {
+					out.Caption += " · " + failing
+					if stageTrackerBlockerRepeats(out.Blocker, out.Perspectives) {
+						out.Blocker = ""
+					}
+				}
 			case "requires_human":
 				out.State, out.Caption = "human_decision", "Review findings · needs owner sign-off"
 				out.Blocker = agg.DecisionQuestion
@@ -471,7 +573,9 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 			for _, verdict := range trackerLatestBundleVerdicts(bundle) {
 				if verdict.Verdict == "changes_requested" || verdict.Verdict == "reject" {
 					out.State, out.Caption = "changes_requested", "Review findings · awaiting author"
-					if len(verdict.Findings) > 0 {
+					if failing != "" {
+						out.Caption += " · " + failing
+					} else if len(verdict.Findings) > 0 {
 						out.Blocker = verdict.Findings[0].Summary
 					}
 					break
