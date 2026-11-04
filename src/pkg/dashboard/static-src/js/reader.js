@@ -43,7 +43,7 @@
     var feed = element('div', 'reader-feed', '', scroller);
     var motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     var pending = [], current = null, readUntil = 0, timer = 0, lastSeq = 0;
-    var history = [], retainedLines = 0, retainedBytes = 0, epoch = '', snapshotThrough = null, contentGeneration = 0;
+    var retained = [], retainedLines = 0, retainedBytes = 0, epoch = '', snapshotThrough = null, contentGeneration = 0;
     var enabled = false, manualPause = false, loading = false, again = false, problem = '';
     function paused(){ return manualPause || document.hidden; }
     // The source supplies indivisible regions. Never infer a paragraph from
@@ -57,11 +57,11 @@
         var item = {repo: region.repo, pr: region.pr, path: region.path, prURL: region.pr_url,
           stage: 'Pushed PR', at: region.at, lines: region.lines, size: size,
           delivery: Number(region.seq) <= snapshotThrough ? 'Buffered snapshot' : 'Newly received checkpoint'};
-        history.push(item); pending.push(item);
+        retained.push(item); pending.push(item);
         retainedLines += item.lines.length; retainedBytes += size;
         while (retainedLines > MAX_LINES || retainedBytes > MAX_BYTES) {
-          var victim = history.findIndex(function(r){ return r !== current; });
-          var old = history.splice(victim, 1)[0];
+          var victim = retained.findIndex(function(r){ return r !== current; });
+          var old = retained.splice(victim, 1)[0];
           retainedLines -= old.lines.length; retainedBytes -= old.size;
           pending = pending.filter(function(r){ return r !== old; });
           if (old.node) { feed.removeChild(old.node); old.node = null; }
@@ -116,7 +116,7 @@
       while (feed.children.length > MAX_CARDS) {
         var first = feed.children[0], height = first.offsetHeight || 0;
         feed.removeChild(first);
-        history.forEach(function(r){ if (r.node === first) r.node = null; });
+        retained.forEach(function(r){ if (r.node === first) r.node = null; });
         scroller.scrollTop = Math.max(0, (scroller.scrollTop || 0) - height);
       }
     }
@@ -180,7 +180,7 @@
     function clearContent(message){
       contentGeneration++;
       stop();
-      enabled = false; pending = []; history = []; retainedLines = 0; retainedBytes = 0;
+      enabled = false; pending = []; retained = []; retainedLines = 0; retainedBytes = 0;
       current = null; lastSeq = 0; snapshotThrough = null; problem = message;
       feed.replaceChildren();
       updateStatus();
@@ -216,10 +216,10 @@
         .finally(function(){ loading = false; if (again) pull(); });
     };
     replay.addEventListener('click', function(){
-      if (!enabled || !history.length) return;
+      if (!enabled || !retained.length) return;
       stop(); feed.replaceChildren(); current = null; readUntil = 0;
-      history.forEach(function(r){ r.node = null; r.delivery = 'Replay · buffered snapshot'; });
-      pending = history.slice(); schedule(false);
+      retained.forEach(function(r){ r.node = null; r.delivery = 'Replay · buffered snapshot'; });
+      pending = retained.slice(); schedule(false);
     });
     button.addEventListener('click', function(){ setPaused(!manualPause); });
     scroller.addEventListener('wheel', inspect, {passive: true});
