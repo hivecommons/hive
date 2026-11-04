@@ -74,15 +74,17 @@ const src = [
   pick(/function stageTrackerIsPrimary\(repo, primary\) \{[\s\S]*?\n    \}\n/, 'stageTrackerIsPrimary'),
   pick(/function stageTrackerRepoChipHtml\(repo, ctx\) \{[\s\S]*?\n    \}\n/, 'stageTrackerRepoChipHtml'),
   pick(/function stageTrackerPrimaryRepo\(\) \{[^\n]*\n/, 'stageTrackerPrimaryRepo'),
+  pick(/function stageTrackerMergerText\(by\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergerText'),
+  pick(/function stageTrackerMergedByOf\(key, d\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergedByOf'),
   pick(/function stageTrackerMergeBannerText\(b, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerText'),
   pick(/function stageTrackerMergeBanner\(b\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBanner'),
   pick(/function stageTrackerMergeBannerDismiss\(el\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMergeBannerDismiss'),
   pick(/function hamBannerDismiss\(btn\) \{[\s\S]*?\n    \}\n/, 'hamBannerDismiss'),
 ].join('\n');
 
-function load() {
+function load(tracker) {
   const dom = makeDom();
-  const api = new Function('document', 'setTimeout', 'clearTimeout', src + '; return { banner: stageTrackerMergeBanner, dismiss: stageTrackerMergeBannerDismiss, hamBannerDismiss, merged: _stageTrackerMerged, filter: _stageTrackerFilter, chip: stageTrackerRepoChipHtml };')(dom.document, dom.setTimeout, dom.clearTimeout);
+  const api = new Function('document', 'setTimeout', 'clearTimeout', '_stageTracker', src + '; return { banner: stageTrackerMergeBanner, dismiss: stageTrackerMergeBannerDismiss, hamBannerDismiss, merged: _stageTrackerMerged, filter: _stageTrackerFilter, chip: stageTrackerRepoChipHtml, mergerText: stageTrackerMergerText, mergedByOf: stageTrackerMergedByOf, bannerText: stageTrackerMergeBannerText };')(dom.document, dom.setTimeout, dom.clearTimeout, tracker || null);
   return Object.assign(dom, api);
 }
 
@@ -197,4 +199,45 @@ test('merge repo chips use the existing escaping and preview behavior', () => {
   assert.ok(!el.innerHTML.includes('<console'));
   assert.ok(!el.innerHTML.includes('Open on GitHub'), 'preview does not invent a GitHub URL');
   assert.ok(el.innerHTML.includes('(test)'));
+});
+
+// hivecommons/hive#16658: a PR merged by anyone celebrates, and the head
+// names the merger — "merged by @login" for a human, "merged by 🐝 hive"
+// for the hive's own merge — so an external merge reads like the hive's.
+test('#16658: merger text names a human by @login and the hive by 🐝', () => {
+  const d = load();
+  assert.strictEqual(d.mergerText('clubanderson'), '@clubanderson');
+  assert.strictEqual(d.mergerText('hive'), '🐝 hive');
+  assert.strictEqual(d.mergerText(''), '');
+  assert.strictEqual(d.mergerText(undefined), '');
+  assert.strictEqual(d.mergerText('  '), '');
+});
+
+test('#16658: banner head reads "#N merged by <merger>" and falls back to plain "merged" when unknown', () => {
+  const d = load();
+  const at = Date.now();
+  const human = d.bannerText({ key: 'hivecommons/hive/pr#16644', repo: 'hivecommons/hive', number: 16644, merged_by: 'clubanderson', at }, at);
+  assert.strictEqual(human.head, '#16644 merged by @clubanderson');
+  assert.strictEqual(human.merger, '@clubanderson');
+  const hive = d.bannerText({ key: 'hivecommons/hive/pr#16645', repo: 'hivecommons/hive', number: 16645, merged_by: 'hive', at }, at);
+  assert.strictEqual(hive.head, '#16645 merged by 🐝 hive');
+  const unknown = d.bannerText({ key: 'hivecommons/hive/pr#1', repo: 'hivecommons/hive', number: 1, at }, at);
+  assert.strictEqual(unknown.head, '#1 merged');
+  assert.strictEqual(unknown.merger, '');
+  const preview = d.bannerText({ key: 'hivecommons/hive/pr#2', repo: 'hivecommons/hive', number: 2, merged_by: 'hive', preview: true, at }, at);
+  assert.strictEqual(preview.head, '#2 merged by 🐝 hive (test)');
+});
+
+test('#16658: mergedByOf resolves the merger from recently_merged, then the ledger, then the held terminal fact', () => {
+  const tracker = {
+    recently_merged: [{ repo: 'hivecommons/hive', number: 16644, merged_by: 'clubanderson' }],
+    merged: { recent: [{ repo: 'hive', number: 16645, merged_by: 'hive' }, { repo: 'acme/other', number: 16644, merged_by: 'someone-else' }] },
+  };
+  const d = load(tracker);
+  assert.strictEqual(d.mergedByOf('hivecommons/hive/pr#16644', tracker), 'clubanderson', 'audit/ledger union wins, repo-scoped');
+  assert.strictEqual(d.mergedByOf('hivecommons/hive/pr#16645', tracker), 'hive', 'short repo name in the ledger matches the key');
+  assert.strictEqual(d.mergedByOf('acme/other/pr#16644', tracker), 'someone-else', 'colliding numbers stay repo-scoped');
+  assert.strictEqual(d.mergedByOf('hivecommons/hive/pr#9999', tracker), '', 'unknown PR is empty, never a guess');
+  assert.strictEqual(d.mergedByOf('', tracker), '');
+  assert.strictEqual(d.mergedByOf('hivecommons/hive/pr#16644', null), '', 'no payload, no held fact → empty');
 });
