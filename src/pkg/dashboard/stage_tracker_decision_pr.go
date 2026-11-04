@@ -206,6 +206,52 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	return d
 }
 
+// decisionApproveSignOffConsequence is the inline Approve pill's hover on
+// a sign-off ask.
+const decisionApproveSignOffConsequence = "Posts /lgtm + /approve as you; the merge queue takes it from there. Nothing merges here."
+
+// stageTrackerLeadApproveForSignOff marks Approve the lead answer on a PR
+// parked for a policy sign-off: a reviewer or the security check asked a
+// person to accept something (a workflow change from a fork touching a
+// secret, hivecommons/hive#16572), the reviews are otherwise done
+// (human_decision / approved on this head), Approve is enabled and CI is
+// not failing. The row then reads "Approve ▸ · Let hive decide ▸" instead
+// of leading with delegate. Runs after CI and review activity are
+// derived, since decisionForPR sees neither. A lead the question already
+// chose (Re-author, Close as superseded) stands.
+func stageTrackerLeadApproveForSignOff(it *StageTrackerItem) {
+	if it == nil || it.Kind != "pr" || it.DecisionNeeded == nil {
+		return
+	}
+	d := it.DecisionNeeded
+	if d.AskedBy != decisionAskedByReviewer && d.AskedBy != decisionAskedBySentinel {
+		return
+	}
+	for _, o := range d.Options {
+		if o.Lead {
+			return
+		}
+	}
+	if it.CIActivity != nil && it.CIActivity.Head == it.Head && (it.CIActivity.State == "failing" || it.CIActivity.ChecksFailed > 0) {
+		return
+	}
+	if it.ReviewActivity == nil || it.ReviewActivity.Head != it.Head ||
+		(it.ReviewActivity.State != "human_decision" && it.ReviewActivity.State != "approved") {
+		return
+	}
+	for i := range d.Options {
+		o := &d.Options[i]
+		if o.Action != decisionActionApprove || !o.Enabled {
+			continue
+		}
+		o.Lead = true
+		if o.Consequence == "" {
+			o.Consequence = decisionApproveSignOffConsequence
+		}
+		return
+	}
+}
+
 // decisionLeadWithCloseSuperseded moves "Close as superseded" to the front
 // of opts with the superseding PR named in its consequence.
 func decisionLeadWithCloseSuperseded(opts []StageTrackerDecisionOption, redundantOf int) []StageTrackerDecisionOption {

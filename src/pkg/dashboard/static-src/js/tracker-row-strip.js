@@ -79,8 +79,18 @@
         case 'approved': return count + ' approved';
         case 'changes_requested': return count + ' · changes requested';
         // The hive on the repair (adopted / remediating) is not a human
-        // decision: the findings are the changes requested.
-        case 'human_decision': return count + (stageTrackerHiveOwnsRepair(item) ? ' · changes requested' : ' · awaiting human decision');
+        // decision: the findings are the changes requested. Otherwise the
+        // reviews are done and a person's sign-off is what is left — the
+        // viewer's when the ask names them, else the owner's. Never
+        // "awaiting human" to the human it waits on (hivecommons/hive#16572:
+        // "why does review say awaiting humans if 5/5 reviews are good?").
+        case 'human_decision': {
+          if (stageTrackerHiveOwnsRepair(item)) return count + ' · changes requested';
+          const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
+          const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
+          const mine = !!me && q.indexOf('@' + me) >= 0;
+          return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
+        }
         case 'reviewing': case 'adjudicating': return count + ' · ' + (actor ? actor + ' reviewing' : 'reviewing');
         case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued');
         case 'unassigned': return count + ' · swarm requested';
@@ -161,7 +171,12 @@
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
-      const blocker = matches && a.blocker ? ' · ' + a.blocker : '';
+      let blocker = matches && a.blocker ? ' · ' + a.blocker : '';
+      // A sign-off ask: the tooltip carries the question itself (who should
+      // decide what, and why — "workflow change from a fork") when the
+      // review evidence did not already quote it.
+      const ask = matches && state === 'human_decision' && item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question) : '';
+      if (ask && blocker.indexOf(ask) < 0) blocker += ' · ' + ask;
       // The backend's plain-language sentence behind the caption rides in
       // the tooltip only; the chevron clamps the caption.
       const detail = matches && a.detail ? ' · ' + a.detail : '';
