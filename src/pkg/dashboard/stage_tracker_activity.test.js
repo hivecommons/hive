@@ -13,7 +13,8 @@ function fn(source, name) {
   assert.ok(match, name);
   return match[0];
 }
-const esc = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
+// Mirrors production esc(): newlines flatten to spaces.
+const esc = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;').replaceAll('\n', ' ');
 const globals = `
 const STAGE_TRACKER_PATH = [0, 10, 20, 30, 50, 80];
 const STAGE_TRACKER_TERMINAL = 110;
@@ -883,7 +884,7 @@ test('settled current-head verdicts keep one known caption at every observation 
 });
 
 test('motion needs a fresh observation even when the backend active flag is cached', () => {
-  for (const [kind, state] of [['review', 'reviewing'], ['review', 'adjudicating'], ['review', 'assigned'], ['ci', 'running'], ['ci', 'queued']]) {
+  for (const [kind, state] of [['review', 'reviewing'], ['review', 'adjudicating'], ['review', 'assigned'], ['review', 'unassigned'], ['review', 'waiting_ci'], ['ci', 'running'], ['ci', 'queued'], ['ci', 'waiting_ci']]) {
     for (const observed of [new Date(now - 15 * 60000).toISOString(), undefined, new Date(now + 60000).toISOString()]) {
       const item = { kind: 'pr', head: 'head', [kind + '_activity']: { ...activity(state, 'Work observed', true), observed_at: observed } };
       const html = track(item, kind, {}, false, now);
@@ -911,7 +912,7 @@ test('review tooltip lists escaped perspective verdicts before current-head prov
   assert.ok(tip.includes(esc(caption) + '<br>correctness ✗: ' + esc(summary)));
   assert.match(tip, /<br>security ✓<br>quality ✗: explain the edge case<br>head head · verified-review-bundle · observed 15m ago/);
   assert.doesNotMatch(html, /<img|activity unknown|last observed/);
-  assert.ok(html.includes('\nsecurity ✓\nquality ✗: explain the edge case\nhead head'), 'accessible title retains the same perspective lines');
+  assert.ok(html.includes(' security ✓ quality ✗: explain the edge case head head'), 'accessible title flattens the same perspective lines');
   item.head = 'new-head';
   assert.doesNotMatch(track(item, 'review', {}, false, now), /correctness|security|edge case|verified-review-bundle|<img|&lt;img/);
 });
