@@ -1,0 +1,1 @@
+- Activity Monitor stage chevrons are a one-line band again on phones and touch tablets; the chevron's info wrapper no longer inherits the 40px tap-target floor (and ring) that made every chevron a 44px box ([#16551](https://github.com/hivecommons/hive/issues/16551)).
