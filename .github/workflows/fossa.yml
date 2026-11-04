@@ -49,6 +49,30 @@ jobs:
           team: Hive Commons
           branch: ${{ github.head_ref || github.ref_name }}
 
+      # A recent base-branch push may still be queued or analyzing in FOSSA.
+      # Upload the exact diff baseline here so the PR test does not race it.
+      # Check it out after the PR scan to keep it out of that scan's discovery.
+      - name: Checkout FOSSA diff baseline
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .fossa-base
+          persist-credentials: false
+
+      - name: Analyze FOSSA diff baseline
+        if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
+        working-directory: .fossa-base
+        env:
+          FOSSA_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FOSSA_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        # Reuse the CLI installed by Run FOSSA scan; the action has no revision input.
+        run: |
+          fossa analyze --project hivecommons/hive \
+            --revision "$FOSSA_BASE_SHA" \
+            --branch "$FOSSA_BASE_BRANCH" \
+            --team "Hive Commons"
+
       - name: Run FOSSA policy test
         if: env.FOSSA_API_KEY != '' && github.event_name == 'pull_request'
         uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
