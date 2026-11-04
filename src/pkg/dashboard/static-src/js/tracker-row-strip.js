@@ -195,13 +195,22 @@
       if (code && !codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_STATIC;
       if (motion === STAGE_TRACKER_MOTION_ACTIVE && !worker) motion = STAGE_TRACKER_MOTION_STATIC;
       if (codeWorking && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
+      // Evidence-based remediation (stage_tracker_remediation.go): the PR in
+      // progress chevron pulses only while somebody is KNOWN to be on a red
+      // PR (kick / claim); "unassigned" is bright but still; a fix head
+      // pushed after the red signal is done-style with its word.
+      const codeOnHead = code && String(code.head || '') === String(item.head || '');
+      const remediation = codeOnHead && ['unassigned', 'remediating', 'fix_pushed'].includes(code.state) ? code.state : '';
+      if (remediation === 'remediating' && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
+      const evidence = item.remediation && item.remediation.kind ? 'evidence: ' + item.remediation.kind + (item.remediation.actor ? ' by ' + item.remediation.actor : '') + (item.remediation.since ? ' since ' + item.remediation.since : '') + (item.remediation.source ? ' (' + item.remediation.source + ')' : '') : '';
       const motionAttr = motion === STAGE_TRACKER_MOTION_STATIC ? '' : ` data-motion="${motion}"`;
       return segs.map(sg => {
         if (sg.number === 50) return ['ci', 'review'].map(kind => stageTrackerActivityTrackHtml(item, kind, sg, sg.number < from || sg.number > to, nowMs)).join('');
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
         const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', fixPushed ? 'ham-fix-pushed' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -241,6 +250,8 @@
           if (!sg.cap && typeof stageTrackerCueLead === 'function') tip = stageTrackerCueLead(item, worker, nowMs) + tip;
           if (sg.number === 30 && item.code_activity && Number(item.display_column) === 30) {
             tip = (codeWorking ? code.caption : sg.detour ? sg.detour.text : 'Code activity unknown') + ' · head ' + (item.head || 'unknown') + ' · ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown');
+            if (code.detail) tip += ' · ' + code.detail;
+            if (evidence) tip += ' · ' + evidence;
             if (code.blocker) tip += ' · ' + code.blocker;
             if (claimant) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
           }
@@ -280,8 +291,12 @@
           const content = `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
           // A decision's dialog is its sole hover/focus detail surface.
           inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
+        } else if (fixPushed) {
+          const pushedTip = [code.caption, code.detail, evidence, item.head ? 'head ' + item.head : '', code.since ? 'since ' + code.since : ''].filter(Boolean).join(' · ');
+          const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
+          inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(pushedTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(code.caption)}</span></span><span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(pushedTip)}</span></span>`;
         } else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
+        return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
 
