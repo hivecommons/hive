@@ -388,12 +388,12 @@ func maintainerCallQuestion(body string) string {
 // logVerdictDispatchRefusal reports a discarded verdict. A self-approval
 // refusal is the guard working as designed, not a runtime fault, so it is
 // logged at INFO to keep it out of the fleet's repeated-error reports.
-func (c *Client) logVerdictDispatchRefusal(req ReviewRequest, report review.PerspectiveReport, reason string) {
+func (c *Client) logVerdictDispatchRefusal(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, reason string) {
 	level := slog.LevelWarn
 	if reason == "author_self_approval" {
 		level = slog.LevelInfo
 	}
-	c.logger.Log(context.Background(), level, "review-request watcher: verdict does not match a review dispatch, discarded",
+	c.logger.Log(ctx, level, "review-request watcher: verdict does not match a review dispatch, discarded",
 		slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
 		slog.String("perspective", string(report.Perspective)),
 		slog.String("agent", req.Agent),
@@ -423,7 +423,7 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	// here exactly as it would be for a single-object verdict.
 	auth := c.verdictDispatchAuthorizedAt(ctx, report, req, prSnapshot)
 	if !auth.OK {
-		c.logVerdictDispatchRefusal(req, report, auth.Reason)
+		c.logVerdictDispatchRefusal(ctx, req, report, auth.Reason)
 		return report, false, false
 	}
 	// A dispatched verdict is stored under the head its dispatch record names,

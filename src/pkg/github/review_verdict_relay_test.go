@@ -861,7 +861,7 @@ func TestLogVerdictDispatchRefusalLevel(t *testing.T) {
 		t.Run(tt.reason, func(t *testing.T) {
 			var logBuf bytes.Buffer
 			c := &Client{logger: slog.New(slog.NewTextHandler(&logBuf, nil))}
-			c.logVerdictDispatchRefusal(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer"}, review.PerspectiveReport{}, tt.reason)
+			c.logVerdictDispatchRefusal(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer"}, review.PerspectiveReport{}, tt.reason)
 			if !strings.Contains(logBuf.String(), tt.wantLevel) {
 				t.Fatalf("log = %q, want %s", logBuf.String(), tt.wantLevel)
 			}
