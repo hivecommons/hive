@@ -24,21 +24,21 @@ import (
 // was sent, serves a scripted sequence of Job statuses, one pod, its log and
 // its terminated exit code, and records deletes.
 type fakeAPI struct {
-	mu              sync.Mutex
-	created         map[string]any
-	statuses        []string // JSON bodies served to successive GET job calls
-	getCalls        int
-	deleted         bool
-	podName         string
-	exitCode        int
-	noPod           bool
-	logBody         string
-	podStatus       string // "terminated" or "running"
-	failCode        int    // when >0, every request fails with this status
-	createErr       int    // when >0, POST fails with this status
-	onJobGet        func() // called (under mu) on every GET job, after it is counted
+	mu                    sync.Mutex
+	created               map[string]any
+	statuses              []string // JSON bodies served to successive GET job calls
+	getCalls              int
+	deleted               bool
+	podName               string
+	exitCode              int
+	noPod                 bool
+	logBody               string
+	podStatus             string // "terminated" or "running"
+	failCode              int    // when >0, every request fails with this status
+	createErr             int    // when >0, POST fails with this status
+	onJobGet              func() // called (under mu) on every GET job, after it is counted
 	onPodLogAfterComplete func() // called (under mu) on pod log request after Job Complete
-	jobCompleted    bool   // tracks whether job status shows Complete
+	jobCompleted          bool   // tracks whether job status shows Complete
 }
 
 func newFakeAPI() *fakeAPI {
