@@ -81,6 +81,8 @@ type matrixLinesResponse struct {
 	Seq    uint64       `json:"seq"`
 	Source string       `json:"source"`
 	Lines  []matrixLine `json:"lines"`
+	// More is true only when another line this caller may see remains.
+	More bool `json:"more"`
 	// LastIngestAt is when the pass that feeds this source last finished
 	// (RFC 3339), or null before the first; NextIngestInS is the whole
 	// seconds until the next pass is due, 0 when unknown. Together they let
@@ -130,7 +132,7 @@ func (s *Server) handleMatrixLines(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Filter inside the scan so max counts only lines this caller may see.
-	lines, latest := src.SinceMatching(since, limit, func(l matrixLine) bool {
+	lines, latest, more := src.SinceMatching(since, limit, func(l matrixLine) bool {
 		return cfg.RepoAllowed(l.Repo)
 	})
 
@@ -139,6 +141,7 @@ func (s *Server) handleMatrixLines(w http.ResponseWriter, r *http.Request) {
 		Seq:    latest,
 		Source: "pushed-lines",
 		Lines:  lines,
+		More:   more,
 	}
 	if last, nextS := src.ingestStatus(src.now()); !last.IsZero() {
 		resp.LastIngestAt = &last
