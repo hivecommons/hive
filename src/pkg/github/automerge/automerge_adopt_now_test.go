@@ -159,3 +159,29 @@ func TestAdoptNowTakesOverOwnerAuthoredPR(t *testing.T) {
 		t.Fatalf("forced mark or person block survived the adoption: %+v", rec)
 	}
 }
+
+// hivecommons/hive#16489: the adoption/supersede label queued with Adopt now
+// is consumed with the forced mark, so later sweeps do not re-read it as a
+// plain request and refuse an owner's PR every pass.
+func TestAdoptNowConsumesSupersedeLabelOn072(t *testing.T) {
+	policy := adoptPolicy()
+	policy.OwnerAuthor = func(login string) bool { return login == "mallory" }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, policy)
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: false}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+
+	store.NoteAdoptionForced(key, "clubanderson", h.clock.now())
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", append(labels, "adoption/supersede")...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("Adopt now did not supersede: pulls=%v", h.adopt.pulls)
+	}
+	if !containsLabel(h.api.removed, "adoption/supersede") {
+		t.Fatalf("request label kept after the forced adoption was consumed: removed=%v", h.api.removed)
+	}
+}

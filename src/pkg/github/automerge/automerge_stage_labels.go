@@ -1362,10 +1362,18 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					}
 				}
 				if policy.Adoption {
+					before, _ := store.Get(key)
 					n, err := c.adoptContributorPR(ctx, store, key, obs, policy, presence, hasPresence, now)
 					result.Comments += n
 					if err != nil && firstErr == nil {
 						firstErr = err
+					}
+					// A consumed request (a forced adoption included) must not
+					// leave its label behind to re-refuse every sweep.
+					if after, ok := store.Get(key); ok && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after) || after.AdoptionRequestConsumed(obs.HeadSHA)) {
+						if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, delegatedecision.LabelAdoptSupersede); err != nil && firstErr == nil {
+							firstErr = err
+						}
 					}
 					if err := c.restageAfterAdoption(ctx, reconciler, store, p); err != nil && firstErr == nil {
 						firstErr = err
