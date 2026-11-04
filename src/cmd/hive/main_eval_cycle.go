@@ -574,6 +574,7 @@ func runEvalCycle(
 			actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
 		}
 	}
+	reconcileDeferredFixQueue(gov, cfg.Project.Org, actionable)
 	if swarmRepo := dashSrv.ActiveSwarmRepo(); swarmRepo != "" {
 		github.BoostActionableRepoPriority(actionable.Issues.Items, swarmRepo)
 		logger.Info("swarm priority boost applied", "repo", swarmRepo)
@@ -1140,6 +1141,7 @@ func runEvalCycle(
 	// previously unreachable without a tmux session and a live governor.
 	var deliveredReviewKicks []review.DispatchKick
 	var deliveredKicks []scheduler.KickMessage
+	fixQueue := reviewFixKickQueue{governor: gov, kicks: reviewKickByMessage}
 	if len(messages) > 0 {
 		// governor.kick wraps the whole dispatch pass; each delivered kick
 		// still gets its own agent.kick child via startKickSpan below.
@@ -1182,11 +1184,13 @@ func runEvalCycle(
 				}
 			},
 			onReviewDelivered: func(msg scheduler.KickMessage) {
+				fixQueue.Delivered(msg)
 				if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
 					deliveredReviewKicks = append(deliveredReviewKicks, k)
 					persistReviewDispatchStateInProgress(reviewPlan, deliveredReviewKicks, logger)
 				}
 			},
+			onDeferred: fixQueue.Deferred,
 			onFailed: func(msg scheduler.KickMessage, err error) {
 				gov.RecordKickFailure(msg.Agent, err, time.Now())
 				if k, ok := reviewKickByMessage[reviewKickKey(msg)]; ok {

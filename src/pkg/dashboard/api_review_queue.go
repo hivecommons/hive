@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -51,7 +52,19 @@ type reviewQueueResponse struct {
 	// needs attention (hivecommons/hive#12534).
 	HiveHeld int                       `json:"hive_held"`
 	History  []ReviewQueueHistoryEntry `json:"history"`
-	Items    []ghpkg.ReviewQueueEntry  `json:"items"`
+	Items    []reviewQueueItem         `json:"items"`
+}
+
+type reviewQueueItem struct {
+	ghpkg.ReviewQueueEntry
+	governor.FixerQueueStatus
+}
+
+func (s *Server) governorFixerQueue() map[string]governor.FixerQueueStatus {
+	if s == nil || s.deps == nil {
+		return nil
+	}
+	return s.deps.Governor.FixerQueue()
 }
 
 // handleReviewQueue serves GET /api/review/queue?limit=N&offset=M: every open
@@ -110,7 +123,7 @@ func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 		Limit:       limit,
 		Offset:      offset,
 		History:     history,
-		Items:       []ghpkg.ReviewQueueEntry{},
+		Items:       []reviewQueueItem{},
 	}
 	for _, e := range queue {
 		if e.Stage != nil && e.Stage.WaitingOnHive && e.Stage.PastDwell {
@@ -122,7 +135,13 @@ func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 		if end > len(queue) {
 			end = len(queue)
 		}
-		resp.Items = queue[offset:end]
+		fixers := s.governorFixerQueue()
+		for _, entry := range queue[offset:end] {
+			resp.Items = append(resp.Items, reviewQueueItem{
+				ReviewQueueEntry: entry,
+				FixerQueueStatus: fixers[ghpkg.ReviewQueueKey(entry.Repo, entry.Number)],
+			})
+		}
 	}
 	resp.HasMore = offset+len(resp.Items) < len(queue)
 	jsonResponse(w, resp)
