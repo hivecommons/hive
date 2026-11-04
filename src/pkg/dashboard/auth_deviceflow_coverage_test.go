@@ -469,8 +469,8 @@ func TestCovDF_SSO_NoSecret(t *testing.T) {
 	rec := doGet(s, "/sso?token=x")
 	// Terminates with an explanation instead of redirecting to "/", which
 	// bounced the browser in a loop.
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("no secret: want 503, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no secret: want 401, got %d", rec.Code)
 	}
 	if loc := rec.Header().Get("Location"); loc != "" {
 		t.Fatalf("no secret must not redirect, got Location %q", loc)
