@@ -108,6 +108,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerQueueAheadWord"),
 		jsFunc(t, html, "stageTrackerStageTrack"),
 		jsFunc(t, html, "stageTrackerTrackWord"),
+		jsFunc(t, html, "stageTrackerAgoWord"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
