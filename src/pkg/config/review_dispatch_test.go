@@ -205,3 +205,25 @@ func TestReviewDeltaRereviewConfig(t *testing.T) {
 		t.Fatalf("ValidateDeltaMaxAge rejected unset: %v", err)
 	}
 }
+
+func TestReviewFixerFallbackConfig(t *testing.T) {
+	r := ReviewConfig{FixerFallbackAfterUndeliverable: 2}
+	if r.EffectiveFixerFallbackAfterUndeliverable() != 0 {
+		t.Fatal("threshold alone enabled fallback routing")
+	}
+	r.FixerFallbackAgents = []string{" ", " fixer "}
+	if got := r.EffectiveFixerFallbackAgents(); len(got) != 1 || got[0] != "fixer" {
+		t.Fatalf("fallback names = %v", got)
+	}
+	if r.EffectiveFixerFallbackAfterUndeliverable() != 2 {
+		t.Fatal("explicit threshold was not used")
+	}
+	r.FixerFallbackAfterUndeliverable = 0
+	if r.EffectiveFixerFallbackAfterUndeliverable() != 3 {
+		t.Fatal("opted-in default must be three refusals")
+	}
+	r.FixerFallbackAfterUndeliverable = -1
+	if r.ValidateFixerFallback() == nil {
+		t.Fatal("negative threshold accepted")
+	}
+}
