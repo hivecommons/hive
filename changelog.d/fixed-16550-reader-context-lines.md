@@ -1,0 +1,1 @@
+- The code activity reader renders unchanged diff context lines in a neutral color instead of marking them green as additions ([#16550](https://github.com/hivecommons/hive/issues/16550)).
