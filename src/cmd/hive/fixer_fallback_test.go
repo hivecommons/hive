@@ -150,7 +150,7 @@ func TestReviewFixerFallbackWiring(t *testing.T) {
 				cfg.Review.FixerFallbackAgents = nil
 			}
 			mgr.statuses["scanner"].KicksUndeliverable = tc.kicks
-			plan := planReviewDispatch(cfg, actionableWithPR("hive-bot"), mgr, nil, discardLogger())
+			plan := planReviewDispatch(cfg, actionableWithPR("hive-bot[bot]"), mgr, nil, discardLogger())
 			if len(plan.FixKicks) != 1 || plan.FixKicks[0].Agent != tc.want {
 				t.Fatalf("fix kicks = %+v, want one for %s", plan.FixKicks, tc.want)
 			}
@@ -165,7 +165,7 @@ func TestReviewFixerFallbackWiring(t *testing.T) {
 					t.Fatal(err)
 				}
 				mgr.statuses["scanner"].KicksUndeliverable = 0
-				again := planReviewDispatch(cfg, actionableWithPR("hive-bot"), mgr, nil, discardLogger())
+				again := planReviewDispatch(cfg, actionableWithPR("hive-bot[bot]"), mgr, nil, discardLogger())
 				if len(again.FixKicks) != 0 || len(again.State.Fixes) != 1 || again.State.Fixes[0].Agent != "fixer" {
 					t.Fatalf("recovery duplicated the pending fallback fix: %+v", again)
 				}
@@ -184,12 +184,12 @@ func TestReviewFixerFallbackAllBusyRetriesWithoutHumanHold(t *testing.T) {
 	cfg, mgr := fallbackTestFleet()
 	mgr.statuses["fixer"].KicksUndeliverable = 1
 	mgr.statuses["spare"].Paused = true
-	plan := planReviewDispatch(cfg, actionableWithPR("hive-bot"), mgr, nil, discardLogger())
+	plan := planReviewDispatch(cfg, actionableWithPR("hive-bot[bot]"), mgr, nil, discardLogger())
 	if len(plan.FixKicks) != 0 || len(plan.State.Fixes) != 0 || len(plan.State.Human) != 0 {
 		t.Fatalf("busy fleet sent a repair or created a human hold: %+v", plan)
 	}
 	mgr.statuses["scanner"].KicksUndeliverable = 0
-	plan = planReviewDispatch(cfg, actionableWithPR("hive-bot"), mgr, nil, discardLogger())
+	plan = planReviewDispatch(cfg, actionableWithPR("hive-bot[bot]"), mgr, nil, discardLogger())
 	if len(plan.FixKicks) != 1 || plan.FixKicks[0].Agent != "scanner" {
 		t.Fatalf("repair did not retry after recovery: %+v", plan.FixKicks)
 	}
