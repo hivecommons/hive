@@ -3781,7 +3781,7 @@ type statusWithWebhooks struct {
 	*EvalLoopStatus
 	// MatrixEnabled reports whether the Matrix block is active (enabled with
 	// at least one repo, see config.MatrixConfig.Active) so the header shows
-	// the Matrix tab only on hives whose /api/matrix/lines will serve it.
+	// the Code activity entry only where /api/matrix/lines will serve it.
 	MatrixEnabled bool `json:"matrixEnabled"`
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
 	// machine (scheduled / draining / pulling / … / missed) with the drain
