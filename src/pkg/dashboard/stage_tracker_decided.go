@@ -113,6 +113,13 @@ const (
 	decidedEffectNone     = "none"
 )
 
+// stageTrackerQueuedForMergeWord is the one chevron word for every
+// "nothing left but the merge itself" state (hivecommons/hive#16653): a
+// recorded approval reads the same as 080 and a merge-train seat, with a
+// short qualifier after the dot saying why it has not merged yet. The
+// SPA's STAGE_TRACKER_QUEUED_FOR_MERGE_WORD mirrors it.
+const stageTrackerQueuedForMergeWord = "Queued for merge"
+
 // decidedVerb is the pill / caption vocabulary per verdict.
 type decidedVerb struct {
 	Word   string
@@ -126,13 +133,13 @@ type decidedVerb struct {
 
 var decidedVerbs = map[string]decidedVerb{
 	string(delegatedecision.VerdictAdoptSupersede):  {Word: "Adopted", Text: "Adopted · hive rebases & merges next pass", Acting: "Adopting · opening hive copy…", Plain: "adopted (supersede)", Stage: stagelabels.AwaitingMergeAdmission},
-	string(delegatedecision.VerdictApprove):         {Word: "Approved", Text: "Approved · merge queue takes it", Acting: "Approving…", Plain: "approved", Stage: stagelabels.AwaitingMergeAdmission},
+	string(delegatedecision.VerdictApprove):         {Word: stageTrackerQueuedForMergeWord, Text: stageTrackerQueuedForMergeWord + " · next pass", Acting: "Approving…", Plain: "approved", Stage: stagelabels.AwaitingMergeAdmission},
 	string(delegatedecision.VerdictDirection):       {Word: "Sent back", Text: "Sent back · waiting for a new commit", Acting: "Sending back…", Plain: "direction given", Stage: stagelabels.None},
 	string(delegatedecision.VerdictCloseDuplicate):  {Word: "Closing", Text: "Closing · duplicate, leaves the tracker next refresh", Acting: "Closing…", Plain: "closed as duplicate", Stage: stagelabels.None},
 	string(delegatedecision.VerdictCloseSuperseded): {Word: "Closing", Text: "Closing · superseded, leaves the tracker next refresh", Acting: "Closing…", Plain: "closed as superseded", Stage: stagelabels.None},
 	string(delegatedecision.VerdictNotNow):          {Word: "Closing", Text: "Closing · declined for now, leaves the tracker next refresh", Acting: "Closing…", Plain: "declined for now", Stage: stagelabels.None},
 	string(delegatedecision.VerdictClose):           {Word: "Closing", Text: "Closing · advisory resolved, leaves the tracker next refresh", Acting: "Closing…", Plain: "closed as completed", Stage: stagelabels.None},
-	operatorActionQueueMerge:                        {Word: "Approved", Text: "Approved · hive will merge on the next tick once CI is green", Acting: "Recording approval…", Plain: "approved — hive will merge on the next tick once CI is green", Stage: stagelabels.AwaitingMergeAdmission},
+	operatorActionQueueMerge:                        {Word: stageTrackerQueuedForMergeWord, Text: stageTrackerQueuedForMergeWord + " · after CI", Acting: "Recording approval…", Plain: "queued for merge — hive merges it on its next pass once CI is green", Stage: stagelabels.AwaitingMergeAdmission},
 	operatorActionMergeNow:                          {Word: "Merging", Text: "Merging · now as maintainer", Acting: "Merging…", Plain: "merged now as maintainer", Stage: stagelabels.MergeQueue},
 }
 

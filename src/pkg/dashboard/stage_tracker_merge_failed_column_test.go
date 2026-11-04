@@ -13,7 +13,7 @@ import (
 // "PUT https://api.github.com/…" error spilling out of it. An actual queue
 // outcome lights the Merge gate; a premature call waiting for head checks
 // does not admit a 050/060 PR. The chip is a fixed short phrase
-// (no URL, no verb, ≤ 5 words) with GitHub's words in the tooltip's
+// (no URL, no verb, ≤ 6 words) with GitHub's words in the tooltip's
 // Details line; pending CI is "CI running", never "red"; and the cue
 // names the stage in plain words, not "stage/060-reviewed".
 func TestStageTrackerMergeFailedColumnNode(t *testing.T) {
@@ -83,26 +83,27 @@ assert.strictEqual(stageTrackerAnchor(50, stages, 'pr', prepared), 50, 'preparat
 assert.strictEqual(stageTrackerAnchor(100, stages, 'pr', prepared), STAGE_TRACKER_MERGE_COLUMN, 'an actual queue-stage outcome stays at the gate');
 
 // 2. The chip for this exact payload (Go translated the 405): the sweep
-//    called too early, so it is "Waiting for CI · 4 checks", not a failure.
+//    called too early, so it is "Queued for merge · after CI", not a failure.
 let info = stageTrackerMergeGateInfo(row(gate({ merge_failed_kind: 'checks-pending', merge_failed_text: "4 required checks haven't finished", merge_failed_checks: 4 })), now);
-assert.strictEqual(info.word, 'Waiting for CI');
-assert.strictEqual(info.detail, '4 checks');
+assert.strictEqual(info.word, 'Queued for merge');
+assert.strictEqual(info.detail, 'after CI', 'the check count rides the hover, not the chip');
 assert.strictEqual(info.cue, 'running', 'the sweep is on it');
 assert.ok(info.tip.includes("before its required checks had reported — 4 required checks haven't finished"), info.tip);
 assert.ok(info.tip.includes('Details: ' + raw), 'raw error only after Details: ' + info.tip);
 assert.ok(!info.tip.startsWith('stage/'), info.tip);
 // Older payload without the translated fields: the SPA classifies the raw text itself.
 info = stageTrackerMergeGateInfo(row(gate()), now);
-assert.strictEqual(info.word + ' · ' + info.detail, 'Waiting for CI · 4 checks', 'raw-only payload');
+assert.strictEqual(info.word + ' · ' + info.detail, 'Queued for merge · after CI', 'raw-only payload');
 assert.ok(info.tip.includes("4 required checks haven't finished"), info.tip);
 
-// 3. Every merge-failed chip is a fixed short phrase: no URL, no verb, ≤ 5 words.
+// 3. Every merge-failed chip is a fixed short phrase: no URL, no verb, ≤ 6 words
+//    (the three-word queue word plus a qualifier of at most three, #16653).
 const cases = [
-  [gate(), 'Waiting for CI · 4 checks'],
-  [gate({ sweep_running: false }), 'Waiting for CI · 4 checks'],
+  [gate(), 'Queued for merge · after CI'],
+  [gate({ sweep_running: false }), 'Queued for merge · after CI'],
   [gate({ merge_failed: '405 Pull Request is not mergeable' }), 'Merge failed · retrying'],
-  [gate({ merge_failed: '405 Pull Request is not mergeable', sweep_running: false }), 'Merge failed · branch protection'],
-  [gate({ merge_failed: '409 Head branch was modified. Review and try the merge again.', sweep_running: false }), 'Merge failed · needs rebase'],
+  [gate({ merge_failed: '405 Pull Request is not mergeable', sweep_running: false }), 'Queued for merge · branch protection pending'],
+  [gate({ merge_failed: '409 Head branch was modified. Review and try the merge again.', sweep_running: false }), 'Queued for merge · needs rebase'],
   [gate({ merge_failed: '403 Resource not accessible by integration', sweep_running: false }), 'Merge failed · not allowed'],
   [gate({ merge_failed: 'context deadline exceeded', sweep_running: false }), 'Merge failed · GitHub refused'],
   [gate({ merge_failed: 'context deadline exceeded', merge_failed_kind: 'refused', merge_failed_text: 'GitHub refused the merge', sweep_running: false }), 'Merge failed · GitHub refused'],
@@ -114,7 +115,7 @@ for (const [mg, want] of cases) {
   const label = i.word + (i.detail ? ' · ' + i.detail : '');
   assert.strictEqual(label, want);
   assert.ok(plain(label), 'no raw error in the chip: ' + label);
-  assert.ok(words(label).length <= 5, 'chip ≤ 5 words: ' + label);
+  assert.ok(words(label).length <= 6, 'chip ≤ 6 words: ' + label);
   const html = stageTrackerMergeGateWordHtml(row(mg), now);
   assert.ok(html.includes('<span class="ham-seg-t">') && plain(html), html);
   if (mg.merge_failed) assert.ok(i.tip.includes('Details: ' + mg.merge_failed), 'raw text rides the tooltip: ' + i.tip);
