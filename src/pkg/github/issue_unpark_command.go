@@ -445,7 +445,11 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	if err != nil {
 		return false, err
 	}
-	if !labelDriven {
+	// A held issue (hivecommons/hive#16591) has nothing open to decide: no
+	// "What to reply" notice and no prose hint, but every command it does
+	// get is still answered.
+	held := isHeldAfterDecision(issueLabelNames(issue.Labels))
+	if !labelDriven && !held {
 		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), comments); err != nil {
 			return false, err
 		}
@@ -503,6 +507,9 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return true, nil
 	case unparkCommandNone:
 		// Prose assent, no command. Say what to type; do not act on it.
+		if held {
+			return false, nil
+		}
 		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), unparkProseHintReply); err != nil {
 			return false, err
 		}
@@ -784,13 +791,7 @@ func isUnparkRemovableLabel(label string) bool {
 }
 
 // hasIssueParkingLabel reports whether the issue is parked on a person.
-// `needs-human` beside the approval label and without a stage/045 park label
-// is an issue held after a human decision: nothing is open to decide, so it is
-// not parked (hivecommons/hive#16591).
 func hasIssueParkingLabel(labels []string) bool {
-	if isHeldAfterDecision(labels) {
-		return false
-	}
 	if hasIssueNeedsHumanLabel(labels) {
 		return true
 	}
@@ -1290,6 +1291,11 @@ func renderUnparkFixedReply(actor, note string, removed []string) string {
 	return b.String()
 }
 
+// isHeldAfterDecision reports an issue held after a human decision:
+// `needs-human` beside the approval label and without a stage/045 park label.
+// Nothing is open to decide on it, so the sweep stops offering `/hive approve`
+// / `/hive decision` (hivecommons/hive#16591) while still answering any
+// command a maintainer posts.
 func isHeldAfterDecision(labels []string) bool {
 	return hasIssueNeedsHumanLabel(labels) && labelPresent(labels, HumanAckLabel) &&
 		!labelPresent(labels, NeedsDecisionStageLabel) && !labelPresent(labels, legacyIssueNeedsDecisionStageLabel) &&

@@ -1270,11 +1270,88 @@ func TestParseUnparkCommandKeepsDecisionTextAfterFirstLine(t *testing.T) {
 	}
 }
 
-func TestHasIssueParkingLabelHeldAfterDecision(t *testing.T) {
-	if hasIssueParkingLabel([]string{"needs-human", HumanAckLabel}) {
-		t.Fatal("needs-human + approved-direction without a park stage is held, not parked")
+func heldIssue(number int, comments ...unparkWireComment) unparkWireIssue {
+	issue := parkedIssue(number, comments...)
+	issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: HumanAckLabel}, {Name: "hold"}}
+	return issue
+}
+
+func TestIsHeldAfterDecision(t *testing.T) {
+	if !isHeldAfterDecision([]string{"needs-human", HumanAckLabel}) {
+		t.Fatal("needs-human + approved-direction without a park stage is held")
 	}
-	if !hasIssueParkingLabel([]string{"needs-human", HumanAckLabel, NeedsDecisionStageLabel}) {
-		t.Fatal("a stage/045 park label keeps the issue parked")
+	if isHeldAfterDecision([]string{"needs-human", HumanAckLabel, NeedsDecisionStageLabel}) {
+		t.Fatal("a stage/045 park label means something is still open to decide")
+	}
+	if isHeldAfterDecision([]string{"needs-human"}) {
+		t.Fatal("needs-human alone is parked, not held")
+	}
+	if !hasIssueParkingLabel([]string{"needs-human", HumanAckLabel}) {
+		t.Fatal("a held issue stays in the sweep so its commands are still answered")
+	}
+}
+
+func TestSweepIssueUnparkCommandsHeldIssueGetsNoNoticeOrProseHint(t *testing.T) {
+	issues := []unparkWireIssue{
+		heldIssue(61),
+		heldIssue(62, humanComment(71, "maintainer", "sounds good, go ahead")),
+	}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if result.Seen != 2 || len(result.Unparked) != 0 || result.Replies != 0 {
+		t.Fatalf("seen=%d unparked=%+v replies=%d", result.Seen, result.Unparked, result.Replies)
+	}
+	for _, n := range []int{61, 62} {
+		if len(rec.posted[n]) != 0 {
+			t.Fatalf("held issue %d must not be re-offered a decision, got %v", n, rec.posted[n])
+		}
+	}
+	if len(rec.edited) != 0 {
+		t.Fatalf("no notice to edit on a held issue, got %v", rec.edited)
+	}
+}
+
+func TestSweepIssueUnparkCommandsHeldIssueStillAnswersDecision(t *testing.T) {
+	issues := []unparkWireIssue{heldIssue(63, humanComment(72, "maintainer", "/hive decision ship it as is"))}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 1 || result.Unparked[0].Number != 63 || result.Unparked[0].Decision != "ship it as is" {
+		t.Fatalf("a /hive decision on a held issue must still be answered, got %+v", result.Unparked)
+	}
+	if len(rec.posted[63]) != 1 || !strings.Contains(rec.posted[63][0], "Decision: ship it as is") {
+		t.Fatalf("expected exactly the acceptance reply, got %v", rec.posted[63])
+	}
+	if strings.Contains(rec.posted[63][0], unparkNoticeMarker) {
+		t.Fatalf("the notice must not be posted on a held issue: %v", rec.posted[63])
+	}
+	if strings.Contains(strings.Join(rec.removed[63], ","), "hold") {
+		t.Fatalf("hold must never be removed, got %v", rec.removed[63])
+	}
+}
+
+func TestSweepIssueUnparkCommandsHeldIssueStillAnswersHelp(t *testing.T) {
+	issues := []unparkWireIssue{heldIssue(64, humanComment(73, "maintainer", "/hive help"))}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if result.Replies != 1 || len(rec.posted[64]) != 1 {
+		t.Fatalf("expected one help reply, replies=%d posted=%v", result.Replies, rec.posted[64])
+	}
+	if strings.Contains(rec.posted[64][0], unparkNoticeMarker) {
+		t.Fatalf("the help reply must be the only comment, got %v", rec.posted[64])
 	}
 }
