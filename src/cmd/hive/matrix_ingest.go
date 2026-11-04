@@ -20,15 +20,9 @@ import (
 // run every couple of minutes on its own goroutine.
 const matrixIngestInterval = 2 * time.Minute
 
-// matrixLinesStatePath and sentinelHeadsStatePath are where the Matrix
-// backlog and the sentinel's evaluated-head map persist on the PVC, each its
-// own file like the other /data histories so a parse failure in one never
-// takes the other down. Together they let a restarted hive refill the kiosk
-// at once and diff only heads that moved while it was down.
-const (
-	matrixLinesStatePath   = "/data/matrix-lines.json"
-	sentinelHeadsStatePath = "/data/sentinel-heads.json"
-)
+// sentinelHeadsStatePath keeps the evaluated-head map across restarts. Code
+// buffers remain memory-only; restarting never restores captured code.
+const sentinelHeadsStatePath = "/data/sentinel-heads.json"
 
 // matrixIngestState serializes incremental passes so concurrent callers must
 // not read the same new head twice.

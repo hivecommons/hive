@@ -255,7 +255,15 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 		// pod could not be read back (already GC'd, or RBAC on pods missing).
 		res.ExitCode = 0
 	}
-	_ = l.delete(ctx, jobPath)
+	// Collection may have expired the context even on success; use a fresh one
+	// for cleanup to ensure the finished Job is immediately removed.
+	deleteCtx := ctx
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		deleteCtx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+		defer cancel()
+	}
+	_ = l.delete(deleteCtx, jobPath)
 	return res, nil
 }
 
