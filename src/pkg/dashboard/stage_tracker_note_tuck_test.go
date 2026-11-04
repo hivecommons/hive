@@ -36,6 +36,14 @@ func stageTrackerNoteTuckJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerNoteEvents"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
 		jsFunc(t, html, "stageTrackerEventHtml"),
+		jsFunc(t, html, "stageTrackerNoteLineHtml"),
+		jsFunc(t, html, "stageTrackerTextHash"),
+		jsFunc(t, html, "stageTrackerHumanNote"),
+		jsFunc(t, html, "stageTrackerHumanNotesNext"),
+		jsFunc(t, html, "stageTrackerHumanNoteHtml"),
+		jsFunc(t, html, "stageTrackerNoteEventOf"),
+		jsFunc(t, html, "stageTrackerNoteEventSet"),
+		jsFunc(t, html, "stageTrackerNoteEventsAll"),
 		jsFunc(t, html, "stageTrackerNoteTuckSetting"),
 		jsFunc(t, html, "stageTrackerSetNoteTuck"),
 		jsFunc(t, html, "stageTrackerNoteOpen"),
@@ -48,7 +56,7 @@ func stageTrackerNoteTuckJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerNoteToggle"),
 		jsFunc(t, html, "stageTrackerNoteVisibility"),
 		jsFunc(t, html, "stageTrackerRowSrcKey"),
-		"let _stageTrackerEvents = {}; let _stageTrackerStates = null; let _stageTrackerNoteTimer = 0; let _stageTrackerNoteHiddenAt = 0;",
+		"let _stageTrackerEvents = {}; let _stageTrackerHumanNotes = {}; let _stageTrackerStates = null; let _stageTrackerNoteTimer = 0; let _stageTrackerNoteHiddenAt = 0;",
 	}, "\n") + "\n"
 }
 
@@ -174,6 +182,62 @@ stageTrackerSetNoteTuck(true);
 // TestStageTrackerNoteTuckWiring: the page carries the markup, the CSS (tokens
 // only, reduced motion → instant toggle), the ⚙ toggle, and the visibility
 // hook; the window is the one the owner asked for.
+// A "Needs human: …" / "Current blocker: …" line (tracker-human-attention)
+// is a hive note too (owner, 2026-11-04): it opens, tucks after the same
+// 30 s on the same shared timer, re-opens on a click, keeps its View link,
+// and a re-render never re-opens a line this tab already showed. #16011 had
+// drawn it as a static row that never left.
+func TestStageTrackerHumanNoteTucksLikeHiveNote(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerNoteTuckJS(t, html)+stageTrackerNoteTuckFixture+`
+// ---- human-requirement notes ride the same line ----
+timers = []; panel.children.length = 0; _stageTrackerEvents = {}; _stageTrackerHumanNotes = {};
+const hnow = Date.now();
+const body = 'PR #16572 — Needs human: @clubanderson should decide <a href="https://x/pull/16572">View PR #16572</a>';
+let line = stageTrackerHumanNoteHtml('r/pr#16572', body, 'PR #16572 — Needs human: @clubanderson should decide · View PR #16572', hnow);
+assert.ok(/^<p class="cue-event cue-event-tuckable ham-human-context" data-cue-key="human:r\/pr#16572:[a-z0-9]+">/.test(line), line);
+assert.ok(line.includes('class="cue-event-ico"') && line.includes('data-action="stageTrackerNoteToggle"'), line);
+assert.ok(line.includes('<span class="cue-event-body"><span class="cue-event-text">' + body + '</span> <span class="cue-event-age" data-at="' + hnow + '"></span></span>'), line);
+assert.ok(/ title="PR #16572 — Needs human: @clubanderson should decide · View PR #16572 · 0s ago" data-action/.test(line), 'tooltip is the words themselves, no Hive: prefix: ' + line);
+const hkey = line.match(/data-cue-key="([^"]+)"/)[1];
+// A re-render 10 s later keeps the same key and stays open: no re-opening.
+const again = stageTrackerHumanNoteHtml('r/pr#16572', body, 'PR #16572 — Needs human: @clubanderson should decide · View PR #16572', hnow + 10000);
+assert.ok(again.includes('data-cue-key="' + hkey + '"') && !again.includes('cue-event-tucked'), again);
+assert.strictEqual(stageTrackerRowSrcKey(line), stageTrackerRowSrcKey(again), 'age in the tooltip never swaps the row node');
+// Mount it and let the shared timer tuck it after 30 s.
+const hp = el('cue-event cue-event-tuckable ham-human-context', { 'data-cue-key': hkey });
+const hb = el('cue-event-ico', { 'aria-expanded': 'true' }); hp.children.push(hb); panel.children.push(hp);
+stageTrackerNoteSync(panel, Date.now());
+assert.ok(!tucked(hp)); assert.strictEqual(timers.length, 1, 'one shared timer armed for the human note');
+tick(STAGE_TRACKER_CAPTION_SHOW_MS + 1);
+assert.ok(tucked(hp), 'the human note tucks like a hive note');
+assert.strictEqual(hb.attrs['aria-expanded'], 'false');
+// Rendered fresh now, it arrives already tucked.
+assert.ok(stageTrackerHumanNoteHtml('r/pr#16572', body, 'PR #16572 — Needs human: @clubanderson should decide · View PR #16572', Date.now()).includes('cue-event-tucked'));
+// A click re-opens it for another window, from its own map.
+stageTrackerNoteToggle(hkey);
+assert.ok(!tucked(hp)); assert.ok(_stageTrackerHumanNotes[hkey].openAt === Date.now() && !_stageTrackerEvents[hkey]);
+tick(STAGE_TRACKER_CAPTION_SHOW_MS + 1);
+assert.ok(tucked(hp));
+// New words → a new line, open again; the row leaving the payload drops both.
+const other = stageTrackerHumanNoteHtml('r/pr#16572', 'Needs human: something else', 'Needs human: something else', Date.now());
+assert.ok(!other.includes('cue-event-tucked') && !other.includes(hkey));
+assert.strictEqual(Object.keys(_stageTrackerHumanNotes).length, 2);
+_stageTrackerHumanNotes = stageTrackerHumanNotesNext(_stageTrackerHumanNotes, { 'r/pr#16572': {} });
+assert.strictEqual(Object.keys(_stageTrackerHumanNotes).length, 2);
+_stageTrackerHumanNotes = stageTrackerHumanNotesNext(_stageTrackerHumanNotes, { 'r/pr#1': {} });
+assert.strictEqual(Object.keys(_stageTrackerHumanNotes).length, 0);
+// Auto-collapse off: the plain line, gone after the two-minute life.
+stageTrackerSetNoteTuck(false);
+const t0 = Date.now();
+let plain = stageTrackerHumanNoteHtml('r/pr#2', 'Needs human: x', 'Needs human: x', t0);
+assert.ok(/^<p class="cue-event ham-human-context" data-cue-key=/.test(plain) && !plain.includes('cue-event-ico'), plain);
+plain = stageTrackerHumanNoteHtml('r/pr#2', 'Needs human: x', 'Needs human: x', t0 + STAGE_TRACKER_EVENT_MS * 0.8);
+assert.ok(plain.includes('cue-event-fading'), plain);
+assert.strictEqual(stageTrackerHumanNoteHtml('r/pr#2', 'Needs human: x', 'Needs human: x', t0 + STAGE_TRACKER_EVENT_MS), '');
+`)
+}
+
 func TestStageTrackerNoteTuckWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{

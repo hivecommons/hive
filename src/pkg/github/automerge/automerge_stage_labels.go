@@ -927,6 +927,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Reason = replacement.Reason
 		}
 		fixer, fixerKnown := c.fixDispatchStatusFor(obs, pass)
+		var reauthored reauthorRecord
 		pass.FixerExcluded = fixerKnown && fixer.Excluded()
 		if replacement, ok := stageengine.PreserveStageOnStaleDecisionAnswer(prevRec, hadPrev, obs, verdict, pass.FixerExcluded); ok {
 			verdict = replacement
@@ -1127,16 +1128,37 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 			if !verdict.Terminal && verdict.Stage == fixingStage(obs) && fixerKnown && fixer.Exhausted() {
 				// The hive's own PR whose fix dispatcher refuses another
-				// fix (re-engagement cap spent, hivecommons/hive#15744):
-				// a person decides (re-author / hand over / close as not
-				// planned) instead of the row reading "Fixing" with
-				// nobody on it for hours (#15308).
-				verdict.Stage = stagelabels.NeedsDecision
-				verdict.Rank = stageRankOwned
-				obs.Reason = stagelabels.FixerExhaustedReason(fixer.Attempts)
-				pass.FixerExhausted = fixer.Attempts
-				route := c.fixerExhaustedRoute(obs, fixer)
-				obs.Route = &route
+				// fix (re-engagement cap spent, hivecommons/hive#15744).
+				// First time for its issue: the hive re-authors it itself
+				// (closes it as superseded, a fresh PR opens from the
+				// current base) — a hive agent's PR needs no re-author
+				// pill. Already re-authored once, or no issue to redo:
+				// a person decides (give direction / hand over / close
+				// as not planned) instead of the row reading "Fixing"
+				// with nobody on it for hours (#15308).
+				target := c.autoReauthorTarget(ctx, store, obs)
+				if prev, ok := store.Get(key); ok && prev.Reauthored() {
+					target = reauthorTarget{Issue: prev.ReauthorIssue}
+				}
+				if target.eligible() && policy.Adoption && !obs.Merged {
+					n, noted, err := c.reauthorExhaustedHivePR(ctx, store, key, obs, fixer, target.Issue, now)
+					result.Comments += n
+					if err != nil && firstErr == nil {
+						firstErr = err
+					}
+					if err == nil {
+						reauthored = reauthorRecord{issue: target.Issue, attempts: fixer.Attempts, noted: noted}
+					}
+					obs.Reason = stagelabels.ReauthoringReason(target.Issue)
+					pass.Reauthoring = target.Issue
+				} else {
+					verdict.Stage = stagelabels.NeedsDecision
+					verdict.Rank = stageRankOwned
+					obs.Reason = stagelabels.FixerExhaustedReason(fixer.Attempts)
+					pass.FixerExhausted = fixer.Attempts
+					route := c.fixerExhaustedRoute(obs, fixer, max(target.PriorPR, 0))
+					obs.Route = &route
+				}
 			}
 			if step := c.sharedCIRecoveryUnauthorized(ctx, obs); step != "" && verdict.Stage != stagelabels.None {
 				pass.RecoveryUnauthorized = step
@@ -1147,6 +1169,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				obs.Route = &route
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
+			if reauthored.issue > 0 {
+				store.MarkReauthored(key, reauthored.issue, obs.HeadSHA, reauthored.attempts, now)
+				if reauthored.noted {
+					store.MarkReauthorNoted(key)
+				}
+			}
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)

@@ -128,13 +128,17 @@
       if (l.kind === 'superseded') return Number(l.to_number) > 0 ? 'superseded by #' + Number(l.to_number) + tail : '';
       if (!(Number(l.from_number) > 0)) return '';
       const whose = l.from_author ? '@' + l.from_author + "'s " : '';
-      return (l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : 'adopted from ') + whose + '#' + Number(l.from_number) + tail;
+      // "re-authored from #N" is the hive rewriting its OWN exhausted PR;
+      // "adopted from" is a contributor's PR the hive took over.
+      const verb = l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : l.kind === 're-authored' ? 're-authored from ' : 'adopted from ';
+      return verb + whose + '#' + Number(l.from_number) + tail;
     }
     // Pure: the hover — why the hive took it over, in plain words.
     function stageTrackerLineageTip(item) {
       const l = item && item.lineage;
       if (!l || !l.kind) return '';
       if (l.kind === 'superseded') return 'Hive took this PR over as #' + Number(l.to_number) + '; this original is closed when that merges.';
+      if (l.kind === 're-authored') return "Hive's fixer gave up on its own #" + Number(l.from_number) + ', so the hive closed it as superseded and opened this fresh PR from the current base.' + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
       const who = l.from_author ? '@' + l.from_author : 'the contributor';
       const tip = STAGE_TRACKER_LINEAGE_REASON_TIP[l.reason] || STAGE_TRACKER_LINEAGE_REASON_TIP['ci-red-contributor-offline'];
       return tip.split('@AUTHOR').join(who) + stageTrackerSupersededOriginalClause(Number(l.from_number), l.from_state);
@@ -165,7 +169,7 @@
       let l = item && item.lineage;
       if (!l && item && item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length === 1) l = item.linked_prs[0].lineage;
       if (!l || !(Number(l.from_number) > 0) || l.kind === 'superseded') return '';
-      return ' (adopted from #' + Number(l.from_number) + ')';
+      return (l.kind === 're-authored' ? ' (re-authored from #' : ' (adopted from #') + Number(l.from_number) + ')';
     }
     // Pure: the "↳ adopted from #N · you let hive decide 17:51" chip on the
     // hive's copy of an adopted PR (hivecommons/hive#15126).

@@ -64,32 +64,44 @@ func TestStageTrackerFixerExhaustedCaption(t *testing.T) {
 	}
 }
 
-func TestDecisionForPRFixerExhaustedLeadsWithReauthor(t *testing.T) {
+// The hive re-authors its own exhausted PR by itself, so the 085 card on a
+// hive-authored PR never offers "re-author": Give direction leads, close
+// reads "not planned". A contributor clanker's PR gets Adopt instead.
+func TestDecisionForPRFixerExhaustedNoReauthorOnHivePR(t *testing.T) {
 	it := StageTrackerItem{
 		Repo: "hivecommons/hive", Number: 15308, Kind: "pr", Stage: trackerNumberNeedsDecision,
 		AuthorKind: authorKindHive,
 		Reason:     stagelabels.FixerExhaustedReason(6),
 	}
 	d := decisionForPR(it, &review.Aggregate{HumanSummaries: []string{"tests fail on arm64"}}, "", false)
-	if d == nil || !strings.Contains(d.Question, "6 attempts") || !strings.Contains(d.Question, "tests fail on arm64") {
+	if d == nil || !strings.Contains(d.Question, "6 attempts") || !strings.Contains(d.Question, "tests fail on arm64") || strings.Contains(d.Question, "Re-author") {
 		t.Fatalf("decision = %+v", d)
 	}
-	if len(d.Options) == 0 || d.Options[0].Action != decisionActionReauthor || !d.Options[0].Lead || !d.Options[0].Enabled {
+	if len(d.Options) == 0 || d.Options[0].Action != decisionActionDirection || !d.Options[0].Lead || !d.Options[0].Enabled {
 		t.Fatalf("lead option = %+v", d.Options)
 	}
 	var sawClose bool
 	for i, o := range d.Options {
+		if o.Action == "decide:re-author" || o.Action == decisionActionAdopt {
+			t.Fatalf("hive-authored PR offered %q at %d: %+v", o.Action, i, d.Options)
+		}
+		if o.Action == decisionActionDirection && i != 0 {
+			t.Fatalf("duplicate direction option at %d: %+v", i, d.Options)
+		}
 		if o.Action == decisionActionCloseWontfix {
 			sawClose = true
 			if i == 0 || o.Lead || o.Label != "Close as not planned" {
 				t.Fatalf("close option = %+v at %d", o, i)
 			}
 		}
-		if o.Action == decisionActionReauthor && i != 0 {
-			t.Fatalf("duplicate re-author option at %d: %+v", i, d.Options)
-		}
 	}
 	if !sawClose {
 		t.Fatalf("no close-as-not-planned option: %+v", d.Options)
+	}
+	agent := it
+	agent.AuthorKind, agent.Author = authorKindClanker, "thatguywob"
+	d = decisionForPR(agent, nil, "", false)
+	if len(d.Options) < 2 || d.Options[0].Action != decisionActionDirection || d.Options[1].Action != decisionActionAdopt || d.Options[1].Label != "Adopt as hive PR" {
+		t.Fatalf("contributor options = %+v", d.Options)
 	}
 }

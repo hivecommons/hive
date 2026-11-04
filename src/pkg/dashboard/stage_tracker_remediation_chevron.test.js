@@ -119,11 +119,15 @@ test('adopted row: a complete review verdict is done-style, and a human-decision
   assert.match(parked, /Review 5\/5 · needs owner sign-off</, 'genuinely parked: the sign-off word stands');
 
   const changes = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: { ...decision, state: 'changes_requested' } }))[5];
-  assert.match(changes, /class="ham-seg ham-activity-track failing"/);
-  assert.match(changes, /Review 5\/5 · changes requested</);
+  // A settled verdict is the glyph alone in the pass / fail colour; its
+  // count words ride in the tooltip.
+  assert.match(changes, /class="ham-seg ham-activity-track failing"[^>]*data-verdict="fail"/);
+  assert.match(changes, /Review: Review 5\/5 · changes requested · /);
+  assert.match(changes, /ham-track-verdict"><svg [^>]*><\/svg><\/span>/);
   const approved = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: { ...decision, state: 'approved' } }))[5];
-  assert.match(approved, /class="ham-seg ham-activity-track done"/);
-  assert.match(approved, /Review 5\/5 approved</);
+  assert.match(approved, /class="ham-seg ham-activity-track done"[^>]*data-verdict="pass"/);
+  assert.match(approved, /Review: Review 5\/5 approved · /);
+  assert.match(approved, /ham-track-verdict"><svg [^>]*><\/svg><\/span>/);
   const ci = cells(redPR({ stage: 74, display_column: 30, code_activity: adopted, review_activity: decision }))[4];
   assert.match(ci, /class="ham-seg ham-activity-track done"/, '11/11 passed is done-style');
 });
@@ -166,7 +170,7 @@ test('#16268 row: waiting for the contributor, CI 7/11 unreported, review approv
   const c = cells(redPR({ stage: 71, display_column: 30, author: 'hanthor', author_kind: 'human', code_activity: owner, ci_activity: ci, review_activity: approved }));
   assert.match(c[3], /class="ham-seg active detoured"/);
   assert.match(c[4], /class="ham-seg ham-activity-track pending"[^]*CI 7\/11 · test not reported</);
-  assert.match(c[5], /class="ham-seg ham-activity-track done"[^]*Review 5\/5 approved</);
+  assert.match(c[5], /class="ham-seg ham-activity-track done"[^]*Review: Review 5\/5 approved · [^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/);
   assert.equal(litCount(c.join('')), 1);
   // Even a queued check does not light CI while the row waits on a person.
   const queued = cells(redPR({ stage: 71, display_column: 30, author: 'hanthor', author_kind: 'human', code_activity: owner, ci_activity: { ...ci, state: 'queued' }, review_activity: approved }));
@@ -199,8 +203,8 @@ test('#16456 row: PR in progress with changes requested → the stage chevron is
     ci_activity: { head: 'abc1234def', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'abc1234def', state: 'changes_requested', caption: 'Review findings', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: red } }));
   assert.match(c[3], /class="ham-seg active ham-remediation-unassigned detoured"/);
-  assert.match(c[4], /class="ham-seg ham-activity-track done"[^]*CI 11\/11 passed</);
-  assert.match(c[5], /class="ham-seg ham-activity-track failing"[^]*Review 5\/5 · changes requested</);
+  assert.match(c[4], /class="ham-seg ham-activity-track done"[^>]*data-verdict="pass"[^]*CI: CI 11\/11 passed · [^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/);
+  assert.match(c[5], /class="ham-seg ham-activity-track failing"[^>]*data-verdict="fail"[^]*Review: Review 5\/5 · changes requested · [^]*ham-track-verdict"><svg [^>]*><\/svg><\/span>/);
   assert.equal(litCount(c.join('')), 1, 'done / failing tracks are text-colour variants, not fills');
 });
 

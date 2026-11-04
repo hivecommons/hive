@@ -91,24 +91,26 @@ assert.strictEqual(leads[1].target, human, 'delegate carries the decide target')
 assert.strictEqual(leads[1].enabled, true);
 // The parked issue whose lead already is delegate: one pill, never two.
 assert.strictEqual(stageTrackerLeadActionsOnRow(parked, ctx).length, 1);
-// A Re-author lead (the #16456 row): both pills, delegate disabled with its
-// reason for a reader.
-const reauthor = { ...human, number: 16456, decision_needed: { question: 'Changes requested', options: [{ action: 'decide:re-author', label: 'Re-author', enabled: true, lead: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
+// A Give-direction lead (the #16456 row, a hive-authored PR whose fixer
+// gave up — the hive re-authors those itself, so no re-author pill is
+// offered): both pills, delegate disabled with its reason for a reader.
+const reauthor = { ...human, number: 16456, decision_needed: { question: 'Changes requested', options: [{ action: 'decide:direction', label: 'Give direction', enabled: true, lead: true, consequence: 'Tell the hive what to change; its next attempt starts from your words.' }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
 h = stageTrackerLeadActionHtml(reauthor, ctx);
 assert.strictEqual(buttons(h), 2, h);
-assert.strictEqual(labelOf(h), 'Re-author', h);
+assert.strictEqual(labelOf(h), 'Give direction', h);
+assert.ok(!h.includes('re-author'), 'no re-author pill on a hive-authored row: ' + h);
 assert.ok(h.includes('data-ham-act="decide:delegate"'), h);
-// Owner on that row: "Re-author" read as a record of what happened — the
+// Owner on that row: the lead read as a record of what happened — the
 // action pills and the record pills ("adopted from #N", the base branch)
 // wore the same outline. Inline actions are <button>s with the filled
 // action class (primary / secondary / danger), never the record class;
 // a record pill never carries the action class. The server's
 // consequence is the lead's hover text; a lead without one gets the
 // client's clause for its verb.
-assert.ok(h.includes('<button type="button" class="ham-lead-act ham-act-primary" data-ham-act="decide:re-author" title="The hive opens a fresh PR for the same issue from the current base and closes this one as superseded."'), 'lead: filled primary button with the consequence tooltip: ' + h);
+assert.ok(h.includes('<button type="button" class="ham-lead-act ham-act-primary" data-ham-act="decide:direction" title="Tell the hive what to change; its next attempt starts from your words."'), 'lead: filled primary button with the consequence tooltip: ' + h);
 assert.ok(!h.includes('ham-badge'), 'action pills never wear the record class: ' + h);
 assert.strictEqual((h.match(/<button type="button" class="ham-lead-act ham-act-(primary|secondary)"/g) || []).length, 2, h);
-const withConsequence = { ...reauthor, decision_needed: { question: 'Changes requested', options: [{ action: 'decide:re-author', label: 'Re-author', enabled: true, lead: true, consequence: 'Hive opens a fresh PR for the issue and closes this one as superseded' }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
+const withConsequence = { ...reauthor, decision_needed: { question: 'Changes requested', options: [{ action: 'decide:direction', label: 'Give direction', enabled: true, lead: true, consequence: 'Hive opens a fresh PR for the issue and closes this one as superseded' }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
 assert.ok(stageTrackerLeadActionHtml(withConsequence, ctx).includes('title="Hive opens a fresh PR for the issue and closes this one as superseded"'), 'the server consequence wins');
 const closeLead = { ...human, decision_needed: { question: 'Superseded?', options: [{ action: 'decide:close-superseded', label: 'Close as superseded by #9', enabled: true, lead: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
 h = stageTrackerLeadActionHtml(closeLead, ctx);

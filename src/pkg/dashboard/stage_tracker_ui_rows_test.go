@@ -709,7 +709,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     review_activity: { head: 'f269349', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(owner), 1, 'with the contributor: only the stage chevron is lit: ' + strip(owner));
   assert.ok(/<li class="ham-seg active detoured"[^>]*aria-current="step"/.test(owner) && owner.includes('Waiting for @hanthor'), owner);
-  assert.ok(/data-track="ci"[^>]*>[\s\S]*?CI 7\/11 · test not reported<\/span>/.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*>[\s\S]*?Review 5\/5 approved<\/span>/.test(owner), owner);
+  assert.ok(/data-track="ci"[^>]*>[\s\S]*?CI 7\/11 · test not reported<\/span>/.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*data-verdict="pass"[^>]*>[\s\S]*?ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg><\/span>[\s\S]*?Review: Review 5\/5 approved · /.test(owner), 'an approved review is the glyph alone, its count words in the tooltip: ' + owner);
   const busy = stageTrackerRowHtml({ repo: 'acme/console', number: 16456, kind: 'pr', stage: 70, display_column: 30, head: 'f269349', author: 'hive[bot]', author_kind: 'hive',
     code_activity: { head: 'f269349', state: 'remediating', caption: 'Remediating · scanner · 4m', actor: 'scanner', active: true, source: 'fix-dispatch', observed_at: seen },
     ci_activity: { head: 'f269349', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
@@ -723,7 +723,8 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     ci_activity: { head: 'f269349', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'f269349', state: 'changes_requested', caption: 'Review findings · changes requested', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } }, stages, ctx);
   assert.strictEqual(lit(changes), 1, 'changes requested in PR in progress: one filled chevron: ' + strip(changes));
-  assert.ok(/<li class="ham-seg ham-activity-track done" data-track="ci"[^>]*>[\s\S]*?CI 11\/11 passed<\/span>/.test(changes) && /<li class="ham-seg ham-activity-track failing" data-track="review"[^>]*>[\s\S]*?Review 5\/5 · changes requested<\/span>/.test(changes), changes);
+  assert.ok(/<li class="ham-seg ham-activity-track done" data-track="ci"[^>]*data-verdict="pass"[^>]*>[\s\S]*?CI: CI 11\/11 passed · /.test(changes) && /<li class="ham-seg ham-activity-track failing" data-track="review"[^>]*data-verdict="fail"[^>]*>[\s\S]*?Review: Review 5\/5 · changes requested · /.test(changes), changes);
+  assert.ok(!/ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg>(?:CI|Review) /.test(changes), 'settled verdicts carry no words beside the glyph: ' + changes);
   assert.ok(/<li class="ham-seg active ham-settled-current ham-remediation-remediating detoured"/.test(busy) && busy.includes('Remediating · scanner · 4m'), 'the stage chevron is settled-current with its words: ' + busy);
 }
 // Merged: the lit cap is the only chevron with hover text.
