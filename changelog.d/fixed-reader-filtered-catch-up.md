@@ -1,1 +1,1 @@
-- The code activity reader reveals caught-up changes without an extra empty request when newer lines are filtered out ([#16530](https://github.com/hivecommons/hive/issues/16530)).
+- `/api/matrix/lines` reports `more` only when another line the caller may see remains, so clients paging a filtered backlog can stop without an empty follow-up request ([#16530](https://github.com/hivecommons/hive/issues/16530)).
