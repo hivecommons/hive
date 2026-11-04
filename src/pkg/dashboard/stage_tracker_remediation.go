@@ -261,6 +261,7 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 	if it.Kind != "pr" || it.Head == "" || it.Superseded != nil || it.Stage == trackerNumberNeedsDecision || it.Stage >= trackerNumberAwaitingMerge {
 		return
 	}
+	stageTrackerAdoptHumanDecision(it)
 	redSince, redWord, red := stageTrackerRedSince(it)
 	if !red {
 		return
@@ -282,6 +283,10 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 		return
 	}
 	if out.State == "waiting_ci" && out.Source == "recorded-ci-retry" {
+		return
+	}
+	// 074: the hive adopted the repair; the stage word stands.
+	if out.State == "adopted" {
 		return
 	}
 	redAt := ""
@@ -342,4 +347,35 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 			strings.HasPrefix(it.Caption, "Remediating") || strings.HasPrefix(it.Caption, "Fixing")) {
 		it.Caption = out.Caption
 	}
+}
+
+// stageTrackerAdoptHumanDecision: a review verdict that asked for a human
+// decision stops reading "awaiting human decision" once the row is back in
+// PR in progress with the hive on it — adopted (074) or in a fix stage —
+// and nobody is actually parked on a person. The findings are then changes
+// the hive is addressing; the decision question rides in the detail.
+func stageTrackerAdoptHumanDecision(it *StageTrackerItem) {
+	a := it.ReviewActivity
+	if a == nil || a.State != "human_decision" || !strings.EqualFold(a.Head, it.Head) {
+		return
+	}
+	if it.NeedsHuman || it.OnHold || it.Hold != nil || it.Stage == trackerNumberNeedsDecision {
+		return
+	}
+	switch it.Stage {
+	case trackerNumberAdopted, trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberReturned:
+	default:
+		return
+	}
+	who := "the hive adopted the repair"
+	if it.Stage != trackerNumberAdopted {
+		who = "the row is under repair"
+	}
+	a.State, a.Caption, a.Active = "changes_requested", "Review findings · changes requested", false
+	a.Source += "+adopted-decision"
+	detail := "The review swarm asked for a human decision; " + who + ", so its findings are the changes to make."
+	if a.Blocker != "" {
+		detail += " Question: " + a.Blocker
+	}
+	a.Detail = strings.TrimSpace(detail + " " + a.Detail)
 }
