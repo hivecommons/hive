@@ -113,3 +113,49 @@ func TestAdoptNowOfflineWordingAndHoldStops(t *testing.T) {
 		t.Fatalf("offline wording: %s", comments[0])
 	}
 }
+
+// An operator may take over anyone's PR, a hive owner's included: the
+// person-authored rule (hivecommons/hive#15202) holds for the hive's own
+// initiative and for an adoption/supersede request, but an explicit Adopt
+// now adopts, consumes the forced mark and leaves no "queued" behind.
+func TestAdoptNowTakesOverOwnerAuthoredPR(t *testing.T) {
+	policy := adoptPolicy()
+	policy.OwnerAuthor = func(login string) bool { return login == "mallory" }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, policy)
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: false}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+
+	// Control: the request label alone is refused for an owner's PR.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", append(labels, "adoption/supersede")...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 {
+		t.Fatalf("request adopted an owner's PR: pulls=%v", h.adopt.pulls)
+	}
+	if rec, _ := store.Get(key); rec.AdoptionBlocked("aaa") != "author-is-person" {
+		t.Fatalf("refusal not recorded: %+v", rec)
+	}
+
+	store.NoteAdoptionForced(key, "clubanderson", h.clock.now())
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", append(labels, "adoption/supersede")...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("Adopt now did not supersede an owner's PR: pulls=%v added=%v", h.adopt.pulls, h.api.added)
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || !strings.Contains(comments[0], "by=@clubanderson reason=operator-forced") {
+		t.Fatalf("adoption comments = %v", h.api.comments)
+	}
+	rec, _ := store.Get(key)
+	if rec.AdoptedHead != "aaa" || rec.AdoptedBy != 90 || rec.AdoptReason != AdoptReasonOperatorForced {
+		t.Fatalf("record after Adopt now: %+v", rec)
+	}
+	if _, forced := rec.AdoptionForced(); forced || rec.AdoptionBlocked("aaa") != "" {
+		t.Fatalf("forced mark or person block survived the adoption: %+v", rec)
+	}
+}
