@@ -231,6 +231,10 @@
         // the glyph alone.
         const words = cell.querySelector('.ham-track-state')?.innerText.trim() || '';
         if (cell.classList.contains('todo')) assert(words === '', name + 'not-started track is icon-only');
+        // A settled verdict (passed / failed, approved / changes requested)
+        // is the glyph alone in its colour; its count words ride in the
+        // tooltip and accessible label.
+        else if (cell.dataset.verdict) assert(words === '' && /\b(CI|Review): (CI|Review)\b/.test(cell.getAttribute('aria-label') || ''), name + 'settled verdict is the glyph alone with its words in the label: ' + JSON.stringify(words));
         else assert(/^(CI|Review)\b/.test(words), name + 'lit unknown track carries count words, never a bare glyph: ' + JSON.stringify(words));
         assert(!!cell.querySelector('svg'), name + 'unknown track retains the column glyph');
         assert(!cell.hasAttribute('data-motion'), name + 'unknown cannot animate as observed work');

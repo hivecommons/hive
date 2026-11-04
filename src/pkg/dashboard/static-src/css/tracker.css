@@ -392,6 +392,11 @@
     .ham-seg.ham-activity-track.done.decided { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
     /* The count words stay on one line and ellipsize instead of wrapping. */
     .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
+    /* A settled verdict is the glyph alone (green passed / approved, red
+       failed / changes requested — the .done / .failing colours above);
+       the words live in the tooltip. Same box, same height: only the
+       trailing gap goes and the stroke firms up so the colour reads. */
+    .ham-chevron-copy.ham-track-verdict .ham-ico { margin-right: 0; stroke-width: 2; }
     .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
     .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }

@@ -49,12 +49,24 @@
       }
       return out;
     }
+    // A human-requirement line is a hive note: it opens, then tucks into
+    // its ⬡ icon like the "Hive: …" line (stageTrackerHumanNoteHtml,
+    // tracker-motion). Lifted copies without tracker-motion (tests,
+    // previews) render the plain row instead.
+    function stageTrackerHumanContextLine(item, bodyHtml, text, nowMs) {
+      if (typeof stageTrackerHumanNoteHtml === 'function' && typeof stageTrackerItemKey === 'function') {
+        return stageTrackerHumanNoteHtml(stageTrackerItemKey(item), bodyHtml, text, nowMs);
+      }
+      return `<div class="cue-event ham-human-context"><span>${bodyHtml}</span></div>`;
+    }
     function stageTrackerHumanContextHtml(item, stages, nowMs, subRows) {
       const required = stageTrackerHumanContextOf(item, stages);
       const lines = required.map(entry => {
         const it = entry.item;
         const href = it.url || item.url;
-        return `<div class="cue-event ham-human-context"><span>${esc(entry.text)}${href ? ` <a href="${esc(href)}" target="_blank" rel="noopener">View ${it.kind === 'pr' ? 'PR' : 'issue'} #${Number(it.number)}</a>` : ''}</span></div>`;
+        const view = href ? 'View ' + (it.kind === 'pr' ? 'PR' : 'issue') + ' #' + Number(it.number) : '';
+        const body = esc(entry.text) + (view ? ` <a href="${esc(href)}" target="_blank" rel="noopener">${view}</a>` : '');
+        return stageTrackerHumanContextLine(item, body, entry.text + (view ? ' · ' + view : ''), nowMs);
       });
       if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines.join('');
       const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
@@ -62,7 +74,8 @@
         stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
       if (stale || staleLinks.length) {
         const refs = staleLinks.length ? staleLinks.map(lp => 'PR #' + lp.number).join(', ') : item.kind === 'pr' ? 'PR #' + item.number : 'Issue #' + item.number;
-        return `<div class="cue-event ham-human-context"><span>${esc(refs)} · decision context unavailable for the displayed identity/head${item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''}</span></div>`;
+        const text = refs + ' · decision context unavailable for the displayed identity/head';
+        return stageTrackerHumanContextLine(item, esc(text) + (item.url ? ` · <a href="${esc(item.url)}" target="_blank" rel="noopener">View current item</a>` : ''), text, nowMs);
       }
       const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
       if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
@@ -78,9 +91,11 @@
         const who = actor.login ? '@' + actor.login : 'a person';
         const prNumber = item.kind === 'issue' && (item.linked_pr || ((item.linked_prs || []).length === 1 && item.linked_prs[0].number));
         const target = prNumber ? ' on PR #' + prNumber : '';
-        lines.push(`<div class="cue-event ham-human-context"><span>Next move: ${esc(who + target)}${actor.why ? ' — ' + esc(actor.why) : ' · action reason unavailable'}</span></div>`);
+        const text = 'Next move: ' + who + target + (actor.why ? ' — ' + actor.why : ' · action reason unavailable');
+        lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
       } else if (claimant && claimant.kind === 'person' && claimant.login) {
-        lines.push(`<div class="cue-event ham-human-context"><span>Claimed by @${esc(claimant.login)} · claim ownership, not a human decision request</span></div>`);
+        const text = 'Claimed by @' + claimant.login + ' · claim ownership, not a human decision request';
+        lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
       }
       if (typeof stageTrackerLeadActionOnRow === 'function' && typeof stageTrackerActionCtx === 'function') {
         const ctx = stageTrackerActionCtx(item.repo);
@@ -89,7 +104,8 @@
           ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
           const action = stageTrackerLeadActionOnRow(item, ctx, subRows);
           if (action && (action.id === 'decide:delegate' || action.id === 'decide:delegate-all')) {
-            lines.push('<div class="cue-event ham-human-context"><span>Optional delegation: Let hive decide is available; it does not itself mean human input is required.</span></div>');
+            const text = 'Optional delegation: Let hive decide is available; it does not itself mean human input is required.';
+            lines.push(stageTrackerHumanContextLine(item, esc(text), text, nowMs));
           }
         }
       }
