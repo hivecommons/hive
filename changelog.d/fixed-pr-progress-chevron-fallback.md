@@ -1,0 +1,1 @@
+- Activity Monitor: the PR in progress chevron is the row's fallback — it defers (settled, icon only) whenever CI or Review runs, so CI + Review is the only pair ever active together — and its words are the PR's lifecycle (`Unassigned · next: scanner`, `Waiting for @author · fix owed`), never the CI / review verdict (hivecommons/hive#16643).

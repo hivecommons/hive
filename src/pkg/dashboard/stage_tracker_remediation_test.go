@@ -37,7 +37,7 @@ func TestStageTrackerRemediationUnassignedWithoutEvidence(t *testing.T) {
 		t.Fatalf("no evidence must yield no remediation record: %+v", it.Remediation)
 	}
 	ca := it.CodeActivity
-	if ca.State != codeStateUnassigned || ca.Caption != "Changes requested · unassigned · next: scanner" || it.DisplayColumn != trackerNumberPRInProgress {
+	if ca.State != codeStateUnassigned || ca.Caption != "Unassigned · next: scanner" || it.DisplayColumn != trackerNumberPRInProgress {
 		t.Fatalf("unassigned word: state=%s caption=%q col=%d", ca.State, ca.Caption, it.DisplayColumn)
 	}
 	if !strings.Contains(ca.Detail, "switches to Remediating when") || ca.Since == nil || !ca.Since.Equal(now.Add(-40*time.Minute)) {
@@ -56,7 +56,7 @@ func TestStageTrackerRemediationCIFailingWordAndPersonNext(t *testing.T) {
 	it.CIActivity = &StageTrackerActivity{Head: it.Head, State: "failing", Since: &red}
 	it.AuthorKind, it.Author, it.Claimant = authorKindHuman, "alice", nil
 	stageTrackerApplyRemediation(it, review.DispatchState{}, nil, "scanner", now)
-	if got := it.CodeActivity.Caption; got != "CI failing · unassigned · next: @alice" {
+	if got := it.CodeActivity.Caption; got != "Unassigned · next: @alice" {
 		t.Fatalf("CI-only red names CI and the author: %q", got)
 	}
 }
@@ -146,7 +146,7 @@ func TestStageTrackerRemediationEvidenceClaim(t *testing.T) {
 	it = remediationRedPR(now)
 	it.Rework = &StageTrackerRework{State: reworkStateRequested, Actor: "bob", Evidence: reworkEvidenceQueued, Ahead: 3}
 	stageTrackerApplyRemediation(it, review.DispatchState{}, nil, "scanner", now)
-	if it.Remediation != nil || it.CodeActivity.Caption != "Changes requested · unassigned · fixer queued, 3 ahead · next: @bob's clanker" {
+	if it.Remediation != nil || it.CodeActivity.Caption != "Unassigned · fixer queued, 3 ahead · next: @bob's clanker" {
 		t.Fatalf("queued fix is waiting, not remediating: %+v %q", it.Remediation, it.CodeActivity.Caption)
 	}
 }
@@ -191,7 +191,7 @@ func TestStageTrackerRemediationKeepsOwnerWaitAndObservedWork(t *testing.T) {
 	stageTrackerApplyCodeActivity(it, review.DispatchState{}, nil, now)
 	stageTrackerApplyRemediation(it, review.DispatchState{}, nil, "scanner", now)
 	ca := it.CodeActivity
-	if ca.State != "waiting_owner" || ca.Caption != "Waiting for @erin · changes requested" || it.DisplayColumn != trackerNumberPRInProgress || it.Remediation != nil {
+	if ca.State != "waiting_owner" || ca.Caption != "Waiting for @erin · fix owed" || it.DisplayColumn != trackerNumberPRInProgress || it.Remediation != nil {
 		t.Fatalf("person-owned wait keeps its word with the red reason: state=%s caption=%q col=%d ev=%+v", ca.State, ca.Caption, it.DisplayColumn, it.Remediation)
 	}
 	// Observed code work already reads Remediating · agent; untouched.
@@ -261,5 +261,46 @@ func TestStageTrackerAdoptedRowRewordsHumanDecision(t *testing.T) {
 				t.Fatalf("the decision question and provenance ride in the detail/source: %q %q", a.Detail, a.Source)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#16643: the PR in progress chevron never carries the CI
+// or Review chevron's verdict. Whatever is red, an unpicked-up PR reads
+// its lifecycle word (Unassigned / Waiting for @author · fix owed) and the
+// red word rides only in the detail.
+func TestStageTrackerRemediationCaptionNeverNamesTrackVerdict(t *testing.T) {
+	now := time.Date(2026, 11, 4, 2, 45, 0, 0, time.UTC)
+	red := now.Add(-40 * time.Minute)
+	for _, tc := range []struct {
+		name   string
+		ci     string
+		review string
+	}{{"ci red", "failing", "approved"}, {"review red", "passing", "changes_requested"}, {"both red", "failing", "changes_requested"}} {
+		for _, owner := range []bool{false, true} {
+			it := remediationRedPR(now)
+			it.CIActivity = &StageTrackerActivity{Head: it.Head, State: tc.ci, Since: &red}
+			it.ReviewActivity = &StageTrackerActivity{Head: it.Head, State: tc.review, Since: &red}
+			if owner {
+				it.Stage, it.Author, it.AuthorKind, it.Push = trackerNumberReturned, "erin", authorKindClanker, nil
+				stageTrackerApplyCodeActivity(it, review.DispatchState{}, nil, now)
+			}
+			stageTrackerApplyRemediation(it, review.DispatchState{}, nil, "scanner", now)
+			ca := it.CodeActivity
+			for _, word := range []string{"CI failing", "Changes requested", "changes requested", "CI "} {
+				if strings.Contains(ca.Caption, word) {
+					t.Fatalf("%s owner=%v: PR in progress caption carries the track verdict %q: %q", tc.name, owner, word, ca.Caption)
+				}
+			}
+			want := prProgressUnassignedWord
+			if owner {
+				want = "Waiting for @erin · " + prProgressFixOwedWord
+			}
+			if !strings.HasPrefix(ca.Caption, want) {
+				t.Fatalf("%s owner=%v: caption = %q, want prefix %q", tc.name, owner, ca.Caption, want)
+			}
+			if ca.Detail == "" || !(strings.Contains(ca.Detail, "CI failing") || strings.Contains(ca.Detail, "Changes requested")) {
+				t.Fatalf("%s owner=%v: the red word must ride in the detail: %q", tc.name, owner, ca.Detail)
+			}
+		}
 	}
 }
