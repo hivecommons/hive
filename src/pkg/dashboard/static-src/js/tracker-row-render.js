@@ -93,9 +93,11 @@
       const nowMs = Number(ctx.nowMs) || Date.now();
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
-      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '';
+      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '', basePill = '';
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
+        // The primary (first-sorted) PR's base; an issue with no PR shows none.
+        if (linked.length) basePill = stageTrackerBasePillHtml(linked[0].base_ref, linked[0].number);
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
@@ -103,7 +105,7 @@
           prTargetKey = stageTrackerItemKey(pr);
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null))];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
@@ -129,8 +131,10 @@
       // as one (hivecommons/hive#15232) — and the PR stays in the PR column
       // rather than taking the issue slot. A not-planned close adds a chip
       // saying the PR may be moot.
-      // The repo chip (when on) leads the row, before the issue slot's #N.
-      const chip = ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '';
+      // The repo chip (when on) leads the row, before the issue slot's #N;
+      // the PR's base pill follows it as a quieter sibling.
+      if (!isIssue) basePill = stageTrackerBasePillHtml(item.base_ref, item.number);
+      const chip = (ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '') + basePill;
       let leadHtml;
       if (isIssue) {
         leadHtml = `<div class="ham-head-main">

@@ -1,0 +1,1 @@
+- Recognize install, boot, and explicitly named E2E GitHub Actions workflows in the ACMM E2E prerequisite, retaining web/configuration and directory alternatives without treating unrelated CI workflows as E2E coverage.

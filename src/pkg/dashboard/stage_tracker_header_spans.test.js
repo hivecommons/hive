@@ -28,7 +28,7 @@ function load() {
     stageTrackerIcon: (kind, cls) => `<svg class="${cls || ''}"></svg>`,
     stageTrackerRepoChipHtml: () => '<button class="ham-repo-chip">long-repo-name</button>',
     stageTrackerTooltip: () => 'tooltip',
-    stageTrackerPRPillsHtml: ref => `<span class="ham-pr-line">${ref}<span class="ham-badge">base v5</span></span>`,
+    stageTrackerPRPillsHtml: ref => `<span class="ham-pr-line">${ref}</span>`,
     stageTrackerActedBadgeHtml: () => '',
     stageTrackerChipsHtml: () => chips,
     stageTrackerMoveAttrs: () => '',
@@ -42,7 +42,7 @@ function load() {
     vm.runInContext(pick(new RegExp('const ' + name + ' = [^\\n]*'), name), ctx);
   }
   for (const name of ['stageTrackerHeadColsHtml', 'stageTrackerHeaderHtml', 'stageTrackerRowHtml', 'stageTrackerSubRowHtml',
-    'stageTrackerPRRef', 'stageTrackerPRIssueSlot', 'stageTrackerTitleHtml', 'stageTrackerSplitTitleTag']) {
+    'stageTrackerPRRef', 'stageTrackerPRIssueSlot', 'stageTrackerTitleHtml', 'stageTrackerSplitTitleTag', 'stageTrackerBasePillHtml']) {
     vm.runInContext(fn(name), ctx);
   }
   return ctx;

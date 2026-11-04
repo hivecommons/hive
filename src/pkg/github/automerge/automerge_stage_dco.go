@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -51,6 +52,16 @@ func dcoCommitStatsDetailed(commits []*gh.RepositoryCommit, appLogin string) dco
 }
 
 func dcoCommitStatsDetailedForAuthor(commits []*gh.RepositoryCommit, appLogin, prAuthor string) dcoStats {
+	return dcoCommitStatsForSquashAuthor(commits, appLogin, prAuthor, botSquashAuthor(prAuthor))
+}
+
+// dcoCommitStatsForSquashAuthor is dcoCommitStatsDetailedForAuthor with the
+// squash-attribution verdict on the PR author made explicit: selfSquash means
+// a squash under prAuthor attributes the hive's commits to the hive itself
+// (a bot author, or one of this hive's own identities: project.ai_author,
+// the App bot), so no signed hive commit is squash-unsafe. Unsigned commits
+// are still counted and rejected.
+func dcoCommitStatsForSquashAuthor(commits []*gh.RepositoryCommit, appLogin, prAuthor string, selfSquash bool) dcoStats {
 	var stats dcoStats
 	for _, rc := range commits {
 		if rc == nil || len(rc.Parents) > 1 {
@@ -65,7 +76,7 @@ func dcoCommitStatsDetailedForAuthor(commits []*gh.RepositoryCommit, appLogin, p
 			} else {
 				stats.unsignedOther++
 			}
-		} else if !botSquashAuthor(prAuthor) && dcoCommitByHive(rc, appLogin) && !messageHasPRAuthorSignoff(msg, prAuthor) {
+		} else if !selfSquash && dcoCommitByHive(rc, appLogin) && !messageHasPRAuthorSignoff(msg, prAuthor) {
 			stats.squashUnsafeHive++
 		}
 	}
@@ -87,10 +98,12 @@ func dcoCommitByHive(commit *gh.RepositoryCommit, appLogin string) bool {
 // with Store.NoteDCO once the record exists). A read
 // failure leaves the state unknown (labels untouched, stage unchanged) and
 // is reported, never fatal.
-func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation) (dcoStats, error) {
+func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy) (dcoStats, error) {
 	if obs.HeadSHA == "" {
 		return dcoStats{}, nil
 	}
+	appLogin := c.transport.AppBotLogin()
+	selfSquash := botSquashAuthor(obs.Author) || hiveAuthoredPR(obs, policy, appLogin)
 	if rec, ok := store.Get(key); ok {
 		if t, u, cached := rec.DCOFor(obs.HeadSHA); cached {
 			// Records cached before the ownership split existed carry
@@ -98,7 +111,7 @@ func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key str
 			// so read the commits once more for that case only.
 			if (u > 0 || rec.DCOSquashUnsafeKnown) && (u == 0 || rec.DCOSplitKnown(obs.HeadSHA) || !rec.AdoptedInPlace()) {
 				unsafe := rec.DCOSquashUnsafeHive
-				if botSquashAuthor(obs.Author) {
+				if selfSquash {
 					unsafe = 0
 				}
 				return dcoStats{total: t, unsigned: u, unsignedHive: rec.DCOUnsignedHive, unsignedOther: u - rec.DCOUnsignedHive, squashUnsafeHive: unsafe}, nil
@@ -110,7 +123,27 @@ func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key str
 	if err != nil {
 		return dcoStats{}, err
 	}
-	return dcoCommitStatsDetailedForAuthor(all, c.transport.AppBotLogin(), obs.Author), nil
+	return dcoCommitStatsForSquashAuthor(all, appLogin, obs.Author, selfSquash), nil
+}
+
+// hiveAuthoredPR reports whether the PR is the hive's own: author/hive by
+// kind, observed under the self-authored lane, authored by the App bot, or
+// authored by one of the identities the policy names as this hive's
+// (project.ai_author — the clanker login the hive's agents open PRs as).
+// Such a PR is never re-homed for sign-off attribution: a squash under its
+// author attributes the hive's commits to the hive (hivecommons/hive#16619).
+func hiveAuthoredPR(obs stageObservation, policy StageLabelPolicy, appLogin string) bool {
+	if obs.AuthorKind == authorkind.Hive || obs.Lane == stageLaneSelf {
+		return true
+	}
+	author := strings.TrimSpace(obs.Author)
+	if author == "" {
+		return false
+	}
+	if appLogin != "" && strings.EqualFold(author, appLogin) {
+		return true
+	}
+	return policy.HiveAuthor != nil && policy.HiveAuthor(author)
 }
 
 // Matches the bot-PR policy in check-squash-signoff-attribution.sh: a squash

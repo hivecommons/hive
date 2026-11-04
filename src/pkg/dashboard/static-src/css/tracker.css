@@ -178,6 +178,8 @@
     .ham-repo-tint-4 { --ham-repo-tint: var(--ham-repo-tint-4); }
     .ham-repo-tint-5 { --ham-repo-tint: var(--ham-repo-tint-5); }
     .ham-repo-chip.ham-repo-primary { --ham-repo-tint: var(--text-muted); }
+    /* The PR's base branch: same height and type as the repo chip it follows, muted border, no tint. */
+    .ham-base-pill { flex: 0 0 auto; display: inline-block; font: inherit; font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.5; padding: 0 var(--sp-2); border-radius: var(--r-sm); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: baseline; }
     .ham-pr-line { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; }
     /* Group-by-repo header row: sticky under the column header while its
        rows scroll, caret toggle, chip, owner/repo, counts, and a mini
@@ -400,12 +402,14 @@
     .ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); animation: none; }
     .ham-seg.active.ham-settled-current::before { display: none; }
     .ham-seg.ham-activity-track.done.decided { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
-    /* A row always has one filled chevron (hivecommons/hive#16599). When
-       nothing moves on a review-pending row and the stage track has
-       settled, the blocker's track is filled stalled: a still, muted amber
-       (muted red on a finding), words kept, person icon when a human
-       action moves it (workflow approval, a sign-off). */
-    .ham-seg.ham-activity-track.active.ham-stalled { background: color-mix(in srgb, var(--amber) 55%, var(--panel-strong)); color: var(--text); animation: none; }
+    /* A stalled blocker track (nothing moves; the row waits on a person
+       or a late check) is ACTIVE like any other text-bearing track: the one
+       bright amber fill (hivecommons/hive#16643 — "an active chevron has
+       exactly one fill"). It is still, not pulsing; the person glyph and
+       the tooltip say why.
+       Active-track fill invariant: no rule sets a background on
+       .ham-activity-track.active beyond .ham-seg.active. */
+    .ham-seg.ham-activity-track.active.ham-stalled { animation: none; }
     .ham-seg.ham-activity-track.active.ham-stalled::before { display: none; }
     .ham-seg.ham-activity-track.ham-stalled .ham-actor-ico { margin-left: var(--sp-1); flex: 0 0 auto; }
     /* The CI / Review glyph is a ring of steps (checks / perspectives,

@@ -1518,6 +1518,8 @@
     .ham-repo-tint-4 { --ham-repo-tint: var(--ham-repo-tint-4); }
     .ham-repo-tint-5 { --ham-repo-tint: var(--ham-repo-tint-5); }
     .ham-repo-chip.ham-repo-primary { --ham-repo-tint: var(--text-muted); }
+    /* The PR's base branch: same height and type as the repo chip it follows, muted border, no tint. */
+    .ham-base-pill { flex: 0 0 auto; display: inline-block; font: inherit; font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.5; padding: 0 var(--sp-2); border-radius: var(--r-sm); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: baseline; }
     .ham-pr-line { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; }
     /* Group-by-repo header row: sticky under the column header while its
        rows scroll, caret toggle, chip, owner/repo, counts, and a mini
@@ -1740,12 +1742,14 @@
     .ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); animation: none; }
     .ham-seg.active.ham-settled-current::before { display: none; }
     .ham-seg.ham-activity-track.done.decided { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
-    /* A row always has one filled chevron (hivecommons/hive#16599). When
-       nothing moves on a review-pending row and the stage track has
-       settled, the blocker's track is filled stalled: a still, muted amber
-       (muted red on a finding), words kept, person icon when a human
-       action moves it (workflow approval, a sign-off). */
-    .ham-seg.ham-activity-track.active.ham-stalled { background: color-mix(in srgb, var(--amber) 55%, var(--panel-strong)); color: var(--text); animation: none; }
+    /* A stalled blocker track (nothing moves; the row waits on a person
+       or a late check) is ACTIVE like any other text-bearing track: the one
+       bright amber fill (hivecommons/hive#16643 — "an active chevron has
+       exactly one fill"). It is still, not pulsing; the person glyph and
+       the tooltip say why.
+       Active-track fill invariant: no rule sets a background on
+       .ham-activity-track.active beyond .ham-seg.active. */
+    .ham-seg.ham-activity-track.active.ham-stalled { animation: none; }
     .ham-seg.ham-activity-track.active.ham-stalled::before { display: none; }
     .ham-seg.ham-activity-track.ham-stalled .ham-actor-ico { margin-left: var(--sp-1); flex: 0 0 auto; }
     /* The CI / Review glyph is a ring of steps (checks / perspectives,
@@ -8393,7 +8397,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         <input id="activity-monitor-q" class="ham-input" type="search" placeholder="Search # or title…" autocomplete="off" spellcheck="false" aria-label="Search by number or title" data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w">
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
-        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, unauthorized, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
+        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, hive bot lacks permission, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
         <button type="button" class="ham-chip ham-chip--waiting" id="activity-monitor-waiting" data-action="hamFilter" data-arg0="waitingOnYou" data-arg1="toggle" aria-pressed="false" title="Only items parked on you: a decision asked at 045 / 085, a PR ready for a human merge at 090, an approval the hive cannot give, or a contributor offline past their grace so you are the fallback. Same rows as the sidebar's orange badge and the topbar's Waiting on you pill">Waiting on you</button>
         <label class="ham-repo-filter"><span>Decisions</span><select id="activity-monitor-acted" class="ham-select" data-change-action="hamFilter" data-arg0="acted" data-arg-types="s,v" aria-label="Filter by whether you acted on the row" title="Awaiting my decision: parked on a person, no action recorded yet. I acted: an action was recorded from this dashboard (history badge). Acted, still stuck: acted, but the item has not moved past that stage (amber history badge)"><option value="any">Any</option><option value="awaiting">Awaiting my decision</option><option value="acted">I acted</option><option value="stuck">Acted, still stuck</option></select></label>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
@@ -15381,7 +15385,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // "workflow-files" / "untrusted-author" / "branch-protection", falling
     // back to "policy"); the tooltip carries the payload's one-sentence
     // human_merge_reason_text (hivecommons/hive#14658).
-    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'hive bot lacks permission', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
     // 090 under the breaking-change rule (human_merge_reason
     // "breaking-change": a ⚠️ title or needs-owner-merge label,
     // hivecommons/hive#15442): no approval lets the hive merge it, so the
@@ -16260,7 +16264,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_NEEDS_HUMAN_STAGES = [15, 45, 85, 90];
     const STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES = [71, 72];
     const STAGE_TRACKER_NEEDS_HUMAN_MODS = ['needs-human', 'needs-decision', 'unauthorized'];
-    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, or a needs-human / unauthorized pill';
+    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, or a needs-human / hive-bot-lacks-permission pill';
     const STAGE_TRACKER_ON_HOLD_TIP = 'Paused on purpose with a hold label — waiting on nobody; remove the hold to resume';
     // Label families a chip row is built from, in display order; other
     // labels follow when at least two items carry them.
@@ -17651,7 +17655,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
+    // hive:unauthorized reads "hive bot lacks permission", never "unauthorized": the App
+    // installation is missing a permission, nobody did anything illegitimate (hivecommons/hive#16639).
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe', unauthorized: 'hive bot lacks permission' };
     // The draft pill and the Draft chevron explain themselves on hover: no
     // maintainer action is pending, the lanes resume when the author is ready.
     const STAGE_TRACKER_DRAFT_TIP = 'Draft PR — hive review and merge lanes skip drafts until the author marks it ready for review.';
@@ -17827,8 +17833,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const external = sa.kind === STAGE_TRACKER_ACTOR_NONE && typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
-      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'CI failing') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
-      const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
+      // The red verdict is the CI / Review chevron's word; this lane says
+      // who owes the fix (hivecommons/hive#16643).
+      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Fix owed') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
+      const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Fix owed';
       return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }
 
@@ -18326,11 +18334,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const remediation = codeOnHead && ['unassigned', 'remediating', 'fix_pushed'].includes(code.state) ? code.state : '';
       if (remediation === 'remediating' && Number(item.display_column) === 30) motion = STAGE_TRACKER_MOTION_ACTIVE;
       const evidence = item.remediation && item.remediation.kind ? 'evidence: ' + item.remediation.kind + (item.remediation.actor ? ' by ' + item.remediation.actor : '') + (item.remediation.since ? ' since ' + item.remediation.since : '') + (item.remediation.source ? ' (' + item.remediation.source + ')' : '') : '';
-      // Both tracks running: the PR waits on them, nobody works it. The
-      // stage chevron is settled-current (bright words, no amber, no pulse)
-      // so the row never lights three chevrons (hivecommons/hive#16540).
+      // Activation resolution (hivecommons/hive#16643): CI and Review are
+      // resolved first. If either runs, the PR waits on it and nothing
+      // else is active — the stage chevron (PR in progress, Merge queue …)
+      // renders settled-current, icon only, its words in the tooltip, so
+      // CI + Review is the one pair that can be active together and every
+      // other row has exactly one active chevron. The stage chevron is the
+      // ≥ 1 fallback: active only when no track is in motion.
       const tracksRunning = ['ci', 'review'].filter(kind => stageTrackerTrackRunning(item, kind)).length;
-      const waitingOnTracks = tracksRunning === 2;
+      const waitingOnTracks = tracksRunning >= 1;
       if (waitingOnTracks) motion = STAGE_TRACKER_MOTION_STATIC;
       const motionAttr = motion === STAGE_TRACKER_MOTION_STATIC ? '' : ` data-motion="${motion}"`;
       // Column 50 is the row's phase and no track moves: one track is
@@ -18388,7 +18400,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (code.blocker) tip += ' · ' + code.blocker;
             if (claimant) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
           }
-          if (waitingOnTracks && !sg.cap) tip = 'Waiting on CI and review, both running — ' + tip;
+          if (waitingOnTracks && !sg.cap) tip = (tracksRunning === 2 ? 'Waiting on CI and review, both running' : 'Waiting on ' + (stageTrackerTrackRunning(item, 'ci') ? 'CI' : 'review') + ', running') + ' — ' + tip;
         }
         let inner;
         // A lit chevron on a row parked on a person ("Needs human decision",
@@ -18422,7 +18434,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           const caption = gateWord || word;
           const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
-          const content = `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
+          // Deferred to a running track: the icon alone (a decision trigger
+          // keeps its button, since the popover lives in the word).
+          const content = waitingOnTracks && !sg.cap && !decision ? stageTrackerIcon(sg.number, 'ham-ico') : `${gateCue}${workIco}<span class="ham-chevron-copy">${text}</span>${actorIco || holderIco}`;
           // A decision's dialog is its sole hover/focus detail surface.
           inner = decision ? `<span class="ham-chevron-info ham-chevron-decision">${content}</span>` : `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${content}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}</span></span>`;
         } else if (fixPushed) {
@@ -18598,7 +18612,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
-      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Unauthorized: ' + item.unauthorized);
+      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Hive bot lacks permission: ' + item.unauthorized);
       if (mods.indexOf('hold') >= 0 && typeof stageTrackerHoldPill === 'function' && stageTrackerHoldPill(item)) lines.push(stageTrackerHoldPill(item));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
@@ -18701,7 +18715,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The regressed pill (lead or folded into "+1") explains itself on
       // hover; failing that, a draft pill (lead or folded) does.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      // An unauthorized pill names the missing App permission and the human step;
+      // A hive-bot-lacks-permission pill names the missing App permission and the human step;
       // the regressed pill explains itself; a blocked pill names what it waits on;
       // failing all three, a draft pill does.
       const anyBlockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
@@ -19442,9 +19456,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ctx.rows = typeof _stageTrackerRows !== 'undefined' ? _stageTrackerRows : null;
       return stageTrackerLeadActionHtml(item, ctx, subRows);
     }
-    // PR link, then the lineage chip (null = none), then the base pill.
-    function stageTrackerPRPillsHtml(ref, lineage, baseRef) {
-      return ref + (lineage == null ? '' : ' ' + lineage) + (baseRef ? ` <span class="ham-badge">${esc(baseRef)}</span>` : '');
+    // PR link, then the lineage chip (null = none). The base pill sits by
+    // the repo chip at the row's head (stageTrackerBasePillHtml), not here.
+    function stageTrackerPRPillsHtml(ref, lineage) {
+      return ref + (lineage == null ? '' : ' ' + lineage);
+    }
+    // Pure: the PR's base branch as a quiet sibling of the repo chip —
+    // `[hive][v5] #16603 …` — so the target reads with the repo, not in the
+    // right-hand modifier cluster. '' when the row has no PR (or no base).
+    function stageTrackerBasePillHtml(baseRef, prNumber) {
+      if (!baseRef) return '';
+      const tip = (Number(prNumber) ? 'PR #' + Number(prNumber) + ' targets ' : 'Targets ') + baseRef;
+      return `<span class="ham-base-pill" title="${esc(tip)}">${esc(baseRef)}</span>`;
     }
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
@@ -19456,9 +19479,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // A superseded original wears neither pill — it closes as superseded,
       // not as the closer of anything.
       const lineage = superseded ? '' : ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : ''));
-      const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
+      const chip = (ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '') + stageTrackerBasePillHtml(lp.base_ref, pr.number);
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
-      ref = stageTrackerPRPillsHtml(ref, !superseded && typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref);
+      ref = stageTrackerPRPillsHtml(ref, !superseded && typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null));
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       if (superseded) {
         // The adopted original: one muted line, no chevron track, no row
@@ -19715,9 +19738,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nowMs = Number(ctx.nowMs) || Date.now();
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
-      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '';
+      let prRefs = [], shown = item, range = null, subs = '', subRows = null, prTargetKey = '', basePill = '';
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
+        // The primary (first-sorted) PR's base; an issue with no PR shows none.
+        if (linked.length) basePill = stageTrackerBasePillHtml(linked[0].base_ref, linked[0].number);
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
@@ -19725,7 +19750,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           prTargetKey = stageTrackerItemKey(pr);
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           const lineage = (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(lp, nowMs) : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null), lp.base_ref)];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), typeof stageTrackerLinkedChipsHtml === 'function' ? stageTrackerLinkedChipsHtml(lp, lineage) : (lineage || null))];
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
@@ -19751,8 +19776,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // as one (hivecommons/hive#15232) — and the PR stays in the PR column
       // rather than taking the issue slot. A not-planned close adds a chip
       // saying the PR may be moot.
-      // The repo chip (when on) leads the row, before the issue slot's #N.
-      const chip = ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '';
+      // The repo chip (when on) leads the row, before the issue slot's #N;
+      // the PR's base pill follows it as a quieter sibling.
+      if (!isIssue) basePill = stageTrackerBasePillHtml(item.base_ref, item.number);
+      const chip = (ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '') + basePill;
       let leadHtml;
       if (isIssue) {
         leadHtml = `<div class="ham-head-main">

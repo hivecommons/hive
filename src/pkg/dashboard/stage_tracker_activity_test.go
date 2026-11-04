@@ -38,7 +38,7 @@ func TestStageTrackerActivityRequiredCI(t *testing.T) {
 					{Name: "tide", State: "queued"}, {Name: "optional", State: "completed", Conclusion: "failure"}},
 			}}
 			got := stageTrackerCIActivity(pr, now)
-			if got.State != tc.want || got.Active != (tc.want == "running") {
+			if got.State != tc.want || got.Active != (tc.want == "running" || tc.want == "queued") {
 				t.Fatalf("activity = %+v, want %s", got, tc.want)
 			}
 			pr.CIActivity.Head = "old-head"
@@ -53,10 +53,12 @@ func TestStageTrackerActivityRequiredCI(t *testing.T) {
 		t.Fatalf("missing run became a verdict: %+v", got)
 	}
 	pr.CIActivity.Checks = []github.PRActivityCheck{{Name: "missing", State: "in_progress"}}
+	// A running check is active whatever the poll's age: one fill, the
+	// observation time in the tooltip (hivecommons/hive#16643).
 	for _, at := range []time.Time{now.Add(-trackerActivityFreshWindow - time.Second), now.Add(time.Second)} {
 		pr.CIActivity.ObservedAt = &at
-		if got := stageTrackerCIActivity(pr, now); got.Active {
-			t.Fatalf("stale or future CI manufactured current activity: %+v", got)
+		if got := stageTrackerCIActivity(pr, now); !got.Active || got.State != "running" {
+			t.Fatalf("a stale poll dimmed running CI: %+v", got)
 		}
 	}
 }
