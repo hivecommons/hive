@@ -52,15 +52,15 @@ type matrixPRState struct {
 	touched   time.Time
 }
 
-// matrixSource turns sentinel patch observations into a bounded, scrubbed,
-// de-duplicated in-memory backlog. Observe never blocks; one goroutine does
-// all the parsing. Nothing is written to disk.
 type matrixQueuedObservation struct {
 	observation github.SentinelPatchObservation
 	epoch       string
 }
 
-// matrixSource owns the shared observer queue and its legacy line projection.
+// matrixSource turns sentinel patch observations into a bounded, scrubbed,
+// de-duplicated in-memory backlog. It owns the shared observer queue and its
+// legacy line projection. Observe never blocks; one goroutine does all the
+// parsing. Nothing is written to disk.
 type matrixSource struct {
 	checkpoints *checkpointSource
 	// policyMu is held exclusively by setConfig and shared by observers, so
@@ -501,8 +501,3 @@ func (s *Server) RecordMatrixIngest(at time.Time, every time.Duration) {
 	}
 	m.recordIngest(at, every)
 }
-
-// SetMatrixPersistPath is retained for callers compiled against the Matrix
-// prototype. Code activity is memory-only: no legacy file is read or written.
-// Deprecated: persistent code history is no longer supported.
-func (s *Server) SetMatrixPersistPath(_ string) {}
