@@ -675,7 +675,7 @@
       if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
-      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Unauthorized: ' + item.unauthorized);
+      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Hive bot lacks permission: ' + item.unauthorized);
       if (mods.indexOf('hold') >= 0 && typeof stageTrackerHoldPill === 'function' && stageTrackerHoldPill(item)) lines.push(stageTrackerHoldPill(item));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
@@ -778,7 +778,7 @@
       // The regressed pill (lead or folded into "+1") explains itself on
       // hover; failing that, a draft pill (lead or folded) does.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      // An unauthorized pill names the missing App permission and the human step;
+      // A hive-bot-lacks-permission pill names the missing App permission and the human step;
       // the regressed pill explains itself; a blocked pill names what it waits on;
       // failing all three, a draft pill does.
       const anyBlockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
