@@ -54,7 +54,10 @@ func stageTrackerManualMergeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerReadyForHumanWord"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_GATED"),
 		jsConstLine(t, html, "STAGE_TRACKER_UNAUTHORIZED_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_UNAUTHORIZED_WHERE"),
+		jsFunc(t, html, "stageTrackerUnauthorizedWho"),
 		jsFunc(t, html, "stageTrackerUnauthorizedWord"),
+		jsFunc(t, html, "stageTrackerPersonActsOnPR"),
 		jsConstLine(t, html, "STAGE_TRACKER_ADOPTED_BY_HIVE"),
 		jsFunc(t, html, "stageTrackerAdoptedWord"),
 	}, "\n")

@@ -727,6 +727,42 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   assert.ok(!/ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg>(?:CI|Review) /.test(changes), 'settled verdicts carry no words beside the glyph: ' + changes);
   assert.ok(/<li class="ham-seg active ham-settled-current ham-remediation-remediating detoured"/.test(busy) && busy.includes('Remediating · scanner · 4m'), 'the stage chevron is settled-current with its words: ' + busy);
 }
+// hivecommons/hive#16524: 085 under hive:unauthorized (a maintainer must
+// rerun shared CI on GitHub), CI unknown, review findings open. The ask is
+// the person's move ON THE PR, not a merge matter: the chevron lights PR in
+// progress with "Waiting for @clubanderson · rerun shared ci on GitHub"
+// and the person icon; the Merge queue column stays empty. A merge-ready
+// twin (approved + CI green) or a queued one keeps the gate.
+{
+  const seen = new Date(now - 60000).toISOString();
+  const head = '7879a51';
+  const ask = { question: "The hive's GitHub App may not rerun shared ci here. A maintainer has to do that step on GitHub.", asked_by: 'GitHub permissions', since: seen, blocker_reason: 'unauthorized:rerun-shared-ci', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: false }] };
+  const shape = (extra) => Object.assign({ repo: 'hivecommons/hive', number: 16524, kind: 'pr', stage: 85, head, author: 'clubanderson', author_kind: 'human', modifiers: ['unauthorized'],
+    reason: 'unauthorized:rerun-shared-ci', unauthorized_step: 'rerun shared ci', unauthorized: "The hive's GitHub App lacks the permission to rerun shared ci, so only a person can take that step.",
+    caption: 'Waiting for a maintainer · rerun shared ci on GitHub — the hive\'s GitHub App is not permitted to rerun shared ci; a maintainer must', decision_needed: ask,
+    human_attention: { number: 16524, kind: 'pr', head, reason: ask.question, asked_by: 'GitHub permissions' },
+    ci_activity: { head, state: 'unknown', caption: 'CI unknown · no check results observed for this head yet', checks_passed: 34, checks_total: 42, checks_failed: 1, source: 'github-graphql-cache+required-branch', observed_at: seen },
+    review_activity: { head, state: 'changes_requested', caption: 'Review findings · awaiting author', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } }, extra || {});
+  const rerun = stageTrackerRowHtml(shape(), stages, ctx);
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', shape()), 30, 'the ask is the person\'s move on the PR: PR in progress');
+  assert.deepStrictEqual(segStates(rerun), [D, D, D, 'active detoured', T, T, 'todo cap'], 'PR in progress lit, Merge queue empty: ' + strip(rerun));
+  assert.ok(rerun.includes('Waiting for @clubanderson · rerun shared ci on GitHub'), 'the chevron names the person and the step: ' + strip(rerun));
+  assert.ok(!/<li class="ham-seg active[^"]*"[^>]*>[\s\S]*?Awaiting human/.test(strip(rerun)), 'no "Awaiting human" chevron: ' + strip(rerun));
+  const litSeg = /<li class="ham-seg active detoured"[^>]*>([\s\S]*?)<\/li>/.exec(strip(rerun));
+  assert.ok(litSeg && litSeg[1].includes('ham-actor-ico'), 'the person icon stays on the lit chevron: ' + strip(rerun));
+  const mergeSeg = Array.from(strip(rerun).matchAll(/<li class="ham-seg ([^"]*)"[^>]*>([\s\S]*?)<\/li>/g)).filter(m => !m[1].includes('ham-activity-track') && !m[1].includes('ham-head'))[4];
+  assert.ok(mergeSeg && mergeSeg[1] === 'todo' && !/ham-chevron-copy/.test(mergeSeg[2]), 'the merge-queue chevron carries no words: ' + mergeSeg[0]);
+  assert.strictEqual(litChevrons(strip(rerun)), 1, 'one lit chevron: ' + strip(rerun));
+  // Merge-ready (approved + CI green) or queued twins are merge matters: the gate keeps them.
+  const ready = shape({ ci_activity: { head, state: 'passing', caption: 'CI green', checks_passed: 42, checks_total: 42, source: 'checks', observed_at: seen }, review_activity: { head, state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } });
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', ready), 80, 'merge-ready 085 keeps the gate');
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', shape({ merge_train: { id: 'v5#1', state: 'queued-behind', front: 1, position: 2, size: 2 } })), 80, 'a train member keeps the gate');
+  // A bare 085 decision (no track evidence, no step) still decides at the gate (#14821).
+  assert.strictEqual(stageTrackerAnchor(85, stages, 'pr', { kind: 'pr', stage: 85, caption: 'decision requested' }), 80);
+  // A nested PR under its issue follows the same column.
+  const nested = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 16500, kind: 'issue', stage: 40, linked_prs: [shape()] }, stages, ctx);
+  assert.ok(nested.includes('Waiting for @clubanderson · rerun shared ci on GitHub'), 'nested PR carries the word: ' + nested);
+}
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
 assert.ok(/<li class="ham-seg active cap merged" title="Merged — [^"]*" aria-current="step">/.test(row) && titled(strip(row)).length === 1, row);
