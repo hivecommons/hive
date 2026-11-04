@@ -1,0 +1,1 @@
+- Overview KPI tiles no longer overflow the phone viewport: the refresh/stale pill wraps inside the card, tile sublines and sparklines stay within the tile, and labels/sublines use compact font tokens on narrow screens (hivecommons/hive#16601).
