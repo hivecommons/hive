@@ -25,6 +25,13 @@ const (
 	checkpointMaxBytes       = 512 << 10
 )
 
+// Response contract shared by ingest and since(): the reader shows
+// checkpointSourceLabel as the feed source and checkpointStage on every region.
+const (
+	checkpointSourceLabel = "Pushed PR"
+	checkpointStage       = "pushed-checkpoint"
+)
+
 type checkpointLine struct {
 	Op   string `json:"op"`
 	Line string `json:"line"`
@@ -148,7 +155,7 @@ func (c *checkpointSource) ingest(obs github.SentinelPatchObservation, epoch str
 				continue
 			}
 			c.seq++
-			region := checkpointRegion{Seq: c.seq, Repo: obs.Repo, PR: obs.Number, PRURL: fmt.Sprintf("https://github.com/%s/pull/%d", obs.Repo, obs.Number), Head: obs.HeadSHA, Path: file.Path, Stage: "pushed-checkpoint", At: at, Lines: lines}
+			region := checkpointRegion{Seq: c.seq, Repo: obs.Repo, PR: obs.Number, PRURL: fmt.Sprintf("https://github.com/%s/pull/%d", obs.Repo, obs.Number), Head: obs.HeadSHA, Path: file.Path, Stage: checkpointStage, At: at, Lines: lines}
 			for len(c.regions) > 0 && (c.lines+len(lines) > matrixBacklogCap || c.bytes+size > checkpointMaxBytes) {
 				old := c.regions[0]
 				c.lines -= len(old.Lines)
@@ -288,7 +295,7 @@ func (c *checkpointSource) since(seq uint64, limit int) checkpointResponse {
 	if seq > c.seq {
 		seq = 0
 	}
-	out := checkpointResponse{Seq: seq, Latest: c.seq, Epoch: c.epoch, Source: "Pushed PR", Stage: "pushed-checkpoint", Regions: []checkpointRegion{}}
+	out := checkpointResponse{Seq: seq, Latest: c.seq, Epoch: c.epoch, Source: checkpointSourceLabel, Stage: checkpointStage, Regions: []checkpointRegion{}}
 	count := 0
 	for _, r := range c.regions {
 		if r.Seq <= seq {

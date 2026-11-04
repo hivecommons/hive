@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -35,7 +37,7 @@ func TestCheckpointWholeRegionsAndContinuation(t *testing.T) {
 	}
 	want := []checkpointLine{{"-", "old"}, {"+", "\tnew"}, {"+", ""}, {"+", "repeat"}, {"+", "repeat"}}
 	r := first.Regions[0]
-	if !reflect.DeepEqual(r.Lines, want) || r.Head != "real-head" || r.PRURL != "https://github.com/"+matrixTestRepo+"/pull/3" || r.Stage != "pushed-checkpoint" || !r.At.Equal(now) {
+	if !reflect.DeepEqual(r.Lines, want) || r.Head != "real-head" || r.PRURL != "https://github.com/"+matrixTestRepo+"/pull/3" || r.Stage != checkpointStage || !r.At.Equal(now) {
 		t.Fatalf("region %+v", r)
 	}
 	next := c.since(first.Seq, 1)
@@ -285,7 +287,7 @@ func TestCheckpointAPIAuthColdAndEpoch(t *testing.T) {
 	}
 	rr := request("Bearer checkpoint-test-token", "")
 	var cold checkpointResponse
-	if rr.Code != 200 || json.Unmarshal(rr.Body.Bytes(), &cold) != nil || cold.Epoch == "" || cold.LastIngestAt != nil || len(cold.Regions) != 0 || cold.Source != "Pushed PR" || cold.Stage != "pushed-checkpoint" {
+	if rr.Code != 200 || json.Unmarshal(rr.Body.Bytes(), &cold) != nil || cold.Epoch == "" || cold.LastIngestAt != nil || len(cold.Regions) != 0 || cold.Source != checkpointSourceLabel || cold.Stage != checkpointStage {
 		t.Fatalf("cold response %d %s", rr.Code, rr.Body.String())
 	}
 	// Feed the real observer queue, including a deletion-only checkpoint.
@@ -338,6 +340,25 @@ func TestCheckpointMemoryOnly(t *testing.T) {
 	restored := newMatrixSource(matrixTestConfig(), nil)
 	if len(restored.checkpoints.since(0, 200).Regions) != 0 || restored.checkpoints.policyEpoch() == m.checkpoints.policyEpoch() {
 		t.Fatal("new source restored checkpoint history")
+	}
+	// The superseded persistent line history must never re-enter the feed and
+	// is left untouched for the operator to remove, rather than silently
+	// deleted or rewritten as part of a dashboard upgrade.
+	path := filepath.Join(t.TempDir(), "matrix-lines.json")
+	seed := []byte(`{"seq":7,"lines":[{"seq":7,"repo":"org/repo","pr":1,"line":"old retained code"}]}`)
+	if err := os.WriteFile(path, seed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{}
+	observe := s.MatrixObserver(matrixTestConfig())
+	defer func() { s.matrix.close(); <-s.matrix.done }()
+	if s.matrix.Latest() != 0 || len(s.matrix.checkpoints.since(0, 200).Regions) != 0 {
+		t.Fatal("legacy persistent code restored")
+	}
+	observe(matrixObs(1, "h", sentinel.File{Path: "a.go", Patch: checkpointPatch("fresh checkpoint")}))
+	waitFor(t, func() bool { return s.matrix.Latest() != 0 }, "observer ingest")
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(seed) {
+		t.Fatal("legacy history file changed")
 	}
 	// Compile-time assertion: the public observer still receives the existing
 	// authoritative transport, with no extra patch collector or endpoint.
