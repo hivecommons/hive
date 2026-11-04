@@ -91,7 +91,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		if finding := decisionFixerExhaustedFinding(it, verdict); finding != "" {
 			d.Question += ": " + finding
 		}
-		d.Question += ". Re-author it from scratch, hand it to a person, or close it as not planned?"
+		d.Question += ". Give direction, hand it to a person, or close it as not planned?"
 	case verdict != nil && decisionFirstNonEmpty(verdict.HumanSummaries) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer handed this to a person: " + decisionFirstNonEmpty(verdict.HumanSummaries)
@@ -190,7 +190,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Options = slices.Insert(d.Options, 0, decisionOption(decisionActionAdopt, rebasemerge.OptionAdoptFreshLabel, true, ""))
 	}
 	if fixerExhausted {
-		d.Options = decisionLeadWithReauthor(d.Options)
+		d.Options = decisionLeadFixerExhausted(d.Options, it)
 	}
 	if selfHold != nil {
 		// Release leads: it is the one action that answers the question.
@@ -269,25 +269,29 @@ func decisionLeadWithCloseSuperseded(opts []StageTrackerDecisionOption, redundan
 	return out
 }
 
-// decisionLeadWithReauthor puts "Re-author" at the front of opts (the lead
-// action for a fixer-exhausted PR, hivecommons/hive#15744) and relabels the
-// won't-fix close as "Close as not planned" so it stays in the Decide…
-// submenu rather than leading a destructive answer.
-func decisionLeadWithReauthor(opts []StageTrackerDecisionOption) []StageTrackerDecisionOption {
-	lead := decisionOption(decisionActionReauthor, "Re-author", true, "")
-	lead.Consequence = "The hive opens a fresh PR for the same issue from the current base and closes this one as superseded."
+// decisionLeadFixerExhausted shapes the options for a fixer-exhausted PR.
+// The hive re-authors its own exhausted PR by itself (once per issue; see
+// automerge's reauthorExhaustedHivePR), so no "re-author" answer is
+// offered here: a person gives direction (the lead), hands it to someone,
+// or closes it as not planned. A contributor's PR may instead be adopted.
+func decisionLeadFixerExhausted(opts []StageTrackerDecisionOption, it StageTrackerItem) []StageTrackerDecisionOption {
+	lead := decisionOption(decisionActionDirection, "Give direction", true, "")
+	lead.Consequence = "Tell the hive what to change; its next attempt starts from your words instead of the reviewer's."
 	lead.Lead = true
-	out := make([]StageTrackerDecisionOption, 0, len(opts)+1)
+	out := make([]StageTrackerDecisionOption, 0, len(opts)+2)
 	out = append(out, lead)
+	if it.AuthorKind != authorKindHive && it.AuthorKind != authorKindHuman {
+		adopt := decisionOption(decisionActionAdopt, "Adopt as hive PR", true, "")
+		adopt.Consequence = "The hive opens a fresh PR for the same issue from the current base and closes this one as superseded."
+		out = append(out, adopt)
+	}
 	for _, o := range opts {
 		switch o.Action {
-		case decisionActionReauthor:
+		case decisionActionDirection, decisionActionAdopt:
 			continue
 		case decisionActionCloseWontfix:
 			o.Label = "Close as not planned"
 			o.Consequence = "Closes this PR as not planned; the issue stays open for someone else."
-		case decisionActionDirection:
-			o.Consequence = "Hands the PR to a person: say who takes it or what to change; the hive steps back."
 		}
 		out = append(out, o)
 	}

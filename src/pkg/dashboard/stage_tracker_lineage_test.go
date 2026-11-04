@@ -122,6 +122,15 @@ assert.ok(stageTrackerLineageChipHtml(orig, nowMs).includes('href="https://githu
 assert.strictEqual(stageTrackerLineageClause(orig), '');
 assert.strictEqual(stageTrackerLineageText({ lineage: { kind: 'adopted', from_number: 7 } }, nowMs), 'adopted from #7');
 assert.ok(stageTrackerLineageTip({ lineage: { kind: 'adopted', from_number: 7, reason: 'operator-asked' } }).includes("maintainer's request"));
+// A hive self re-author (fixer exhausted on the hive's own PR): the chip
+// says "re-authored from", never "adopted from", and the hover says why.
+const reauthored = { kind: 'pr', number: 95, author_kind: 'hive', lineage: { kind: 're-authored', from_number: 90, from_url: 'https://github.com/acme/docs/pull/90', from_author_kind: 'hive', from_state: 'closed', at: '2026-10-29T04:56:00Z', reason: 'fixer-exhausted' } };
+assert.strictEqual(stageTrackerLineageText(reauthored, nowMs), 're-authored from #90 · 6h');
+assert.strictEqual(stageTrackerLineageClause(reauthored), ' (re-authored from #90)');
+const reTip = stageTrackerLineageTip(reauthored);
+assert.ok(reTip.includes('fixer gave up on its own #90') && reTip.includes('#90 is closed as superseded.'), reTip);
+assert.ok(!reTip.includes('adopt'), reTip);
+assert.ok(stageTrackerLineageChipHtml(reauthored, nowMs).includes('href="https://github.com/acme/docs/pull/90"'));
 `,
 	}, "\n")
 	runStageTrackerRowActionsScript(t, script)

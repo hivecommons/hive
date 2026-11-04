@@ -96,11 +96,11 @@ func TestStageTrackerLeadApproveForSignOff(t *testing.T) {
 			t.Fatalf("leads = %v", got)
 		}
 	})
-	t.Run("an existing lead (Re-author) stands", func(t *testing.T) {
+	t.Run("an existing lead (Give direction) stands", func(t *testing.T) {
 		it := signOffItem("passing", "human_decision")
-		it.DecisionNeeded.Options = decisionLeadWithReauthor(it.DecisionNeeded.Options)
+		it.DecisionNeeded.Options = decisionLeadFixerExhausted(it.DecisionNeeded.Options, it)
 		stageTrackerLeadApproveForSignOff(&it)
-		if got := leadActions(it.DecisionNeeded); len(got) != 1 || got[0] != decisionActionReauthor {
+		if got := leadActions(it.DecisionNeeded); len(got) != 1 || got[0] != decisionActionDirection {
 			t.Fatalf("leads = %v", got)
 		}
 	})

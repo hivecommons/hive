@@ -653,6 +653,9 @@
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
       'queue-merge': 'Approve and let hive merge', 'merge-now': 'Merge now as maintainer',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
+      // Historical ledger entries only: the hive now re-authors its own
+      // exhausted PRs itself and a person's rewrite of a contributor PR is adopt.
+      're-author': 'Re-author (now: adopt)',
     };
     // "Rebase, then merge as maintainer" is merge-now on a row that needs a
     // rebase (hivecommons/hive#14822): the server relabels the option and
