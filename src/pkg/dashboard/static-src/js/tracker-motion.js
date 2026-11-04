@@ -293,6 +293,20 @@
       stageTrackerNoteEventSet(key, stageTrackerNoteToggled(ev, nowMs, stageTrackerNoteTuckSetting()));
       stageTrackerNoteSync(document.getElementById('activity-monitor-panel'), nowMs);
     }
+    // The row's "needs human" pill: bring its "Needs human: …" line into
+    // view, untucked. rowKey: the row's data-ham-key.
+    function stageTrackerNeedsHumanReveal(rowKey) {
+      const panel = document.getElementById('activity-monitor-panel');
+      if (!panel || !rowKey) return;
+      const rows = panel.querySelectorAll('.ham-row[data-ham-key]');
+      let row = null;
+      for (const r of rows) if (r.getAttribute('data-ham-key') === String(rowKey)) { row = r; break; }
+      if (!row) return;
+      const line = row.querySelector('.ham-human-context[data-cue-key]');
+      if (!line) return;
+      if (line.classList.contains('cue-event-tucked')) stageTrackerNoteToggle(line.getAttribute('data-cue-key'));
+      if (typeof line.scrollIntoView === 'function') line.scrollIntoView({ block: 'nearest' });
+    }
     // Hidden tab: stop the clock on every open line; visible again: give
     // back the hidden time and re-arm.
     function stageTrackerNoteVisibility(hidden, nowMs) {
