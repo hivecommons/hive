@@ -264,7 +264,7 @@ assert.ok(tooltip(row).includes('Flags: needs-rebase, needs-human') && tooltip(r
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 60 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active', T, 'todo cap'], '060 reviewed lights CI / Review, not the merge gate: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 80, caption: 'soak 20m left' }, stages, ctx);
-assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left · Next move: hive"'), 'chevron tooltip carries 080: ' + row);
+assert.ok(row.includes('<span class="ham-seg-t">Queued for merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left · Next move: hive"'), 'chevron tooltip carries 080: ' + row);
 
 // PR regressed from the queue back to review-pending: Review lit, "Sent back" in the tooltip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 103, kind: 'pr', stage: 70, modifiers: ['regressed', 'needs-rebase'], history: [{number:80,slug:'awaiting-merge-admission'},{number:100,slug:'merge-queue'},{number:70,slug:'fixing',from:100,regressed:true}] }, stages, ctx);
@@ -559,7 +559,7 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // is what the chevron says, the actor is whose move it is. The active
 // chevron now leads with its stage icon, so the regex skips that svg.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Queued for merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   if ([50, 60, 70, 71, 72, 74].includes(st)) {
     assert.ok(r.includes('data-track="ci"') && r.includes('data-track="review"'), 'pre-gate tracks remain separate at ' + st);
