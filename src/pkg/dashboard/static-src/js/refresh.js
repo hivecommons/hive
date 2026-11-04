@@ -480,8 +480,6 @@
         _lastStatusSeq = data.statusSeq;
       }
       if (typeof data.matrixEnabled === 'boolean') {
-        const matrixTab = document.getElementById('oc-matrix-tab');
-        if (matrixTab) matrixTab.hidden = !data.matrixEnabled;
         const readerTab = document.getElementById('oc-reader-tab');
         if (readerTab) readerTab.hidden = !data.matrixEnabled;
       }

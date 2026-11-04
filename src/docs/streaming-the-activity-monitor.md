@@ -95,7 +95,7 @@ apply the overlay — the steps below are all yours to run.
 
 ### Call-to-action overlay
 
-Every kiosk view — this stream's Activity Monitor, the [Matrix](#matrix-mode-separate-channel)
+Every kiosk view — this stream's Activity Monitor, [Code activity](#code-activity-separate-channel)
 and the hub's [public fleet page](#the-hivecommonsfleet-broadcast) — carries a
 small pill bottom-right: "🐝 Want this for your repos?", the URL
 `hive.hivecommons.dev/get-started` in 24px amber, and a 110px QR code of it, so
@@ -107,8 +107,8 @@ spoke the destination and the copy are `dashboard.kiosk_cta_url` and
 are `HIVE_HUB_KIOSK_CTA_URL` and `HIVE_HUB_KIOSK_CTA_TEXT`. The QR code is
 rendered server-side (`src/pkg/webassets/kioskcta`) as an inline `data:` PNG, so
 nothing external is loaded and the pages' Content-Security-Policy is unchanged.
-In Matrix mode the pill sits above the canvas at 85 % opacity so it does not
-fight the effect.
+In Code activity the pill sits above the reader at 85 % opacity so it does not
+obscure the code.
 
 ### Channel title, category, tags
 
@@ -291,51 +291,31 @@ with the same ↑/↓ delta cue), enlarged in kiosk, pop-out, display and full-s
 views so it reads at 1920×1080. Do not point the streamer at a hive tracking private
 repositories without reviewing what the tracker would show.
 
-The main `twitch.tv/hivecommons` stream never shows Matrix; it remains the
+The main `twitch.tv/hivecommons` stream never shows Code activity; it remains the
 full-screen Activity Monitor.
 
-## Matrix mode (separate channel)
+## Code activity (separate channel)
 
-When `dashboard.matrix.enabled` is set, the Activity Monitor header also shows a **Matrix** tab that opens `?kiosk=1&view=matrix` in the same window. It also shows a **Reader** tab that opens the [code activity reader](dashboard.md#code-activity-reader) at `?kiosk=1&view=reader`. The reader uses the same lines, shown as readable paragraphs.
+The Activity Monitor topbar shows one **Code activity** entry when
+`dashboard.matrix.enabled` is set. It opens the [reader](dashboard.md#code-activity-reader)
+at `?kiosk=1&view=reader` in a new tab. Code activity supersedes the Matrix
+code view: rain, cascade, ghost, terminal and all `mx.*` presentation settings
+are retired. Update saved Matrix display URLs to the reader URL.
 
-Matrix is an experimental, default-off code display for a separate channel,
-[`twitch.tv/hivecommonsmatrix`](https://www.twitch.tv/hivecommonsmatrix).
-It depends on the Matrix display renderer (`/?kiosk=1&view=matrix`,
-[#15936](https://github.com/hivecommons/hive/issues/15936)); without that
-renderer the dashboard ignores `view=matrix` and the kiosk serves the ordinary
-Activity Monitor. When active it shows pushed added lines only, from positively
-identified hive identities, on public repositories explicitly allowlisted in
-`dashboard.matrix.repos`.
-Private patches, unverified authors and excluded paths are never shown. Lines
-touched by scrubbing are dropped entirely rather than displayed with redactions;
-the built-in secret/path filters and `dashboard.matrix.exclude_paths` apply.
-Dashboard authentication alone does not make a code stream safe for public
-Twitch broadcasting: the public allowlist, author restriction and scrub/drop
-rules are required.
-
-The display's look is chosen with `mx.*` URL parameters; each value is also
-remembered in the browser (`hive.matrix.*` in local storage) for later visits.
-Every effect renders only lines already delivered by `/api/matrix/lines`.
-
-| `mx.effect` | Display |
-|---|---|
-| `rain` (default) | Falling columns built from the characters of the latest lines. Unknown values fall back to `rain`. |
-| `cascade` | Whole lines drift down the screen, each with its `repo#PR · path` caption. |
-| `ghost` | Ghost coder: a fake editor with one tab per PR (`repo#PR`), titled with the file path; at most six tabs, the oldest closes first. Lines are typed character by character behind a blinking cursor, with light keyword/string/comment/number colouring by file extension. |
-| `terminal` | An endless `git log -p`-style scroll: each line printed as a green `+ <line>`, with a `repo#PR · path` header whenever the PR or file changes. |
-
-`mx.speed` (0.1–5, default 1) and `mx.fps` (1–60, default 30) set the
-animation and typing speed, `mx.palette` is `green` (default), `amber` or
-`gold`, and `mx.captions=off` hides the `repo#PR · path` captions and headers
-on the canvas. `p` or Space pauses; a hidden tab pauses too. With the
-operating system's *reduce motion* setting on, every effect is replaced by
-static pages of the latest lines with their captions.
+The source remains default-off and limited to pushed published PR checkpoints
+from positively identified Hive/clanker authors in explicitly allowlisted public
+repositories. Complete admitted add/remove regions are shown with `Pushed PR`
+provenance and observed time; opening backlog is labelled a buffered snapshot.
+There is no workspace or pre-push capture. The internal `dashboard.matrix.*`
+configuration and `/api/matrix/lines` names are deprecated but remain supported.
+Existing read authorization, path exclusions and whole-region scrub/drop filters
+still apply. Dashboard authentication alone does not authorize broadcasting.
 
 [`overlays/hive-hosted-matrix/`](../deploy/stream/overlays/hive-hosted-matrix/kustomization.yaml)
 reuses the streamer image and base as a separate instance. It renders Deployment,
 ConfigMap and NetworkPolicy `matrix-hive-stream` in namespace `hive-stream-matrix`,
 with separate pod selectors and secret references scoped to that namespace.
-It opens `/?kiosk=1&view=matrix&sound=off` and sets `STREAM_AUDIO=silent`.
+It opens `/?kiosk=1&view=reader&sound=off` and sets `STREAM_AUDIO=silent`.
 Its independent process and deployment isolate restarts and failures from the
 existing stream. The `hive-hosted` overlay and `twitch.tv/hivecommons` are
 unaffected.
@@ -344,11 +324,11 @@ unaffected.
 channel.** The overlay has `replicas: 0`; applying it starts no streamer.
 Channel availability alone does not authorize activation. The owner must:
 
-1. Confirm the deployed dashboard build serves the Matrix display for
-   `view=matrix` (#15936). A build without it broadcasts the ordinary kiosk
-   Activity Monitor on the Matrix channel, not code lines.
+1. Confirm the deployed dashboard build serves Code activity for
+   `view=reader`. A build without it broadcasts the ordinary kiosk
+   Activity Monitor on the separate channel, not code changes.
 2. Enable `dashboard.matrix` with an explicit, reviewed public repo allowlist
-   and verify the Matrix display and its author restriction and scrub/drop rules
+   and verify Code activity and its author restriction and scrub/drop rules
    before any broadcast. An empty allowlist captures nothing.
 3. Provision `hivecommonsmatrix` independently, create namespace
    `hive-stream-matrix`, and create the out-of-band

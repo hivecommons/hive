@@ -607,15 +607,21 @@ The endpoint returns `stages` (the stage table with `short`, `branch_from`, conf
 ## Code activity reader
 
 The code activity reader is a kiosk view at `?kiosk=1&view=reader` that shows
-pushed changes as readable paragraphs. It is the planned successor to the
-Matrix code view ([#16137](https://github.com/hivecommons/hive/issues/16137)).
-Until the cutover, both views are available. The reader uses the same opt-in
-setting and authorized `GET /api/matrix/lines` endpoint as Matrix, so it has
-the same `dashboard.matrix` repository allowlist, author restriction and
-scrub/path filters. When `dashboard.matrix.enabled` is set, the header shows a
-**Reader** tab next to **Matrix**. Without that setting, the endpoint answers
-404 and the view says it is not enabled. The reader adds no permission and no
-anonymous access.
+pushed changes as readable paragraphs. It supersedes the Matrix code view
+([#16137](https://github.com/hivecommons/hive/issues/16137)). The Activity Monitor
+topbar has one **Code activity** entry, opening the reader in a new tab when
+`dashboard.matrix.enabled` is set. The decorative Matrix view and its rain,
+cascade, ghost and terminal effects are retired; saved display URLs must use
+`?kiosk=1&view=reader`. The old `view=matrix`, `mx.*` URL options and
+`hive.matrix.*` browser preferences no longer select or configure a code view.
+
+The internal `dashboard.matrix.*` configuration names and `/api/matrix/lines`
+endpoint are deprecated names retained for compatibility; do not rename existing
+configuration. They continue to enforce the same public repository allowlist,
+author restriction, dashboard read authorization and scrub/path filters. Code
+activity stays **off by default**: this cutover enables no capture or broadcast.
+When inactive, the content endpoint answers 404 and the reader says it is not
+enabled. There is no anonymous access or workspace/pre-push capture.
 
 - **Cards.** Each card is a complete contiguous add/remove region from a
   validated unified-diff hunk at an actual published PR head. Indentation, blank lines

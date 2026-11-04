@@ -125,7 +125,7 @@ func TestDashboardScriptRealIndexShellBudget(t *testing.T) {
 		t.Fatal("real inline boot script changed")
 	}
 	for _, global := range []string{
-		"window.HIVE_MATRIX", "window.HIVE_KIOSK", "window.HIVE_POPOUT",
+		"window.HIVE_READER", "window.HIVE_KIOSK", "window.HIVE_POPOUT",
 		"window.HIVE_DISPLAY", "window.hiveURLWithHash", "window.hiveKioskCTAOn",
 	} {
 		if !bytes.Contains(retained[0], []byte(global)) ||
