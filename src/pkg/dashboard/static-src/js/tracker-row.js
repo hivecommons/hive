@@ -287,8 +287,10 @@
       if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const external = sa.kind === STAGE_TRACKER_ACTOR_NONE && typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
-      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'CI failing') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
-      const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
+      // The red verdict is the CI / Review chevron's word; this lane says
+      // who owes the fix (hivecommons/hive#16643).
+      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Fix owed') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
+      const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Fix owed';
       return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }
 

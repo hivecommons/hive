@@ -687,12 +687,14 @@ function stageTrackerIcon(n, cls) { return '<svg class="' + cls + '"></svg>'; }
   const html = render(item, [{ number: 30, short: 'PR in progress' }, { number: 50, short: 'CI / Review' }, { number: 70, short: 'Fixing', branch_from: 50 }], null, now, {});
   assert.equal((html.match(/<li /g) || []).length, 8, 'one PR strip, seven visible columns plus history');
   // Three qualify, two may light (#16540): CI and review running win; the
-  // stage chevron is settled-current — words kept, no pulse.
+  // stage chevron is settled-current — icon only, its words in the
+  // tooltip, no pulse (hivecommons/hive#16643).
   assert.equal((html.match(/data-motion="active"/g) || []).length, 2);
   assert.match(html, /class="ham-seg active ham-settled-current detoured"/);
   assert.doesNotMatch(html, /ham-settled-current[^>]*data-motion/);
   assert.match(html, /Waiting on CI and review, both running — /);
-  assert.match(html, /ham-detour[^>]*>Remediating · fixer/);
+  assert.match(html, /aria-label="[^"]*Remediating · fixer/);
+  assert.doesNotMatch(html, /ham-detour[^>]*>Remediating · fixer/, 'a deferred stage chevron carries no words');
   assert.match(html, /data-track="review"[^]*Review working · reviewer/);
   item.code_activity.observed_at = new Date(now - 300000).toISOString();
   const stale = render(item, stages, null, now, {});
