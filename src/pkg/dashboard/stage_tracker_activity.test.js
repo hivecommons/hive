@@ -561,7 +561,7 @@ test('old-head or stale observations cannot fabricate running/completion, but do
     } else {
       assert.match(cells.ci, /active ham-current[^]*CI \?\/\? · running</, mode + ': the last observed state still reads in words');
       assert.match(cells.review, /done ham-current[^]*data-verdict="pass"[^]*Review: Review approved · /, mode + ': an approval of this head stays done, freshness only in the tooltip');
-      assert.match(cells.review, mode === 'stale' ? /stale · / : /observation time unknown/);
+      assert.match(cells.review, mode === 'stale' ? /observed 5m ago/ : /observation time unknown/);
     }
   }
 });
@@ -854,4 +854,100 @@ test('#16484: the three screenshot rows — both tracks lit with counts, swarm r
     assert.equal(text(cell), '');
     assert.match(cell, /<svg /);
   }
+});
+
+test('settled current-head verdicts keep one known caption at every observation age', () => {
+  for (const [kind, state, caption] of [
+    ['review', 'approved', 'Review approved'],
+    ['review', 'changes_requested', 'Review findings · correctness ✗: handle the stale verdict'],
+    ['review', 'human_decision', 'Review findings · needs owner sign-off'],
+    ['ci', 'passing', 'CI green'],
+    ['ci', 'failing', 'CI failing · build red'],
+  ]) {
+    for (const observed of [new Date(now - 15 * 60000).toISOString(), undefined, 'invalid', new Date(now + 60000).toISOString()]) {
+      const a = { ...activity(state, caption), observed_at: observed };
+      const item = { kind: 'pr', head: 'head', [kind + '_activity']: a };
+      const html = track(item, kind, {}, false, now);
+      assert.match(html, /data-display-state="known"/);
+      assert.ok(html.includes(caption), state + ': caption preserved');
+      assert.doesNotMatch(html, /activity unknown|last observed|data-motion/);
+      if (observed === undefined || observed === 'invalid') assert.match(html, /observation time unknown/);
+      else if (Date.parse(observed) > now) assert.match(html, /observation time in future/);
+      else assert.match(html, /observed 15m ago/);
+      item.head = 'new-head';
+      const pushed = track(item, kind, {}, false, now);
+      assert.match(pushed, /data-display-state="unknown"/);
+      assert.doesNotMatch(pushed, /data-verdict=|correctness|build red/);
+    }
+  }
+});
+
+test('motion needs a fresh observation even when the backend active flag is cached', () => {
+  for (const [kind, state] of [['review', 'reviewing'], ['review', 'adjudicating'], ['review', 'assigned'], ['ci', 'running'], ['ci', 'queued']]) {
+    for (const observed of [new Date(now - 15 * 60000).toISOString(), undefined, new Date(now + 60000).toISOString()]) {
+      const item = { kind: 'pr', head: 'head', [kind + '_activity']: { ...activity(state, 'Work observed', true), observed_at: observed } };
+      const html = track(item, kind, {}, false, now);
+      assert.match(html, /data-display-state="unknown"/);
+      assert.match(html, /activity unknown/);
+      assert.doesNotMatch(html, /data-motion/);
+    }
+  }
+});
+
+test('review tooltip lists escaped perspective verdicts before current-head provenance', () => {
+  const summary = '<img src=x onerror="bad()"> & check the current head';
+  const caption = 'Review findings · correctness ✗: ' + summary;
+  const item = { kind: 'pr', head: 'head', review_activity: {
+    ...activity('changes_requested', caption), source: 'verified-review-bundle',
+    observed_at: new Date(now - 15 * 60000).toISOString(), blocker: summary,
+    perspectives: [
+      { name: 'correctness', verdict: 'changes_requested', summary },
+      { name: 'security', verdict: 'approve', summary: '' },
+      { name: 'quality', verdict: 'reject', summary: 'explain the edge case' },
+    ],
+  } };
+  const html = track(item, 'review', {}, false, now);
+  const tip = html.match(/role="tooltip">([^]*?)<\/span>/)[1];
+  assert.ok(tip.includes(esc(caption) + '<br>correctness ✗: ' + esc(summary)));
+  assert.match(tip, /<br>security ✓<br>quality ✗: explain the edge case<br>head head · verified-review-bundle · observed 15m ago/);
+  assert.doesNotMatch(html, /<img|activity unknown|last observed/);
+  assert.ok(html.includes('\nsecurity ✓\nquality ✗: explain the edge case\nhead head'), 'accessible title retains the same perspective lines');
+  item.head = 'new-head';
+  assert.doesNotMatch(track(item, 'review', {}, false, now), /correctness|security|edge case|verified-review-bundle|<img|&lt;img/);
+});
+
+test('human perspective explains a settled or adopted decision without leaking into unknown motion', () => {
+  const a = { ...activity('human_decision', 'Review findings · needs owner sign-off'),
+    observed_at: new Date(now - 15 * 60000).toISOString(),
+    perspectives: [{ name: 'correctness', verdict: 'requires_human', summary: 'Choose whether to keep the API break' }] };
+  const item = { kind: 'pr', head: 'head', review_activity: a };
+  for (const state of ['human_decision', 'changes_requested']) {
+    a.state = state;
+    const html = track(item, 'review', {}, false, now);
+    assert.match(html, /correctness requires human: Choose whether to keep the API break<br>correctness requires human: Choose whether to keep the API break<br>head/);
+    assert.doesNotMatch(html, /activity unknown|last observed/);
+  }
+  for (const state of ['reviewing', 'unknown']) {
+    a.state = state;
+    a.caption = 'Review activity unknown';
+    const html = track(item, 'review', {}, false, now);
+    assert.match(html, /data-display-state="unknown"/);
+    assert.doesNotMatch(html, /correctness|API break|requires human/);
+  }
+});
+
+test('a settled failing CI verdict preserves fresh motion from other running checks', () => {
+  const item = { kind: 'pr', head: 'head', ci_activity: {
+    ...activity('failing', 'CI failing · build red · other checks still running', true),
+    checks_failed: 1, checks_total: 2, checks_failing: ['build'],
+  } };
+  const fresh = track(item, 'ci', {}, false, now);
+  assert.match(fresh, /data-activity-state="failing"/);
+  assert.match(fresh, /data-display-state="known"/);
+  assert.match(fresh, /data-motion="active"/);
+  const stale = track(item, 'ci', {}, false, now + 15 * 60000);
+  assert.match(stale, /data-activity-state="failing"/);
+  assert.match(stale, /data-display-state="known"/);
+  assert.match(stale, /observed 15m ago/);
+  assert.doesNotMatch(stale, /data-motion|activity unknown|last observed/);
 });

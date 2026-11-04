@@ -1,0 +1,1 @@
+- The Activity Monitor preserves settled review and CI verdicts on the current head as observations age, and review tooltips list each perspective’s verdict and finding with the observation age ([#16617](https://github.com/hivecommons/hive/issues/16617)).

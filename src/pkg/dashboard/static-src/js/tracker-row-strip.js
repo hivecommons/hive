@@ -234,7 +234,7 @@
     // a finding, pending and decided are words in their colour on the muted
     // field — only a running track is filled (hivecommons/hive#16540); not
     // started = the empty chevron with the glyph alone. Freshness gates only
-    // the pulse.
+    // the pulse and certainty of motion; settled current-head verdicts persist.
     function stageTrackerActivityTrackHtml(item, kind, sg, blank, nowMs, opts) {
       if (blank) return `<li class="ham-seg blank" data-track="${kind}" data-route-state="blank" aria-hidden="true"></li>`;
       const name = kind === 'ci' ? 'CI' : 'Review';
@@ -247,8 +247,19 @@
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
       const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
-      const active = known && a.active;
+      const moving = ['running', 'queued', 'reviewing', 'adjudicating', 'assigned'].includes(state);
+      const fresh = Number.isFinite(observed) && !stale;
+      const known = matches && state !== 'unknown' && (!moving || fresh);
+      const active = known && fresh && a.active;
+      const perspectives = known && kind === 'review' && Array.isArray(a.perspectives) ? a.perspectives : [];
+      const perspectiveMark = verdict => verdict === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(verdict) ? '✗' : verdict === 'requires_human' ? 'requires human' : verdict || '?';
+      const perspectiveLine = p => String(p.name || 'Perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
+      // A repair projection can rewrite the generic caption; keep its first
+      // finding visible without changing the backend's settled verdict.
+      if (['changes_requested', 'human_decision'].includes(state)) {
+        const firstFinding = perspectives.find(p => ['changes_requested', 'reject', 'requires_human'].includes(p.verdict));
+        if (firstFinding && !caption.includes(perspectiveLine(firstFinding))) caption += ' · ' + perspectiveLine(firstFinding);
+      }
       if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
       const ownsPR = item.kind === 'pr' || item.via_pr;
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
@@ -272,9 +283,11 @@
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
-      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
+      const age = Math.max(0, Math.floor((clock - observed) / 60000));
+      const ago = age < 1 ? 'just now' : age < 60 ? age + 'm ago' : age < 1440 ? Math.floor(age / 60) + 'h ago' : Math.floor(age / 1440) + 'd ago';
+      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : observed > clock ? 'observation time in future · ' + new Date(observed).toISOString() : 'observed ' + ago + (stale && moving ? ' · stale' : '') + ' · ' + new Date(observed).toISOString();
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
-      let blocker = matches && a.blocker ? ' · ' + a.blocker : '';
+      let blocker = matches && a.blocker && !caption.includes(a.blocker) ? ' · ' + a.blocker : '';
       // A sign-off ask: the tooltip carries the question itself (who should
       // decide what, and why — "workflow change from a fork") when the
       // review evidence did not already quote it.
@@ -283,7 +296,8 @@
       // The backend's plain-language sentence behind the caption rides in
       // the tooltip only; the chevron clamps the caption.
       const detail = matches && a.detail ? ' · ' + a.detail : '';
-      let tip = caption + blocker + detail + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
+      const perspectiveLines = perspectives.map(perspectiveLine);
+      let tip = [caption + blocker + detail, ...perspectiveLines, 'head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since].join('\n');
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
@@ -317,7 +331,7 @@
         (lead ? ' · hive is waiting on ' + lead.waitingOn + (lead.newHead && sha7 ? ' for new head ' + sha7 : '') : '');
       const tipID = 'ham-track-tip-' + [item.repo || '', item.kind || '', item.number || 0, kind].map(x => encodeURIComponent(String(x))).join('-');
       const copy = `<span class="ham-chevron-copy ham-track-state${lit ? '' : ' ham-track-verdict'}">${evidenceLink}</span>${personIco}`;
-      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip)}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
+      return `<li class="ham-seg ham-activity-track ${cls}${current ? ' ham-current' : ''}" data-track="${kind}"${stalled ? ' data-stalled="true"' : ''} data-route-state="${esc(routeState)}" data-activity-state="${esc(state)}" data-display-state="${known ? 'known' : 'unknown'}"${verdict ? ` data-verdict="${verdict}"` : ''}${current ? ' aria-current="step"' : ''}${active ? ' data-motion="active"' : ''}${ownsPR ? ` title="${esc(fullTip)}"` : ''} aria-label="${esc(fullTip)}"><span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(fullTip)}" aria-describedby="${esc(tipID)}">${copy}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(fullTip).replaceAll('\n', '<br>')}${decided ? `<span class="ham-track-context">${decided}</span>` : ''}</span></span></li>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an

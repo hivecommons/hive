@@ -43,8 +43,18 @@ type StageTrackerActivity struct {
 	// the swarm's expected set for this PR (configured perspectives plus any
 	// extra one dispatched or reported for the head), Done the ones with a
 	// verdict for the current head.
-	PerspectivesDone  int `json:"perspectives_done,omitempty"`
-	PerspectivesTotal int `json:"perspectives_total,omitempty"`
+	PerspectivesDone  int                       `json:"perspectives_done,omitempty"`
+	PerspectivesTotal int                       `json:"perspectives_total,omitempty"`
+	Perspectives      []StageTrackerPerspective `json:"perspectives,omitempty"`
+}
+
+// StageTrackerPerspective describes the latest bundle verdict for one perspective
+// on the current head, preserving dissent across reviewers. Summary is the
+// first finding, when one was reported.
+type StageTrackerPerspective struct {
+	Name    string `json:"name"`
+	Verdict string `json:"verdict"`
+	Summary string `json:"summary"`
 }
 
 const trackerActivityFreshWindow = 2 * time.Minute
@@ -439,6 +449,37 @@ func trackerLatestBundleVerdicts(bundle *evidence.Bundle) []evidence.Verdict {
 	return out
 }
 
+func trackerReviewPerspectives(bundle *evidence.Bundle) []StageTrackerPerspective {
+	latest := map[string]evidence.Verdict{}
+	for _, verdict := range trackerLatestBundleVerdicts(bundle) {
+		if verdict.Perspective == "" {
+			continue
+		}
+		previous, ok := latest[verdict.Perspective]
+		// Each backend/model has its own current verdict. An approval by
+		// another reviewer must not hide dissent that still blocks the head.
+		if !ok || (previous.Verdict == "approve" && verdict.Verdict != "approve") ||
+			((previous.Verdict == "approve") == (verdict.Verdict == "approve") && verdict.RecordedAt.After(previous.RecordedAt)) {
+			latest[verdict.Perspective] = verdict
+		}
+	}
+	names := make([]string, 0, len(latest))
+	for name := range latest {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	out := make([]StageTrackerPerspective, 0, len(names))
+	for _, name := range names {
+		v := latest[name]
+		p := StageTrackerPerspective{Name: name, Verdict: v.Verdict}
+		if len(v.Findings) > 0 {
+			p.Summary = v.Findings[0].Summary
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func trackerBundleApproves(bundle *evidence.Bundle, agg *review.Aggregate) bool {
 	latest := trackerLatestBundleVerdicts(bundle)
 	if len(latest) == 0 || len(agg.Perspectives) == 0 {
@@ -515,6 +556,7 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 	qualify := stageTrackerRepoQualifier(status)
 	if bundle != nil && trackerHeadMatches(pr.Repo, pr.Number, pr.HeadSHA, bundle.Repo, bundle.Number, bundle.HeadSHA) {
 		out.Source, out.ObservedAt = "verified-review-bundle", timePtr(bundle.UpdatedAt)
+		out.Perspectives = trackerReviewPerspectives(bundle)
 		for _, verdict := range trackerLatestBundleVerdicts(bundle) {
 			if !verdict.RecordedAt.IsZero() && (out.Since == nil || verdict.RecordedAt.After(*out.Since)) {
 				at := verdict.RecordedAt
@@ -639,6 +681,22 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 			break
 		}
 	}
+	if out.State == "changes_requested" || out.State == "human_decision" {
+		for _, perspective := range out.Perspectives {
+			if perspective.Verdict == "changes_requested" || perspective.Verdict == "reject" || perspective.Verdict == "requires_human" {
+				mark := "✗"
+				if perspective.Verdict == "requires_human" {
+					mark = "requires human"
+				}
+				out.Caption += " · " + perspective.Name + " " + mark
+				if perspective.Summary != "" {
+					out.Caption += ": " + perspective.Summary
+				}
+				break
+			}
+		}
+	}
+
 	return out
 }
 

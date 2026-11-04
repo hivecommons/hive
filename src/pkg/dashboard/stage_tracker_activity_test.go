@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -483,5 +485,60 @@ func TestStageTrackerActivityReviewPerspectiveCounts(t *testing.T) {
 	dispatch.Pending = nil
 	if got := count(bundle, agg, dispatch); got.PerspectivesDone != 0 || got.PerspectivesTotal != len(expected) {
 		t.Fatalf("old-head evidence leaked into counts: %d/%d", got.PerspectivesDone, got.PerspectivesTotal)
+	}
+}
+
+func TestStageTrackerReviewPerspectiveDetails(t *testing.T) {
+	now := time.Date(2026, 11, 4, 3, 0, 0, 0, time.UTC)
+	observed := now.Add(-15 * time.Minute)
+	pr := github.PullRequest{Repo: "org/repo", Number: 7, HeadSHA: "head"}
+	bundle := &evidence.Bundle{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, UpdatedAt: observed,
+		Verdicts: []evidence.Verdict{
+			{Perspective: "security", Verdict: "approve", RecordedAt: observed},
+			{Perspective: "correctness", Backend: "old", Verdict: "approve", RecordedAt: observed.Add(-time.Minute)},
+			{Perspective: "correctness", Backend: "new", Verdict: "changes_requested", RecordedAt: observed,
+				Findings: []evidence.Finding{{Summary: "do not discard the settled verdict"}}},
+			{Perspective: "quality", Verdict: "changes_requested", RecordedAt: observed.Add(-time.Minute),
+				Findings: []evidence.Finding{{Summary: "superseded finding"}}},
+			{Perspective: "quality", Verdict: "approve", RecordedAt: observed},
+			{Verdict: "reject", RecordedAt: observed},
+		}}
+	want := []StageTrackerPerspective{
+		{Name: "correctness", Verdict: "changes_requested", Summary: "do not discard the settled verdict"},
+		{Name: "quality", Verdict: "approve"},
+		{Name: "security", Verdict: "approve"},
+	}
+	for _, verdict := range []review.Verdict{"changes_requested", "requires_human"} {
+		agg := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: verdict}
+		got := stageTrackerReviewActivity(pr, bundle, agg, review.DispatchState{}, nil, now)
+		if !reflect.DeepEqual(got.Perspectives, want) || !strings.Contains(got.Caption, "correctness ✗: do not discard the settled verdict") || got.Active {
+			t.Fatalf("settled review lost its current-head perspective details: %+v", got)
+		}
+		data, err := json.Marshal(got)
+		if err != nil || !strings.Contains(string(data), `"perspectives":[{"name":"correctness","verdict":"changes_requested","summary":"do not discard the settled verdict"}`) {
+			t.Fatalf("perspective wire fields missing: %s, %v", data, err)
+		}
+	}
+	bundle.Verdicts[2].Verdict = "requires_human"
+	agg := &review.Aggregate{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: "requires_human"}
+	got := stageTrackerReviewActivity(pr, bundle, agg, review.DispatchState{}, nil, now)
+	if got.State != "human_decision" || !strings.Contains(got.Caption, "correctness requires human: do not discard the settled verdict") || got.Perspectives[0].Verdict != "requires_human" {
+		t.Fatalf("human perspective was not explained: %+v", got)
+	}
+	bundle.Verdicts[2].Verdict = "changes_requested"
+	// Approval from another backend must not replace still-current dissent.
+	bundle.Verdicts = append(bundle.Verdicts, evidence.Verdict{Perspective: "correctness", Backend: "z", Verdict: "approve", RecordedAt: observed.Add(time.Minute)})
+	if got := trackerReviewPerspectives(bundle); !reflect.DeepEqual(got, want) {
+		t.Fatalf("newer approval from another backend hid a finding: %+v", got)
+	}
+	for _, other := range []github.PullRequest{
+		{Repo: pr.Repo, Number: pr.Number, HeadSHA: "new-head"},
+		{Repo: "other/repo", Number: pr.Number, HeadSHA: pr.HeadSHA},
+		{Repo: pr.Repo, Number: 8, HeadSHA: pr.HeadSHA},
+	} {
+		got := stageTrackerReviewActivity(other, bundle, nil, review.DispatchState{}, nil, now)
+		if got.State != "unknown" || len(got.Perspectives) != 0 || strings.Contains(got.Caption, "correctness") {
+			t.Fatalf("unrelated review details leaked: %+v", got)
+		}
 	}
 }
