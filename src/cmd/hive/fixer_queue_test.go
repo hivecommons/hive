@@ -114,3 +114,20 @@ func TestReconcileDeferredFixQueueOpenHeldAndClosedPRs(t *testing.T) {
 		t.Fatal("closed or removed PRs still queued")
 	}
 }
+
+func TestReconcilePlannedFixQueueDropsPRsNoLongerPlanningAFix(t *testing.T) {
+	gov := &governor.Governor{}
+	gov.RecordFixKickDeferred("org/repo#1", time.Now())
+	gov.RecordFixKickDeferred("org/repo#2", time.Now().Add(time.Minute))
+	reconcilePlannedFixQueue(gov, nil, nil)
+	if len(gov.FixerQueue()) != 2 {
+		t.Fatal("missing enumeration cleared queue")
+	}
+	// #1 stays open but its fix is no longer planned; #2 still needs one.
+	reconcilePlannedFixQueue(gov, &github.ActionableResult{}, []review.DispatchKick{{Kind: "fix", PRRef: "Org/Repo#2"}})
+	queue := gov.FixerQueue()
+	second := queue["org/repo#2"]
+	if len(queue) != 1 || second.FixerQueuePosition != 1 || second.FixerQueueAhead == nil || *second.FixerQueueAhead != 0 {
+		t.Fatalf("planned queue = %+v", queue)
+	}
+}

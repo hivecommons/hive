@@ -56,9 +56,10 @@ func (g *Governor) RecordFixKickDelivered(ref string) {
 	}
 }
 
-// ReconcileFixerQueue drops PRs no longer in the enumeration's open-PR set,
-// including PRs closed or merged while their fixer was busy.
-func (g *Governor) ReconcileFixerQueue(open map[string]bool) {
+// ReconcileFixerQueue drops PRs absent from keep: the enumeration's open-PR
+// set (PRs closed or merged while their fixer was busy) or the current plan's
+// fix-kick refs (PRs that no longer need a fix).
+func (g *Governor) ReconcileFixerQueue(keep map[string]bool) {
 	if g == nil {
 		return
 	}
@@ -66,7 +67,7 @@ func (g *Governor) ReconcileFixerQueue(open map[string]bool) {
 	defer g.mu.Unlock()
 	kept := g.deferredFixKicks[:0]
 	for _, kick := range g.deferredFixKicks {
-		if open[kick.ref] {
+		if keep[kick.ref] {
 			kept = append(kept, kick)
 		}
 	}
