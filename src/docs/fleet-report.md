@@ -169,9 +169,12 @@ when optional issue activity or CI trail fetches are shed below the reserve,
 their warnings remain in local logs but do not create repeated-error reports.
 Issue activity keeps its last rollup and is retried by the collector.
 
-The contributor-lane sweep's failed combined-status read on GitHub HTTP 500
-also stays in the logs without triggering the catch-all. The sweep fails closed
-and retries on its next pass; other contributor-lane failures remain reportable.
+Callers that fail closed on a GitHub HTTP 500 from the combined-status
+endpoint — the merge-eligible lane gate, the trusted-author and contributor-lane
+automerge sweeps, and the stage-label check digest — also stay in the logs
+without triggering the catch-all (`failClosedStatus500`, `pkg/fleetreport/slogfeed`).
+The PR is retried next tick; other errors on those log lines and HTTP 500s
+elsewhere remain reportable.
 
 The generic feed also skips the exact `review pending expired` message: it
 records the review planner's bounded retry, and a burst across unrelated PRs
