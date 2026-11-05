@@ -78,6 +78,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	// attention: asks a person to look or act.
 	"dashboard.(*ContributeWSHub).parkWrongBase":             {Class: NotificationClassAttention},
 	"dashboard.(*ContributeWSHub).noteAlreadyDoneUnverified": {Class: NotificationClassAttention},
+	"dashboard.(*ContributeWSHub).needsDecisionParkPost":     {Class: NotificationClassAttention},
 	"dashboard.(*Server).handleRepoItemReroute":              {Class: NotificationClassAttention},
 	"dashboard.(*Server).handleReviewPipelineSendToHuman":    {Class: NotificationClassAttention},
 	"dashboard.(*Server).reroutePickupLapsed":                {Class: NotificationClassAttention},
