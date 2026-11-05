@@ -729,11 +729,18 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				if err == nil {
 					err = c.verifyIssueParkLanded(ctx, req.Repo, req.Number, parkLabel)
 				}
+			} else if issueDecisionDowngrade.Lane != "" {
+				// A workflow-only change goes to the lane that can push
+				// it: the label routes the issue there (scheduler
+				// routeWorkflowsLane), and nothing parks it.
+				err = c.AddLabels(ctx, req.Repo, req.Number, []string{WorkflowsLaneLabel})
 			}
 		}
 		if err == nil {
 			commentBody := issueOwnerStepBody(body, req.NeedsDecision && !issueDecisionDowngrade.Active, req.OwnerStep)
-			if issueDecisionDowngrade.Active {
+			if issueDecisionDowngrade.Lane != "" {
+				commentBody = appendWorkflowsHandoff(commentBody, issueDecisionDowngrade)
+			} else if issueDecisionDowngrade.Active {
 				commentBody = appendHiveDecisionTaken(commentBody, issueDecisionDowngrade.Question)
 			}
 			if key := relayStatusNoteKey(commentBody); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
@@ -1017,7 +1024,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		extra = append(extra, "path", PRAuditPathRelay)
 	}
 	c.recordWriteAudit(action, meta, WriteTarget{Repo: req.Repo, Number: resp.Number}, extra...)
-	if issueDecisionDowngrade.Active {
+	if issueDecisionDowngrade.Lane != "" {
+		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
+			"policy", "workflows-handoff", "lane", issueDecisionDowngrade.Lane)
+	} else if issueDecisionDowngrade.Active {
 		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
 			"policy", decisionpolicy.PolicyResolve, "question", issueDecisionDowngrade.Question)
 	}
@@ -1035,6 +1045,9 @@ type issueDecisionDowngrade struct {
 	Active   bool
 	Question string
 	Note     string
+	// Lane is set when the park is a workflow-only change handed to the
+	// lane that can push it (workflowsHandoff), not a decision the hive took.
+	Lane string
 }
 
 // A typed owner step (e.g. a release) proposes an action only a person
@@ -1043,6 +1056,9 @@ type issueDecisionDowngrade struct {
 func (c *Client) issueDecisionDowngradeForCreate(req IssueRequest, body string) issueDecisionDowngrade {
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
+	}
+	if d := c.workflowsHandoff(req.Agent, req.Title, body); d.Active {
+		return d
 	}
 	return c.issueDecisionDowngrade(req.Title, body)
 }
@@ -1053,6 +1069,9 @@ func (c *Client) issueDecisionDowngradeForCreate(req IssueRequest, body string) 
 func (c *Client) issueDecisionDowngradeForComment(req IssueRequest, body string) issueDecisionDowngrade {
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
+	}
+	if d := c.workflowsHandoff(req.Agent, "", body); d.Active {
+		return d
 	}
 	return c.issueDecisionDowngrade("", body)
 }
@@ -1150,7 +1169,12 @@ func (c *Client) issueCreateLabels(req IssueRequest, body string) (labels []stri
 	if d = c.issueDecisionDowngradeForCreate(req, createBody); d.Active {
 		labels = removeDecisionParkLabels(labels, c.needsDecisionLabel())
 		labels = appendLabelIfMissing(labels, stagelabels.Actionable.Label())
-		createBody = appendHiveDecisionTaken(createBody, d.Question)
+		if d.Lane != "" {
+			labels = appendLabelIfMissing(labels, WorkflowsLaneLabel)
+			createBody = appendWorkflowsHandoff(createBody, d)
+		} else {
+			createBody = appendHiveDecisionTaken(createBody, d.Question)
+		}
 		return labels, createBody, d
 	}
 	return appendLabelIfMissing(labels, c.needsDecisionLabel()), createBody, d

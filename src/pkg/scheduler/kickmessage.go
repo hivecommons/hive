@@ -302,6 +302,7 @@ func (s *Scheduler) BuildKickMessagesWithSkips(actionable *github.ActionableResu
 	classifiedIssues := classify.ClassifyAll(sweepCtx, actionable.Issues.Items)
 	s.recordClassified(classifiedIssues)
 	classifiedIssues = s.applyRunTriage(sweepCtx, classifiedIssues)
+	classifiedIssues = s.routeWorkflowsLane(classifiedIssues)
 	cancelSweep()
 	s.offerQuestions(classifiedIssues)
 

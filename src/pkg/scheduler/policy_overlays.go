@@ -133,7 +133,40 @@ When a fix belongs in a workflow file:
 Everything else is pushable as normal, including composite actions under
 ` + "`.github/actions/`" + ` — GitHub's restriction covers the workflows directory only.
 `
+	if lane := s.cfg.WorkflowsLaneFor(agentName); lane != "" {
+		section += `
+This hive runs ` + "`" + lane + "`" + `, whose token can push workflow files. A park from step 3
+whose only remaining change is under ` + "`.github/workflows/`" + ` (and that offers the
+owner no lettered options) is not parked: the hive hands the issue to
+` + "`" + lane + "`" + ` (label ` + "`" + github.WorkflowsLaneLabel + "`" + `), and your exact replacement is its spec.
+Write it for that lane to apply, not as a step for the owner, and do not pick
+the issue up again.
+`
+	}
 	return insertAfterKickHeader(message, section)
+}
+
+// routeWorkflowsLane sends an issue the relay handed off for a workflow-only
+// change (github.WorkflowsLaneLabel) to the lane that can push workflow files.
+// Without it the issue keeps its `[lane]` title / `agent/<lane>` routing and
+// goes back to the lane that could not land it — Danathar/exult#374: the
+// owner approved the direction, ci-maintainer was kicked again and re-parked
+// it as an owner step, while scanner was merging workflow fixes in the same
+// hive. With no capable lane configured the issue keeps its classification.
+func (s *Scheduler) routeWorkflowsLane(issues []github.Issue) []github.Issue {
+	lane := s.cfg.WorkflowsCapableLane()
+	if lane == "" {
+		return issues
+	}
+	for i := range issues {
+		for _, l := range issues[i].Labels {
+			if strings.EqualFold(strings.TrimSpace(l), github.WorkflowsLaneLabel) {
+				issues[i].Lane = lane
+				break
+			}
+		}
+	}
+	return issues
 }
 
 // agentEffectiveMode returns the agent's configured mode, preferring the
@@ -142,23 +175,7 @@ Everything else is pushable as normal, including composite actions under
 // both did inline; it is one place now so a new caller cannot get it subtly
 // different.
 func (s *Scheduler) agentEffectiveMode(agentName string) string {
-	if s.cfg == nil {
-		return ""
-	}
-	agentCfg, ok := s.cfg.Agents[agentName]
-	if !ok {
-		agentCfg, ok = s.cfg.Agents[s.cfg.BaseAgentName(agentName)]
-	}
-	if !ok {
-		return ""
-	}
-	mode := agentCfg.Mode
-	if agentCfg.Tools != nil {
-		if effective := agentCfg.Tools.EffectiveMode(); effective != "" {
-			mode = effective
-		}
-	}
-	return mode
+	return s.cfg.AgentEffectiveMode(agentName)
 }
 
 // isPRCapableAgent reports whether the agent's effective mode lets it push

@@ -131,6 +131,10 @@ type Client struct {
 	issueFilter                IssueAdmitter
 	agentIssueDecisionPolicyMu sync.RWMutex
 	agentIssueDecisionPolicy   string
+	// workflowsLane names the lane a workflow-only park is handed to
+	// (SetWorkflowsLaneFunc, issue_workflows_handoff.go).
+	workflowsLaneMu sync.RWMutex
+	workflowsLane   func(agent string) string
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.

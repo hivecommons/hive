@@ -153,6 +153,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetIssueFilter(b.cfg.Project.IssueFilter)
 	b.applyPriorArtFilingGate(client)
 	client.SetAgentIssueDecisionPolicy(b.cfg.Project.EffectiveAgentIssueDecisionPolicy())
+	// A lane that cannot push .github/workflows/** hands a workflow-only park
+	// to the lane that can, instead of the owner (issue_workflows_handoff.go).
+	// Live predicate over the shared config, like the scope funcs above.
+	client.SetWorkflowsLaneFunc(b.cfg.WorkflowsLaneFor)
 	client.SetReporterConfirmationEnabledFunc(func() bool {
 		return b.cfg.Issues.ReporterConfirmationEnabled()
 	})
