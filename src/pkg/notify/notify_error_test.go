@@ -243,3 +243,49 @@ func TestWebhookLogHelpers(t *testing.T) {
 type errPlain string
 
 func (e errPlain) Error() string { return string(e) }
+
+func TestLogNtfyErrorDedupeWindowLevel(t *testing.T) {
+	// Regression test for #16708: dedupe summary must be INFO level, not WARN.
+	// If logged at WARN, the selfreport feed would count it as a repeated error.
+	var buf bytes.Buffer
+	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(handler)
+
+	n := New(config.NotificationsConfig{}, logger)
+
+	// First call logs at WARN
+	n.logNtfyError("ntfy returned error", "status=429")
+	// Second call within window is suppressed silently
+	n.logNtfyError("ntfy returned error", "status=429")
+	// Third call with different message flushes the dedupe summary at INFO
+	n.logNtfyError("ntfy send failed", "error detail")
+
+	logged := buf.String()
+	lines := strings.Split(strings.TrimSpace(logged), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 log lines, got %d: %s", len(lines), logged)
+	}
+
+	// Check that "ntfy errors suppressed" line is at INFO level
+	var foundSuppressionSummary bool
+	var suppressionAtWarnLevel bool
+	for _, line := range lines {
+		if strings.Contains(line, "ntfy errors suppressed") {
+			foundSuppressionSummary = true
+			// The level field should be "INFO", not "WARN"
+			if strings.Contains(line, `"level":"WARN"`) {
+				suppressionAtWarnLevel = true
+			}
+			if !strings.Contains(line, `"level":"INFO"`) {
+				t.Logf("WARNING: suppression summary might not be INFO level: %s", line)
+			}
+		}
+	}
+
+	if !foundSuppressionSummary {
+		t.Fatalf("did not find 'ntfy errors suppressed' in logs:\n%s", logged)
+	}
+	if suppressionAtWarnLevel {
+		t.Fatalf("ntfy errors suppressed was logged at WARN level (regression #16708): %s", logged)
+	}
+}

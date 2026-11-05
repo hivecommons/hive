@@ -40,6 +40,15 @@ const src = [
   pick(/function stageTrackerPresenceInPillHtml\(item, text\) \{[\s\S]*?\n    \}\n/, 'stageTrackerPresenceInPillHtml'),
   pick(/function stageTrackerPresenceChipText\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerPresenceChipText'),
   pick(/function stageTrackerPresenceChipHtml\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerPresenceChipHtml'),
+  pick(/const STAGE_TRACKER_REWORK_WORDS = [^\n]*\n/, 'STAGE_TRACKER_REWORK_WORDS'),
+  pick(/function stageTrackerReworkOf\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerReworkOf'),
+  pick(/function stageTrackerReworkWord\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerReworkWord'),
+  pick(/const STAGE_TRACKER_REWORK_OWED_BY_HIVE = [^\n]*\n/, 'STAGE_TRACKER_REWORK_OWED_BY_HIVE'),
+  pick(/function stageTrackerReReviewOwedByHive\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerReReviewOwedByHive'),
+  pick(/function stageTrackerReReviewWord\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerReReviewWord'),
+  pick(/function stageTrackerHiveReviewerChipText\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerHiveReviewerChipText'),
+  pick(/function stageTrackerReworkSuffix\(text, item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerReworkSuffix'),
+  pick(/function stageTrackerReworkTip\(item, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerReworkTip'),
 ].join('\n');
 
 // The clock the tooltips are rendered against, and the stubs the lifted
@@ -52,7 +61,7 @@ const stubs = `
   Date.now = () => ${NOW};
 `;
 const api = new Function(stubs + src + `; return { of: stageTrackerPresenceOf, tip: stageTrackerPresenceTip, aria: stageTrackerPresenceAria, dot: stageTrackerPresenceDotHtml,
-  inPill: stageTrackerPresenceInPillHtml, chipText: stageTrackerPresenceChipText, chip: stageTrackerPresenceChipHtml, adoptionChip: stageTrackerAdoptionChipHtml, icons: STAGE_TRACKER_ICONS };`)();
+  inPill: stageTrackerPresenceInPillHtml, chipText: stageTrackerPresenceChipText, chip: stageTrackerPresenceChipHtml, adoptionChip: stageTrackerAdoptionChipHtml, adoptionChipText: stageTrackerAdoptionChipText, reworkTip: stageTrackerReworkTip, icons: STAGE_TRACKER_ICONS };`)();
 // Collapse an inline SVG's body so the surrounding markup can be matched exactly.
 const flat = (h) => h.replace(/<svg ([^>]*)>[\s\S]*?<\/svg>/g, '<svg $1></svg>');
 
@@ -169,4 +178,40 @@ test('style ratchet: the indicator uses classes and tokens, no inline styles; re
   assert.match(html, /\.ham-presence-offline \{[^\n]*var\(--status-error\)/);
   assert.match(html, /\.ham-presence-unknown \.ham-presence-dot \{[^\n]*border: var\(--line-width\) solid var\(--text-faint\)[^\n]*background: transparent/);
   assert.match(html, /@media \(prefers-reduced-motion: reduce\) \{ \.ham-presence-online \.ham-presence-dot \{ animation: none; \} \}/);
+});
+
+// hivecommons/hive#16615: @thatguywob (a clanker) pushed d88928e after the
+// ask; every check on it is green and no findings stand against it. The
+// re-review is the HIVE reviewer's to deliver — the pill must not say the
+// hive waits on the clanker.
+const head16615 = 'd88928e16f21ab6e653e5d06f137926bc0db1c0d';
+const pushed16615 = { repo: 'hivecommons/hive', number: 16615, kind: 'pr', stage: 72, head: head16615, author: 'thatguywob', author_kind: 'clanker',
+  adoption: { author: 'thatguywob', due: false, since: iso(NOW - 4 * MIN), nudges: 1, author_online: false, author_registered: true, policy: 'adopt', text: 'waiting on @thatguywob (offline 4m, 1 nudge)' },
+  presence: { login: 'thatguywob', state: 'offline', kind: 'clanker', since: iso(NOW - 4 * MIN), last_seen: iso(NOW - 10 * MIN), next: 'adopt', adopt_at: iso(NOW + 11 * MIN) },
+  rework: { state: 'pushed', actor: 'thatguywob', requested_at: iso(NOW - 4 * MIN), since: iso(NOW - 3 * MIN), evidence: 'commit', head: head16615, owed_by: 'hive-reviewer' },
+  ci_activity: { head: head16615, state: 'passing', caption: 'CI green' },
+  review_activity: { head: head16615, state: 'unknown', perspectives_done: 0, perspectives_total: 5 } };
+
+test('#16615: a pushed, green head waits on the hive reviewer, not the clanker that pushed it', () => {
+  assert.strictEqual(api.adoptionChipText(pushed16615), 'waiting on 🐝 hive reviewer · re-review of d88928e');
+  assert.strictEqual(api.chipText(pushed16615), 'waiting on 🐝 hive reviewer · re-review of d88928e');
+  const chip = api.adoptionChip(pushed16615);
+  assert.match(chip, />waiting on 🐝 hive reviewer · re-review of d88928e</, 'pill text as rendered');
+  assert.doesNotMatch(chip, /ham-presence-dot|@thatguywob · re-review/, 'no author presence glyph, no author attribution on the pill');
+  assert.match(api.reworkTip(pushed16615, NOW), /@thatguywob pushed a new head .* · hive reviewer owes the re-review of d88928e$/);
+  // Older servers without owed_by: the same answer from the activities.
+  const legacy = { ...pushed16615, rework: { ...pushed16615.rework, owed_by: undefined } };
+  assert.strictEqual(api.adoptionChipText(legacy), 'waiting on 🐝 hive reviewer · re-review of d88928e');
+});
+
+test('#16615: the author keeps the pill only when the pushed head asks them for something', () => {
+  const owes = (extra) => api.adoptionChipText({ ...pushed16615, rework: { ...pushed16615.rework, owed_by: undefined }, ...extra });
+  assert.strictEqual(owes({ ci_activity: { head: head16615, state: 'failing' } }), 'waiting on @thatguywob · re-review pending', 'red CI on the pushed head is theirs to fix');
+  assert.strictEqual(owes({ review_activity: { head: head16615, state: 'changes_requested' } }), 'waiting on @thatguywob · re-review pending', 'findings on the pushed head are theirs');
+  assert.strictEqual(owes({ reason: 'conflicting' }), 'waiting on @thatguywob · re-review pending', 'a conflict nobody rebases is theirs');
+  assert.strictEqual(owes({ reason: 'conflicting', rebase: { attempt: 1, max: 2 } }), 'waiting on 🐝 hive reviewer · re-review of d88928e', 'the hive rebasing it is the hive\'s move');
+  assert.strictEqual(api.adoptionChipText({ ...pushed16615, rework: { ...pushed16615.rework, owed_by: 'author' } }), 'waiting on @thatguywob · re-review pending', 'the server\'s word wins over the activities');
+  assert.strictEqual(api.adoptionChipText({ ...pushed16615, rework: { ...pushed16615.rework, owed_by: undefined, state: 'acknowledged' } }), 'waiting on @thatguywob · acknowledged', 'before the push the author owes the rework');
+  const authorChip = api.adoptionChip({ ...pushed16615, rework: { ...pushed16615.rework, owed_by: undefined }, ci_activity: { head: head16615, state: 'failing' } });
+  assert.match(authorChip, /ham-presence-dot/, 'the author pill keeps its presence glyph');
 });

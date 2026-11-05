@@ -18,14 +18,18 @@ import (
 // theirs — add the reporter-trust triage label (`triage/accepted` or the
 // first of `issue_filter.reporter_trust.untrusted_require_labels`) and drop
 // the awaiting label (`needs-triage` / `reporter_trust.awaiting_label`). The
-// labels are the whole signal: the reporter-trust gate admits the issue on
-// its next poll, the stage engine moves 015 → 010 (never a regression), and
-// a label-driven repository's own sweep reads the approval label exactly as
-// if the maintainer had applied it by hand. A Hive-written
-// `stage/015-triage-needed` label is removed with the awaiting label so the
-// chevron does not keep reading "Triage needed" until the engine's next
-// cycle. Authorised like Hold (write permission on the repo or the verified
-// owner role); attributed to the signed-in dashboard user in the audit log.
+// labels are the signal the reporter-trust gate admits the issue on at its
+// next poll, and a label-driven repository's own sweep reads the approval
+// label exactly as if the maintainer had applied it by hand. The handler
+// also moves the stage in the same request: an issue with no stage label
+// (parked 000-new by the gate) or wearing a Hive-written
+// `stage/015-triage-needed` gets `stage/010-actionable` (015 removed with
+// the awaiting label), so the row leaves "New" / "Triage needed" on the next
+// poll instead of waiting for the engine's cycle (hivecommons/hive#16652
+// sat at "New" after the click). A higher stage is never regressed; the
+// engine's next pass may refine 010. Authorised like Hold (write permission
+// on the repo or the verified owner role); attributed to the signed-in
+// dashboard user in the audit log.
 
 const (
 	acceptTriageAuditAction      = "repo_item_accept_triage"
@@ -97,21 +101,57 @@ func acceptTriagePlan(labels []string, accept string, awaiting []string) (add, r
 	return add, remove
 }
 
-// stageTrackerAcceptedTriageRecord reports whether rec parks the issue at
-// 015 while its labels already say triage was accepted (the accept label is
-// on, no awaiting label and no 015 stage label remain). The labels are the
-// newer fact; the record is waiting on the engine's next reconcile, and the
-// row reads 010 Actionable meanwhile.
-func (s *Server) stageTrackerAcceptedTriageRecord(rec stagelabels.Record, labels []string) bool {
-	if rec.Stage != stagelabels.TriageNeeded {
-		return false
+// acceptTriageStageAdvance is pure: the stage label to add so the accepted
+// issue reads 010 Actionable, or "" when it already carries a stage label
+// other than 015 (a claim or a covering PR is further along and is never
+// regressed) or is on hold (the reconciler strips stage labels from a held
+// item; the row reads "on hold" whatever the stage). stageOf reads the
+// item's current stage from its labels.
+func acceptTriageStageAdvance(labels []string, hiveID string, stageOf func([]string) stagelabels.Stage) string {
+	if len(holdLabels(labels, hiveID)) > 0 {
+		return ""
 	}
+	switch stageOf(labels) {
+	case stagelabels.None, stagelabels.TriageNeeded:
+		return stagelabels.Actionable.Label()
+	}
+	return ""
+}
+
+// acceptTriageLabelsAccepted reports whether labels say triage was accepted:
+// the accept label is on and no awaiting label and no 015 stage label remain.
+func (s *Server) acceptTriageLabelsAccepted(labels []string) bool {
 	accept, awaiting := s.acceptTriageLabels()
 	if !acceptTriageHasLabel(labels, accept) {
 		return false
 	}
 	_, remove := acceptTriagePlan(labels, accept, awaiting)
 	return len(remove) == 0
+}
+
+// stageTrackerAcceptedTriageStage is the stage the tracker shows for an
+// issue the engine has no stage for (no record, or a record at None) whose
+// labels already say triage was accepted: 010 Actionable rather than
+// 000-new, until the engine's next pass records it. "New" is never derived
+// from the mere absence of a stage label when the accept label is present
+// (hivecommons/hive#16652).
+func (s *Server) stageTrackerAcceptedTriageStage(stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, labels []string) stagelabels.Stage {
+	if stage != stagelabels.None || (hasRec && rec.Stage != stagelabels.None) {
+		return stage
+	}
+	if s.acceptTriageLabelsAccepted(labels) {
+		return stagelabels.Actionable
+	}
+	return stage
+}
+
+// stageTrackerAcceptedTriageRecord reports whether rec parks the issue at
+// 015 while its labels already say triage was accepted (the accept label is
+// on, no awaiting label and no 015 stage label remain). The labels are the
+// newer fact; the record is waiting on the engine's next reconcile, and the
+// row reads 010 Actionable meanwhile.
+func (s *Server) stageTrackerAcceptedTriageRecord(rec stagelabels.Record, labels []string) bool {
+	return rec.Stage == stagelabels.TriageNeeded && s.acceptTriageLabelsAccepted(labels)
 }
 
 func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Request) {
@@ -156,8 +196,13 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 	}
 	accept, awaiting := s.acceptTriageLabels()
 	add, remove := acceptTriagePlan(labels, accept, awaiting)
+	hiveID := ""
+	if s.deps.Config != nil {
+		hiveID = s.deps.Config.HiveID
+	}
+	stageLabel := acceptTriageStageAdvance(labels, hiveID, labelStage)
 	out := repoAcceptTriageResponse{OK: true, Repo: repoFull, Number: number, AcceptLabel: accept, Added: []string{}, Removed: []string{}}
-	if len(add) == 0 && len(remove) == 0 {
+	if len(add) == 0 && len(remove) == 0 && stageLabel == "" {
 		out.MinStatusSeq, err = s.refreshAcceptedTriage(ctx, repoFull, number)
 		if err != nil {
 			jsonError(w, "Triage is already accepted on GitHub, but the work handoff could not be refreshed: "+err.Error(), http.StatusBadGateway)
@@ -170,17 +215,21 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 		jsonResponse(w, out)
 		return
 	}
+	alreadyAccepted := len(add) == 0
 	if len(add) > 0 {
 		if err := s.deps.GHClient.EnsureIssueLabel(ctx, repoFull, accept, acceptTriageLabelColor, acceptTriageLabelDescription); err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		if err := s.deps.GHClient.AddLabels(ctx, repoFull, number, add); err != nil {
+	}
+	if stageLabel != "" {
+		if err := s.deps.GHClient.EnsureIssueLabel(ctx, repoFull, stageLabel, stagelabels.StageColor, stagelabels.Actionable.Description()); err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		out.Added = add
 	}
+	// Removes before adds so the issue never carries two stage labels
+	// (015 off before 010 on), matching stagelabels.Enforce.
 	for _, label := range remove {
 		if err := s.deps.GHClient.RemoveLabel(ctx, repoFull, number, label); err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
@@ -188,13 +237,29 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	out.Removed = remove
+	if stageLabel != "" {
+		add = append(add, stageLabel)
+	}
+	if len(add) > 0 {
+		if err := s.deps.GHClient.AddLabels(ctx, repoFull, number, add); err != nil {
+			jsonError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		out.Added = add
+	}
 	s.auditFromRequest(r, acceptTriageAuditAction, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "added", strings.Join(add, ","), "removed", strings.Join(remove, ",")), "")
 	out.MinStatusSeq, err = s.refreshAcceptedTriage(ctx, repoFull, number)
 	if err != nil {
 		jsonError(w, "Triage labels were saved on GitHub, but the work handoff could not be refreshed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	outcome := "Triage accepted: `" + accept + "` added"
+	outcome := "Triage accepted: `" + strings.Join(add, "`, `") + "` added"
+	if alreadyAccepted {
+		outcome = "Triage already accepted: `" + strings.Join(add, "`, `") + "` added"
+		if len(add) == 0 {
+			outcome = "Triage already accepted"
+		}
+	}
 	if len(remove) > 0 {
 		outcome += ", `" + strings.Join(remove, "`, `") + "` removed"
 	}
@@ -241,14 +306,15 @@ func (s *Server) refreshAcceptedTriage(ctx context.Context, repo string, number 
 	return seq, nil
 }
 
-// acceptTriageNextText is the result's "next" line: the hive picks the
-// issue up on its next scanner pass, with the governor's ETA when known.
+// acceptTriageNextText is the result's "next" line: the row reads 010
+// actionable now; the hive picks the issue up on its next scanner pass,
+// with the governor's ETA when known.
 func acceptTriageNextText(eta string) string {
 	next := "Hive picks it up on its next scanner pass"
 	if eta != "" {
 		next += " (≈" + eta + ")"
 	}
-	return next + "; the reporter-trust gate admits the issue on that poll and the stage engine records it 010 actionable."
+	return next + "; the row reads 010 actionable now and the reporter-trust gate admits the issue on that poll."
 }
 
 // governorNextPassIn is the governor's published next kick as an ETA

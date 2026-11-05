@@ -60,9 +60,9 @@ func decisionForUnauthorized(it StageTrackerItem, held bool) *StageTrackerDecisi
 	step := strings.TrimSpace(it.UnauthorizedStep)
 	if step == "" {
 		_, tip := stageTrackerUnauthorized(it.Reason)
-		d.Question = "The hive's GitHub App lacks a permission for the next step. " + tip
+		d.Question = "The hive bot lacks a permission for the next step. " + tip
 	} else {
-		d.Question = "The hive's GitHub App may not " + unauthorizedStepWords(step) + " here. Do that step on GitHub, then re-evaluate so the hive picks it up."
+		d.Question = "The hive bot's GitHub App is missing the permission to " + unauthorizedStepWords(step) + " here. Do that step on GitHub, then re-evaluate so the hive picks it up."
 	}
 	d.Blocker = strings.TrimSpace(it.Unauthorized)
 	if d.Blocker == "" {

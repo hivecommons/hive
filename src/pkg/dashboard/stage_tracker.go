@@ -77,13 +77,20 @@ type StageTrackerResponse struct {
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
-	// RecentlyMerged lists the pull requests the hive saw merge within
-	// stageTrackerMergedWindow, from the audit log's pr_merged entries
-	// (sweep, queue, relay and human merges observed by the PR poller
-	// alike). Items only ever lists open work, so a merged PR simply
-	// drops out of Items on the next build; this side list is what lets
-	// the SPA tell "merged" from "closed" between two polls and play its
-	// opt-in merge sound for the right rows.
+	// RecentlyMerged lists the pull requests GitHub reports merged within
+	// stageTrackerMergedWindow, whoever merged them: the audit log's
+	// pr_merged entries (the hive's own sweep, queue, relay and forge
+	// merges, written the instant the merge call returns, and the PR
+	// poller's observations of human merges) united with the merged
+	// ledger's entries over the same window (webhook `closed` deliveries
+	// and their confirming reads, the closed sweep). Items only ever lists
+	// open work, so a merged PR simply drops out of Items on the next
+	// build; this side list is the terminal snapshot that lets the SPA
+	// tell "merged" from "closed" between two polls and celebrate the
+	// right rows. Before hivecommons/hive#16658 it carried audit entries
+	// only, so a merge by a human (`gh pr merge`) reached it minutes
+	// after the row had left — or never, when the PR poller's settle
+	// scan was behind — and the row vanished in silence.
 	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
 	// RecentlyClosed lists the pull requests that left Items closed but
 	// not merged within stageTrackerMergedWindow — superseded, withdrawn,
@@ -127,6 +134,10 @@ type StageTrackerMerged struct {
 	Repo     string    `json:"repo"`
 	Number   int       `json:"number"`
 	MergedAt time.Time `json:"merged_at"`
+	// MergedBy is MergedByHive when the hive performed the merge, else the
+	// merger's GitHub login; "" when not (yet) known. The SPA's merge
+	// toast reads it ("merged by 🐝 hive" / "merged by @login").
+	MergedBy string `json:"merged_by,omitempty"`
 }
 
 // StageTrackerClosed is one recently closed, unmerged pull request.
@@ -177,54 +188,94 @@ func stageTrackerRepoQualifier(status *StatusPayload) func(string) string {
 	}
 }
 
-// stageTrackerRecentlyMerged reads the pr_merged audit entries newer than
-// now-stageTrackerMergedWindow from the in-memory ring: newest first, one
-// entry per (repo, number) after qualify has mapped short repo names onto
-// the owner/name Items use. The ring holds auditRingCap entries and is the
-// only source consulted — a window this short never needs the on-disk log,
-// and reading files on every tracker build would defeat its cache.
+// stageTrackerRecentlyMerged lists the PRs merged within
+// now-stageTrackerMergedWindow, by anyone: the pr_merged audit entries in
+// the in-memory ring united with the merged ledger's entries over the same
+// window, newest first, one entry per (repo, number) after qualify has
+// mapped short repo names onto the owner/name Items use. The ring holds
+// auditRingCap entries and is the only audit source consulted — a window
+// this short never needs the on-disk log, and reading files on every
+// tracker build would defeat its cache.
 func (s *Server) stageTrackerRecentlyMerged(now time.Time, qualify func(string) string) []StageTrackerMerged {
 	return s.stageTrackerMergedSince(now, stageTrackerMergedWindow, qualify)
 }
 
 // stageTrackerMergedSince is stageTrackerRecentlyMerged over any window.
 func (s *Server) stageTrackerMergedSince(now time.Time, window time.Duration, qualify func(string) string) []StageTrackerMerged {
-	if s == nil || s.audit == nil {
+	if s == nil {
 		return nil
 	}
 	if qualify == nil {
 		qualify = func(repo string) string { return repo }
 	}
-	seen := map[string]bool{}
+	index := map[string]int{}
 	var out []StageTrackerMerged
-	for _, e := range s.audit.RecentWithPrefixSince(now.Add(-window), github.AuditActionPRMerged) {
-		if e.Action != github.AuditActionPRMerged {
-			continue
-		}
-		repo, ok := collect.AuditEntryRepo(e)
-		if !ok {
-			continue
-		}
-		repo = qualify(repo)
-		number := e.Target
-		if number == 0 {
-			if m := stageTrackerAuditNumberRe.FindStringSubmatch(e.Detail); m != nil {
-				number, _ = strconv.Atoi(m[1])
+	key := func(repo string, number int) string { return strings.ToLower(repo) + "#" + strconv.Itoa(number) }
+	// An audit entry whose short repo name no configured repo accounts for
+	// stays short, while the ledger qualified the same merge with the
+	// configured org: match the two on the short name so one merge is
+	// listed once.
+	short := func(repo string) string { return strings.ToLower(repo[strings.LastIndex(repo, "/")+1:]) }
+	shortIndex := map[string]int{}
+	// Audit entries first: the hive's own merge writes one the instant the
+	// merge call returns, so its merged_at is the sharpest.
+	if s.audit != nil {
+		for _, e := range s.audit.RecentWithPrefixSince(now.Add(-window), github.AuditActionPRMerged) {
+			if e.Action != github.AuditActionPRMerged {
+				continue
 			}
+			repo, ok := collect.AuditEntryRepo(e)
+			if !ok {
+				continue
+			}
+			repo = qualify(repo)
+			attrs := parseAuditDetailAttrs(e.Detail)
+			number := e.Target
+			if number == 0 {
+				if m := stageTrackerAuditNumberRe.FindStringSubmatch(e.Detail); m != nil {
+					number, _ = strconv.Atoi(m[1])
+				}
+			}
+			if number <= 0 {
+				continue
+			}
+			k := key(repo, number)
+			if i, dup := index[k]; dup {
+				if out[i].MergedBy == "" {
+					out[i].MergedBy = mergedByFromAudit(attrs)
+				}
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, e.Timestamp)
+			if err != nil {
+				at = now
+			}
+			index[k] = len(out)
+			if !strings.Contains(repo, "/") {
+				shortIndex[key(short(repo), number)] = len(out)
+			}
+			out = append(out, StageTrackerMerged{Repo: repo, Number: number, MergedAt: at.UTC(), MergedBy: mergedByFromAudit(attrs)})
 		}
-		if number <= 0 {
+	}
+	// Then the ledger: a merge GitHub reported through a webhook, its
+	// confirming read or the closed sweep, by whoever performed it, is a
+	// terminal fact for the SPA the moment the row leaves — it must not
+	// wait for the PR poller's settle scan to write an audit line.
+	for _, e := range s.mergedLedger().Since(now.Add(-window), now) {
+		repo := qualify(e.Repo)
+		k := key(repo, e.Number)
+		i, dup := index[k]
+		if !dup {
+			i, dup = shortIndex[key(short(repo), e.Number)]
+		}
+		if dup {
+			if out[i].MergedBy == "" {
+				out[i].MergedBy = e.MergedBy
+			}
 			continue
 		}
-		key := repo + "#" + strconv.Itoa(number)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		at, err := time.Parse(time.RFC3339, e.Timestamp)
-		if err != nil {
-			at = now
-		}
-		out = append(out, StageTrackerMerged{Repo: repo, Number: number, MergedAt: at.UTC()})
+		index[k] = len(out)
+		out = append(out, StageTrackerMerged{Repo: repo, Number: e.Number, MergedAt: e.MergedAt.UTC(), MergedBy: e.MergedBy})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if !out[i].MergedAt.Equal(out[j].MergedAt) {

@@ -488,8 +488,12 @@ type issueOwnershipInput struct {
 	// that is itself parked on a decision ("#511", or "owner/repo#511" in
 	// another repo), from the enumeration row's OpenBlockers; "" when none.
 	decisionBlocker string
-	createdAt       time.Time
-	updatedAt       time.Time
+	// hiveClosingPR is an open pull request authored by this hive's App
+	// whose GitHub closing references name a parked (non-actionable)
+	// issue, from hiveClosingPRFor; 0 when there is none.
+	hiveClosingPR int
+	createdAt     time.Time
+	updatedAt     time.Time
 
 	// lane is the lane the classifier routed the issue to.
 	lane string
@@ -557,6 +561,15 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		parking = env.parkingBucket(in.labels)
 	}
 	if parking != "" {
+		// A decision park that an open hive PR closes waits on that PR:
+		// the PR is the answer, and merging it closes the issue. Owner
+		// asks from an outside author's "Closes #N" stay your turn.
+		// Danathar/openaudible-autoupdate#177 sat in the inbox for its
+		// options A/B/C while hive PR #176 ("Closes #177") was open and
+		// green, until a maintainer posted a decision.
+		if parking == config.DefaultNeedsDecisionLabel && in.hiveClosingPR > 0 {
+			return waitingElsewhereFor(fmt.Sprintf("Waits on hive PR #%d, which closes it", in.hiveClosingPR))
+		}
 		// A decision park blocked by another open issue defers to that
 		// issue's decision: one owner ask, not two. Danathar/tududi#512 (the
 		// v2.0.0-rc.1 tag, parked "Answer on #511; the same choice applies
@@ -898,6 +911,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				bucketReason:    item.Reason,
 				decisionBlocker: decisionBlockerFor(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number), item.OpenBlockers, decisionParks, repoName),
 			}
+			in.hiveClosingPR = hiveClosingPRFor(*repo, repoName, item.Number)
 			decision := withReleaseAction(decideIssueOwnershipGated(in, env), item.OwnerStep, env.releaseOnApproveFor(in.repo))
 			record(ownershipKindIssue, item.Number, item.URL, decision, item.CreatedAt, item.UpdatedAt)
 		}

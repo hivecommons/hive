@@ -1,0 +1,1 @@
+- Clarify the `StageTrackerActivity` source documentation: CI activity uses the resolved required checks when branch protection is known, otherwise all check runs observed on the head. This corrects the description without changing runtime behavior ([#16674](https://github.com/hivecommons/hive/pull/16674)).

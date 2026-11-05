@@ -29,6 +29,7 @@ func (s *Server) noteClosedSnapshots(snaps []github.WebhookItemSnapshot) {
 	}
 	now := time.Now()
 	qualify := s.mergedRepoQualifier()
+	ledger := s.mergedLedger()
 	s.recentlyClosedMu.Lock()
 	defer s.recentlyClosedMu.Unlock()
 	for _, snap := range snaps {
@@ -36,6 +37,12 @@ func (s *Server) noteClosedSnapshots(snaps []github.WebhookItemSnapshot) {
 			continue
 		}
 		repo := qualify(snap.Repo)
+		// A snapshot that cannot tell merged from closed (a hint from a
+		// delivery without the PR object) must not contradict a merge the
+		// ledger already holds: "closed" would be the SPA's final word.
+		if ledger.Has(repo, snap.Number) {
+			continue
+		}
 		at := snap.UpdatedAt
 		if at.IsZero() || at.After(now) {
 			at = now
@@ -53,6 +60,35 @@ func (s *Server) noteClosedSnapshots(snaps []github.WebhookItemSnapshot) {
 		s.recentlyClosed = append(s.recentlyClosed, StageTrackerClosed{Repo: repo, Number: snap.Number, ClosedAt: at.UTC()})
 	}
 	s.pruneRecentlyClosedLocked(now)
+}
+
+// forgetClosedSnapshots drops from the list every PR snaps now report
+// merged: an earlier closed-unmerged read was wrong (or arrived before the
+// merge fact), and the SPA must see the merge, not the close.
+func (s *Server) forgetClosedSnapshots(snaps []github.WebhookItemSnapshot) {
+	if s == nil || len(snaps) == 0 {
+		return
+	}
+	qualify := s.mergedRepoQualifier()
+	s.recentlyClosedMu.Lock()
+	defer s.recentlyClosedMu.Unlock()
+	if len(s.recentlyClosed) == 0 {
+		return
+	}
+	for _, snap := range snaps {
+		if !snap.IsPR || !snap.Merged || snap.Number <= 0 || snap.Repo == "" {
+			continue
+		}
+		repo := qualify(snap.Repo)
+		kept := s.recentlyClosed[:0]
+		for _, e := range s.recentlyClosed {
+			if e.Number == snap.Number && strings.EqualFold(e.Repo, repo) {
+				continue
+			}
+			kept = append(kept, e)
+		}
+		s.recentlyClosed = kept
+	}
 }
 
 // pruneRecentlyClosedLocked drops entries older than the window and, past

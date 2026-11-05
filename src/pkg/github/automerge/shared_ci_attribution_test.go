@@ -45,7 +45,7 @@ func TestStageDCONormalizesCachedBotAttributionWithoutChangingSignoffs(t *testin
 	store.NoteDCO(key, "aaa", 3, 0, 0, 1)
 	got, err := e.stageDCO(context.Background(), store, key, stageObservation{
 		Owner: "acme", Repo: "widget", Number: 42, HeadSHA: "aaa", Author: "dependabot[bot]",
-	})
+	}, StageLabelPolicy{})
 	if err != nil || got.total != 3 || got.unsigned != 0 || got.squashUnsafeHive != 0 {
 		t.Fatalf("cached bot attribution: %+v, %v", got, err)
 	}

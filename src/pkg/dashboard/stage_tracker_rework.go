@@ -68,6 +68,51 @@ type StageTrackerRework struct {
 	Ahead int `json:"ahead,omitempty"`
 	// Head is the new head on a pushed state.
 	Head string `json:"head,omitempty"`
+	// OwedBy names who owes the next move on a pushed state
+	// (hivecommons/hive#16615): "hive-reviewer" when the new head needs the
+	// hive's re-review and nothing on it is the author's to fix, so the
+	// waiting-on pill names the hive, not the author; "author" when they
+	// still owe something on the pushed head — red CI, changes requested on
+	// it, or a conflict nobody in the hive is rebasing. Empty on the other
+	// states (and from older servers, which the dashboard reads from the
+	// activities instead).
+	OwedBy string `json:"owed_by,omitempty"`
+}
+
+// Who owes the next move on a pushed head.
+const (
+	reworkOwedByHiveReviewer = "hive-reviewer"
+	reworkOwedByAuthor       = "author"
+)
+
+// stageTrackerApplyReworkOwedBy fills Rework.OwedBy once the row's CI and
+// review activity are known (they are derived after the rework field).
+func stageTrackerApplyReworkOwedBy(it *StageTrackerItem) {
+	if it == nil || it.Rework == nil || it.Rework.State != reworkStatePushed {
+		return
+	}
+	it.Rework.OwedBy = stageTrackerReworkOwedBy(*it)
+}
+
+// stageTrackerReworkOwedBy answers "who owes the next move on the pushed
+// head?" The author owes it only when the head itself asks them for
+// something: CI failing on it, review findings against it, or a merge
+// conflict the hive is not rebasing. Otherwise the re-review of the new
+// head is the hive reviewer's to deliver.
+func stageTrackerReworkOwedBy(it StageTrackerItem) string {
+	onHead := func(a *StageTrackerActivity) bool {
+		return a != nil && (a.Head == "" || it.Head == "" || strings.EqualFold(a.Head, it.Head))
+	}
+	if onHead(it.CIActivity) && it.CIActivity.State == "failing" {
+		return reworkOwedByAuthor
+	}
+	if onHead(it.ReviewActivity) && it.ReviewActivity.State == "changes_requested" {
+		return reworkOwedByAuthor
+	}
+	if strings.Contains(strings.ToLower(it.Reason), "conflict") && it.Rebase == nil {
+		return reworkOwedByAuthor
+	}
+	return reworkOwedByHiveReviewer
 }
 
 // StageTrackerFixWork is the hub's fix-queue standing for one PR and one

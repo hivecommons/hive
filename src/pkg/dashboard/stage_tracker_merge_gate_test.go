@@ -145,8 +145,8 @@ func TestStageTrackerMergeGateInPayload(t *testing.T) {
 func TestStageTrackerMergeGateNode(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
-		`60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging'`,
+		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Queued for merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
+		`60: 'Review passed', 80: 'Queued for merge', 95: 'Soaking', 100: 'Merging'`,
 		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';`,
 		`const caption = gateWord || word;`,
 		`const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;`,
@@ -164,7 +164,7 @@ func TestStageTrackerMergeGateNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"**Merge queue pills — legend**", "Awaiting merge gate", "Ready for auto merge", "**Soaking**", "**Merging**", "next pass in"} {
+	for _, want := range []string{"**Merge queue pills — legend**", "Awaiting merge gate", "Queued for merge", "**Soaking**", "**Merging**", "next pass in"} {
 		if !strings.Contains(string(docs), want) {
 			t.Errorf("docs/dashboard-sections/activity-monitor.md missing merge-gate legend %q", want)
 		}
@@ -205,7 +205,7 @@ const pr15044 = { repo: 'hivecommons/hive', number: 15044, kind: 'pr', base_ref:
 const ready = { repo: 'hivecommons/hive', number: 15060, kind: 'pr', stage: 80, merge_gate: { state: 'ready', last_sweep_at: iso(now - 10000), next_sweep_at: iso(now + 42000) } };
 const merging = { repo: 'hivecommons/hive', number: 15061, kind: 'pr', stage: 100, merge_gate: { state: 'merging', last_sweep_at: iso(now - 1000) } };
 
-// Both 060 rows read the same word — neither is "Ready for auto merge" with CI pending.
+// Both 060 rows read the same word — neither is "Queued for merge" with CI pending.
 let a = stageTrackerMergeGateInfo(pr15042, now), b = stageTrackerMergeGateInfo(pr15054, now);
 assert.strictEqual(a.word, 'Review passed'); assert.strictEqual(b.word, 'Review passed');
 assert.strictEqual(a.cue, 'running'); assert.strictEqual(a.detail, 'CI in progress');
@@ -226,7 +226,7 @@ assert.strictEqual(stageTrackerGateCueHtml({ repo: 'r', number: 1, kind: 'pr', s
 assert.strictEqual(stageTrackerGateCueHtml({ repo: 'r', number: 1, kind: 'pr', stage: STAGE_TRACKER_TERMINAL }, now), '', 'merged: no glyph');
 
 // The pill word with the live detail; the waiting row says what it waits for.
-assert.strictEqual(stageTrackerMergeGateWordHtml(ready, now), '<span class="ham-seg-t">Ready for auto merge <span class="ham-gate-detail" data-ham-until="' + (now + 42000) + '" data-ham-until-kind="ready">· next pass in 42s</span></span>');
+assert.strictEqual(stageTrackerMergeGateWordHtml(ready, now), '<span class="ham-seg-t">Queued for merge <span class="ham-gate-detail" data-ham-until="' + (now + 42000) + '" data-ham-until-kind="ready">· next pass in 42s</span></span>');
 // The soak detail carries its clock (data-ham-soak…) so the tick redoes the words and the hover.
 const soakHtml = stageTrackerMergeGateWordHtml(pr15044, now);
 assert.ok(soakHtml.startsWith('<span class="ham-seg-t">Soaking <span class="ham-gate-detail" data-ham-soak="1" data-ham-until="' + (now + 452000) + '" data-ham-until-kind="soaking"'), soakHtml);
@@ -241,7 +241,7 @@ assert.strictEqual(stageTrackerMergeGateInfo(merging, now).tip, 'Admitted and so
 
 // Without merge_gate (older server) the stage alone picks the word and a plain sentence.
 const old = stageTrackerMergeGateInfo({ stage: 80 }, now);
-assert.deepStrictEqual([old.word, old.detail, old.cue], ['Ready for auto merge', '', 'waiting']);
+assert.deepStrictEqual([old.word, old.detail, old.cue], ['Queued for merge', '', 'waiting']);
 assert.strictEqual(old.tip, "Approved and green; waiting for hive's next merge pass. A GitHub event on the PR (check run, review, push) triggers a pass sooner.");
 assert.strictEqual(stageTrackerMergeGateInfo({ stage: 95, soak_remaining_seconds: 90 }, now).detail, '2m left', 'legacy soak_remaining_seconds still counts');
 assert.strictEqual(stageTrackerSoakLeft({ merge_gate: { soak_remaining_seconds: 452 } }), ' — 8m left', 'the 095 chevron tooltip reads the mirrored field too');
