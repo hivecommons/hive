@@ -349,7 +349,13 @@ blocked sweep that follows each stage-label sync lifts the label and posts
 one `<!-- hive:unblocked -->` note once the tracked PR is merged or closed,
 and strips `help wanted` again should the org workflow re-add it while the
 PR is open. The review backlog applies the same parking itself when it files
-a finding whose file does not exist on the reviewed PR's base branch.
+a finding whose file does not exist on the reviewed PR's base branch. The
+review-backlog reconciler and the blocked sweep can both lift the same block;
+whichever runs second sees the first one's note for that PR (newer than the
+last blocked-on marker) and posts nothing. On an issue `project.issue_filter`
+does not admit (for example no `triage/accepted`), the note says
+"Unblocked — waiting for a maintainer to admit it" and names the label that
+admits it, instead of "actionable now" or "re-triaging".
 
 A posted comment is the agent's **start signal** on that issue only when it
 says work is starting. The hub records a 2h agent claim the first time the
