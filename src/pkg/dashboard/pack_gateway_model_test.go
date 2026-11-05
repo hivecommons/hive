@@ -570,6 +570,44 @@ func TestApplyPackGivesGatewayAgentTheOperatorsModel(t *testing.T) {
 	}
 }
 
+// A model copied onto the gateway must survive loss of the runtime overrides,
+// but a new operator model or a gateway default must still take precedence.
+func TestApplyPackKeepsGatewayModelAfterOverridesLost(t *testing.T) {
+	const model = "ibm/granite-4-h-small"
+	srv := gatewayModelHive(t, "override", model)
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"scanner", "quality", "guide"} {
+		if err := srv.deps.AgentMgr.SetModelOverride(name, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.deps.AgentMgr.SetBackendOverride(name, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 2 {
+		if _, err := srv.ApplyPack(2); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"scanner", "quality", "guide", "reviewer"} {
+			got := srv.deps.Config.Agents[name]
+			if got.Backend != "litellm" || got.Model != model {
+				t.Errorf("apply %d: %s backend=%q model=%q, want litellm/%s", i, name, got.Backend, got.Model, model)
+			}
+		}
+	}
+	srv.deps.Config.Governor.Gateways = []config.GatewayConfig{{
+		Name: "litellm", Kind: config.GatewayKindLiteLLM, Endpoint: "https://litellm.example.test", DefaultModel: "new-default",
+	}}
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.deps.Config.Agents["reviewer"].Model; got != "" {
+		t.Errorf("reviewer model=%q, want gateway default", got)
+	}
+}
+
 // TestApplyPackGatewayDefaultModelOutranksOperatorsModel: a gateway with a
 // default_model keeps the #9945 behaviour, the pack agent names no model and
 // the default applies.
