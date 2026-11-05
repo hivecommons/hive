@@ -182,6 +182,15 @@ func (c *Client) workflowApprovalWithLedger(repo string, number int, head string
 // head (workflowApprovalAdmitted), or the PR author or the run's triggering
 // actor is the hive's App or in the allowlist. A trusted author covers
 // every gated run on the head, since the code under test is theirs.
+//
+// Trusting the App as triggering actor covers heads the App pushed itself
+// (its own PRs, rebases and review-fix commits). GitHub only holds fork
+// `pull_request` runs behind "Approve and run workflows", and the App
+// cannot push to a fork, so this never approves a contributor's head the
+// App merely pushed to: a same-repository branch is not gated, and a fork
+// head is always triggered by the fork owner. Trust is per head, not per
+// repository: a contributor PR later pushed by the App earns no trust for
+// the heads the contributor pushed.
 func workflowApprovalTrusted(author, actor, app string, admitted bool, actors []string) bool {
 	if admitted {
 		return true

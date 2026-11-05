@@ -277,7 +277,12 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   and names no approver), or the PR author or the run's triggering actor is
   this hive's App or is listed in `governor.ci.auto_approve_workflow_actors`
   (default `['dependabot[bot]', 'renovate[bot]']`; an explicit `[]` trusts
-  only the App and owner admission). Runs of other events (for example
+  only the App and owner admission). Trusting the App as triggering actor
+  covers heads the App pushed itself (its own PRs, rebases, review-fix
+  commits); it does not extend to contributor code, because GitHub holds
+  only fork `pull_request` runs behind the gate and the App cannot push to
+  a fork — a same-repository branch the App pushes to is never gated. Runs
+  of other events (for example
   `pull_request_target`) are counted in the caption but never approved.
   Guards: `governor.ci.auto_approve_workflows` (default `true` — unset
   means on; `false` leaves the gate to a person), the repo pause, hold /
