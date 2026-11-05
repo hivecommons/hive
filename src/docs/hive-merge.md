@@ -786,9 +786,12 @@ Every other gate below still applies to a registry-admitted PR. Set
 
 A registry-admitted author also gets their CI started. GitHub's fork-approval
 policy holds a first-time contributor's `pull_request` runs in
-`action_required`, and the hive otherwise never approves a human-authored
-lane's held runs (the `hive-ok-to-test` workflow approves same-repo heads
-only). hivecommons/docs#481 by a `trusted` registry contributor sat 17 hours
+`action_required`, and the hive otherwise approves a human-authored lane's
+held runs in only one other case: the gated-run approval sweep
+(`governor.ci.auto_approve_workflows`, default `true`, hivecommons/hive#16603)
+approves held runs for allowlisted actors (`auto_approve_workflow_actors`) and
+for a head a verified owner or merger admitted from the dashboard (the
+`hive-ok-to-test` workflow approves same-repo heads only). hivecommons/docs#481 by a `trusted` registry contributor sat 17 hours
 at `required-check-missing:Audit production dependencies` until an operator
 clicked "Approve and run". When the registry path admitted the author and the
 lane stops at `required-check-missing:<ctx>`, it now approves the head's held
