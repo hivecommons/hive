@@ -282,6 +282,17 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 
 const classifierFixHint = "check the ioscan classifier model/endpoint is served by the inference gateway (governor.trajectory/litellm, ioscan.classifier.model), or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open"
 
+// classifierFixHintOpen is the fail-open variant: the scheduler is already
+// fail-open, so recommending fail_mode: open would be a no-op.
+const classifierFixHintOpen = "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false"
+
+// isNoEndpointErr reports whether err is the resolver's "unconfigured"
+// signal, which both fail modes special-case so the WARN is logged once per
+// process instead of once per distinct error string.
+func isNoEndpointErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no model endpoint resolved")
+}
+
 // warnBlockedKick logs that fail-closed withheld a kick, naming the latest
 // classifier error and the config knobs so operators can act on it.
 func (s *Scheduler) warnBlockedKick(agentName string) {
@@ -302,7 +313,7 @@ func (s *Scheduler) classifierErrored(sanitized string, v ioscan.Verdict, err er
 		s.classifierUnavailable(err)
 		s.lastClassifierErr.Store(err.Error())
 		if s.logger != nil {
-			if strings.Contains(err.Error(), "no model endpoint resolved") {
+			if isNoEndpointErr(err) {
 				s.warnOnce("classifier-no-endpoint", "ioscan classifier failed closed; text withheld",
 					"error", err,
 					"fix", classifierFixHint)
@@ -317,10 +328,16 @@ func (s *Scheduler) classifierErrored(sanitized string, v ioscan.Verdict, err er
 		return ioscan.UnavailableRedactionMarker("error"), cv
 	}
 	s.recordClassifierSkip("error")
-	if s.logger != nil {
+	if s.logger != nil && isNoEndpointErr(err) {
+		// Unconfigured is an operator-config state, not a runtime defect; the
+		// wording avoids the fleet-report "failed open" keyword.
+		s.warnOnce("classifier-no-endpoint", "ioscan classifier not configured; semantic scan skipped (fail-open)",
+			"error", err,
+			"fix", classifierFixHintOpen)
+	} else if s.logger != nil {
 		s.warnOnce("classifier-open-error:"+err.Error(), "ioscan classifier failed open; text passes on unclassified",
 			"error", err,
-			"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false")
+			"fix", classifierFixHintOpen)
 	}
 	return sanitized, v
 }
