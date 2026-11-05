@@ -1,0 +1,1 @@
+- Avoid filing repeated-error reports for contributor-lane sweeps deferred by GitHub combined-status HTTP 500 responses; the sweep still fails closed and retries.

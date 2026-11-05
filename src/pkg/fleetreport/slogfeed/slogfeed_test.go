@@ -705,6 +705,7 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	}{
 		{"merge-eligible lane gate could not evaluate PR; leaving it listed", []any{"repo", "o/r", "number", 3929, "error", "o/r#3929 lane evidence unavailable (status-check; fail closed): " + statusErr}},
 		{"trusted-author automerge sweep skipped PR", []any{"repo", "hive", "pr", 15763, "reason", "release-hold-check", "error", statusErr}},
+		{"contributor-lane automerge sweep skipped PR", []any{"repo", "flatpak-index", "pr", 216, "reason", "status-check", "error", statusErr}},
 		{"stage labels: check digest failed", []any{"repo", "hive", "pr", 797, "error", statusErr}},
 	}
 	for _, tc := range cases {
@@ -723,7 +724,9 @@ func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.Warn("trusted-author automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1: 404 Not Found")
 	logger.Warn("merge-eligible lane gate could not evaluate PR; leaving it listed", "error", "boom")
-	if len(*seen) != 2 {
+	logger.Warn("contributor-lane automerge sweep skipped PR", "reason", "status-check", "error", "GET https://api.github.com/repos/o/r/commits/abc/status: 403 Forbidden")
+	logger.Warn("contributor-lane automerge sweep skipped PR", "reason", "fetch-pr", "error", "GET https://api.github.com/repos/o/r/pulls/216: 500 Internal Server Error")
+	if len(*seen) != 4 {
 		t.Fatalf("other failures must remain reportable: %+v", *seen)
 	}
 }
