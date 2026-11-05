@@ -1,0 +1,1 @@
+- Docs: `github.app_signed_commits` now has an operator-reference row (default off, App-only, what it rewrites, fallbacks, Settings location) and the level-6 checklist and `github-app-setup.md` point at its dashboard switch (Settings → Forge App → "Re-author agent PRs as GitHub-signed commits") instead of calling it YAML-only.
