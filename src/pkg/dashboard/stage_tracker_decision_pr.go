@@ -79,6 +79,11 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		// name the gate and the issue, and offer release / keep.
 		d.AskedBy = decisionAskedByLane
 		d.Question = "The hive held this PR itself for " + decisionHoldReason(selfHold) + ". Release the hold (the lane then merges it on its next pass once the other gates are clear), or keep it?"
+		if strings.EqualFold(selfHold.Source, stagelabels.HoldSourceHumanMergePath) {
+			// No lane merges a human-merge-path PR, held or not: the
+			// person's step is the merge (projectbluefin/utah#1097).
+			d.Question = "The hive held this PR because " + decisionHoldReason(selfHold) + ": the hive never merges it. Review it and merge it by hand, or close it?"
+		}
 		if selfHold.Since != nil {
 			t := *selfHold.Since
 			d.Since = &t
