@@ -187,16 +187,31 @@
       const data = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(_stageTracker, Date.now()) : _stageTracker;
       return keys.map(k => stageTrackerItemByKey(data, k)).filter(Boolean);
     }
+    // Pure: whether the viewer's identity is still loading — the auth
+    // fetch (showGHAuthState) has not answered yet and nothing else has
+    // named a user or role. Unknown is not "read": on a hard reload the
+    // tracker's first paint lands before auth resolves, and gating the
+    // pills on 'read' here made them flash disabled for a poll interval
+    // (hivecommons/hive#16754).
+    function stageTrackerAuthPending() {
+      if (typeof window === 'undefined') return false;
+      return !window._hiveAuthKnown && window._hiveRole === undefined && !window._hiveUser;
+    }
     // What the signed-in viewer may do on this repo. Hold permission is
     // looked up lazily (the server answers 403 either way); needs-human is
-    // merger/owner only.
+    // merger/owner only. While the viewer's identity is still loading the
+    // ctx is optimistic — like canHold === null, unknown renders enabled
+    // and the server's 403 is the answer to a click that beat auth; the
+    // repaint showGHAuthState schedules settles the pills within the tick.
     function stageTrackerActionCtx(repo) {
+      const governor = (window._lastStatus && window._lastStatus.governor) || null;
+      if (stageTrackerAuthPending()) return { user: true, canHold: null, canHuman: true, authPending: true, login: '', governor };
       const role = window._hiveRole || 'read';
       const owner = dashboardRoleAtLeast(role, 'owner');
       const user = !!window._hiveUser || owner;
       if (typeof ensureRepoHoldPermission === 'function') ensureRepoHoldPermission(repo);
       const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
-      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor: (window._lastStatus && window._lastStatus.governor) || null };
+      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
     // "Needs human decision" pill on the Merge queue column) decides itself;
