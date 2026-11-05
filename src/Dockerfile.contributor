@@ -551,7 +551,16 @@ COPY bin/hive-config.sh /usr/local/bin/
 # proactive quota protection with no custom reader and no local hive server.
 COPY --from=quota-publisher-builder /hive-quota-publisher /usr/local/bin/hive-quota-publisher
 COPY --from=quota-publisher-builder /crux /usr/local/bin/crux
-RUN npm install -g --ignore-scripts --no-fund --no-audit cline@${CLINE_VERSION} \
+# npm can briefly advertise AWS SDK versions before all registry replicas serve
+# them. Wait at most three minutes between attempts and revalidate metadata.
+RUN attempt=1; \
+    until npm install -g --ignore-scripts --no-fund --no-audit --prefer-online cline@${CLINE_VERSION}; do \
+      status=$?; \
+      if [ "$attempt" -ge 4 ]; then exit "$status"; fi; \
+      echo "Cline install failed (attempt $attempt/4); retrying in 60s" >&2; \
+      sleep 60; \
+      attempt=$((attempt + 1)); \
+    done \
     && ln -sf "$(npm root -g)/cline/bin/cline" /usr/local/bin/cline \
     && cline --version
 COPY config/backends.conf /usr/local/etc/hive/
