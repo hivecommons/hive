@@ -1,0 +1,1 @@
+- The stage tracker's row tooltip and current-stage line now share one relative-age formatter (#16668)

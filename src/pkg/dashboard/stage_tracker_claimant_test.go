@@ -210,7 +210,7 @@ const covered = stageTrackerRowHtml(issue(9, { stage: 40, caption: 'Covered by P
 ] }), stages, ctx);
 const subWords = strips(covered).slice(1).map(s => text((/<li class="ham-seg active[^"]*"[^>]*>([\s\S]*?)<\/li>/.exec(s) || ['', ''])[1]));
 assert.deepStrictEqual(subWords, ['Remediating · fixer', ''], JSON.stringify(subWords));
-assert.ok(subs(covered)[1].includes('CI unknown') && subs(covered)[1].includes('Review unknown'), 'the PR owner is not an assigned reviewer');
+assert.ok(subs(covered)[1].includes('CI · no data for head') && subs(covered)[1].includes('Review · no data for head'), 'the PR owner is not an assigned reviewer');
 assert.ok(subs(covered)[1].includes('Held by: @alice'), 'ownership stays available without implying review activity');
 console.log('claimant chevron ok');
 `)
