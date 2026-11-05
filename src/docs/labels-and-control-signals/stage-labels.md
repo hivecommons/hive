@@ -1016,7 +1016,15 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      hive-controlled evidence means the contributor is back: the hive yields — ONE
      `<!-- hive:adoption-yield head=<sha> -->` note, the adoption is forgotten
      and the PR is back on the ordinary 072 flow (a fresh nudge for the new
-     head; it may be adopted again under the same rules).
+     head; it may be adopted again under the same rules). The exception is a
+     head pushed by someone other than the author who may take the PR over:
+     the GitHub-linked committer (or the author, when the committer is
+     `web-flow` or unlinked) is an App bot, or a person whose repository
+     permission is write, maintain or admin. That is a maintainer takeover,
+     not the contributor returning: the adoption stands on the new head, no
+     yield note and no nudge to the author. A read-only third party's push
+     yields as above; an unreadable permission keeps the adoption and re-reads
+     on the next sweep.
      A review verdict of `changes_requested` on an in-place adoption is the
      hive's work: the review-fix dispatcher may push signed fixer commits to
      that adopted branch and keeps the PR in the fixer's work list every cycle
