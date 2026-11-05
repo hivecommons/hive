@@ -626,14 +626,24 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 		t.Fatal("signed head does not need DCO re-home")
 	}
 	// A hive-authored PR (hivecommons/hive#16619) is never re-homed for
-	// sign-off: a pushable base-repo head is amended in place whoever the
-	// unsigned commits are linked to; a fork head keeps its PR and waits.
+	// sign-off: a pushable base-repo head whose unsigned commits are all
+	// the hive's is amended in place; one carrying someone else's unsigned
+	// commit is not signed by the App and waits (hivecommons/hive#16685);
+	// a fork head keeps its PR and waits.
 	own := obs
-	own.Author, own.Detail.DCOUnsigned, own.Detail.DCOUnsignedOther = "thatguywob", 2, 2
+	own.Author, own.Detail.DCOUnsigned, own.Detail.DCOUnsignedHive, own.Detail.DCOUnsignedOther = "thatguywob", 2, 2, 0
 	own.Owner, own.Repo, own.HeadRepo = "acme", "widget", "acme/widget"
 	if got := adoptionDCORepairMode(own, true, true); got != stagelabels.AdoptModeInPlace {
-		t.Fatalf("hive-authored base-repo head: mode=%q, want in-place amend", got)
+		t.Fatalf("hive-authored base-repo head, all unsigned commits the hive's: mode=%q, want in-place amend", got)
 	}
+	own.Detail.DCOUnsignedHive, own.Detail.DCOUnsignedOther = 1, 1
+	if got := adoptionDCORepairMode(own, true, true); got != "" {
+		t.Fatalf("hive-authored base-repo head with a collaborator's unsigned commit: mode=%q, want wait for a person", got)
+	}
+	if adoptionNeedsDCORehome(own, true, true) || adoptedHeadNeedsDCORepair(own, inPlace, true, true) || adoptedHeadNeedsDCORehome(own, inPlace, true, true) {
+		t.Fatal("a collaborator's unsigned commit on a hive-authored PR must be neither signed by the App nor superseded")
+	}
+	own.Detail.DCOUnsignedHive, own.Detail.DCOUnsignedOther = 0, 2
 	own.HeadRepo = "thatguywob/widget"
 	if got := adoptionDCORepairMode(own, false, true); got != "" {
 		t.Fatalf("hive-authored fork head: mode=%q, want no re-home", got)
