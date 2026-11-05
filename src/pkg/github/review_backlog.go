@@ -424,7 +424,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 			if !ref.Reused && ref.SameFileAs > 0 && createErr == nil {
 				// hivecommons/hive#13906: the item exists, so a failed
 				// cross-link must not fail the pass and re-file it.
-				if err := sink.AppendToItem(ctx, req.Repo, ref, reviewBacklogSameFileComment(finding, ref.SameFileAs)); err != nil {
+				if err := sink.AppendToItem(ctx, req.Repo, ref, reviewBacklogSameFileComment(finding, ref.SameFileAs, ref.SameFilePath)); err != nil {
 					c.logger.Warn("review backlog: same-file cross-link comment failed",
 						slog.String("repo", req.Repo), slog.String("item", ref.Key),
 						slog.Int("same_file_as", ref.SameFileAs), slog.String("error", err.Error()))

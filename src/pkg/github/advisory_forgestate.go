@@ -20,6 +20,9 @@ import (
 type forgeStateBinding struct {
 	mu           sync.RWMutex
 	advisoryNums map[string]int
+	// advisoryPersonClosed is the person-closed advisory issue the next
+	// create replaces (advisory_person_close.go).
+	advisoryPersonClosed map[string]advisoryPersonClose
 }
 
 // forgeStateReader is the slice of *forgestate.Store the advisory lookup
@@ -147,7 +150,13 @@ func (c *Client) confirmAdvisoryIssue(ctx context.Context, store forgeStateReade
 	case issue.GetState() == "open":
 		return n, nil
 	}
-	// Closed: reuse it, as the list path's fallback 3 does.
+	// Closed: reuse it, as the list path's fallback 3 does — unless a person
+	// closed it; then the list path finds nothing open and the caller files
+	// a new one that says why.
+	if !c.advisoryReusable(ctx, owner, repo, n, issue) {
+		c.rememberAdvisoryIssue(full, 0)
+		return 0, errAdvisoryCacheMiss
+	}
 	if _, _, err := c.client.Issues.Edit(ctx, owner, repo, n, &gh.IssueRequest{State: gh.Ptr("open")}); err != nil {
 		c.logger.Warn("found closed advisory issue in cache but could not reopen it",
 			slog.String("repo", full), slog.Int("number", n), slog.String("error", err.Error()))
