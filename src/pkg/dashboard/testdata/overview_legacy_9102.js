@@ -87,7 +87,7 @@
       return (Date.now() - t) > repoIssueBandConfig().staleDays * MS_PER_DAY;
     }
 
-    function issueBandInfo(issue) {
+    function issueBandInfo(issue, held) {
       const cfg = repoIssueBandConfig();
       const labels = issueLabelSet(issue);
       const linked = issueLinkedPRState(issue) || {};
@@ -95,13 +95,18 @@
       const acknowledged = issueAcknowledged(issue);
       const matches = {
         done: issueHasAnyLabel(issue, cfg.doneLabels) || !!linked.merged,
-        waiting: issueHasAnyLabel(issue, cfg.waitingLabels),
+        waiting: issueHasAnyLabel(issue, cfg.waitingLabels) || !!held,
         inProgress: ((issue && issue.assignees) || []).length > 0 || issueClaimed(issue) || !!linked.open,
         // Agent-filed is an operator queue only until a human acknowledges
         // the proposal (#5117); acknowledged issues fall through to the
         // claimed/unclaimed bands with the role badge still on the pill.
         agentFiled: !!role && !acknowledged
       };
+      // hive/likely-done alone does not outrank a park (Go: onlyLikelyDone).
+      if (matches.done && matches.waiting && !linked.merged && labels.has('hive/likely-done') &&
+          !(cfg.doneLabels || []).some(l => String(l).toLowerCase() !== 'hive/likely-done' && labels.has(String(l).toLowerCase()))) {
+        matches.done = false;
+      }
       let band = 'ready';
       if (matches.done) band = 'done';
       else if (matches.waiting) band = 'waiting';
@@ -125,8 +130,8 @@
       switch (band) {
         case 'in-progress': return { label: 'Claimed', short: 'claimed', rule: 'assigned or claimed by an agent — nothing needed unless it stalls' };
         case 'agent-filed': return { label: 'Needs triage', short: 'triage', rule: 'filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — agents do not pick it up until it is labelled, assigned to a human, or closed. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here' };
-        case 'waiting': return { label: 'Parked', short: 'parked', rule: 'labelled ' + (cfg.waitingLabels || []).join(', ') + ' — parked: agents do not continue until the label is removed or the question it names is answered' };
-        case 'done': return { label: 'Confirm & close', short: 'close?', rule: 'an agent applied ' + (cfg.doneLabels || []).join(', ') + ' — the agent reports the work as landed, and the issue is still open' };
+        case 'waiting': return { label: 'Parked', short: 'parked', rule: 'labelled ' + (cfg.waitingLabels || []).join(', ') + ', or held — parked: agents do not continue until the label is removed or the question it names is answered' };
+        case 'done': return { label: 'Confirm & close', short: 'close?', rule: 'an agent applied ' + (cfg.doneLabels || []).join(', ') + ' (hive/likely-done not on a parked issue) — the agent reports the work as landed, and the issue is still open' };
         default: return { label: 'Unclaimed', short: 'unclaimed', rule: 'no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up' };
       }
     }
@@ -148,10 +153,10 @@
       return { ready: 0, 'in-progress': 1, 'agent-filed': 2, waiting: 3, done: 4 }[band] ?? 9;
     }
 
-    function groupedRepoIssues(issues) {
+    function groupedRepoIssues(issues, heldSet) {
       const groups = new Map();
       (issues || []).forEach(issue => {
-        const info = issueBandInfo(issue);
+        const info = issueBandInfo(issue, !!(heldSet && heldSet.has(issue)));
         const key = info.band;
         if (!groups.has(key)) groups.set(key, { key, band: info.band, label: issueBandLabel(info.band), tip: issueBandTip(info.band), issues: [] });
         groups.get(key).issues.push({ issue, info });
@@ -174,7 +179,7 @@
         const actionable = (r.actionableIssues || []).map(issue => ({ issue, held: false }));
         const held = (r.heldIssues || []).map(issue => ({ issue, held: true }));
         const meta = new Map(actionable.concat(held).map(entry => [entry.issue, entry]));
-        groupedRepoIssues(actionable.concat(held).map(entry => entry.issue)).forEach(g => {
+        groupedRepoIssues(actionable.concat(held).map(entry => entry.issue), new Set(held.map(entry => entry.issue))).forEach(g => {
           counts.set(g.band, (counts.get(g.band) || 0) + g.issues.length);
           const next = g.issues.map(entry => {
             const source = meta.get(entry.issue) || {};
@@ -474,9 +479,9 @@
 
     function overviewIssueCsvRow(item, band) {
       const issue = (item && (item.item || item.issue)) || item || {};
-      const info = (item && item.info) || issueBandInfo(issue);
-      const key = band || info.band;
       const held = !!(item && item.held);
+      const info = (item && item.info) || issueBandInfo(issue, held);
+      const key = band || info.band;
       return {
         band: issueBandLabel(key),
         band_rule: issueBandRule(key),
