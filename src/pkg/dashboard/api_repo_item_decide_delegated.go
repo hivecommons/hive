@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -727,7 +728,25 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	if in.Kind == delegatedecision.KindIssue {
 		in.Advisory = delegatedAdvisoryChecklist(in.Labels, in.Body)
 	}
+	// Only an item the capability-gap rule would hold costs the probe.
+	if delegatedecision.CapabilityGap(in) {
+		in.WorkflowsPushable = s.delegatedWorkflowsPushable(ctx, repoFull)
+	}
 	return in, nil
+}
+
+// delegatedWorkflowsPushable reports whether the hive can land a
+// .github/workflows change in repoFull. An enabled lane whose token carries
+// the Workflows permission must serve the repository
+// (config.WorkflowsCapableLane), and the App installation must grant
+// `workflows: write`. Anything unknown (no such lane, no App auth, a failed
+// probe) is false, so the park stays as before.
+func (s *Server) delegatedWorkflowsPushable(ctx context.Context, repoFull string) bool {
+	if s.deps == nil || s.deps.Config == nil || s.deps.Config.WorkflowsCapableLane(repoFull) == "" {
+		return false
+	}
+	info, err := installationPermissionProbe(ctx, s.deps.GHAppAuth)
+	return err == nil && info.Granted(blocker.CapabilityWorkflowsPermission.Permission(), "write")
 }
 
 // delegatedAdvisoryChecklist is the advisory block of a hive advisory issue

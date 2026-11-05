@@ -25,6 +25,8 @@ func TestWorkflowPushCeilingReachesCustomizedKick(t *testing.T) {
 		"contributor",
 		"Do not open a PR for it",
 		"needs a human or an\n   ISSUES_PRS_MERGE agent to land",
+		"Name the limit as this lane's token",
+		"never the hive's or the\n   App's",
 		"CUSTOM POLICY BODY",
 	} {
 		if !strings.Contains(msg, want) {
