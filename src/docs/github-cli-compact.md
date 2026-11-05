@@ -85,7 +85,7 @@ The prose may be reworded; the codes are stable identifiers:
 | `ci_watch_blocked` | wrapper | blocking CI wait: `gh run watch` or `gh pr checks --watch` (#13587) |
 | `write_surface_enforce` | wrapper, proxy | direct write from a lane under `write_surface.enforce` (#9587) |
 | `author_identity_unresolved`, `author_mismatch` | wrapper | `--author` gate (#3072/#3982/#4044) |
-| `enumeration_disabled` | wrapper | `gh issue list` / `gh pr list` for staff agents. `gh pr list --state merged` (no `--search`) is allowed: merged PRs are history, not a work queue. The denial names the reads that still work |
+| `enumeration_disabled` | wrapper | `gh issue list` / `gh pr list` for staff agents. The denial names the reads that still work, including merged PRs via `gh search prs --merged` or a GET of `repos/<o>/<r>/pulls` |
 | `relay_missing` | wrapper | `hive-open-pr` shim absent |
 | `mode_no_github`, `mode_advisory`, `mode_issues_only`, `mode_issues_and_prs`, `mode_unrecognized` | wrapper | agent-mode gates |
 | `supervisor_no_issues`, `acmm_level` | wrapper | level-based fallback gates |

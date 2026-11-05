@@ -489,60 +489,30 @@ _run_test_cached_env_spoof 1 "issue list --author env-seeded identity cache octo
   issue list --repo test/repo --author octocat
 
 echo ""
-echo "=== Staff agents may list merged PRs; the denial names the reads that work ==="
+echo "=== Staff agents: the enumeration denial names the reads that work ==="
 
-# Danathar/dns-failover#152: ci-maintainer could not run the repo's agent audit
-# (`gh pr list --state merged --json ... | node scripts/ai-audit-report.mjs`)
-# and parked "say which PR it flags" for the owner. Merged PRs are history,
-# not a work queue.
+# Danathar/dns-failover#152: ci-maintainer read "listing is blocked" as "no way
+# to look up merged PRs" and parked a red audit-trail check for the owner. The
+# gate stays as it is; the denial says which reads reach merged PRs.
 ENUM_DENY='reason=enumeration_disabled'
-_run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list --state merged --json (allowed: the audit script's input)" \
-  pr list --repo test/repo --state merged --limit 500 --json number,title,body,author,mergedBy,baseRefName,mergedAt
-_run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list --state=merged (allowed, equals form)" \
-  pr list --repo test/repo --state=merged
-_run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list -s merged (allowed, short flag)" \
-  pr list --repo test/repo -s merged
-_run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list -sMERGED (allowed, attached short flag, any case)" \
-  pr list --repo test/repo -sMERGED
-_run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list -R before the subcommand --state merged (allowed)" \
-  -R test/repo pr list --state merged
-_run_test_staff_gate 0 "-" "$ENUM_DENY" "pr list --state open --state merged (allowed: the last --state wins, as in gh)" \
-  pr list --repo test/repo --state open --state merged
-
-# Everything that could still reach open work stays refused.
+_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged (still blocked: the gate is unchanged)" \
+  pr list --repo test/repo --state merged --json number,title,body
 _run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open (blocked)" \
   pr list --repo test/repo --state open
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state all (blocked)" \
-  pr list --repo test/repo --state all
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state closed (blocked: closed-unmerged can be reopened work)" \
-  pr list --repo test/repo --state closed
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged --state open (blocked: the last --state wins)" \
-  pr list --repo test/repo --state merged --state open
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged --search 'is:open' (blocked: search qualifiers bypass --state)" \
-  pr list --repo test/repo --state merged --search 'is:open'
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged -S review (blocked: short search flag)" \
-  pr list --repo test/repo --state merged -S review
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged --search=x (blocked: equals search flag)" \
-  pr list --repo test/repo --state merged --search=x
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state with no value (blocked)" \
-  pr list --repo test/repo --state
-_run_test_staff_gate 1 "$ENUM_DENY" "-" "issue list --state merged (blocked: issues are never merged)" \
-  issue list --repo test/repo --state merged
-_run_test_staff_gate 1 "author_mismatch" "-" "pr list --state merged --author foreign-user (still the --author gate)" \
-  pr list --repo test/repo --state merged --author foreign-user
-
-# The denial names the reads that still work, so "listing is blocked" is not
-# read as "no way to look up merged PRs".
-_run_test_staff_gate 1 "gh pr list --state merged' \\(merged PRs only" "-" "denial names the merged-PR listing" \
+_run_test_staff_gate 1 "author_mismatch" "-" "pr list --author foreign-user (still the --author gate)" \
+  pr list --repo test/repo --author foreign-user
+_run_test_staff_gate 1 "gh search prs --repo <owner/repo> --merged --json" "-" "denial names the merged-PR search" \
   pr list --repo test/repo
+_run_test_staff_gate 1 "gh api repos/<owner/repo>/pulls\\?state=closed' \\(GET; merged ones carry merged_at\\)" "-" "denial names the GET api read" \
+  issue list --repo test/repo
 _run_test_staff_gate 1 "gh search prs\\|issues --repo <owner/repo> <terms>' without --author" "-" "denial names authorless search" \
   pr list --repo test/repo
-_run_test_staff_gate 1 "gh api repos/<owner/repo>/pulls\\?state=closed' \\(GET\\)" "-" "denial names the GET api read" \
-  issue list --repo test/repo
+_run_test_staff_gate 1 "$ENUM_DENY" "gh pr list --state merged" "denial does not offer a merged pr list" \
+  pr list --repo test/repo
 
 # ...and those reads really are allowed.
-_run_test_staff_gate 0 "-" "BLOCKED" "authorless search prs --merged (allowed, as the denial says)" \
-  search prs --repo test/repo --merged audit
+_run_test_staff_gate 0 "-" "BLOCKED" "authorless search prs --merged --json (allowed, as the denial says)" \
+  search prs --repo test/repo --merged --json number,title,body,author,closedAt
 _run_test_staff_gate 0 "-" "BLOCKED" "GET api repos/<o>/<r>/pulls?state=closed (allowed, as the denial says)" \
   api 'repos/test/repo/pulls?state=closed&per_page=100'
 
