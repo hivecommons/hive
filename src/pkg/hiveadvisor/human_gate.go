@@ -56,6 +56,7 @@ var gateReasons = map[string]gateReason{
 	"review_rejected":               {"rejected by the hive's review", "close or rework what the hive's review rejected"},
 	"review_dispatch_hold":          {"with the hive's review parked for a person", "read the parked hive reviews in %s"},
 	"review_loop_cap":               {"with the hive's review and fix loop stopped", "finish the PRs whose review and fix loop stopped"},
+	"adopted_push_refused":          {"adopted by the hive on branches it cannot push", "push the fixes or close the adopted PRs the hive cannot push in %s"},
 	"stale_safety_net":              {"untouched long enough that the safety net handed them to a person", "look at the long-untouched items in %s"},
 	"blocked_unexplained":           {"labelled blocked with no blocker named", "name the blocker or lift the label"},
 	"pr_gate_label":                 {"held by a gate label", "act on the gate labels or remove them"},
