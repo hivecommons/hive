@@ -248,6 +248,10 @@ type ownershipEnv struct {
 	supersededPR          func(repo string, number int) (github.ReviewQueueSuperseded, bool)
 	repoLevel             func(repo string) int
 	selfAuthorizationHold func(repo string) bool
+	// adoptedPushRefused names why the hive cannot push a PR's branch
+	// (adopted_push.go); nil or "" lets a recorded answer read as the
+	// hive fixing it.
+	adoptedPushRefused    func(pr github.PullRequest) string
 	reviewerLaneAvailable func(repo string) bool
 	escalatedAt           func(repo string, number int) time.Time
 	// laneCanOpenPR reports whether the running agent serving a routed lane
@@ -989,6 +993,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process,
 		org = cfg.Project.Org
 	}
 	env.reviewSwarm.answer = decisionAnswerLookup(org)
+	env.adoptedPushRefused = adoptedPushRefusalFor(org)
 	if leased := hub.leasedWorkItems(now, org); len(leased) > 0 {
 		env.leased = func(repo string, number int) bool { return leased[leaseItemKey(org, repo, number)] }
 	}

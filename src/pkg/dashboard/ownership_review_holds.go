@@ -111,6 +111,16 @@ func answeredWaitReason(req review.HumanChangeRequest) string {
 	return fmt.Sprintf("%s answered Hive's review on this head%s; the hive is fixing it, and the review comes back to you if the new head needs you", who, when)
 }
 
+// answeredPushRefusedReason says the answer is recorded but cannot be
+// carried out: the hive cannot push the branch.
+func answeredPushRefusedReason(req review.HumanChangeRequest, why string) string {
+	who := "You"
+	if a := strings.TrimSpace(req.Actor); a != "" {
+		who = "@" + a
+	}
+	return fmt.Sprintf("%s answered Hive's review on this head, but the hive cannot push this branch: %s. Push the fix yourself, ask the author, or close it", who, why)
+}
+
 // loadReviewSwarm loads the verdict artifact, the dispatch state, the
 // review-links ledger and the review hold releases /api/review/pipeline
 // reads. A missing file reads as
@@ -179,6 +189,14 @@ func (e ownershipEnv) reviewHoldOwnership(pr github.PullRequest, withinAdjudicat
 	// 070-fixing on the owner's answer. A dispatcher hold (fix cap, no
 	// fixer) or the loop cap is still the owner's.
 	if req, ok := e.answeredChangeRequest(pr, holds); ok {
+		// An answer only the hive's fixer could carry out, on a branch the
+		// hive cannot push, leaves the PR with the person who answered
+		// (projectbluefin/utah#919, projectbluefin/testsuite#1037).
+		if e.adoptedPushRefused != nil {
+			if why := e.adoptedPushRefused(pr); why != "" {
+				return yourTurn(OwnershipReasonAdoptedPushRefused, answeredPushRefusedReason(req, why)), true
+			}
+		}
 		var rest []pipeline.ReviewHold
 		for _, h := range holds {
 			if !answerableReviewHold(h) {

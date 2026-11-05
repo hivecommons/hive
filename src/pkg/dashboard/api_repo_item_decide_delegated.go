@@ -623,6 +623,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	api := client.GoGitHub()
 	owner, repoName, _ := strings.Cut(repoFull, "/")
 	in := delegatedecision.Input{Repo: repoFull, Number: number, Kind: delegatedecision.KindIssue, ContributorOnline: true}
+	var push adoptedPushFacts
 	reason := strings.TrimSpace(req.Reason)
 	if reason != "" {
 		in.Reasons = append(in.Reasons, reason)
@@ -654,6 +655,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		}
 		in.HeadSHA = strings.TrimSpace(pr.GetHead().GetSHA())
 		in.Title, in.Body = pr.GetTitle(), pr.GetBody()
+		headRepo := pr.GetHead().GetRepo().GetFullName()
+		push.Fork = headRepo == "" || !strings.EqualFold(headRepo, repoFull)
+		push.MaintainerCanModify = pr.GetMaintainerCanModify()
 		for _, l := range pr.Labels {
 			if name := l.GetName(); name != "" && !slices.Contains(in.Labels, name) {
 				in.Labels = append(in.Labels, name)
@@ -731,6 +735,11 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	// Only an item the capability-gap rule would hold costs the probe.
 	if delegatedecision.CapabilityGap(in) {
 		in.WorkflowsPushable = s.delegatedWorkflowsPushable(ctx, repoFull)
+	}
+	if in.Kind == delegatedecision.KindPR && in.AdoptedByHive {
+		push.WorkflowPath = in.WorkflowPath
+		recordedAdoptedPush(s.stageStoreOrShared(), repoFull, number, in.HeadSHA, &push)
+		in.AdoptedPushRefused = push.refusal()
 	}
 	return in, nil
 }
