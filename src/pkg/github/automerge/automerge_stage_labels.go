@@ -517,6 +517,10 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	obs.SharedCIIncident = stageSharedCIIncident(policy, owner, repo, obs.Number, obs.HeadSHA)
 	obs.BaseRedChecks = stageBaseBranchRed(policy, owner, repo, obs.Number, obs.HeadSHA)
 	obs.ForkGuardChecks = stageForkGuard(policy, owner, repo, obs.Number, obs.HeadSHA)
+	if len(obs.ForkGuardChecks) == 0 {
+		rec, ok := c.stageStoreOrShared().Get(stageKey(owner, repo, obs.Number))
+		obs.ForkGuardChecks = carriedForkGuard(rec, ok, obs)
+	}
 	c.stageTrackerOrShared().record(obs)
 }
 

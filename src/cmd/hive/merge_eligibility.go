@@ -801,6 +801,29 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
 }
 
+// handMergeVerdict marks an outstanding verdict in a repo whose auto-merge
+// switch is off as a hand merge too, its reason naming both what the sweep
+// still wants and that a person merges it. Outstanding means GitHub would
+// take the merge and only Hive's own gates (a contributor-lane refusal, a red
+// check nobody declared required, a soak) hold it, and no Hive sweep ever
+// merges in that repo. Without this only a PR that passed every gate carried
+// HandMerge, so those PRs fell out of the your-turn inbox with no reason
+// (projectbluefin/documentation#1668, projectbluefin/actions#697). A blocked
+// verdict (GitHub itself refuses: a conflict, a failing required check) is
+// still the author's CI work, and an unknown one is left alone.
+func handMergeVerdict(v github.MergeVerdict, repoAutoMergeOff bool) github.MergeVerdict {
+	if !repoAutoMergeOff || v.HandMerge || v.State != github.MergeVerdictOutstanding {
+		return v
+	}
+	v.HandMerge = true
+	if r := strings.TrimSpace(v.Reason); r != "" {
+		v.Reason = r + "; " + repoAutoMergeOffReason
+	} else {
+		v.Reason = repoAutoMergeOffReason
+	}
+	return v
+}
+
 // repoAutoMergeOffReason is the verdict reason for a PR that passes every
 // gate in a repo whose auto-merge switch is off.
 const repoAutoMergeOffReason = "auto-merge is off for this repo (its auto-merge setting, or the hive is below ACMM L6) — a person merges it"
@@ -1321,6 +1344,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 				verdict = github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: refusal}
 			}
 		}
+		verdict = handMergeVerdict(verdict, prGates.repoAutoMergeOff)
 		verdicts[github.MergeVerdictKey(pr)] = verdict
 		if intentReason != "" {
 			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]

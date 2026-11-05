@@ -707,7 +707,7 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	e.Checks = CheckSummary{Total: 5, Green: 4, Red: []string{"Canary"}, Known: true}
 	e.ForkGuard = []string{"Canary"}
 	r := RouteHuman(e)
-	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or approve the run as the repository requires)"
+	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or run or approve it for head `abc1234` as the repository requires)"
 	if r.Stage != NeedsDecision || r.LaneReason != "" || !containsString(r.Reasons, want) {
 		t.Fatalf("fork-guard route = %+v", r)
 	}
