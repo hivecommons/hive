@@ -3,6 +3,8 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,14 +21,19 @@ func TestWorkflowApprovalTrusted(t *testing.T) {
 	defaults := (config.GovernorCIConfig{}).WorkflowApprovalActors()
 	for _, tc := range []struct {
 		name, author, actor, app string
-		admitted                 bool
+		headInBase, admitted     bool
 		actors                   []string
 		want                     bool
 	}{
 		{name: "dependabot author", author: "dependabot[bot]", actor: "someone", actors: defaults, want: true},
 		{name: "renovate triggering actor", author: "outsider", actor: "renovate[bot]", actors: defaults, want: true},
 		{name: "app author", author: "hive[bot]", actor: "outsider", app: "hive[bot]", want: true},
-		{name: "app triggering actor", author: "outsider", actor: "hive[bot]", app: "hive[bot]", want: true},
+		{name: "app triggering actor", author: "outsider", actor: "hive[bot]", app: "hive[bot]", headInBase: true, want: true},
+		// A public App installed on a contributor's fork pushes with the
+		// same login: the actor path never trusts a fork head.
+		{name: "app triggering actor on fork head", author: "outsider", actor: "hive[bot]", app: "hive[bot]"},
+		{name: "app author on fork head", author: "hive[bot]", actor: "outsider", app: "hive[bot]", want: true},
+		{name: "allowlisted actor on fork head", author: "outsider", actor: "dependabot[bot]", actors: defaults, want: true},
 		{name: "owner admission", author: "outsider", actor: "outsider", admitted: true, want: true},
 		{name: "case and whitespace", author: "outsider", actor: "CUSTOM[bot]", actors: []string{" custom[bot] "}, want: true},
 		{name: "untrusted human", author: "outsider", actor: "outsider", actors: defaults},
@@ -35,7 +42,7 @@ func TestWorkflowApprovalTrusted(t *testing.T) {
 		{name: "explicit empty allowlist", author: "dependabot[bot]", actor: "dependabot[bot]", actors: []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := workflowApprovalTrusted(tc.author, tc.actor, tc.app, tc.admitted, tc.actors); got != tc.want {
+			if got := workflowApprovalTrusted(tc.author, tc.actor, tc.app, tc.headInBase, tc.admitted, tc.actors); got != tc.want {
 				t.Fatalf("trusted = %v, want %v", got, tc.want)
 			}
 		})
@@ -113,6 +120,8 @@ type workflowApprovalFixture struct {
 	posts          []string
 	freshReads     int
 	approvalStatus int
+	// transientFailures fails that many approve POSTs with a 502 first.
+	transientFailures int
 }
 
 func (f *workflowApprovalFixture) counts() (int, int) {
@@ -139,6 +148,11 @@ func newWorkflowApprovalFixture(t *testing.T) (*Client, *workflowApprovalFixture
 			_ = json.NewEncoder(w).Encode(f.fresh)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/approve"):
 			f.posts = append(f.posts, r.URL.Path)
+			if f.transientFailures > 0 {
+				f.transientFailures--
+				http.Error(w, `{"message":"Bad Gateway"}`, http.StatusBadGateway)
+				return
+			}
 			if f.approvalStatus != 0 {
 				http.Error(w, `{"message":"Resource not accessible by integration"}`, f.approvalStatus)
 				return
@@ -252,6 +266,92 @@ func TestSweepWorkflowApprovalsPermissionRefusalOnce(t *testing.T) {
 			stats := c.WorkflowApprovalsStatus()
 			if stats.PermissionErrors != 1 || stats.Approved != 0 || stats.Last == nil || stats.Last.Outcome != "permission_error" {
 				t.Fatalf("stats=%+v", stats)
+			}
+		})
+	}
+}
+
+func TestWorkflowApprovalPermissionRefused(t *testing.T) {
+	status := func(code int) *http.Response { return &http.Response{StatusCode: code} }
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "403", err: &gh.ErrorResponse{Response: status(http.StatusForbidden)}, want: true},
+		{name: "404", err: &gh.ErrorResponse{Response: status(http.StatusNotFound)}, want: true},
+		{name: "wrapped 403", err: fmt.Errorf("approve: %w", &gh.ErrorResponse{Response: status(http.StatusForbidden)}), want: true},
+		{name: "500", err: &gh.ErrorResponse{Response: status(http.StatusInternalServerError)}},
+		{name: "502", err: &gh.ErrorResponse{Response: status(http.StatusBadGateway)}},
+		{name: "primary rate limit", err: &gh.RateLimitError{Response: status(http.StatusForbidden)}},
+		{name: "secondary rate limit", err: &gh.AbuseRateLimitError{Response: status(http.StatusForbidden)}},
+		{name: "network error", err: errors.New("connection reset by peer")},
+		{name: "context canceled", err: context.Canceled},
+		{name: "no response", err: &gh.ErrorResponse{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workflowApprovalPermissionRefused(tc.err); got != tc.want {
+				t.Fatalf("refused = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A transient POST failure must not spend the head's one pass: the next
+// sweep retries, without counting the head's denials a second time.
+func TestSweepWorkflowApprovalsRetriesTransientFailure(t *testing.T) {
+	c, f, _ := newWorkflowApprovalFixture(t)
+	f.fresh.User.Login = gh.Ptr("outsider")
+	f.transientFailures = 1
+	sweep := func() []PullRequest {
+		prs := []PullRequest{gatedPR("outsider", gatedRun(11, "head1", "renovate[bot]"), gatedRun(12, "head1", "outsider"))}
+		c.SweepWorkflowApprovals(context.Background(), prs, config.GovernorCIConfig{})
+		return prs
+	}
+	prs := sweep()
+	if posts, _ := f.counts(); posts != 1 {
+		t.Fatalf("first pass: posts=%d", posts)
+	}
+	if wa := prs[0].CIActivity.WorkflowApproval; wa == nil || wa.PermissionDenied {
+		t.Fatalf("transient failure surfaced as a permission refusal: %+v", wa)
+	}
+	if stats := c.WorkflowApprovalsStatus(); stats.Approved != 0 || stats.PermissionErrors != 0 || stats.Denied != 1 {
+		t.Fatalf("after transient failure: stats=%+v", stats)
+	}
+	sweep()
+	if posts, _ := f.counts(); posts != 2 {
+		t.Fatalf("transient failure consumed the pass: posts=%d", posts)
+	}
+	if stats := c.WorkflowApprovalsStatus(); stats.Approved != 1 || stats.Denied != 1 {
+		t.Fatalf("after retry: stats=%+v", stats)
+	}
+	// Approved: the pass is spent again.
+	sweep()
+	if posts, _ := f.counts(); posts != 2 {
+		t.Fatalf("approved head repeated: posts=%d", posts)
+	}
+}
+
+// The App as triggering actor is trusted only on a head in the base
+// repository; on a fork head it may be a public App installed by the fork.
+func TestSweepWorkflowApprovalsAppActorNeedsBaseRepoHead(t *testing.T) {
+	for _, tc := range []struct {
+		name, headRepo string
+		want           int
+	}{
+		{name: "base repository head", headRepo: "org/repo", want: 1},
+		{name: "fork head", headRepo: "fork/repo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, f, _ := newWorkflowApprovalFixture(t)
+			c.SetAppBotLogin("hive[bot]")
+			f.fresh.User.Login = gh.Ptr("outsider")
+			f.fresh.Head.Repo.FullName = gh.Ptr(tc.headRepo)
+			run := gatedRun(11, "head1", "hive[bot]")
+			run.HeadRepository.FullName = gh.Ptr(tc.headRepo)
+			c.SweepWorkflowApprovals(context.Background(), []PullRequest{gatedPR("outsider", run)}, config.GovernorCIConfig{})
+			if posts, _ := f.counts(); posts != tc.want {
+				t.Fatalf("posts=%d, want %d", posts, tc.want)
 			}
 		})
 	}

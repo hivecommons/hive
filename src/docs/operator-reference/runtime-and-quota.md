@@ -283,9 +283,10 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   to bot logins unless that is acceptable for a human login you add.
   Trusting the App as triggering actor
   covers heads the App pushed itself (its own PRs, rebases, review-fix
-  commits); it does not extend to contributor code, because GitHub holds
-  only fork `pull_request` runs behind the gate and the App cannot push to
-  a fork — a same-repository branch the App pushes to is never gated. Runs
+  commits), and only when the run's head repository is the PR's base
+  repository: a fork head is never trusted on the triggering-actor path,
+  because a public App installed on a contributor's fork pushes with the
+  same `<slug>[bot]` login. Runs
   of other events (for example
   `pull_request_target`) are counted in the caption but never approved.
   Guards: `governor.ci.auto_approve_workflows` (default `true` — unset
@@ -304,7 +305,12 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   lacks `actions: write`) is recorded once, never retried for that head,
   logged as `workflow approval refused; needs workflow approval on GitHub`,
   and the caption becomes `CI waiting · needs workflow approval on GitHub`
-  on every later cycle, including ones that skip the sweep. That refusal
+  on every later cycle, including ones that skip the sweep. Any other
+  failure of that POST — a `5xx`, a network error, a cancelled cycle, or a
+  primary/secondary rate-limit `403` — is logged as `failed to approve
+  gated workflow run; retrying next sweep` and gives the head's pass back,
+  so the next sweep re-reads the PR and tries again (denials are not
+  counted twice). That refusal
   is bound to the head: granting the App **Actions: Read and write**
   afterwards does not make the hive retry a head it already recorded a
   refusal for — the operator approves that run on GitHub, or a new push to
