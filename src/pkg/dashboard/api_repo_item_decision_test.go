@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -342,7 +343,7 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 			name:    "sentinel released, lane merges",
 			facts:   repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded", "sentinel-label", "sentinel-acknowledged", "admitted"}, SentinelLabel: "sentinel-alert", SoakMinutes: 30},
 			outcome: "Approved #510 as @clubanderson · sentinel alert cleared by your review.",
-			next:    "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked (≈30 min).",
+			next:    "Hive merges it on its next merge pass once CI is green and the head has soaked (≈30 min).",
 			posted:  "`/lgtm` posted|`/approve` posted|`sentinel-alert` label removed|head admitted as-is on your approval",
 			cleared: true,
 		},
@@ -350,7 +351,7 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 			name:      "sentinel still open",
 			facts:     repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded"}, SentinelOpen: true, SentinelLabel: "sentinel-alert", SoakMinutes: 30},
 			outcome:   "Approved #510 as @clubanderson · sentinel alert still open.",
-			next:      "The `sentinel-alert` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's merge sweep will touch it.",
+			next:      "The `sentinel-alert` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's next merge pass will touch it.",
 			posted:    "`/lgtm` posted|`/approve` posted",
 			stillOpen: true,
 		},
@@ -365,14 +366,14 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 			name:    "prow-managed repo: approval recorded, not claimed approved for prow",
 			facts:   repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded"}, SoakMinutes: 3, Prow: true},
 			outcome: "Approval of #510 recorded in hive as @clubanderson.",
-			next:    "Prow approval still needs an OWNERS reviewer: the relayed `/approve` came from hive's account, which Prow does not count. Hive's merge sweep merges it on its next pass once CI is green and the head has soaked (≈3 min).",
+			next:    "Prow approval still needs an OWNERS reviewer: the relayed `/approve` came from hive's account, which Prow does not count. Hive merges it on its next merge pass once CI is green and the head has soaked (≈3 min).",
 			posted:  "`/lgtm` posted|`/approve` posted",
 		},
 		{
 			name:    "no user, no soak figure",
 			facts:   repoItemApproveFacts{Released: []string{"approval-recorded"}},
 			outcome: "Approved #510.",
-			next:    "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked.",
+			next:    "Hive merges it on its next merge pass once CI is green and the head has soaked.",
 			posted:  "`/lgtm` posted|`/approve` posted",
 		},
 	}
@@ -388,8 +389,8 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 			if got.SentinelCleared != tc.cleared || got.SentinelOpen != tc.stillOpen {
 				t.Fatalf("sentinel flags cleared=%v open=%v", got.SentinelCleared, got.SentinelOpen)
 			}
-			for _, bad := range []string{"released:", "merges nothing", "merge gate takes it"} {
-				if strings.Contains(got.Outcome+got.Next, bad) {
+			for _, bad := range []string{"released:", "merges nothing", "merge gate takes it", "sweep"} {
+				if strings.Contains(strings.ToLower(got.Outcome+got.Next), bad) {
 					t.Fatalf("old wording %q survives: %+v", bad, got)
 				}
 			}
@@ -401,5 +402,39 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 	// The legacy builder keeps the same shape for callers without facts.
 	if got := repoItemDecisionResult("o/r", 1, "pr", repoItemDecisionApprove, "", "", "", nil); got.Outcome != "Approved #1." {
 		t.Fatalf("legacy = %+v", got)
+	}
+}
+
+// TestRepoItemDecisionWordingNeverSaysSweep is the ratchet for
+// hivecommons/hive#15575's follow-up: "sweep" is the lane's internal name for
+// its pass and never reaches a person. The ⋯ decision `Next` sentences, the
+// "Approve and let hive merge" consequence and the GitHub approval note all
+// say "merge pass" instead.
+func TestRepoItemDecisionWordingNeverSaysSweep(t *testing.T) {
+	var texts []string
+	for _, decision := range []string{repoItemDecisionApprove, repoItemDecisionQueueMerge, repoItemDecisionMergeNow, repoItemDecisionAdopt, repoItemDecisionReauthor, repoItemDecisionDirection, repoItemDecisionCloseSuperseded} {
+		for _, facts := range []repoItemApproveFacts{
+			{User: "clubanderson", Released: []string{"approval-recorded", "admitted"}, SoakMinutes: 10},
+			{User: "clubanderson", Released: []string{"approval-recorded"}, Prow: true, SoakMinutes: 3},
+			{User: "clubanderson", Released: []string{"approval-recorded"}, SentinelLabel: "sentinel-alert", SentinelOpen: true},
+		} {
+			got := repoItemDecisionResultWith("hivecommons/dibs", 510, "pr", decision, "", "", "", facts)
+			texts = append(texts, decision+": "+got.Outcome+" "+got.Next+" "+strings.Join(got.Posted, " "))
+		}
+	}
+	in := delegatedecision.Input{Repo: "hivecommons/dibs", Kind: delegatedecision.KindPR, Number: 510}
+	approve := delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "approve-human-merge", Text: "approve #510"}
+	for _, notes := range [][]string{nil, {"`/lgtm` + `/approve` recorded"}, {"queued for auto-merge"}} {
+		got := delegatedRowActionResult(in, approve, notes)
+		texts = append(texts, "delegated: "+got.Outcome+" "+got.Next)
+	}
+	for _, opt := range delegatedHumanMergeOptions(in, 510, true) {
+		texts = append(texts, "option "+opt.Action+": "+opt.Consequence)
+	}
+	texts = append(texts, "note: "+renderRepoItemDecisionQueueNote("clubanderson", ""))
+	for _, text := range texts {
+		if strings.Contains(strings.ToLower(text), "sweep") {
+			t.Errorf("user-facing decision text says \"sweep\" (hivecommons/hive#15575): %s", text)
+		}
 	}
 }
