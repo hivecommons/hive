@@ -176,7 +176,8 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		return err
 	}
 	refs := parkRefsFromTimeline(events)
-	named := parkNamedRefs(c.parkText(issue, comments, start), owner+"/"+repo, number)
+	text := c.parkText(issue, comments, start)
+	named := parkNamedRefs(text, owner+"/"+repo, number)
 	lookups := 0
 	for _, key := range named {
 		if _, ok := refs[key]; ok || lookups >= parkRecheckMaxNamedLookups {
@@ -196,7 +197,7 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		result.Skipped++
 		return nil
 	}
-	c.markParkLandings(ctx, c.parkText(issue, comments, start), refs, named, owner+"/"+repo, start, changes)
+	c.markParkLandings(ctx, text, refs, named, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
 	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
 	for _, cm := range comments {
@@ -316,10 +317,16 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 // which patches get read.
 //
 // Contributor provenance is the durable predicate (SetKnownContributor: live
-// relay claim or registry profile), not the live relay claim alone. The
-// relay posts the park comment under the contributor's own account with
-// author_association NONE and the claim expires with the task lease; the
-// re-check runs days later and must still read that comment as park text.
+// relay claim or a registry profile at a tier above newcomer and not
+// revoked), not the live relay claim alone. The relay posts the park comment
+// under the contributor's own account with author_association NONE and the
+// claim expires with the task lease; the re-check runs days later and must
+// still read that comment as park text.
+//
+// Every in-window comment the gate drops is logged with its author, so a
+// park whose refs rested on a since-expired claim-only relay, or on a
+// commenter the registry no longer admits, is observable rather than
+// silently matching nothing.
 func (c *Client) parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) string {
 	inWindow := func(at time.Time) bool {
 		return !at.IsZero() && !at.After(start) && start.Sub(at) <= parkTextWindow
@@ -334,6 +341,9 @@ func (c *Client) parkText(issue *gh.Issue, comments []*gh.IssueComment, start ti
 		}
 		login := cm.GetUser().GetLogin()
 		if !c.isHiveAccount(cm.GetUser()) && !c.isKnownContributor(login) && !c.reporterIsTrusted(login, cm.GetAuthorAssociation()) {
+			if c.logger != nil {
+				c.logger.Info("park re-check excluded pre-park comment from untrusted author", "issue", issue.GetHTMLURL(), "comment", cm.GetID(), "login", login, "association", cm.GetAuthorAssociation())
+			}
 			continue
 		}
 		body := cm.GetBody()

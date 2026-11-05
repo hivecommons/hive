@@ -64,11 +64,13 @@ func (c *Client) isRelayContributor(login string) bool {
 	return fn(login)
 }
 
-// SetKnownContributor installs the durable contributor-provenance predicate:
-// true when login has a live relay claim or a profile in this hive's
-// contributor registry. The live claim alone expires with the relay task
-// lease (claims.DefaultContributorTTL), so a park re-check that runs days
-// later would read a relay-authored park comment as untrusted; the registry
+// SetKnownContributor installs the durable contributor-provenance predicate
+// the park re-check reads: true when login has a live relay claim or a
+// profile in this hive's contributor registry at a tier that is neither the
+// unauthenticated self-registration default (newcomer) nor revoked. The live
+// claim alone expires with the relay task lease
+// (claims.DefaultContributorTTL), so a park re-check that runs days later
+// would read a relay-authored park comment as untrusted; the registry
 // outlives the claim. nil knows no contributors.
 func (c *Client) SetKnownContributor(fn func(login string) bool) {
 	if c == nil {

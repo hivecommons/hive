@@ -220,3 +220,38 @@ func TestFirstTimerKnownContributor(t *testing.T) {
 		t.Fatal("firstTimerState must be lazily built and cached")
 	}
 }
+
+// The park re-check's contributor predicate is tier-aware: a live relay
+// claim or a granted registry tier counts, but the unauthenticated
+// self-registration default (newcomer), a revoked profile, a legacy profile
+// with no tier and an unregistered login do not (#16697).
+func TestParkTextContributorTierAware(t *testing.T) {
+	tiers := map[string]string{
+		"newbie": "newcomer", "contrib": "contributor", "trusty": "trusted",
+		"merger": "merger", "advisor": "advisor", "gone": "revoked", "legacy": "",
+	}
+	registry := func(login string) (string, bool) {
+		tier, ok := tiers[login]
+		return tier, ok
+	}
+	relay := func(login string) bool { return login == "claimed" }
+	tests := []struct {
+		login string
+		want  bool
+	}{
+		{"claimed", true}, {"contrib", true}, {"trusty", true}, {"merger", true}, {"advisor", true},
+		{"newbie", false}, {"gone", false}, {"legacy", false}, {"stranger", false},
+	}
+	for _, tt := range tests {
+		if got := parkTextContributorKnown(relay, registry, tt.login); got != tt.want {
+			t.Errorf("parkTextContributorKnown(%q) = %v, want %v", tt.login, got, tt.want)
+		}
+	}
+	if parkTextContributorKnown(nil, nil, "contrib") {
+		t.Fatal("nil predicates must know nobody")
+	}
+	b := &boot{}
+	if b.parkTextContributor("nobody-registered-here") {
+		t.Fatal("unregistered login must not be park-text provenance")
+	}
+}

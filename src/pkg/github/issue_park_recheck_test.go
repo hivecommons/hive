@@ -606,6 +606,13 @@ func TestParkCopyQuote(t *testing.T) {
 func TestParkTextTrustedAuthors(t *testing.T) {
 	c := parkClient(t, newParkFake(t, &parkFake{}))
 	c.SetReporterTrusted(func(login, association string) bool { return association == "MEMBER" })
+	// The wired predicate is tier-aware (cmd/hive parkTextContributorKnown):
+	// a self-registered newcomer or a revoked profile answers false.
+	tiers := map[string]string{"contributor": "contributor", "newcomer": "newcomer", "revoked": "revoked"}
+	c.SetKnownContributor(func(login string) bool {
+		tier := tiers[login]
+		return tier != "" && tier != "newcomer" && tier != "revoked"
+	})
 	at := prTS(parkT0.Add(-20 * time.Second))
 	comment := func(login, association, body string) map[string]any {
 		return map[string]any{"user": map[string]any{"login": login}, "author_association": association, "body": body, "created_at": at}
@@ -619,6 +626,8 @@ func TestParkTextTrustedAuthors(t *testing.T) {
 		{"registered contributor with expired relay claim included", comment("contributor", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"trusted maintainer included", comment("maint", "MEMBER", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"untrusted commenter excluded", comment("stranger", "NONE", "see evil/repo#9"), ""},
+		{"self-registered newcomer excluded", comment("newcomer", "NONE", "see evil/repo#9"), ""},
+		{"revoked contributor excluded", comment("revoked", "NONE", "see evil/repo#9"), ""},
 		{"hive notice excluded", comment("hive[bot]", "NONE", parkRecheckMarker+" see org/other#7"), ""},
 	}
 	for _, tt := range tests {

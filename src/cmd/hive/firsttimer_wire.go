@@ -81,9 +81,10 @@ func firstTimerCandidates(org string, result *github.ActionableResult) []firstti
 }
 
 // knownContributor reports whether login already runs a hive against this
-// one: a live relay claim or a contributor-registry profile. The registry
-// half is what outlives the claim's TTL, so the first-timer welcome and the
-// park re-check (SetKnownContributor) both read it.
+// one: a live relay claim or a contributor-registry profile at any tier. The
+// first-timer welcome reads it (a newcomer who registered is not a first
+// timer); the park re-check reads the tier-aware parkTextContributor
+// instead, since self-registration alone is not provenance there.
 func (b *boot) knownContributor(login string) bool {
 	if b.relayContributor(login) {
 		return true
