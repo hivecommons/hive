@@ -17,7 +17,7 @@
 #
 # Usage (drop-in for the common gh shapes):
 #   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>]
-#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
+#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-by <n[,n]>] [--blocked-on-pr <n>]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -36,6 +36,9 @@
 # ready work until its blockers close, and lifts it automatically when they do
 # — write the order here, not only in a comment. A blocker that cannot be
 # linked is reported in the result and does not stop the create.
+# On `comment` it links the existing issue the same way: use it when a park
+# only defers to another parked issue's decision ("answer on #511; the same
+# choice applies here"), so the owner sees one ask, not two.
 #
 # --close-on-merge appends the legacy `hive: close-on-merge` marker to the new
 # issue's body (hivecommons/hive#10304). Close-on-merge is now the default, so
@@ -389,6 +392,25 @@ reviewers = [part.strip() for value in json.loads(reviewers)
 team_reviewers = [part.strip() for value in json.loads(team_reviewers)
                   for part in value.split(",") if part.strip()]
 req = {"kind": kind, "repo": repo, "agent": agent}
+
+
+def parse_blockers():
+    # --blocked-by accepts "12", "#12", "12,13" and repeated flags.
+    blockers = []
+    for value in json.loads(blocked_by):
+        for part in value.split(","):
+            part = part.strip().lstrip("#")
+            if not part:
+                continue
+            if not part.isdigit():
+                sys.stderr.write("hive-open-issue: --blocked-by expects issue numbers, got %r; nothing was written.\n" % part)
+                sys.exit(2)
+            n = int(part)
+            if n > 0 and n not in blockers:
+                blockers.append(n)
+    return blockers
+
+
 step_kind, release_tag, release_target = sys.argv[18:21]
 if sys.argv[21] == "1":
     error = ""
@@ -416,6 +438,12 @@ if kind == "comment":
     # the configured needs-decision label before posting (hivecommons/hive#12329).
     if needs_decision == "1":
         req["needs_decision"] = True
+    # --blocked-by on a comment links the existing issue: a park that only
+    # defers to another issue's decision waits on that one instead of
+    # counting as a second owner ask.
+    blockers = parse_blockers()
+    if blockers:
+        req["blocked_by"] = blockers
 elif kind == "claim":
     # The watcher applies the hive/claimed-by-<agent> label; number is all it
     # needs. No body/title/labels.
@@ -450,19 +478,8 @@ else:
     if int(parent) > 0:
         req["parent"] = int(parent)
     # --blocked-by: record GitHub "blocked by" dependencies on the new issue
-    # (hivecommons/hive#9839). Accepts "12", "#12", "12,13", repeated flags.
-    blockers = []
-    for value in json.loads(blocked_by):
-        for part in value.split(","):
-            part = part.strip().lstrip("#")
-            if not part:
-                continue
-            if not part.isdigit():
-                sys.stderr.write("hive-open-issue: --blocked-by expects issue numbers, got %r; nothing was created.\n" % part)
-                sys.exit(2)
-            n = int(part)
-            if n > 0 and n not in blockers:
-                blockers.append(n)
+    # (hivecommons/hive#9839).
+    blockers = parse_blockers()
     if blockers:
         req["blocked_by"] = blockers
     # --needs-decision: the watcher applies the configured needs-decision

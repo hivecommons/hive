@@ -128,9 +128,12 @@ type IssueRequest struct {
 	// this one is ready. On an "issue" request the watcher records each as a
 	// GitHub "blocked by" dependency of the new issue after creating it
 	// (hivecommons/hive#9839), so a split's order lives where enumeration can
-	// read it instead of only in prose. A failed link does not fail the
-	// create; linked and failed blockers are both reported in the result.
-	BlockedBy []int `json:"blocked_by,omitempty"` // issue only
+	// read it instead of only in prose. On a "comment" request it records
+	// them on the existing issue: a park that defers to another issue's
+	// decision names it, and the dashboard then counts one owner ask, not
+	// two. A failed link does not fail the request; linked and failed
+	// blockers are both reported in the result.
+	BlockedBy []int `json:"blocked_by,omitempty"` // issue and comment
 	// NeedsDecision parks the issue on a maintainer decision
 	// (hivecommons/hive#11215). On an "issue" request the watcher adds the
 	// hive's configured needs-decision label (hard_suppress_labels.
@@ -758,6 +761,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
 			if err == nil {
 				err = c.RemoveLabel(ctx, req.Repo, req.Number, helpWantedLabel)
+			}
+		}
+		// Best-effort "blocked by" links on the existing issue, the
+		// create's contract (#9839): never a failure of the comment.
+		if err == nil && len(req.BlockedBy) > 0 {
+			resp.BlockedByLinked, resp.BlockedByErrors = c.linkBlockedBy(ctx, req.Repo, req.Number, req.BlockedBy)
+			for _, e := range resp.BlockedByErrors {
+				c.logger.Warn("issue-request watcher: blocked-by link failed, comment still posted",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("blocker", e))
 			}
 		}
 		if err == nil {

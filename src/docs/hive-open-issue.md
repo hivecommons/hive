@@ -43,7 +43,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--step-kind release --release-tag <tag> --release-target <sha>]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-by <n[,n]>] [--blocked-on-pr <n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -60,7 +60,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
-| `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
+| `--blocked-by` | — | issue, comment | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
 | `--step-kind` | — | issue, comment | `release`; requires `--needs-decision`, `--release-tag` and `--release-target`; records metadata only, never publishes a release |
 | `--release-tag` | — | issue, comment | release tag from the repository's version source |
 | `--release-target` | — | issue, comment | full lowercase 40-character commit SHA for the proposed release |
@@ -157,6 +157,13 @@ be resolved is reported on the result file (`blocked_by_errors`, alongside
 `blocked_by_linked`) and never stops the issue from being created. A mutual
 block (A blocked by B, B blocked by A) would hide both forever, so the hive
 drops that pair with a warning and offers both.
+
+On `comment`, `--blocked-by` links the existing issue the same way, after the
+comment is posted. Use it when a park only defers to another parked issue's
+decision (a release tag that rides on #N's change: "answer on #N; the same
+choice applies here"). The dashboard then counts the pair as one owner ask:
+a decision park with an open blocker reads as waiting on that issue, not as
+your turn ([Danathar/tududi#512](https://github.com/Danathar/tududi/issues/512)).
 
 #### Parking an issue that needs a decision
 

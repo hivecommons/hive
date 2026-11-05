@@ -2079,7 +2079,11 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
-			details = append(details, c.workIssue(repo, issue, labels, "filtered", suppress))
+			row := c.workIssue(repo, issue, labels, "filtered", suppress)
+			// A parked issue blocked by another open issue waits on that
+			// one's answer, not on its own (the dashboard's ownership).
+			row.OpenBlockedBy = blockedCounts[issue.GetNumber()]
+			details = append(details, row)
 			continue
 		}
 

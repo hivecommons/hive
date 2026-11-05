@@ -138,3 +138,39 @@ func TestNeedsDecisionAsksNameARecommendation(t *testing.T) {
 		t.Fatal("no 045 rules found; the guard would pass vacuously")
 	}
 }
+
+// A park whose only question another parked issue already asks must link it
+// instead of asking twice: Danathar/tududi#512 (a release tag riding on #511's
+// change) parked "Answer on #511" and counted as a second owner ask. Every
+// lane's 045 rule names the flag that links it.
+func TestNeedsDecisionDeferringParkLinksBlockedBy(t *testing.T) {
+	t.Parallel()
+
+	want := []byte("add `--blocked-by <N>`, so it waits on #N's answer instead of counting as a second ask")
+	entries, err := fs.ReadDir(DefaultPolicies, "defaults")
+	if err != nil {
+		t.Fatalf("read embedded defaults: %v", err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, err := DefaultPolicies.ReadFile(path.Join("defaults", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		for _, line := range bytes.Split(data, []byte("\n")) {
+			if !bytes.HasPrefix(line, []byte("- `stage/045-needs-decision`:")) {
+				continue
+			}
+			checked++
+			if !bytes.Contains(line, want) {
+				t.Errorf("%s: the 045 rule does not tell a deferring park to link its blocker", e.Name())
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no 045 rules found; the guard would pass vacuously")
+	}
+}

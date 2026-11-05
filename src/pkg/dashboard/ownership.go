@@ -484,8 +484,12 @@ type issueOwnershipInput struct {
 	// openBlockers are the issue's open GitHub blocked-by links
 	// (Issue.OpenBlockers).
 	openBlockers []string
-	createdAt    time.Time
-	updatedAt    time.Time
+	// openBlockedBy is GitHub's count of open blocked-by links on a parked
+	// (hard-suppressed) issue, from the enumeration row; openBlockers is
+	// read for actionable issues only.
+	openBlockedBy int
+	createdAt     time.Time
+	updatedAt     time.Time
 
 	// lane is the lane the classifier routed the issue to.
 	lane string
@@ -553,6 +557,13 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		parking = env.parkingBucket(in.labels)
 	}
 	if parking != "" {
+		// A decision park blocked by another open issue defers to that
+		// issue's decision: one owner ask, not two. Danathar/tududi#512 (the
+		// v2.0.0-rc.1 tag, parked "Answer on #511; the same choice applies
+		// here") sat in the inbox beside #511 itself.
+		if parking == config.DefaultNeedsDecisionLabel && in.openBlockedBy > 0 {
+			return waitingElsewhereFor("Waits on the decision of the issue it is blocked by")
+		}
 		return parkedOwnership(parking)
 	}
 	// (6) untrusted reporter awaiting an admission label.
@@ -811,15 +822,16 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				continue
 			}
 			in := issueOwnershipInput{
-				repo:         nonEmpty(item.Repo, repoName),
-				number:       item.Number,
-				labels:       item.Labels,
-				acknowledged: item.HumanAcknowledged,
-				createdAt:    item.CreatedAt,
-				updatedAt:    item.UpdatedAt,
-				reporterGate: item.ReporterConfirmationGate,
-				bucket:       item.Bucket,
-				bucketReason: item.Reason,
+				repo:          nonEmpty(item.Repo, repoName),
+				number:        item.Number,
+				labels:        item.Labels,
+				acknowledged:  item.HumanAcknowledged,
+				createdAt:     item.CreatedAt,
+				updatedAt:     item.UpdatedAt,
+				reporterGate:  item.ReporterConfirmationGate,
+				bucket:        item.Bucket,
+				bucketReason:  item.Reason,
+				openBlockedBy: item.OpenBlockedBy,
 			}
 			decision := withReleaseAction(decideIssueOwnershipGated(in, env), item.OwnerStep, env.releaseOnApproveFor(in.repo))
 			record(ownershipKindIssue, item.Number, item.URL, decision, item.CreatedAt, item.UpdatedAt)

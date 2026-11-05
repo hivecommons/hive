@@ -219,6 +219,32 @@ check "--blocked-by refusal writes no request" "" "$(find_req badblockedbot)"
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# On a comment --blocked-by links the existing issue: a park that only defers
+# to another issue's decision (Danathar/tududi#512 → #511) waits on it.
+run_script "blockedcommentbot" comment --repo "hiveorg/widgets" 512 --body "Answer on #511; the same choice applies here." \
+  --needs-decision --blocked-by "#511" >/dev/null
+REQ_FILE="$(find_req blockedcommentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_BLOCKED="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('kind'), d.get('number'), d.get('needs_decision'), d.get('blocked_by'))" "$REQ_FILE")"
+  check "comment --blocked-by carries blocked_by on the comment request" "comment 512 True [511]" "$GOT_BLOCKED"
+else
+  echo "  FAIL: request file not created for comment --blocked-by test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+set +e
+run_script "badblockedcommentbot" comment --repo "hiveorg/widgets" 512 --body "x" --blocked-by "eleven" >/dev/null 2>&1
+BAD_RC=$?
+set -e
+check "comment --blocked-by refuses a non-numeric blocker (exit 2)" "2" "$BAD_RC"
+check "comment --blocked-by refusal writes no request" "" "$(find_req badblockedcommentbot)"
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --- Section 3d: --close-on-merge flag (filing-time opt-in, #10304) ---
 run_script "closeonmergebot" --repo "hiveorg/widgets" --title "Sweep finding" --body "found by reading the code" --close-on-merge
 
