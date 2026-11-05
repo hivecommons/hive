@@ -192,7 +192,7 @@ func TestStageTrackerSupersededRowRatchetJS(t *testing.T) {
 const since = new Date(now - 3600000).toISOString();
 const pr = (n, extra) => Object.assign({ repo: 'hivecommons/hive', number: n, kind: 'pr', title: 'dashboard: split stage_tracker.go into 4 files, a very long title that must ellipsize before the note does', url: 'https://x/' + n, stage: 74, stage_since: since, caption: 'Adopted', author: 'odttlnt', author_kind: 'clanker', modifiers: [] }, extra || {});
 const issue = (n, prs, extra) => Object.assign({ repo: 'hivecommons/hive', number: n, kind: 'issue', title: 'Issue ' + n, url: 'https://x/i' + n, stage: 40, stage_since: since, linked_prs: prs }, extra || {});
-const copy = (n, from, extra) => pr(n, Object.assign({ author: 'hivecommons-hive[bot]', author_kind: 'hive', stage: 80, caption: 'Merge queued', adopted_from: { number: from, url: 'https://x/' + from, author: 'odttlnt', state: 'open', text: '↳ adopted from #' + from } }, extra || {}));
+const copy = (n, from, extra) => pr(n, Object.assign({ author: 'hivecommons-hive[bot]', author_kind: 'hive', stage: 80, caption: 'Queued for merge', adopted_from: { number: from, url: 'https://x/' + from, author: 'odttlnt', state: 'open', text: '↳ adopted from #' + from } }, extra || {}));
 const noteOf = (sub) => (/<span class="ham-superseded-note"[^>]*>([^<]*)<\/span>/.exec(sub) || [])[1] || '';
 const subsOf = (row) => row.split('<div class="ham-sub').slice(1);
 

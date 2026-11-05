@@ -318,7 +318,16 @@ RUN timeout 120s npm install -g --ignore-scripts --no-fund --no-audit \
 # static list, and non-codex backends are unaffected.
 ARG CODEX_VERSION=0.166.0
 ARG CLINE_VERSION=3.0.74
-RUN npm install -g --ignore-scripts --no-fund --no-audit cline@${CLINE_VERSION} \
+# npm can briefly advertise AWS SDK versions before all registry replicas serve
+# them. Wait at most three minutes between attempts and revalidate metadata.
+RUN attempt=1; \
+    until npm install -g --ignore-scripts --no-fund --no-audit --prefer-online cline@${CLINE_VERSION}; do \
+      status=$?; \
+      if [ "$attempt" -ge 4 ]; then exit "$status"; fi; \
+      echo "Cline install failed (attempt $attempt/4); retrying in 60s" >&2; \
+      sleep 60; \
+      attempt=$((attempt + 1)); \
+    done \
     && ln -sf "$(npm root -g)/cline/bin/cline" /usr/local/bin/cline \
     && cline --version
 RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
