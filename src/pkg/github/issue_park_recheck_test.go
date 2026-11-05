@@ -174,7 +174,7 @@ func parkClient(t *testing.T, srv *httptest.Server) *Client {
 	// claim (claims.DefaultContributorTTL) is gone; the registry-backed
 	// predicate is what still knows the park author.
 	c.SetRelayContributor(func(string) bool { return false })
-	c.SetKnownContributor(func(login string) bool { return login == "contributor" })
+	c.SetParkTextContributor(func(login string) bool { return login == "contributor" })
 	return c
 }
 
@@ -606,13 +606,8 @@ func TestParkCopyQuote(t *testing.T) {
 func TestParkTextTrustedAuthors(t *testing.T) {
 	c := parkClient(t, newParkFake(t, &parkFake{}))
 	c.SetReporterTrusted(func(login, association string) bool { return association == "MEMBER" })
-	// The wired predicate is tier-aware (cmd/hive parkTextContributorKnown):
-	// a self-registered newcomer or a revoked profile answers false.
-	tiers := map[string]string{"contributor": "contributor", "newcomer": "newcomer", "revoked": "revoked"}
-	c.SetKnownContributor(func(login string) bool {
-		tier := tiers[login]
-		return tier != "" && tier != "newcomer" && tier != "revoked"
-	})
+	// Which contributors count is the embedder's call (cmd/hive
+	// parkTextContributorKnown, covered there); here only "contributor" is.
 	at := prTS(parkT0.Add(-20 * time.Second))
 	comment := func(login, association, body string) map[string]any {
 		return map[string]any{"user": map[string]any{"login": login}, "author_association": association, "body": body, "created_at": at}
@@ -626,8 +621,7 @@ func TestParkTextTrustedAuthors(t *testing.T) {
 		{"registered contributor with expired relay claim included", comment("contributor", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"trusted maintainer included", comment("maint", "MEMBER", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"untrusted commenter excluded", comment("stranger", "NONE", "see evil/repo#9"), ""},
-		{"self-registered newcomer excluded", comment("newcomer", "NONE", "see evil/repo#9"), ""},
-		{"revoked contributor excluded", comment("revoked", "NONE", "see evil/repo#9"), ""},
+		{"unknown contributor excluded", comment("newcomer", "NONE", "see evil/repo#9"), ""},
 		{"hive notice excluded", comment("hive[bot]", "NONE", parkRecheckMarker+" see org/other#7"), ""},
 	}
 	for _, tt := range tests {
@@ -664,8 +658,46 @@ func TestParkTextLiveRelayClaimIsNotProvenance(t *testing.T) {
 	if got := c.parkText(&gh.Issue{}, comments, parkT0); got != "" {
 		t.Fatalf("parkText = %q, want empty without a known-contributor predicate", got)
 	}
-	c.SetKnownContributor(func(login string) bool { return login == "contributor" })
+	c.SetParkTextContributor(func(login string) bool { return login == "contributor" })
 	if got := c.parkText(&gh.Issue{}, comments, parkT0); got != "waiting on org/other#7" {
 		t.Fatalf("parkText = %q, want the registered contributor's comment", got)
+	}
+}
+
+// The issue body is park text only when the issue was filed inside the
+// window and its reporter passes the same author gate as a comment: an
+// untrusted reporter whose issue is parked straight after filing cannot seed
+// refs either (#16697 folded-in finding).
+func TestParkTextIssueBodyTrustedReporter(t *testing.T) {
+	c := parkClient(t, newParkFake(t, &parkFake{}))
+	c.SetReporterTrusted(func(login, association string) bool { return association == "MEMBER" })
+	issue := func(login, association string) *gh.Issue {
+		raw, err := json.Marshal(map[string]any{"user": map[string]any{"login": login}, "author_association": association, "body": "filed parked on org/other#7", "created_at": prTS(parkT0.Add(-20 * time.Second))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out gh.Issue
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+		return &out
+	}
+	tests := []struct {
+		name  string
+		issue *gh.Issue
+		want  string
+	}{
+		{"hive account included", issue("hive[bot]", "NONE"), "filed parked on org/other#7"},
+		{"registered contributor included", issue("contributor", "NONE"), "filed parked on org/other#7"},
+		{"trusted maintainer included", issue("maint", "MEMBER"), "filed parked on org/other#7"},
+		{"untrusted reporter excluded", issue("stranger", "NONE"), ""},
+		{"unknown contributor excluded", issue("newcomer", "CONTRIBUTOR"), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := c.parkText(tt.issue, nil, parkT0); got != tt.want {
+				t.Errorf("parkText = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

@@ -176,7 +176,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// predicate instead — tier-aware, since the registry admits
 	// self-registered newcomers (api_contribute.go register) and keeps
 	// revoked profiles.
-	client.SetKnownContributor(b.parkTextContributor)
+	client.SetParkTextContributor(b.parkTextContributor)
 	// Ledger fallback for the enumeration-time claim read and the
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).
@@ -288,11 +288,12 @@ func (b *boot) relayContributor(login string) bool {
 }
 
 // parkTextContributor is the park re-check's contributor-provenance
-// predicate: a live relay claim, or a contributor-registry profile at a tier
-// an operator or auto-promotion granted. It is narrower than knownContributor
-// on purpose — POST /api/contribute/register creates a newcomer profile from
-// a self-asserted username without authentication, and a revoked profile
-// stays in the registry — so neither tier may let a commenter steer which
+// predicate (github.Client.SetParkTextContributor): a live relay claim, or a
+// contributor-registry profile at a tier an operator or auto-promotion
+// granted. It is narrower than firstTimerKnownContributor on purpose — POST
+// /api/contribute/register creates a newcomer profile from a self-asserted
+// username without authentication, and a revoked profile stays in the
+// registry — so neither tier may let a commenter or reporter steer which
 // cross-repo patches the park re-check reads with the App token (#16697).
 func (b *boot) parkTextContributor(login string) bool {
 	return parkTextContributorKnown(b.relayContributor, dashboard.ContributorTrustTierByLogin, login)

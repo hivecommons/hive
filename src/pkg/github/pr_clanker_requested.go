@@ -64,29 +64,27 @@ func (c *Client) isRelayContributor(login string) bool {
 	return fn(login)
 }
 
-// SetKnownContributor installs the durable contributor-provenance predicate
-// the park re-check reads: true when login has a live relay claim or a
-// profile in this hive's contributor registry at a tier that is neither the
-// unauthenticated self-registration default (newcomer) nor revoked. The live
-// claim alone expires with the relay task lease
-// (claims.DefaultContributorTTL), so a park re-check that runs days later
-// would read a relay-authored park comment as untrusted; the registry
-// outlives the claim. nil knows no contributors.
-func (c *Client) SetKnownContributor(fn func(login string) bool) {
+// SetParkTextContributor installs the contributor-provenance predicate the
+// park re-check reads (issue_park_recheck.go parkText). The embedder decides
+// which contributors count; the contract is that the answer is durable — a
+// registry-backed lookup rather than the live relay claim alone, which
+// expires with the relay task lease (claims.DefaultContributorTTL) while the
+// re-check runs days after the park. nil knows no contributors.
+func (c *Client) SetParkTextContributor(fn func(login string) bool) {
 	if c == nil {
 		return
 	}
 	c.reporterTrustMu.Lock()
 	defer c.reporterTrustMu.Unlock()
-	c.knownContributor = fn
+	c.parkTextContributor = fn
 }
 
-func (c *Client) isKnownContributor(login string) bool {
+func (c *Client) isParkTextContributor(login string) bool {
 	if c == nil {
 		return false
 	}
 	c.reporterTrustMu.RLock()
-	fn := c.knownContributor
+	fn := c.parkTextContributor
 	c.reporterTrustMu.RUnlock()
 	if fn == nil {
 		return false

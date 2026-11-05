@@ -95,7 +95,14 @@ The `/hive help` reply uses the same box.
 ### When a park's premise moves
 
 A park is written once, often by a contributor relay, and names the work it
-waits on ("#722 is in progress", "the precedent has not been set"). At the
+waits on ("#722 is in progress", "the precedent has not been set"). The text
+Hive reads as the park is the issue body (when the issue was filed inside the
+park window) plus the comments posted in that window, but only when the author
+is one of the hive's own accounts, a registered contributor at a tier above the
+self-registered `newcomer` default and not revoked (so a relay-authored park
+still counts after its claim expires), or a trusted maintainer; an excluded
+body or comment is logged with its author, and a park that rests on it alone
+gets no re-check note. At the
 hard-suppress reconcile cadence (`issues.hard_suppress_reconcile_interval`,
 default 30m) Hive re-reads every open issue at `stage/045-needs-decision`.
 When, after the park began, a PR or issue the park text names merged or
