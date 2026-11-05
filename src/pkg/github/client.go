@@ -3349,6 +3349,9 @@ const (
 	prowLgtmLabel         = "lgtm"
 	prowLgtmStatusContext = "prow/lgtm"
 	prowStatusDescMaxLen  = 140
+
+	prowLgtmWarningMarker = "<!-- hive-prow-lgtm-status-warning -->"
+	prowWarningTimeout    = 15 * time.Second
 )
 
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
@@ -3384,7 +3387,14 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 			"repo", owner+"/"+repoName, "number", number, "error", err)
 	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
-	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil {
+	// The status call may have spent the caller's deadline, so the warning gets
+	// its own bounded context, and is posted once per PR, not once per sweep.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), prowWarningTimeout)
+	defer cancel()
+	if _, found, ferr := c.findOwnMarkerComment(wctx, owner, repoName, number, prowLgtmWarningMarker); ferr == nil && found {
+		return fmt.Errorf("Prow status reporting: %w", err)
+	}
+	if cerr := c.CreateIssueComment(wctx, owner+"/"+repoName, number, prowLgtmWarningMarker+"\n"+note); cerr != nil {
 		if c.logger != nil {
 			c.logger.Warn("could not post the prow/lgtm status warning comment",
 				"repo", owner+"/"+repoName, "number", number, "error", cerr)
