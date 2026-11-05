@@ -262,6 +262,30 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
   "nudged contributor lane". **Agents never watch or poll CI themselves**:
   detection is out-of-band via this webhook path, or the sweep as fallback.
+- **Gated workflow runs are approved for trusted heads.** After each CI
+  enrichment pass the sweep looks for open, non-draft PR heads whose
+  workflow runs sit behind GitHub's "Approve and run workflows" gate
+  (`action_required`) and approves them **at most once per PR head**
+  ([#16603](https://github.com/hivecommons/hive/issues/16603)). A head is
+  trusted when the PR is admitted by the owner (carries the automerge
+  label), when its author or the run's triggering actor is this hive's App,
+  or when that login is in `governor.ci.auto_approve_workflow_actors`
+  (default `['dependabot[bot]', 'renovate[bot]']`; an explicit `[]` trusts
+  only the App and owner admission). Guards: `governor.ci.auto_approve_workflows`
+  (default `true` — **unset means on**; `false` keeps the gate read-only and
+  still surfaces `waiting on workflow approval`), the repo pause, hold /
+  exempt / sentinel labels, a fresh `GET /pulls/N` re-read (head SHA, open,
+  non-draft, author, labels) before any write, a head-repository match on
+  every run, and the writeback gate (`ci_rerun`). Approval starts CI only;
+  the review, hold and merge gates are unchanged. A `403`/`404` from
+  `POST /actions/runs/{id}/approve` is recorded once as a permission error
+  and the Activity Monitor shows the manual-action caption instead of
+  retrying. Counts are published at `/api/status.workflow_approvals`
+  (`approved`, `denied`, `permission_errors`, `last`), and the spoke logs
+  `approved gated workflow run` / `workflow approval refused; needs workflow
+  approval on GitHub`. Because approved runs execute the head's workflow
+  files on the repository's runners, operators on self-hosted runners who
+  want an explicit opt-in should set `governor.ci.auto_approve_workflows: false`.
 - **A recorded review verdict also wakes the governor loop.** When the
   relay records a verdict bound to a review dispatch, the head that wrote it
   is free and the PR may be ready for its next head or its decision kick, so
