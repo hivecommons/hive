@@ -3355,8 +3355,9 @@ const (
 )
 
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
-// the queue review approved. The label and review are already in place, so a
-// failure is logged and surfaced on the PR but never returned.
+// the queue review approved. On failure it returns the error, logs it when a
+// logger is available, and attempts to surface a warning on the PR. The caller
+// records the reporting error without undoing the already-placed label and review.
 func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, number int, headSHA, queuedBy string) error {
 	sha7 := headSHA
 	if len(sha7) > 7 {
