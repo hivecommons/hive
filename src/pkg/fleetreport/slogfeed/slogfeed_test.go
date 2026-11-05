@@ -1005,3 +1005,42 @@ func TestInferenceBlockedStallLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("other stalls must remain reportable: %+v", *seen)
 	}
 }
+
+// #16844: a GitHub 5xx on the review POST is retried with backoff by design.
+func TestReviewRetryServerErrorLogsWithoutFleetReport(t *testing.T) {
+	const msg = "review-request watcher: review failed, will retry with backoff"
+	errOf := func(code string) string {
+		return "effect outcome uncertain, reconciliation required: POST https://api.github.com/repos/hivecommons/hive/pulls/16830/reviews: " + code + "  []"
+	}
+	cases := []struct {
+		name string
+		msg  string
+		err  string
+		want int
+	}{
+		{"500", msg, errOf("500"), 0},
+		{"502", msg, errOf("502"), 0},
+		{"503", msg, errOf("503"), 0},
+		{"403", msg, errOf("403"), 8},
+		{"422", msg, errOf("422"), 8},
+		{"non-http error", msg, "boom", 8},
+		{"other message", "review-request watcher: review quarantined", errOf("500"), 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn(tc.msg, "repo", "hivecommons/hive", "number", 16830, "error", tc.err)
+			}
+			if tc.want == 0 && len(*seen) != 0 {
+				t.Errorf("produced observations: %+v", *seen)
+			}
+			if tc.want != 0 && len(*seen) == 0 {
+				t.Errorf("must remain reportable")
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+		})
+	}
+}
