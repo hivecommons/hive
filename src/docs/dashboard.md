@@ -520,6 +520,12 @@ and exposes the editable rows.
 | Draft PRs | Pull request is open but marked draft. | GitHub draft state. | Use GitHub's **Ready for review** action. |
 | Hold-adjacent/other | Safety remainder for open items that did not match a named actionable, held, blocked, or outside classifier. | Fixed scanner fallback. | Check labels and scanner rules; add a dedicated classifier if the remainder is meaningful. |
 
+A standing meta issue (bot Dependency Dashboard, Hive Advisory Report) derives
+no stage label, in the sweep and out of cycle: a `needs-human` a triage bot puts
+on a Dependency Dashboard used to park it at `stage/045-needs-decision`
+(projectbluefin/gutenprint-printer-app#45). The stage writer takes such a 045
+off; the bot's own labels stay.
+
 The Issues and PRs panels link directly to `/api/overview/issues.csv` and
 `/api/overview/prs.csv` by default, or to the matching `.json` endpoints when
 JSON export is selected; non-empty legend rows add a `slice` query filter (the

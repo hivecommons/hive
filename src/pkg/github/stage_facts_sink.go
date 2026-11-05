@@ -160,6 +160,16 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 		f.Issue.Bucket = stageengine.BucketFiltered
 		f.Issue.FilteredReason = issueFilterReason
 	}
+	// A standing meta issue derives no stage out of cycle either, or a
+	// webhook on a Renovate dashboard re-parks it between sweeps.
+	if f.Issue != nil {
+		switch standingMetaIssueKindFor(issue.GetTitle(), issue.GetUser().GetLogin(), labels) {
+		case standingMetaDependencyDashboard:
+			f.Issue.Bucket = stageengine.BucketDependencyDashboard
+		case standingMetaHiveAdvisory:
+			f.Issue.Bucket = stageengine.BucketHiveAdvisory
+		}
+	}
 	if f.Issue != nil {
 		resolveIssueLabelFacts(issueInputFrom(f), &f)
 		f.Issue.Stalled = issueHasLabel(f.Labels, stagelabels.StalledLabel)
