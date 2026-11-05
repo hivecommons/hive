@@ -321,6 +321,7 @@ func TestProxyHTTPGraphQLMutationAllowed(t *testing.T) {
 
 func TestHandleConnectDirectAnthropicNoRoute(t *testing.T) {
 	p := newTestProxy()
+	p.allowPrivateForward = true // the tunnel target under test is a loopback listener
 	p.inference = newInferenceRouter()
 	// No route set for any agent
 
@@ -641,6 +642,7 @@ func TestProxyHTTPUpstreamWriteError(t *testing.T) {
 
 func TestTunnelDirectSuccess(t *testing.T) {
 	p := newTestProxy()
+	p.allowPrivateForward = true // the tunnel target under test is a loopback listener
 
 	// Create a local TCP server
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -9,17 +9,22 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 )
 
-// The plain-HTTP (non-CONNECT) forward path is the one egress path through
+// The plain-HTTP (non-CONNECT) forward path and the uninspected tunnel paths
+// (a CONNECT to a host the proxy neither inspects nor intercepts, and the
+// transparent-TLS passthrough for such a host) are the egress paths through
 // this proxy that carried NO destination policy at all: handleConn hands every
-// non-CONNECT request to forwardPlainDirect, which RoundTripped it unchanged.
-// An agent that sets a proxy URL by hand — or simply asks its CLI for
-// `http://<anything>` — therefore had the proxy open a connection on its
-// behalf, from the PROXY's uid, to any address the agent named. The forced
-// egress gate does not cover it: the iptables rule only redirects :443, so
-// plain HTTP is reachable only through this path, and the proxy's own uid is
-// exempted from the redirect precisely so its upstream dials work.
+// non-CONNECT request to forwardPlainDirect, which RoundTripped it unchanged,
+// and tunnelDirect dialled whatever host:port the CONNECT line named. An agent
+// that sets a proxy URL by hand — or simply asks its CLI for
+// `http://<anything>`, or sends `CONNECT 169.254.169.254:80` — therefore had
+// the proxy open a connection on its behalf, from the PROXY's uid, to any
+// address the agent named. The forced egress gate does not cover it: the
+// iptables rule only redirects :443, so plain HTTP is reachable only through
+// this path, and the proxy's own uid is exempted from the redirect precisely
+// so its upstream dials work.
 //
 // The interesting targets are not on the public internet, where the agent's
 // own egress would have reached anyway. They are the addresses only the pod
@@ -29,7 +34,8 @@ import (
 // (node credentials on most clouds), and the cluster-internal RFC1918 estate
 // (the Kubernetes API, other spokes, internal registries).
 //
-// So the plain forward path dials only globally routable addresses. The check
+// So the plain forward and uninspected tunnel paths dial only globally
+// routable addresses. The check
 // runs in the dialer's Control hook rather than on the request's host string:
 // Control is called AFTER name resolution with the concrete remote address, so
 // a hostname that resolves to 127.0.0.1 or 169.254.169.254 — a public DNS
@@ -132,6 +138,36 @@ var (
 	unguardedPlainForwardTransport = newPlainForwardTransport(false)
 )
 
+// guardedMarkDialer is markDialer with the destination check layered into the
+// Control hook, so the address refused is the resolved one the kernel is about
+// to connect to. It is the single dialer both the plain forward transport and
+// the uninspected tunnel paths build on; keep the policy here so the two
+// paths cannot drift apart.
+func guardedMarkDialer(timeout time.Duration) *net.Dialer {
+	dialer := markDialer(timeout)
+	mark := dialer.Control
+	dialer.Control = func(network, address string, c syscall.RawConn) error {
+		if reason := plainForwardDenyReason(address); reason != "" {
+			return &plainForwardDenied{target: address, reason: reason}
+		}
+		return mark(network, address, c)
+	}
+	return dialer
+}
+
+// tunnelDialer returns the dialer an uninspected tunnel (CONNECT passthrough
+// or transparent-TLS passthrough) opens its upstream leg with: guarded unless
+// the deployment lifted the guard with HIVE_PROXY_ALLOW_PRIVATE_FORWARD, the
+// same boot-time choice the plain forward path honours. The zero value of
+// allowPrivateForward is guarded, so a struct-literal GitHubProxy is
+// protected without opting in.
+func (p *GitHubProxy) tunnelDialer(timeout time.Duration) *net.Dialer {
+	if p.allowPrivateForward {
+		return markDialer(timeout)
+	}
+	return guardedMarkDialer(timeout)
+}
+
 // newPlainForwardTransport clones the standard transport (keeping its
 // connection pooling and timeouts), drops its ProxyFromEnvironment so an
 // HTTP_PROXY/HTTPS_PROXY on the proxy process is deliberately ignored — with
@@ -146,13 +182,7 @@ func newPlainForwardTransport(guard bool) *http.Transport {
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialer := markDialer(upstreamDialTimeout)
 		if guard {
-			mark := dialer.Control
-			dialer.Control = func(network, address string, c syscall.RawConn) error {
-				if reason := plainForwardDenyReason(address); reason != "" {
-					return &plainForwardDenied{target: address, reason: reason}
-				}
-				return mark(network, address, c)
-			}
+			dialer = guardedMarkDialer(upstreamDialTimeout)
 		}
 		return dialer.DialContext(ctx, network, address)
 	}
