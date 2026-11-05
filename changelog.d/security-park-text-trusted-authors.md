@@ -1,1 +1,1 @@
-Pre-park comments from untrusted authors no longer feed the park re-check's landed-change match; only the hive's own and trusted maintainers' comments do.
+- fix(park-recheck): pre-park comments from untrusted authors no longer feed the park re-check landed-change match; only the hive's own and trusted maintainers' comments do (#16765)
