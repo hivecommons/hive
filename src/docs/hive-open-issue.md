@@ -43,7 +43,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--step-kind release --release-tag <tag> --release-target <sha>]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-on-pr <n>]
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-by <n[,n]>] [--blocked-on-pr <n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -60,7 +60,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
-| `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
+| `--blocked-by` | — | issue, comment | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
 | `--step-kind` | — | issue, comment | `release`; requires `--needs-decision`, `--release-tag` and `--release-target`; records metadata only, never publishes a release |
 | `--release-tag` | — | issue, comment | release tag from the repository's version source |
 | `--release-target` | — | issue, comment | full lowercase 40-character commit SHA for the proposed release |
@@ -158,6 +158,33 @@ be resolved is reported on the result file (`blocked_by_errors`, alongside
 `blocked_by_linked`) and never stops the issue from being created. A mutual
 block (A blocked by B, B blocked by A) would hide both forever, so the hive
 drops that pair with a warning and offers both.
+
+On `comment`, `--blocked-by` links the existing issue the same way, after the
+comment is posted. Use it when a park only defers to another parked issue's
+decision (a release tag that rides on #N's change: "answer on #N; the same
+choice applies here"). The dashboard then counts the pair as one owner ask:
+a decision park blocked by an open issue that is itself parked on a decision
+reads as "Waits on the decision on #N", not as your turn
+([Danathar/tududi#512](https://github.com/Danathar/tududi/issues/512)). A
+blocker that is ordinary open work, a `needs-human` park, or an issue the
+snapshot does not carry leaves the park your turn: that decision is still the
+owner's to make, and a link alone never hides it. Asks blocked by each other
+(directly or round a loop) all stay your turn, so a loop never hides every
+one of them.
+
+When a `--needs-decision` park (issue or comment) gives no `--blocked-by`, the
+watcher links it itself if the text asks a decision another open issue already
+asks: it reads up to four same-repo `#N` the text names, each lower-numbered
+than the issue being parked (filed earlier, so two asks never wait on each
+other), and links the first that is an open issue still parked on a decision
+and that the text either defers to in so many words ("answer on #N", "pick on
+#N", "the same choice ... #N", "parking this with #N", "#N settles it") or
+shares a cited Actions run with (`/actions/runs/<id>` in its body or a Hive
+comment on it). The park gets one added line, "Hive linked this issue as
+blocked by #N: it asks the same decision, so answer on #N and this issue
+follows it", the result lists the link in `blocked_by_linked`, and the write
+audit records `folded_into`. A pull request is never a target: GitHub's
+"blocked by" links issues.
 
 #### Parking an issue that needs a decision
 

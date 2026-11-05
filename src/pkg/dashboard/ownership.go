@@ -484,6 +484,10 @@ type issueOwnershipInput struct {
 	// openBlockers are the issue's open GitHub blocked-by links
 	// (Issue.OpenBlockers).
 	openBlockers []string
+	// decisionBlocker names an open issue this parked issue is blocked by
+	// that is itself parked on a decision ("#511", or "owner/repo#511" in
+	// another repo), from the enumeration row's OpenBlockers; "" when none.
+	decisionBlocker string
 	// hiveClosingPR is an open pull request authored by this hive's App
 	// whose GitHub closing references name a parked (non-actionable)
 	// issue, from hiveClosingPRFor; 0 when there is none.
@@ -565,6 +569,15 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		// green, until a maintainer posted a decision.
 		if parking == config.DefaultNeedsDecisionLabel && in.hiveClosingPR > 0 {
 			return waitingElsewhereFor(fmt.Sprintf("Waits on hive PR #%d, which closes it", in.hiveClosingPR))
+		}
+		// A decision park blocked by another open issue defers to that
+		// issue's decision: one owner ask, not two. Danathar/tududi#512 (the
+		// v2.0.0-rc.1 tag, parked "Answer on #511; the same choice applies
+		// here") sat in the inbox beside #511 itself.
+		// Only a blocker that is itself a decision park counts: a
+		// decision blocked by ordinary work is still the owner's to make.
+		if parking == config.DefaultNeedsDecisionLabel && in.decisionBlocker != "" {
+			return waitingElsewhereFor("Waits on the decision on " + in.decisionBlocker)
 		}
 		return parkedOwnership(parking)
 	}
@@ -747,6 +760,68 @@ func ownershipFor(decisions map[string]Ownership, kind string, number int) *Owne
 	return &decision
 }
 
+// decisionParkKeys maps the lowercased "repo#N" key of every parked issue in
+// the snapshot whose park is a decision (needs_decision) to its open
+// blockers' keys, lowercased.
+func decisionParkKeys(repos []FrontendRepo, env ownershipEnv) map[string][]string {
+	keys := map[string][]string{}
+	for _, repo := range repos {
+		repoName := overviewRepoName(repo)
+		for _, raw := range repo.NonActionableIssues {
+			item, ok := repoWorkIssueRow(raw)
+			if !ok || env.parkingBucket(item.Labels) != config.DefaultNeedsDecisionLabel {
+				continue
+			}
+			blockers := make([]string, 0, len(item.OpenBlockers))
+			for _, b := range item.OpenBlockers {
+				blockers = append(blockers, strings.ToLower(b))
+			}
+			keys[strings.ToLower(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number))] = blockers
+		}
+	}
+	return keys
+}
+
+// decisionBlockerFor returns the first of self's blockers that is a decision
+// park and does not, through decision parks it is blocked by in turn, wait
+// on self: asks that wait on each other would otherwise all leave the inbox
+// and none would be asked (hive reviewer on hivecommons/hive#16694). It is
+// shown as "#N" in repoName and "owner/repo#N" elsewhere, or "".
+func decisionBlockerFor(self string, blockers []string, decisionParks map[string][]string, repoName string) string {
+	self = strings.ToLower(self)
+	for _, key := range blockers {
+		lower := strings.ToLower(key)
+		if _, ok := decisionParks[lower]; !ok || decisionParkReaches(lower, self, decisionParks) {
+			continue
+		}
+		if repo, num, ok := strings.Cut(key, "#"); ok && strings.EqualFold(repo, repoName) {
+			return "#" + num
+		}
+		return key
+	}
+	return ""
+}
+
+// decisionParkReaches reports whether following decision-park blockers from
+// "from" arrives at "to".
+func decisionParkReaches(from, to string, decisionParks map[string][]string) bool {
+	seen := map[string]bool{}
+	stack := []string{from}
+	for len(stack) > 0 {
+		key := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if key == to {
+			return true
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		stack = append(stack, decisionParks[key]...)
+	}
+	return false
+}
+
 // decideRepoOwnership decides every issue and pull request row of the
 // snapshot's repositories, stores the decisions on each repository, and
 // assigns inbox ranks across all of them.
@@ -761,6 +836,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 		kind     string
 	}
 	var inbox []ranked
+	decisionParks := decisionParkKeys(repos, env)
 	for i := range repos {
 		repo := &repos[i]
 		repoName := overviewRepoName(*repo)
@@ -824,15 +900,16 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				continue
 			}
 			in := issueOwnershipInput{
-				repo:         nonEmpty(item.Repo, repoName),
-				number:       item.Number,
-				labels:       item.Labels,
-				acknowledged: item.HumanAcknowledged,
-				createdAt:    item.CreatedAt,
-				updatedAt:    item.UpdatedAt,
-				reporterGate: item.ReporterConfirmationGate,
-				bucket:       item.Bucket,
-				bucketReason: item.Reason,
+				repo:            nonEmpty(item.Repo, repoName),
+				number:          item.Number,
+				labels:          item.Labels,
+				acknowledged:    item.HumanAcknowledged,
+				createdAt:       item.CreatedAt,
+				updatedAt:       item.UpdatedAt,
+				reporterGate:    item.ReporterConfirmationGate,
+				bucket:          item.Bucket,
+				bucketReason:    item.Reason,
+				decisionBlocker: decisionBlockerFor(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number), item.OpenBlockers, decisionParks, repoName),
 			}
 			in.hiveClosingPR = hiveClosingPRFor(*repo, repoName, item.Number)
 			decision := withReleaseAction(decideIssueOwnershipGated(in, env), item.OwnerStep, env.releaseOnApproveFor(in.repo))

@@ -2085,7 +2085,23 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
-			details = append(details, c.workIssue(repo, issue, labels, "filtered", suppress))
+			row := c.workIssue(repo, issue, labels, "filtered", suppress)
+			// A decision park blocked by another open decision park waits
+			// on that one's answer, not on its own (the dashboard's
+			// ownership), so its blockers are read: one call, only for a
+			// decision park with an open blocker. An unreadable list
+			// leaves the row an ask of its own.
+			row.OpenBlockedBy = blockedCounts[issue.GetNumber()]
+			if row.OpenBlockedBy > 0 && (labelPresent(labels, c.needsDecisionLabel()) || labelPresent(labels, NeedsDecisionStageLabel)) {
+				deps, depErr := c.githubBlockedByDependencies(ctx, owner, repoName, repo, issue.GetNumber())
+				if depErr != nil {
+					c.logger.Warn("issue enumeration: could not read a parked issue's \"blocked by\" dependencies; it stays its own ask this cycle",
+						slog.String("repo", repo), slog.Int("number", issue.GetNumber()), slog.String("error", depErr.Error()))
+				} else {
+					row.OpenBlockers = Issue{DependsOn: deps}.OpenBlockers()
+				}
+			}
+			details = append(details, row)
 			continue
 		}
 
@@ -5113,6 +5129,10 @@ type RepoWorkIssue struct {
 	// (liftBlockedMarkerless).
 	ReviewBacklog bool `json:"review_backlog,omitempty"`
 	OpenBlockedBy int  `json:"open_blocked_by,omitempty"`
+	// OpenBlockers are the keys ("repo#N") of a decision park's open
+	// blocked-by issues, read only for such a park; the dashboard checks
+	// whether one is itself a decision park (Issue.OpenBlockers).
+	OpenBlockers []string `json:"open_blockers,omitempty"`
 	// Advisory is the body-derived advisory classification (dedupe
 	// checklist marker, "Decision required: no"), read here because the
 	// body itself is not carried (hivecommons/hive#15381).
