@@ -56,6 +56,28 @@ type Ledger struct {
 	entries map[string]Entry
 	now     func() time.Time
 	loaded  bool
+	// capabilityCheck refutes a capability report (SetCapabilityCheck).
+	capabilityCheck func(repo string, k Kind) bool
+}
+
+// SetCapabilityCheck installs the check Observe asks before it records a
+// capability blocker: true means the hive verified it holds that capability
+// on repo (for workflows: the installation grants `workflows: write` and a
+// lane whose token asks for it serves the repo), so an agent's "the App
+// cannot push workflow files" is not recorded as a blocker
+// (projectbluefin/testsuite#1059). Nil, the default, records every report.
+func (l *Ledger) SetCapabilityCheck(fn func(repo string, k Kind) bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.capabilityCheck = fn
+}
+
+// capabilityHeld runs the check outside the ledger lock: it may read GitHub.
+func (l *Ledger) capabilityHeld(repo string, k Kind) bool {
+	l.mu.Lock()
+	fn := l.capabilityCheck
+	l.mu.Unlock()
+	return fn != nil && k.IsCapability() && fn(repo, k)
 }
 
 // NewLedger returns a ledger backed by path (loaded lazily; a missing or
@@ -138,6 +160,11 @@ func (l *Ledger) Observe(repo string, number int, text string, at time.Time) (En
 			e, _ := l.Get(repo, number)
 			return e, false
 		}
+		return l.RecordReason(repo, number, NormalizeReason(text), at), true
+	}
+	if l.capabilityHeld(repo, b.Kind) {
+		// The hive holds the capability the report says is missing: keep the
+		// reason for the loop guard, park nothing on it.
 		return l.RecordReason(repo, number, NormalizeReason(text), at), true
 	}
 	return l.Record(repo, number, b, NormalizeReason(text)), true
@@ -276,6 +303,45 @@ func (l *Ledger) ClearKind(k Kind) int {
 		_ = l.save()
 	}
 	return n
+}
+
+// RecheckCapabilities lifts every capability blocker that held(repo, kind)
+// now refutes and returns the released entries as they were. It is the
+// scheduled form of the dashboard's Re-check permissions, per item rather
+// than per kind, so a blocker on a repo no capable lane serves stays. held
+// runs outside the ledger lock; a blocker that changed kind meanwhile is kept.
+func (l *Ledger) RecheckCapabilities(held func(repo string, k Kind) bool) []Entry {
+	if held == nil {
+		return nil
+	}
+	var refuted []Entry
+	for _, e := range l.Blockers() {
+		if e.Blocker.Kind.IsCapability() && held(e.Repo, e.Blocker.Kind) {
+			refuted = append(refuted, e)
+		}
+	}
+	if len(refuted) == 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var released []Entry
+	for _, was := range refuted {
+		k := Key(was.Repo, was.Number)
+		e, ok := l.entries[k]
+		if !ok || e.Blocker == nil || e.Blocker.Kind != was.Blocker.Kind || !e.Blocker.Since.Equal(was.Blocker.Since) {
+			continue
+		}
+		e.Blocker = nil
+		e.Reapplied = false
+		e.ClearedAt = l.now()
+		l.entries[k] = e
+		released = append(released, was)
+	}
+	if len(released) > 0 {
+		_ = l.save()
+	}
+	return released
 }
 
 // Blockers lists every current blocker, sorted by item key.
