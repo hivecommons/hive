@@ -1,0 +1,1 @@
+- ACMM pack agents (such as strategist) now get their per-agent user, private group and pre-created token cache when the level comes from the config's `acmm_level` or the persisted hive state, not only from `HIVE_LEVEL`, so they no longer fall back to the shared full-privilege token ([#16803](https://github.com/hivecommons/hive/issues/16803)).
