@@ -349,7 +349,13 @@ blocked sweep that follows each stage-label sync lifts the label and posts
 one `<!-- hive:unblocked -->` note once the tracked PR is merged or closed,
 and strips `help wanted` again should the org workflow re-add it while the
 PR is open. The review backlog applies the same parking itself when it files
-a finding whose file does not exist on the reviewed PR's base branch.
+a finding whose file does not exist on the reviewed PR's base branch. The
+review-backlog reconciler and the blocked sweep can both lift the same block;
+whichever runs second sees the first one's note for that PR (newer than the
+last blocked-on marker) and posts nothing. On an issue `project.issue_filter`
+does not admit (for example no `triage/accepted`), the note says
+"Unblocked — waiting for a maintainer to admit it" and names the label that
+admits it, instead of "actionable now" or "re-triaging".
 
 A posted comment is the agent's **start signal** on that issue only when it
 says work is starting. The hub records a 2h agent claim the first time the
@@ -793,6 +799,15 @@ Every consolidated result also carries `consolidated_reason`: `subject` (a
 canonical title match on a human-filed issue), `file_set` (an exact file-set
 twin) or `component:<path>` (a same-component fold on `<path>`), so the agent
 can tell a true twin from a shared-path fold.
+
+### Dedupe checklists never take a fold
+
+A dedupe-agent checklist (body carrying `<!-- hive:dedupe-checklist repo=… -->`)
+cites every path its pairs touch, so a path fold would bury the whole repo
+checklist in whichever finding shares one: projectbluefin/actions#543, a
+data-loss bug, received the repository's checklist as a "Folded finding". A
+checklist skips the same folds as a DAG child (below); an open issue with the
+exact same title is still reused.
 
 ### DAG children never take a fold
 
