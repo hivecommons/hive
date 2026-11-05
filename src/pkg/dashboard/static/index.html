@@ -22496,16 +22496,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const data = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(_stageTracker, Date.now()) : _stageTracker;
       return keys.map(k => stageTrackerItemByKey(data, k)).filter(Boolean);
     }
+    // Pure: whether the viewer's identity is still loading — the auth
+    // fetch (showGHAuthState) has not answered yet and nothing else has
+    // named a user or role. Unknown is not "read": on a hard reload the
+    // tracker's first paint lands before auth resolves, and gating the
+    // pills on 'read' here made them flash disabled for a poll interval
+    // (hivecommons/hive#16754).
+    function stageTrackerAuthPending() {
+      if (typeof window === 'undefined') return false;
+      return !window._hiveAuthKnown && window._hiveRole === undefined && !window._hiveUser;
+    }
     // What the signed-in viewer may do on this repo. Hold permission is
     // looked up lazily (the server answers 403 either way); needs-human is
-    // merger/owner only.
+    // merger/owner only. While the viewer's identity is still loading the
+    // ctx is optimistic — like canHold === null, unknown renders enabled
+    // and the server's 403 is the answer to a click that beat auth; the
+    // repaint showGHAuthState schedules settles the pills within the tick.
     function stageTrackerActionCtx(repo) {
+      const governor = (window._lastStatus && window._lastStatus.governor) || null;
+      if (stageTrackerAuthPending()) return { user: true, canHold: null, canHuman: true, authPending: true, login: '', governor };
       const role = window._hiveRole || 'read';
       const owner = dashboardRoleAtLeast(role, 'owner');
       const user = !!window._hiveUser || owner;
       if (typeof ensureRepoHoldPermission === 'function') ensureRepoHoldPermission(repo);
       const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
-      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor: (window._lastStatus && window._lastStatus.governor) || null };
+      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
     // "Needs human decision" pill on the Merge queue column) decides itself;
@@ -66911,7 +66926,23 @@ function burnAreaChart() {
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     }
 
+    /* The viewer's identity is known once showGHAuthState has run on either
+       path (or checkGHAuth gave up). Until then the stage tracker treats the
+       viewer as unknown rather than 'read' (stageTrackerAuthPending), so a
+       hard reload does not flash the decision pills disabled; when the
+       answer lands, repaint the tracker once — only if something changed. */
+    function hiveAuthResolved() {
+      const before = (window._hiveAuthKnown ? 'k' : '') + '|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
+      window._hiveAuthKnown = true;
+      return function() {
+        const after = 'k|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
+        if (after === before) return;
+        if (typeof renderStageTracker === 'function' && typeof _stageTracker !== 'undefined' && _stageTracker) renderStageTracker();
+      };
+    }
+
     function showGHAuthState(loggedIn, username, avatarURL, role, displayName) {
+      const repaintTracker = hiveAuthResolved();
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       const banner = document.getElementById('gh-auth-banner');
@@ -66975,6 +67006,7 @@ function burnAreaChart() {
         if (avatarWrap) avatarWrap.hidden = true;
       }
       if (typeof renderPublicKnowledgeControls === 'function') renderPublicKnowledgeControls();
+      repaintTracker();
     }
 
     /* renderMyHivesMenuItem (#9696): point the user menu's "My hives" entry at
@@ -67126,7 +67158,11 @@ function burnAreaChart() {
         const resp = await fetch('/api/gh-user-auth/status');
         const data = await resp.json();
         showGHAuthState(data.logged_in, data.username, data.avatar_url);
-      } catch (e) {}
+      } catch (e) {
+        /* Neither endpoint answered: the viewer is anonymous as far as the
+           page can tell. Say so, or the tracker waits on auth forever. */
+        hiveAuthResolved()();
+      }
     }
 
     function showSetupDetails(which) {
