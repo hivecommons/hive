@@ -51767,20 +51767,17 @@ function burnAreaChart() {
       var at = rs.attempt || {};
       var aTone = 'muted', aIcon = 'ⓘ', aLabel = '';
       var hideAttemptRow = false;
-      var supersededNote = '';
+      var supersededSuccess = false;
       var targetShort = at.target ? versionShortSHA(at.target) : '';
       switch (at.state) {
         case 'succeeded':
           if (at.superseded && at.runningCommit) {
-            // The recorded upgrade landed but the hive has since been rolled to
-            // another commit: headline the running commit (the one the version
-            // menu shows) and age the RUNNING build, not the superseded
-            // attempt. The superseded note moves to the secondary line with
-            // its own timestamp so the two ages are never conflated.
+            // A later roll makes the old successful attempt history, not an
+            // actionable status. Show the running build and its own age.
+            supersededSuccess = true;
             aTone = 'muted'; aIcon = '↷';
             aLabel = 'Running <strong>' + escapeHtml(at.runningCommit) + '</strong>' +
               (at.rolledExternally ? ' <span class="text-muted">(rolled externally)</span>' : '');
-            supersededNote = targetShort ? 'Last spoke-side upgrade to ' + targetShort + ' superseded' : '';
             break;
           }
           aTone = 'success'; aIcon = '✅';
@@ -51817,7 +51814,7 @@ function burnAreaChart() {
       var attemptWhen = at.completedAt || at.at || '';
       var when = attemptWhen;
       var whenTitle = '';
-      if (supersededNote) {
+      if (supersededSuccess) {
         when = at.runningSince || '';
         if (when) whenTitle = 'running since ' + when;
       }
@@ -51825,18 +51822,9 @@ function burnAreaChart() {
       if (when) {
         whenHtml = ' · <span class="text-muted" title="' + escapeHtml(whenTitle || when) + '">' + escapeHtml(relativeAge(when)) + '</span>';
       }
-      var detail = at.detail || '';
+      var detail = supersededSuccess ? '' : (at.detail || '');
       if (targetShort && /hive is running/i.test(detail) && detail.toLowerCase().indexOf(targetShort.toLowerCase()) >= 0) detail = '';
       var detailHtml = detail ? '<div class="release-status-detail">' + escapeHtml(detail) + '</div>' : '';
-      if (supersededNote) {
-        // Secondary line: what the spoke upgrader last did, with its own age.
-        // Once that attempt predates the running build it is plain history.
-        var noteAge = attemptWhen ? relativeAge(attemptWhen) : '';
-        var noteOld = attemptWhen && when && Date.parse(attemptWhen) < Date.parse(when);
-        detailHtml = '<div class="release-status-detail' + (noteOld ? ' text-muted' : '') + '" title="' + escapeHtml(at.detail || '') + '">' +
-          escapeHtml(supersededNote) + (noteAge ? ' · <span title="' + escapeHtml(attemptWhen) + '">' + escapeHtml(noteAge) + '</span>' : '') +
-          '</div>';
-      }
 
       // --- Staleness warning: never present stale data as current truth. ---
       var staleHtml = '';
