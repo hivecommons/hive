@@ -1,0 +1,1 @@
+- Clarify gateway model reconciliation logs by distinguishing the old model from the selected gateway model.
