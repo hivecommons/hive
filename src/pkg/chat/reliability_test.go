@@ -12,6 +12,9 @@ import (
 )
 
 func TestSSELoopBackoffResetsAfterConnectedSession(t *testing.T) {
+	// A large base keeps scheduler/CI jitter small relative to the gap between a
+	// reset delay (base..1.5*base) and an unreset one (>= 4*base).
+	const base = 200 * time.Millisecond
 	var requests atomic.Int64
 	times := make(chan time.Time, 4)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,8 +29,8 @@ func TestSSELoopBackoffResetsAfterConnectedSession(t *testing.T) {
 	defer ts.Close()
 
 	s := newTestBot(ts, "ch")
-	s.sseReconnectBase = 30 * time.Millisecond
-	s.sseReconnectMax = time.Second
+	s.sseReconnectBase = base
+	s.sseReconnectMax = 10 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go s.sseLoop(ctx)
@@ -37,13 +40,13 @@ func TestSSELoopBackoffResetsAfterConnectedSession(t *testing.T) {
 		select {
 		case tm := <-times:
 			seen = append(seen, tm)
-		case <-time.After(2 * time.Second):
+		case <-time.After(15 * time.Second):
 			t.Fatalf("timed out waiting for SSE reconnects; got %d", len(seen))
 		}
 	}
 	cancel()
 	postSuccessDelay := seen[3].Sub(seen[2])
-	if postSuccessDelay > 90*time.Millisecond {
+	if postSuccessDelay >= 4*base {
 		t.Fatalf("post-success reconnect delay = %v, want reset near base", postSuccessDelay)
 	}
 }
