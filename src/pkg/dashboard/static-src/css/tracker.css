@@ -561,6 +561,8 @@
     @keyframes ham-plan-skeleton-pulse { 50% { opacity: .55; } }
     @media (prefers-reduced-motion: reduce) { .ham-plan-skeleton-line { animation: none; } }
     .ham-plan-error { margin: 0 0 var(--sp-4); color: var(--status-error); }
+    .ham-plan-error-why { margin: 0 0 var(--sp-4); color: var(--muted); }
+    .ham-plan-error-rails { margin: 0 0 var(--sp-4); font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-plan-merge[hidden] { display: none; }
     /* A covered issue's "decision pending on #N" chip goes to the PR's row. */
     .ham-decision-pending { font-family: inherit; font-size: var(--fs-xs); background: transparent; cursor: pointer; }
