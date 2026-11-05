@@ -262,8 +262,9 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
   "nudged contributor lane". **Agents never watch or poll CI themselves**:
   detection is out-of-band via this webhook path, or the sweep as fallback.
-- **Gated workflow runs are approved for trusted heads.** After each CI
-  enrichment pass the sweep looks for open, non-draft PR heads whose
+- **Gated workflow runs are approved for trusted heads.** After the CI
+  enrichment pass of a full (non-cached) cycle in `normal` API-budget
+  mode, the sweep looks for open, non-draft PR heads whose
   workflow runs sit behind GitHub's "Approve and run workflows" gate
   (`action_required`) and approves them **at most once per PR head**
   ([#16603](https://github.com/hivecommons/hive/issues/16603)). A head is
@@ -286,6 +287,11 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   approval on GitHub`. Because approved runs execute the head's workflow
   files on the repository's runners, operators on self-hosted runners who
   want an explicit opt-in should set `governor.ci.auto_approve_workflows: false`.
+  The sweep is an optional enrichment step: it is shed in `conserve` /
+  `critical` mode, on off-cadence cycles and on cached (webhook-wake)
+  cycles, so a gated head waits for the next full `normal`-mode cycle.
+  `EnrichCIStatus` still runs on those cycles, so the
+  `waiting on workflow approval` state remains visible meanwhile.
 - **A recorded review verdict also wakes the governor loop.** When the
   relay records a verdict bound to a review dispatch, the head that wrote it
   is free and the PR may be ready for its next head or its decision kick, so
