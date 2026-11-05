@@ -19,6 +19,13 @@ import (
 // started, and #890 went to 072 for "Failing checks: Canary".
 func attributionServer(t *testing.T, runs []map[string]any, suiteStatus int, calls map[string]int) *httptest.Server {
 	t.Helper()
+	// Workflow runs behind each check suite, as GET actions/runs?check_suite_id=
+	// returns them; suite 900 is another app's (no workflow run).
+	workflowRuns := map[string]string{
+		"878": `{"total_count":1,"workflow_runs":[{"id":42111306103,"head_branch":"fix/bot-pr-required-check-handoff","head_repository":{"full_name":"kylerankin/r"}}]}`,
+		"890": `{"total_count":1,"workflow_runs":[{"id":42114117162,"head_branch":"danathar/supersede-878","head_repository":{"full_name":"o/r"}}]}`,
+		"900": `{"total_count":0,"workflow_runs":[]}`,
+	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		calls[r.URL.Path]++
@@ -27,18 +34,24 @@ func attributionServer(t *testing.T, runs []map[string]any, suiteStatus int, cal
 			_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "statuses": []any{}})
 		case "/repos/o/r/commits/95b9d22/check-runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
-		case "/repos/o/r/check-suites/878":
-			if suiteStatus != 0 {
+		case "/repos/o/r/actions/runs":
+			suite := r.URL.Query().Get("check_suite_id")
+			calls["suite:"+suite]++
+			if suite == "878" && suiteStatus != 0 {
 				w.WriteHeader(suiteStatus)
 				return
 			}
-			_, _ = w.Write([]byte(`{"id":878,"head_branch":"fix/bot-pr-required-check-handoff","head_sha":"95b9d22"}`))
-		case "/repos/o/r/check-suites/890":
-			_, _ = w.Write([]byte(`{"id":890,"head_branch":"danathar/supersede-878","head_sha":"95b9d22"}`))
+			_, _ = w.Write([]byte(workflowRuns[suite]))
+		case "/repos/o/r/check-suites/900":
+			_, _ = w.Write([]byte(`{"id":900,"head_branch":"other-app-branch","head_sha":"95b9d22"}`))
 		case "/repos/o/r/pulls/890":
-			_, _ = w.Write([]byte(`{"number":890,"head":{"ref":"danathar/supersede-878","sha":"95b9d22"}}`))
+			_, _ = w.Write([]byte(`{"number":890,"head":{"ref":"danathar/supersede-878","sha":"95b9d22","repo":{"full_name":"o/r"}}}`))
+		case "/repos/o/r/pulls/891":
+			// An in-repo copy pushed under the fork's branch name
+			// (gh pr checkout 878 && git push origin HEAD).
+			_, _ = w.Write([]byte(`{"number":891,"head":{"ref":"fix/bot-pr-required-check-handoff","sha":"95b9d22","repo":{"full_name":"o/r"}}}`))
 		case "/repos/o/r/pulls/878":
-			_, _ = w.Write([]byte(`{"number":878,"head":{"ref":"fix/bot-pr-required-check-handoff","sha":"95b9d22"}}`))
+			_, _ = w.Write([]byte(`{"number":878,"head":{"ref":"fix/bot-pr-required-check-handoff","sha":"95b9d22","repo":{"full_name":"kylerankin/r"}}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -94,6 +107,9 @@ func TestCheckRunsAttributedByPR(t *testing.T) {
 		{name: "#890: its own red Canary counts", pr: 890, runs: []map[string]any{build, checkRunJSON(4, "Canary", "completed", "failure", 890, 890)}, wantRed: true},
 		{name: "#890: a red run with no PR on its own branch counts (push run)", pr: 890, runs: []map[string]any{build, checkRunJSON(5, "Canary", "completed", "failure", 890)}, wantRed: true},
 		{name: "#890: suite lookup fails, the run is kept", pr: 890, runs: []map[string]any{build, forkCanary}, suiteStatus: http.StatusInternalServerError, wantRed: true},
+		{name: "#891: in-repo copy under the fork's branch name: the fork run is not #891's", pr: 891, runs: []map[string]any{build, forkCanary}, wantRed: false},
+		{name: "#890: another app's suite on another branch is not #890's", pr: 890, runs: []map[string]any{build, checkRunJSON(7, "Canary", "completed", "failure", 900)}, wantRed: false},
+		{name: "#891: another app's suite is judged on branch alone", pr: 891, runs: []map[string]any{build, checkRunJSON(8, "Canary", "completed", "failure", 900)}, wantRed: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := map[string]int{}
@@ -117,14 +133,14 @@ func TestCheckRunAttributionLookupsAreBounded(t *testing.T) {
 	if st := evaluateAttribution(t, srv, 0); !strings.HasPrefix(st.Reason, "check-failing:Canary") {
 		t.Fatalf("commit-only read must keep every run: reason %q", st.Reason)
 	}
-	if calls["/repos/o/r/check-suites/878"] != 0 || calls["/repos/o/r/check-suites/890"] != 0 {
+	if calls["/repos/o/r/actions/runs"] != 0 || calls["/repos/o/r/pulls/890"] != 0 {
 		t.Fatalf("lookups without a PR: %v", calls)
 	}
 	calls = map[string]int{}
 	srv2 := attributionServer(t, []map[string]any{checkRunJSON(1, "build", "completed", "success", 890), checkRunJSON(6, "lint", "completed", "success", 878)}, 0, calls)
 	defer srv2.Close()
 	evaluateAttribution(t, srv2, 890)
-	if calls["/repos/o/r/check-suites/878"] != 0 || calls["/repos/o/r/pulls/890"] != 0 {
+	if calls["/repos/o/r/actions/runs"] != 0 || calls["/repos/o/r/pulls/890"] != 0 {
 		t.Fatalf("green runs cost lookups: %v", calls)
 	}
 }
@@ -141,7 +157,7 @@ func TestCheckRunAttributionCachesSuite(t *testing.T) {
 	if st := evaluateAttribution(t, srv, 890); st.Reason != "" || len(st.FailingNonRequired) != 0 {
 		t.Fatalf("reason %q failing %v, want #878's runs dropped", st.Reason, st.FailingNonRequired)
 	}
-	if calls["/repos/o/r/check-suites/878"] != 1 || calls["/repos/o/r/pulls/890"] != 1 {
+	if calls["suite:878"] != 1 || calls["/repos/o/r/pulls/890"] != 1 {
 		t.Fatalf("lookups = %v, want one suite read and one PR read", calls)
 	}
 }

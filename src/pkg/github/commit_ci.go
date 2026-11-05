@@ -1120,26 +1120,48 @@ func groupedCheckRuns(checks []*gh.CheckRun) map[checkRunIdentity][]*gh.CheckRun
 // its author for "Failing checks: Canary" 41 seconds after it opened, on the
 // Canary run of the fork PR #878 at the same SHA, while #890's own Canary had
 // not started. A run naming pull requests counts only when it names this one.
-// A red run naming none (GitHub omits fork PRs there) counts only when its
-// check suite ran for this PR's head branch. Lookups that fail keep the run,
-// so a doubt can only over-block. Green and running runs are kept as they
-// are: only a red one can return a PR to its author.
+// A red run naming none (GitHub omits fork PRs there) counts only when it ran
+// for this PR's head: the Actions workflow run behind its check suite names
+// the head repository and branch (the check-suite API names no head
+// repository, and an in-repo copy pushed under the fork's branch name shares
+// the branch); a suite with no workflow run (another app) is judged on its
+// head branch alone. Lookups that fail keep the run, so a doubt can only
+// over-block. Green and running runs are kept as they are: only a red one can
+// return a PR to its author.
 func checkRunsForPR(ctx context.Context, client *gh.Client, owner, repo string, checks []*gh.CheckRun, number int) []*gh.CheckRun {
+	type head struct{ repo, branch string }
 	var (
-		headRef      string
-		headRefRead  bool
-		suiteBranch  = map[int64]string{}
-		out          = make([]*gh.CheckRun, 0, len(checks))
-		prHeadBranch = func() string {
-			if !headRefRead {
-				headRefRead = true
-				if pr, _, err := client.PullRequests.Get(ctx, owner, repo, number); err == nil {
-					headRef = pr.GetHead().GetRef()
-				}
-			}
-			return headRef
-		}
+		prHead     head
+		prHeadRead bool
+		suiteHeads = map[int64]head{}
+		out        = make([]*gh.CheckRun, 0, len(checks))
 	)
+	prHeadOf := func() head {
+		if !prHeadRead {
+			prHeadRead = true
+			if pr, _, err := client.PullRequests.Get(ctx, owner, repo, number); err == nil {
+				prHead = head{repo: pr.GetHead().GetRepo().GetFullName(), branch: pr.GetHead().GetRef()}
+			}
+		}
+		return prHead
+	}
+	suiteHeadOf := func(id int64) head {
+		if h, ok := suiteHeads[id]; ok {
+			return h
+		}
+		var h head
+		runs, _, err := client.Actions.ListRepositoryWorkflowRuns(ctx, owner, repo, &gh.ListWorkflowRunsOptions{CheckSuiteID: id, ListOptions: gh.ListOptions{PerPage: 1}})
+		if err == nil && len(runs.WorkflowRuns) > 0 {
+			run := runs.WorkflowRuns[0]
+			h = head{repo: run.GetHeadRepository().GetFullName(), branch: run.GetHeadBranch()}
+		} else if err == nil {
+			if suite, _, err := client.Checks.GetCheckSuite(ctx, owner, repo, id); err == nil {
+				h.branch = suite.GetHeadBranch()
+			}
+		}
+		suiteHeads[id] = h
+		return h
+	}
 	for _, cr := range checks {
 		if cr == nil || cr.GetStatus() != "completed" || !checkConclusionIsRed(cr.GetConclusion()) {
 			out = append(out, cr)
@@ -1156,19 +1178,22 @@ func checkRunsForPR(ctx context.Context, client *gh.Client, owner, repo string, 
 			out = append(out, cr)
 			continue
 		}
-		branch, ok := suiteBranch[suiteID]
-		if !ok {
-			if suite, _, err := client.Checks.GetCheckSuite(ctx, owner, repo, suiteID); err == nil {
-				branch = suite.GetHeadBranch()
-			}
-			suiteBranch[suiteID] = branch
-		}
-		if ref := prHeadBranch(); branch != "" && ref != "" && branch != ref {
+		if foreignHead(suiteHeadOf(suiteID), prHeadOf()) {
 			continue
 		}
 		out = append(out, cr)
 	}
 	return out
+}
+
+// foreignHead reports whether a check suite's head is known to differ from
+// the PR's: a different head repository when both are known, else a
+// different head branch when both are known. Unknown is not foreign.
+func foreignHead(suite, pr struct{ repo, branch string }) bool {
+	if suite.repo != "" && pr.repo != "" && !strings.EqualFold(suite.repo, pr.repo) {
+		return true
+	}
+	return suite.branch != "" && pr.branch != "" && suite.branch != pr.branch
 }
 
 // checkRunNamesPR reports whether the check run's pull_requests list names
