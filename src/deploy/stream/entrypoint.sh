@@ -125,6 +125,7 @@ export RUN_DIR PROGRESS FFMPEG_PID FFMPEG_STARTED HEALTH_JSON HEARTBEAT_FILE
 log() { printf '%s stream: %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
 pids=()
+# shellcheck disable=SC2329  # invoked via the trap below
 cleanup() { trap - EXIT INT TERM; log "shutting down"; kill "${pids[@]}" 2>/dev/null || true; wait 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
