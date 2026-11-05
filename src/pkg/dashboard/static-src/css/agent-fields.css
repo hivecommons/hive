@@ -68,9 +68,8 @@
     .agent-card.off { border-left-color: color-mix(in srgb, var(--muted) 60%, var(--bg)); opacity: 0.6; }
     .agent-card.off .agent-state { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); }
     .pause-badge { --component-status: var(--status-error); margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe */
-    .pause-info { cursor: help; font-size: 0.7rem; margin-left: var(--sp-2); opacity: 0.8; position: relative; display: inline-block; }
-    .pause-info:hover .pause-tooltip { display: block; }
-    .pause-tooltip { display: none; position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 10px; font-size: 0.7rem; white-space: nowrap; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+    .config-info.pause-info { cursor: help; font-size: 0.7rem; margin-left: var(--sp-2); opacity: 0.8; }
+    .config-tooltip-portal.pause-tooltip { max-width: calc(100vw - 16px); box-sizing: border-box; overflow-wrap: anywhere; }
     .off-badge { margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe (default muted) */
     .on-demand-badge { --component-status: var(--status-info); margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe */
 

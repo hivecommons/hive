@@ -1,5 +1,15 @@
 # Spoke dashboard
 
+## Resuming a paused agent
+
+On the agent card, hover or focus the information icon beside **paused** to
+see the recorded reason, trigger, actor and time. An owner can lift the pause
+with **▶ resume**, or **▶ start & resume** if the session is down. If the
+agent is disabled, turn it on first; viewers without owner access must ask an
+owner to resume it. The pause is separate from the **Enabled** setting and from
+per-mode cadences: after resuming, check **Cadences** if the current governor
+mode still has no schedule.
+
 ## Base preparation visibility
 
 The Activity Monitor shows a compact **Preparation train** pill directly above
