@@ -60,7 +60,7 @@ func TestGeneralConfigDisabledAgentDoesNotWarnAboutMissingProcess(t *testing.T) 
 	var logs bytes.Buffer
 	s.logger = slog.New(slog.NewTextHandler(&logs, nil))
 
-	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/strategist/general", strings.NewReader(`{"display_name":"Strategy"}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/strategist/general", strings.NewReader(`{"displayName":"Strategy"}`))
 	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
