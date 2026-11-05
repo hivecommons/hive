@@ -115,6 +115,6 @@ assert.strictEqual(counts.badge, 3);
 assert.ok(counts.badgeTitle.includes('3 rows (6 issues + 1 PR on its own row)'), counts.badgeTitle);
 assert.ok(counts.badgeTitle.includes('4 review notes folded under their PR'), counts.badgeTitle);
 assert.ok(!counts.badgeTitle.includes("issue's row"), 'no PR shares an issue row here: ' + counts.badgeTitle);
-assert.deepStrictEqual(stageTrackerRowBreakdown(7, { issues: 6, prs: 1 }), { known: true, rows: 7, issues: 6, prs: 1, standalonePRs: 1, shared: 0, folded: 0 }, 'without folding the breakdown is as before');
+assert.deepStrictEqual(stageTrackerRowBreakdown(7, { issues: 6, prs: 1 }), { known: true, rows: 7, issues: 6, prs: 1, standalonePRs: 1, shared: 0, folded: 0, standing: 0 }, 'without folding the breakdown is as before');
 `)
 }

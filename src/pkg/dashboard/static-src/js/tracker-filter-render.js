@@ -110,7 +110,7 @@
       if (typeof stageTrackerNativeQueueSync === 'function') stageTrackerNativeQueueSync(d, page.rows, nowMs, f.repo);
       if (typeof stageTrackerExecutionSync === 'function') stageTrackerExecutionSync(d, nowMs);
       // Attention is counted over the filtered set, nested PRs included.
-      const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
+      const filteredAll = d.items.filter(it => !stageTrackerIsStandingMeta(it) && stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
       // "N filtered out" and the sidebar pill count against the default
       // view's rows (stageTrackerRowCount), so drawing a PR on its issue's
@@ -124,8 +124,8 @@
       // is the warn-coloured header suffix and the pill's tooltip, counted
       // over every item regardless of filter. The same count lands on the
       // monitor header's own pill, the one chrome-less views can see.
-      const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
-      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll, stageTrackerFoldedCount(d.items, ctx));
+      const attentionAll = d.items.filter(it => !stageTrackerIsStandingMeta(it) && stageTrackerNeedsAttention(it)).length;
+      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll, stageTrackerFoldedCount(d.items, ctx), stageTrackerStandingCount(d.items));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       navCountBind(STAGE_TRACKER_COUNT_BADGE_IDS, counts.badge, counts.badgeTitle, !!data || countRefresh);
       stageTrackerRenderWaiting(d, nowMs, !!data || countRefresh);
