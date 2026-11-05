@@ -162,7 +162,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		// The gate's refusal is a fact about the record: readers that
 		// compare the record with the item's labels must know the labels
 		// never carried the stage.
-		r.opts.Store.NoteLabelsSuppressed(key, out.Suppressed)
+		r.opts.Store.NoteLabelsSuppressed(key, out.Suppressed, out.SuppressedReason)
 	}
 	r.opts.Metrics.WriterWrite(f.Ref.Kind, OpAdd, len(out.Added))
 	r.opts.Metrics.WriterWrite(f.Ref.Kind, OpRemove, len(out.Removed))
