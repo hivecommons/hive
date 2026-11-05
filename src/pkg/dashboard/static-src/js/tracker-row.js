@@ -279,6 +279,34 @@
       const src = STAGE_TRACKER_CLAIMANT_SOURCE[c.source] || c.source || '';
       return 'Held by: ' + who + since + (src ? ' (' + src + ')' : '');
     }
+    // Who works a lit "PR in progress" chevron (word is the chevron's bare
+    // word; any other word → null), named the way "Waiting for @x" names
+    // its person: `{ who: '@login', kind }` with kind one of the
+    // actor icons (hive / clanker / human). The recorded holder (claimant)
+    // leads, then the server's stage_actor login, then the PR's author (for
+    // an issue drawn through its one covering PR, that PR's author). Null
+    // when nobody is known — a bot author or an unlabelled one — so the
+    // chevron keeps the bare word; it never guesses a kind from a login.
+    const STAGE_TRACKER_PR_PROGRESS_WORD = 'PR in progress';
+    const STAGE_TRACKER_PR_PROGRESS_KINDS = ['hive', 'clanker', 'human'];
+    function stageTrackerPRProgressActor(item, word) {
+      if (String(word) !== STAGE_TRACKER_PR_PROGRESS_WORD) return null;
+      const c = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      if (c) {
+        const who = stageTrackerClaimantShort(c);
+        return who ? { who, kind: stageTrackerClaimantIconKind(c) } : null;
+      }
+      const sa = stageTrackerStageActor(item);
+      const kindOf = k => k === 'maintainer' ? 'human' : String(k || '');
+      if (sa && sa.login && STAGE_TRACKER_PR_PROGRESS_KINDS.indexOf(kindOf(sa.kind)) >= 0) return { who: '@' + String(sa.login).replace(/^@/, ''), kind: kindOf(sa.kind) };
+      // An issue's own author filed the issue; only a PR row (or an issue
+      // drawn through its PR) has a PR author to name.
+      if (!item || (item.kind !== 'pr' && !item.via_pr) || typeof stageTrackerReturnedAuthor !== 'function') return null;
+      const who = stageTrackerReturnedAuthor(item);
+      if (who.author && STAGE_TRACKER_PR_PROGRESS_KINDS.indexOf(kindOf(who.kind)) >= 0) return { who: '@' + who.author, kind: kindOf(who.kind) };
+      return null;
+    }
+
     // The Fixing column word when nobody is fixing: a bot-authored PR the
     // hive does not touch, or an unowned red PR, reads as its state in
     // plain words instead of an active "Fixing" (hivecommons/docs#500).

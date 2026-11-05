@@ -1,0 +1,1 @@
+- Activity Monitor: a lit "PR in progress" chevron names who works the PR with their kind icon — `PR in progress · @login` plus the hive / clanker / person glyph, the way "Waiting for @login" does (hivecommons/hive#16770); the name truncates with the copy, the tooltip holds the full text, and nobody known keeps the bare word.
