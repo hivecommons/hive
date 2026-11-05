@@ -175,7 +175,10 @@ ownership: the hive follows the head only when GitHub links the commit to the
 App bot (the stage store only remembers SHAs that already passed that
 check); otherwise it hands the PR back as a contributor push
 (`governor.labels.stage.adoption.strict_attribution`, default on; first deploys
-without any repo evidence log and keep adoption). Push-capable App-authored
+without any repo evidence log and keep adoption) — unless an App bot or a
+person with write or higher on the repository, not the author, pushed it:
+that is a maintainer takeover and the adoption stands, with no nudge to the
+author. Push-capable App-authored
 agents use the App bot noreply email (keyed by the bot's GitHub user id, not
 the App id) for git commits so fixer pushes normally carry that GitHub linkage while their commit name/sign-off still names the
 lane. Once the hive's in-place head is green, reviewer-approved, DCO-clean

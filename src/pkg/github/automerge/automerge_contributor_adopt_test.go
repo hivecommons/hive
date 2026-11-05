@@ -89,8 +89,9 @@ type adoptAPI struct {
 }
 
 type adoptCommit struct {
-	login    string // GitHub login of author/committer, or git:<name> for an unlinked identity
-	verified bool
+	login     string // GitHub login of author/committer, or git:<name> for an unlinked identity
+	committer string // GitHub committer login when it differs from login ("" = login)
+	verified  bool
 }
 
 func newAdoptAPI() *adoptAPI {
@@ -338,7 +339,7 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 			_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": nil, "committer": nil, "commit": map[string]any{"author": map[string]any{"name": name}, "committer": map[string]any{"name": name}, "verification": verification}})
 			return true
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": map[string]any{"login": commit.login}, "committer": map[string]any{"login": commit.login}, "commit": map[string]any{"verification": verification}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": map[string]any{"login": commit.login}, "committer": map[string]any{"login": nonEmpty(commit.committer, commit.login)}, "commit": map[string]any{"verification": verification}})
 		return true
 	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/pulls/"):
 		var body map[string]any
@@ -384,6 +385,14 @@ func (a *adoptAPI) setVerifiedCommitAuthor(sha, login string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.commits[sha] = adoptCommit{login: login, verified: true}
+}
+
+// setCommitPushedBy serves sha with distinct GitHub author and committer
+// logins (a rebase, or web-flow committing a web edit).
+func (a *adoptAPI) setCommitPushedBy(sha, author, committer string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.commits[sha] = adoptCommit{login: author, committer: committer}
 }
 
 func (a *adoptAPI) setSuperseder(n int, state string, merged bool) {
@@ -1574,6 +1583,105 @@ func TestAdoptionKeepsWhenHeadCommitLookupFails(t *testing.T) {
 	}
 	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "missing" {
 		t.Fatalf("adoption did not stay on unknown pusher: %+v", rec)
+	}
+}
+
+// A new head without hive evidence yields only when the author (or a
+// read-only third party) pushed it. A push by someone with write or higher,
+// or by an App, is a takeover: the adoption stands and the absent author is
+// neither handed the PR nor nudged (projectbluefin/utah#919: Danathar's push
+// handed the PR back to its offline author; utah-packages#804/#812/#822).
+func TestAdoptionNewHeadPusherDecidesYield(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		setup       func(*adoptAPI)
+		want        string // yield, keep, or defer (adoption kept, head not moved)
+		permissions int    // permission reads the settle makes
+	}{
+		{name: "author push", setup: func(a *adoptAPI) { a.setCommitAuthor("bbb", "mallory") }, want: "yield"},
+		{name: "author web edit", setup: func(a *adoptAPI) { a.setCommitPushedBy("bbb", "mallory", "web-flow") }, want: "yield"},
+		{name: "write collaborator push", setup: func(a *adoptAPI) {
+			a.permissions = map[string]string{"danathar": "write"}
+			a.setCommitAuthor("bbb", "danathar")
+		}, want: "keep", permissions: 1},
+		{name: "maintain collaborator push", setup: func(a *adoptAPI) {
+			a.permissions = map[string]string{"hanthor": "maintain"}
+			a.setCommitAuthor("bbb", "hanthor")
+		}, want: "keep", permissions: 1},
+		{name: "admin collaborator push", setup: func(a *adoptAPI) {
+			a.permissions = map[string]string{"castrojo": "admin"}
+			a.setCommitAuthor("bbb", "castrojo")
+		}, want: "keep", permissions: 1},
+		{name: "maintainer rebase keeps author", setup: func(a *adoptAPI) {
+			a.permissions = map[string]string{"hanthor": "maintain"}
+			a.setCommitPushedBy("bbb", "mallory", "hanthor")
+		}, want: "keep", permissions: 1},
+		{name: "maintainer update branch via web", setup: func(a *adoptAPI) {
+			a.permissions = map[string]string{"danathar": "write"}
+			a.setCommitPushedBy("bbb", "danathar", "web-flow")
+		}, want: "keep", permissions: 1},
+		{name: "other hive app push", setup: func(a *adoptAPI) { a.setCommitAuthor("bbb", "other-hive[bot]") }, want: "keep"},
+		{name: "read-only third party push", setup: func(a *adoptAPI) {
+			a.permissions = map[string]string{"drive-by": "read"}
+			a.setCommitAuthor("bbb", "drive-by")
+		}, want: "yield", permissions: 1},
+		{name: "triage third party push", setup: func(a *adoptAPI) {
+			a.permissions = map[string]string{"drive-by": "triage"}
+			a.setCommitAuthor("bbb", "drive-by")
+		}, want: "yield", permissions: 1},
+		{name: "pusher permission unreadable", setup: func(a *adoptAPI) {
+			a.failPermission = true
+			a.setCommitAuthor("bbb", "danathar")
+		}, want: "defer", permissions: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			h.clock.advance(30 * time.Minute)
+			h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+			key := stageKey("acme", "widget", 7)
+			if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.AdoptedHead != "aaa" {
+				t.Fatalf("not adopted in place: %+v", rec)
+			}
+			h.e.stageStoreOrShared().MarkHivePushedHead(key, "prior-hive-head")
+			tc.setup(h.adopt)
+			reads := h.adopt.permissionReads
+
+			h.api.reset()
+			h.clock.advance(time.Minute)
+			h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+			if got := h.adopt.permissionReads - reads; got != tc.permissions {
+				t.Fatalf("permission reads=%d, want %d", got, tc.permissions)
+			}
+			var yields int
+			for _, c := range h.api.comments {
+				if strings.HasPrefix(c, AdoptionYieldMarker) {
+					yields++
+				}
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			switch tc.want {
+			case "yield":
+				if rec.AdoptedInPlace() || rec.YieldedHead != "bbb" || yields != 1 {
+					t.Fatalf("want yield: yields=%d record=%+v comments=%v", yields, rec, h.api.comments)
+				}
+			case "keep", "defer":
+				wantHead := "bbb"
+				if tc.want == "defer" {
+					wantHead = "aaa"
+				}
+				if !rec.AdoptedInPlace() || rec.AdoptedHead != wantHead || rec.YieldedHead != "" {
+					t.Fatalf("want adoption kept at %s: %+v", wantHead, rec)
+				}
+				if h.api.writes() != 0 || yields != 0 || len(nudgeComments(h.api)) != 0 {
+					t.Fatalf("takeover handed back or nudged: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+				}
+			}
+		})
 	}
 }
 
