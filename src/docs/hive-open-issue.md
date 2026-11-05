@@ -165,6 +165,20 @@ choice applies here"). The dashboard then counts the pair as one owner ask:
 a decision park with an open blocker reads as waiting on that issue, not as
 your turn ([Danathar/tududi#512](https://github.com/Danathar/tududi/issues/512)).
 
+When a `--needs-decision` park (issue or comment) gives no `--blocked-by`, the
+watcher links it itself if the text asks a decision another open issue already
+asks: it reads up to four same-repo `#N` the text names, each lower-numbered
+than the issue being parked (filed earlier, so two asks never wait on each
+other), and links the first that is an open issue still parked on a decision
+and that the text either defers to in so many words ("answer on #N", "pick on
+#N", "the same choice ... #N", "parking this with #N", "#N settles it") or
+shares a cited Actions run with (`/actions/runs/<id>` in its body or a Hive
+comment on it). The park gets one added line, "Hive linked this issue as
+blocked by #N: it asks the same decision, so answer on #N and this issue
+follows it", the result lists the link in `blocked_by_linked`, and the write
+audit records `folded_into`. A pull request is never a target: GitHub's
+"blocked by" links issues.
+
 #### Parking an issue that needs a decision
 
 `--needs-decision` is the way an agent parks an issue it files or, on `comment`, an existing issue. Hive-authored issues must not use it for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions: with `project.agent_issue_decision_policy: resolve` (default), the relay records `Decision taken by hive: …`, keeps the issue actionable, and audits the downgrade. Use it only when the body asks the maintainer to decide a risk category, and include `Risk: <category>` for security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, owner-only credentials/secrets/infra, or uninferable human intent. The script sends `"needs_decision": true` on the request, and

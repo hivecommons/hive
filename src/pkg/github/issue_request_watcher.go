@@ -557,6 +557,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	originalAddLabels := append([]string(nil), addLabels...)
 	removeLabels := normalizeLabelList(req.RemoveLabels)
 	var issueDecisionDowngrade issueDecisionDowngrade
+	// askFoldedInto is the earlier decision park this park was linked
+	// "blocked by" because it asks the same decision (issue_ask_fold.go).
+	var askFoldedInto int
 	if kind == "label" && containsConfiguredDecisionParkLabel(addLabels, c.needsDecisionLabel()) {
 		var dErr error
 		issueDecisionDowngrade, dErr = c.issueDecisionDowngradeForLabel(ctx, req, addLabels)
@@ -715,6 +718,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			// the comment records the decision and the owner-step marker is
 			// withheld so the unpark menu does not offer `/hive done`.
 			issueDecisionDowngrade = c.issueDecisionDowngradeForComment(req, body)
+			if !issueDecisionDowngrade.Active && len(req.BlockedBy) == 0 {
+				if n := c.askFoldTarget(ctx, req.Repo, req.Number, body); n > 0 {
+					req.BlockedBy, askFoldedInto = []int{n}, n
+					body = appendAskFoldNote(body, n)
+				}
+			}
 			if !issueDecisionDowngrade.Active {
 				// The park is a Parked fact for the stage engine, the same
 				// path a `label` request takes: the engine derives and
@@ -879,6 +888,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if d.Active {
 			issueDecisionDowngrade = d
 		}
+		if req.NeedsDecision && !issueDecisionDowngrade.Active && len(req.BlockedBy) == 0 {
+			if n := c.askFoldTarget(ctx, req.Repo, 0, req.Title+"\n"+createBody); n > 0 {
+				req.BlockedBy, askFoldedInto = []int{n}, n
+				createBody = appendAskFoldNote(createBody, n)
+			}
+		}
 		// A declared parent/blocked-by makes the request a distinct DAG node;
 		// never fold it into a sibling that merely cites the same path (#16065).
 		dagSkipReason := ""
@@ -1008,6 +1023,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 	if kind == "comment" && req.NeedsDecision && !issueDecisionDowngrade.Active {
 		extra = append(extra, "parked", c.needsDecisionLabel())
+	}
+	if askFoldedInto > 0 {
+		extra = append(extra, "folded_into", strconv.Itoa(askFoldedInto))
 	}
 	if kind == "label" {
 		extra = []string{
