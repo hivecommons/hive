@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -202,5 +203,19 @@ func TestNavbarRemovedChipSpecificMetricOverrides(t *testing.T) {
 		if !strings.Contains(componentsCSS, want) {
 			t.Errorf("shared navbar chip CSS is missing %q", want)
 		}
+	}
+}
+
+func TestDrawerToggleLabelVisibleAtPhoneWidths(t *testing.T) {
+	css, err := os.ReadFile("static-src/css/agent-detail.css")
+	if err != nil {
+		t.Fatalf("reading agent-detail.css: %v", err)
+	}
+	cssStr := string(css)
+	
+	// The rule that hides labels for .nav-chip--action must exempt #oc-drawer-toggle
+	// at phone widths (max-width: 600px) so the Navigation label remains visible.
+	if !strings.Contains(cssStr, `.oc-topbar .nav-chip--action:not(#oc-drawer-toggle) .nav-chip__label`) {
+		t.Error("agent-detail.css is missing :not(#oc-drawer-toggle) exemption; drawer toggle label would be hidden at phone widths")
 	}
 }
