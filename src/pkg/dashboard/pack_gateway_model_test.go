@@ -619,6 +619,10 @@ func TestApplyPackKeepsGatewayPlacementAfterOverridesLost(t *testing.T) {
 				srv.deps.Config.Governor.Gateways = []config.GatewayConfig{{
 					Name: gateway, Kind: config.GatewayKindLiteLLM, Endpoint: "https://litellm.example.test",
 				}}
+				// Match production wiring so overrides accept configured gateway names.
+				srv.deps.AgentMgr.SetGatewayBackendChecker(func(backend string) bool {
+					return srv.deps.Config.Governor.ResolveGateway(backend) != nil
+				})
 			}
 			for _, name := range []string{"scanner", "quality", "guide"} {
 				if err := srv.deps.AgentMgr.SetBackendOverride(name, gateway); err != nil {
