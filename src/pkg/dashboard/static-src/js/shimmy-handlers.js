@@ -275,6 +275,8 @@
       gh33: function (event, A) { markDirty('general','sortOrder',parseInt(this.value,10)); },
       gh34: function (event, A) { markDirty('general','replicas',Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)));this.value=Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)); },
       gh35: function (event, A) { markDirty('general','staleTimeout',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value)); },
+      // Contributor-first grace (#16518): blank or unparseable saves 0, which clears it to the 10m default.
+      contributorFirstGraceChanged: function (event, A) { const secs=cadenceFromHuman(this.value);markDirty('general','contributorFirstGrace',secs);this.value=secs>0?cadenceToHuman(secs):''; },
       // Repo scope (#6204). An empty field is meaningful — it CLEARS the scope
       // and returns the agent to hive-wide — so it marks dirty with [] rather
       // than skipping, which is why it cannot just reuse gh36.
