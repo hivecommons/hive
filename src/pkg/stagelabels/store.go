@@ -2490,10 +2490,11 @@ func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashU
 	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other && r.DCOSquashUnsafeHive == squashUnsafeHive && r.DCOSquashUnsafeKnown && (r.DCOSplitHiveIdentity || !hiveIdentity)) {
 		return
 	}
+	headChanged := r.DCOHead != head
 	r.DCOHead, r.DCOTotal, r.DCOUnsigned, r.DCOUnsignedHive, r.DCOUnsignedOther, r.DCOSquashUnsafeHive = head, total, unsigned, unsignedHive, other, squashUnsafeHive
 	r.DCOSquashUnsafeKnown = true
-	if hiveIdentity {
-		r.DCOSplitHiveIdentity = true
+	if headChanged || hiveIdentity {
+		r.DCOSplitHiveIdentity = hiveIdentity
 	}
 	s.items[key] = r
 	s.dirty = true
