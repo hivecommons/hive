@@ -262,6 +262,37 @@ func pullRequestFromItem(it forgestate.Item) *gh.PullRequest {
 // Without a source it lists /pulls as before. The cache and the targets
 // are keyed by owner/name, never by the configured (possibly bare) name.
 func (c *Engine) openPullRequests(ctx context.Context, owner, repoName string, targets SweepTargets) ([]*gh.PullRequest, string, error) {
+	prs, skip, err := c.listOpenPullRequestsForSweep(ctx, owner, repoName, targets)
+	if err == nil && skip == "" {
+		c.sightHeads(owner+"/"+repoName, prs)
+	}
+	return prs, skip, err
+}
+
+// sightHeads records the first time the hive listed each PR head
+// (head_sightings.go).
+func (c *Engine) sightHeads(fullRepo string, prs []*gh.PullRequest) {
+	heads := make(map[int]string, len(prs))
+	for _, pr := range prs {
+		if pr != nil {
+			heads[pr.GetNumber()] = pr.GetHead().GetSHA()
+		}
+	}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	c.headSightingsOrShared().Sight(fullRepo, heads, now())
+}
+
+func (c *Engine) headSightingsOrShared() *HeadSightings {
+	if c != nil && c.headSightings != nil {
+		return c.headSightings
+	}
+	return sharedHeadSightings
+}
+
+func (c *Engine) listOpenPullRequestsForSweep(ctx context.Context, owner, repoName string, targets SweepTargets) ([]*gh.PullRequest, string, error) {
 	fullRepo := owner + "/" + repoName
 	if c.openPRs == nil {
 		prs, err := c.listOpenPullRequests(ctx, owner, repoName)
