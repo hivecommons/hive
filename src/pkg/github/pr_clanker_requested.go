@@ -64,6 +64,34 @@ func (c *Client) isRelayContributor(login string) bool {
 	return fn(login)
 }
 
+// SetParkTextContributor installs the contributor-provenance predicate the
+// park re-check reads (issue_park_recheck.go parkText). The embedder decides
+// which contributors count; the contract is that the answer is durable — a
+// registry-backed lookup rather than the live relay claim alone, which
+// expires with the relay task lease (claims.DefaultContributorTTL) while the
+// re-check runs days after the park. nil knows no contributors.
+func (c *Client) SetParkTextContributor(fn func(login string) bool) {
+	if c == nil {
+		return
+	}
+	c.reporterTrustMu.Lock()
+	defer c.reporterTrustMu.Unlock()
+	c.parkTextContributor = fn
+}
+
+func (c *Client) isParkTextContributor(login string) bool {
+	if c == nil {
+		return false
+	}
+	c.reporterTrustMu.RLock()
+	fn := c.parkTextContributor
+	c.reporterTrustMu.RUnlock()
+	if fn == nil {
+		return false
+	}
+	return fn(login)
+}
+
 func clankerRequestedAddendum(cc ReporterTrustClankerConfig) string {
 	if addendum := strings.TrimSpace(cc.ReporterTrustClankerRequestedAddendum()); addendum != "" {
 		return "\n\n" + addendum
