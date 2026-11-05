@@ -321,6 +321,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.None && !(ok && rec.Stage != stagelabels.None) {
 			stage = bucketStage(bucket)
 		}
+		// Triage accepted on the labels but no stage anywhere yet: 010, not
+		// 000-new, until the engine's next pass (hivecommons/hive#16652).
+		stage = s.stageTrackerAcceptedTriageStage(stage, rec, ok, issue.Labels)
 		// A held issue is "Open · on hold" whatever stage label or store
 		// record the hold caught it with; the reconciler drops both on its
 		// next cycle (hivecommons/hive#13012).
@@ -477,6 +480,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.ReviewActivity = stageTrackerReviewActivity(activityPR, bundle, currentAggregate, dispatchState, status, now)
 		stageTrackerCountPerspectives(it.ReviewActivity, activityPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 		stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
+		stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(&it, pr, len(expectedPerspectives) > 0))
 		stageTrackerLeadApproveForSignOff(&it)
 		if stageTrackerClaimantStage(it.Kind, it.Stage) {
 			var worker *stageTrackerWorker
@@ -535,7 +539,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// A push projection can advance the head ahead of the cached PR list.
 		// Never leave old-head approval/check verdicts on the projected item.
 		if it.CIActivity == nil || !strings.EqualFold(it.CIActivity.Head, it.Head) {
-			it.CIActivity = trackerUnknownActivity(it.Head, "CI unknown · no check results observed for this head yet")
+			it.CIActivity = trackerUnknownActivity(it.Head, stageTrackerCINoDataCaption(it.Head))
 		}
 		if it.ReviewActivity == nil || !strings.EqualFold(it.ReviewActivity.Head, it.Head) {
 			currentPR := github.PullRequest{Repo: activityItem.Repo, Number: it.Number, HeadSHA: it.Head, Author: it.Author}
@@ -553,11 +557,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.ReviewActivity = stageTrackerReviewActivity(currentPR, bundle, currentAggregate, dispatchState, status, now)
 			stageTrackerCountPerspectives(it.ReviewActivity, currentPR, bundle, currentAggregate, dispatchState, stageTrackerRepoQualifier(status), expectedPerspectives)
 			stageTrackerReviewPendingState(it.ReviewActivity, it.Stage, it.StageSince)
+			stageTrackerReviewFallbackState(it.ReviewActivity, stageTrackerReviewFallbackInputsFor(it, currentPR, len(expectedPerspectives) > 0))
 		}
 		activityItem.CIActivity, activityItem.ReviewActivity = it.CIActivity, it.ReviewActivity
 		stageTrackerApplyCodeActivity(&activityItem, dispatchState, status, now)
 		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
 		it.CodeActivity, it.Remediation, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
+		stageTrackerApplyReworkOwedBy(it)
 	}
 	stageTrackerApplyReauthor(resp.Items, store, status.GitHubBaseURL, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,14 +296,43 @@ func (l *MergedLedger) persistLocked() {
 	if err != nil {
 		return
 	}
-	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := writeFileAtomicUnique(l.path, data); err != nil {
 		slog.Error("merged ledger write failed", "error", err)
-		return
 	}
-	if err := os.Rename(tmp, l.path); err != nil {
-		slog.Error("merged ledger rename failed", "error", err)
+}
+
+// writeFileAtomicUnique writes data to a uniquely named temp file beside
+// path and renames it into place. A fixed ".tmp" name let two writers (two
+// ledgers on one path, or a restart overlapping a roll) rename each other's
+// file away, failing with ENOENT (hivecommons/hive#16629).
+func writeFileAtomicUnique(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Summary computes the API block at now in loc (nil → UTC). "Today" rolls
@@ -365,6 +395,41 @@ func (l *MergedLedger) ClosedBy(repo string, issue, exclude int) int {
 		}
 	}
 	return 0
+}
+
+// Since lists the entries merged at or after since and not after now
+// (plus the minute of clock skew Summary allows), newest first. The stage
+// tracker's recently_merged reads it so a merge GitHub reported — by
+// anyone — is a terminal fact for the SPA as soon as the ledger has it.
+func (l *MergedLedger) Since(since, now time.Time) []MergedLedgerEntry {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []MergedLedgerEntry
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		e := l.entries[i]
+		if e.MergedAt.After(now.Add(time.Minute)) {
+			continue
+		}
+		if e.MergedAt.Before(since) {
+			break
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// Has reports whether the ledger lists repo#number as merged.
+func (l *MergedLedger) Has(repo string, number int) bool {
+	if l == nil || number <= 0 {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.index[mergedLedgerKey(repo, number)]
+	return ok
 }
 
 // Len is the number of listed (unpruned) entries.

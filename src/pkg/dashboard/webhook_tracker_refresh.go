@@ -397,6 +397,7 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) i
 		return 0
 	}
 	s.recordMergedSnapshots(snaps)
+	s.forgetClosedSnapshots(snaps)
 	s.noteClosedSnapshots(snaps)
 	s.notePushedSnapshots(snaps)
 	if s.deps != nil && s.deps.ApplyWebhookItems != nil {

@@ -1,0 +1,1 @@
+- Activity Monitor: a CI ring that is not yet full now renders the CI chevron active ("CI 13/19 · running") beside a running Review instead of a silent part-green glyph; check-run motion on the head leads red, unreported or ambiguous neighbours, and icon-only green is reserved for a complete ring (hivecommons/hive#16631).

@@ -56,30 +56,30 @@ assert.strictEqual(stageTrackerTrainIndex([]).count, 0);
 assert.strictEqual(stageTrackerTrainIndex([{ group: { key: 'g' } }, { group: { key: 'g' }, item: a1 }, { item: b2 }]).count, 2);
 
 // "1st of 2" always; the tag only past one train.
-assert.strictEqual(stageTrackerTrainWord(a1), 'Merge queued · 1st of 2');
-assert.strictEqual(stageTrackerTrainWord(a1, 1), 'Merge queued · 1st of 2');
-assert.strictEqual(stageTrackerTrainWord(a1, 2), 'Merge queued · 1st of 2 · train main.go');
-assert.strictEqual(stageTrackerTrainWord(a2, 2), 'Merge queued · 2nd of 2 · train main.go');
-assert.strictEqual(stageTrackerTrainWord(b1, 2), 'Merge queued · 1st of 2 · train stage_tracker.go');
-assert.strictEqual(stageTrackerTrainWord(b2, 2), 'Merge queued · 2nd of 2 · train stage_tracker.go');
+assert.strictEqual(stageTrackerTrainWord(a1), 'Queued for merge · 1st of 2');
+assert.strictEqual(stageTrackerTrainWord(a1, 1), 'Queued for merge · 1st of 2');
+assert.strictEqual(stageTrackerTrainWord(a1, 2), 'Queued for merge · 1st of 2 · train main.go');
+assert.strictEqual(stageTrackerTrainWord(a2, 2), 'Queued for merge · 2nd of 2 · train main.go');
+assert.strictEqual(stageTrackerTrainWord(b1, 2), 'Queued for merge · 1st of 2 · train stage_tracker.go');
+assert.strictEqual(stageTrackerTrainWord(b2, 2), 'Queued for merge · 2nd of 2 · train stage_tracker.go');
 // Two trains never yield the same chevron word for the same place.
 assert.notStrictEqual(stageTrackerTrainWord(a1, two.count), stageTrackerTrainWord(b1, two.count));
 assert.notStrictEqual(stageTrackerTrainWord(a2, two.count), stageTrackerTrainWord(b2, two.count));
 // No overlap list: the head names the train.
 const bare = mk(15600, 'v5#15600', 1, 3, [], 15600);
 assert.strictEqual(stageTrackerTrainTag(bare.merge_train), '#15600');
-assert.strictEqual(stageTrackerTrainWord(bare, 2), 'Merge queued · 1st of 3 · train #15600');
+assert.strictEqual(stageTrackerTrainWord(bare, 2), 'Queued for merge · 1st of 3 · train #15600');
 assert.strictEqual(stageTrackerTrainTag({}), '');
 // The gate chip reads the same word, and its hover names the train.
 const chipA2 = stageTrackerMergeGateInfo(a2, now, 2);
-assert.strictEqual(chipA2.word, 'Merge queued · 2nd of 2 · train main.go');
+assert.strictEqual(chipA2.word, 'Queued for merge · 2nd of 2 · train main.go');
 assert.ok(chipA2.tip.startsWith('Train of 2 PRs overlapping main.go; merges after #15567. 2nd of 2 in the merge queue · behind #15567'), chipA2.tip);
 const chipB1 = stageTrackerMergeGateInfo(b1, now, 2);
-assert.strictEqual(chipB1.word, 'Merge queued · 1st of 2 · train stage_tracker.go');
+assert.strictEqual(chipB1.word, 'Queued for merge · 1st of 2 · train stage_tracker.go');
 assert.ok(chipB1.tip.startsWith('Train of 2 PRs overlapping stage_tracker.go; merges first. 1st of 2 in the merge queue · merges next'), chipB1.tip);
 assert.ok(!stageTrackerMergeGateInfo(a2, now, 1).tip.includes('Train of'), 'one train: no train sentence');
 assert.ok(!stageTrackerMergeGateInfo(a2, now).tip.includes('Train of'), 'no count: no train sentence');
-assert.strictEqual(stageTrackerMergeGateWordHtml(a2, now, 2).replace(/<[^>]+>/g, ''), 'Merge queued · 2nd of 2 · train main.go');
+assert.strictEqual(stageTrackerMergeGateWordHtml(a2, now, 2).replace(/<[^>]+>/g, ''), 'Queued for merge · 2nd of 2 · train main.go');
 assert.ok(stageTrackerGateCueHtml(a2, now, 2).includes('Train of 2 PRs overlapping main.go'), stageTrackerGateCueHtml(a2, now, 2));
 // A provisional slot (#15581) keeps blocker-first and still names its train.
 const p1 = mk(15577, 'v5#15577', 1, 2, ['tracker-words.js'], 15577, 50);

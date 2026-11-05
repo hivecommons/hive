@@ -50,7 +50,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	switch {
 	case it.UnauthorizedStep != "":
 		d.AskedBy = decisionAskedByApp
-		d.Question = "The hive's GitHub App may not " + unauthorizedStepWords(it.UnauthorizedStep) + " here. A maintainer has to do that step on GitHub."
+		d.Question = "The hive bot's GitHub App is missing the permission to " + unauthorizedStepWords(it.UnauthorizedStep) + " here. A maintainer has to do that step on GitHub."
 		d.Blocker = strings.TrimSpace(it.Unauthorized)
 		delegateOK, delegateWhy = false, decisionWhyNoPermission
 		approveOK, approveWhy = false, decisionWhyApproveNoGrant

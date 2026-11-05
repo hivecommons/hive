@@ -81,3 +81,23 @@ func TestHiveSupersederHardStopReasonRejectsOtherReasons(t *testing.T) {
 		t.Fatal("unknown token must have no prose")
 	}
 }
+
+// TestRouteHumanHiveSupersederSignOffQuestionParksAt085: a requires_human
+// that still carries its decision question is the aggregate's pure
+// approver sign-off (nothing for the fixer, hivecommons/hive#16607). It is
+// a decision with approve / request-changes actions, not a 070 row nobody
+// is working.
+func TestRouteHumanHiveSupersederSignOffQuestionParksAt085(t *testing.T) {
+	e := hiveSupersederEvidence()
+	e.DecisionQuestion = "@hanthor should confirm the relay may App-merge trusted pin-only PRs."
+	r := RouteHuman(e)
+	if r.Stage != NeedsDecision || r.LaneReason == LaneReasonHiveSupersederFix {
+		t.Fatalf("route = %+v, want 085 decision", r)
+	}
+	if !strings.Contains(strings.Join(r.Reasons, "\n"), "reviewer question: "+e.DecisionQuestion) {
+		t.Fatalf("reasons = %v, want the reviewer question", r.Reasons)
+	}
+	if DecisionActions(r) == "" {
+		t.Fatalf("route = %+v, want approve / request-changes actions", r)
+	}
+}
