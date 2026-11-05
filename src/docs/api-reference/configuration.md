@@ -41,6 +41,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `DELETE` | `/api/config/agent/{name}/variables/{var}` | Owner only | Delete one per-agent variable (404 for inherited hive-level variables — delete those via `/api/config/variables/{name}`) | `pkg/dashboard/api_variables.go:300` |
 | `GET` | `/api/config/stat-sources` | Dashboard auth/session | Stat Sources | `pkg/dashboard/api.go:208` |
 | `GET` | `/api/config/governor` | Dashboard auth/session | Governor Config Get | `pkg/dashboard/api.go:210` |
+| `PATCH` | `/api/config/governor` | Owner only | Update `merge_train_stall_warn_s`; omitted values stay unchanged, 0 disables warnings; returns the effective interval | `pkg/dashboard/api_governor_merge_train.go` |
 | `PUT` | `/api/config/governor/sensing` | Owner only | Governor Sensing | `pkg/dashboard/api.go:214` |
 | `PUT` | `/api/config/governor/thresholds` | Owner only | Governor Thresholds | `pkg/dashboard/api.go:215` |
 | `PUT` | `/api/config/governor/labels` | Owner only | Governor Labels | `pkg/dashboard/api.go:222` |
@@ -102,6 +103,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `PUT` | `/api/config/governor/general-advanced` | Owner only | Governor General Advanced Set | `pkg/dashboard/api.go:247` |
 | `GET` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Get | `pkg/dashboard/api.go:251` |
 | `PUT` | `/api/config/auto-merge` | Owner only | Auto-Merge Config Set | `pkg/dashboard/api.go:252` |
+| `PATCH` | `/api/config/auto-merge` | Owner only | Partially update auto-merge settings, including nested `merge_train`; omitted fields stay unchanged; returns effective settings and bot-author metadata | `pkg/dashboard/api_config_automerge.go` |
 | `GET` | `/api/config/convergence` | Owner only | Convergence Config Get | `pkg/dashboard/api.go:258` |
 | `PUT` | `/api/config/convergence` | Owner only | Convergence Config Set | `pkg/dashboard/api.go:260` |
 | `GET` | `/api/config/governor/advisory` | Owner only | Governor Advisory Get | `pkg/dashboard/api.go:264` |
