@@ -19,9 +19,10 @@ import (
 // decision recorded on its blocker.
 const decisionInheritedMarker = "<!-- hive:decision-inherited -->"
 
-// isDecisionParkLabel reports whether label parks an issue on a decision,
+// isNeedsDecisionLabel reports whether label is a needs-decision park label
+// (narrower than isDecisionParkLabel, which also counts needs-human),
 // under any spelling the hive writes or the operator configured.
-func (c *Client) isDecisionParkLabel(label string) bool {
+func (c *Client) isNeedsDecisionLabel(label string) bool {
 	for _, want := range []string{c.needsDecisionLabel(), NeedsDecisionStageLabel, legacyIssueNeedsDecisionStageLabel, issueNeedsDecisionLabel} {
 		if strings.EqualFold(strings.TrimSpace(label), want) {
 			return true
@@ -36,7 +37,7 @@ func (c *Client) isDecisionParkLabel(label string) bool {
 func (c *Client) onlyDecisionParked(labels []string) bool {
 	parking := c.parkingLabelsPresent(labels)
 	for _, label := range parking {
-		if !c.isDecisionParkLabel(label) {
+		if !c.isNeedsDecisionLabel(label) {
 			return false
 		}
 	}
