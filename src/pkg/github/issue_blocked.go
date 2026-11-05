@@ -664,6 +664,10 @@ func askHumanBlockedMarkerless(ctx context.Context, client *Client, t blockedIss
 	}
 	owner, name := client.splitRepo(t.repo)
 	if d := client.WritebackAllowed(owner+"/"+name, item, writeback.KindGateComment, blockedMarkerlessAskNote); !d.Allowed {
+		// The burst hold lets a couple of asks per repo through per sweep,
+		// and a failed write's retry is a duplicate for same_item_ttl; both
+		// clear on a later sweep. Say so rather than fall through silently.
+		logger.Info("blocked sweep: needs-human ask held by writeback gate", "repo", t.repo, "issue", t.number, "reason", d.Reason, "detail", d.Detail)
 		return false
 	}
 	if !issueHasLabel(t.labels, issueNeedsHumanLabel) {

@@ -1,10 +1,12 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 func TestBlockedOnMarkerRoundTrip(t *testing.T) {
@@ -1140,5 +1143,60 @@ func TestSweepBlockedIssues(t *testing.T) {
 	defer mu.Unlock()
 	if !unblocked {
 		t.Fatal("blocked label was not removed from issue 10")
+	}
+}
+
+// A writeback-gate refusal (a burst hold, a duplicate within same_item_ttl,
+// a paused repo) leaves the block as it is for a later sweep and says so in
+// the log instead of falling through silently.
+func TestSweepBlockedAskHeldByGateLogs(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues" && strings.Contains(r.URL.RawQuery, "labels=blocked"):
+			_, _ = io.WriteString(w, `[{"number":80,"state":"open","labels":[{"name":"blocked"}],"body":"Upgrade once upstream ships."}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80":
+			_, _ = io.WriteString(w, `{"number":80,"state":"open","user":{"login":"`+testBot+`"},"labels":[{"name":"blocked"}]}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80/comments":
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/80/timeline":
+			_, _ = io.WriteString(w, `[{"event":"labeled","created_at":"2026-10-29T04:17:25Z","label":{"name":"blocked"},"actor":{"login":"`+testBot+`","type":"Bot"}}]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.appBotLogin = testBot
+	var logs bytes.Buffer
+	c.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{
+		RepoPause: func(string) (writeback.RepoPauseInfo, bool) {
+			return writeback.RepoPauseInfo{By: "owner", Reason: "freeze"}, true
+		},
+	}, ""))
+	res, err := c.SweepBlockedIssues(context.Background(), BlockedSweepOptions{Repos: []string{"o/r"}})
+	if err != nil {
+		t.Fatalf("SweepBlockedIssues: %v", err)
+	}
+	if res.AskedHuman != 0 || res.Unblocked != 0 {
+		t.Fatalf("res = %+v, want nothing converted while the gate refuses", res)
+	}
+	mu.Lock()
+	joined := strings.Join(calls, "\n")
+	mu.Unlock()
+	for _, never := range []string{"POST /repos/o/r/issues/80/labels", "DELETE /repos/o/r/issues/80/labels/blocked", "POST /repos/o/r/issues/80/comments"} {
+		if strings.Contains(joined, never) {
+			t.Errorf("unexpected call %q while the gate refuses:\n%s", never, joined)
+		}
+	}
+	if out := logs.String(); !strings.Contains(out, "needs-human ask held by writeback gate") || !strings.Contains(out, "issue=80") {
+		t.Fatalf("gate refusal not logged:\n%s", out)
 	}
 }
