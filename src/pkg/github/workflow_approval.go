@@ -39,7 +39,12 @@ type workflowApprovalAttempt struct {
 	attempted        bool
 	denied           bool
 	permissionDenied bool
+	seen             time.Time
 }
+
+// workflowApprovalAttemptTTL bounds the attempts ledger: an entry no sweep
+// has observed for this long belongs to a merged, closed or superseded head.
+const workflowApprovalAttemptTTL = 24 * time.Hour
 
 type workflowApprovalState struct {
 	mu       sync.Mutex
@@ -96,6 +101,44 @@ func (s *workflowApprovalState) record(key workflowApprovalKey, runID int64, out
 		s.attempts[key] = attempt
 	}
 	s.status.Last = &WorkflowApprovalEvent{Repo: key.repo, Number: key.number, Head: key.head, RunID: runID, Outcome: outcome, At: time.Now().UTC()}
+}
+
+// touchAttempt marks a gated head as live in the attempts ledger and returns
+// its entry. Superseded heads of the same PR and entries no sweep has observed
+// within workflowApprovalAttemptTTL are evicted. The caller holds s.mu.
+func (s *workflowApprovalState) touchAttempt(key workflowApprovalKey, now time.Time) workflowApprovalAttempt {
+	if s.attempts == nil {
+		s.attempts = map[workflowApprovalKey]workflowApprovalAttempt{}
+	}
+	for other, entry := range s.attempts {
+		if other == key {
+			continue
+		}
+		if (other.repo == key.repo && other.number == key.number) || now.Sub(entry.seen) >= workflowApprovalAttemptTTL {
+			delete(s.attempts, other)
+		}
+	}
+	attempt := s.attempts[key]
+	attempt.seen = now
+	s.attempts[key] = attempt
+	return attempt
+}
+
+// workflowApprovalForPR returns a copy of the head's approval probe with the
+// attempts ledger applied, so a permission refusal keeps its caption on cycles
+// that skip SweepWorkflowApprovals. Cached probes are never mutated.
+func (c *Client) workflowApprovalForPR(ctx context.Context, repo string, number int, sha string) *PRWorkflowApproval {
+	probe := c.workflowRunsAwaitingApproval(ctx, repo, sha)
+	if probe == nil {
+		return nil
+	}
+	wa := *probe
+	owner, name := c.splitRepo(repo)
+	key := workflowApprovalKey{repo: owner + "/" + name, number: number, head: sha}
+	c.workflowApprovals.mu.Lock()
+	wa.PermissionDenied = c.workflowApprovals.attempts[key].permissionDenied
+	c.workflowApprovals.mu.Unlock()
+	return &wa
 }
 
 // workflowRunsAwaitingApproval memoizes the read for a short window. The

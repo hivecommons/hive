@@ -335,3 +335,38 @@ func TestSweepWorkflowApprovalsGuards(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowApprovalForPRCarriesRefusalWithoutSweep(t *testing.T) {
+	c, f, prs := newWorkflowApprovalFixture(t)
+	f.approvalStatus = http.StatusForbidden
+	c.SweepWorkflowApprovals(context.Background(), prs, config.GovernorCIConfig{})
+	// Budget mode skips the sweep; CI enrichment alone must still surface
+	// the manual-approval caption from the ledger, without a new POST.
+	got := c.workflowApprovalForPR(context.Background(), "org/repo", 7, "head1")
+	if got == nil || !got.PermissionDenied || len(f.posts) != 1 {
+		t.Fatalf("refusal dropped outside the sweep: got=%+v posts=%v", got, f.posts)
+	}
+	if cached := c.workflowApprovalForPR(context.Background(), "org/repo", 8, "head1"); cached == nil || cached.PermissionDenied {
+		t.Fatalf("ledger leaked across PRs or cached probe was mutated: %+v", cached)
+	}
+}
+
+func TestWorkflowApprovalAttemptsLedgerEviction(t *testing.T) {
+	s := &workflowApprovalState{}
+	now := time.Now()
+	old := workflowApprovalKey{repo: "org/repo", number: 7, head: "head1"}
+	other := workflowApprovalKey{repo: "org/repo", number: 9, head: "head9"}
+	s.touchAttempt(old, now)
+	s.attempts[old] = workflowApprovalAttempt{attempted: true, seen: now}
+	s.touchAttempt(other, now)
+	// A new head on the same PR supersedes the old one immediately.
+	s.touchAttempt(workflowApprovalKey{repo: "org/repo", number: 7, head: "head2"}, now)
+	if _, ok := s.attempts[old]; ok || len(s.attempts) != 2 {
+		t.Fatalf("superseded head retained: %+v", s.attempts)
+	}
+	// Live heads are refreshed each sweep; the rest age out after the TTL.
+	s.touchAttempt(other, now.Add(workflowApprovalAttemptTTL))
+	if _, ok := s.attempts[other]; !ok || len(s.attempts) != 1 {
+		t.Fatalf("ttl eviction wrong: %+v", s.attempts)
+	}
+}

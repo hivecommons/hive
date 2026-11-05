@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
-// workflowApprovalTrusted is deliberately per run: one trusted triggering
-// actor must not authorize other actors' runs on the same PR head.
+// workflowApprovalTrusted follows hivecommons/hive#16603: a trusted PR
+// author authorizes every gated run on the head, because the code under
+// test is theirs. Otherwise trust is per run — a trusted triggering actor
+// (or the App) authorizes only the runs it triggered, and an admitted PR
+// authorizes all of them.
 func workflowApprovalTrusted(author, actor, app string, admitted bool, actors []string) bool {
 	if admitted {
 		return true
@@ -57,11 +61,11 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 			activity.WorkflowApproval = nil
 			pr.CIActivity = &activity
 		}
-		probe := c.workflowRunsAwaitingApproval(ctx, repo, pr.HeadSHA)
+		probe := c.workflowApprovalForPR(ctx, repo, pr.Number, pr.HeadSHA)
 		if probe == nil {
 			continue
 		}
-		wa := *probe // never mutate a cached probe or an older dashboard snapshot
+		wa := *probe
 		if pr.CIActivity == nil {
 			pr.CIActivity = &PRCIActivity{Head: pr.HeadSHA, Source: "github-workflow-runs"}
 		}
@@ -71,9 +75,8 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 		pr.CIActivity.WorkflowApproval = &wa
 		key := workflowApprovalKey{repo: repo, number: pr.Number, head: pr.HeadSHA}
 		c.workflowApprovals.mu.Lock()
-		previous := c.workflowApprovals.attempts[key]
+		previous := c.workflowApprovals.touchAttempt(key, time.Now())
 		c.workflowApprovals.mu.Unlock()
-		wa.PermissionDenied = previous.permissionDenied
 		if previous.attempted || !policy.AutoApproveWorkflowsEnabled() {
 			continue
 		}
@@ -113,9 +116,6 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 			}
 		}
 		c.workflowApprovals.mu.Lock()
-		if c.workflowApprovals.attempts == nil {
-			c.workflowApprovals.attempts = map[workflowApprovalKey]workflowApprovalAttempt{}
-		}
 		attempt := c.workflowApprovals.attempts[key]
 		recordDenied := !attempt.denied
 		attempt.denied = attempt.denied || len(denied) > 0
