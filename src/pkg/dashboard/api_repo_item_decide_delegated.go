@@ -1029,7 +1029,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 				if _, err := client.RecordOperatorPullRequestApproval(ctx, repoFull, number, user); err != nil {
 					return notes, fmt.Errorf("approving PR: %w", err)
 				}
-				notes = append(notes, "`/lgtm` + `/approve` recorded; hive's merge sweep merges it once CI is green and the head has soaked")
+				notes = append(notes, "`/lgtm` + `/approve` recorded; hive merges it on its next merge pass once CI is green and the head has soaked")
 			}
 		case delegatedecision.ActionLabelsAdd:
 			for _, l := range a.Labels {
