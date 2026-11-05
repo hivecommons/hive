@@ -264,6 +264,13 @@ type Input struct {
 	// refused by the adoption fence: deciding to adopt cannot take effect
 	// (hivecommons/hive#15188).
 	WorkflowPath bool
+	// WorkflowsPushable: the hive checked that it can land a
+	// .github/workflows change in this repository. The App installation
+	// grants `workflows: write` and an enabled lane whose token carries it
+	// serves the repository. An agent writing "the hive's token cannot
+	// change workflow files" is then describing its own lane's ceiling, not
+	// a missing App permission (Danathar/goodreads-mcp#440).
+	WorkflowsPushable bool
 	// BlockedOnPRClosed: a review-backlog item whose PR closed unmerged.
 	BlockedOnPRClosed bool
 	// SupersededBy names the merged PR that already delivered this PR's
@@ -471,10 +478,15 @@ func HivePolicyChange(in Input) bool {
 // CapabilityGap reports a needs-human whose blocker is a missing GitHub App
 // capability rather than an open question. Shared ledger inference handles
 // known capability kinds; a generic App-permission guard keeps other missing
-// permissions parked. Human-only blockers are handled by the ledger.
+// permissions parked. Human-only blockers are handled by the ledger. Prose
+// claiming the workflows permission is missing is not a gap when the hive
+// checked that it can push workflow files here (WorkflowsPushable).
 func CapabilityGap(in Input) bool {
 	isCapability := func(text string) bool {
 		k, ok := blocker.Infer(text)
+		if ok && k == blocker.CapabilityWorkflowsPermission && in.WorkflowsPushable {
+			return false
+		}
 		return ok && k.IsCapability() || appPermissionRE.MatchString(text)
 	}
 	return isCapability(in.headline()) ||

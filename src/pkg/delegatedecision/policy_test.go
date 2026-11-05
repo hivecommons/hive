@@ -25,6 +25,41 @@ func sameKinds(a, b []ActionKind) bool {
 	return true
 }
 
+// Danathar/goodreads-mcp#440: "the hive's token cannot change workflow
+// files" is one lane's ceiling when the hive checked it can push workflow
+// files in the repository (WorkflowsPushable). Every other capability claim
+// still holds the park.
+func TestCapabilityGapWorkflowsPushable(t *testing.T) {
+	for _, report := range []string{
+		"Option A needs a person to apply it, because the hive's token cannot change workflow files.",
+		"The App cannot push changes to workflow files.",
+		"The GitHub App lacks the `workflows` permission.",
+	} {
+		in := Input{Kind: KindIssue, Body: report}
+		if !CapabilityGap(in) {
+			t.Fatalf("unverified workflows claim must stay a gap: %q", report)
+		}
+		in.WorkflowsPushable = true
+		if CapabilityGap(in) {
+			t.Fatalf("workflows claim with WorkflowsPushable is not a gap: %q", report)
+		}
+		in = Input{Kind: KindIssue, Reasons: []string{report}, WorkflowsPushable: true}
+		if CapabilityGap(in) {
+			t.Fatalf("park reason with WorkflowsPushable is not a gap: %q", report)
+		}
+	}
+	for _, report := range []string{
+		"The App cannot set the repository secret.",
+		"The App cannot update the protected branch.",
+		"The GitHub App lacks the `issues: write` permission.",
+		"The App token is missing the `checks: write` permission.",
+	} {
+		if !CapabilityGap(Input{Kind: KindIssue, Body: report, WorkflowsPushable: true}) {
+			t.Fatalf("WorkflowsPushable must not clear another capability: %q", report)
+		}
+	}
+}
+
 func TestCapabilityGapSharedInference(t *testing.T) {
 	for _, report := range []string{
 		"The App cannot push changes to workflow files.",
