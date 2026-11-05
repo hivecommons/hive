@@ -16,7 +16,10 @@ package github
 // comment. The enumeration files a blocked issue under the filtered bucket,
 // IssueStageFor derives no stage for it, IssueClaimBlockReason refuses every
 // automated claim on it, and ReconcileBlockedIssues lifts the label once the
-// tracked PR merges or closes.
+// tracked PR merges or closes. The issue form, `<!-- hive:blocked-on
+// issue=owner/repo#N -->`, names an issue the block waits on instead (a
+// contributor's blocked verdict on another repository's work); the sweep
+// lifts that label once the issue closes and never as marker-less.
 //
 // A blocked issue with no tracked PR may instead carry a deadline,
 // `<!-- hive:recheck-after <RFC3339> -->` (hivecommons/hive#13310): the
@@ -63,6 +66,7 @@ const blockedUnblockedMarker = "<!-- hive:unblocked -->"
 
 var (
 	blockedOnMarkerRE      = regexp.MustCompile(`<!--\s*hive:blocked-on\s+pr=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)\s*-->`)
+	blockedOnIssueMarkerRE = regexp.MustCompile(`<!--\s*hive:blocked-on\s+issue=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)\s*-->`)
 	adoptedSupersedeRE     = regexp.MustCompile(`(?i)<!--\s*hive:adopted\b[^>]*\bmode=supersede\b[^>]*\bsuperseded_by=(\d+)`)
 	adoptedSupersedeAttrRE = regexp.MustCompile(`(?i)<!--\s*hive:adopted\b[^>]*\bsuperseded_by=(\d+)[^>]*\bmode=supersede`)
 	supersededByRE         = regexp.MustCompile(`(?i)\bSuperseded by #?(\d+)\b`)
@@ -96,6 +100,20 @@ func ParseSupersededBy(text string) (int, bool) {
 // BlockedOnMarker renders the marker that names the PR an issue waits on.
 func BlockedOnMarker(repo string, pr int) string {
 	return blockedOnMarkerPrefix + strings.TrimSpace(repo) + "#" + strconv.Itoa(pr) + " -->"
+}
+
+// parseBlockedOnIssueMarker returns the first issue-form blocked-on marker,
+// `<!-- hive:blocked-on issue=owner/repo#N -->`, in text.
+func parseBlockedOnIssueMarker(text string) (repo string, issue int, ok bool) {
+	m := blockedOnIssueMarkerRE.FindStringSubmatch(text)
+	if m == nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return m[1], n, true
 }
 
 // ParseBlockedOnMarker returns the first blocked-on marker in text.
@@ -138,13 +156,21 @@ func BlockedOnTarget(body, reason string) (repo string, pr int, ok bool) {
 // blocked issue; IssueStageFor and the sweep recognise it by prefix.
 const blockedFilterReasonPrefix = "blocked"
 
+// blockedOnIssueReasonWord sets an issue blocker apart from a PR one in the
+// filtered reason: "blocked on issue owner/repo#N".
+const blockedOnIssueReasonWord = "issue "
+
 // blockedFilterReason is the work-detail reason for a blocked issue:
-// "blocked on owner/repo#N" when the body carries the marker, "blocked until
+// "blocked on owner/repo#N" when the body carries the marker, "blocked on
+// issue owner/repo#N" when it carries the issue form, "blocked until
 // <RFC3339>" when it carries a recheck-after deadline instead, else the bare
 // label. It is what IssueStageFor echoes as the stage reason.
 func blockedFilterReason(body string) string {
 	if repo, pr, ok := ParseBlockedOnMarker(body); ok {
 		return blockedFilterReasonPrefix + " on " + repo + "#" + strconv.Itoa(pr)
+	}
+	if repo, issue, ok := parseBlockedOnIssueMarker(body); ok {
+		return blockedFilterReasonPrefix + " on " + blockedOnIssueReasonWord + repo + "#" + strconv.Itoa(issue)
 	}
 	if at, ok := gfi.ParseRecheckAfter(body); ok {
 		return blockedFilterReasonPrefix + " until " + at.Format(time.RFC3339)
@@ -316,7 +342,9 @@ type blockedIssueTarget struct {
 // deadline has passed loses `blocked` with a one-line note (once per
 // deadline) so the next enumeration re-triages it; an ops-tracking row on the
 // hive's own project gets soak evidence instead (runRecheckSoak) and keeps
-// `blocked`, other ops-tracking rows are left alone. A row with no marker,
+// `blocked`, other ops-tracking rows are left alone. A row whose marker names
+// an issue (issue=) instead loses `blocked` once that issue closes and keeps
+// it while it is open (reconcileBlockedOnIssue). A row with no marker,
 // no deadline and no ops-tracking whose `blocked` the hive itself applied is
 // lifted as a defect (liftBlockedMarkerless, hivecommons/hive#13364). Lookup
 // failures are counted and skipped.
@@ -405,16 +433,17 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 			break
 		}
 		res.Items++
-		prRepo, prNumber, ok := parseBlockedOnReason(t.reason)
+		// onIssue: the marker names an issue (issue=), not a PR.
+		prRepo, prNumber, onIssue, ok := parseBlockedOnReason(t.reason)
 		// scanned: the comments were read without error and hold no marker,
-		// so a marker-less lift may trust that nothing names a PR.
+		// so a marker-less lift may trust that nothing names a blocker.
 		scanned := false
 		if lookups < blockedSweepCommentLookups {
 			lookups++
 			scan, err := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
 			scanned = err == nil
 			if scan.ok {
-				prRepo, prNumber, ok = scan.prRepo, scan.pr, scan.ok
+				prRepo, prNumber, onIssue, ok = scan.prRepo, scan.pr, scan.issue, scan.ok
 			}
 			if !ok && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
 				if t.opsTracking && isRecheckSoakRepo(t.repo) {
@@ -440,6 +469,10 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 				}
 			}
 			stripBlockedHelpWanted(ctx, c, t, &res, logger)
+			continue
+		}
+		if onIssue {
+			reconcileBlockedOnIssue(ctx, c, t, prRepo, prNumber, &res, logger)
 			continue
 		}
 		settled, merged, err := c.pullRequestSettledDetails(ctx, prRepo, prNumber)
@@ -487,7 +520,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 						logger.Warn("blocked sweep: comment lookup before re-target failed", "repo", t.repo, "issue", t.number, "error", scanErr)
 						continue
 					}
-					if scan.ok && (scan.prRepo != prRepo || scan.pr != prNumber) {
+					if scan.ok && (scan.issue || scan.prRepo != prRepo || scan.pr != prNumber) {
 						stripBlockedHelpWanted(ctx, c, t, &res, logger)
 						continue
 					}
@@ -604,21 +637,55 @@ func (c *Client) BlockedLabelAppliedByHive(ctx context.Context, repo string, num
 	return c.isOwnBotLogin(actor) || c.IsHiveAuthorLogin(actor), nil
 }
 
-// parseBlockedOnReason reads "blocked on owner/repo#N" back into its parts.
-func parseBlockedOnReason(reason string) (repo string, pr int, ok bool) {
+// parseBlockedOnReason reads "blocked on owner/repo#N" (issue false) or
+// "blocked on issue owner/repo#N" (issue true) back into its parts.
+func parseBlockedOnReason(reason string) (repo string, number int, issue bool, ok bool) {
 	rest, found := strings.CutPrefix(strings.TrimSpace(reason), blockedFilterReasonPrefix+" on ")
 	if !found {
-		return "", 0, false
+		return "", 0, false, false
 	}
+	rest, issue = strings.CutPrefix(strings.TrimSpace(rest), blockedOnIssueReasonWord)
 	repo, num, found := strings.Cut(strings.TrimSpace(rest), "#")
 	if !found || repo == "" {
-		return "", 0, false
+		return "", 0, false, false
 	}
 	n, err := strconv.Atoi(num)
 	if err != nil || n <= 0 {
-		return "", 0, false
+		return "", 0, false, false
 	}
-	return repo, n, true
+	return repo, n, issue, true
+}
+
+// reconcileBlockedOnIssue settles a block whose marker names an issue
+// (`<!-- hive:blocked-on issue=owner/repo#N -->`): once that issue is closed
+// the label comes off with one unblocked note; while it is open the block
+// stays and only `help wanted` is stripped. A contributor's blocked verdict
+// on another repository's work is not a marker-less defect: lifting it sent
+// projectbluefin/utah#10 and #855 back to triage, where contributor after
+// contributor re-verified "still blocked" and re-applied it. A lookup error
+// is counted and leaves the block; a missing issue reads as open, so a
+// mistyped reference never lifts it.
+func reconcileBlockedOnIssue(ctx context.Context, c *Client, t blockedIssueTarget, repo string, number int, res *BlockedIssueResult, logger *slog.Logger) {
+	ref := repo + "#" + strconv.Itoa(number)
+	owner, name := c.splitRepo(repo)
+	_, closed, err := c.IssueClosedAt(ctx, owner, name, number)
+	if err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: tracked issue lookup failed", "repo", t.repo, "issue", t.number, "blocker", ref, "error", err)
+		return
+	}
+	if !closed {
+		stripBlockedHelpWanted(ctx, c, t, res, logger)
+		return
+	}
+	if err := c.unblockIssue(ctx, t.repo, t.number); err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
+		return
+	}
+	c.postUnblockedNote(ctx, t.repo, t.number, blockedUnblockedMarker+"\nUnblocked: "+ref+" is closed. This issue is actionable again.", logger)
+	res.Unblocked++
+	logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "blocker", ref)
 }
 
 // liftBlockedDeadline lifts `blocked` from an issue with no tracked PR whose
@@ -699,18 +766,21 @@ func blockedDeadlineNote(deadline string) string {
 }
 
 // blockedSweepScan is what one comment read tells the sweep about an issue.
+// issue is set when the newest blocked-on marker is the issue form, so
+// prRepo and pr then name an issue.
 type blockedSweepScan struct {
 	prRepo        string
 	pr            int
+	issue         bool
 	ok            bool
 	deadlineNoted bool
 	evidenceNoted bool
 }
 
 // blockedSweepComments reads the issue's comments once: the newest
-// blocked-on marker (the scanner's blocked note carries one) and, when
-// recheckAfter is set, whether the unblocked note for that deadline or a
-// soak-evidence comment is already there.
+// blocked-on marker of either form (the scanner's blocked note carries one)
+// and, when recheckAfter is set, whether the unblocked note for that
+// deadline or a soak-evidence comment is already there.
 func (c *Client) blockedSweepComments(ctx context.Context, repo string, number int, recheckAfter time.Time) (blockedSweepScan, error) {
 	var scan blockedSweepScan
 	owner, name := c.splitRepo(repo)
@@ -726,6 +796,10 @@ func (c *Client) blockedSweepComments(ctx context.Context, repo string, number i
 		body := comments[i].GetBody()
 		if !scan.ok {
 			scan.prRepo, scan.pr, scan.ok = ParseBlockedOnMarker(body)
+			if !scan.ok {
+				scan.prRepo, scan.pr, scan.ok = parseBlockedOnIssueMarker(body)
+				scan.issue = scan.ok
+			}
 		}
 		if passed != "" && strings.Contains(body, blockedUnblockedMarker) && strings.Contains(body, passed) {
 			scan.deadlineNoted = true

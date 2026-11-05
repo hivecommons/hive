@@ -204,6 +204,14 @@ and strips `help wanted` again should the org workflow re-add it while the
 PR is open. The review backlog applies the same parking itself when it files
 a finding whose file does not exist on the reviewed PR's base branch.
 
+A blocker that is an issue rather than a PR (another repository's build or
+release tracked as an issue) is named by the issue form of the marker,
+`<!-- hive:blocked-on issue=owner/repo#N -->`, in the issue body or a
+comment; a contributor's `blocked` verdict comment carries it. The sweep keeps
+`blocked` while that issue is open, never lifts it as marker-less, and lifts
+it with one `<!-- hive:unblocked -->` note once the issue closes. A malformed
+marker counts as none.
+
 A posted comment is the agent's **start signal** on that issue only when it
 says work is starting. The hub records a 2h agent claim the first time the
 agent's own `claim` request, a `hive-open-pr --issues` request, or a comment
