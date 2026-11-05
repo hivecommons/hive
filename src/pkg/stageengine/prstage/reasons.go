@@ -69,9 +69,13 @@ const (
 	StageLaneSelf                          = "self-authored"
 	StageLaneTrusted                       = "trusted-author"
 	StageReasonBaseBranchRed               = "base-branch-red:"
-	StageReasonForkGuard                   = "fork-guard:"
-	StageReasonOptionalCheckFailing        = "optional-check-failing:"
-	StageReasonSharedCIIncident            = "shared-ci-incident:"
+	// StageReasonBaseRefreshMergeGuard: the lane did not evaluate the PR
+	// this pass because a merge to its destination was in flight
+	// (hivecommons/hive#16520); it says nothing about the stage.
+	StageReasonBaseRefreshMergeGuard = "base-refresh:merge-guard"
+	StageReasonForkGuard             = "fork-guard:"
+	StageReasonOptionalCheckFailing  = "optional-check-failing:"
+	StageReasonSharedCIIncident      = "shared-ci-incident:"
 	// StageReasonUnauthorizedPrefix: the lane's next step needs an API
 	// call the hive's GitHub App is not permitted to make (403 "Resource
 	// not accessible by integration"); the rest names the step

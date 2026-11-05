@@ -217,7 +217,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			slice := overviewPRChartSlice(entry.pr, entry.verdict, ownership, autoMergeLabel)
 			term := overviewPRTerm(ownership, held || len(holdLabels(entry.pr.Labels, status.HiveID)) > 0, entry.pr, entry.verdict, autoMergeLabel)
 			countSlice(slices.PRs, slice)
-			result = append(result, overviewStatusPR{FrontendPR{entry.pr, entry.verdict}, info, ownership, slice, term, criticalPathFor(paths, ownershipKindPR, entry.pr.Number)})
+			result = append(result, overviewStatusPR{entry.wire, info, ownership, slice, term, criticalPathFor(paths, ownershipKindPR, entry.pr.Number)})
 		}
 		return result
 	}

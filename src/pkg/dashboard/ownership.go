@@ -923,7 +923,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				}
 				pr := entry.pr
 				pr.Repo = nonEmpty(pr.Repo, repoName)
-				record(ownershipKindPR, pr.Number, pr.URL, decidePROwnershipGated(pr, entry.verdict, held, cfg, env), pr.CreatedAt, pr.UpdatedAt)
+				record(ownershipKindPR, pr.Number, pr.URL, withSuppressedStageNote(decidePROwnershipGated(pr, entry.verdict, held, cfg, env), entry.wire.SuppressedStage), pr.CreatedAt, pr.UpdatedAt)
 			}
 		}
 		prRows(repo.OpenPrs, false)

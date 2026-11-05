@@ -262,11 +262,68 @@ type StageTracker struct {
 	// ran per key+head, so a PR that legitimately sits at 085 is not
 	// re-read every pass.
 	superseded map[string]time.Time
+	// owners remembers, per key, the lane whose observation set the stage
+	// last written and the head it was for (stageOwnerHolds). Unlike obs it
+	// survives drain: two sweeps reconcile alternate passes from one tracker.
+	owners map[string]stageOwner
+}
+
+// stageOwner is the lane that set a PR's current stage, for which head, and
+// when it last reported.
+type stageOwner struct {
+	Lane  string
+	Head  string
+	Stage stagelabels.Stage
+	At    time.Time
+}
+
+// stageOwnerAbsenceGrace bounds how long a stage is kept for a lane that
+// stopped reporting: twice the slowest self-authored sweep interval, so one
+// missed tick never hands the stage to a lower lane, and a lane that is gone
+// for good (config change) does not pin it.
+const stageOwnerAbsenceGrace = 2 * selfAuthoredSweepMaxInterval
+
+func (t *StageTracker) owner(key string) (stageOwner, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	o, ok := t.owners[key]
+	return o, ok
+}
+
+func (t *StageTracker) noteOwner(key string, o stageOwner) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.owners[key] = o
+}
+
+// stageOwnerHolds reports whether this pass's stage for the PR must wait:
+// the lane that set the current stage outranks the lane deciding now, did
+// not report this pass, and last reported within the grace for this same
+// head. projectbluefin/utah-packages#878: the self-authored lane runs only
+// in the engine's tick pass, so the queued sweep's contributor lane wrote
+// 072 over its 070 on every other pass with nothing changed. A new head, a
+// terminal outcome, or the same stage never waits.
+func stageOwnerHolds(owner stageOwner, ok bool, list []stageObservation, obs stageObservation, verdict stageVerdict, current stagelabels.Stage, hadCurrent bool, now time.Time) bool {
+	if !ok || !hadCurrent || verdict.Terminal || owner.Head == "" || owner.Head != obs.HeadSHA {
+		return false
+	}
+	if current != owner.Stage || verdict.Stage == current {
+		return false
+	}
+	if stageLanePrecedence[owner.Lane] <= stageLanePrecedence[obs.Lane] || now.Sub(owner.At) > stageOwnerAbsenceGrace {
+		return false
+	}
+	for _, o := range list {
+		if o.Lane == owner.Lane {
+			return false
+		}
+	}
+	return true
 }
 
 // NewStageTracker returns an empty tracker.
 func NewStageTracker() *StageTracker {
-	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}, checks: map[string]humanChecksEntry{}, fences: map[string]humanFenceEntry{}, superseded: map[string]time.Time{}}
+	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}, checks: map[string]humanChecksEntry{}, fences: map[string]humanFenceEntry{}, superseded: map[string]time.Time{}, owners: map[string]stageOwner{}}
 }
 
 var sharedStageTracker = NewStageTracker()
@@ -465,6 +522,9 @@ type prStagePending struct {
 	// mergeCommit carries the head's commit stats when the lane elected a
 	// merge commit: its note is posted only once the write landed.
 	mergeCommit *dcoStats
+	// owned: the deciding lane held an owned opinion, so it becomes the
+	// stage's owner once the write lands (stageOwnerHolds).
+	owned bool
 }
 
 // removeNonStageLabel takes one non-hive label off a PR (the stray
@@ -986,6 +1046,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// the author-blocked outcome by kind now (human 071 / clanker 072).
 			verdict.Stage = fixingStage(obs)
 		}
+		current, hadCurrent := store.Get(key)
+		owner, ownerKnown := tracker.owner(key)
+		if stageOwnerHolds(owner, ownerKnown, list, obs, verdict, current.Stage, hadCurrent, now) {
+			c.debug("stage labels: owning lane did not report this pass; stage kept", "repo", obs.Display, "pr", obs.Number, "stage", current.Stage.String(), "owner_lane", owner.Lane, "lane", obs.Lane, "wanted", verdict.Stage.String())
+			result.Skipped++
+			continue
+		}
 		obs.LaneReason = obs.Reason
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
@@ -1371,7 +1438,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		pass.AuthorKind = obs.AuthorKind
 		pass.Stalled, pass.KindLabels = want.Stalled, want.KindLabels
 		facts.PR.Pass = pass
-		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts, mergeCommit: mergeCommitStats})
+		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts, mergeCommit: mergeCommitStats, owned: verdict.Rank >= stageRankOwned})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads
 	// each PR before writing so a stage another writer placed since the
@@ -1404,6 +1471,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if firstErr == nil {
 				firstErr = err
 			}
+		}
+		if err == nil && p.owned {
+			tracker.noteOwner(key, stageOwner{Lane: obs.Lane, Head: obs.HeadSHA, Stage: out.Stage, At: now})
 		}
 		result.Writes += len(out.Removed)
 		if len(out.Added) > 0 {
