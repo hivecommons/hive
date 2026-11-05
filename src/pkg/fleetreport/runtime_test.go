@@ -756,7 +756,7 @@ func TestMatchesExplicitClass(t *testing.T) {
 }
 
 func TestIsBenignMessage(t *testing.T) {
-	for _, m := range []string{"read tcp 1.2.3.4: i/o timeout", "keepalive ping: i/o timeout", "fetch: context canceled", "permissions watcher: fixed file permissions path=/x old_mode=-rw-r----- new_mode=-rw-rw-----", "permissions watcher: fixed ownership path=/x uid=1000", "shadow fence would have denied external mutation", "inference backend refused on a spending limit", "inference provider error detected, backing off kicks instead of sending action nudge"} {
+	for _, m := range []string{"read tcp 1.2.3.4: i/o timeout", "keepalive ping: i/o timeout", "fetch: context canceled", "permissions watcher: fixed file permissions path=/x old_mode=-rw-r----- new_mode=-rw-rw-----", "permissions watcher: fixed ownership path=/x uid=1000", "shadow fence would have denied external mutation", "inference backend refused on a spending limit", "inference provider error detected, backing off kicks instead of sending action nudge", "inference agent answered kick with prose only, sending action nudge"} {
 		if !IsBenignMessage(m) {
 			t.Fatalf("%q not benign", m)
 		}
