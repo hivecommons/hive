@@ -2917,6 +2917,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 			status.RepoTargetIssue = ""
 		}
 	}
+	attachSuppressedStages(status.Repos, s.stageStoreOrShared())
 	status.ContributorPool = s.BuildContributorPoolStatus()
 	status.Inception = s.buildFrontendInception()
 	if s.contributeHub != nil {

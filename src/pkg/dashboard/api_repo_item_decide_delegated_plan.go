@@ -332,7 +332,7 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 		return "Close " + ref + " as superseded by #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target) + "."}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate, d.Verdict == delegatedecision.VerdictCloseSuperseded:
 		return "Close " + ref + ".", []string{ref + " is closed with a comment saying why."}
-	case d.Verdict == delegatedecision.VerdictDirection && in.AdoptedByHive:
+	case d.Verdict == delegatedecision.VerdictDirection && in.AdoptedByHive && d.Rule == delegatedecision.RuleAdoptedFixer:
 		// The hive adopted the PR in place: it is the author now, so the
 		// instruction is its own fixer's, not the contributor's
 		// (hivecommons/hive#15722).

@@ -39,6 +39,7 @@ func (w *stageWriter) Apply(ctx context.Context, ref stageengine.Ref, hint []str
 		// before calling here), nothing landed on GitHub.
 		out.Added, out.Removed = nil, nil
 		out.Suppressed = true
+		out.SuppressedReason = l.reason
 	}
 	return out, err
 }

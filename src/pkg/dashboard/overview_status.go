@@ -155,7 +155,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			issue.Repo = nonEmpty(issue.Repo, repoName)
 			info := IssueBand(issue, held, cfg, now, selfAuthorizationHoldActive)
 			if held {
-				info.HoldReason = heldReason(issue.Labels, false, status.HiveID)
+				info.HoldReason = heldReason(issue.Labels, false, status.HiveID, nil)
 			}
 			countSlice(out.OverviewBands.Issues, info.Band)
 			ownership := ownershipFor(decisions, ownershipKindIssue, issue.Number)
@@ -217,7 +217,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			slice := overviewPRChartSlice(entry.pr, entry.verdict, ownership, autoMergeLabel)
 			term := overviewPRTerm(ownership, held || len(holdLabels(entry.pr.Labels, status.HiveID)) > 0, entry.pr, entry.verdict, autoMergeLabel)
 			countSlice(slices.PRs, slice)
-			result = append(result, overviewStatusPR{FrontendPR{entry.pr, entry.verdict}, info, ownership, slice, term, criticalPathFor(paths, ownershipKindPR, entry.pr.Number)})
+			result = append(result, overviewStatusPR{entry.wire, info, ownership, slice, term, criticalPathFor(paths, ownershipKindPR, entry.pr.Number)})
 		}
 		return result
 	}
@@ -229,6 +229,11 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		repo.NonActionableIssues = nonActionable(repo.NonActionableIssues, *repo, repoName)
 		repo.OpenPrs = prs(repo.OpenPrs, false, repo.Ownership, repo.CriticalPath)
 		repo.HeldPrs = prs(repo.HeldPrs, true, repo.Ownership, repo.CriticalPath)
+		// Drafts are sidelined, not listed with the PRs above; count them in
+		// their band so the Draft band is not always 0.
+		for _, entry := range frontendRepoDraftPRs(*repo) {
+			countSlice(out.OverviewBands.PRs, prBand(entry.pr, nil, false, cfg, now, autoMergeLabel, status.HiveID).Band)
+		}
 	}
 	out.OverviewTotals = overviewTotals(status)
 	var fullCfg *config.Config

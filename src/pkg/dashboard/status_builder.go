@@ -1823,6 +1823,11 @@ func openPRIsMergeable(pr any) bool {
 type FrontendPR struct {
 	github.PullRequest
 	MergeVerdict *github.MergeVerdict `json:"merge_verdict,omitempty"`
+	// SuppressedStage is the stage label the hive holds this PR at but the
+	// write-back gate kept off GitHub, with the gate's reason
+	// (attachSuppressedStages); "" when the labels carry the stage.
+	SuppressedStage       string `json:"suppressed_stage,omitempty"`
+	SuppressedStageReason string `json:"suppressed_stage_reason,omitempty"`
 }
 
 // AttachMergeVerdicts stamps the governor's per-PR merge verdicts onto the

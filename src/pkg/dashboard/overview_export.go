@@ -263,7 +263,7 @@ func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsCon
 		for _, issue := range frontendRepoIssues(repo, true) {
 			issue.Repo = nonEmpty(issue.Repo, repoName)
 			info := IssueBand(issue, true, cfg, now, selfAuthorizationHoldActive)
-			info.HoldReason = heldReason(issue.Labels, false, status.HiveID)
+			info.HoldReason = heldReason(issue.Labels, false, status.HiveID, nil)
 			ownership := ownershipFor(repo.Ownership, ownershipKindIssue, issue.Number)
 			slice := overviewIssueChartSlice(issue, ownership)
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, true) {
@@ -368,6 +368,16 @@ func (s *Server) overviewPRItems(status *StatusPayload, cfg config.DashboardIssu
 				continue
 			}
 			out = append(out, overviewPRItem{pr: entry.pr, verdict: entry.verdict, held: true, info: info, ownership: ownership, slice: slice})
+		}
+		for _, entry := range frontendRepoDraftPRs(repo) {
+			entry.pr.Repo = nonEmpty(entry.pr.Repo, repoName)
+			info := prBand(entry.pr, nil, false, cfg, now, autoMergeLabel, status.HiveID)
+			ownership := ownershipFor(repo.Ownership, ownershipKindPR, entry.pr.Number)
+			slice := overviewPRChartSlice(entry.pr, nil, ownership, autoMergeLabel)
+			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, false) {
+				continue
+			}
+			out = append(out, overviewPRItem{pr: entry.pr, info: info, ownership: ownership, slice: slice})
 		}
 	}
 	return out
@@ -479,8 +489,11 @@ func holdItemIssue(item github.HoldItem) github.Issue {
 }
 
 type frontendPR struct {
+	// pr is the PR as the hive tracks it (withSuppressedStage); wire is the
+	// snapshot entry as published, with GitHub's labels.
 	pr      github.PullRequest
 	verdict *github.MergeVerdict
+	wire    FrontendPR
 }
 
 func frontendRepoPRs(repo FrontendRepo, held bool) []frontendPR {
@@ -497,22 +510,42 @@ func frontendRepoPRs(repo FrontendRepo, held bool) []frontendPR {
 	return out
 }
 
+// frontendRepoDraftPRs are the repo's open drafts as band entries. The
+// enumeration sidelines drafts (github.RepoWorkPR, bucket "draft") instead of
+// listing them with OpenPrs / HeldPrs, so the PR bands never saw one: the
+// Draft band read 0 hive-wide while projectbluefin/common#1532, #1626 and
+// server#585 were open drafts.
+func frontendRepoDraftPRs(repo FrontendRepo) []frontendPR {
+	var out []frontendPR
+	for _, raw := range repo.NonActionablePrs {
+		w, ok := repoWorkPR(raw)
+		if !ok || !w.Draft {
+			continue
+		}
+		out = append(out, frontendPR{pr: github.PullRequest{
+			Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: append([]string(nil), w.Labels...),
+			Draft: true, URL: w.URL, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed,
+		}})
+	}
+	return out
+}
+
 func frontendPullRequest(raw any) (frontendPR, bool) {
 	switch v := raw.(type) {
 	case FrontendPR:
-		return frontendPR{pr: v.PullRequest, verdict: v.MergeVerdict}, true
+		return frontendPR{pr: withSuppressedStage(v.PullRequest, v.SuppressedStage), verdict: v.MergeVerdict, wire: v}, true
 	case *FrontendPR:
 		if v == nil {
 			return frontendPR{}, false
 		}
-		return frontendPR{pr: v.PullRequest, verdict: v.MergeVerdict}, true
+		return frontendPR{pr: withSuppressedStage(v.PullRequest, v.SuppressedStage), verdict: v.MergeVerdict, wire: *v}, true
 	case github.PullRequest:
-		return frontendPR{pr: v}, true
+		return frontendPR{pr: v, wire: FrontendPR{PullRequest: v}}, true
 	case *github.PullRequest:
 		if v == nil {
 			return frontendPR{}, false
 		}
-		return frontendPR{pr: *v}, true
+		return frontendPR{pr: *v, wire: FrontendPR{PullRequest: *v}}, true
 	default:
 		return frontendPR{}, false
 	}

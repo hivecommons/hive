@@ -723,6 +723,8 @@
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
+      const suppressed = typeof stageTrackerLabelsSuppressedText === 'function' ? stageTrackerLabelsSuppressedText(item) : '';
+      if (suppressed) lines.push(suppressed);
       const deferred = stageTrackerDeferredMods(item);
       if (deferred.length) lines.push(STAGE_TRACKER_DEFERRED_NOTE + deferred.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));

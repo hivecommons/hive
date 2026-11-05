@@ -44,11 +44,45 @@ type humanChecksEntry struct {
 // CheckSummarizer reads the check digest for a head; tests swap it.
 type CheckSummarizer func(ctx context.Context, owner, repo, sha string) (hgithub.CommitChecksSummary, error)
 
-func (c *Engine) summarizeChecks(ctx context.Context, owner, repo, sha string) (hgithub.CommitChecksSummary, error) {
+func (c *Engine) summarizeChecks(ctx context.Context, owner, repo, sha string, required func() map[string]bool) (hgithub.CommitChecksSummary, error) {
 	if c.checkSummary != nil {
 		return c.checkSummary(ctx, owner, repo, sha)
 	}
-	return hgithub.SummarizeCommitChecks(ctx, c.gh, owner, repo, sha)
+	return hgithub.SummarizeCommitChecksRequired(ctx, c.gh, owner, repo, sha, required())
+}
+
+// humanRequiredEntry is one base branch's required check set.
+type humanRequiredEntry struct {
+	at  time.Time
+	set map[string]bool
+}
+
+// headRequiredChecks is the required check set of obs's base branch (branch
+// protection, rulesets, else the configured list), cached per repo and
+// branch for humanChecksTTL; nil when unknown.
+func (c *Engine) headRequiredChecks(ctx context.Context, tracker *StageTracker, obs stageObservation, now time.Time) map[string]bool {
+	base := strings.TrimSpace(obs.BaseRef)
+	if base == "" || c.gh == nil {
+		return nil
+	}
+	key := strings.ToLower(obs.Owner+"/"+obs.Repo) + "@" + base
+	tracker.mu.Lock()
+	entry, ok := tracker.required[key]
+	tracker.mu.Unlock()
+	if ok && now.Sub(entry.at) < humanChecksTTL {
+		return entry.set
+	}
+	set, known := c.requiredStatusCheckContexts(ctx, obs.Owner, obs.Repo, base)
+	if !known {
+		set = nil
+	}
+	tracker.mu.Lock()
+	if tracker.required == nil {
+		tracker.required = map[string]humanRequiredEntry{}
+	}
+	tracker.required[key] = humanRequiredEntry{at: now, set: set}
+	tracker.mu.Unlock()
+	return set
 }
 
 // headChecks returns the (possibly cached) check digest for obs's head.
@@ -59,7 +93,7 @@ func (c *Engine) headChecks(ctx context.Context, tracker *StageTracker, key stri
 	if ok && entry.head == obs.HeadSHA && now.Sub(entry.at) < humanChecksTTL {
 		return entry.summary, !entry.err
 	}
-	summary, err := c.summarizeChecks(ctx, obs.Owner, obs.Repo, obs.HeadSHA)
+	summary, err := c.summarizeChecks(ctx, obs.Owner, obs.Repo, obs.HeadSHA, func() map[string]bool { return c.headRequiredChecks(ctx, tracker, obs, now) })
 	if err != nil {
 		c.warn("stage labels: check digest failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 	}
@@ -492,7 +526,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	}
 	e.Sentinel = hasLabelFold(obs.Labels, sentinel)
 	summary, known := c.headChecks(ctx, tracker, key, obs, now)
-	e.Checks = stagelabels.CheckSummary{Total: summary.Total, Green: summary.Green, Pending: summary.Pending, Red: summary.Red, Known: known}
+	e.Checks = stagelabels.CheckSummary{Total: summary.Total, Green: summary.Green, Pending: summary.Pending, Red: summary.Red, Missing: summary.MissingRequired, Known: known}
 	if c.hiveSupersedingPR(obs) {
 		e.HiveSuperseder = true
 		e.HiveSupersederHardStop, _ = hiveSupersederHardStop(e, contributorVerdict, c.sentinelAcknowledgedFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA))

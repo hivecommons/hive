@@ -349,6 +349,9 @@ type Engine struct {
 	// baseRefresh memoises whether a PR head is the hive's own base refresh
 	// of the head a decision was recorded on (automerge_decision_carry.go).
 	baseRefresh hgithub.BaseRefreshChecker
+	// approvalReach memoises whether a trusted approving review reaches a
+	// head (automerge_review_head_binding.go).
+	approvalReach approvalReachCache
 
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string

@@ -61,6 +61,10 @@ type ReporterTrustClankerConfig interface {
 // and a refused issue is outside the pipeline until a required label lands.
 const issueFilterReason = "Project issue filter"
 
+// IssueFilterReason is issueFilterReason for readers of the work detail
+// (the dashboard's your-turn decision).
+const IssueFilterReason = issueFilterReason
+
 // IssueFilterNoticeConfig is the optional user-facing side of Admits: the
 // labels that would admit an issue the filter refuses, named in a reply.
 // config.IssueFilterConfig implements it.

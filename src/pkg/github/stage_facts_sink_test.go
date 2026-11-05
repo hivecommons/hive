@@ -26,6 +26,9 @@ type stageFactsServer struct {
 	state   string
 	isPR    bool
 	body    string
+	// title / login, when set, are the issue's title and author.
+	title string
+	login string
 	added   []string
 	removed []string
 	// prState / prMerged answer GET /pulls/N (the covering-PR re-read);
@@ -57,7 +60,11 @@ func newStageFactsServer(t *testing.T, labels ...string) *stageFactsServer {
 			}
 			_ = json.NewEncoder(w).Encode(body)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/"):
-			body := map[string]any{"number": 7, "state": s.state, "labels": wireLabelsOf(s.labels), "user": map[string]any{"login": "dev"}, "body": s.body}
+			login := s.login
+			if login == "" {
+				login = "dev"
+			}
+			body := map[string]any{"number": 7, "state": s.state, "labels": wireLabelsOf(s.labels), "user": map[string]any{"login": login}, "body": s.body, "title": s.title}
 			if s.isPR {
 				body["pull_request"] = map[string]any{"url": "https://api.github.com/repos/o/r/pulls/7"}
 			}

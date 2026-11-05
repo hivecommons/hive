@@ -255,6 +255,17 @@ listed only so an agent can file regression issues should carry
 `backfill: false` (default) additionally keeps every kind off items that
 predate hive's first sight of, or write access to, the repo.
 
+"Internal tracking" means the stage engine still records the PR's stage
+when the gate keeps its `stage_label` write off GitHub: the record carries
+`labels_suppressed` and the gate's reason, the Overview bands and the
+your-turn inbox read that stage in place of the missing label (a refused 085
+park is still *Parked until a maintainer decides*), the Activity Monitor row
+says "Stage label not on GitHub" with the reason, and an escalation note
+says the hive *would* move the PR to `stage/085-needs-decision` and why it
+did not instead of "Moving to". The backfill guard applies to
+`stage_label` like every other kind; with the stage tracked internally an
+older PR is still in the inbox, only unlabelled on GitHub.
+
 ## Example config alignment
 
 `src/hive.yaml.example` uses the built-in `quality` lane for automated test suites, coverage gates, and regression checks. There is no built-in `tester` lane in the ACMM packs, known-agent defaults, or shipped policy templates; operators who want a separate tester must define it as a custom agent with explicit metadata and a policy template.
