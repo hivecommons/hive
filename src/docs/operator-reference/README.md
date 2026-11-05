@@ -410,9 +410,19 @@ Dependabot branch), GitHub may create the `pull_request` runs and hold them
 for approval (`action_required`) under the repository or organization workflow
 approval policy; the required contexts never appear and the PR sits at
 `required-check-missing:<ctx>` or `required-check-pending:<ctx>` indefinitely
-(hivecommons/hive#11552). For the App self-merge, trusted-bot, and
-registry-trusted clanker lanes only, the sweep now inspects the head's workflow
-runs when a required check is missing or pending:
+(hivecommons/hive#11552). The primary cure is the gated-run approval sweep
+(`governor.ci.auto_approve_workflows`, default `true`,
+hivecommons/hive#16603): once per PR head it approves the held `pull_request`
+runs with the App token (`POST /actions/runs/{id}/approve`) when the PR author
+or triggering actor is Dependabot/Renovate (`auto_approve_workflow_actors`) or
+the App itself, or a verified owner or merger admitted that head from the
+dashboard. That path needs the App's **Actions: Read and write** grant; with
+only Read the call `403`s, the hive records one `permission_error` per head in
+`/api/status` `workflow_approvals`, and the CI caption reads `CI waiting ·
+needs workflow approval on GitHub`. For the App self-merge, trusted-bot, and
+registry-trusted clanker lanes only, the automerge sweep additionally inspects
+the head's workflow runs when a required check is missing or pending, as the
+fallback when the approval sweep is off or refused:
 
 - held runs whose head repository is the base repository cause Hive to post one
   `/ok-to-test` issue comment per head and report `workflow-approval-required:<ctx>`.
@@ -420,7 +430,8 @@ runs when a required check is missing or pending:
   listens for that comment and approves the held runs with the repository
   `GITHUB_TOKEN` (not the Hive App token). It references no reusable workflow,
   so it also works under "allow select actions" policies and on GHES.
-  No Prow and no Hive App Actions-write permission are required.
+  This fallback needs no Prow and no Hive App Actions-write permission; it
+  never reaches fork heads.
 - if the held runs remain `action_required` after the grace period, Hive reports
   `workflow-approval-required:missing-workflow:<ctx>` so the attention panel and
   stage entry name the likely missing workflow, and the 085 entry comment
