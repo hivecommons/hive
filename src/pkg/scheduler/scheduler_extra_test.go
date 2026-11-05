@@ -105,11 +105,34 @@ func TestBuildKickMessages_IncludesGovernorWorkSourceRule(t *testing.T) {
 	for _, want := range []string{
 		"The PRs/issues for this kick are listed in this prompt by the governor",
 		"Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work",
-		"blocked by the hive proxy for agents",
 		"Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers",
 	} {
 		if !strings.Contains(msgs[0].Message, want) {
 			t.Errorf("expected governor work-source rule to contain %q:\n%s", want, msgs[0].Message)
+		}
+	}
+}
+
+func TestGovernorWorkSourceRule_MergedHistoryReadGate(t *testing.T) {
+	// Isolate the injected header from policy bodies, which carry their own
+	// work-source guidance and must not mask a stale header.
+	msg := addGovernorWorkSourceRule("[agent:quality]\n\nPolicy body")
+	for _, want := range []string{
+		"Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work",
+		"Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers",
+		"For merged PR history only, `gh pr list --state merged`",
+		"no `--search` or `-S`",
+		"only when the wrapper permits it for your tier",
+		"this does not authorize open-work discovery",
+		"If refused, do not retry or bypass the restriction",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("injected header must preserve merged-history read gate %q:\n%s", want, msg)
+		}
+	}
+	for _, stale := range []string{"blocked by the hive proxy for agents", "only waste a turn"} {
+		if strings.Contains(msg, stale) {
+			t.Errorf("injected header must not categorically deny merged-history reads with %q:\n%s", stale, msg)
 		}
 	}
 }
