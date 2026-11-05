@@ -64,6 +64,34 @@ func (c *Client) isRelayContributor(login string) bool {
 	return fn(login)
 }
 
+// SetKnownContributor installs the durable contributor-provenance predicate:
+// true when login has a live relay claim or a profile in this hive's
+// contributor registry. The live claim alone expires with the relay task
+// lease (claims.DefaultContributorTTL), so a park re-check that runs days
+// later would read a relay-authored park comment as untrusted; the registry
+// outlives the claim. nil knows no contributors.
+func (c *Client) SetKnownContributor(fn func(login string) bool) {
+	if c == nil {
+		return
+	}
+	c.reporterTrustMu.Lock()
+	defer c.reporterTrustMu.Unlock()
+	c.knownContributor = fn
+}
+
+func (c *Client) isKnownContributor(login string) bool {
+	if c == nil {
+		return false
+	}
+	c.reporterTrustMu.RLock()
+	fn := c.knownContributor
+	c.reporterTrustMu.RUnlock()
+	if fn == nil {
+		return false
+	}
+	return fn(login)
+}
+
 func clankerRequestedAddendum(cc ReporterTrustClankerConfig) string {
 	if addendum := strings.TrimSpace(cc.ReporterTrustClankerRequestedAddendum()); addendum != "" {
 		return "\n\n" + addendum

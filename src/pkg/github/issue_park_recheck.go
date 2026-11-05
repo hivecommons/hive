@@ -4,9 +4,9 @@ package github
 // parked on a premise — "#722 is in progress, agents leave it alone", "the
 // precedent has not been set", "whether to adopt ruff and type checking".
 // The park text is written once, usually by a contributor relay under its
-// own account (only hive accounts, relay contributors and trusted
-// maintainers count as park-text authors), and nothing re-read it when the
-// work it named moved on. A
+// own account (only hive accounts, known contributors — live relay claim or
+// registry profile — and trusted maintainers count as park-text authors),
+// and nothing re-read it when the work it named moved on. A
 // maintainer then decides from a premise that no longer holds, and agents
 // stay off work that is unblocked (projectbluefin/server#385,
 // projectbluefin/utah#13, projectbluefin/website#926).
@@ -310,10 +310,16 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 }
 
 // parkText is the text the park rests on: the issue body when the issue was
-// filed parked, and every comment a hive account, a contributor relay or a
+// filed parked, and every comment a hive account, a known contributor or a
 // trusted maintainer posted in the window before the park label. The hive's
 // own notices are not park text, and an untrusted commenter cannot steer
 // which patches get read.
+//
+// Contributor provenance is the durable predicate (SetKnownContributor: live
+// relay claim or registry profile), not the live relay claim alone. The
+// relay posts the park comment under the contributor's own account with
+// author_association NONE and the claim expires with the task lease; the
+// re-check runs days later and must still read that comment as park text.
 func (c *Client) parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) string {
 	inWindow := func(at time.Time) bool {
 		return !at.IsZero() && !at.After(start) && start.Sub(at) <= parkTextWindow
@@ -327,7 +333,7 @@ func (c *Client) parkText(issue *gh.Issue, comments []*gh.IssueComment, start ti
 			continue
 		}
 		login := cm.GetUser().GetLogin()
-		if !c.isHiveAccount(cm.GetUser()) && !c.isRelayContributor(login) && !c.reporterIsTrusted(login, cm.GetAuthorAssociation()) {
+		if !c.isHiveAccount(cm.GetUser()) && !c.isKnownContributor(login) && !c.reporterIsTrusted(login, cm.GetAuthorAssociation()) {
 			continue
 		}
 		body := cm.GetBody()

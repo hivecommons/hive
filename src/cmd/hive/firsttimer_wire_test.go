@@ -213,7 +213,7 @@ func TestFirstTimerTemplateTextLoadsOnce(t *testing.T) {
 
 func TestFirstTimerKnownContributor(t *testing.T) {
 	b := &boot{}
-	if b.firstTimerKnownContributor("nobody-registered-here") {
+	if b.knownContributor("nobody-registered-here") {
 		t.Fatal("unknown login must not be known")
 	}
 	if b.firstTimerState() == nil || b.firstTimerState() != b.firstTimer {

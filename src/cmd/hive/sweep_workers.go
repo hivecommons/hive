@@ -140,7 +140,7 @@ func (b *boot) sweepJobs() []sweepJob {
 			runGoodFirstIssueSweepIfDue(ctx, gh, cfg, b.dashSrv, gfi, b.lastActionable.Load(), nil, b.logger)
 		}},
 		{"first_timer", baseInterval, sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
-			runFirstTimerWelcome(ctx, gh, cfg, b.dashSrv, first, b.firstTimerKnownContributor, b.lastActionable.Load(), b.logger)
+			runFirstTimerWelcome(ctx, gh, cfg, b.dashSrv, first, b.knownContributor, b.lastActionable.Load(), b.logger)
 		}},
 		{"rfc_existing", baseInterval, sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCExistingCheck(ctx, newRFCCoverageForge(gh), cfg, b.dashSrv, coverage, b.lastActionable.Load(), b.logger)

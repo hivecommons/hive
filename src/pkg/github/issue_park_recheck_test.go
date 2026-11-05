@@ -170,7 +170,11 @@ func parkClient(t *testing.T, srv *httptest.Server) *Client {
 	t.Helper()
 	c := newTestClient(t, srv, "org", []string{"repo"})
 	c.SetAppBotLogin("hive[bot]")
-	c.SetRelayContributor(func(login string) bool { return login == "contributor" })
+	// The re-check runs days after the park, so the relay's live contributor
+	// claim (claims.DefaultContributorTTL) is gone; the registry-backed
+	// predicate is what still knows the park author.
+	c.SetRelayContributor(func(string) bool { return false })
+	c.SetKnownContributor(func(login string) bool { return login == "contributor" })
 	return c
 }
 
@@ -612,9 +616,10 @@ func TestParkTextTrustedAuthors(t *testing.T) {
 		want    string
 	}{
 		{"hive account included", comment("hive[bot]", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
-		{"contributor relay included", comment("contributor", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
+		{"registered contributor with expired relay claim included", comment("contributor", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"trusted maintainer included", comment("maint", "MEMBER", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"untrusted commenter excluded", comment("stranger", "NONE", "see evil/repo#9"), ""},
+		{"hive notice excluded", comment("hive[bot]", "NONE", parkRecheckMarker+" see org/other#7"), ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -630,5 +635,28 @@ func TestParkTextTrustedAuthors(t *testing.T) {
 				t.Errorf("parkText = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A hive that knows no contributors (nil predicate) reads a relay-style NONE
+// comment as untrusted: the live relay claim alone is not park-text
+// provenance, since it has expired by the time the re-check runs.
+func TestParkTextLiveRelayClaimIsNotProvenance(t *testing.T) {
+	c := newTestClient(t, newParkFake(t, &parkFake{}), "org", []string{"repo"})
+	c.SetRelayContributor(func(login string) bool { return login == "contributor" })
+	raw, err := json.Marshal([]map[string]any{{"user": map[string]any{"login": "contributor"}, "author_association": "NONE", "body": "waiting on org/other#7", "created_at": prTS(parkT0.Add(-20 * time.Second))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var comments []*gh.IssueComment
+	if err := json.Unmarshal(raw, &comments); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.parkText(&gh.Issue{}, comments, parkT0); got != "" {
+		t.Fatalf("parkText = %q, want empty without a known-contributor predicate", got)
+	}
+	c.SetKnownContributor(func(login string) bool { return login == "contributor" })
+	if got := c.parkText(&gh.Issue{}, comments, parkT0); got != "waiting on org/other#7" {
+		t.Fatalf("parkText = %q, want the registered contributor's comment", got)
 	}
 }

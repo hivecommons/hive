@@ -170,6 +170,11 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// ledger is read per call because the client can be configured before
 	// it is built.
 	client.SetRelayContributor(b.relayContributor)
+	// Park-text provenance for the park re-check (#16697): the live claim
+	// above expires with the relay task lease, but the re-check reads park
+	// comments days later, so it keys on the durable registry-backed
+	// predicate instead.
+	client.SetKnownContributor(b.knownContributor)
 	// Ledger fallback for the enumeration-time claim read and the
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).

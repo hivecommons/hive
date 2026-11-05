@@ -358,6 +358,11 @@ type Client struct {
 	// clanker-requested parking (pr_clanker_requested.go). nil knows no relay
 	// contributors.
 	relayContributor func(login string) bool
+	// knownContributor reports whether a login has ever run a relay against
+	// this hive — a live claim or a contributor-registry profile — the
+	// durable provenance the park re-check needs long after the claim's TTL
+	// (issue_park_recheck.go). nil knows no contributors.
+	knownContributor func(login string) bool
 	// prSignedCommits, when set and returning true, makes the PR-request watcher
 	// re-author each head branch through createCommitOnBranch before opening the
 	// PR, so the commit is GitHub-signed (Verified) and authored by the App bot.
