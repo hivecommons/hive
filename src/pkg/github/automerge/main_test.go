@@ -15,6 +15,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	sharedBasePreparation = NewBasePreparationStore(filepath.Join(dir, "base-preparation"))
+	sharedHeadSightings = NewHeadSightings(filepath.Join(dir, "pr-head-sightings.json"))
 
 	code := m.Run()
 	if err := os.RemoveAll(dir); err != nil {
