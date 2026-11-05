@@ -102,7 +102,7 @@
       }
       // The issue-filter ADMIT rows name the filter's own labels in the
       // reason; admissionLabels are reporter trust's.
-      if (own.verb === 'ADMIT' && own.reason_code !== 'decided_not_admitted' && own.reason_code !== 'agent_finding_not_admitted') {
+      if (own.verb === 'ADMIT' && own.reason_code === 'untrusted_reporter') {
         const labels = (ctx.admissionLabels || []).filter(Boolean);
         after.push({ type: 'note', text: labels.length ? 'Add the label ' + labels.join(' or ') + ' to admit it.' : 'Add an admission label to admit it.' });
       }

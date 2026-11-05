@@ -834,6 +834,7 @@ assert.deepEqual(kinds(model(own('ADMIT', 'untrusted_reporter'))), [open, 'note:
 // reporter-trust labels would be the wrong ones.
 assert.deepEqual(kinds(model(own('ADMIT', 'decided_not_admitted'))), [open]);
 assert.deepEqual(kinds(model(own('ADMIT', 'agent_finding_not_admitted'))), [open]);
+assert.deepEqual(kinds(model(own('ADMIT', 'person_issue_not_admitted'))), [open]);
 assert.match(kinds(model(own('INSPECT', 'sentinel_flagged')))[1], /Removing the sentinel-alert label after review releases it/);
 assert.deepEqual(kinds(model(own('CLOSE', 'reporter_confirmation_stale'))), [open, 'copy:/fixed']);
 assert.deepEqual(kinds(model(own('CLOSE', 'verified_done'))), [open]);

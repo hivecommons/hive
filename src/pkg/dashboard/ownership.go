@@ -80,6 +80,7 @@ const (
 	// self-authorize (no TRIAGE row covers it).
 	OwnershipReasonDecidedNotAdmitted      = "decided_not_admitted"
 	OwnershipReasonAgentFindingNotAdmitted = "agent_finding_not_admitted"
+	OwnershipReasonPersonIssueNotAdmitted  = "person_issue_not_admitted"
 )
 
 // ownershipReasonVerbs is the fixed reason-code set with the one verb each
@@ -111,6 +112,7 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonStaleSafetyNet:              OwnershipVerbReview,
 	OwnershipReasonDecidedNotAdmitted:          OwnershipVerbAdmit,
 	OwnershipReasonAgentFindingNotAdmitted:     OwnershipVerbAdmit,
+	OwnershipReasonPersonIssueNotAdmitted:      OwnershipVerbAdmit,
 }
 
 // OwnershipActionReleaseHold is the dashboard's existing release-hold action.
@@ -507,6 +509,9 @@ type issueOwnershipInput struct {
 	number       int
 	labels       []string
 	acknowledged bool
+	// authorIsHuman is the enumeration's reporter classification
+	// (RepoWorkIssue.AuthorIsHuman) for a non-actionable row.
+	authorIsHuman bool
 	// openLinkedPR is set when the issue has an open (unmerged) linked PR or
 	// open PR claim context.
 	openLinkedPR bool
@@ -635,8 +640,11 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	}
 	// (9b) refused by the issue filter: no lane will ever see it, so a
 	// decided issue (`/hive decision` and `/hive approve` apply
-	// approved-direction, not the filter's label) or an agent's finding
-	// waits on a maintainer admitting it. projectbluefin/testsuite#1091 was
+	// approved-direction, not the filter's label), an agent's finding or a
+	// person's issue waits on a maintainer admitting it. Only the filter's
+	// own refusal counts: holds, exempt, tracking, blocked, park and
+	// reporter-confirmation rows and standing dashboards carry other
+	// buckets or reasons (client.go fetchIssues decides those first). projectbluefin/testsuite#1091 was
 	// approved at 20:31Z on 11-05; the un-park reply said "still outside the
 	// agent queue", and no inbox listed it.
 	if in.bucket == repoWorkBucketFiltered && in.bucketReason == github.IssueFilterReason {
@@ -645,6 +653,12 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		}
 		if role := issueAgentRole(in.labels); role != "" {
 			return yourTurn(OwnershipReasonAgentFindingNotAdmitted, "Filed by agent "+role+"; the issue filter keeps it off the agent queue — "+env.admitPhrase()+", or close it if it no longer applies")
+		}
+		// A person's issue nobody has decided: the filter only ever lets it
+		// in by a maintainer's label. A bot's (not a standing dashboard,
+		// which never reaches this bucket) stays outside.
+		if in.authorIsHuman {
+			return yourTurn(OwnershipReasonPersonIssueNotAdmitted, "A person filed this; the issue filter keeps it off the agent queue — "+env.admitPhrase()+" so the hive works it, or close it")
 		}
 	}
 	// (11) otherwise not your turn; the safety net may still apply.
@@ -950,6 +964,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				createdAt:       item.CreatedAt,
 				updatedAt:       item.UpdatedAt,
 				reporterGate:    item.ReporterConfirmationGate,
+				authorIsHuman:   item.AuthorIsHuman,
 				bucket:          item.Bucket,
 				bucketReason:    item.Reason,
 				decisionBlocker: decisionBlockerFor(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number), item.OpenBlockers, decisionParks, repoName),
