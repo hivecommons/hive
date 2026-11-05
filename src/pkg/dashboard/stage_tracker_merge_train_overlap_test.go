@@ -113,7 +113,7 @@ func TestStageTrackerMergeTrainCountsOnlyMergeQueueMembers(t *testing.T) {
 // Two overlapping PRs, the planner's front still at 050 and the sibling
 // at 080: no train object (one merge-queue member is no train), but the
 // 080 row keeps its seat words — "behind #15577 (2nd of 2)" — rather than
-// "Ready for auto merge · checking now" (hivecommons/hive#15825), and the
+// "Queued for merge · checking now" (hivecommons/hive#15825), and the
 // 050 row's hint says it leads once green, naming the rider waiting on it.
 func TestStageTrackerMergeTrainPendingFrontLeavesLoneRider(t *testing.T) {
 	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)

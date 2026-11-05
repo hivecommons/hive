@@ -1,0 +1,1 @@
+- Opening a hosted hive from the hub when the hive cannot verify the hub's single sign-on now shows the "Sign-in didn't complete" page with a GitHub sign-in button, instead of being replaced by the gateway's "Hive is restarting" outage page ([#16652](https://github.com/hivecommons/hive/issues/16652)).

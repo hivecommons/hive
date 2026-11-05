@@ -53,7 +53,7 @@ function load() {
   vm.runInContext(fn('tracker-words-stage', 'stageTrackerStageName'), c);
   for (const name of ['stageTrackerLinkedSuperseder', 'stageTrackerLinkedSupersededGone', 'stageTrackerLinkedSupersededText', 'stageTrackerLinkedSupersededTip']) vm.runInContext(fn('tracker-words-gate', name), c);
   for (const name of ['stageTrackerItemKey', 'stageTrackerPRKey', 'stageTrackerRowPRKeys']) vm.runInContext(fn('tracker-merged', name), c);
-  for (const name of ['stageTrackerLinkedPRItem', 'stageTrackerLinkedPROpen', 'stageTrackerLinkedDrawnHere', 'stageTrackerLinkedSorted', 'stageTrackerHeadColsHtml', 'stageTrackerSubRowHtml']) vm.runInContext(fn('tracker-row-layout', name), c);
+  for (const name of ['stageTrackerLinkedPRItem', 'stageTrackerLinkedPROpen', 'stageTrackerLinkedDrawnHere', 'stageTrackerLinkedSorted', 'stageTrackerHeadColsHtml', 'stageTrackerSubRowHtml', 'stageTrackerBasePillHtml']) vm.runInContext(fn('tracker-row-layout', name), c);
   vm.runInContext(fn('tracker-row-render', 'stageTrackerRowHtml'), c);
   vm.runInContext(fn('tracker-filter', 'stageTrackerPRIssueSlot'), c);
   vm.runInContext(source('tracker-motion'), c);

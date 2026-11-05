@@ -172,7 +172,7 @@ func TestStageTrackerRESTCommitStatusCollectionAndRequiredBinding(t *testing.T) 
 					staleChecks := time.Now().Add(-trackerActivityFreshWindow - time.Second)
 					a.ObservedAt = &staleChecks
 					got := stageTrackerCIActivity(pr, time.Now())
-					if got.ObservedAt == nil || !got.ObservedAt.Equal(*a.StatusesObservedAt) || got.Active {
+					if got.ObservedAt == nil || !got.ObservedAt.Equal(*a.StatusesObservedAt) || got.Active != (got.State == "running" || got.State == "queued") {
 						t.Fatalf("status freshness inherited the unrelated check snapshot: %+v", got)
 					}
 				}

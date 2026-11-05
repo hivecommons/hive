@@ -146,6 +146,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			AuthorKindLabels:          cfg.Governor.Labels.Author.Names(),
 			RelayKnown:                contributorRelayKnown,
 			OwnerAuthor:               dashboardOwnerLogin(cfg),
+			HiveAuthor:                hiveIdentity(cfg).Matches,
 			SharedCIIncident:          stageSharedCIIncident,
 			BaseBranchRed:             stageBaseBranchRed,
 			ForkGuard:                 stageForkGuard,

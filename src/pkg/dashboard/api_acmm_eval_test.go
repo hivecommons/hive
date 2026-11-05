@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -318,6 +319,159 @@ func TestPatternExists_NilGHClientOnCacheMiss(t *testing.T) {
 	empty := map[string]map[string]bool{}
 	if s.patternExists(t.Context(), "myorg", "repo1", "anything", empty) {
 		t.Fatal("expected false when GHClient is nil and cache misses")
+	}
+}
+
+func TestE2ECriterion_WorkflowAndWebAlternatives(t *testing.T) {
+	s := NewServer(0, acmmEvalTestLogger())
+	deps := testDeps(t)
+	deps.GHClient = nil
+	s.RegisterAPI(deps)
+	c := findCriterion(t, "acmm:prereq-e2e")
+
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{".github/workflows/test-plain-install.yml", true},
+		{".github/workflows/test-luks-install.yml", true},
+		{".github/workflows/test-network-install.yaml", true},
+		{".github/workflows/test-uefi-boot.yml", true},
+		{".github/workflows/test-secure-boot.yaml", true},
+		{".github/workflows/e2e.yml", true},
+		{".github/workflows/nightly-e2e.yaml", true},
+		{"playwright.config.ts", true},
+		{"playwright.config.js", true},
+		{"cypress.config.ts", true},
+		{"e2e/", true},
+		{"web/e2e/", true},
+		{"web/playwright.config.ts", true},
+		{"web/playwright.config.js", true},
+		{"test/e2e/", true},
+		{"tests/e2e/", true},
+		{".github/workflows/ci.yml", false},
+		{".github/workflows/install-dependencies.yml", false},
+		{".github/workflows/test-unit.yml", false},
+		{".github/workflows/test-install.yml.disabled", false},
+		{".github/workflows/test-install.yml/", false},
+		{"docs/test-install.yml", false},
+		{".github/workflows/nested/test-install.yml", false},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			cache := map[string]map[string]bool{}
+			for _, p := range c.Patterns {
+				clean := strings.TrimSuffix(p, "/")
+				parent := ""
+				if idx := strings.LastIndex(clean, "/"); idx >= 0 {
+					parent = clean[:idx]
+				}
+				cache[parent] = map[string]bool{}
+			}
+			clean := strings.TrimSuffix(tc.path, "/")
+			parent, base := "", clean
+			if idx := strings.LastIndex(clean, "/"); idx >= 0 {
+				parent, base = clean[:idx], clean[idx+1:]
+			}
+			if cache[parent] == nil {
+				cache[parent] = map[string]bool{}
+			}
+			cache[parent][base] = true
+			if strings.HasSuffix(tc.path, "/") {
+				cache[parent][base+"/"] = true
+			}
+			if got := s.checkCriterion(t.Context(), "myorg", "repo1", c, cache); got != tc.want {
+				t.Fatalf("E2E detection for %q = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPatternExists_FileGlobCacheAndFallback(t *testing.T) {
+	for _, cached := range []bool{true, false} {
+		for _, tc := range []struct {
+			name    string
+			pattern string
+			isDir   bool
+			want    bool
+		}{
+			{"matching file", "test*-install*.yml", false, true},
+			{"question and class", "test-?-install.[y]ml", false, true},
+			{"unrelated file", "*e2e*.yml", false, false},
+			{"invalid glob", "[", false, false},
+			{"directory named like workflow", "test*-install*.yml", true, false},
+		} {
+			t.Run(fmt.Sprintf("cached=%v/%s", cached, tc.name), func(t *testing.T) {
+				calls := 0
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					if r.URL.Path != "/repos/myorg/repo1/contents/.github/workflows" {
+						t.Errorf("glob queried %q, want parent directory listing", r.URL.Path)
+						http.NotFound(w, r)
+						return
+					}
+					entryType := "file"
+					if tc.isDir {
+						entryType = "dir"
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode([]map[string]string{
+						{"name": "test-a-install.yml", "type": entryType},
+					})
+				}))
+				t.Cleanup(ts.Close)
+				s := NewServer(0, acmmEvalTestLogger())
+				deps := testDeps(t)
+				deps.GHClient = ghpkg.NewClientForTest(ts.URL, "myorg", []string{"repo1"}, acmmEvalTestLogger())
+				s.RegisterAPI(deps)
+				cache := map[string]map[string]bool{}
+				if cached {
+					cache[".github/workflows"] = map[string]bool{"test-a-install.yml": true}
+					if tc.isDir {
+						cache[".github/workflows"]["test-a-install.yml/"] = true
+					}
+				}
+				for range 2 {
+					if got := s.patternExists(t.Context(), "myorg", "repo1", ".github/workflows/"+tc.pattern, cache); got != tc.want {
+						t.Fatalf("patternExists = %v, want %v", got, tc.want)
+					}
+				}
+				wantCalls := 1
+				if cached {
+					wantCalls = 0
+				}
+				if calls != wantCalls {
+					t.Fatalf("directory API calls = %d, want %d", calls, wantCalls)
+				}
+			})
+		}
+	}
+}
+
+func TestPatternExists_FileGlobMissingParentCachedOnce(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	s := NewServer(0, acmmEvalTestLogger())
+	deps := testDeps(t)
+	deps.GHClient = ghpkg.NewClientForTest(ts.URL, "myorg", []string{"repo1"}, acmmEvalTestLogger())
+	s.RegisterAPI(deps)
+	cache := map[string]map[string]bool{}
+	for _, pattern := range []string{"test*-install*.yml", "test*-boot*.yaml", "*e2e*.yml"} {
+		if s.patternExists(t.Context(), "myorg", "repo1", ".github/workflows/"+pattern, cache) {
+			t.Fatalf("patternExists(%q) = true for missing parent directory", pattern)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("directory API calls = %d, want 1 (missing parent should be cached)", calls)
+	}
+	if s.patternExists(t.Context(), "myorg", "repo1", ".github/workflows/ci.yml", cache) {
+		t.Fatal("literal lookup under cached missing parent should be false")
+	}
+	if calls != 1 {
+		t.Fatalf("directory API calls after literal lookup = %d, want 1", calls)
 	}
 }
 

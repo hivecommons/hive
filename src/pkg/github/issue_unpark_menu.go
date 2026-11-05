@@ -44,6 +44,10 @@ type unparkMenu struct {
 	// ownerStep is true when the issue is parked on a step only the owner can
 	// do, so `/hive done` is offered.
 	ownerStep bool
+	// landedBy is the merged PR a park re-check note says landed the change
+	// this issue asks for (parkRecheckLandedBy); `/fixed` is then the reply
+	// offered first.
+	landedBy string
 	// releaseStep is the typed release proposal. The repo policy decides
 	// whether `/hive approve` may execute it; without that opt-in it remains
 	// descriptive metadata and the legacy manual-step menu is unchanged.
@@ -104,11 +108,27 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 			// unparkReplyMarkerPrefix.
 			ownerStep = false
 			m.releaseStep = nil
+			m.landedBy = ""
+			continue
+		}
+		if strings.Contains(body, parkRecheckMarker) {
+			// The re-check note is not park text: it names no options and
+			// states no recommendation, but it may say the change landed.
+			m.landedBy = parkRecheckLandedBy(body)
 			continue
 		}
 		if strings.Contains(body, unparkReplyMarkerPrefix) {
 			// `/hive help`, the prose hint and the ai_author refusal leave
 			// the owner step open.
+			continue
+		}
+		if strings.Contains(body, parkWithdrawnMarkerPrefix) {
+			// The agent took its ask back: its options and recommendation
+			// go with it, so a later park starts from its own text.
+			ownerStep = false
+			m.releaseStep = nil
+			m.options, m.optionText, m.optionSource = nil, nil, ""
+			m.hasRecommendation, recommendationSource = false, ""
 			continue
 		}
 		if strings.Contains(body, unparkNoticeMarker) {
@@ -171,7 +191,12 @@ func (m unparkMenu) bulletsFor(releaseOnApprove bool) string {
 func (m unparkMenu) replies(releaseOnApprove bool) []unparkReply {
 	var out []unparkReply
 	add := func(command, does string, recommended bool) {
-		out = append(out, unparkReply{command: command, does: does, recommended: recommended})
+		// When the change already landed, closing the issue is the one
+		// recommended reply; the park's own recommendation predates it.
+		out = append(out, unparkReply{command: command, does: does, recommended: recommended && m.landedBy == ""})
+	}
+	if m.landedBy != "" {
+		out = append(out, unparkReply{command: "/fixed", does: "the change this issue asks for already landed in " + m.landedBy + "; close it as completed", recommended: true})
 	}
 	if m.ownerStep {
 		add("/hive done", "you did the step only you can do; Hive re-checks it and closes the issue once it is verified", false)

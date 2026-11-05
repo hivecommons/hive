@@ -78,8 +78,8 @@ func TestCovG_HandleSSO(t *testing.T) {
 	// "/" here is what produced the infinite browser bounce.
 	rec := httptest.NewRecorder()
 	s.handleSSO(rec, httptest.NewRequest(http.MethodGet, "/sso", nil))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("no-secret: expected 503, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no-secret: expected 401, got %d", rec.Code)
 	}
 	if loc := rec.Header().Get("Location"); loc != "" {
 		t.Fatalf("no-secret must not redirect, got Location %q", loc)

@@ -109,7 +109,9 @@
     }
 
     const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
+    // hive:unauthorized reads "hive bot lacks permission", never "unauthorized": the App
+    // installation is missing a permission, nobody did anything illegitimate (hivecommons/hive#16639).
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe', unauthorized: 'hive bot lacks permission' };
     // The draft pill and the Draft chevron explain themselves on hover: no
     // maintainer action is pending, the lanes resume when the author is ready.
     const STAGE_TRACKER_DRAFT_TIP = 'Draft PR — hive review and merge lanes skip drafts until the author marks it ready for review.';
@@ -290,8 +292,10 @@
       if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const external = sa.kind === STAGE_TRACKER_ACTOR_NONE && typeof stageTrackerExternalPRWork === 'function' ? stageTrackerExternalPRWork(item) : null;
-      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'CI failing') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
-      const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
+      // The red verdict is the CI / Review chevron's word; this lane says
+      // who owes the fix (hivecommons/hive#16643).
+      if (external) return (mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Fix owed') + (external.owner ? ' · owner recorded' : (external.author ? ' · author-owned' : ' · owner unknown'));
+      const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Fix owed';
       return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }
 
