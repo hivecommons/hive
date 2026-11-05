@@ -829,6 +829,7 @@ var rateLimitSubstrings = []string{
 	"429 too many requests",
 	"github pacing: request shed",
 	"github pacing: slot would miss request deadline",
+	"github rest budget below reserve ",
 	"rate-limit caution window is engaged",
 }
 

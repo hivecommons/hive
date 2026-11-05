@@ -608,6 +608,8 @@ func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
 		{15109, "advisory: path existence check failed", []any{"path", "a/b.sh", "repo", "common", "error", `checking o/common/a/b.sh@abc: Get "https://api.github.com/repos/o/common/contents/a/b.sh?ref=abc"` + shed}},
 		{0, "failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 429 Too Many Requests"}},
 		{0, "failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 403 API rate limit of 5000 still exceeded until 2026-10-28 17:42:28 -0400 EDT, not making remote request."}},
+		{16784, "issue activity fetch skipped", []any{"repo", "xfce-linux", "error", "github REST budget below reserve 500; skipping issue activity for xfce-linux"}},
+		{16784, "CI trail fetch skipped", []any{"error", "github REST budget below reserve 500; skipping CI trail for org/repo#1"}},
 	}
 	for _, tc := range cases {
 		logger, seen, out := newFeed(t)
@@ -627,7 +629,8 @@ func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.Warn("failed to fetch check runs", "error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 403 Resource not accessible by integration")
 	logger.Warn("stage labels: check digest failed", "error", "GET https://api.github.com/repos/o/r/commits/abc/status: 403 Resource not accessible by integration")
-	if len(*seen) != 2 {
+	logger.Warn("issue activity fetch skipped", "repo", "xfce-linux", "error", "listing issues: 403 Resource not accessible by integration")
+	if len(*seen) != 3 {
 		t.Fatalf("non-rate-limit failures must remain reportable: %+v", *seen)
 	}
 }

@@ -164,6 +164,11 @@ title is `[selfreport] <class>: <short message>`.
 | `models_endpoint_empty` | the dashboard's inference model discovery (`/api/inference/{backend}/models`) found no models from any configured endpoint (`no models found from any endpoint`, `pkg/dashboard/api_models.go`) and fell back to the static aliases, flagged unverified in the UI. The source logs it at WARN once per backend per hour (DEBUG on repeats, re-armed when discovery succeeds), so this fires only when the condition flaps ≥5 times in 10 min (gateway key rejected, endpoint down). Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | low |
 | `unclassified_error_repeated` | **generic catch-all**: the same WARN/ERROR log line (numbers, hashes, paths and quoted strings collapsed) repeated ≥5 times in 10 min. Fed by a `slog.Handler` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger, so a repeating defect is noticed even with no hook site. Skips benign lines (read/keepalive i/o timeouts, WARNs whose `error` is a GitHub rate-limit refusal or a 502/503/504 gateway failure — the caller retries next tick, context cancellation, the permissions watcher's `fixed …` self-healing lines) and any message that already matches another class's keywords. Clears automatically after 20 quiet minutes (2× the window), so a "cleared" comment follows once the symptom stops | low |
 
+The GitHub rate-limit exclusion also covers the local REST reserve guard:
+when optional issue activity or CI trail fetches are shed below the reserve,
+their warnings remain in local logs but do not create repeated-error reports.
+Issue activity keeps its last rollup and is retried by the collector.
+
 The generic feed also skips the exact `review pending expired` message: it
 records the review planner's bounded retry, and a burst across unrelated PRs
 must not become a repeated-error report. The original expiry log and its
