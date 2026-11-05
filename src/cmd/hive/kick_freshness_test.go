@@ -75,7 +75,9 @@ func TestFreshenKickMessages_WithholdsStaleAndClosed(t *testing.T) {
 // A refusal from the API budget or rate-limit caution window is the designed
 // back-off, not a fault: it is withheld but logged below WARN so the fleet
 // self-report feed does not file it as an unclassified repeated error
-// (#15465). Any other refusal still logs at WARN.
+// (#15465). A merged/closed item is likewise the designed outcome (#16774).
+// Stale snapshots and other refusals still log at WARN. The summary line
+// follows the same rule: INFO only when every ref was expected.
 func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -85,7 +87,7 @@ func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 		{"budget critical", github.ErrAPIBudgetCritical, false},
 		{"caution window", github.ErrRateLimitCaution, false},
 		{"stale snapshot", github.ErrSnapshotStaleForDecision, true},
-		{"item closed", github.ErrItemNotOpen, true},
+		{"item closed", github.ErrItemNotOpen, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,7 +107,38 @@ func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 			if got := strings.Contains(log, "level=WARN"); got != tc.wantWarn {
 				t.Fatalf("WARN logged = %v, want %v: %q", got, tc.wantWarn, log)
 			}
+			if !strings.Contains(log, "kick withheld: every ref failed the freshness check") {
+				t.Fatalf("summary not logged: %q", log)
+			}
 		})
+	}
+}
+
+// A message mixing a closed ref with a stale one keeps the summary at WARN.
+func TestFreshenKickMessages_MixedRefsSummaryWarns(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	guard := github.IrreversibleGuard(func(_ context.Context, _ string, number int, _ bool) error {
+		if number == 1 {
+			return github.ErrItemNotOpen
+		}
+		return github.ErrSnapshotStaleForDecision
+	})
+	out := freshenKickMessages(context.Background(), guard, nil, freshKickMsgs([]string{"acme/web#1", "acme/web#2"}), logger)
+	if len(out) != 0 {
+		t.Fatalf("message not withheld: %+v", out)
+	}
+	found := false
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "kick withheld: every ref failed") {
+			found = true
+			if !strings.Contains(line, "level=WARN") {
+				t.Fatalf("summary not at WARN: %q", line)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("summary not logged: %q", buf.String())
 	}
 }
 
