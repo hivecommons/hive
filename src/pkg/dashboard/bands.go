@@ -143,6 +143,25 @@ func uniqueLabels(labels, fallback []string) []string {
 	return out
 }
 
+// blockedNoReasonSignal is the band signal for `blocked` with nothing that
+// names the blocker; blockedReasonSignal replaces it when the row's reason
+// does (a blocked-on marker, or a recheck deadline).
+const blockedNoReasonSignal = "labelled blocked — the label records no reason; see the issue"
+
+// blockedReasonSignal names what a blocked row waits on from its enumeration
+// reason ("blocked on owner/repo#N", "blocked until <t>"); "" when the reason
+// is the bare label. projectbluefin/finpilot#624 and #390 carried markers and
+// still read "records no reason".
+func blockedReasonSignal(reason string) string {
+	if repo, pr, ok := github.ParseBlockedOnReason(reason); ok {
+		return fmt.Sprintf("blocked on %s#%d — lifted when it merges or closes", repo, pr)
+	}
+	if rest, ok := strings.CutPrefix(strings.TrimSpace(reason), "blocked until "); ok && rest != "" {
+		return "blocked until " + rest + " — re-checked then"
+	}
+	return ""
+}
+
 func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConfig, now time.Time, selfAuthorizationHoldActive ...func(string) bool) IssueBandInfo {
 	norm := normalizeIssueBandsConfig(cfg)
 	labels := labelSet(issue.Labels)
@@ -177,7 +196,7 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	if open := slices.Compact(issue.OpenBlockers()); len(open) > 0 {
 		signals = append(signals, Signal{Glyph: "⛔", Label: "blocked by " + strings.Join(open, ", ")})
 	} else if labels["blocked"] {
-		signals = append(signals, Signal{Glyph: "⛔", Label: "labelled blocked — the label records no reason; see the issue"})
+		signals = append(signals, Signal{Glyph: "⛔", Label: blockedNoReasonSignal})
 	}
 	if labelsNeedDecision(labels) {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
