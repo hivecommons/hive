@@ -230,7 +230,11 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 		c.logger.Warn("could not create advisory label, issue will be created without it", slog.String("error", labelErr.Error()))
 	}
 
-	body := "This issue collects advisory findings from Hive agents.\n\n" +
+	replaces := ""
+	if pc, ok := c.takeAdvisoryPersonClose(owner + "/" + repo); ok {
+		replaces = advisoryReplacesNote(pc)
+	}
+	body := replaces + "This issue collects advisory findings from Hive agents.\n\n" +
 		"At lower ACMM levels, some agents work in advisory mode — they analyze code and post findings " +
 		"here but do not create issues or PRs. At higher levels, designated agents (e.g. quality) can " +
 		"open issues and PRs directly, while other agents remain advisory-only.\n\n" +
@@ -937,7 +941,9 @@ func (c *Client) findAdvisoryIssueListed(ctx context.Context, owner, repo string
 	// that never updates again, which reads exactly like a wedged digest. So
 	// reopen the most recent closed one and keep posting to the URL people
 	// already follow. Only after this finds nothing does the caller create.
-	if num, ok := c.findClosedAdvisoryIssue(ctx, owner, repo); ok {
+	// A person's close is a decision, not an accident: that issue stays
+	// closed and the caller files a new one (advisory_person_close.go).
+	if num, ok := c.findClosedAdvisoryIssue(ctx, owner, repo); ok && c.advisoryReusable(ctx, owner, repo, num, nil) {
 		if _, _, err := c.client.Issues.Edit(ctx, owner, repo, num, &gh.IssueRequest{State: gh.Ptr("open")}); err != nil {
 			// Cannot reopen (permissions, locked). Report NOT-FOUND rather than
 			// the closed number: posting a digest to a closed issue would be
