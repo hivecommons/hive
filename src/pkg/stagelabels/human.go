@@ -512,7 +512,13 @@ func RouteHuman(e Evidence) Route {
 		if len(e.ForkGuard) > 1 {
 			subject, verb, it = "checks", "refuse", "them"
 		}
-		decide = append(decide, subject+" `"+strings.Join(e.ForkGuard, "`, `")+"` "+verb+" pull requests from a fork, so neither the author nor the hive can turn "+it+" green: a maintainer must push this branch to the repository (or approve the run as the repository requires)")
+		// The run a maintainer dispatches proves one exact head
+		// (projectbluefin/utah-packages#862), so the ask names it.
+		run := "approve the run"
+		if h := ShortSHA(e.Head); h != "" {
+			run = "run or approve " + it + " for head `" + h + "`"
+		}
+		decide = append(decide, subject+" `"+strings.Join(e.ForkGuard, "`, `")+"` "+verb+" pull requests from a fork, so neither the author nor the hive can turn "+it+" green: a maintainer must push this branch to the repository (or "+run+" as the repository requires)")
 	}
 	approver := strings.TrimSpace(e.HumanApprover)
 	switch e.Verdict {
