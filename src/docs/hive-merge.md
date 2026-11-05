@@ -964,9 +964,16 @@ A PR merges through this tier only when all of the following hold:
   the current head's content, by a login the hive's merger authorizer trusts
   (the same bar that releases a `requires_human` verdict). GitHub moves an
   existing review's commit onto a later merge of the base, so the review
-  counts only when it was submitted at or after the head commit's date, or
-  when the head adds nothing but base merges (by anyone) that leave the PR's
-  diff unchanged since the commit it approved; the audit comment then says
+  counts when GitHub reports it on a head that is not a merge, when it was
+  submitted after both the head commit's date and the hive's first listing
+  of that commit as the PR head, or when the head adds nothing but base
+  merges (by anyone) that leave the PR's diff unchanged since the commit it
+  approved (or since a commit both dated and first listed before the
+  review). The first listing of each head is kept in
+  `pr-head-sightings.json` in the stage state directory; a commit with no
+  listing on record (for example from before the upgrade) carries nothing by
+  date, so a backdated content push cannot inherit an approval. The audit
+  comment then says
   "carried over a base merge … (PR diff unchanged)"
   (projectbluefin/utah#1078). The same rule lets an approval on the previous
   head answer the swarm's `requires_human` after such a merge instead of
