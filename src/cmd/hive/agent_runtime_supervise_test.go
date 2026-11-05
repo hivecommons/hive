@@ -116,6 +116,20 @@ func TestCruxRuntimeSupervision_NilOutsideSidecar(t *testing.T) {
 	}
 }
 
+func TestCruxRuntimeSupervision_ProbeDeadlineIndependentOfInterval(t *testing.T) {
+	_, ts := liveServe(t)
+	s, _, _ := newSupervisionFor(t, ts.URL, cruxconfig.SuperviseExternal)
+	s.interval = time.Nanosecond
+
+	s.probe(context.Background())
+	if down := s.reconcile(false); down {
+		t.Fatal("live server reported down with a tiny poll interval")
+	}
+	if !s.prober.Status().Reachable {
+		t.Fatal("prober unreachable with a tiny poll interval")
+	}
+}
+
 func TestCruxRuntimeSupervision_ConditionFollowsReachability(t *testing.T) {
 	_, ts := liveServe(t)
 	s, cl, log := newSupervisionFor(t, ts.URL, cruxconfig.SuperviseExternal)

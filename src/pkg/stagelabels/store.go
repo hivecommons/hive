@@ -159,6 +159,10 @@ type Record struct {
 	DCOUnsignedOther     int    `json:"dco_unsigned_other,omitempty"`
 	DCOSquashUnsafeHive  int    `json:"dco_squash_unsafe_hive,omitempty"`
 	DCOSquashUnsafeKnown bool   `json:"dco_squash_unsafe_known,omitempty"`
+	// DCOSplitHiveIdentity marks a split computed with the hive's own
+	// identities (project.ai_author) counted as the hive's; records cached
+	// before that (hivecommons/hive#16701) lack it and are read again once.
+	DCOSplitHiveIdentity bool `json:"dco_split_hive_identity,omitempty"`
 	// EntryCommented records that the stage's entry comment (085 "needs a
 	// decision", 090 "ready for a human merge") was posted for the current
 	// stage visit; reset on every stage change so each transition explains
@@ -2617,9 +2621,11 @@ func (s *Store) NoteHold(key string, hold *HoldProvenance) {
 func (s *Store) ClearHold(key string) { s.NoteHold(key, nil) }
 
 // NoteDCO caches the commit check for head on an existing record:
-// unsignedHive is the App-linked share of the unsigned commits, the rest
-// is recorded as other.
-func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashUnsafeHive int) {
+// unsignedHive is the hive's share of the unsigned commits (App bot or a
+// hive identity), the rest is recorded as other. hiveIdentity says the split
+// was computed with a hive identity configured; an App-only split leaves the
+// marker unset so configuring one later triggers the one-time re-read.
+func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashUnsafeHive int, hiveIdentity bool) {
 	if head == "" {
 		return
 	}
@@ -2629,11 +2635,15 @@ func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashU
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other && r.DCOSquashUnsafeHive == squashUnsafeHive && r.DCOSquashUnsafeKnown) {
+	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other && r.DCOSquashUnsafeHive == squashUnsafeHive && r.DCOSquashUnsafeKnown && (r.DCOSplitHiveIdentity || !hiveIdentity)) {
 		return
 	}
+	headChanged := r.DCOHead != head
 	r.DCOHead, r.DCOTotal, r.DCOUnsigned, r.DCOUnsignedHive, r.DCOUnsignedOther, r.DCOSquashUnsafeHive = head, total, unsigned, unsignedHive, other, squashUnsafeHive
 	r.DCOSquashUnsafeKnown = true
+	if headChanged || hiveIdentity {
+		r.DCOSplitHiveIdentity = hiveIdentity
+	}
 	s.items[key] = r
 	s.dirty = true
 }

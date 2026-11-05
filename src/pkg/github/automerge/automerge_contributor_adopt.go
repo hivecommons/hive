@@ -326,16 +326,21 @@ func adoptionNeedsDCORehome(obs stageObservation, canPushInPlace, hiveAuthored b
 // the App's REST token, so a fork head re-homes (AdoptModeSupersede) even
 // when every unsigned commit is the hive's (hivecommons/hive#14666).
 //
-// A hive-authored PR (hiveAuthored: the App bot or project.ai_author opened
-// it) is never re-homed: every commit on it is the hive's to sign, so a
-// pushable base-repo head is amended in place and any other head keeps its
-// PR number, approvals and CI history and waits for a person (""),
-// rather than restarting as a copy (hivecommons/hive#16619).
+// Only the hive's own unsigned commits are ever signed in place: those GitHub
+// links to the App bot or to one of the hive's identities
+// (project.ai_author). A hive-authored PR (hiveAuthored: the App bot or
+// project.ai_author opened it) is never re-homed: a pushable base-repo head
+// whose unsigned commits are all the hive's is amended in place, and any
+// other head — including one carrying a collaborator's unsigned commit,
+// which the App must not sign for them (hivecommons/hive#16685) — keeps its
+// PR number, approvals and CI history and waits for a person (""), rather
+// than restarting as a copy (hivecommons/hive#16619).
 func adoptionDCORepairMode(obs stageObservation, canPushInPlace, hiveAuthored bool) string {
 	if obs.Detail.DCO != stagelabels.DCONo || obs.Detail.DCOUnsigned <= 0 {
 		return ""
 	}
-	if canPushInPlace && headInBaseRepo(obs) && (hiveAuthored || (obs.Detail.DCOUnsignedHive == obs.Detail.DCOUnsigned && obs.Detail.DCOUnsignedOther == 0)) {
+	allHive := obs.Detail.DCOUnsignedOther == 0 && (hiveAuthored || obs.Detail.DCOUnsignedHive == obs.Detail.DCOUnsigned)
+	if canPushInPlace && headInBaseRepo(obs) && allHive {
 		return stagelabels.AdoptModeInPlace
 	}
 	if hiveAuthored {
