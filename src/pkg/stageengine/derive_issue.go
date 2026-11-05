@@ -17,12 +17,14 @@ import (
 // mapping is pinned byte-for-byte on both sides of the move.
 
 const (
-	reasonIssueNotIssue   = "stage facts: not an issue"
-	reasonIssueNoBucket   = "stage facts: no enumeration bucket for the issue"
-	reasonIssueClosed     = "closed"
-	reasonIssueLikelyDone = "merged PR awaiting confirmation"
-	reasonIssueActionable = "actionable"
-	reasonIssueOpenPR     = "open PR covers it"
+	reasonIssueNotIssue = "stage facts: not an issue"
+	reasonIssueNoBucket = "stage facts: no enumeration bucket for the issue"
+	// reasonIssueStandingMeta prefixes the bucket of a standing meta issue.
+	reasonIssueStandingMeta = "standing meta issue, not work: "
+	reasonIssueClosed       = "closed"
+	reasonIssueLikelyDone   = "merged PR awaiting confirmation"
+	reasonIssueActionable   = "actionable"
+	reasonIssueOpenPR       = "open PR covers it"
 	// reasonIssueOpenPRPartial is 040 under a PR that references the issue
 	// without closing it (ClaimFact.Partial); ReasonIsPartialCover reads it.
 	reasonIssueOpenPRPartial = "open PR addresses part of it (references it without a closing keyword)"
@@ -137,6 +139,13 @@ func issueTriageClear(f Facts, stage stagelabels.Stage) []string {
 // belongs to the PR, whose stage the reason names).
 func issueStage(f Facts) (stage stagelabels.Stage, covered bool, reason string) {
 	is := f.Issue
+	// A standing meta issue is a control panel or a report, never work:
+	// projectbluefin/gutenprint-printer-app#45, ps-printer-app#50 and
+	// hplip-printer-app#42 (mergeraptor's Dependency Dashboards) wore
+	// stage/045 because a triage bot added `needs-human`.
+	if is.Bucket == BucketDependencyDashboard || is.Bucket == BucketHiveAdvisory {
+		return stagelabels.None, false, reasonIssueStandingMeta + string(is.Bucket)
+	}
 	if is.LikelyDone {
 		return stagelabels.None, false, reasonIssueLikelyDone
 	}

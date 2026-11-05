@@ -800,6 +800,15 @@ canonical title match on a human-filed issue), `file_set` (an exact file-set
 twin) or `component:<path>` (a same-component fold on `<path>`), so the agent
 can tell a true twin from a shared-path fold.
 
+### Dedupe checklists never take a fold
+
+A dedupe-agent checklist (body carrying `<!-- hive:dedupe-checklist repo=… -->`)
+cites every path its pairs touch, so a path fold would bury the whole repo
+checklist in whichever finding shares one: projectbluefin/actions#543, a
+data-loss bug, received the repository's checklist as a "Folded finding". A
+checklist skips the same folds as a DAG child (below); an open issue with the
+exact same title is still reused.
+
 ### DAG children never take a fold
 
 A request that declares `--parent` or `--blocked-by` is an explicit statement

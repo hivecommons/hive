@@ -1422,6 +1422,10 @@ type CreateIssueResult struct {
 	// fold into: it cites the same files but not the same finding, so a new
 	// issue was created instead (#13906). 0 otherwise.
 	SameFileAs int
+	// SameFilePath is the path SameFileAs shares with this request when the
+	// match was on one component path; "" for an equal file set, where every
+	// cited path is shared.
+	SameFilePath string
 }
 
 // CreateIssueRequest is what every hive issue-create path hands the central
@@ -1444,7 +1448,7 @@ type CreateIssueRequest struct {
 	// SkipSharedPathFold suppresses the file-set, same-component and
 	// canonical-subject folds (#16065) for a request that declares DAG
 	// placement (--parent or --blocked-by): sibling children routinely share
-	// a path and a title stem. The create's idempotency claim keys on the
+	// a path and a title stem. createIssue sets it for a dedupe checklist too. The create's idempotency claim keys on the
 	// exact title rather than the canonical stem for the same reason. The
 	// exact-title and rejected-twin gates still apply.
 	SkipSharedPathFold bool
@@ -1524,6 +1528,14 @@ func (c *Client) CreateIssue(ctx context.Context, req CreateIssueRequest) (Creat
 // dashboard's ACMM gap issues) also turn it on.
 func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (CreateIssueResult, error) {
 	repo, title, body, consolidateOpen := req.Repo, req.Title, req.Body, req.ConsolidateOpen
+	// A dedupe checklist cites every path its pairs touch, so a path fold
+	// would bury the whole repo checklist in whichever finding shares one:
+	// projectbluefin/actions#543, a data-loss bug, received the repo's
+	// checklist as a "Folded finding" (10-24). It is filed on its own, like a
+	// declared DAG node; an exact-title twin is still reused.
+	if strings.Contains(body, dedupeChecklistMarkerPrefix) {
+		req.SkipSharedPathFold = true
+	}
 	originLabel := req.OriginLabel()
 	if originLabel == "" {
 		return CreateIssueResult{}, ErrOriginRequired
@@ -1661,6 +1673,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// whichever merges first forces the other to rebase. Fold the finding into
 	// the existing issue so one PR handles both.
 	var sameFileAs int
+	var sameFilePath string
 	if fileSetTwin != nil && req.FoldMatch != nil && !req.FoldMatch(fileSetTwin.GetTitle(), fileSetTwin.GetBody()) {
 		sameFileAs, fileSetTwin = fileSetTwin.GetNumber(), nil
 	}
@@ -1712,7 +1725,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	}
 	if componentTwin != nil && req.FoldMatch != nil && !req.FoldMatch(componentTwin.GetTitle(), componentTwin.GetBody()) {
 		if sameFileAs == 0 {
-			sameFileAs = componentTwin.GetNumber()
+			sameFileAs, sameFilePath = componentTwin.GetNumber(), componentPath
 		}
 		componentTwin = nil
 	}
@@ -1804,11 +1817,11 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		}
 		c.logger.Info("CreateIssue: create replayed as already applied, reusing the journaled issue",
 			slog.String("repo", repoName), slog.Int("number", number))
-		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true, SameFileAs: sameFileAs}, nil
+		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true, SameFileAs: sameFileAs, SameFilePath: sameFilePath}, nil
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
-	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID(), SameFileAs: sameFileAs}, nil
+	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID(), SameFileAs: sameFileAs, SameFilePath: sameFilePath}, nil
 }
 
 // issueCreateUnknownTTL bounds how long an issue-create operation may sit
