@@ -74,6 +74,12 @@ const (
 	OwnershipReasonPersonPRNeedsHuman          = "person_pr_needs_human"
 	OwnershipReasonReviewRequiresHuman         = "review_requires_human"
 	OwnershipReasonStaleSafetyNet              = "stale_safety_net"
+	// The issue filter (project.issue_filter.require_labels) keeps these off
+	// every agent queue, so only a maintainer adding a required label lets
+	// them move: a decided issue, and an agent's finding where agents
+	// self-authorize (no TRIAGE row covers it).
+	OwnershipReasonDecidedNotAdmitted      = "decided_not_admitted"
+	OwnershipReasonAgentFindingNotAdmitted = "agent_finding_not_admitted"
 )
 
 // ownershipReasonVerbs is the fixed reason-code set with the one verb each
@@ -103,6 +109,8 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonPersonPRNeedsHuman:          OwnershipVerbReview,
 	OwnershipReasonReviewRequiresHuman:         OwnershipVerbReview,
 	OwnershipReasonStaleSafetyNet:              OwnershipVerbReview,
+	OwnershipReasonDecidedNotAdmitted:          OwnershipVerbAdmit,
+	OwnershipReasonAgentFindingNotAdmitted:     OwnershipVerbAdmit,
 }
 
 // OwnershipActionReleaseHold is the dashboard's existing release-hold action.
@@ -282,6 +290,9 @@ type ownershipEnv struct {
 	// author in repo (automerge.Engine.MergeLaneTakesAuthor); nil turns the
 	// hand-merge rule off.
 	mergeLaneTakesAuthor func(repo, author string) bool
+	// admitLabels are project.issue_filter.require_labels: the labels that
+	// let an issue the filter refuses onto the agent queues.
+	admitLabels []string
 }
 
 func (e ownershipEnv) laneCanOpenPRFor(lane, repo string) bool {
@@ -306,6 +317,20 @@ func (e ownershipEnv) selfAuthorizationHoldFor(repo string) bool {
 		return e.hiveLevel < config.MaxACMMLevel
 	}
 	return e.selfAuthorizationHold(repo)
+}
+
+// admitPhrase names what admits an issue the filter refuses.
+func (e ownershipEnv) admitPhrase() string {
+	var named []string
+	for _, l := range e.admitLabels {
+		if l = strings.TrimSpace(l); l != "" {
+			named = append(named, "`"+l+"`")
+		}
+	}
+	if len(named) == 0 {
+		return "add an admission label to admit it"
+	}
+	return "add " + strings.Join(named, " or ") + " to admit it"
 }
 
 func (e ownershipEnv) releaseOnApproveFor(repo string) bool {
@@ -607,6 +632,20 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	// (9) agent-filed and unacknowledged while acknowledgment is required.
 	if role := issueAgentRole(in.labels); role != "" && !in.acknowledged && !labels[ownershipLabelApprovedDirection] && env.selfAuthorizationHoldFor(in.repo) {
 		return yourTurn(OwnershipReasonAgentFiledUnacknowledged, "Filed by agent "+role+" — acknowledge it or close it")
+	}
+	// (9b) refused by the issue filter: no lane will ever see it, so a
+	// decided issue (`/hive decision` and `/hive approve` apply
+	// approved-direction, not the filter's label) or an agent's finding
+	// waits on a maintainer admitting it. projectbluefin/testsuite#1091 was
+	// approved at 20:31Z on 11-05; the un-park reply said "still outside the
+	// agent queue", and no inbox listed it.
+	if in.bucket == repoWorkBucketFiltered && in.bucketReason == github.IssueFilterReason {
+		if labels[ownershipLabelApprovedDirection] {
+			return yourTurn(OwnershipReasonDecidedNotAdmitted, "Decided, but the issue filter keeps it off the agent queue — "+env.admitPhrase())
+		}
+		if role := issueAgentRole(in.labels); role != "" {
+			return yourTurn(OwnershipReasonAgentFindingNotAdmitted, "Filed by agent "+role+"; the issue filter keeps it off the agent queue — "+env.admitPhrase()+", or close it if it no longer applies")
+		}
 	}
 	// (11) otherwise not your turn; the safety net may still apply.
 	if issueSafetyNetCovers(in, labels, env) && env.stale(in.createdAt, in.updatedAt) {
@@ -1012,6 +1051,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process,
 	}
 	env.unparkCommandsRefused = func(repo string) bool { return labelDrivenRefusesUnparkCommands(cfg, repo) }
 	env.releaseOnApprove = cfg.RepoReleaseOnApprove
+	env.admitLabels = cfg.Project.IssueFilter.RequireLabelsForNotice()
 	env.laneCanOpenPR = laneCanOpenPRAt(env, agentStatuses)
 	return env
 }
