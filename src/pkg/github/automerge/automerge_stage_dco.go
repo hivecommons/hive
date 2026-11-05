@@ -62,6 +62,13 @@ func dcoCommitStatsDetailedForAuthor(commits []*gh.RepositoryCommit, appLogin, p
 // the App bot), so no signed hive commit is squash-unsafe. Unsigned commits
 // are still counted and rejected.
 func dcoCommitStatsForSquashAuthor(commits []*gh.RepositoryCommit, appLogin, prAuthor string, selfSquash bool) dcoStats {
+	return dcoCommitStatsForHive(commits, appLogin, prAuthor, selfSquash, nil)
+}
+
+// dcoCommitStatsForHive is dcoCommitStatsForSquashAuthor with the hive's own
+// identities (isHive, StageLabelPolicy.HiveAuthor) counted as the hive's when
+// splitting unsigned commits; a nil isHive counts only the App bot.
+func dcoCommitStatsForHive(commits []*gh.RepositoryCommit, appLogin, prAuthor string, selfSquash bool, isHive func(login string) bool) dcoStats {
 	var stats dcoStats
 	for _, rc := range commits {
 		if rc == nil || len(rc.Parents) > 1 {
@@ -71,7 +78,7 @@ func dcoCommitStatsForSquashAuthor(commits []*gh.RepositoryCommit, appLogin, prA
 		msg := rc.GetCommit().GetMessage()
 		if !signedOffByRE.MatchString(msg) {
 			stats.unsigned++
-			if dcoCommitByHive(rc, appLogin) {
+			if dcoCommitOwnedByHive(rc, appLogin, isHive) {
 				stats.unsignedHive++
 			} else {
 				stats.unsignedOther++
@@ -90,6 +97,23 @@ func dcoCommitStatsForSquashAuthor(commits []*gh.RepositoryCommit, appLogin, prA
 // hive-owned. Anything else is "other" and re-homes.
 func dcoCommitByHive(commit *gh.RepositoryCommit, appLogin string) bool {
 	return commitByApp(commit, appLogin)
+}
+
+// dcoCommitOwnedByHive is dcoCommitByHive that also counts a commit GitHub
+// links (by author login) to one of the hive's own identities (isHive:
+// project.ai_author, the login the hive's agents push as). Only GitHub's
+// linkage counts here too: git author names and emails never do, so a
+// collaborator's unsigned commit stays "other" and is never signed by the
+// App (hivecommons/hive#16685).
+func dcoCommitOwnedByHive(commit *gh.RepositoryCommit, appLogin string, isHive func(login string) bool) bool {
+	if dcoCommitByHive(commit, appLogin) {
+		return true
+	}
+	if commit == nil || isHive == nil {
+		return false
+	}
+	login := strings.TrimSpace(commit.GetAuthor().GetLogin())
+	return login != "" && isHive(login)
 }
 
 // stageDCO returns the commit check for the observation's head, reading the
@@ -123,7 +147,7 @@ func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key str
 	if err != nil {
 		return dcoStats{}, err
 	}
-	return dcoCommitStatsForSquashAuthor(all, appLogin, obs.Author, selfSquash), nil
+	return dcoCommitStatsForHive(all, appLogin, obs.Author, selfSquash, policy.HiveAuthor), nil
 }
 
 // hiveAuthoredPR reports whether the PR is the hive's own: author/hive by

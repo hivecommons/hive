@@ -2414,6 +2414,29 @@ func TestDCOCommitStatsSkipsMerges(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#16685: an unsigned commit GitHub links to one of the
+// hive's identities (project.ai_author) is the hive's to sign; a
+// collaborator's unsigned commit is not, whatever its git author name says.
+func TestDCOCommitStatsForHiveCountsHiveIdentities(t *testing.T) {
+	commits := []*gh.RepositoryCommit{
+		{Author: &gh.User{Login: gh.Ptr("thatguywob")}, Commit: &gh.Commit{Message: gh.Ptr("hive fix")}, Parents: []*gh.Commit{{}}},
+		{Author: &gh.User{Login: gh.Ptr("collaborator")}, Commit: &gh.Commit{Message: gh.Ptr("drive-by"), Author: &gh.CommitAuthor{Name: gh.Ptr("thatguywob")}}, Parents: []*gh.Commit{{}}},
+		{Author: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Commit: &gh.Commit{Message: gh.Ptr("app fix")}, Parents: []*gh.Commit{{}}},
+	}
+	isHive := func(login string) bool { return strings.EqualFold(login, "thatguywob") }
+	stats := dcoCommitStatsForHive(commits, testHiveAppBotLogin, "thatguywob", true, isHive)
+	if stats.unsigned != 3 || stats.unsignedHive != 2 || stats.unsignedOther != 1 {
+		t.Fatalf("with hive identities: %+v, want unsigned=3 hive=2 other=1", stats)
+	}
+	stats = dcoCommitStatsForHive(commits, testHiveAppBotLogin, "thatguywob", true, nil)
+	if stats.unsigned != 3 || stats.unsignedHive != 1 || stats.unsignedOther != 2 {
+		t.Fatalf("nil predicate: %+v, want unsigned=3 hive=1 other=2", stats)
+	}
+	if old := dcoCommitStatsForSquashAuthor(commits, testHiveAppBotLogin, "thatguywob", true); old != stats {
+		t.Fatalf("dcoCommitStatsForSquashAuthor=%+v, want App-only split %+v", old, stats)
+	}
+}
+
 // hivecommons/hive#12557: a gate flapping between merge-queue and a pending
 // stage on one unchanged head used to post a stage-regressed comment every
 // sweep, because each recover re-armed the dedupe. One comment per head.
