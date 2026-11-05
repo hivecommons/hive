@@ -258,6 +258,9 @@ type StageTracker struct {
 	ensured map[string]bool                        // repo → labels provisioned this process
 	checks  map[string]humanChecksEntry            // key → head check digest (human routing)
 	fences  map[string]humanFenceEntry             // key → head diff fence (human routing)
+	// required caches the base branch's required check set (human
+	// routing); created on first use.
+	required map[string]humanRequiredEntry
 	// superseded remembers when the hive-authored superseded check last
 	// ran per key+head, so a PR that legitimately sits at 085 is not
 	// re-read every pass.
