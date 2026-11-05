@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // hivecommons/hive#16699: a decision park linked "blocked by" another
@@ -152,5 +154,57 @@ func TestSweepIssueUnparkCommandsDeferringParkInheritsDecision(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The inherited-decision note is an unsolicited comment, so it goes through
+// the write-back gate like every other decision-park comment: a repo whose
+// mode is off still gets its deferring park lifted, but no note is posted.
+func TestSweepIssueUnparkCommandsInheritedNoteConsultsWritebackGate(t *testing.T) {
+	decided := parkedIssue(511, humanComment(41, "owner", "/hive decision keep the rc tag"))
+	decided.Labels = []wireLabel{{Name: NeedsDecisionStageLabel}}
+	deferring := unparkWireIssue{
+		Number: 512,
+		Title:  "v2.0.0-rc.1 tag",
+		Body:   "Answer on #511; the same choice applies here.",
+		User:   wireUser{Login: "hive[bot]"},
+		Labels: []wireLabel{{Name: NeedsDecisionStageLabel}},
+	}
+	inner, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{decided, deferring}, map[string]string{"owner": "admin"})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/org/repo/issues/512/dependencies/blocked_by" {
+			inner.Config.Handler.ServeHTTP(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"number":         511,
+			"state":          "open",
+			"repository_url": "https://api.github.com/repos/org/repo",
+		}})
+	}))
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetWritebackGate(writeback.New(writeback.Config{PerRepo: map[string]writeback.RepoOverride{"org/repo": {Mode: writeback.RepoModeOff}}}, writeback.Deps{}, ""))
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	var inherited bool
+	for _, event := range result.Unparked {
+		if event.Number == 512 {
+			inherited = true
+		}
+	}
+	if !inherited {
+		t.Fatalf("#512 did not take #511's decision: %+v", result.Unparked)
+	}
+	if !strings.Contains(strings.Join(rec.removed[512], ","), NeedsDecisionStageLabel) {
+		t.Fatalf("#512 kept its decision park: removed=%v", rec.removed[512])
+	}
+	for _, body := range rec.posted[512] {
+		if strings.Contains(body, decisionInheritedMarker) {
+			t.Fatalf("gate off must withhold the inherited-decision note, got %q", body)
+		}
 	}
 }
