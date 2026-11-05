@@ -1,0 +1,1 @@
+- Editing a disabled or ACMM-gated agent's configuration no longer reports a missing runtime process as a repeated sync failure ([#16798](https://github.com/hivecommons/hive/issues/16798)).
