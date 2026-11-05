@@ -174,7 +174,7 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		return err
 	}
 	refs := parkRefsFromTimeline(events)
-	named := parkNamedRefs(parkText(issue, comments, start), owner+"/"+repo, number)
+	named := parkNamedRefs(c.parkText(issue, comments, start), owner+"/"+repo, number)
 	lookups := 0
 	for _, key := range named {
 		if _, ok := refs[key]; ok || lookups >= parkRecheckMaxNamedLookups {
@@ -194,7 +194,7 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		result.Skipped++
 		return nil
 	}
-	c.markParkLandings(ctx, parkText(issue, comments, start), refs, named, owner+"/"+repo, start, changes)
+	c.markParkLandings(ctx, c.parkText(issue, comments, start), refs, named, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
 	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
 	for _, cm := range comments {
@@ -308,9 +308,10 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 }
 
 // parkText is the text the park rests on: the issue body when the issue was
-// filed parked, and every comment posted in the window before the park
-// label. The hive's own notices are not park text.
-func parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) string {
+// filed parked, and every comment the hive or a trusted maintainer posted in
+// the window before the park label. The hive's own notices are not park
+// text, and an untrusted commenter cannot steer which patches get read.
+func (c *Client) parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) string {
 	inWindow := func(at time.Time) bool {
 		return !at.IsZero() && !at.After(start) && start.Sub(at) <= parkTextWindow
 	}
@@ -320,6 +321,9 @@ func parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) str
 	}
 	for _, cm := range comments {
 		if cm == nil || !inWindow(cm.GetCreatedAt().Time) {
+			continue
+		}
+		if !c.isHiveAccount(cm.GetUser()) && !c.reporterIsTrusted(cm.GetUser().GetLogin(), cm.GetAuthorAssociation()) {
 			continue
 		}
 		body := cm.GetBody()

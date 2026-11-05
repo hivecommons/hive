@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -172,13 +174,13 @@ func parkClient(t *testing.T, srv *httptest.Server) *Client {
 }
 
 // parkedIssue is an open issue parked at parkT0 by a relay comment (posted
-// under a contributor account just before the label) carrying parkText.
+// by the hive just before the label) carrying parkText.
 func prParkedIssue(number int, parkText string) *parkFake {
 	return &parkFake{
 		issue: map[string]any{"number": number, "state": "open", "title": "t", "body": "reporter body, no refs",
 			"user": map[string]any{"login": "reporter"}, "created_at": prTS(parkT0.Add(-30 * 24 * time.Hour)),
 			"labels": []any{map[string]any{"name": "stage/045-needs-decision"}}},
-		comments: []map[string]any{{"id": int64(1), "body": parkText, "user": map[string]any{"login": "contributor"}, "created_at": prTS(parkT0.Add(-20 * time.Second))}},
+		comments: []map[string]any{{"id": int64(1), "body": parkText, "user": map[string]any{"login": "hive[bot]"}, "created_at": prTS(parkT0.Add(-20 * time.Second))}},
 		timeline: []map[string]any{
 			// needs-decision → stage/085 → stage/045, swapped a second apart:
 			// one continuous park since parkT0.
@@ -593,5 +595,38 @@ func TestParkCopyQuote(t *testing.T) {
 	}
 	if got := parkCopyQuote("Short."); got != "Short." {
 		t.Fatalf("short quote = %q", got)
+	}
+}
+
+func TestParkTextTrustedAuthors(t *testing.T) {
+	c := parkClient(t, newParkFake(t, &parkFake{}))
+	c.SetReporterTrusted(func(login, association string) bool { return association == "MEMBER" })
+	at := prTS(parkT0.Add(-20 * time.Second))
+	comment := func(login, association, body string) map[string]any {
+		return map[string]any{"user": map[string]any{"login": login}, "author_association": association, "body": body, "created_at": at}
+	}
+	tests := []struct {
+		name    string
+		comment map[string]any
+		want    string
+	}{
+		{"hive account included", comment("hive[bot]", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
+		{"trusted maintainer included", comment("maint", "MEMBER", "waiting on org/other#7"), "waiting on org/other#7"},
+		{"untrusted commenter excluded", comment("stranger", "NONE", "see evil/repo#9"), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := json.Marshal([]map[string]any{tt.comment})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var comments []*gh.IssueComment
+			if err := json.Unmarshal(raw, &comments); err != nil {
+				t.Fatal(err)
+			}
+			if got := c.parkText(&gh.Issue{}, comments, parkT0); got != tt.want {
+				t.Errorf("parkText = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
