@@ -226,7 +226,7 @@ A hive-filed issue (`[selfreport]`, app or AI author) counts as trusted. The gat
 
 **Release or override.** A human removes `hold` on a contributor PR; Hive never auto-releases it there. On a **hive-authored** PR still wearing a hive-set reporter-trust hold (newest `hold` event labeled by the App bot with the notice at or after it — a person's hold is left alone), the stage-label pass releases `hold` (and `needs-human` when the notice says the gate added it), posts one `<!-- hive:reporter-trust-release -->` comment and logs `stage labels: releasing self-imposed reporter-trust hold`.
 
-The pass also records the hold's provenance (`by`, `source`, `reason`, `since`) on the stage store, so the tracker pill reads *Held by hive · reporter trust (issue #N by @X, contributor)* and the 085 comment names who set the hold and why. Holdguard re-holds on a new head SHA.
+The pass also records the hold's provenance (`by`, `source`, `reason`, `since`) on the stage store, so the tracker pill reads *Held by hive · reporter trust (issue #N by @X, contributor)* and the 085 comment names who set the hold and why. `source` is `reporter-trust`, `human-merge-path` (the App's `<!-- hive-human-merge-path -->` notice is on the PR) or `label`. Holdguard re-holds on a new head SHA.
 
 **Configuration and implementation.** `github.reporter_trust_hold` (nil follows `reporter_trust.enabled`), per-repo `project.repo_policies[].reporter_trust_hold`, `HIVE_REPORTER_TRUST_HOLD` (`src/pkg/github/pr_reporter_trust.go`, `src/pkg/github/pr_level_hold.go`, `src/pkg/github/automerge/reporter_trust_release.go`)
 
