@@ -211,9 +211,10 @@
     // row (one muted "N review notes blocked on this PR" line), or, when the
     // PR is not drawn in this view, into the lowest-numbered note of its
     // group, so a PR with eight notes costs the count one row, not eight.
+    // A standing meta issue is never a row (stageTrackerIsStandingMeta).
     function stageTrackerVisible(items, filter, ctx) {
       const f = stageTrackerNormalizeFilter(filter || _stageTrackerFilter);
-      const rows = (items || []).filter(it => stageTrackerMatches(it, f, ctx));
+      const rows = (items || []).filter(it => !stageTrackerIsStandingMeta(it) && stageTrackerMatches(it, f, ctx));
       if (f.kind === 'pr') return rows;
       const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
       const out = rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
@@ -234,6 +235,21 @@
     // Pure: an issue the tracker folds as a review note (see stageTrackerVisible).
     function stageTrackerIsReviewNote(it) {
       return !!(it && it.kind === 'issue' && Number(it.review_note_of) > 0);
+    }
+
+    // Pure: a standing meta issue — a bot Dependency Dashboard or the Hive
+    // Advisory Report, the enumeration's hive_advisory / dependency_dashboard
+    // buckets. It is a control panel, not pipeline work, so the monitor never
+    // draws it (hivecommons/hive#13257). It stays in the payload's items, so
+    // open_issues still equals the Overview tile, and the count line names
+    // the difference.
+    function stageTrackerIsStandingMeta(it) {
+      return !!(it && it.kind === 'issue' && (it.bucket === 'hive_advisory' || it.bucket === 'dependency_dashboard'));
+    }
+
+    // Pure: how many items are standing meta issues (not rows).
+    function stageTrackerStandingCount(items) {
+      return (items || []).filter(stageTrackerIsStandingMeta).length;
     }
 
     // Pure: the review notes folded into this row. On a PR row, its
@@ -322,24 +338,26 @@
     }
 
     // label facet model begin
-    // Label chips: every label on any item, stage/NNN first by number then
-    // the rest alphabetically (stageTrackerLabelCompare). The row shows the
-    // first STAGE_TRACKER_LABEL_CHIP_LIMIT plus every selected label; `all`
-    // is the complete list the "+N more" dialog offers, so no label is ever
-    // out of reach. `needsHuman` and `onHold` are the synthetic facets:
-    // their counts are the items stageTrackerItemNeedsHuman /
-    // stageTrackerItemOnHold accept — the same predicates the filter uses.
+    // Label chips: every label on any item that can be a row (never a
+    // standing meta issue, stageTrackerIsStandingMeta), stage/NNN first by
+    // number then the rest alphabetically (stageTrackerLabelCompare). The
+    // row shows the first STAGE_TRACKER_LABEL_CHIP_LIMIT plus every selected
+    // label; `all` is the complete list the "+N more" dialog offers, so no
+    // label is ever out of reach. `needsHuman` and `onHold` are the
+    // synthetic facets: their counts are the items stageTrackerItemNeedsHuman
+    // / stageTrackerItemOnHold accept — the same predicates the filter uses.
     function stageTrackerLabelFacets(items, f, opts) {
       f = stageTrackerNormalizeFilter(f);
+      items = (items || []).filter(it => !stageTrackerIsStandingMeta(it));
       const counts = {};
-      (items || []).forEach(it => (Array.isArray(it.labels) ? it.labels : []).forEach(l => { const k = String(l).toLowerCase(); counts[k] = (counts[k] || 0) + 1; }));
+      items.forEach(it => (Array.isArray(it.labels) ? it.labels : []).forEach(l => { const k = String(l).toLowerCase(); counts[k] = (counts[k] || 0) + 1; }));
       const all = Object.keys(counts).sort(stageTrackerLabelCompare);
       const shown = all.slice(0, STAGE_TRACKER_LABEL_CHIP_LIMIT);
       f.labels.forEach(l => { if (counts[l] && shown.indexOf(l) < 0) shown.push(l); });
       shown.sort(stageTrackerLabelCompare);
       const chip = l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 });
-      const needsHuman = { count: (items || []).filter(stageTrackerItemNeedsHuman).length, on: f.needsHuman };
-      const onHold = { count: (items || []).filter(stageTrackerItemOnHold).length, on: f.onHold };
+      const needsHuman = { count: items.filter(stageTrackerItemNeedsHuman).length, on: f.needsHuman };
+      const onHold = { count: items.filter(stageTrackerItemOnHold).length, on: f.onHold };
       return { chips: shown.map(chip), all: all.map(chip), hidden: Math.max(0, all.length - shown.length), needsHuman, onHold };
     }
 
@@ -368,17 +386,18 @@
     // spells out how the row count is made ("33 issues + 4 PRs on their
     // own row") in the header and the pill tooltip, so the two pills read
     // as different views of one population rather than a disagreement.
-    function stageTrackerCountsText(page, allCount, attention, open, attentionAll, folded) {
+    function stageTrackerCountsText(page, allCount, attention, open, attentionAll, folded, standing) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
       const attnText = n => n ? n + ' need' + (n === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
       const attn = attnText(attention);
       const attnAll = attnText(Number.isFinite(Number(attentionAll)) ? Number(attentionAll) : attention);
       const rowsWord = n => n === 1 ? 'row' : 'rows';
-      const parts = stageTrackerRowBreakdown(allCount, open, folded);
+      const parts = stageTrackerRowBreakdown(allCount, open, folded, standing);
       const noteBits = [];
       if (parts.shared) noteBits.push(`${parts.shared} ${parts.shared === 1 ? 'PR' : 'PRs'} shown on ${parts.shared === 1 ? 'its' : 'their'} issue's row`);
       if (parts.folded) noteBits.push(`${parts.folded} review ${parts.folded === 1 ? 'note' : 'notes'} folded under ${parts.folded === 1 ? 'its' : 'their'} PR`);
+      if (parts.standing) noteBits.push(`${parts.standing} bot ${parts.standing === 1 ? 'dashboard' : 'dashboards'} or advisory ${parts.standing === 1 ? 'report' : 'reports'} not listed`);
       const note = noteBits.join(' · ');
       const breakdown = parts.known ? `${parts.issues} ${parts.issues === 1 ? 'issue' : 'issues'} + ${parts.standalonePRs} ${parts.standalonePRs === 1 ? 'PR' : 'PRs'} on ${parts.standalonePRs === 1 ? 'its' : 'their'} own row` : '';
       return {
@@ -393,18 +412,20 @@
 
     // Pure: how the default view's row count decomposes against the open
     // item totals. Every open issue is a row except a review note folded
-    // under its PR (`folded`, see stageTrackerVisible); a PR is a row only
-    // when it is not drawn under a listed issue, so standalonePRs = rows −
-    // (issues − folded) and shared = (issues − folded + PRs) − rows. `known`
-    // is false without totals. `issues` stays the open-issue total so the
+    // under its PR (`folded`, see stageTrackerVisible) and a standing meta
+    // issue (`standing`); a PR is a row only when it is not drawn under a
+    // listed issue, so standalonePRs = rows − (issues − folded − standing)
+    // and shared = (issues − folded − standing + PRs) − rows. `known` is
+    // false without totals. `issues` stays the open-issue total so the
     // breakdown still adds up to the Overview tile.
-    function stageTrackerRowBreakdown(rowCount, open, folded) {
+    function stageTrackerRowBreakdown(rowCount, open, folded, standing) {
       const rows = Math.max(0, Number(rowCount) || 0);
-      if (!open || !Number.isFinite(Number(open.issues)) || !Number.isFinite(Number(open.prs))) return { known: false, rows, issues: 0, prs: 0, standalonePRs: 0, shared: 0, folded: 0 };
+      if (!open || !Number.isFinite(Number(open.issues)) || !Number.isFinite(Number(open.prs))) return { known: false, rows, issues: 0, prs: 0, standalonePRs: 0, shared: 0, folded: 0, standing: 0 };
       const issues = Math.max(0, Number(open.issues)), prs = Math.max(0, Number(open.prs));
       const fold = Math.min(issues, Math.max(0, Number(folded) || 0));
-      const standalonePRs = Math.min(prs, Math.max(0, rows - (issues - fold)));
-      return { known: true, rows, issues, prs, standalonePRs, shared: Math.max(0, issues - fold + prs - rows), folded: fold };
+      const meta = Math.min(issues - fold, Math.max(0, Number(standing) || 0));
+      const standalonePRs = Math.min(prs, Math.max(0, rows - (issues - fold - meta)));
+      return { known: true, rows, issues, prs, standalonePRs, shared: Math.max(0, issues - fold - meta + prs - rows), folded: fold, standing: meta };
     }
 
     // Pure: how many issues of the default view are folded review notes
