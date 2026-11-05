@@ -262,6 +262,43 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
   "nudged contributor lane". **Agents never watch or poll CI themselves**:
   detection is out-of-band via this webhook path, or the sweep as fallback.
+- **Gated workflow runs are approved for trusted heads.** GitHub holds
+  workflow runs for dependabot and first-time/fork contributors behind
+  "Approve and run workflows" (`action_required`); such runs create no check
+  runs, so CI never reports. `EnrichCIStatus` detects them on pending heads
+  and the CI caption reads `CI waiting · N workflow runs need approval on
+  GitHub`. Right after it, the eval cycle runs the workflow-approval sweep,
+  which approves a head's gated `pull_request` runs **at most once per PR
+  head** ([#16603](https://github.com/hivecommons/hive/issues/16603)) when
+  the head is trusted: the PR carries the owner's automerge admission label
+  (`lgtm` by default), or the PR author or the run's triggering actor is
+  this hive's App or is listed in `governor.ci.auto_approve_workflow_actors`
+  (default `['dependabot[bot]', 'renovate[bot]']`; an explicit `[]` trusts
+  only the App and owner admission). Runs of other events (for example
+  `pull_request_target`) are counted in the caption but never approved.
+  Guards: `governor.ci.auto_approve_workflows` (default `true` — unset
+  means on; `false` leaves the gate to a person), the repo pause, hold /
+  exempt / sentinel labels, a fresh `GET /pulls/N` (open, non-draft, same
+  head, author, labels) before any write, a head-repository match on every
+  run, and the write-back gate (`ci_rerun`). Approval starts CI only;
+  review, hold and merge gates are unchanged. **The sweep does not run on
+  every cycle:** it is an optional enrichment step, so it is skipped
+  whenever the API-budget decision sets `SkipOptional` — `conserve` and
+  `critical` budget modes, off-cadence cycles under
+  `governor.optional_sweep_every_n_cycles`, and cached-snapshot (webhook
+  wake) cycles — and a gated head then waits for the next cycle that runs
+  it. `EnrichCIStatus` still runs on those cycles, so the gate stays
+  visible. A `403`/`404` from `POST /actions/runs/{id}/approve` (the App
+  lacks `actions: write`) is recorded once, never retried for that head,
+  logged as `workflow approval refused; needs workflow approval on GitHub`,
+  and the caption becomes `CI waiting · needs workflow approval on GitHub`
+  on every later cycle, including ones that skip the sweep. Each approved
+  run logs one `approved gated workflow run` INFO line; counts since boot
+  are at `/api/status` `workflow_approvals` (`approved`, `denied`,
+  `permission_errors`, `last`). Approved runs execute the head's workflow
+  files on the repository's runners; operators on self-hosted runners who
+  want an explicit opt-in should set `governor.ci.auto_approve_workflows:
+  false`.
 - **A recorded review verdict also wakes the governor loop.** When the
   relay records a verdict bound to a review dispatch, the head that wrote it
   is free and the PR may be ready for its next head or its decision kick, so

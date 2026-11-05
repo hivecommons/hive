@@ -1574,6 +1574,8 @@ func (g *GovernorConfig) ReleaseCadenceOwnership(mode, agent string) {
 }
 
 type GovernorConfig struct {
+	// CI is governor.ci (hivecommons/hive#16603); see GovernorCIConfig.
+	CI                   GovernorCIConfig      `yaml:"ci,omitempty" json:"ci,omitempty"`
 	Modes                map[string]ModeConfig `yaml:"modes"`
 	EvalIntervalS        int                   `yaml:"eval_interval_s"`
 	EvalIntervalMaxS     int                   `yaml:"eval_interval_max_s,omitempty"`

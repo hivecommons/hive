@@ -413,6 +413,12 @@ agents:
 
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
+  # GitHub's "Approve and run workflows" gate (#16603). Approval starts CI
+  # only; writeback, hold, review and merge gates still apply.
+  # ci:
+  #   auto_approve_workflows: true
+  #   auto_approve_workflow_actors: ['dependabot[bot]', 'renovate[bot]']
+  # An explicit [] trusts only this hive's App and owner-admitted PRs.
   eval_interval_s: 300                    # Seconds between governor evaluations
   eval_interval_max_s: 1800               # Cap when API budget mode stretches evals
   eval_interval_webhook_s: 900            # Base interval while GitHub webhooks are healthy (see /api/webhook/github)

@@ -163,6 +163,7 @@ type Client struct {
 	mergeAlertIDsByRepo       map[string]map[string]*mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	workflowApprovals         workflowApprovalLedger
 	mergedClaimScanTransient  sync.Map        // repo -> true while its merged-PR scan is timing out
 	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState
@@ -2564,7 +2565,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		// approve-workflows gate (dependabot, forks); only a pending head
 		// pays for the extra listing (hivecommons/hive#16599).
 		if prs[i].CIStatus == "pending" && prs[i].CIActivity != nil {
-			prs[i].CIActivity.WorkflowApproval = c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA)
+			prs[i].CIActivity.WorkflowApproval = c.workflowApprovalWithLedger(prs[i].Repo, prs[i].Number, prs[i].HeadSHA, c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA))
 		}
 		if prs[i].CIStatus == "failure" {
 			prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], incidents)
