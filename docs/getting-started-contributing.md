@@ -25,6 +25,7 @@ build/test commands, see [`docs/development.md`](development.md).
   duplicated.
 - Need a quick human answer? [Join our Discord](https://hivecommons.dev/discord).
 - Curious what a running hive looks like? [Watch the hive live on Twitch](https://www.twitch.tv/hivecommons).
+- Want to talk with maintainers live? [Join the community meeting](https://docs.hivecommons.dev/docs/community/meetings), held every other Thursday at 10:00 AM Eastern.
 
 ## 2. Set up a local environment
 

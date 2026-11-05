@@ -139,7 +139,7 @@ Use official images from `ghcr.io/hivecommons/hive`.
 
 ## Community
 
-[First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Live stream (Twitch)](https://www.twitch.tv/hivecommons) · [Discussions](https://github.com/hivecommons/hive/discussions).
+[First contribution](docs/getting-started-contributing.md) · [Contributing](CONTRIBUTING.md) · [Contribute compute](src/docs/contributor-relay.md) · [Discord](https://hivecommons.dev/discord) · [Live stream (Twitch)](https://www.twitch.tv/hivecommons) · [Discussions](https://github.com/hivecommons/hive/discussions) · [Community meeting](https://docs.hivecommons.dev/docs/community/meetings).
 
 [Code of Conduct](CODE_OF_CONDUCT.md) · [Project governance](GOVERNANCE.md) · [Report a vulnerability](SECURITY.md) · [Telemetry](src/docs/telemetry.md).
 
