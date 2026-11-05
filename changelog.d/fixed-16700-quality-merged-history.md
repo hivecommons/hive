@@ -1,1 +1,1 @@
-- The quality policy distinguishes prohibited work discovery from merged PR history reads, which remain conditional on wrapper and tier permissions ([#16700](https://github.com/hivecommons/hive/issues/16700)).
+- All five quality policies distinguish prohibited work discovery from merged PR history reads, which remain conditional on wrapper and tier permissions ([#16700](https://github.com/hivecommons/hive/issues/16700), [#16715](https://github.com/hivecommons/hive/issues/16715)).

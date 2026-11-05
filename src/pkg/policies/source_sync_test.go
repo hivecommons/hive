@@ -51,27 +51,39 @@ func readPolicyPair(t *testing.T, name string) (source, embedded string, ok bool
 }
 
 func TestQualityMergedHistoryPreservesWorkDiscoveryBoundary(t *testing.T) {
-	source, embedded, ok := readPolicyPair(t, "quality.md")
-	if !ok {
-		return
-	}
-	for name, policy := range map[string]string{"source": source, "embedded": embedded} {
-		for _, required := range []string{
-			"Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work.",
-			"`gh pr view <n>` on supplied PR numbers",
-			"`gh issue view <n>` only on supplied GitHub issue numbers",
-			"For merged PR history only, `gh pr list --state merged` (no `--search` or `-S`)",
-			"only when the wrapper permits it for your tier",
-			"this does not authorize open-work discovery",
-			"If refused, do not retry or bypass the restriction.",
-		} {
-			if !strings.Contains(policy, required) {
-				t.Errorf("%s quality policy is missing work-discovery guardrail %q", name, required)
+	for _, policyName := range []string{
+		"quality.md",
+		"quality-advisory.md",
+		"quality-full.md",
+		"quality-measured.md",
+		"quality-holdgated.md",
+	} {
+		t.Run(policyName, func(t *testing.T) {
+			source, embedded, ok := readPolicyPair(t, policyName)
+			if !ok {
+				return
 			}
-		}
-		if strings.Contains(policy, "these are blocked by the hive proxy for agents and only waste a turn") {
-			t.Errorf("%s quality policy still claims every list/search read is blocked", name)
-		}
+			for name, policy := range map[string]string{"source": source, "embedded": embedded} {
+				t.Run(name, func(t *testing.T) {
+					for _, required := range []string{
+						"Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work.",
+						"`gh pr view <n>` on supplied PR numbers",
+						"`gh issue view <n>` only on supplied GitHub issue numbers",
+						"For merged PR history only, `gh pr list --state merged` (no `--search` or `-S`)",
+						"only when the wrapper permits it for your tier",
+						"this does not authorize open-work discovery",
+						"If refused, do not retry or bypass the restriction.",
+					} {
+						if !strings.Contains(policy, required) {
+							t.Errorf("quality policy is missing work-discovery guardrail %q", required)
+						}
+					}
+					if strings.Contains(policy, "these are blocked by the hive proxy for agents and only waste a turn") {
+						t.Error("quality policy still claims every list/search read is blocked")
+					}
+				})
+			}
+		})
 	}
 }
 
