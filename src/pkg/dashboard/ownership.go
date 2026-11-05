@@ -74,6 +74,10 @@ const (
 	OwnershipReasonPersonPRNeedsHuman          = "person_pr_needs_human"
 	OwnershipReasonReviewRequiresHuman         = "review_requires_human"
 	OwnershipReasonStaleSafetyNet              = "stale_safety_net"
+	// OwnershipReasonCitedLinesGone: an agent finding the issue filter
+	// refuses whose cited lines are gone from the default branch
+	// (RepoWorkIssue.CitedLinesGone).
+	OwnershipReasonCitedLinesGone = "cited_lines_gone"
 )
 
 // ownershipReasonVerbs is the fixed reason-code set with the one verb each
@@ -103,6 +107,7 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonPersonPRNeedsHuman:          OwnershipVerbReview,
 	OwnershipReasonReviewRequiresHuman:         OwnershipVerbReview,
 	OwnershipReasonStaleSafetyNet:              OwnershipVerbReview,
+	OwnershipReasonCitedLinesGone:              OwnershipVerbClose,
 }
 
 // OwnershipActionReleaseHold is the dashboard's existing release-hold action.
@@ -499,6 +504,10 @@ type issueOwnershipInput struct {
 	createdAt     time.Time
 	updatedAt     time.Time
 
+	// citedLinesGone is RepoWorkIssue.CitedLinesGone for a non-actionable
+	// row.
+	citedLinesGone string
+
 	// lane is the lane the classifier routed the issue to.
 	lane string
 	// liveClaim is true while the issue carries an unexpired ClaimedBy claim.
@@ -603,6 +612,12 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	// (8) verified done but not closed.
 	if ownershipVerifiedDone(in, labels, env) {
 		return yourTurn(OwnershipReasonVerifiedDone, "Hive verified this is done but could not close it")
+	}
+	// (8b) an agent finding whose cited lines are gone from the default
+	// branch describes code main no longer has: close it rather than
+	// acknowledge or admit it (projectbluefin/testsuite#1085).
+	if in.citedLinesGone != "" {
+		return yourTurn(OwnershipReasonCitedLinesGone, "The cited lines no longer match main ("+in.citedLinesGone+") — close it, or admit it if the finding still holds")
 	}
 	// (9) agent-filed and unacknowledged while acknowledgment is required.
 	if role := issueAgentRole(in.labels); role != "" && !in.acknowledged && !labels[ownershipLabelApprovedDirection] && env.selfAuthorizationHoldFor(in.repo) {
@@ -913,6 +928,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				reporterGate:    item.ReporterConfirmationGate,
 				bucket:          item.Bucket,
 				bucketReason:    item.Reason,
+				citedLinesGone:  item.CitedLinesGone,
 				decisionBlocker: decisionBlockerFor(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number), item.OpenBlockers, decisionParks, repoName),
 			}
 			in.hiveClosingPR = hiveClosingPRFor(*repo, repoName, item.Number)

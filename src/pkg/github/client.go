@@ -135,6 +135,8 @@ type Client struct {
 	// (SetWorkflowsLaneFunc, issue_workflows_handoff.go).
 	workflowsLaneMu sync.RWMutex
 	workflowsLane   func(agent, repo string) string
+	// citedLines caches the stale-finding check (issue_cited_lines.go).
+	citedLines citedCache
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.
@@ -1976,6 +1978,8 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, reporterTrustWaitBudget *reporterTrustWaitBudget) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, details []RepoWorkIssue, err error) {
 	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
+	// Stale-finding checks this pass may refresh (issue_cited_lines.go).
+	citedBudget := citedMaxChecksPerRepo
 	// Taken before the list call: a hold recorded after the listing snapshot
 	// must outlive this pass's prune of the local hold-source record.
 	passStart := time.Now().UTC()
@@ -2140,7 +2144,9 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 
 		if !issueFilter.Admits(labels) {
 			breakdown.Filtered++
-			details = append(details, c.workIssue(repo, issue, labels, "filtered", issueFilterReason))
+			row := c.workIssue(repo, issue, labels, "filtered", issueFilterReason)
+			row.CitedLinesGone = c.citedLinesGone(ctx, owner, repoName, issue, labels, &citedBudget)
+			details = append(details, row)
 			continue
 		}
 
@@ -5101,6 +5107,11 @@ type RepoWorkIssue struct {
 	Reason            string    `json:"reason,omitempty"`
 	// ReporterConfirmationGate mirrors Issue.ReporterConfirmationGate.
 	ReporterConfirmationGate bool `json:"reporter_confirmation_gate,omitempty"`
+	// CitedLinesGone names the citation ("path:163") of an agent finding the
+	// issue filter refuses when every permalink it cites is gone from the
+	// default branch (issue_cited_lines.go); "" when any is still there or
+	// it was not checked.
+	CitedLinesGone string `json:"cited_lines_gone,omitempty"`
 	// ClaimKind, ClaimedBy and ClaimPRStarted are Issue.ClaimKind /
 	// Issue.ClaimedBy / Issue.ClaimPRStarted, copied for the issue stage
 	// reconciler.

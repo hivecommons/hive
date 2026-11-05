@@ -59,6 +59,7 @@ var gateReasons = map[string]gateReason{
 	"adopted_push_refused":          {"adopted by the hive on branches it cannot push", "push the fixes or close the adopted PRs the hive cannot push in %s"},
 	"stale_safety_net":              {"untouched long enough that the safety net handed them to a person", "look at the long-untouched items in %s"},
 	"blocked_unexplained":           {"labelled blocked with no blocker named", "name the blocker or lift the label"},
+	"cited_lines_gone":              {"agent findings whose cited lines are gone from main", "close the agent findings main no longer matches in %s"},
 	"pr_gate_label":                 {"held by a gate label", "act on the gate labels or remove them"},
 	"hand_merge_required":           {"that only a person can merge", "merge the reviewed PRs by hand in %s"},
 	"review_decision_required":      {"waiting for an approving review that branch protection requires", "approve PRs in %s"},
