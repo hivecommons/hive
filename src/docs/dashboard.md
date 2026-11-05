@@ -735,6 +735,7 @@ so the reason text can change without breaking them.
 | `parked_needs_decision` | `DECIDE` |
 | `parked_needs_spec` | `SPEC` |
 | `untrusted_reporter` | `ADMIT` |
+| `decided_not_admitted`, `agent_finding_not_admitted`, `person_issue_not_admitted` | `ADMIT` |
 | `reporter_confirmation_stale` | `CLOSE` |
 | `verified_done` | `CLOSE` |
 | `agent_filed_unacknowledged` | `TRIAGE` |
@@ -768,6 +769,9 @@ means the situation cannot occur at that level.
 | Unclaimed issue filed by a person | Not yours — backlog | Not yours — backlog, or a lane will act | Not yours — a lane will act | same |
 | Issue filed by an agent, not yet acknowledged, while the self-authorization hold is active (by default below L6) | — (no agent files issues) | Yours — `TRIAGE` | Yours — `TRIAGE` | Not yours by default (agents self-authorize); Yours — `TRIAGE` when the hold is configured on |
 | Issue from an untrusted reporter awaiting an admission label | Yours — `ADMIT` | same | same | same |
+| Issue the issue filter (`project.issue_filter.require_labels`) refuses that carries `approved-direction` (a `/hive decision` or `/hive approve` applies it, not the filter's label) | Yours — `ADMIT` (`decided_not_admitted`; the reason names the labels that admit it) | same | same | same |
+| Agent-filed issue the issue filter refuses, where the TRIAGE row above does not apply (agents self-authorize, by default at L6) | — (no agent files issues) | — (TRIAGE applies) | — (TRIAGE applies) | Yours — `ADMIT` (`agent_finding_not_admitted`: admit it, or close it if it no longer applies) |
+| Person-filed issue the issue filter refuses, undecided (only the missing `require_labels` keeps it out: holds, exempt, tracking, `blocked`, parks, reporter confirmation, reporter triage and standing dashboards are decided before the filter and keep their own rows; a bot's issue stays Not yours) | Yours — `ADMIT` (`person_issue_not_admitted`: admit it so the hive works it, or close it) | same | same | same |
 | Parked: `needs-decision` / `needs-direction` / `needs-human` | Yours — `DECIDE` / `STEER` / `REVIEW` | same | same | same — no lane ever takes a parked issue |
 | Parked: `needs-spec` | Yours — `SPEC` | same | same | same |
 | Agent PR held by the level gate (decided from the hold's recorded source, not from the repository's level) | — (no agent opens PRs) | Yours — `REVIEW` | Yours — `REVIEW` | A level hold placed before the level was raised stays until released: Yours — `REVIEW`. Outreach-lane PRs keep their hold: Yours — `REVIEW` |
@@ -808,7 +812,10 @@ admission → `ADMIT`; (7) awaiting reporter confirmation → Not yours until it
 has had no activity for the stale period, then `CLOSE`
 (`reporter_confirmation_stale`); (8) verified done but not closed → `CLOSE`;
 (9) agent-filed and unacknowledged where acknowledgment is required →
-`TRIAGE`; (10) for a pull request with a hold, the hold sources decide and no
+`TRIAGE`; (9b) an issue the issue filter refuses that carries
+`approved-direction` → `ADMIT` (`decided_not_admitted`), that an agent filed
+→ `ADMIT` (`agent_finding_not_admitted`), or that a person filed → `ADMIT`
+(`person_issue_not_admitted`); (10) for a pull request with a hold, the hold sources decide and no
 later row applies; for any other pull request, the PR rows of the table; (11)
 otherwise Not yours. The safety net then applies
 only to items that came out Not yours. Last, the gate rules apply to items
