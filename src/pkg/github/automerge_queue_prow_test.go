@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type prowQueueRecorder struct {
@@ -40,10 +41,12 @@ func prowQueueServer(t *testing.T, label string, statusCode int, rec *prowQueueR
 			}
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			json.NewEncoder(w).Encode(map[string]any{"login": "hive-bot", "id": 1})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			items := []map[string]any{}
 			for i, b := range rec.bodies {
-				items = append(items, map[string]any{"id": i + 1, "body": b})
+				items = append(items, map[string]any{"id": i + 1, "body": b, "user": map[string]any{"login": "hive-bot", "id": 1}})
 			}
 			json.NewEncoder(w).Encode(items)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
@@ -119,8 +122,8 @@ func TestBindProwLgtmWarningUsesLiveContextAndPostsOnce(t *testing.T) {
 	api := prowQueueServer(t, "lgtm", http.StatusForbidden, rec)
 	defer api.Close()
 	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
-	expired, cancel := context.WithCancel(context.Background())
-	cancel()
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
 	for i := 0; i < 2; i++ {
 		if err := c.bindProwLgtm(expired, "acme", "widget", 7, "0123456789abcdef", "alice"); err == nil {
 			t.Fatalf("pass %d: want the status error returned", i)
@@ -128,5 +131,20 @@ func TestBindProwLgtmWarningUsesLiveContextAndPostsOnce(t *testing.T) {
 	}
 	if rec.comments != 1 {
 		t.Fatalf("warning comments = %d, want 1", rec.comments)
+	}
+}
+
+func TestBindProwLgtmWarningSkipsWithdrawnCaller(t *testing.T) {
+	rec := &prowQueueRecorder{}
+	api := prowQueueServer(t, "lgtm", http.StatusForbidden, rec)
+	defer api.Close()
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	withdrawn, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.bindProwLgtm(withdrawn, "acme", "widget", 7, "0123456789abcdef", "alice"); err == nil {
+		t.Fatal("want the status error returned")
+	}
+	if rec.comments != 0 {
+		t.Fatalf("warning comments = %d, want 0 after the caller cancelled", rec.comments)
 	}
 }

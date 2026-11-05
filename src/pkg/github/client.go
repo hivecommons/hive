@@ -3387,10 +3387,18 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 			"repo", owner+"/"+repoName, "number", number, "error", err)
 	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
-	// The status call may have spent the caller's deadline, so the warning gets
-	// its own bounded context, and is posted once per PR, not once per sweep.
+	// A caller that withdrew has nothing left to warn about; a caller whose
+	// deadline the status call spent still does. The warning gets its own
+	// bounded deadline but keeps following the caller's cancellation, and is
+	// posted once per PR, not once per sweep.
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return fmt.Errorf("Prow status reporting: %w", err)
+	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), prowWarningTimeout)
 	defer cancel()
+	if ctx.Err() == nil {
+		defer context.AfterFunc(ctx, cancel)()
+	}
 	if _, found, ferr := c.findOwnMarkerComment(wctx, owner, repoName, number, prowLgtmWarningMarker); ferr == nil && found {
 		return fmt.Errorf("Prow status reporting: %w", err)
 	}
