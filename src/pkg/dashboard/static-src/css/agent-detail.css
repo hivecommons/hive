@@ -330,7 +330,7 @@
       .oc-topbar-right { grid-column: auto; flex-wrap: wrap; }
       .widget-dl { display: none; }
       #oc-project-name { display: none; }
-      .oc-topbar .nav-chip--action .nav-chip__label,
+      .oc-topbar .nav-chip--action:not(#oc-drawer-toggle) .nav-chip__label,
       .oc-topbar .nav-chip--primary .nav-chip__label { display: none; }
       /* keep the pill one line so the right group wraps as a unit
          instead of being clipped at the viewport edge */
