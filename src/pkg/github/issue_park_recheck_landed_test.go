@@ -54,7 +54,9 @@ func TestParkLandedFile(t *testing.T) {
 	}
 }
 
-func prFile(name, patch string) map[string]any { return map[string]any{"filename": name, "patch": patch} }
+func prFile(name, patch string) map[string]any {
+	return map[string]any{"filename": name, "patch": patch}
+}
 
 // arch-bootc#634: the named issue #633 closed when #635 merged; #635's patch
 // removes the line the park quotes. The note names #635 and the file, and
