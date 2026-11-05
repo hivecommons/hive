@@ -3,6 +3,7 @@ package dashboard
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -620,7 +621,11 @@ func TestApplyPackKeepsGatewayPlacementAfterOverridesLost(t *testing.T) {
 					Name: gateway, Kind: config.GatewayKindLiteLLM, Endpoint: "https://litellm.example.test",
 				}}
 				// Match production wiring so overrides accept configured gateway names.
-				srv.deps.AgentMgr.SetGatewayBackendChecker(func(backend string) bool {
+				host, ok := srv.deps.AgentMgr.(crux.Host)
+				if !ok {
+					t.Fatal("test runtime does not expose host wiring")
+				}
+				host.SetGatewayBackendChecker(func(backend string) bool {
 					return srv.deps.Config.Governor.ResolveGateway(backend) != nil
 				})
 			}
