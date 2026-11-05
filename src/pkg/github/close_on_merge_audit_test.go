@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -71,12 +72,48 @@ func TestCloseOnMergeWrongClosesReport(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(t, srv, "o", []string{"r"})
 	c.SetAppBotLogin("hive[bot]")
-	rows, err := c.CloseOnMergeWrongCloses(context.Background(), time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
+	audit, err := c.CloseOnMergeWrongCloses(context.Background(), CloseOnMergeAuditOptions{Since: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)})
 	if err != nil {
 		t.Fatalf("report: %v", err)
+	}
+	rows := audit.Items
+	if audit.Truncated || audit.Inspected != 6 {
+		t.Fatalf("inspected=%d truncated=%v, want 6 closed issues in the window and no truncation", audit.Inspected, audit.Truncated)
 	}
 	if len(rows) != 2 || rows[0].Issue != 490 || rows[0].PR != 860 || rows[0].Reason != "pr_leaves_issue_open" || rows[0].Repo != "o/r" ||
 		rows[1].Issue != 491 || rows[1].Reason != "issue_marked_open" {
 		t.Fatalf("rows = %+v, want #490 (pr_leaves_issue_open) and #491 (issue_marked_open)", rows)
+	}
+}
+
+// MaxIssues stops the scan: only that many closed issues cost a comments
+// read, and the result says it was truncated.
+func TestCloseOnMergeWrongClosesCap(t *testing.T) {
+	commentReads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/repos/o/r/issues":
+			var issues []map[string]any
+			for n := 1; n <= 5; n++ {
+				issues = append(issues, map[string]any{"number": n, "state": "closed", "closed_at": "2026-11-01T12:00:00Z"})
+			}
+			_ = json.NewEncoder(w).Encode(issues)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			commentReads++
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"r"})
+	audit, err := c.CloseOnMergeWrongCloses(context.Background(), CloseOnMergeAuditOptions{Since: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), MaxIssues: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !audit.Truncated || audit.Inspected != 2 || commentReads != 2 {
+		t.Fatalf("truncated=%v inspected=%d comment reads=%d, want true/2/2", audit.Truncated, audit.Inspected, commentReads)
 	}
 }

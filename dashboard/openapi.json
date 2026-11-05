@@ -36946,7 +36946,7 @@
           "Governor"
         ],
         "summary": "List issues close-on-merge closed on a PR that left them open",
-        "description": "Read-only report for maintainers (projectbluefin/utah-packages#490): issues the hive closed in the last ?days=N (default 30, 1-90) with \"Fixed by #N\" where PR #N only references the issue (Refs / Part of) or says it stays open, or where the issue carried hive/verified-open or hive/partially-addressed and the PR had no closing keyword for it. The hive reopens nothing; maintainers decide.",
+        "description": "Owner only. Read-only report for maintainers (projectbluefin/utah-packages#490): issues the hive closed in the last ?days=N (default 30, 1-90) with \"Fixed by #N\" where PR #N only references the issue (Refs / Part of) or says it stays open, or where the issue carried hive/verified-open or hive/partially-addressed and the PR had no closing keyword for it. The scan reads GitHub on the installation token: it runs under a 60 s deadline, inspects at most 500 closed issues (truncated with a note past that) and caches each window's answer for 10 minutes (cached_at). GitHub's issue-list since filters on updated_at; the close time is checked locally. The hive reopens nothing; maintainers decide.",
         "parameters": [
           {
             "name": "days",
@@ -36976,7 +36976,7 @@
                     },
                     "complete": {
                       "type": "boolean",
-                      "description": "false when a repository listing failed; error says which"
+                      "description": "false when a repository listing failed (error says which) or the scan was truncated"
                     },
                     "error": {
                       "type": "string"
@@ -37015,6 +37015,23 @@
                           }
                         }
                       }
+                    },
+                    "inspected": {
+                      "type": "integer",
+                      "description": "Closed issues inspected in the window"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "The 500-issue cap stopped the scan; items covers only what was inspected"
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "Present when truncated"
+                    },
+                    "cached_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Present when the answer came from the 10-minute cache"
                     }
                   }
                 }
@@ -37026,6 +37043,9 @@
           },
           "503": {
             "description": "GitHub client not configured"
+          },
+          "403": {
+            "description": "Not a verified owner"
           }
         }
       }

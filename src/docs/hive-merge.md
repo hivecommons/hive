@@ -1165,8 +1165,9 @@ whose own text closes it, never by a branch name, claim or comment link
 alone. Every sweep compares references as `owner/repo`, whatever name the
 repository is configured under: the backfill sweep passed the short name and
 closed projectbluefin/utah-packages#490 on a `Refs #490` PR.
-`GET /api/close-on-merge/wrong-closes?days=N` lists the issues closed that way
-for maintainers to reopen; the hive reopens nothing itself.
+`GET /api/close-on-merge/wrong-closes?days=N` (owner only; at most 500 closed
+issues per scan, cached for 10 minutes) lists the issues closed that way for
+maintainers to reopen; the hive reopens nothing itself.
 
 The tracker shows the consequence honestly. A follow-up or duplicate PR whose
 body names an issue an *earlier* PR already delivered — `Refs #15422` on
