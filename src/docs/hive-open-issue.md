@@ -242,7 +242,11 @@ token asks for the Workflows permission, and the App installation grants
 `workflows: write` (read at most every five minutes), the watcher parks
 nothing, adds no label, and appends a "Not parked: `<lane>`'s token can push
 `.github/workflows/`" note: the issue stays with that lane to push the change.
-If the installation lacks the permission, or cannot be read, the park stands.
+If the installation lacks the permission, or cannot be read, the park stands. It
+also stands when the park quotes GitHub's own rejection of the push ("refusing to
+allow a GitHub App to create or update workflow … without `workflows`
+permission"): that is evidence, and the blocker it records is never released by
+the scheduled re-check.
 
 #### Withdrawing your own park
 

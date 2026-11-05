@@ -163,7 +163,7 @@ func (l *Ledger) Observe(repo string, number int, text string, at time.Time) (En
 		}
 		return l.RecordReason(repo, number, NormalizeReason(text), at), true
 	}
-	if l.capabilityHeld(repo, number, b.Kind) {
+	if !b.Proven && l.capabilityHeld(repo, number, b.Kind) {
 		// The hive holds the capability the report says is missing: keep the
 		// reason for the loop guard, park nothing on it.
 		return l.RecordReason(repo, number, NormalizeReason(text), at), true
@@ -309,7 +309,8 @@ func (l *Ledger) ClearKind(k Kind) int {
 // RecheckCapabilities lifts every capability blocker that held(repo, number, kind)
 // now refutes and returns the released entries as they were. It is the
 // scheduled form of the dashboard's Re-check permissions, per item rather
-// than per kind, so a blocker on a repo no capable lane serves stays. held
+// than per kind, so a blocker on a repo no capable lane serves stays, and so
+// does one whose report quoted GitHub's rejection (Blocker.Proven). held
 // runs outside the ledger lock; a blocker that changed kind meanwhile is kept.
 func (l *Ledger) RecheckCapabilities(held func(repo string, number int, k Kind) bool) []Entry {
 	if held == nil {
@@ -317,7 +318,7 @@ func (l *Ledger) RecheckCapabilities(held func(repo string, number int, k Kind) 
 	}
 	var refuted []Entry
 	for _, e := range l.Blockers() {
-		if e.Blocker.Kind.IsCapability() && held(e.Repo, e.Number, e.Blocker.Kind) {
+		if e.Blocker.Kind.IsCapability() && !e.Blocker.Proven && held(e.Repo, e.Number, e.Blocker.Kind) {
 			refuted = append(refuted, e)
 		}
 	}

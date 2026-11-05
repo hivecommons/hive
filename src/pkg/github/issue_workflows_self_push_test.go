@@ -73,6 +73,7 @@ func TestWorkflowsParkCheckedAgainstTierAndInstallation(t *testing.T) {
 		lane    bool
 		perms   map[string]string
 		err     error
+		body    string
 		want    string
 	}{
 		{name: "merger tier, installation grants: back to the agent", agent: "scanner", appAuth: true, lane: true, perms: write, want: self},
@@ -80,6 +81,7 @@ func TestWorkflowsParkCheckedAgainstTierAndInstallation(t *testing.T) {
 		{name: "merger tier, installation has read only: parks", agent: "scanner", appAuth: true, lane: true, perms: read, want: park},
 		{name: "merger tier, installation read fails: parks", agent: "scanner", appAuth: true, lane: true, err: errors.New("502"), want: park},
 		{name: "merger tier, token-authenticated client: parks", agent: "scanner", appAuth: false, lane: true, perms: write, want: park},
+		{name: "merger tier quoting GitHub's rejection: parks", agent: "scanner", appAuth: true, lane: true, perms: write, body: selfPush1059 + "\n\nThe push bounced: `! [remote rejected] scanner/fix-1059 (refusing to allow a GitHub App to create or update workflow `.github/workflows/e2e.yml` without `workflows` permission)`", want: park},
 		{name: "contributor tier, installation grants: hand-off", agent: "ci-maintainer", appAuth: true, lane: true, perms: write, want: handoff},
 		{name: "contributor tier, installation lacks it: parks", agent: "ci-maintainer", appAuth: true, lane: true, perms: read, want: park},
 		{name: "contributor tier, installation unknown: hand-off as before", agent: "ci-maintainer", appAuth: true, lane: true, err: errors.New("502"), want: handoff},
@@ -87,8 +89,12 @@ func TestWorkflowsParkCheckedAgainstTierAndInstallation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stubInstallation(t, tc.perms, tc.err)
+			body := tc.body
+			if body == "" {
+				body = selfPush1059
+			}
 			writes, bodies, resp := runNeedsDecisionCommentCapture(t, needsDecisionFilter{label: "owner-call"}, IssueRequest{
-				Kind: "comment", Repo: "o/r", Number: 1059, Agent: tc.agent, NeedsDecision: true, Body: selfPush1059,
+				Kind: "comment", Repo: "o/r", Number: 1059, Agent: tc.agent, NeedsDecision: true, Body: body,
 			}, false, fleet(tc.appAuth, tc.lane))
 			if got := strings.Join(writes, ","); got != tc.want {
 				t.Fatalf("writes = %q, want %q", got, tc.want)

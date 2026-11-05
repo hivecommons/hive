@@ -64,3 +64,29 @@ func TestRecheckCapabilitiesReleasesOnlyRefuted(t *testing.T) {
 		t.Fatal("nil check must release nothing")
 	}
 }
+
+// A report quoting GitHub's own rejection of the push is evidence: no
+// capability check refutes it, at record time or on the re-check.
+func TestQuotedWorkflowsRejectionIsProven(t *testing.T) {
+	rejection := "needs-human: the push bounced: refusing to allow a GitHub App to create or update workflow `.github/workflows/e2e.yml` without `workflows` permission"
+	at := time.Date(2026, 11, 5, 21, 0, 0, 0, time.UTC)
+	l := NewLedger("")
+	l.SetCapabilityCheck(func(string, int, Kind) bool { return true })
+	e, _ := l.Observe("o/r", 1, rejection, at)
+	if !e.Blocks() || !e.Blocker.Proven {
+		t.Fatalf("quoted rejection: %+v, want a proven workflows blocker", e)
+	}
+	if got := l.RecheckCapabilities(func(string, int, Kind) bool { return true }); len(got) != 0 {
+		t.Fatalf("re-check released a proven blocker: %+v", got)
+	}
+	for text, want := range map[string]bool{
+		rejection: true,
+		"refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope":            true,
+		"refusing to allow a Personal Access Token to create or update workflow `.github/workflows/ci.yml` without `workflow` scope": true,
+		"the hive app cannot push `.github/workflows/`": false,
+	} {
+		if got := QuotesWorkflowsRejection(text); got != want {
+			t.Errorf("QuotesWorkflowsRejection(%q) = %v, want %v", text, got, want)
+		}
+	}
+}

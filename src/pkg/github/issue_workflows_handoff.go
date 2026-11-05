@@ -98,13 +98,19 @@ func parkIsWorkflowsOnly(text string) bool {
 // e2e.yml in #1089). Any other lane hands it to the lane that can push it:
 // the issue is not parked, it carries WorkflowsLaneLabel, and the posted text
 // says where it went. Inactive (the park stands) when the text is not a
-// workflow-only park, when no lane can push it, or when the installation is
-// known to lack `workflows: write`.
+// workflow-only park, when no lane can push it, when the installation is
+// known to lack `workflows: write`, or when a lane that pushes workflow files
+// quotes GitHub's rejection of its push.
 func (c *Client) workflowsHandoff(ctx context.Context, agent, repo, title, body string) issueDecisionDowngrade {
 	if !parkIsWorkflowsOnly(title + "\n" + body) {
 		return issueDecisionDowngrade{}
 	}
 	if c.workflowsSelfPushFor(agent) {
+		// A park quoting GitHub's rejection is what the note below asks
+		// for when a push still bounces: evidence, so it stands.
+		if itemblocker.QuotesWorkflowsRejection(title + "\n" + body) {
+			return issueDecisionDowngrade{}
+		}
 		if granted, known := c.installationGrantsWorkflows(ctx); known && granted {
 			return issueDecisionDowngrade{Active: true, SelfPush: true, Note: workflowsSelfPushNote(agent)}
 		}
