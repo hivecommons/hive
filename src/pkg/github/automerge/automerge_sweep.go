@@ -352,6 +352,9 @@ type Engine struct {
 	// approvalReach memoises whether a trusted approving review reaches a
 	// head (automerge_review_head_binding.go).
 	approvalReach approvalReachCache
+	// headSightings overrides the process-wide first-sighting record of PR
+	// heads (head_sightings.go); nil shares it.
+	headSightings *HeadSightings
 
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string

@@ -107,12 +107,12 @@ func TestIssueBandParkingStageIsNotDone(t *testing.T) {
 			}
 			ticked := false
 			for _, sig := range info.Signals {
-				if sig.Label == "already done" {
+				if sig.Glyph == "✓" {
 					ticked = true
 				}
 			}
 			if ticked != tt.wantTick {
-				t.Fatalf("already-done signal = %v, want %v (signals=%+v)", ticked, tt.wantTick, info.Signals)
+				t.Fatalf("done signal = %v, want %v (signals=%+v)", ticked, tt.wantTick, info.Signals)
 			}
 		})
 	}

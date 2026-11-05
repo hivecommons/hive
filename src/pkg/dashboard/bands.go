@@ -149,8 +149,19 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	role := issueAgentRole(issue.Labels)
 	acknowledged := issue.HumanAcknowledged || labels["approved-direction"]
 	linked := issueLinkedPRState(issue)
-	done := issueDoneLabel(labels, norm.DoneLabels) || linked.merged || issueStageCovered(issue.Labels)
-	waiting := hasAnyLabel(labels, norm.WaitingLabels)
+	stageCovered := issueStageCovered(issue.Labels)
+	done := issueDoneLabel(labels, norm.DoneLabels) || linked.merged || stageCovered
+	// A hold pauses the issue for a person (the stage engine leaves it
+	// "Open · on hold", hivecommons/hive#13012), so it is parked, not
+	// unclaimed: projectbluefin/utah#551 wore `hold` in the ready band.
+	waiting := hasAnyLabel(labels, norm.WaitingLabels) || held
+	// hive/likely-done is a heuristic (a merged PR referenced the issue); a
+	// park on a person is the stronger, later word. projectbluefin/common#1328,
+	// an RFC parked on needs-decision, sat in "Confirm & close" for a month
+	// on a likely-done from a PR that only referenced it.
+	if done && waiting && !linked.merged && !stageCovered && onlyLikelyDone(labels, norm.DoneLabels) {
+		done = false
+	}
 	inProgress := len(issue.Assignees) > 0 || issueClaimed(issue.Labels) || linked.open
 	selfAuthorizationHeld := true
 	if len(selfAuthorizationHoldActive) > 0 && selfAuthorizationHoldActive[0] != nil {
@@ -199,8 +210,13 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	}
 	if done {
 		label := "already done"
-		if linked.merged {
+		switch {
+		case linked.merged:
 			label = "merged PR references this issue"
+		case stageCovered && !issueDoneLabel(labels, norm.DoneLabels):
+			// stage/040 means an open PR covers it, not that it landed
+			// (projectbluefin/utah#12, #1075 read "already done").
+			label = "covered by an open PR (stage/040) — check it merged before closing"
 		}
 		signals = append(signals, Signal{Glyph: "✓", Label: label})
 	}
@@ -221,6 +237,9 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	chip := ""
 	if band == "waiting" {
 		chip = issueLabelChip(labels)
+		if chip == "" && held {
+			chip = "hold"
+		}
 	}
 	return IssueBandInfo{Band: band, Role: role, Acknowledged: acknowledged, Held: held, HoldReason: heldReason(issue.Labels, false, "", nil), Stale: stale, Signals: signals, Chip: chip}
 }
@@ -254,6 +273,21 @@ func issueDoneLabel(labels map[string]bool, doneLabels []string) bool {
 		}
 	}
 	return false
+}
+
+// onlyLikelyDone reports whether hive/likely-done is the only configured
+// done label the issue wears.
+func onlyLikelyDone(labels map[string]bool, doneLabels []string) bool {
+	if !labels[github.LikelyDoneLabel] {
+		return false
+	}
+	for _, label := range doneLabels {
+		lower := strings.ToLower(label)
+		if lower != github.LikelyDoneLabel && labels[lower] {
+			return false
+		}
+	}
+	return true
 }
 
 func issueLinkedPRState(github.Issue) linkedPRState { return linkedPRState{} }
@@ -467,9 +501,9 @@ func issueBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 	case "agent-filed":
 		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — agents do not pick it up until it is labelled, assigned to a human, or closed. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
 	case "waiting":
-		return BandSpec{Key: key, Label: "Parked", Short: "parked", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + " — parked: agents do not continue until the label is removed or the question it names is answered"}
+		return BandSpec{Key: key, Label: "Parked", Short: "parked", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + ", or held — parked: agents do not continue until the label is removed or the question it names is answered"}
 	case "done":
-		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " — the agent reports the work as landed, and the issue is still open"}
+		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " (hive/likely-done not on a parked issue) — the agent reports the work as landed, and the issue is still open"}
 	default:
 		return BandSpec{Key: "ready", Label: "Unclaimed", Short: "unclaimed", Rule: "no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up"}
 	}
