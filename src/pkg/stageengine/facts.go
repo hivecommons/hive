@@ -120,6 +120,12 @@ const (
 	// (#9665) holds out until a maintainer adds the triage label; it
 	// derives 015-triage-needed.
 	BucketReporterTriage IssueBucket = "reporter_triage"
+	// BucketDependencyDashboard and BucketHiveAdvisory are the standing meta
+	// issues (a bot's Dependency Dashboard, the hive's own advisory report):
+	// structurally not work, so they derive no stage at all — not even 045
+	// from a `needs-human` a triage bot put on them.
+	BucketDependencyDashboard IssueBucket = "dependency_dashboard"
+	BucketHiveAdvisory        IssueBucket = "hive_advisory"
 )
 
 // IssueFacts is the issue-side evidence.

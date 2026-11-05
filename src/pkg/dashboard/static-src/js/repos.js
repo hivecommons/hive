@@ -696,12 +696,18 @@
       const held = holdLabels(labels);
       const needsHuman = labels.includes('needs-human');
       const parts = [];
-      parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
+      // Same wording as the Go heldReason (bands.go): a hold label is named
+      // only when the item wears one, and the ACMM sentence only for a
+      // generic hold whose sources are unknown or name the level gate.
+      parts.push(held.length
+        ? 'On hold — label ' + held.map(l => '`' + l + '`').join(', ') + ': agents will not act on this until the hold label is removed'
+        : 'On hold: agents will not act on this until what holds it is cleared');
       if (item && item.reporter_trust_reason) {
         parts.push(item.reporter_trust_reason);
         return parts.join('; ');
       }
-      if (item && item.hive_attributed) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
+      const sources = (item && Array.isArray(item.hold_sources)) ? item.hold_sources : [];
+      if (item && item.hive_attributed && held.length && (!sources.length || sources.includes('level_gate'))) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
       if (needsHuman) parts.push('labelled needs-human: automated fix attempts exhausted');
       return parts.join('; ');
     }
