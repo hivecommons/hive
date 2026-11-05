@@ -634,7 +634,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		return in, fmt.Errorf("reading %s#%d: %w", repoFull, number, err)
 	}
 	if issue.GetState() != "" && !strings.EqualFold(issue.GetState(), "open") {
-		return in, fmt.Errorf("%s#%d is not open", repoFull, number)
+		return in, &delegatedItemNotOpenError{Ref: fmt.Sprintf("%s#%d", repoFull, number), State: strings.ToLower(issue.GetState())}
 	}
 	in.Title = issue.GetTitle()
 	in.Body = issue.GetBody()

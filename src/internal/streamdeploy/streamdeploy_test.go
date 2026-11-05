@@ -22,9 +22,9 @@ import (
 // hivecommonsfleet broadcast must not repurpose, interrupt or change that
 // stream, so these bytes only move in a PR that intends to change it.
 var hivecommonsStreamConfig = map[string]string{
-	"docker-compose.yaml":                     "681ce70c760874b1838c752e5fd75a40d0a9eddae54d87b8f709c5b7a2f7bb5b",
-	"k8s/configmap.yaml":                      "8aa4f2f18e3233097985fbd3b33d51a5530df60ca097d8af47ca5e1a6e6da9fc",
-	"k8s/deployment.yaml":                     "e6e3d13d088f739db5b592b9a08e87bf917e1284212d6801b9b8deb96491df27",
+	"docker-compose.yaml":                     "300bb28adcce7bc6150d7e602e08a5bf119b788afb53cc982cb8ca63d2342c40",
+	"k8s/configmap.yaml":                      "a8852adedcc085f542f83f544f130903ddbd18f1ac761c1ca48707037c41b3ef",
+	"k8s/deployment.yaml":                     "ff3a50fc48a768f6582db11c5a7f882a5e42f7cc5abba5c2bcce81691bc0b744",
 	"k8s/kustomization.yaml":                  "235b0a5504ce4a9f81deb6238b2bea9d9e08e725cf78337ac0ed2b0b02c74dc7",
 	"k8s/namespace.yaml":                      "8841b27156e855cd6906162ebde1b169a4a50aa5d40e2098c6f54ae3aad15490",
 	"k8s/networkpolicy.yaml":                  "7bae3769413535474e6473f633e1e93c3f57bd084e5c0b0c49350480d53dd616",

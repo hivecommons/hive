@@ -22,6 +22,9 @@ spec:
         app.kubernetes.io/name: hive-stream-fleet
     spec:
       automountServiceAccountToken: false
+      # ffmpeg closes the RTMP session on SIGTERM within a second or two;
+      # a short grace period lets the Recreate rollout hand the key over fast.
+      terminationGracePeriodSeconds: 15
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -57,11 +60,16 @@ spec:
               mountPath: /dev/shm
             - name: run
               mountPath: /run/stream
+          # Both probes read the watchdog heartbeat (healthcheck.sh). Start-up
+          # gets 6 min: Twitch keeps the stream key locked for ~2 min after the
+          # previous publisher drops, and ffmpeg's relaunch backoff must ride
+          # that out. Liveness fails once the heartbeat is older than
+          # HEARTBEAT_MAX_AGE_SECONDS (300 s) three times in a row.
           startupProbe:
             exec:
               command: ["/usr/local/bin/healthcheck.sh"]
             periodSeconds: 10
-            failureThreshold: 18
+            failureThreshold: 36
           livenessProbe:
             exec:
               command: ["/usr/local/bin/healthcheck.sh"]

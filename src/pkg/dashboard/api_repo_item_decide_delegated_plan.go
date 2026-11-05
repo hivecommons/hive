@@ -13,8 +13,11 @@ import (
 	"sync"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // The "Let hive decide" preview (hivecommons/hive#15126). The owner pressed
@@ -89,7 +92,8 @@ func (s *Server) handleRepoItemDecideDelegatedPlan(w http.ResponseWriter, r *htt
 		return
 	}
 	if s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
-		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
+		failure := delegatedPlanFailureFor(errDelegatedPlanNoGitHub, repoFull, number, 0, 0, s.publicHiveName())
+		jsonStatusResponse(w, failure.status, failure)
 		return
 	}
 	var body delegatedDecisionRequest
@@ -118,9 +122,14 @@ func (s *Server) handleRepoItemDecideDelegatedPlan(w http.ResponseWriter, r *htt
 	if !ok {
 		cache = "miss"
 		var err error
-		plan, err = s.planDelegatedDecision(ctx, repoFull, number, itemType, mergerRole, body)
+		var attempts int
+		plan, attempts, err = s.planDelegatedDecisionWithRetry(ctx, repoFull, number, itemType, mergerRole, body)
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadGateway)
+			failure := delegatedPlanFailureFor(err, repoFull, number, attempts, time.Since(start), s.publicHiveName())
+			if s.logger != nil {
+				s.logger.Warn("decide-delegated plan failed", "repo", repoFull, "number", number, "type", itemType, "reason", failure.Reason, "attempts", attempts, "retryable", failure.Retryable, "status", failure.status, "duration_ms", time.Since(start).Milliseconds(), "error", err)
+			}
+			jsonStatusResponse(w, failure.status, failure)
 			return
 		}
 		s.delegatedJobs.plans.put(key, plan, time.Now())
@@ -141,7 +150,139 @@ const (
 	delegatedPlanCacheMax = 256
 	// delegatedPlanPrefetchHeader marks the SPA's prefetch (log only).
 	delegatedPlanPrefetchHeader = "X-Hive-Prefetch"
+	// delegatedPlanRetries is how many more times the plan re-reads the
+	// item after a transient GitHub failure (5xx, rate limit, timeout)
+	// before the preview gives up; delegatedPlanRetryBackoff is the pause
+	// before the first retry, doubled for the next. The plan is a handful
+	// of sequential GitHub reads and api.github.com answers one of them
+	// with an intermittent 500 often enough (check-runs on a 70-check head,
+	// observed live 2026-11-05) that a single attempt failed the preview
+	// for the owner several times a day.
+	delegatedPlanRetries      = 2
+	delegatedPlanRetryBackoff = 750 * time.Millisecond
 )
+
+// delegatedPlanRetrySleep is the retry pause; tests replace it.
+var delegatedPlanRetrySleep = func(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// planDelegatedDecisionWithRetry is planDelegatedDecision retried on a
+// transient GitHub failure. It returns the plan, how many attempts ran and
+// the last error.
+func (s *Server) planDelegatedDecisionWithRetry(ctx context.Context, repoFull string, number int, itemType string, mergerRole bool, req delegatedDecisionRequest) (*delegatedDecisionPlan, int, error) {
+	backoff := delegatedPlanRetryBackoff
+	for attempt := 1; ; attempt++ {
+		plan, err := s.planDelegatedDecision(ctx, repoFull, number, itemType, mergerRole, req)
+		if err == nil {
+			return plan, attempt, nil
+		}
+		if attempt > delegatedPlanRetries || !ghpkg.IsRetryableError(err) {
+			return nil, attempt, err
+		}
+		if s.logger != nil {
+			s.logger.Debug("decide-delegated plan: transient GitHub failure, retrying", "repo", repoFull, "number", number, "attempt", attempt, "error", err)
+		}
+		if serr := delegatedPlanRetrySleep(ctx, backoff); serr != nil {
+			return nil, attempt, err
+		}
+		backoff *= 2
+	}
+}
+
+// delegatedItemNotOpenError is gatherDelegatedInput's answer for an item
+// GitHub reports closed or merged: there is nothing to decide, and the
+// row the operator clicked is simply older than the merge.
+type delegatedItemNotOpenError struct {
+	Ref   string
+	State string
+}
+
+func (e *delegatedItemNotOpenError) Error() string { return e.Ref + " is not open" }
+
+// errDelegatedPlanNoGitHub is the plan's answer on a hive with no GitHub
+// client: it can neither preview nor decide.
+var errDelegatedPlanNoGitHub = errors.New("GitHub client not configured")
+
+// The plan's failure reasons, keyed off by the SPA's inline error
+// (tracker-actions.js stageTrackerDelegatePlanFailureLines).
+const (
+	delegatedPlanReasonNotOpen = "not-open"
+	delegatedPlanReasonGitHub  = "github"
+	delegatedPlanReasonConfig  = "config"
+	delegatedPlanReasonPlan    = "plan"
+)
+
+// delegatedPlanFailure is the wire shape of a failed POST
+// …/decide-delegated/plan: ok:false and error as every dashboard error
+// carries, plus what the SPA needs to say something actionable — which
+// hive answered, why it could not preview, whether Retry is worth
+// pressing, and how many GitHub attempts over how long it already made.
+//
+// Its status is never 502 or 503: the Ingress in front of a hosted hive
+// intercepts both (custom-http-errors "401,502,503", saas_provision.go)
+// and replaces this body with the generic "hive unavailable" page, which
+// is how a merged PR and an intermittent GitHub 500 both read as "the hive
+// is down" for weeks (the same trap as #16652's SSO 503). A failure the
+// operator can act on is a 4xx: 409 when the item is no longer open, 424
+// when a read the plan depends on (GitHub) failed or is not configured.
+type delegatedPlanFailure struct {
+	OK        bool   `json:"ok"`
+	Error     string `json:"error"`
+	Reason    string `json:"reason"`
+	Retryable bool   `json:"retryable"`
+	Attempts  int    `json:"attempts,omitempty"`
+	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
+	Hive      string `json:"hive,omitempty"`
+	Hint      string `json:"hint"`
+	status    int
+}
+
+// delegatedPlanFailureFor classifies a plan error into the response the
+// SPA renders. hive is the display name of the hive that answered.
+func delegatedPlanFailureFor(err error, repoFull string, number int, attempts int, elapsed time.Duration, hive string) delegatedPlanFailure {
+	ref := fmt.Sprintf("%s#%d", repoFull, number)
+	f := delegatedPlanFailure{Error: err.Error(), Reason: delegatedPlanReasonPlan, Attempts: attempts, ElapsedMS: elapsed.Milliseconds(), Hive: hive, status: http.StatusFailedDependency}
+	var notOpen *delegatedItemNotOpenError
+	switch {
+	case errors.As(err, &notOpen):
+		f.Reason = delegatedPlanReasonNotOpen
+		f.status = http.StatusConflict
+		state := notOpen.State
+		if state == "" {
+			state = "closed"
+		}
+		f.Hint = fmt.Sprintf("%s is %s on GitHub — it was merged or closed after this row loaded, so there is nothing left to decide. Refresh the activity monitor.", ref, state)
+	case errors.Is(err, errDelegatedPlanNoGitHub):
+		f.Reason = delegatedPlanReasonConfig
+		f.Hint = "This hive has no GitHub client configured, so it can neither preview nor record a decision. The hive operator needs to finish the GitHub App setup."
+	case ghpkg.IsRetryableError(err):
+		f.Reason = delegatedPlanReasonGitHub
+		f.Retryable = true
+		f.Hint = fmt.Sprintf("GitHub's API failed a read the preview needs on each of %d attempts over %.0fs; this is usually transient on GitHub's side — Retry.", attempts, elapsed.Seconds())
+	case isGitHubAPIError(err):
+		f.Reason = delegatedPlanReasonGitHub
+		f.Hint = fmt.Sprintf("GitHub refused a read the preview of %s needs. Check the hive's GitHub App access to %s.", ref, repoFull)
+	default:
+		f.Hint = "The hive could not build the preview from what GitHub returned; Retry once, then report it if it persists."
+		f.Retryable = true
+	}
+	return f
+}
+
+// isGitHubAPIError reports whether err wraps a GitHub API error response
+// of any status (the retryable 5xx/429 are classified first).
+func isGitHubAPIError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	return errors.As(err, &ghErr)
+}
 
 // delegatedPlanServerTiming is the plan's Server-Timing metric: its
 // duration in milliseconds and whether the cache answered.

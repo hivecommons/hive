@@ -1762,9 +1762,30 @@
         if (prefetch) headers['X-Hive-Prefetch'] = '1';
         const r = await fetch(req.url + '/plan', { method: 'POST', headers, body: JSON.stringify(req.body) });
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) return { ref: stageTrackerRefOf(item), number: item.number, error: data.error || ('HTTP ' + r.status) };
+        if (!r.ok) return stageTrackerDelegatePlanFailure(item, r.status, data);
         return Object.assign({ ref: stageTrackerRefOf(item) + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : '') }, data);
-      } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
+      } catch (e) { return stageTrackerDelegatePlanFailure(item, 0, { error: String(e && e.message || e), reason: 'network', retryable: true }); }
+    }
+    // Pure: one failed plan — the server's structured failure (reason,
+    // hint, retryable, hive, attempts, elapsed_ms; delegatedPlanFailure in
+    // api_repo_item_decide_delegated_plan.go) when it answered, else what
+    // the transport said. A 502/503 whose body is the hosted gateway's
+    // generic "hive unavailable" page never came from the hive at all.
+    const STAGE_TRACKER_PLAN_GATEWAY_ERROR = 'hive unavailable';
+    function stageTrackerDelegatePlanFailure(item, status, data) {
+      data = data || {};
+      const gateway = status >= 502 && status <= 504 && (!data.reason || data.error === STAGE_TRACKER_PLAN_GATEWAY_ERROR);
+      return {
+        ref: stageTrackerRefOf(item), number: item.number,
+        error: data.error || ('HTTP ' + status),
+        status,
+        reason: gateway ? 'gateway' : (data.reason || (status ? 'http' : 'network')),
+        retryable: gateway || data.retryable === true || (!data.reason && status === 0),
+        hint: data.hint || '',
+        hive: data.hive || '',
+        attempts: data.attempts || 0,
+        elapsed_ms: data.elapsed_ms || 0,
+      };
     }
     // Fire-and-forget: one plan request per Let hive decide target of the
     // row, at most once per STAGE_TRACKER_PLAN_PREFETCH_MS. Returns how many
@@ -1829,15 +1850,62 @@
         + '<button type="button" class="hv-btn ' + (sentinel ? 'btn-danger' : 'btn-primary') + ' hive-dialog-btn primary" disabled aria-disabled="true">' + esc(STAGE_TRACKER_PLAN_BUTTON_DELEGATE) + '</button>'
         + '</div>';
     }
-    // Pure: the inline error that replaces the skeleton, with Retry.
-    function stageTrackerDelegatePlanErrorContent(subject, failed) {
+    // Pure: the inline error that replaces the skeleton, with Retry. The
+    // old one-liner — "Could not preview o/r#N (hive unavailable)" — told
+    // the owner nothing (hivecommons/hive#16776: that message was a merged
+    // PR once and a GitHub 500 the next time). Each failure now names the
+    // hive that answered, says why in its own words, and the last line
+    // says plainly that Let hive do that stays off until a preview loads —
+    // the hive never records a decision it could not preview.
+    const STAGE_TRACKER_PLAN_NO_PREVIEW_NO_DECISION = 'Let hive do that stays off until a preview loads — the hive never decides what it could not preview.';
+    // Pure: which hive the failure came from, for the message — the
+    // server's own name when it answered, else the host the page is on.
+    function stageTrackerDelegatePlanHiveLabel(failed, host) {
+      for (const pl of failed || []) if (pl && pl.hive) return String(pl.hive);
+      host = host || (typeof location !== 'undefined' && location.host) || '';
+      return host ? 'the hive at ' + host : 'the hive';
+    }
+    // Pure: the explanation lines for one failed plan: [what, why/do].
+    function stageTrackerDelegatePlanFailureLines(pl, hive) {
+      pl = pl || {};
+      const ref = pl.ref || ('#' + pl.number);
+      const err = String(pl.error || 'no plan');
+      const tries = pl.attempts > 1 ? ' after ' + pl.attempts + ' attempts' + (pl.elapsed_ms ? ' over ' + Math.round(pl.elapsed_ms / 1000) + 's' : '') : '';
+      switch (pl.reason) {
+        case 'gateway':
+          return ['Could not preview ' + ref + ': ' + hive + ' did not answer (HTTP ' + pl.status + ' from the gateway in front of it).', 'The hive is restarting or its API was briefly unreachable; the gateway replaced its reply with a generic page. Retry in a few seconds.'];
+        case 'not-open':
+          return ['Could not preview ' + ref + ': ' + hive + ' reports it is no longer open.', pl.hint || (ref + ' was merged or closed after this row loaded, so there is nothing left to decide. Refresh the activity monitor.')];
+        case 'github':
+          return ['Could not preview ' + ref + ': ' + hive + ' could not read it from GitHub' + tries + '.', (pl.hint || err) + (pl.hint ? ' (' + err + ')' : '')];
+        case 'config':
+          return ['Could not preview ' + ref + ': ' + hive + ' has no GitHub client configured.', pl.hint || err];
+        case 'network':
+          return ['Could not preview ' + ref + ': could not reach ' + hive + ' (' + err + ').', 'Check your connection, then Retry.'];
+        default:
+          return ['Could not preview ' + ref + ': ' + hive + ' answered' + (pl.status ? ' HTTP ' + pl.status : '') + tries + ' — ' + err + '.', pl.hint || 'Retry once; report it if it persists.'];
+      }
+    }
+    // Pure: does Retry stand a chance — any failure the server or the
+    // transport marked retryable, or one with no word either way.
+    function stageTrackerDelegatePlanRetryable(failed) {
+      return (failed || []).some(pl => !pl || (pl.retryable !== false && pl.reason !== 'not-open' && pl.reason !== 'config'));
+    }
+    function stageTrackerDelegatePlanErrorContent(subject, failed, host) {
       const esc = hiveDialogEscape;
-      const what = (failed || []).map(pl => (pl.ref || ('#' + pl.number)) + ' (' + pl.error + ')').join(', ');
+      failed = (failed || []).map(pl => pl || { error: 'no plan' });
+      const hive = stageTrackerDelegatePlanHiveLabel(failed, host);
+      const blocks = failed.map(pl => {
+        const lines = stageTrackerDelegatePlanFailureLines(pl, hive);
+        return '<p class="ham-plan-error" role="alert">' + esc(lines[0]) + '</p>' + (lines[1] ? '<p class="ham-plan-error-why">' + esc(lines[1]) + '</p>' : '');
+      }).join('');
+      const retry = stageTrackerDelegatePlanRetryable(failed);
       return '<div id="hive-dialog-title" class="hive-dialog-title">' + esc(STAGE_TRACKER_PLAN_TITLE) + '</div>'
         + '<div class="ham-plan-subject">' + esc(subject) + '</div>'
         + '<div class="hive-dialog-body ham-plan-body">'
-        + '<p class="ham-plan-error" role="alert">Could not preview ' + esc(what) + '</p>'
-        + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-retry">' + esc(STAGE_TRACKER_PLAN_RETRY) + '</button>'
+        + blocks
+        + '<p class="ham-plan-error-rails">' + esc(STAGE_TRACKER_PLAN_NO_PREVIEW_NO_DECISION) + '</p>'
+        + (retry ? '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-retry">' + esc(STAGE_TRACKER_PLAN_RETRY) + '</button>' : '')
         + '</div>';
     }
     // Pure: the subject line the skeleton shows before the plan names it.
@@ -1886,7 +1954,9 @@
           const failed = (plans || []).filter(pl => !pl || pl.error);
           if (failed.length || !plans || !plans.length) {
             content.innerHTML = stageTrackerDelegatePlanErrorContent(opts.subject || '', failed.length ? failed : [{ ref: opts.subject || '', error: 'no plan' }]);
-            const retry = content.querySelector('.ham-plan-retry');
+            // Retry takes focus when it is offered; else Cancel, the one
+            // button left that does anything.
+            const retry = content.querySelector('.ham-plan-retry') || overlay.querySelector('.cancel');
             if (retry) retry.focus();
             return;
           }

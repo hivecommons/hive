@@ -281,6 +281,12 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			if wa.ObservedAt != nil {
 				out.Since = wa.ObservedAt
 			}
+			if wa.PermissionDenied {
+				// The hive tried and GitHub refused: the click is a
+				// person's (hivecommons/hive#16603).
+				out.Caption = "CI waiting · needs workflow approval on GitHub"
+				out.Detail = fmt.Sprintf("Hive tried to approve %s for the PR's current commit, but GitHub refused: the App lacks the actions: write permission. A maintainer has to approve workflows on GitHub before required check %s can report.", plural(wa.Pending, "gated workflow run"), check)
+			}
 			break
 		}
 		out.Caption = "CI waiting · required check " + check + " hasn't reported for this head yet"

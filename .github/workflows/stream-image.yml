@@ -74,6 +74,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The supervisor scripts have no Go test lane; shellcheck them and run
+      # the watchdog decision tests (fake ffmpeg, stubbed Twitch check) here,
+      # the only job that sees src/deploy/stream changes.
+      - name: Shell scripts (shellcheck + watchdog tests)
+        run: |
+          set -euo pipefail
+          cd src/deploy/stream
+          shellcheck -x entrypoint.sh stream-watchdog.sh healthcheck.sh public-safe-gate.sh test-stream-watchdog.sh
+          bash test-stream-watchdog.sh
+
       - name: Resolve tags
         id: ref
         env:
