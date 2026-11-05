@@ -1207,7 +1207,9 @@ type PullRequest struct {
 	// larger response. EnrichReviewSignalsAndWorkPRs stamps them on stale
 	// drafts.
 	// Display only: the 🔗 #N badge on a PR pill mirrors the issue column's
-	// linked-PR badge (#8876); nothing gates on any of them.
+	// linked-PR badge (#8876); nothing gates on any of them. The your-turn
+	// decision reads LinkedIssues to see that a hive PR closes a parked
+	// issue (hiveClosingPRFor).
 	CommentCount      int             `json:"comment_count,omitempty"`
 	ReviewThreadCount int             `json:"review_thread_count,omitempty"`
 	LinkedIssues      []PRLinkedIssue `json:"linked_issues,omitempty"`
