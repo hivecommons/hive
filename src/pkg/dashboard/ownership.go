@@ -911,6 +911,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process,
 	if cfg != nil {
 		org = cfg.Project.Org
 	}
+	env.reviewSwarm.answer = decisionAnswerLookup(org)
 	if leased := hub.leasedWorkItems(now, org); len(leased) > 0 {
 		env.leased = func(repo string, number int) bool { return leased[leaseItemKey(org, repo, number)] }
 	}

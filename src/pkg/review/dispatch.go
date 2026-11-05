@@ -257,6 +257,15 @@ type DispatchOptions struct {
 	DeltaMaxAge       time.Duration
 	Agents            []AgentCapability
 	Now               time.Time
+
+	// AnsweredHeadsOnly plans the heads a trusted maintainer answered
+	// (PullRequest.HumanChangeRequest on the current head) even when review
+	// dispatch is off (RequireApproval or FanOut unset): the answer is
+	// handed to the author agent as a fix kick, and nothing else is planned,
+	// reviewed or pruned. Without it a `/hive decision <instruction>` on a
+	// hive that does not require review approval was recorded, the PR moved
+	// to 070-fixing, and no agent was ever told (Danathar/dns-failover#155).
+	AnsweredHeadsOnly bool
 }
 
 type DispatchState struct {
@@ -672,6 +681,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if (!opts.RequireApproval || !opts.FanOut) && opts.AnsweredHeadsOnly {
+		return planAnsweredHeads(prs, artifact, state, opts, now)
+	}
 	state.GeneratedAt = now
 	state = pruneState(state, prs, opts.ProjectOrg)
 	state.Pending = pruneUnconfiguredAgents(state.Pending, opts.Agents)
@@ -708,20 +720,8 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		var delivered map[Perspective]Verdict
 		var deliveredHeads map[Perspective][]string
 		var awaiting *Aggregate
-		if req := pr.HumanChangeRequest; req != nil && SameHeadSHA(req.HeadSHA, pr.HeadSHA) {
-			// A trusted maintainer answered this head — a changes_requested
-			// review or `/hive decision <text>` — so whatever the swarm said
-			// about it is superseded (hivecommons/hive#13041). Hand the
-			// instruction to the author agent; the swarm re-reviews the head
-			// the fix pushes. One kick per head: dispatchFix's pending check.
-			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
-			plan.State.Human = removeHumanForHead(plan.State.Human, pr)
-			agg, _ := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest)
-			if fixPushAllowed(pr, opts) {
-				plan.dispatchFix(pr, agg, opts, now)
-			} else {
-				plan.withholdFix(pr, opts, now)
-			}
+		if answeredHead(pr) {
+			plan.answerHead(pr, artifact, opts, now)
 			continue
 		}
 		if agg, ok := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest); ok {
@@ -1561,6 +1561,48 @@ func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
 // A plain-login ai_author is reviewed but never pushed to.
 func fixPushAuthorOK(author string) bool {
 	return strings.HasSuffix(strings.TrimSpace(author), "[bot]")
+}
+
+// answeredHead reports whether a trusted maintainer answered pr's current
+// head: a changes_requested review or `/hive decision <text>` recorded
+// against exactly that head.
+func answeredHead(pr PullRequest) bool {
+	req := pr.HumanChangeRequest
+	return req != nil && SameHeadSHA(req.HeadSHA, pr.HeadSHA)
+}
+
+// answerHead plans an answered head: whatever the swarm said about it is
+// superseded (hivecommons/hive#13041), so the instruction goes to the author
+// agent and the swarm re-reviews the head the fix pushes. One kick per head:
+// dispatchFix's pending check.
+func (p *DispatchPlan) answerHead(pr PullRequest, artifact Artifact, opts DispatchOptions, now time.Time) {
+	p.State.Pending = removePendingForHead(p.State.Pending, pr)
+	p.State.Human = removeHumanForHead(p.State.Human, pr)
+	agg, _ := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest)
+	if fixPushAllowed(pr, opts) {
+		p.dispatchFix(pr, agg, opts, now)
+	} else {
+		p.withholdFix(pr, opts, now)
+	}
+}
+
+// planAnsweredHeads is PlanDispatch while review dispatch is off
+// (DispatchOptions.AnsweredHeadsOnly): only the answered heads among prs are
+// planned, as the full planner plans them, and the state of every other PR
+// is left exactly as loaded (prs is not the open set, so nothing is
+// pruned). The state is stamped only when a head was planned, so an idle
+// cycle writes nothing.
+func planAnsweredHeads(prs []PullRequest, artifact Artifact, state DispatchState, opts DispatchOptions, now time.Time) DispatchPlan {
+	plan := DispatchPlan{State: state}
+	for _, pr := range prs {
+		pr.Repo = fullRepoName(pr.Repo, opts.ProjectOrg)
+		if pr.Number <= 0 || pr.Repo == "" || !answeredHead(pr) {
+			continue
+		}
+		plan.State.GeneratedAt = now
+		plan.answerHead(pr, artifact, opts, now)
+	}
+	return plan
 }
 
 // withholdFix records that a changes_requested PR got no fix kick because
