@@ -434,12 +434,17 @@ runs when a required check is missing or pending:
 - workflow-approval and never-started holds are logged once per PR head as
   `automerge hold`; later ticks only count the PR in the skip stats instead of
   emitting `automerge skip` every tick.
-- fork heads, sentinel-alert PRs, and human-authored lanes are never touched; a
-  first-time contributor's held run is still a person's decision — with one
-  exception: a contributor-lane PR whose author the **contributor registry**
+- sentinel-alert PRs are never touched, and a first-time contributor's held run
+  is still a person's decision — with two exceptions that reach fork heads: the
+  gated-run approval sweep (`governor.ci.auto_approve_workflows`, default `true`)
+  approves a head's `pull_request` runs once when a verified owner or merger
+  admitted that head from the dashboard or the PR author / triggering actor is
+  the App or in `governor.ci.auto_approve_workflow_actors`
+  ([runtime-and-quota.md](runtime-and-quota.md), hivecommons/hive#16603); and a
+  contributor-lane PR whose author the **contributor registry**
   admitted at a `require_tiers` tier has its held runs approved once per head
   by the App (`auto_merge.contributor_lane.approve_held_runs_for_registry_trusted`,
-  default `true`; needs Actions: Read and write). The operator already trusts
+  default `true`). Both need Actions: Read and write. The operator already trusts
   that author to merge, so holding their CI is pure drag (hivecommons/docs#481).
 
 Per-repo `project.repo_policies[].auto_merge: false` is stronger than the

@@ -277,7 +277,11 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   and names no approver), or the PR author or the run's triggering actor is
   this hive's App or is listed in `governor.ci.auto_approve_workflow_actors`
   (default `['dependabot[bot]', 'renovate[bot]']`; an explicit `[]` trusts
-  only the App and owner admission). Trusting the App as triggering actor
+  only the App and owner admission). A trusted **author** covers every
+  gated run on the head regardless of who pushed it — including commits a
+  fork collaborator pushed to the author's branch — so keep the actor list
+  to bot logins unless that is acceptable for a human login you add.
+  Trusting the App as triggering actor
   covers heads the App pushed itself (its own PRs, rebases, review-fix
   commits); it does not extend to contributor code, because GitHub holds
   only fork `pull_request` runs behind the gate and the App cannot push to
