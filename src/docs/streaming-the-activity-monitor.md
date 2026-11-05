@@ -234,12 +234,53 @@ stream: ffmpeg starting (1920x1080@30, 4500k CBR, keyint 60, sink -f flv …)
 
 Then open **Stream Manager** on Twitch: the preview should show the tracker
 within ~30 s, with the **Live** badge and bitrate around 4500 kbps. The pod's
-`healthcheck.sh` (used by the liveness probe) demands that Chromium is running
-and ffmpeg has written progress in the last 20 s:
+`healthcheck.sh` (startup and liveness probes) demands that Chromium is running
+and that the watchdog heartbeat is fresh:
 
 ```sh
 kubectl --context hive-oke -n hive-stream exec deploy/hive-stream -- healthcheck.sh
-# ok frames=12345
+# ok heartbeat_age=7s frames=12345 watchdog=ok twitch=live restarts=0 live_restarts=0
+```
+
+### Self-healing
+
+The streamer must recover from an ingest drop without a human, so
+`stream-watchdog.sh` runs next to ffmpeg and checks two things:
+
+1. **ffmpeg is advancing** — its `-progress` frame counter grows and `speed`
+   stays near 1x; a stall gets ffmpeg SIGTERMed and relaunched (2→60 s
+   backoff).
+2. **The channel is really live** — every `LIVE_CHECK_EVERY` (60 s) it asks
+   Twitch whether `TWITCH_CHANNEL_LOGIN` is live (unauthenticated GQL with
+   Twitch's public web `Client-Id`, or Helix if `TWITCH_HELIX_CLIENT_ID`/
+   `_SECRET` are set). ffmpeg can sit at `speed=1x` for hours after Twitch
+   drops the session with the pod `1/1 Running`; this is the check that
+   notices. `LIVE_OFFLINE_THRESHOLD` (3) consecutive "offline" answers outside
+   the `LIVE_GRACE_SECONDS` (240 s) window after an ffmpeg start restart
+   ffmpeg, then the watchdog holds for grace + an exponential backoff
+   (30 s → 5 min) before judging again. After `LIVE_RESTART_LIMIT` (5) such
+   restarts with the channel still offline it exits, the supervisor exits,
+   and Kubernetes restarts the container. Lookup errors are "unknown" and
+   never count.
+
+Only while both hold does it touch `/run/stream/stream-healthy`;
+`healthcheck.sh` fails the liveness probe when that file is older than
+`HEARTBEAT_MAX_AGE_SECONDS` (300 s), so a wedged watchdog is recovered too.
+The window is wider than the ~2 min Twitch keeps a stream key locked after
+its previous publisher drops (`rtmp://live.twitch.tv/app/***: Input/output
+error` on every reconnect until it clears) — the startup probe allows 6 min
+for the same reason, and the Deployments use `strategy: Recreate` plus a 15 s
+`terminationGracePeriodSeconds` so a rollout hands the key over quickly.
+
+The log has one line per state change, never one per tick:
+
+```
+stream: watchdog: live check for twitch.tv/hivecommons every 60s (gql; grace 240s, 3 misses restart ffmpeg, 5 restarts exit)
+stream: live on twitch.tv/hivecommons
+stream: offline on twitch.tv/hivecommons (1/3)
+stream: offline on twitch.tv/hivecommons (3/3)
+stream: offline (3/3) → restarting ffmpeg (1/5); next check in 270s
+stream: live on twitch.tv/hivecommons (after 1 ffmpeg restart(s))
 ```
 
 A page reload fires every `RELOAD_EVERY` (default `30m`) so a newly rolled
@@ -256,7 +297,8 @@ dashboard build is picked up without restarting the pod.
 | Stream drops every few minutes | Twitch rejected the key (reset in Creator Dashboard?). ffmpeg restarts with 2→60 s backoff; the logs show the masked `***` key, never the real one. |
 | Old UI after a dashboard roll | Wait for the next `RELOAD_EVERY` tick or `kubectl rollout restart deploy/hive-stream`. |
 | **OOMKilled** / `Killed Xvfb` then `a supervised process left the loop` | The pod ran out of memory, almost always the x11grab frame queue after the encoder stalled (see [Resources and memory](#resources-and-memory)). Check `ipcs -m` in the pod: hundreds of 8 MiB segments means ffmpeg is hoarding frames — lower `VIDEO_QUEUE_FRAMES` or give the encoder CPU. |
-| Pod is `Running` but Twitch is offline | `healthcheck.sh` in the pod; if `frames` is not increasing, the ffmpeg sink is failing — look for `rtmp` errors in the logs. |
+| Pod is `Running` but Twitch is offline | Should self-heal (see [Self-healing](#self-healing)): `kubectl logs` shows `offline on twitch.tv/… (n/3)` then `restarting ffmpeg`. If instead the log says `TWITCH_CHANNEL_LOGIN unset; progress-only`, set it in the ConfigMap. If `frames` is not increasing in `healthcheck.sh`, the ffmpeg sink is failing — look for `rtmp` errors. |
+| `Input/output error` from `rtmp://live.twitch.tv/app/***` on every reconnect | Twitch still holds the key for the previous publisher; it clears within ~2 min. The relaunch loop rides it out and the probes allow for it — do not restart the pod again, that resets the lock. |
 
 ## Resources and memory
 
