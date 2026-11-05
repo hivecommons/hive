@@ -170,17 +170,18 @@ func parkClient(t *testing.T, srv *httptest.Server) *Client {
 	t.Helper()
 	c := newTestClient(t, srv, "org", []string{"repo"})
 	c.SetAppBotLogin("hive[bot]")
+	c.SetRelayContributor(func(login string) bool { return login == "contributor" })
 	return c
 }
 
 // parkedIssue is an open issue parked at parkT0 by a relay comment (posted
-// by the hive just before the label) carrying parkText.
+// under a contributor relay account just before the label) carrying parkText.
 func prParkedIssue(number int, parkText string) *parkFake {
 	return &parkFake{
 		issue: map[string]any{"number": number, "state": "open", "title": "t", "body": "reporter body, no refs",
 			"user": map[string]any{"login": "reporter"}, "created_at": prTS(parkT0.Add(-30 * 24 * time.Hour)),
 			"labels": []any{map[string]any{"name": "stage/045-needs-decision"}}},
-		comments: []map[string]any{{"id": int64(1), "body": parkText, "user": map[string]any{"login": "hive[bot]"}, "created_at": prTS(parkT0.Add(-20 * time.Second))}},
+		comments: []map[string]any{{"id": int64(1), "body": parkText, "user": map[string]any{"login": "contributor"}, "created_at": prTS(parkT0.Add(-20 * time.Second))}},
 		timeline: []map[string]any{
 			// needs-decision → stage/085 → stage/045, swapped a second apart:
 			// one continuous park since parkT0.
@@ -611,6 +612,7 @@ func TestParkTextTrustedAuthors(t *testing.T) {
 		want    string
 	}{
 		{"hive account included", comment("hive[bot]", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
+		{"contributor relay included", comment("contributor", "NONE", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"trusted maintainer included", comment("maint", "MEMBER", "waiting on org/other#7"), "waiting on org/other#7"},
 		{"untrusted commenter excluded", comment("stranger", "NONE", "see evil/repo#9"), ""},
 	}
