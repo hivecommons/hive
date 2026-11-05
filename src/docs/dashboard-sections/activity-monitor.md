@@ -51,7 +51,7 @@ silently revoke an adoption.
 
 ### First use: find the next action
 
-1. Find an item by repository, number or title. Every open issue and PR in the watched repositories is represented, including held, draft, filtered, exempt and reporter-triage work. Being visible does not make it actionable.
+1. Find an item by repository, number or title. Every open issue and PR in the watched repositories is represented, including held, draft, filtered, exempt and reporter-triage work; only standing meta issues (bot Dependency Dashboards and the Hive Advisory Report) are left off. Being visible does not make it actionable.
 2. Read the lit step and the visible human/actor context beneath it. The word says where the work is; **Needs human** names the actual requirement, while **Next move** and **Claimed by** distinguish ordinary actor/claim ownership. Links and chevrons retain further detail.
 3. Use **🙋 Needs human** for work waiting on a person's action. Use **⏸ On hold** separately for work a maintainer deliberately paused. Neither filter grants permission to act.
 4. Open **⋯** (or right-click / Shift+F10) for the actions allowed in that state. Read the confirmation and the result toast; a queued decision is not proof the PR merged.
@@ -102,7 +102,7 @@ The server keys items by repository, kind and number. A PR present in both issue
 
 The header reports the filtered row count and how many need attention; pagination says **showing X–Y of N (M filtered out)**. `stageTrackerCountsText()` produces the header, badge and showing text together. Where pairing reduces the count below open issues + PRs, its tooltip/footnote says **2 PRs shown on their issue's row**, rather than presenting a second competing total. Filters that flatten PRs can change which rows appear; do not add the badge to the payload's `open_issues` / `open_prs`.
 
-**The counter beside the section name.** The left-menu counter and the header lead (`37 rows (33 issues + 4 PRs on their own row) · 3 need attention`) count *rows* of the default view, not items: every open issue is a row; a pull request is its own row only when it is not drawn under a listed issue. The Overview counter (`33/13`) prints the same open set as issues/PRs, so the two differ by exactly the pull requests that share their issue's row (`9 PRs shown on their issue's row` in the tooltip). The header and tooltip also name the PRs sharing issue rows. Filters and the kind tabs narrow the list and the `showing X–Y of N` line, never the counter.
+**The counter beside the section name.** The left-menu counter and the header lead (`37 rows (33 issues + 4 PRs on their own row) · 3 need attention`) count *rows* of the default view, not items: every open issue is a row; a pull request is its own row only when it is not drawn under a listed issue. The Overview counter (`33/13`) prints the same open set as issues/PRs, so the two differ by exactly the pull requests that share their issue's row (`9 PRs shown on their issue's row` in the tooltip). The header and tooltip also name the PRs sharing issue rows. Filters and the kind tabs narrow the list and the `showing X–Y of N` line, never the counter. Standing meta issues — bot Dependency Dashboards and the Hive Advisory Report — are control panels, not pipeline work: they are never rows, label chips or needs-attention items, and the header's sum names them (`… · 2 bot dashboards or advisory reports not listed`); they stay in the payload, so the Overview counter still counts them.
 
 ### How you'll know something is waiting on you
 
