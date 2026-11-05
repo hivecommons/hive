@@ -113,7 +113,11 @@ type parkChange struct {
 	copyOf string
 	// by, quote and link are the closing note a person left when the copy
 	// closed unmerged, if any.
-	by, quote, link string
+	by, quote, link string	// landedBy is the merged PR whose patch removes a line the park quotes,
+	// in landedFile, a file the park names (issue_park_recheck_landed.go):
+	// the park's change landed. landedBy equals ref when the named item is
+	// that PR.
+	landedBy, landedFile string
 }
 
 // RecheckParkedIssues posts or refreshes the re-check note on every open
@@ -189,6 +193,7 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		result.Skipped++
 		return nil
 	}
+	c.markParkLandings(ctx, parkText(issue, comments, start), refs, named, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
 	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
 	for _, cm := range comments {
@@ -638,7 +643,7 @@ func parkRecheckNote(label string, start time.Time, changes []parkChange) string
 	var b strings.Builder
 	b.WriteString(parkRecheckMarker)
 	fmt.Fprintf(&b, "\n**The reason this issue is parked may be out of date.** It has been parked for a maintainer (`%s`) since %s, and since then:\n\n", label, start.UTC().Format("2006-01-02"))
-	noted := false
+	noted, landedBy := false, ""
 	for _, ch := range changes {
 		if ch.copyOf != "" {
 			fmt.Fprintf(&b, "- %s (the hive's copy of %s) %s on %s", ch.ref, ch.copyOf, ch.verb, ch.at.UTC().Format("2006-01-02"))
@@ -656,10 +661,24 @@ func parkRecheckNote(label string, start time.Time, changes []parkChange) string
 		if ch.named {
 			why = "the park reason names it"
 		}
-		fmt.Fprintf(&b, "- %s %s on %s (%s).\n", ch.ref, ch.verb, ch.at.UTC().Format("2006-01-02"), why)
+		landed := ""
+		switch {
+		case ch.landedBy == "":
+		case ch.landedBy == ch.ref:
+			landed = fmt.Sprintf(", changing the lines this issue asks to change in `%s`", ch.landedFile)
+		default:
+			landed = fmt.Sprintf(" by merged %s, which changed the lines this issue asks to change in `%s`", ch.landedBy, ch.landedFile)
+		}
+		if landedBy == "" && ch.landedBy != "" {
+			landedBy = ch.landedBy
+		}
+		fmt.Fprintf(&b, "- %s %s on %s%s (%s).\n", ch.ref, ch.verb, ch.at.UTC().Format("2006-01-02"), landed, why)
 	}
 	b.WriteString("\nThe park reason was written before these changes. Re-read it against the current state before deciding. This note does not un-park the issue: it stays with a maintainer, and Hive updates this note if more of the referenced work moves.")
-	if noted {
+	switch {
+	case landedBy != "":
+		fmt.Fprintf(&b, "\n\n**The change this issue asks for has landed in %s.** If that settles it, a maintainer can reply `/fixed` to close this issue as completed, or `/hive decision <your instructions>` to un-park it.\n%s%s -->", landedBy, parkRecheckLandedPrefix, landedBy)
+	case noted:
 		b.WriteString("\n\nIf the closing note quoted above settles the question, a maintainer can reply `/fixed` to close this issue as completed, or `/hive decision <your instructions>` to un-park it.")
 	}
 	return b.String()

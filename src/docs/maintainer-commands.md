@@ -109,6 +109,14 @@ the copy, the note quotes the first paragraph of their closing comment (at
 most 300 characters, mentions defanged) and adds the replies that act on it,
 `/fixed` or `/hive decision <your instructions>`
 ([projectbluefin/utah#13](https://github.com/projectbluefin/utah/issues/13)).
+When the park quotes the change it asks for in a fenced code block, Hive also
+reads the patch of each named PR that merged, and of the merged PR that closed
+each named issue (at most three reads per issue). If that patch removes a line
+of 16 or more characters the park quotes, in a file the park names, the change
+landed: the note says which PR and file ("#633 was closed by merged #635, which
+changed the lines this issue asks to change in `.github/workflows/build.yml`"),
+and the "What to reply" notice puts **`/fixed`** first as the one recommended
+reply ([Danathar/arch-bootc#634](https://github.com/Danathar/arch-bootc/issues/634)).
 The note never un-parks the issue: leaving 045 stays a maintainer's reply.
 
 The on-demand `/hive help` workflow uses the same first-line command shape, is
