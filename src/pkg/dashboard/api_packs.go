@@ -263,7 +263,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 					s.deps.Config.Governor.DefaultInferenceModel(existing.Backend) == ""
 				if !retainGatewayModel && existing.Model != gwModel {
 					s.logger.Info("setting pack model on gateway-routed agent to the gateway's model",
-					"agent", pa.Name, "backend", existing.Backend, "old_model", existing.Model, "gateway_model", gwModel, "pack_backend", packBackend)
+						"agent", pa.Name, "backend", existing.Backend, "old_model", existing.Model, "gateway_model", gwModel, "pack_backend", packBackend)
 					if existing.Model == "" {
 						gatewayModelFilled = append(gatewayModelFilled, pa.Name)
 					}
@@ -1185,14 +1185,16 @@ func (s *Server) packAgentBackend(pa config.PackAgent) (backend string, replaced
 }
 
 // agentBackendVote is one enabled agent's backend as seen by
-// hiveGatewayBackend: the backend and whether an operator picked it.
+// hiveGatewayBackend: the backend and whether an operator picked it (or a
+// previous pack apply retained that pick after the runtime overrides were lost).
 type agentBackendVote struct {
 	backend       string
 	operatorOwned bool
 	packCLI       bool
 	// model is the model the agent runs on backend when an operator chose
 	// it (a live ModelOverride, or a config model the pack did not write),
-	// else "". hiveGatewayModel reads it.
+	// else "". A retained gateway pick also carries its pack-copied model when
+	// no operator model remains on that gateway. hiveGatewayModel reads it.
 	model string
 }
 
@@ -1211,8 +1213,13 @@ type agentBackendVote struct {
 // config backend equal to it: an earlier apply moved the config onto the
 // gateway the override already named, and the operator's pick must keep
 // counting on the next restart.
+//
+// When no operator picks remain, pack-owned gateway placements retain the
+// hive's earlier move (#16740). They are fallback votes only: an operator's
+// new backend or model choice always takes precedence over a copied one.
 func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 	backends := map[string]agentBackendVote{}
+	hasOperatorPick := false
 	for name, agent := range s.deps.Config.Agents {
 		if !agent.Enabled || s.deps.Config.IsAgentRemoved(name) {
 			continue
@@ -1233,6 +1240,30 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 		}
 		if modelOverride != "" {
 			vote.model = modelOverride
+		}
+		backends[name] = vote
+		hasOperatorPick = hasOperatorPick || vote.operatorOwned
+	}
+	if hasOperatorPick {
+		return backends
+	}
+	operatorModels := map[string]bool{}
+	for _, vote := range backends {
+		if vote.model != "" {
+			operatorModels[strings.ToLower(vote.backend)] = true
+		}
+	}
+	for name, vote := range backends {
+		agent := s.deps.Config.Agents[name]
+		if !agent.BackendIsPackOwned() || !s.agentOnForeignGatewayBackend(vote.backend, "") {
+			continue
+		}
+		// Keep the config pack-owned: this is evidence of the earlier gateway
+		// move, not a new operator edit. The usual unanimity/count/majority
+		// checks still apply to these retained votes.
+		vote.operatorOwned = true
+		if !operatorModels[strings.ToLower(vote.backend)] {
+			vote.model = strings.TrimSpace(agent.Model)
 		}
 		backends[name] = vote
 	}
@@ -1280,9 +1311,10 @@ func (s *Server) unownedGatewayBackend(agent config.AgentConfig) bool {
 //  1. Unanimity: the operator-owned backends among those agents (including an
 //     unowned gateway backend, see unownedGatewayBackend) must all name
 //     the same inference backend or configured gateway. Any operator pick of
-//     a subscription CLI, of the hive default or of a different gateway, or no
-//     operator pick at all, yields "".
-//  2. At least two operator picks: one agent moved onto a gateway is not the
+//     a subscription CLI, of the hive default or of a different gateway
+//     yields "". If no operator picks remain, retained pack-owned gateway
+//     placements vote instead (see hiveAgentBackends); no votes yields "".
+//  2. At least two picks (operator or retained): one agent on a gateway is not the
 //     hive moving, so the pack's CLI agents are not migrated with it.
 //  3. Majority: more than half of the agents NOT waiting on this apply run on
 //     the chosen gateway, whoever placed them there. Roster peers still on

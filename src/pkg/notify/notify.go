@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ import (
 const (
 	httpTimeoutSeconds       = 10
 	errorDedupeWindowSeconds = 60
+	ntfyRateLimitFallback    = time.Minute
+	ntfyRateLimitMaxFallback = time.Hour
 )
 
 type Notifier struct {
@@ -28,6 +31,8 @@ type Notifier struct {
 	lastNtfyErr     string
 	lastNtfyErrTime time.Time
 	ntfyErrCount    int
+	ntfyRetryAt     time.Time
+	ntfyBackoff     time.Duration
 }
 
 func New(cfg config.NotificationsConfig, logger *slog.Logger) *Notifier {
@@ -69,6 +74,13 @@ func (n *Notifier) Send(title, message string, priority Priority) {
 }
 
 func (n *Notifier) sendNtfy(title, message string, priority Priority) {
+	n.mu.Lock()
+	coolingDown := time.Now().Before(n.ntfyRetryAt)
+	n.mu.Unlock()
+	if coolingDown {
+		return
+	}
+
 	url := fmt.Sprintf("%s/%s", n.cfg.Ntfy.Server, n.cfg.Ntfy.Topic)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBufferString(message))
@@ -88,12 +100,46 @@ func (n *Notifier) sendNtfy(title, message string, priority Priority) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		now := time.Now()
+		retryAt, valid := ntfyRetryAfter(resp.Header.Get("Retry-After"), now)
+		n.mu.Lock()
+		if !valid {
+			if n.ntfyBackoff == 0 {
+				n.ntfyBackoff = ntfyRateLimitFallback
+			} else {
+				n.ntfyBackoff = min(n.ntfyBackoff*2, ntfyRateLimitMaxFallback)
+			}
+			retryAt = now.Add(n.ntfyBackoff)
+		}
+		// Requests already in flight may also return 429; never shorten the cooldown.
+		if retryAt.After(n.ntfyRetryAt) {
+			n.ntfyRetryAt = retryAt
+		}
+		n.mu.Unlock()
+	}
+
 	if resp.StatusCode >= 400 {
 		n.logNtfyError("ntfy returned error", fmt.Sprintf("status=%d", resp.StatusCode))
 		return
 	}
 
+	n.mu.Lock()
+	n.ntfyBackoff = 0
+	n.mu.Unlock()
 	n.logger.Debug("ntfy sent", "title", title)
+}
+
+// ntfyRetryAfter accepts positive delta-seconds or a future HTTP date.
+func ntfyRetryAfter(value string, now time.Time) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
+		return now.Add(time.Duration(seconds) * time.Second), true
+	}
+	if retryAt, err := http.ParseTime(value); err == nil && retryAt.After(now) {
+		return retryAt, true
+	}
+	return time.Time{}, false
 }
 
 // logNtfyError deduplicates repeated ntfy errors within a window.
