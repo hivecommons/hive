@@ -3,8 +3,10 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,6 +15,19 @@ type prowQueueRecorder struct {
 	statuses []map[string]string
 	comments int
 	bodies   []string
+	// commentDelay stalls the comment list/create handlers, standing in for
+	// a slow API while the caller's deadline runs out.
+	commentDelay time.Duration
+}
+
+func (rec *prowQueueRecorder) stall(r *http.Request) {
+	if rec.commentDelay <= 0 {
+		return
+	}
+	select {
+	case <-time.After(rec.commentDelay):
+	case <-r.Context().Done():
+	}
 }
 
 func prowQueueServer(t *testing.T, label string, statusCode int, rec *prowQueueRecorder) *httptest.Server {
@@ -44,12 +59,14 @@ func prowQueueServer(t *testing.T, label string, statusCode int, rec *prowQueueR
 		case r.Method == http.MethodGet && r.URL.Path == "/user":
 			json.NewEncoder(w).Encode(map[string]any{"login": "hive-bot", "id": 1})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			rec.stall(r)
 			items := []map[string]any{}
 			for i, b := range rec.bodies {
 				items = append(items, map[string]any{"id": i + 1, "body": b, "user": map[string]any{"login": "hive-bot", "id": 1}})
 			}
 			json.NewEncoder(w).Encode(items)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			rec.stall(r)
 			rec.comments++
 			var req map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -146,5 +163,26 @@ func TestBindProwLgtmWarningSkipsWithdrawnCaller(t *testing.T) {
 	}
 	if rec.comments != 0 {
 		t.Fatalf("warning comments = %d, want 0 after the caller cancelled", rec.comments)
+	}
+}
+
+func TestBindProwLgtmWarningOutlivesCallerDeadline(t *testing.T) {
+	rec := &prowQueueRecorder{commentDelay: 300 * time.Millisecond}
+	api := prowQueueServer(t, "lgtm", http.StatusForbidden, rec)
+	defer api.Close()
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	// Live when the status call fails, but expiring while the warning is
+	// still being looked up and posted.
+	sliver, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := c.bindProwLgtm(sliver, "acme", "widget", 7, "0123456789abcdef", "alice")
+	if err == nil {
+		t.Fatal("want the status error returned")
+	}
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "warning comment:") {
+		t.Fatalf("warning followed the caller's deadline: %v", err)
+	}
+	if rec.comments != 1 {
+		t.Fatalf("warning comments = %d, want 1 despite the caller's deadline expiring", rec.comments)
 	}
 }

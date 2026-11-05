@@ -3397,7 +3397,13 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), prowWarningTimeout)
 	defer cancel()
 	if ctx.Err() == nil {
-		defer context.AfterFunc(ctx, cancel)()
+		// Follow only an explicit withdrawal: the caller's deadline running
+		// out mid-warning is exactly the case the live context exists for.
+		defer context.AfterFunc(ctx, func() {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				cancel()
+			}
+		})()
 	}
 	if _, found, ferr := c.findOwnMarkerComment(wctx, owner, repoName, number, prowLgtmWarningMarker); ferr == nil && found {
 		return fmt.Errorf("Prow status reporting: %w", err)
