@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -36,8 +37,10 @@ func TestClassifyMergeEligibility_RepoAutoMergeOffIsHandMerge(t *testing.T) {
 		t.Errorf("repo on: bucket %v verdict %+v, want eligible without HandMerge", bucket, verdict)
 	}
 
-	// An earlier gate still wins: a red PR in an off repo is CI work, not a
-	// hand merge.
+	// An earlier gate still wins in the classifier: a red PR in an off repo
+	// keeps its CI verdict here. writeMergeEligible then marks an outstanding
+	// verdict as a hand merge too (handMergeVerdict), so the your-turn inbox
+	// still sees it.
 	red := github.PullRequest{Number: 2, Mergeable: github.MergeableYes, MergeableState: "unstable", CIStatus: "failure", FailingChecks: []string{"build"}}
 	bucket, verdict = mergeVerdictOf(t, red, false, mergeGates{repoAutoMergeOff: true})
 	if bucket != mergeBucketFailing || verdict.HandMerge {
@@ -93,5 +96,75 @@ func TestWriteMergeEligible_RepoAutoMergeSwitchDrivesVerdict(t *testing.T) {
 				t.Error("PR dropped from merge-eligible.json; its readers rely on it being listed")
 			}
 		})
+	}
+}
+
+// projectbluefin/documentation#1668 and projectbluefin/actions#697: in a
+// repo whose auto-merge is off, a PR held by a Hive-side gate (a
+// contributor-lane refusal, a red check nobody declared required) is still a
+// hand merge, and its reason says both. A PR GitHub itself blocks stays the
+// author's CI work.
+func TestHandMergeVerdict(t *testing.T) {
+	refusal := "contributor-lane policy refuses the merge relay for @github-actions[bot]'s PR: contributor-lane:no-linked-issue"
+	cases := []struct {
+		name     string
+		in       github.MergeVerdict
+		off      bool
+		wantHand bool
+		wantText []string
+	}{
+		{"lane refusal in an off repo", github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: refusal}, true, true, []string{refusal, repoAutoMergeOffReason}},
+		{"red optional check in an off repo", github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: "CI failing: Check consumer validation evidence"}, true, true, []string{"CI failing", repoAutoMergeOffReason}},
+		{"blocked by GitHub in an off repo", github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "blocked — CI failing: zizmor"}, true, false, []string{"zizmor"}},
+		{"unknown in an off repo", github.MergeVerdict{State: github.MergeVerdictUnknown}, true, false, nil},
+		{"eligible verdict untouched", github.MergeVerdict{State: github.MergeVerdictEligible, Reason: "the sweep would merge this now"}, true, false, nil},
+		{"outstanding in an on repo", github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: refusal}, false, false, []string{refusal}},
+		{"already a hand merge: reason not doubled", github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: repoAutoMergeOffReason, HandMerge: true}, true, true, []string{repoAutoMergeOffReason}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := handMergeVerdict(tc.in, tc.off)
+			if got.HandMerge != tc.wantHand || got.State != tc.in.State {
+				t.Fatalf("got %+v, want HandMerge=%v state %q", got, tc.wantHand, tc.in.State)
+			}
+			for _, w := range tc.wantText {
+				if !strings.Contains(got.Reason, w) {
+					t.Errorf("reason %q lacks %q", got.Reason, w)
+				}
+			}
+			if strings.Count(got.Reason, repoAutoMergeOffReason) > 1 {
+				t.Errorf("reason repeats the switch: %q", got.Reason)
+			}
+			if !tc.wantHand && got.Reason != tc.in.Reason {
+				t.Errorf("reason changed without HandMerge: %q", got.Reason)
+			}
+		})
+	}
+}
+
+// The lane refusal replaces the classifier's hand-merge verdict after
+// classification; the written verdict must still carry HandMerge.
+func TestWriteMergeEligible_LaneRefusalKeepsHandMerge(t *testing.T) {
+	dir := t.TempDir()
+	origMerge, origFail := mergeEligiblePath, ciFailingPath
+	mergeEligiblePath = filepath.Join(dir, "merge-eligible.json")
+	ciFailingPath = filepath.Join(dir, "ci-failing.json")
+	t.Cleanup(func() {
+		mergeEligiblePath = origMerge
+		ciFailingPath = origFail
+	})
+	prevGate := mergeEligibleLaneGate
+	setMergeEligibleLaneGate(func(context.Context, string, int, string) (string, error) {
+		return "contributor-lane policy refuses the merge relay: contributor-lane:no-linked-issue", nil
+	})
+	t.Cleanup(func() { setMergeEligibleLaneGate(prevGate) })
+	l5 := 5
+	cfg := &config.Config{ACMMLevel: &l5, Project: config.ProjectConfig{Org: "org"}}
+	p := github.PullRequest{Repo: "repo", Number: 1668, Author: "github-actions[bot]", Mergeable: github.MergeableYes, MergeableState: "clean", CIStatus: "success", HeadSHA: "abc"}
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{p}}}
+	got := writeMergeEligible(actionable, github.HoldResult{}, "org", nil, false, nil, false, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	v := got[github.MergeVerdictKey(p)]
+	if !v.HandMerge || v.State != github.MergeVerdictOutstanding || !strings.Contains(v.Reason, "no-linked-issue") || !strings.Contains(v.Reason, "auto-merge is off") {
+		t.Fatalf("verdict = %+v, want an outstanding hand merge naming the refusal and the switch", v)
 	}
 }

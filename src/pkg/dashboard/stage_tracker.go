@@ -574,6 +574,10 @@ type StageTrackerItem struct {
 	// label on its next pass, hivecommons/hive#14586). Rendered as a muted
 	// operator tooltip, never as the stage word.
 	StaleLabels []string `json:"stale_labels,omitempty"`
+	// LabelsSuppressed is the write-back gate's reason when it kept this
+	// row's stage label off GitHub: the stage shown is the hive's record,
+	// not a label on the item. "" when the labels carry the stage.
+	LabelsSuppressed string `json:"labels_suppressed,omitempty"`
 	// MergeTrain is set on a PR riding a conflict-aware merge train
 	// (hivecommons/hive#15117): its position, the front, the PRs ahead and
 	// the overlapping files. See stage_tracker_merge_train.go.

@@ -292,6 +292,14 @@
       if (!stale.length) return '';
       return 'Stale label' + (stale.length > 1 ? 's' : '') + ': ' + stale.join(', ') + ' (stage has moved on; the hive removes it on its next pass)';
     }
+    // Pure: the operator note for a stage the write-back gate kept off
+    // GitHub (labels_suppressed: the gate's reason). The row's stage is the
+    // hive's record; the item carries no such label. '' when none.
+    function stageTrackerLabelsSuppressedText(item) {
+      const why = item && typeof item.labels_suppressed === 'string' ? item.labels_suppressed.trim() : '';
+      if (!why) return '';
+      return 'Stage label not on GitHub: the write-back gate refused it (' + why + '). The hive tracks this stage itself.';
+    }
     // Pure: whether a row is an issue waiting on a maintainer's triage.
     function stageTrackerTriageNeeded(item) {
       if (!item || item.kind === 'pr') return false;

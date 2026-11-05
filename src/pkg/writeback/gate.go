@@ -396,6 +396,18 @@ func (rec *repoRecord) backfillCutoff() time.Time {
 // target; kind names the write. A nil gate allows everything (the client
 // without a gate installed behaves as before) but that is never the case
 // in cmd/hive, which installs one at boot.
+// Decide is what Allowed would answer, without recording a refusal: for a
+// writer that describes a write another path makes (the 085 note says
+// whether the stage label it announces can land) rather than making it.
+func (g *Gate) Decide(repo string, item Item, kind Kind) Decision {
+	if g == nil {
+		return Decision{Allowed: true, Reason: ReasonNoGate}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.decideLocked(repo, item, kind)
+}
+
 func (g *Gate) Allowed(repo string, item Item, kind Kind) Decision {
 	return g.AllowedPreview(repo, item, kind, "")
 }

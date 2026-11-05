@@ -479,8 +479,11 @@ func holdItemIssue(item github.HoldItem) github.Issue {
 }
 
 type frontendPR struct {
+	// pr is the PR as the hive tracks it (withSuppressedStage); wire is the
+	// snapshot entry as published, with GitHub's labels.
 	pr      github.PullRequest
 	verdict *github.MergeVerdict
+	wire    FrontendPR
 }
 
 func frontendRepoPRs(repo FrontendRepo, held bool) []frontendPR {
@@ -500,19 +503,19 @@ func frontendRepoPRs(repo FrontendRepo, held bool) []frontendPR {
 func frontendPullRequest(raw any) (frontendPR, bool) {
 	switch v := raw.(type) {
 	case FrontendPR:
-		return frontendPR{pr: v.PullRequest, verdict: v.MergeVerdict}, true
+		return frontendPR{pr: withSuppressedStage(v.PullRequest, v.SuppressedStage), verdict: v.MergeVerdict, wire: v}, true
 	case *FrontendPR:
 		if v == nil {
 			return frontendPR{}, false
 		}
-		return frontendPR{pr: v.PullRequest, verdict: v.MergeVerdict}, true
+		return frontendPR{pr: withSuppressedStage(v.PullRequest, v.SuppressedStage), verdict: v.MergeVerdict, wire: *v}, true
 	case github.PullRequest:
-		return frontendPR{pr: v}, true
+		return frontendPR{pr: v, wire: FrontendPR{PullRequest: v}}, true
 	case *github.PullRequest:
 		if v == nil {
 			return frontendPR{}, false
 		}
-		return frontendPR{pr: *v}, true
+		return frontendPR{pr: *v, wire: FrontendPR{PullRequest: *v}}, true
 	default:
 		return frontendPR{}, false
 	}

@@ -344,12 +344,19 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 
 // prBandFlags reports the merge-state facts every PR band is chosen from.
 func prBandFlags(pr github.PullRequest, verdict *github.MergeVerdict, labels map[string]bool, autoMergeLabel string, review *prReviewInfo) (eligible, blocked, inReview bool) {
-	// A hand-merge verdict (the repo's auto-merge is off) is never eligible,
-	// even with the auto-merge label: every sweep, the queued one included,
-	// skips that repo.
-	eligible = (verdict == nil || !verdict.HandMerge) &&
-		((verdict != nil && verdict.State == github.MergeVerdictEligible) || prQueued(labels, autoMergeLabel))
+	// Eligible means the hive will merge it: the sweep's verdict says so
+	// (it may knowingly merge past a non-required GitHub blocker, so its
+	// word outranks the PR's own merge state). The auto-merge label stands
+	// in only while the classifier has no verdict, and only when nothing
+	// blocks the PR; next to an outstanding or blocked verdict it is a wish,
+	// not a merge (projectbluefin/server#583 and #613 sat in Merge-eligible
+	// with red CI and, on #613, GitHub refusing the merge). A hand-merge
+	// verdict (the repo's auto-merge is off) is never eligible: every sweep,
+	// the queued one included, skips that repo.
 	blocked = (verdict != nil && verdict.State == github.MergeVerdictBlocked) || pr.Mergeable == github.MergeableNo || prCIFailing(pr)
+	noVerdict := verdict == nil || verdict.State == github.MergeVerdictUnknown || verdict.State == ""
+	eligible = (verdict == nil || !verdict.HandMerge) &&
+		((verdict != nil && verdict.State == github.MergeVerdictEligible) || (noVerdict && !blocked && prQueued(labels, autoMergeLabel)))
 	// A hand-merge verdict is outstanding because the repo's switch is off,
 	// not because anyone is reviewing it; it does not earn the in-review band.
 	inReview = (verdict != nil && verdict.State == github.MergeVerdictOutstanding && !verdict.HandMerge) || pr.ReviewURL != "" || review != nil
@@ -475,7 +482,7 @@ func prBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 		labels := uniqueLowerLabels(append(append([]string{}, prHumanGateLabels...), norm.WaitingLabels...))
 		return BandSpec{Key: key, Label: "Gated", Rule: "held, or labelled " + strings.Join(labels, ", ") + " — gated: automation does not continue until the hold is released or the label is removed"}
 	case "eligible":
-		return BandSpec{Key: key, Label: "Merge-eligible", Rule: "sweep verdict eligible, or queued for Hive auto-merge — nothing needed; it merges on its own"}
+		return BandSpec{Key: key, Label: "Merge-eligible", Rule: "sweep verdict eligible, or queued for Hive auto-merge with nothing blocking before the sweep has a verdict — nothing needed; it merges on its own"}
 	case "blocked":
 		return BandSpec{Key: key, Label: "Blocked", Rule: "blocked sweep verdict, merge conflicts, or failing CI"}
 	case "in-review":

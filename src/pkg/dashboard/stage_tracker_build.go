@@ -144,6 +144,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.DCOTotal, it.DCOUnsigned = total, unsigned
 			}
 		}
+		if hasRec && rec.LabelsSuppressed && rec.Stage != stagelabels.None {
+			it.LabelsSuppressed = nonEmpty(rec.LabelsSuppressedReason, "write-back gate")
+		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
 		var attempt github.MergeAttempt
 		var hasAttempt bool

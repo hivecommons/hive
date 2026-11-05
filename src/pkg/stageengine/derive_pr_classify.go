@@ -253,6 +253,11 @@ var stageHandoffReasons = map[string]bool{
 	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
 	trustedAuthorReasonAppAuthored: true, contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
 	"fetch-pr": true, "fetch-pr-recheck": true,
+	// A merge to the destination was in flight, so the lane did not look at
+	// the PR. Read as an owned base-refresh stage it overwrote the stage the
+	// other sweep wrote one pass earlier, every pass
+	// (projectbluefin/utah-packages#869 080↔085, #873 080↔090).
+	prstage.StageReasonBaseRefreshMergeGuard: true,
 }
 
 // stageAdmissionReasons are reasons that mean "this lane cannot vouch for

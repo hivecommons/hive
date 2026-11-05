@@ -19110,6 +19110,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
+      const suppressed = typeof stageTrackerLabelsSuppressedText === 'function' ? stageTrackerLabelsSuppressedText(item) : '';
+      if (suppressed) lines.push(suppressed);
       const deferred = stageTrackerDeferredMods(item);
       if (deferred.length) lines.push(STAGE_TRACKER_DEFERRED_NOTE + deferred.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));
@@ -23109,6 +23111,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const stale = item && Array.isArray(item.stale_labels) ? item.stale_labels.filter(Boolean) : [];
       if (!stale.length) return '';
       return 'Stale label' + (stale.length > 1 ? 's' : '') + ': ' + stale.join(', ') + ' (stage has moved on; the hive removes it on its next pass)';
+    }
+    // Pure: the operator note for a stage the write-back gate kept off
+    // GitHub (labels_suppressed: the gate's reason). The row's stage is the
+    // hive's record; the item carries no such label. '' when none.
+    function stageTrackerLabelsSuppressedText(item) {
+      const why = item && typeof item.labels_suppressed === 'string' ? item.labels_suppressed.trim() : '';
+      if (!why) return '';
+      return 'Stage label not on GitHub: the write-back gate refused it (' + why + '). The hive tracks this stage itself.';
     }
     // Pure: whether a row is an issue waiting on a maintainer's triage.
     function stageTrackerTriageNeeded(item) {
