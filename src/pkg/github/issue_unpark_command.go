@@ -337,6 +337,7 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 		if err != nil {
 			return result, err
 		}
+		unparkedBefore := len(result.Unparked)
 		for _, issue := range issues {
 			if result.actions() >= maxActions {
 				break
@@ -418,6 +419,16 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			if !acted {
 				result.Skipped++
 			}
+		}
+		// Decision parks that deferred to one answered in this pass take
+		// the same answer instead of asking the owner again
+		// (hivecommons/hive#16699). Label-driven repos keep their labels.
+		if !labelDriven && len(result.Unparked) > unparkedBefore {
+			decided := map[int]IssueUnparkEvent{}
+			for _, event := range result.Unparked[unparkedBefore:] {
+				decided[event.Number] = event
+			}
+			c.inheritDeferredDecisions(ctx, repo, owner, repoName, issues, decided, maxActions, result, opts.Audit)
 		}
 		// Reminders, closure clean-up and the per-repo attention queue
 		// (attention pilot, hivecommons/hive#16361, #16362) run after this
