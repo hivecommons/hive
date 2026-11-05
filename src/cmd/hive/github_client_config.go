@@ -170,6 +170,13 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// ledger is read per call because the client can be configured before
 	// it is built.
 	client.SetRelayContributor(b.relayContributor)
+	// Park-text provenance for the park re-check (#16697): the live claim
+	// above expires with the relay task lease, but the re-check reads park
+	// comments days later, so it keys on the durable registry-backed
+	// predicate instead — tier-aware, since the registry admits
+	// self-registered newcomers (api_contribute.go register) and keeps
+	// revoked profiles.
+	client.SetParkTextContributor(b.parkTextContributor)
 	// Ledger fallback for the enumeration-time claim read and the
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).
@@ -278,6 +285,41 @@ func (b *boot) reporterTrusted(login, association string) bool {
 // clanker-requested.
 func (b *boot) relayContributor(login string) bool {
 	return ledgerHasContributor(b.issueClaims, login)
+}
+
+// parkTextContributor is the park re-check's contributor-provenance
+// predicate (github.Client.SetParkTextContributor): a live relay claim, or a
+// contributor-registry profile at a tier an operator or auto-promotion
+// granted. It is narrower than firstTimerKnownContributor on purpose — POST
+// /api/contribute/register creates a newcomer profile from a self-asserted
+// username without authentication, and a revoked profile stays in the
+// registry — so neither tier may let a commenter or reporter steer which
+// cross-repo patches the park re-check reads with the App token (#16697).
+func (b *boot) parkTextContributor(login string) bool {
+	return parkTextContributorKnown(b.relayContributor, dashboard.ContributorTrustTierByLogin, login)
+}
+
+// parkTextContributorTierAdmits reports whether a registry tier is
+// provenance for park text: any tier the registry stores except the
+// self-registration default (newcomer) and revoked. An empty tier is a
+// legacy profile written before tiers existed and is not admitted either.
+func parkTextContributorTierAdmits(tier string) bool {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "", "newcomer", "revoked":
+		return false
+	}
+	return true
+}
+
+func parkTextContributorKnown(relay func(string) bool, registryTier func(string) (string, bool), login string) bool {
+	if relay != nil && relay(login) {
+		return true
+	}
+	if registryTier == nil {
+		return false
+	}
+	tier, ok := registryTier(login)
+	return ok && parkTextContributorTierAdmits(tier)
 }
 
 func ledgerHasContributor(ledger *claims.Ledger, login string) bool {

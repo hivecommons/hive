@@ -4,7 +4,9 @@ package github
 // parked on a premise — "#722 is in progress, agents leave it alone", "the
 // precedent has not been set", "whether to adopt ruff and type checking".
 // The park text is written once, usually by a contributor relay under its
-// own account, and nothing re-read it when the work it named moved on. A
+// own account (only hive accounts, park-text contributors and trusted
+// maintainers count as park-text authors, for comments and the issue body),
+// and nothing re-read it when the work it named moved on. A
 // maintainer then decides from a premise that no longer holds, and agents
 // stay off work that is unblocked (projectbluefin/server#385,
 // projectbluefin/utah#13, projectbluefin/website#926).
@@ -174,7 +176,8 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		return err
 	}
 	refs := parkRefsFromTimeline(events)
-	named := parkNamedRefs(parkText(issue, comments, start), owner+"/"+repo, number)
+	text := c.parkText(issue, comments, start)
+	named := parkNamedRefs(text, owner+"/"+repo, number)
 	lookups := 0
 	for _, key := range named {
 		if _, ok := refs[key]; ok || lookups >= parkRecheckMaxNamedLookups {
@@ -194,7 +197,7 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 		result.Skipped++
 		return nil
 	}
-	c.markParkLandings(ctx, parkText(issue, comments, start), refs, named, owner+"/"+repo, start, changes)
+	c.markParkLandings(ctx, text, refs, named, owner+"/"+repo, start, changes)
 	note := parkRecheckNote(label, start, changes)
 	item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: issueLabelNames(issue.Labels), CreatedAt: issue.GetCreatedAt().Time})
 	for _, cm := range comments {
@@ -309,17 +312,41 @@ func parkStartFrom(events []*gh.Timeline, isPark func(string) bool) time.Time {
 
 // parkText is the text the park rests on: the issue body when the issue was
 // filed parked, and every comment posted in the window before the park
-// label. The hive's own notices are not park text.
-func parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) string {
+// label — in both cases only when the author is a hive account, a park-text
+// contributor or a trusted maintainer. The hive's own notices are not park
+// text, and neither an untrusted commenter nor an untrusted reporter whose
+// issue was parked straight after filing can steer which patches get read.
+//
+// Contributor provenance is the durable embedder-supplied predicate
+// (SetParkTextContributor), not the live relay claim alone. The relay posts
+// the park comment under the contributor's own account with
+// author_association NONE and the claim expires with the task lease; the
+// re-check runs days later and must still read that comment as park text.
+//
+// Every in-window body or comment the gate drops is logged with its author,
+// so a park whose refs rested on a since-expired claim-only relay, or on an
+// author the embedder no longer admits, is observable rather than silently
+// matching nothing.
+func (c *Client) parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) string {
 	inWindow := func(at time.Time) bool {
 		return !at.IsZero() && !at.After(start) && start.Sub(at) <= parkTextWindow
 	}
 	var parts []string
 	if inWindow(issue.GetCreatedAt().Time) {
-		parts = append(parts, issue.GetBody())
+		if c.parkTextAuthorTrusted(issue.GetUser(), issue.GetAuthorAssociation()) {
+			parts = append(parts, issue.GetBody())
+		} else if c.logger != nil {
+			c.logger.Info("park re-check excluded issue body from untrusted reporter", "issue", issue.GetHTMLURL(), "login", issue.GetUser().GetLogin(), "association", issue.GetAuthorAssociation())
+		}
 	}
 	for _, cm := range comments {
 		if cm == nil || !inWindow(cm.GetCreatedAt().Time) {
+			continue
+		}
+		if !c.parkTextAuthorTrusted(cm.GetUser(), cm.GetAuthorAssociation()) {
+			if c.logger != nil {
+				c.logger.Info("park re-check excluded pre-park comment from untrusted author", "issue", issue.GetHTMLURL(), "comment", cm.GetID(), "login", cm.GetUser().GetLogin(), "association", cm.GetAuthorAssociation())
+			}
 			continue
 		}
 		body := cm.GetBody()
@@ -329,6 +356,14 @@ func parkText(issue *gh.Issue, comments []*gh.IssueComment, start time.Time) str
 		parts = append(parts, body)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// parkTextAuthorTrusted reports whether text user wrote (an issue body or a
+// pre-park comment) may be park text: a hive account, a park-text
+// contributor, or an author the reporter-trust predicate trusts.
+func (c *Client) parkTextAuthorTrusted(user *gh.User, association string) bool {
+	login := user.GetLogin()
+	return c.isHiveAccount(user) || c.isParkTextContributor(login) || c.reporterIsTrusted(login, association)
 }
 
 // parkRefRE matches "#N" and "owner/repo#N" references.
