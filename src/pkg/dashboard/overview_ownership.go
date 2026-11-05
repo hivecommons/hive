@@ -123,6 +123,13 @@ func nonActionableIssueInfo(item github.RepoWorkIssue, repoName string, cfg conf
 		HumanAcknowledged: item.HumanAcknowledged,
 	}, false, cfg, now, selfAuthorizationHoldActive)
 	info.Band = nonActionableIssueBand(item)
+	if named := blockedReasonSignal(item.Reason); named != "" {
+		for i := range info.Signals {
+			if info.Signals[i].Label == blockedNoReasonSignal {
+				info.Signals[i].Label = named
+			}
+		}
+	}
 	if info.Band != "" && info.Chip == "" {
 		info.Chip = issueLabelChip(labelSet([]string{item.Reason}))
 	}
