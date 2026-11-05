@@ -162,8 +162,12 @@ On `comment`, `--blocked-by` links the existing issue the same way, after the
 comment is posted. Use it when a park only defers to another parked issue's
 decision (a release tag that rides on #N's change: "answer on #N; the same
 choice applies here"). The dashboard then counts the pair as one owner ask:
-a decision park with an open blocker reads as waiting on that issue, not as
-your turn ([Danathar/tududi#512](https://github.com/Danathar/tududi/issues/512)).
+a decision park blocked by an open issue that is itself parked on a decision
+reads as "Waits on the decision on #N", not as your turn
+([Danathar/tududi#512](https://github.com/Danathar/tududi/issues/512)). A
+blocker that is ordinary open work, a `needs-human` park, or an issue the
+snapshot does not carry leaves the park your turn: that decision is still the
+owner's to make, and a link alone never hides it.
 
 When a `--needs-decision` park (issue or comment) gives no `--blocked-by`, the
 watcher links it itself if the text asks a decision another open issue already

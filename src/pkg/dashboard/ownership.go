@@ -484,12 +484,12 @@ type issueOwnershipInput struct {
 	// openBlockers are the issue's open GitHub blocked-by links
 	// (Issue.OpenBlockers).
 	openBlockers []string
-	// openBlockedBy is GitHub's count of open blocked-by links on a parked
-	// (hard-suppressed) issue, from the enumeration row; openBlockers is
-	// read for actionable issues only.
-	openBlockedBy int
-	createdAt     time.Time
-	updatedAt     time.Time
+	// decisionBlocker names an open issue this parked issue is blocked by
+	// that is itself parked on a decision ("#511", or "owner/repo#511" in
+	// another repo), from the enumeration row's OpenBlockers; "" when none.
+	decisionBlocker string
+	createdAt       time.Time
+	updatedAt       time.Time
 
 	// lane is the lane the classifier routed the issue to.
 	lane string
@@ -561,8 +561,10 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		// issue's decision: one owner ask, not two. Danathar/tududi#512 (the
 		// v2.0.0-rc.1 tag, parked "Answer on #511; the same choice applies
 		// here") sat in the inbox beside #511 itself.
-		if parking == config.DefaultNeedsDecisionLabel && in.openBlockedBy > 0 {
-			return waitingElsewhereFor("Waits on the decision of the issue it is blocked by")
+		// Only a blocker that is itself a decision park counts: a
+		// decision blocked by ordinary work is still the owner's to make.
+		if parking == config.DefaultNeedsDecisionLabel && in.decisionBlocker != "" {
+			return waitingElsewhereFor("Waits on the decision on " + in.decisionBlocker)
 		}
 		return parkedOwnership(parking)
 	}
@@ -745,6 +747,38 @@ func ownershipFor(decisions map[string]Ownership, kind string, number int) *Owne
 	return &decision
 }
 
+// decisionParkKeys are the lowercased "repo#N" keys of every parked issue
+// in the snapshot whose park is a decision (needs_decision).
+func decisionParkKeys(repos []FrontendRepo, env ownershipEnv) map[string]bool {
+	keys := map[string]bool{}
+	for _, repo := range repos {
+		repoName := overviewRepoName(repo)
+		for _, raw := range repo.NonActionableIssues {
+			item, ok := repoWorkIssueRow(raw)
+			if !ok || env.parkingBucket(item.Labels) != config.DefaultNeedsDecisionLabel {
+				continue
+			}
+			keys[strings.ToLower(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number))] = true
+		}
+	}
+	return keys
+}
+
+// decisionBlockerFor returns the first of blockers that is a decision park,
+// shown as "#N" in repoName and "owner/repo#N" elsewhere, or "".
+func decisionBlockerFor(blockers []string, decisionParks map[string]bool, repoName string) string {
+	for _, key := range blockers {
+		if !decisionParks[strings.ToLower(key)] {
+			continue
+		}
+		if repo, num, ok := strings.Cut(key, "#"); ok && strings.EqualFold(repo, repoName) {
+			return "#" + num
+		}
+		return key
+	}
+	return ""
+}
+
 // decideRepoOwnership decides every issue and pull request row of the
 // snapshot's repositories, stores the decisions on each repository, and
 // assigns inbox ranks across all of them.
@@ -759,6 +793,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 		kind     string
 	}
 	var inbox []ranked
+	decisionParks := decisionParkKeys(repos, env)
 	for i := range repos {
 		repo := &repos[i]
 		repoName := overviewRepoName(*repo)
@@ -822,16 +857,16 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				continue
 			}
 			in := issueOwnershipInput{
-				repo:          nonEmpty(item.Repo, repoName),
-				number:        item.Number,
-				labels:        item.Labels,
-				acknowledged:  item.HumanAcknowledged,
-				createdAt:     item.CreatedAt,
-				updatedAt:     item.UpdatedAt,
-				reporterGate:  item.ReporterConfirmationGate,
-				bucket:        item.Bucket,
-				bucketReason:  item.Reason,
-				openBlockedBy: item.OpenBlockedBy,
+				repo:            nonEmpty(item.Repo, repoName),
+				number:          item.Number,
+				labels:          item.Labels,
+				acknowledged:    item.HumanAcknowledged,
+				createdAt:       item.CreatedAt,
+				updatedAt:       item.UpdatedAt,
+				reporterGate:    item.ReporterConfirmationGate,
+				bucket:          item.Bucket,
+				bucketReason:    item.Reason,
+				decisionBlocker: decisionBlockerFor(item.OpenBlockers, decisionParks, repoName),
 			}
 			decision := withReleaseAction(decideIssueOwnershipGated(in, env), item.OwnerStep, env.releaseOnApproveFor(in.repo))
 			record(ownershipKindIssue, item.Number, item.URL, decision, item.CreatedAt, item.UpdatedAt)
