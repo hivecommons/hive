@@ -3,6 +3,7 @@ package dashboard
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -484,6 +485,185 @@ func TestApplyPackFollowsGatewayBackendOverrides(t *testing.T) {
 			}
 			if got := srv.deps.Config.Agents["reviewer"]; got.Backend != "litellm" || got.Model != "" {
 				t.Errorf("reviewer backend=%q model=%q, want litellm with no model like the agents the operator moved", got.Backend, got.Model)
+			}
+		})
+	}
+}
+
+// gatewayModelHive is the third #14678 reopen: scanner/quality/guide run on
+// the LiteLLM gateway with a model the operator picked for each, and the
+// gateway has no default_model. ownership selects how the operator placed
+// them: "override" through the dashboard's live backend and model overrides
+// (replayed from hive-state.json) over the pack's copilot config, "config"
+// through operator-owned config fields.
+func gatewayModelHive(t *testing.T, ownership, model string) *Server {
+	t.Helper()
+	if ownership == "config" {
+		srv := gatewayHive(t, "litellm")
+		for _, name := range []string{"scanner", "quality", "guide"} {
+			a := srv.deps.Config.Agents[name]
+			a.Model, a.ModelOwner = model, config.FieldOwnerOperator
+			srv.deps.Config.Agents[name] = a
+		}
+		return srv
+	}
+	srv := newFullServer(t)
+	for _, name := range []string{"scanner", "quality", "guide"} {
+		a := packCLIAgent(name)
+		srv.deps.Config.Agents[name] = a
+		srv.deps.AgentMgr.AddAgent(name, a)
+		if err := srv.deps.AgentMgr.SetBackendOverride(name, "litellm"); err != nil {
+			t.Fatalf("SetBackendOverride(%s): %v", name, err)
+		}
+		if err := srv.deps.AgentMgr.SetModelOverride(name, model); err != nil {
+			t.Fatalf("SetModelOverride(%s): %v", name, err)
+		}
+	}
+	return srv
+}
+
+// TestApplyPackGivesGatewayAgentTheOperatorsModel covers the third #14678
+// reopen: the reviewer was moved onto LiteLLM with its model cleared for the
+// gateway's default_model, but the gateway had none, so it launched with no
+// model, crash-looped and was paused while every other agent ran on the model
+// the operator picked. It must run on that model, whether the level creates
+// it, moves it off copilot, or an earlier apply left it with no model.
+func TestApplyPackGivesGatewayAgentTheOperatorsModel(t *testing.T) {
+	const model = "ibm/granite-4-h-small"
+	reviewers := []struct {
+		name     string
+		reviewer *config.AgentConfig
+	}{
+		{"reviewer created by the level", nil},
+		{"pack-owned copilot reviewer moved", &config.AgentConfig{
+			ID: "reviewer", Role: "reviewer", Enabled: true,
+			Backend: "copilot", BackendOwner: config.FieldOwnerPack,
+			Model: "claude-fable-5", ModelOwner: config.FieldOwnerPack,
+		}},
+		{"gateway reviewer left with no model repaired", &config.AgentConfig{
+			ID: "reviewer", Role: "reviewer", Enabled: true,
+			Backend: "litellm", BackendOwner: config.FieldOwnerPack,
+			ModelOwner: config.FieldOwnerPack,
+		}},
+	}
+	for _, ownership := range []string{"override", "config"} {
+		for _, tt := range reviewers {
+			t.Run(ownership+"/"+tt.name, func(t *testing.T) {
+				srv := gatewayModelHive(t, ownership, model)
+				if tt.reviewer != nil {
+					srv.deps.Config.Agents["reviewer"] = *tt.reviewer
+				}
+				for i := 0; i < 2; i++ {
+					if _, err := srv.ApplyPack(2); err != nil {
+						t.Fatalf("ApplyPack(2) #%d: %v", i, err)
+					}
+					got := srv.deps.Config.Agents["reviewer"]
+					if got.Backend != "litellm" || got.Model != model {
+						t.Errorf("apply #%d: reviewer backend=%q model=%q, want litellm with the operator's %s", i, got.Backend, got.Model, model)
+					}
+					if got.ModelIsOperatorOwned() {
+						t.Errorf("apply #%d: reviewer model is operator-owned; the operator never picked it", i)
+					}
+				}
+			})
+		}
+	}
+}
+
+// A model copied onto the gateway must survive loss of the runtime overrides,
+// but a new operator model or a gateway default must still take precedence.
+func TestApplyPackKeepsGatewayModelAfterOverridesLost(t *testing.T) {
+	const model = "ibm/granite-4-h-small"
+	srv := gatewayModelHive(t, "override", model)
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"scanner", "quality", "guide"} {
+		if err := srv.deps.AgentMgr.SetModelOverride(name, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.deps.AgentMgr.SetBackendOverride(name, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 2 {
+		if _, err := srv.ApplyPack(2); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"scanner", "quality", "guide", "reviewer"} {
+			got := srv.deps.Config.Agents[name]
+			if got.Backend != "litellm" || got.Model != model {
+				t.Errorf("apply %d: %s backend=%q model=%q, want litellm/%s", i, name, got.Backend, got.Model, model)
+			}
+		}
+	}
+	srv.deps.Config.Governor.Gateways = []config.GatewayConfig{{
+		Name: "litellm", Kind: config.GatewayKindLiteLLM, Endpoint: "https://litellm.example.test", DefaultModel: "new-default",
+	}}
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.deps.Config.Agents["reviewer"].Model; got != "" {
+		t.Errorf("reviewer model=%q, want gateway default", got)
+	}
+}
+
+// TestApplyPackGatewayDefaultModelOutranksOperatorsModel: a gateway with a
+// default_model keeps the #9945 behaviour, the pack agent names no model and
+// the default applies.
+func TestApplyPackGatewayDefaultModelOutranksOperatorsModel(t *testing.T) {
+	srv := gatewayHive(t, "cb")
+	srv.deps.Config.Governor.Gateways = []config.GatewayConfig{{
+		Name: "cb", Kind: config.GatewayKindLiteLLM, Endpoint: "https://litellm.example.test", DefaultModel: "rits/zai-org/glm-5-3",
+	}}
+	for _, name := range []string{"scanner", "quality", "guide"} {
+		a := srv.deps.Config.Agents[name]
+		a.Model, a.ModelOwner = "ibm/granite-4-h-small", config.FieldOwnerOperator
+		srv.deps.Config.Agents[name] = a
+	}
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	if got := srv.deps.Config.Agents["reviewer"]; got.Backend != "cb" || got.Model != "" {
+		t.Errorf("reviewer backend=%q model=%q, want cb with no model so the gateway default_model applies", got.Backend, got.Model)
+	}
+}
+
+// TestApplyPackResumesGatewayAgentCrashLoopedWithoutModel: the reviewer left
+// with no model crash-looped and the watchdog paused it; once the apply gives
+// it the gateway's model, the cause is gone and it is resumed. A pause with any
+// other trigger is not the apply's to undo.
+func TestApplyPackResumesGatewayAgentCrashLoopedWithoutModel(t *testing.T) {
+	for _, tt := range []struct {
+		trigger    string
+		wantResume bool
+	}{
+		{watchdog.CrashLoopTrigger, true},
+		{"dashboard-api", false},
+	} {
+		t.Run(tt.trigger, func(t *testing.T) {
+			srv := gatewayModelHive(t, "override", "ibm/granite-4-h-small")
+			reviewer := config.AgentConfig{
+				ID: "reviewer", Role: "reviewer", Enabled: true,
+				Backend: "litellm", BackendOwner: config.FieldOwnerPack,
+				ModelOwner: config.FieldOwnerPack,
+			}
+			srv.deps.Config.Agents["reviewer"] = reviewer
+			srv.deps.AgentMgr.AddAgent("reviewer", reviewer)
+			if err := srv.deps.AgentMgr.Pause("reviewer", tt.trigger, "test pause"); err != nil {
+				t.Fatalf("pause: %v", err)
+			}
+			if _, err := srv.ApplyPack(2); err != nil {
+				t.Fatalf("ApplyPack(2): %v", err)
+			}
+			proc, err := srv.deps.AgentMgr.GetStatus("reviewer")
+			if err != nil {
+				t.Fatalf("GetStatus(reviewer): %v", err)
+			}
+			// Resume clears the pause marker even when the test manager cannot
+			// relaunch the agent (no tmux), so assert on the marker.
+			if resumed := proc.PausedTrigger == ""; resumed != tt.wantResume {
+				t.Errorf("reviewer paused by %q: resumed=%v, want %v", tt.trigger, resumed, tt.wantResume)
 			}
 		})
 	}

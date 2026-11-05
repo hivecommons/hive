@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -147,6 +148,9 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// the manager's process table and were re-registered. A repair, not a
 	// creation — it never feeds `created` or isFirstApplyOrExpansion (#5632).
 	var readded []string
+	// gatewayModelFilled collects existing gateway-routed agents this apply
+	// gave a model they had none of; see resumeGatewayModelCrashLoops.
+	var gatewayModelFilled []string
 	// Read once, before this apply creates or moves anything, so every pack
 	// agent judges the hive's gateway on the same pre-apply roster rather
 	// than on agents this apply already moved.
@@ -226,7 +230,8 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 					"agent", pa.Name, "backend", existing.Backend, "gateway", gw)
 				existing.Backend = gw
 				if !existing.ModelIsOperatorOwned() {
-					existing.Model = ""
+					existing.Model = s.hiveGatewayModel(hiveBackends, pa.Name, gw)
+					existing.ModelOwner = config.FieldOwnerPack
 				}
 				changed = true
 			}
@@ -246,12 +251,26 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				existing.ModelOwner = config.FieldOwnerPack
 				changed = true
 			}
-			if onForeignGateway && existing.Model != "" && !existing.ModelIsOperatorOwned() {
-				s.logger.Info("clearing pack model on gateway-routed agent so the gateway default_model applies",
-					"agent", pa.Name, "backend", existing.Backend, "model", existing.Model, "pack_backend", packBackend)
-				existing.Model = ""
-				existing.ModelOwner = config.FieldOwnerPack
-				changed = true
+			// With no gateway default_model the agent takes the model the
+			// operator's agents run there instead (hiveGatewayModel), so an
+			// agent an earlier apply left with none is repaired too.
+			// Retain a pack-placed gateway's model only when neither an
+			// operator model nor a gateway default is available. Operator-placed
+			// gateways must not retain an incompatible pack CLI model.
+			if onForeignGateway && !existing.ModelIsOperatorOwned() {
+				gwModel := s.hiveGatewayModel(hiveBackends, pa.Name, existing.Backend)
+				retainGatewayModel := gwModel == "" && existing.BackendIsPackOwned() &&
+					s.deps.Config.Governor.DefaultInferenceModel(existing.Backend) == ""
+				if !retainGatewayModel && existing.Model != gwModel {
+					s.logger.Info("setting pack model on gateway-routed agent to the gateway's model",
+					"agent", pa.Name, "backend", existing.Backend, "old_model", existing.Model, "gateway_model", gwModel, "pack_backend", packBackend)
+					if existing.Model == "" {
+						gatewayModelFilled = append(gatewayModelFilled, pa.Name)
+					}
+					existing.Model = gwModel
+					existing.ModelOwner = config.FieldOwnerPack
+					changed = true
+				}
 			}
 			if pa.Description != "" && existing.Description != pa.Description {
 				existing.Description = pa.Description
@@ -399,10 +418,10 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			packModel = ""
 		}
 		// The pack model is an id from the pack CLI's catalogue; on the
-		// gateway it is cleared so the gateway's default_model applies (#9945).
+		// gateway it is replaced by the gateway's model (#9945, #14678).
 		if gw := gatewayPlacement(packBackend, backendReplaced, hiveGateway); gw != "" {
 			packBackend = gw
-			packModel = ""
+			packModel = s.hiveGatewayModel(hiveBackends, pa.Name, gw)
 		}
 		agentCfg := config.AgentConfig{
 			Backend: packBackend,
@@ -453,6 +472,8 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 
 		created = append(created, pa.Name)
 	}
+
+	s.resumeGatewayModelCrashLoops(gatewayModelFilled)
 
 	s.deps.Config.ACMMLevel = &level
 	if err := s.saveConfig(); err != nil {
@@ -1169,6 +1190,10 @@ type agentBackendVote struct {
 	backend       string
 	operatorOwned bool
 	packCLI       bool
+	// model is the model the agent runs on backend when an operator chose
+	// it (a live ModelOverride, or a config model the pack did not write),
+	// else "". hiveGatewayModel reads it.
+	model string
 }
 
 // hiveAgentBackends snapshots the backend of every enabled agent, keyed by
@@ -1182,7 +1207,10 @@ type agentBackendVote struct {
 // LiteLLM on every card while this vote still read their pack-owned copilot
 // config backend, found no gateway, and left the reviewer on copilot. An
 // override differing from the config backend is an explicit placement, so it
-// counts as an operator pick.
+// counts as an operator pick. So does a gateway override over a pack-owned
+// config backend equal to it: an earlier apply moved the config onto the
+// gateway the override already named, and the operator's pick must keep
+// counting on the next restart.
 func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 	backends := map[string]agentBackendVote{}
 	for name, agent := range s.deps.Config.Agents {
@@ -1195,25 +1223,34 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 			operatorOwned: agent.BackendIsOperatorOwned() || s.unownedGatewayBackend(agent),
 			packCLI:       agent.BackendIsPackOwned() && config.IsCLIBackend(backend),
 		}
-		if override := s.agentBackendOverride(name); override != "" && !strings.EqualFold(override, backend) {
-			vote = agentBackendVote{backend: override, operatorOwned: true}
+		if agent.ModelOwner != config.FieldOwnerPack {
+			vote.model = strings.TrimSpace(agent.Model)
+		}
+		backendOverride, modelOverride := s.agentRuntimeOverrides(name)
+		if backendOverride != "" && (!strings.EqualFold(backendOverride, backend) ||
+			agent.BackendIsPackOwned() && s.agentOnForeignGatewayBackend(backendOverride, "")) {
+			vote = agentBackendVote{backend: backendOverride, operatorOwned: true}
+		}
+		if modelOverride != "" {
+			vote.model = modelOverride
 		}
 		backends[name] = vote
 	}
 	return backends
 }
 
-// agentBackendOverride is name's live BackendOverride, or "" when the agent
-// has none or is not in the manager's process table.
-func (s *Server) agentBackendOverride(name string) string {
+// agentRuntimeOverrides is name's live BackendOverride and ModelOverride, ""
+// for each the agent has none of or when it is not in the manager's process
+// table.
+func (s *Server) agentRuntimeOverrides(name string) (backend, model string) {
 	if s.deps.AgentMgr == nil {
-		return ""
+		return "", ""
 	}
 	proc, err := s.deps.AgentMgr.GetStatus(name)
 	if err != nil || proc == nil {
-		return ""
+		return "", ""
 	}
-	return strings.TrimSpace(proc.BackendOverride)
+	return strings.TrimSpace(proc.BackendOverride), strings.TrimSpace(proc.ModelOverride)
 }
 
 // unownedGatewayBackend reports whether agent sits on an inference backend or
@@ -1313,6 +1350,60 @@ func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except
 		return ""
 	}
 	return shared
+}
+
+// hiveGatewayModel is the model a pack-owned agent on gateway is given in
+// place of the pack's model, or "" to leave it unset so the gateway's
+// default_model applies.
+//
+// When the gateway has no default_model, an agent with no model launches with
+// none and cannot run (#14678): the operator's agents each ran on a model
+// picked in the dashboard, while the L2 reviewer the pack moved onto the same
+// LiteLLM gateway had its model cleared, crash-looped and was paused. It
+// therefore takes the model the operator's agents on that gateway run (the
+// most common, ties broken by name), excluding except, the agent being placed.
+func (s *Server) hiveGatewayModel(backends map[string]agentBackendVote, except, gateway string) string {
+	if gateway == "" || s.deps.Config.Governor.DefaultInferenceModel(gateway) != "" {
+		return ""
+	}
+	counts := map[string]int{}
+	for name, vote := range backends {
+		if strings.EqualFold(name, except) || !vote.operatorOwned || vote.model == "" ||
+			!strings.EqualFold(vote.backend, gateway) {
+			continue
+		}
+		counts[vote.model]++
+	}
+	best := ""
+	for model, n := range counts {
+		if best == "" || n > counts[best] || (n == counts[best] && model < best) {
+			best = model
+		}
+	}
+	return best
+}
+
+// resumeGatewayModelCrashLoops resumes each of names the watchdog paused for
+// crash-looping. These are gateway-routed agents this apply just gave a model
+// they had none of: launched with no model they could not start, which is
+// what the crash-loop pause was for (#14678), and nothing else would resume
+// them now that the cause is fixed. Pauses with any other trigger are left
+// alone. Should the agent still fail, the watchdog pauses it again.
+func (s *Server) resumeGatewayModelCrashLoops(names []string) {
+	if s.deps.AgentMgr == nil {
+		return
+	}
+	for _, name := range names {
+		proc, err := s.deps.AgentMgr.GetStatus(name)
+		if err != nil || proc == nil || !proc.Paused || proc.PausedTrigger != watchdog.CrashLoopTrigger {
+			continue
+		}
+		if err := s.deps.AgentMgr.Resume(s.deps.Ctx, name, "acmm-pack", "gateway model set for an agent paused for crash-looping without one"); err != nil {
+			s.logger.Warn("could not resume crash-looped agent after giving it the gateway's model", "agent", name, "error", err)
+			continue
+		}
+		s.logger.Info("resumed crash-looped agent after giving it the gateway's model", "agent", name)
+	}
 }
 
 // gatewayPlacement is the backend a pack-owned agent is moved to so it follows
