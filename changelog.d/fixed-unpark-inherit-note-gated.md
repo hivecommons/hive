@@ -1,0 +1,1 @@
+- The inherited-decision note a deferring 045 park receives when its blocker is answered now consults the write-back gate like the other decision-park comments, so a repo whose `writeback.per_repo[<repo>].mode` is `off` still has the park lifted but gets no unsolicited comment. The raw comment call also failed `TestDirectWriteRatchet` on `v6`.
