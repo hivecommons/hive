@@ -6,6 +6,8 @@ import (
 	"unicode"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 )
 
 // unparkOwnerStepMarker tags a body the hive posted with `hive-open-issue
@@ -132,6 +134,14 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 			continue
 		}
 		if strings.Contains(body, unparkNoticeMarker) {
+			continue
+		}
+		if delegatedecision.IsDelegatedComment(body) {
+			// The delegate's verdict on the park, not the park's own text:
+			// a recommend-only "hive recommends: …" must not replace the
+			// option the issue recommends, or `/hive approve` would switch
+			// from "option A" to an unnamed recommendation between two
+			// notices (Danathar/goodreads-mcp#440).
 			continue
 		}
 		if hasOwnerStepMarker(body) {

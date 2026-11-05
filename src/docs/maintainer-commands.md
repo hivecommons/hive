@@ -72,7 +72,10 @@ rather than the body, the notice opens with
 to that comment's URL, so a reader can find them.
 `/hive approve` picks the recommended option when the text names one, else the
 first option, and records that choice as the decision ("go with the
-recommendation (option B: …)", "go with option A: …"). When there are no
+recommendation (option B: …)", "go with option A: …"). A "Let hive decide"
+comment (`hive recommends: …`, carrying the `hive:delegated-decision` marker) is
+the delegate's verdict, not the park's text, so it never replaces the options or
+the recommended option the notice offers. When there are no
 options and no recommendation, the notice offers only `/hive decision <your
 instructions>`, and a `/hive approve` gets a reply saying the park names no
 recommendation; the issue stays parked. On a `blocked` park and on an owner
