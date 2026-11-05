@@ -1,0 +1,1 @@
+- Kick freshness self-reports include counts by refusal category, making repeated withheld kicks diagnosable without exposing refs or raw errors.
