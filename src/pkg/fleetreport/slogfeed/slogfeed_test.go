@@ -89,6 +89,30 @@ func TestRebaseAttemptsExhaustedLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #16795: a routine prose-only recovery notice must remain visible locally
+// without feeding the generic repeated-error tracker, even across many kicks.
+func TestActionNudgeLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "inference agent answered kick with prose only, sending action nudge"
+	for i := 1; i <= 10; i++ {
+		logger.Warn(msg, "name", "reviewer", "minutes_since_kick", 7,
+			"total_action_nudges", i)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("routine action nudges produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	if !strings.Contains(out.String(), msg) || !strings.Contains(out.String(), `"total_action_nudges":10`) {
+		t.Fatal("local logs lost the warning or its diagnostics")
+	}
+	logger.Error("inference action nudge delivery failed", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("action nudge failure must remain reportable: %+v", *seen)
+	}
+}
+
 func TestHandlerWithAttrsCarriesBoundAttrsIntoDiagnostics(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.With("agent", "quality").WithGroup("req").Warn("ledger write failed", "path", "/data/x.json")
