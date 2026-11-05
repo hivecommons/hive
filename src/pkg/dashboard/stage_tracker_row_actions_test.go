@@ -888,6 +888,8 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "_stageTrackerPlanPrefetch"),
 		jsFunc(t, html, "stageTrackerPlanRequestKey"),
 		jsFunc(t, html, "stageTrackerPostDelegatePlan"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_GATEWAY_ERROR"),
+		jsFunc(t, html, "stageTrackerDelegatePlanFailure"),
 		jsFunc(t, html, "stageTrackerPrefetchDelegatePlan"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_SKELETON_LINES"),
@@ -895,6 +897,10 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_BUTTONS_OPEN"),
 		jsFunc(t, html, "stageTrackerDelegatePlanSkeletonContent"),
 		jsFunc(t, html, "stageTrackerDelegatePlanSkeletonHtml"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_NO_PREVIEW_NO_DECISION"),
+		jsFunc(t, html, "stageTrackerDelegatePlanHiveLabel"),
+		jsFunc(t, html, "stageTrackerDelegatePlanFailureLines"),
+		jsFunc(t, html, "stageTrackerDelegatePlanRetryable"),
 		jsFunc(t, html, "stageTrackerDelegatePlanErrorContent"),
 		jsFunc(t, html, "stageTrackerDelegatePlanSubject"),
 		jsConstLine(t, html, "_stageTrackerDelegatePreviewing"),
@@ -1038,7 +1044,7 @@ const flagged = { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510'
 const target = { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510' };
 const posted = ['\u0060/lgtm\u0060 posted', '\u0060/approve\u0060 posted', '\u0060sentinel-alert\u0060 label removed'];
 // Released: the alert the row carried is gone, so no ⚠ paragraph.
-const cleared = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert cleared by your review.', next: "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked (≈30 min).", posted, sentinel_cleared: true };
+const cleared = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert cleared by your review.', next: "Hive merges it on its next merge pass once CI is green and the head has soaked (≈30 min).", posted, sentinel_cleared: true };
 let text = stageTrackerResultText(cleared, flagged, { id: 'decide:approve', rowRef: 'hivecommons/dibs#510' });
 assert.strictEqual(text.head, 'Approve on hivecommons/dibs#510: approved');
 assert.strictEqual(text.outcome, cleared.outcome);
@@ -1051,7 +1057,7 @@ let classes = toast.el.children.map(c => c.className).filter(c => c !== 'toast-c
 assert.deepStrictEqual(classes, ['ham-result-head', 'ham-result-outcome', 'ham-result-next', 'ham-result-posted', 'ham-result-link'], classes.join(','));
 assert.ok(classes.indexOf('ham-result-next') < classes.indexOf('ham-result-posted'), 'the posted list is the muted trailer, under Next');
 // Still open: the ⚠ paragraph stays and Next says what the person must do.
-const open = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert still open.', next: 'The \u0060sentinel-alert\u0060 label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive\'s merge sweep will touch it.', posted: posted.slice(0, 2), sentinel_open: true };
+const open = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert still open.', next: 'The \u0060sentinel-alert\u0060 label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive\'s next merge pass will touch it.', posted: posted.slice(0, 2), sentinel_open: true };
 text = stageTrackerResultText(open, flagged, { id: 'decide:approve', rowRef: 'hivecommons/dibs#510' });
 assert.ok(text.warn.startsWith('⚠ hivecommons/dibs#510 — Sentinel flagged security-relevant changes at 30e94a9: possible security override'), text.warn);
 assert.ok(text.next.includes('take the label off on GitHub'), text.next);
@@ -1067,7 +1073,7 @@ text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approved #
 assert.strictEqual(text.warn, '');
 assert.ok(text.next.startsWith('Hive cannot merge this one'), text.next);
 // A Prow-managed repo: the headline says recorded-in-hive, Next says who still approves.
-text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approval of #510 recorded in hive as @clubanderson.', next: 'Prow approval still needs an OWNERS reviewer: the relayed \u0060/approve\u0060 came from hive\'s account, which Prow does not count. Hive\'s merge sweep merges it on its next pass once CI is green and the head has soaked (≈3 min).', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 85 }, { id: 'decide:approve' });
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approval of #510 recorded in hive as @clubanderson.', next: 'Prow approval still needs an OWNERS reviewer: the relayed \u0060/approve\u0060 came from hive\'s account, which Prow does not count. Hive merges it on its next merge pass once CI is green and the head has soaked (≈3 min).', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 85 }, { id: 'decide:approve' });
 assert.ok(text.outcome.startsWith('Approval of #510 recorded in hive'), text.outcome);
 assert.ok(text.next.startsWith('Prow approval still needs an OWNERS reviewer'), text.next);
 `)
@@ -1332,7 +1338,7 @@ const merger = { user: true, canHold: true, canHuman: true };
 const writer = { user: true, canHold: true, canHuman: false };
 const decision090 = { question: 'This PR is ready to merge, but the hive will not merge it by itself (untrusted author): @Karibhou is not a collaborator…', blocker: 'The hive never merges this unattended.', asked_by: 'the merge lane', since: '2026-10-28T12:00:00Z',
   options: [
-    { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass once CI is green and the head has soaked' },
+    { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval; hive merges #317 on its next merge pass once CI is green and the head has soaked' },
     { action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
     { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
     { action: 'decide:direction', label: 'Give direction', enabled: false, reason_if_disabled: 'The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub' },
@@ -1469,7 +1475,7 @@ const ids = as => as.map(a => a.id);
 const merger = { user: true, canHold: true, canHuman: true };
 const decision090 = { question: 'This PR is ready to merge, but the hive will not merge it by itself (untrusted author).', blocker: 'The hive never merges this unattended.', asked_by: 'the merge lane', since: '2026-10-28T12:00:00Z',
   options: [
-    { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass' },
+    { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval; hive merges #317 on its next merge pass' },
     { action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
     { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
     { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #317 unmerged, naming the PR that replaces it' },
@@ -1524,7 +1530,7 @@ const ids = as => as.map(a => a.id);
 global.stageTrackerAdoptionTip = () => '';
 const merger = { user: true, canHold: true, canHuman: true };
 const options = [
-  { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval as the trust override for this head; the hive\'s merge sweep merges #317 as-is on its next pass once CI is green and the head has soaked, and does not adopt it' },
+  { action: 'decide:queue-merge', label: 'Approve and let hive merge', enabled: true, consequence: 'records your approval as the trust override for this head; hive merges #317 as-is on its next merge pass once CI is green and the head has soaked, and does not adopt it' },
   { action: 'decide:merge-now', label: 'Merge now as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you; 2 of 3 commits have no Signed-off-by, so GitHub refuses the merge where DCO is required' },
   { action: 'decide:adopt', label: 'Adopt as hive PR', enabled: true, consequence: 'the hive re-homes #317\'s commits on a hive-owned, signed-off branch and opens a superseding PR; #317 is closed when that one merges; nothing is merged as-is' },
   { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },

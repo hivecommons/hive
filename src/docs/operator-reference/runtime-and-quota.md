@@ -262,6 +262,72 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
   "nudged contributor lane". **Agents never watch or poll CI themselves**:
   detection is out-of-band via this webhook path, or the sweep as fallback.
+- **Gated workflow runs are approved for trusted heads.** GitHub holds
+  workflow runs for dependabot and first-time/fork contributors behind
+  "Approve and run workflows" (`action_required`); such runs create no check
+  runs, so CI never reports. `EnrichCIStatus` detects them on pending heads
+  and the CI caption reads `CI waiting · N workflow runs need approval on
+  GitHub`. Right after it, the eval cycle runs the workflow-approval sweep,
+  which approves a head's gated `pull_request` runs **at most once per PR
+  head** ([#16603](https://github.com/hivecommons/hive/issues/16603)) when
+  the head is trusted: a person admitted **this head** (a verified owner's
+  or merger's dashboard Approve, recorded on the stage record and dropped
+  by the next push — [#15136](https://github.com/hivecommons/hive/issues/15136);
+  the automerge label on its own never counts, since it is bound to no head
+  and names no approver), or the PR author or the run's triggering actor is
+  this hive's App or is listed in `governor.ci.auto_approve_workflow_actors`
+  (default `['dependabot[bot]', 'renovate[bot]']`; an explicit `[]` trusts
+  only the App and owner admission). A trusted **author** covers every
+  gated run on the head regardless of who pushed it — including commits a
+  fork collaborator pushed to the author's branch — so keep the actor list
+  to bot logins unless that is acceptable for a human login you add.
+  Trusting the App as triggering actor
+  covers heads the App pushed itself (its own PRs, rebases, review-fix
+  commits), and only when the run's head repository is the PR's base
+  repository: a fork head is never trusted on the triggering-actor path,
+  because a public App installed on a contributor's fork pushes with the
+  same `<slug>[bot]` login. Runs
+  of other events (for example
+  `pull_request_target`) are counted in the caption but never approved.
+  Guards: `governor.ci.auto_approve_workflows` (default `true` — unset
+  means on; `false` leaves the gate to a person), the repo pause, hold /
+  exempt / sentinel labels, a fresh `GET /pulls/N` (open, non-draft, same
+  head, author, labels) before any write, a head-repository match on every
+  run, and the write-back gate (`ci_rerun`). Approval starts CI only;
+  review, hold and merge gates are unchanged. **The sweep does not run on
+  every cycle:** it is an optional enrichment step, so it is skipped
+  whenever the API-budget decision sets `SkipOptional` — `conserve` and
+  `critical` budget modes, off-cadence cycles under
+  `governor.optional_sweep_every_n_cycles`, and cached-snapshot (webhook
+  wake) cycles — and a gated head then waits for the next cycle that runs
+  it. `EnrichCIStatus` still runs on those cycles, so the gate stays
+  visible. A `403`/`404` from `POST /actions/runs/{id}/approve` (the App
+  lacks `actions: write`) is recorded once, never retried for that head,
+  logged as `workflow approval refused; needs workflow approval on GitHub`,
+  and the caption becomes `CI waiting · needs workflow approval on GitHub`
+  on every later cycle, including ones that skip the sweep. Any other
+  failure of that POST — a `5xx`, a network error, a cancelled cycle, or a
+  primary/secondary rate-limit `403` — is logged as `failed to approve
+  gated workflow run; retrying next sweep` and gives the head's pass back,
+  so the next sweep re-reads the PR and tries again (denials are not
+  counted twice). That refusal
+  is bound to the head: granting the App **Actions: Read and write**
+  afterwards does not make the hive retry a head it already recorded a
+  refusal for — the operator approves that run on GitHub, or a new push to
+  the PR (a new head) or a hive restart (the ledger is in memory) lets the
+  sweep attempt it again. The sweep uses
+  the App token, so it needs **Actions: Read and write** on the App
+  ([github-app-setup.md](../github-app-setup.md)); it runs alongside the
+  older `/ok-to-test` path, in which the contributor lane posts a comment
+  and the repository's own `hive-ok-to-test` workflow approves with its
+  `GITHUB_TOKEN` — operators who want to stay on Actions: Read and that
+  path alone set `governor.ci.auto_approve_workflows: false`. Each approved
+  run logs one `approved gated workflow run` INFO line; counts since boot
+  are at `/api/status` `workflow_approvals` (`approved`, `denied`,
+  `permission_errors`, `last`). Approved runs execute the head's workflow
+  files on the repository's runners; operators on self-hosted runners who
+  want an explicit opt-in should set `governor.ci.auto_approve_workflows:
+  false`.
 - **A recorded review verdict also wakes the governor loop.** When the
   relay records a verdict bound to a review dispatch, the head that wrote it
   is free and the PR may be ready for its next head or its decision kick, so
