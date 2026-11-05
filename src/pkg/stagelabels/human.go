@@ -877,7 +877,14 @@ func DecisionActions(r Route) string {
 	}
 	var steps []string
 	head := "`" + ShortSHA(r.Head) + "`"
-	if r.ManualMerge {
+	if approver := strings.TrimPrefix(strings.TrimSpace(r.HumanApprover), "@"); approver != "" && (r.ManualMerge || r.Verdict == VerdictRequiresHuman) {
+		// The approval this step would ask for is already recorded on the
+		// head: it released the fence and answered requires_human, so the
+		// park is for another reason (projectbluefin/utah#1078 kept asking
+		// "a trusted merger approves this head" next to "approved by
+		// @Danathar"). Say it is done; the reasons name what is left.
+		steps = append(steps, "nothing more to approve: @"+approver+" approved this head ("+head+"); resolve the other reasons listed above")
+	} else if r.ManualMerge {
 		// Only `/hive decision approve` (typed or from the dashboard) and
 		// an Approve review release the fence; `/hive approve` never does
 		// (hivecommons/hive#14672). The first two also answer a

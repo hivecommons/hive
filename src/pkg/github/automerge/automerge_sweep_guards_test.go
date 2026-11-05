@@ -190,6 +190,10 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]any{"merged": fx.mergeApplied, "sha": "merge7"})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
 			json.NewEncoder(w).Encode([]any{}) // no rulesets
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7":
+			// The head commit predates every fixture review, so an approval
+			// on sha7 binds to it (automerge_review_head_binding.go).
+			json.NewEncoder(w).Encode(map[string]any{"sha": "sha7", "parents": []map[string]string{{"sha": "sha6"}}, "commit": map[string]any{"committer": map[string]string{"date": "2026-10-01T00:00:00Z"}}})
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}

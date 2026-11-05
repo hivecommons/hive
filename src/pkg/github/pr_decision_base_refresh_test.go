@@ -325,3 +325,33 @@ func TestSameChangedFilesIgnoresOrderButNotContent(t *testing.T) {
 		t.Fatal("App attribution must match the login case-insensitively, [bot] suffix aside, and nobody else")
 	}
 }
+
+// BaseMergeParent accepts a diff-preserving base merge whoever made it
+// (projectbluefin/utah#1078's 9d8ceab was a web merge by the owner), and
+// refuses one that changes the PR's diff or is not a base merge.
+func TestBaseMergeParentAnyAuthor(t *testing.T) {
+	files := []*gh.CommitFile{refreshFile("ci.yml", "blobA", "@@")}
+	api := &fakeBaseRefreshRepos{
+		commits: map[string]*gh.RepositoryCommit{
+			"merge":   refreshCommit("merge", "Danathar", "head", "base2"),
+			"changed": refreshCommit("changed", "Danathar", "head", "base2"),
+			"single":  refreshCommit("single", "Danathar", "head"),
+		},
+		compares: map[string]*gh.CommitsComparison{
+			"main...head":    refreshCompare("base1", files...),
+			"main...merge":   refreshCompare("base2", files...),
+			"main...changed": refreshCompare("base2", refreshFile("ci.yml", "blobB", "@@ changed")),
+			"main...single":  refreshCompare("base1", files...),
+		},
+	}
+	ctx := context.Background()
+	if prev, ok := BaseMergeParent(ctx, api, "o", "r", "main", api.commits["merge"], "merge"); !ok || prev != "head" {
+		t.Fatalf("diff-preserving merge by a person: prev=%q ok=%v", prev, ok)
+	}
+	if _, ok := BaseMergeParent(ctx, api, "o", "r", "main", api.commits["changed"], "changed"); ok {
+		t.Fatal("a merge that changes the PR's diff must not count")
+	}
+	if _, ok := BaseMergeParent(ctx, api, "o", "r", "main", api.commits["single"], "single"); ok {
+		t.Fatal("a single-parent commit is not a base merge")
+	}
+}

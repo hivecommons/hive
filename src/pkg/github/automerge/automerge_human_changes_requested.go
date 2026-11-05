@@ -58,9 +58,17 @@ func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo strin
 		opts.Page = resp.NextPage
 	}
 	c.noteStageReviews(owner, repo, number, seen)
+	approval := strings.EqualFold(state, "APPROVED")
 	var found *gh.PullRequestReview
 	for login, rv := range latest {
-		if !strings.EqualFold(rv.GetState(), state) || strings.TrimSpace(rv.GetCommitID()) != strings.TrimSpace(head) {
+		if !strings.EqualFold(rv.GetState(), state) {
+			continue
+		}
+		// A change request binds to its commit; an approval binds to the
+		// content it approved, which a base merge carries and a content push
+		// does not, whatever commit_id GitHub reports
+		// (automerge_review_head_binding.go).
+		if !approval && strings.TrimSpace(rv.GetCommitID()) != strings.TrimSpace(head) {
 			continue
 		}
 		if c.isHiveAppReviewAuthor(rv) || strings.HasSuffix(login, "[bot]") {
@@ -68,6 +76,9 @@ func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo strin
 		}
 		trusted, configured := c.isTrustedMerger(login)
 		if !configured || !trusted {
+			continue
+		}
+		if approval && !c.reviewReachesHead(ctx, owner, repo, number, head, rv).ok {
 			continue
 		}
 		if found == nil || rv.GetSubmittedAt().After(found.GetSubmittedAt().Time) {
