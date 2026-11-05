@@ -1,0 +1,1 @@
+- The dashboard no longer shows an obsolete superseded-upgrade notice after a later roll; it shows the running commit and its age instead.
