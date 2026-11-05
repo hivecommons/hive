@@ -95,6 +95,11 @@ func (s *Scheduler) isHoldGatedPRAgent(agentName string) bool {
 // not to fix it. ci-maintainer-holdgated.md meanwhile promised
 // ".github/workflows/*.yml changes" it could never land.
 //
+// Step 3 names the lane's token as the limit: Danathar/goodreads-mcp#440 said
+// "the hive's token cannot change workflow files" while the App held
+// `workflows: write`, and the delegated decider took it for a missing App
+// permission.
+//
 // Injected at the same post-resolution seam as the held-PR preflight and for
 // the same reason (kubestellar/hive#4744): a customized or remotely sourced
 // policy must not be able to omit it.
@@ -124,7 +129,11 @@ When a fix belongs in a workflow file:
 2. File the issue with the exact replacement text, so applying it is mechanical.
 3. Say plainly in the issue that the change needs a human or an
    ISSUES_PRS_MERGE agent to land, and why — otherwise "issue, no PR" reads as
-   a judgement call you did not make. Park it in the same request with
+   a judgement call you did not make. Name the limit as this lane's token
+   ("this lane's token cannot push workflow files"), never the hive's or the
+   App's: the installation can grant ` + "`workflows: write`" + ` to other lanes, and a
+   reader takes the broader claim for a permission the owner must grant. Park
+   it in the same request with
    ` + "`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`" + `
    (or ` + "`--needs-decision`" + ` on the create), since you cannot add the park label yourself.
 4. If part of the fix lives outside ` + "`.github/workflows/`" + `, PR that part and say
