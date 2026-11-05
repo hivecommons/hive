@@ -1781,7 +1781,8 @@ func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservat
 // loops. The first deploy after this rule also keeps adoption until this repo
 // has recorded any App-linked head; after that, missing hive evidence means
 // the contributor is back, so the hive yields once and the ordinary 072 flow
-// re-arms.
+// re-arms — unless the head was pushed by someone other than the author who
+// may take the PR over (adoptionTakeoverPusher): then the adoption stands.
 // Returns the number of comments posted.
 func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record, policy StageLabelPolicy, now time.Time) (int, error) {
 	if prev.AdoptedInPlace() {
@@ -1831,6 +1832,14 @@ func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.S
 		c.warn("stage labels: adopted head changed without hive evidence; no repo evidence recorded yet, keeping adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "pusher", commitIdentity(commit))
 		return 0, nil
 	}
+	if pusher, deferred := c.adoptionTakeoverPusher(ctx, obs, commit); deferred {
+		// Pusher's role unknown: keep the adoption, re-read next sweep.
+		return 0, nil
+	} else if pusher != "" {
+		store.MarkAdoptedHead(key, obs.HeadSHA)
+		c.info("stage labels: adopted head pushed by a maintainer or App, not the author; keeping adoption", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "pusher", pusher)
+		return 0, nil
+	}
 	store.MarkYielded(key, obs.HeadSHA)
 	c.info("stage labels: head changed without hive push evidence; yielding", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "pusher", commitIdentity(commit))
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(AdoptionYieldComment(obs))}); err != nil {
@@ -1838,6 +1847,50 @@ func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.S
 		return 0, err
 	}
 	return 1, nil
+}
+
+// adoptionTakeoverPusher returns the GitHub login that pushed an adopted
+// head when it is not the PR's author and its push does not mean the author
+// is back: an App bot (another hive, a CI bot) or a person with write or
+// higher on the base repo. A maintainer rebasing or fixing an offline
+// contributor's PR was read as the contributor returning, so the hive
+// handed the PR back to the absent author and nudged them
+// (projectbluefin/utah#919, projectbluefin/utah-packages#804, #812, #822).
+// "" keeps the yield: the author, an unlinked identity, or a read-only
+// third party. deferred is true when the pusher's permission could not be
+// read.
+func (c *Engine) adoptionTakeoverPusher(ctx context.Context, obs stageObservation, commit *gh.RepositoryCommit) (login string, deferred bool) {
+	pusher := commitPusher(commit)
+	login = strings.TrimSpace(pusher.GetLogin())
+	if login == "" || normalizeBotLogin(login) == normalizeBotLogin(obs.Author) {
+		return "", false
+	}
+	if strings.EqualFold(pusher.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]") {
+		return login, false
+	}
+	perm, err := c.authorRepoPermission(ctx, obs.Owner, obs.Repo, login)
+	if err != nil {
+		c.warn("stage labels: could not read the pusher's repository permission; keeping adoption this sweep", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "pusher", login, "error", err)
+		return "", true
+	}
+	if !perm.Allowed {
+		return "", false
+	}
+	return login, false
+}
+
+// commitPusher is the GitHub account closest to the push: the committer
+// (a maintainer's rebase keeps the contributor as author), or the author
+// when GitHub itself committed (web-flow: web edits, Update branch) or the
+// committer is not linked to an account. nil when neither is linked.
+func commitPusher(commit *gh.RepositoryCommit) *gh.User {
+	if u := commit.GetCommitter(); u.GetLogin() != "" && !strings.EqualFold(u.GetLogin(), "web-flow") {
+		return u
+	}
+	if u := commit.GetAuthor(); u.GetLogin() != "" {
+		return u
+	}
+	return nil
 }
 
 // commitIdentity renders the commit's pusher for logs: the GitHub login when
