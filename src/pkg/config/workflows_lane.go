@@ -47,15 +47,18 @@ func modePushesWorkflows(mode string) bool {
 }
 
 // WorkflowsCapableLane names the enabled lane whose token can push
-// .github/workflows/**, the first by name; replicas are skipped because they
-// share their source agent's lane. Empty when no lane can.
-func (c *Config) WorkflowsCapableLane() string {
+// .github/workflows/** and serves repo, the first by name; replicas are
+// skipped because they share their source agent's lane. A lane scoped to
+// other repositories is refused on repo by every enforcement point
+// (AgentServesRepo), so it is never chosen there. An empty repo ignores
+// scope (the fleet has such a lane somewhere). Empty when no lane can.
+func (c *Config) WorkflowsCapableLane(repo string) string {
 	if c == nil {
 		return ""
 	}
 	names := make([]string, 0, len(c.Agents))
 	for name, ac := range c.Agents {
-		if ac.ReplicaOf != "" || !ac.Enabled {
+		if ac.ReplicaOf != "" || !ac.Enabled || (repo != "" && !c.AgentServesRepo(name, repo)) {
 			continue
 		}
 		names = append(names, name)
@@ -69,15 +72,15 @@ func (c *Config) WorkflowsCapableLane() string {
 	return ""
 }
 
-// WorkflowsLaneFor names the lane a workflow-file change goes to when agent
-// cannot push it: empty when agent can push it itself, or when no enabled lane
+// WorkflowsLaneFor names the lane a workflow-file change in repo goes to
+// when agent cannot push it: empty when agent can push it itself, or when no enabled lane
 // can (then the change still needs a person). Danathar/arch-bootc#634,
 // Danathar/exult#374: ISSUES_AND_PRS lanes parked approved workflow fixes for
 // the owner while the hive's scanner, at ISSUES_PRS_MERGE, was landing
 // workflow changes in the same repos.
-func (c *Config) WorkflowsLaneFor(agent string) string {
+func (c *Config) WorkflowsLaneFor(agent, repo string) string {
 	if c == nil || modePushesWorkflows(c.AgentEffectiveMode(agent)) {
 		return ""
 	}
-	return c.WorkflowsCapableLane()
+	return c.WorkflowsCapableLane(repo)
 }

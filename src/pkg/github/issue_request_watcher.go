@@ -1057,7 +1057,7 @@ func (c *Client) issueDecisionDowngradeForCreate(req IssueRequest, body string) 
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
 	}
-	if d := c.workflowsHandoff(req.Agent, req.Title, body); d.Active {
+	if d := c.workflowsHandoff(req.Agent, req.Repo, req.Title, body); d.Active {
 		return d
 	}
 	return c.issueDecisionDowngrade(req.Title, body)
@@ -1070,7 +1070,7 @@ func (c *Client) issueDecisionDowngradeForComment(req IssueRequest, body string)
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
 	}
-	if d := c.workflowsHandoff(req.Agent, "", body); d.Active {
+	if d := c.workflowsHandoff(req.Agent, req.Repo, "", body); d.Active {
 		return d
 	}
 	return c.issueDecisionDowngrade("", body)

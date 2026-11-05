@@ -200,8 +200,9 @@ fix is verified — nothing else routes it. The flag applies only to `issue` and
 One park is handed to a lane instead of the owner: a workflow-only change from
 a lane that cannot push `.github/workflows/**`. When the text says so (the
 workflows blocker, or `.github/workflows` named with "workflows permission")
-and lists no lettered options, and an enabled ISSUES_PRS_MERGE lane exists, the
-watcher adds `hive/workflows-lane` instead of the park label, appends a
+and lists no lettered options, and an enabled ISSUES_PRS_MERGE lane serves the
+repository (a lane scoped to other repositories with `repos:` is never chosen),
+the watcher adds `hive/workflows-lane` instead of the park label, appends a
 "Handed to `<lane>`" note and no owner-step marker, and the scheduler routes the
 issue to that lane. On `issue` the new issue is created at
 `stage/010-actionable` with the label.

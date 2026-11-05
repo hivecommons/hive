@@ -56,6 +56,21 @@ func TestRouteWorkflowsLaneNoCapableLane(t *testing.T) {
 	}
 }
 
+// A capable lane scoped to other repositories is refused on this one, so the
+// label routes each issue to a lane that serves its repo, or nowhere
+// (adjudicator on hivecommons/hive#16692).
+func TestRouteWorkflowsLaneHonoursRepoScope(t *testing.T) {
+	s := workflowsFleetScheduler(t, "ISSUES_PRS_MERGE")
+	s.cfg.Agents["scanner"] = config.AgentConfig{Role: "scanner", Mode: "ISSUES_PRS_MERGE", Enabled: true, Repos: []string{"acme/widget"}}
+	got := s.routeWorkflowsLane([]github.Issue{
+		{Repo: "acme/widget", Number: 374, Lane: "ci-maintainer", Labels: []string{github.WorkflowsLaneLabel}},
+		{Repo: "acme/other", Number: 9, Lane: "ci-maintainer", Labels: []string{github.WorkflowsLaneLabel}},
+	})
+	if got[0].Lane != "scanner" || got[1].Lane != "ci-maintainer" {
+		t.Fatalf("lanes = %q, %q; want scanner in its repo and ci-maintainer kept elsewhere", got[0].Lane, got[1].Lane)
+	}
+}
+
 // End to end through the kick build: the labelled issue leaves
 // ci-maintainer's kick, the unlabelled one stays.
 func TestKickRoutesWorkflowsLaneIssueAwayFromIncapableLane(t *testing.T) {
@@ -81,7 +96,7 @@ func TestKickRoutesWorkflowsLaneIssueAwayFromIncapableLane(t *testing.T) {
 // and only when such a lane exists.
 func TestWorkflowPushCeilingNamesCapableLane(t *testing.T) {
 	msg := workflowsFleetScheduler(t, "ISSUES_PRS_MERGE").BuildAgentMessage("quality", nil, &github.ActionableResult{})
-	for _, want := range []string{"Workflow files are out of reach", "This hive runs `scanner`", "`" + github.WorkflowsLaneLabel + "`", "not as a step for the owner"} {
+	for _, want := range []string{"Workflow files are out of reach", "for example `scanner`", "`" + github.WorkflowsLaneLabel + "`", "not as a\nstep for the owner", "Where no such lane\nserves the repository, the park stands"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("kick lacks %q:\n%s", want, msg)
 		}

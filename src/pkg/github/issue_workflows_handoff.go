@@ -15,10 +15,11 @@ import (
 const WorkflowsLaneLabel = "hive/workflows-lane"
 
 // SetWorkflowsLaneFunc installs the fleet lookup the relay asks
-// (config.WorkflowsLaneFor): given the requesting agent, the lane that can
-// push workflow files for it, or "" when the agent can push them itself or no
-// lane can. Nil, or never set, keeps every workflow-only park with the owner.
-func (c *Client) SetWorkflowsLaneFunc(fn func(agent string) string) {
+// (config.WorkflowsLaneFor): given the requesting agent and the repository,
+// the lane that can push workflow files there for it, or "" when the agent
+// can push them itself or no lane serving the repository can. Nil, or never
+// set, keeps every workflow-only park with the owner.
+func (c *Client) SetWorkflowsLaneFunc(fn func(agent, repo string) string) {
 	if c == nil {
 		return
 	}
@@ -27,7 +28,7 @@ func (c *Client) SetWorkflowsLaneFunc(fn func(agent string) string) {
 	c.workflowsLane = fn
 }
 
-func (c *Client) workflowsLaneFor(agent string) string {
+func (c *Client) workflowsLaneFor(agent, repo string) string {
 	if c == nil {
 		return ""
 	}
@@ -37,7 +38,7 @@ func (c *Client) workflowsLaneFor(agent string) string {
 	if fn == nil {
 		return ""
 	}
-	return strings.TrimSpace(fn(agent))
+	return strings.TrimSpace(fn(agent, repo))
 }
 
 // workflowsPermissionRE is the phrase lane parks use when blocker.Infer's
@@ -68,11 +69,11 @@ func parkIsWorkflowsOnly(text string) bool {
 // WorkflowsLaneLabel, and the posted text says where it went. Inactive when
 // the requester can push workflows itself, when no lane can (the owner still
 // applies it), or when the text is not a workflow-only park.
-func (c *Client) workflowsHandoff(agent, title, body string) issueDecisionDowngrade {
+func (c *Client) workflowsHandoff(agent, repo, title, body string) issueDecisionDowngrade {
 	if !parkIsWorkflowsOnly(title + "\n" + body) {
 		return issueDecisionDowngrade{}
 	}
-	lane := c.workflowsLaneFor(agent)
+	lane := c.workflowsLaneFor(agent, repo)
 	if lane == "" {
 		return issueDecisionDowngrade{}
 	}

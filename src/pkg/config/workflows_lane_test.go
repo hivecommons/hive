@@ -21,6 +21,7 @@ func TestWorkflowsLaneFor(t *testing.T) {
 		name  string
 		cfg   *Config
 		agent string
+		repo  string
 		want  string
 	}{
 		{name: "contributor-tier lane hands to scanner", cfg: live, agent: "ci-maintainer", want: "scanner"},
@@ -45,10 +46,31 @@ func TestWorkflowsLaneFor(t *testing.T) {
 			"alpha":         {Mode: "ISSUES_PRS_MERGE", Enabled: true},
 		}), agent: "ci-maintainer", want: "alpha"},
 		{name: "nil config", cfg: nil, agent: "ci-maintainer", want: ""},
+		// Adjudicator on hivecommons/hive#16692: a merge lane scoped to other
+		// repositories is refused on this one, so it is not chosen here and
+		// the next one that serves it is.
+		{name: "a merge lane scoped elsewhere is skipped", cfg: fleet(map[string]AgentConfig{
+			"ci-maintainer": {Mode: "ISSUES_AND_PRS", Enabled: true},
+			"alpha":         {Mode: "ISSUES_PRS_MERGE", Enabled: true, Repos: []string{"other"}},
+			"scanner":       {Mode: "ISSUES_PRS_MERGE", Enabled: true},
+		}), agent: "ci-maintainer", repo: "o/arch-bootc", want: "scanner"},
+		{name: "the scoped lane is chosen in its own repo", cfg: fleet(map[string]AgentConfig{
+			"ci-maintainer": {Mode: "ISSUES_AND_PRS", Enabled: true},
+			"alpha":         {Mode: "ISSUES_PRS_MERGE", Enabled: true, Repos: []string{"o/arch-bootc"}},
+			"scanner":       {Mode: "ISSUES_PRS_MERGE", Enabled: true},
+		}), agent: "ci-maintainer", repo: "o/arch-bootc", want: "alpha"},
+		{name: "no merge lane serves the repo: the owner applies it", cfg: fleet(map[string]AgentConfig{
+			"ci-maintainer": {Mode: "ISSUES_AND_PRS", Enabled: true},
+			"scanner":       {Mode: "ISSUES_PRS_MERGE", Enabled: true, Repos: []string{"o/other"}},
+		}), agent: "ci-maintainer", repo: "o/arch-bootc", want: ""},
+		{name: "no repo: scope is not asked", cfg: fleet(map[string]AgentConfig{
+			"ci-maintainer": {Mode: "ISSUES_AND_PRS", Enabled: true},
+			"scanner":       {Mode: "ISSUES_PRS_MERGE", Enabled: true, Repos: []string{"o/other"}},
+		}), agent: "ci-maintainer", want: "scanner"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.cfg.WorkflowsLaneFor(tc.agent); got != tc.want {
-				t.Fatalf("WorkflowsLaneFor(%q) = %q, want %q", tc.agent, got, tc.want)
+			if got := tc.cfg.WorkflowsLaneFor(tc.agent, tc.repo); got != tc.want {
+				t.Fatalf("WorkflowsLaneFor(%q, %q) = %q, want %q", tc.agent, tc.repo, got, tc.want)
 			}
 		})
 	}

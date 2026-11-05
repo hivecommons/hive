@@ -46,8 +46,8 @@ func TestParkIsWorkflowsOnly(t *testing.T) {
 }
 
 func handToScanner(c *Client) {
-	c.SetWorkflowsLaneFunc(func(agent string) string {
-		if agent == "scanner" {
+	c.SetWorkflowsLaneFunc(func(agent, repo string) string {
+		if agent == "scanner" || repo == "" {
 			return ""
 		}
 		return "scanner"
@@ -91,7 +91,7 @@ func TestCommentWorkflowsParkStaysWithOwner(t *testing.T) {
 		body  string
 		setup func(*Client)
 	}{
-		{name: "no capable lane in the fleet", agent: "ci-maintainer", body: handoff374, setup: func(c *Client) { c.SetWorkflowsLaneFunc(func(string) string { return "" }) }},
+		{name: "no capable lane in the fleet", agent: "ci-maintainer", body: handoff374, setup: func(c *Client) { c.SetWorkflowsLaneFunc(func(string, string) string { return "" }) }},
 		{name: "lookup never installed", agent: "ci-maintainer", body: handoff374},
 		{name: "the capable lane itself could not push", agent: "scanner", body: handoff374, setup: handToScanner},
 		{name: "not a workflow change", agent: "ci-maintainer", body: "Agents do not edit repository settings; the owner runs: gh api --method PUT ...", setup: handToScanner},
