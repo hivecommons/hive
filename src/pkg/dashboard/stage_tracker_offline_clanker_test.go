@@ -51,7 +51,7 @@ func TestStageTrackerSuppressedDecisionRecordKeepsStage(t *testing.T) {
 	s, store, status := offlineClankerFixture(t, now, now.Add(-3*time.Hour))
 	key := stagelabels.Key("hivecommons/hive", 15312)
 	store.Observe(key, stagelabels.NeedsDecision, "contributor-lane:decision-requested")
-	store.NoteLabelsSuppressed(key, true)
+	store.NoteLabelsSuppressed(key, true, "needs-opt-in-label")
 	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 15312)
 	if it.Stage != stagelabels.NeedsDecision.Number() || it.StageSince == nil {
 		t.Fatalf("suppressed 085 record: stage %d since %v caption %q, want 085 from the record", it.Stage, it.StageSince, it.Caption)
@@ -61,7 +61,7 @@ func TestStageTrackerSuppressedDecisionRecordKeepsStage(t *testing.T) {
 	}
 	// The same record with the label write landed and then removed is a
 	// lifted park, as before.
-	store.NoteLabelsSuppressed(key, false)
+	store.NoteLabelsSuppressed(key, false, "")
 	if it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 15312); it.Stage == stagelabels.NeedsDecision.Number() {
 		t.Fatalf("label-less 085 record with labels not suppressed still parks the row: %+v", it)
 	}
