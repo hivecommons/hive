@@ -919,11 +919,7 @@ func DecisionActions(r Route) string {
 	}
 	for _, h := range r.Holds {
 		if h == "hold" && r.Hold.SelfImposed() {
-			reason := strings.TrimSpace(r.Hold.Reason)
-			if reason == "" {
-				reason = "its own gate"
-			}
-			steps = append(steps, "The hive set `hold` itself for "+reason+". **Release** it (dashboard row menu → Release hold, or remove the `hold` label) and the lane merges on its next pass once the other gates are clear, or **keep** it until a maintainer has reviewed the issue's reporter; `/hive approve` does not remove it")
+			steps = append(steps, selfImposedHoldStep(r.Hold))
 			continue
 		}
 		steps = append(steps, "resolve the reason for `"+h+"` and have a maintainer remove that label (`/hive approve` does not remove it)")
@@ -940,6 +936,29 @@ func DecisionActions(r Route) string {
 		b.WriteString("\n- " + s + ".")
 	}
 	return b.String()
+}
+
+// selfImposedHoldStep is the release step for a `hold` the hive set itself,
+// worded for the gate that set it. Only the reporter-trust gate's hold is
+// released into an unattended merge; a human-merge-path hold stays a
+// person's merge whatever the label says (projectbluefin/utah#1097,
+// projectbluefin/finpilot#627 were told the lane would merge them); a hold
+// the hive can attribute only to its label event names no gate it cannot see.
+func selfImposedHoldStep(h *HoldProvenance) string {
+	reason := strings.TrimSpace(h.Reason)
+	switch {
+	case h.ReporterTrust():
+		if reason == "" {
+			reason = "its own gate"
+		}
+		return "The hive set `hold` itself for " + reason + ". **Release** it (dashboard row menu → Release hold, or remove the `hold` label) and the lane merges on its next pass once the other gates are clear, or **keep** it until a maintainer has reviewed the issue's reporter; `/hive approve` does not remove it"
+	case h.HumanMergePath():
+		return "The hive set `hold` because this PR changes " + HumanMergePathReason + ": the hive never merges it, so a maintainer reviews it and merges it by hand; removing `hold` does not hand it back to the lane"
+	}
+	if reason == "" {
+		return "The hive set `hold` itself; its notice on this PR names the gate. Resolve that, then remove the `hold` label; `/hive approve` does not remove it"
+	}
+	return "The hive set `hold` itself for " + reason + ". Resolve that, then remove the `hold` label; `/hive approve` does not remove it"
 }
 
 // HumanAuthorOwesAnswer reports whether a requires_human verdict on a PR a
