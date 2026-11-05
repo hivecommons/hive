@@ -617,13 +617,22 @@ in exactly one band, while non-winning states remain as badges on the pill:
    BLOCKED pill (drawn when `blocked` is a waiting label, not on held rows)
    shows that server text first on hover, followed by the row's other signals;
    the pill legend entry points there.
+   A held issue (any hold label, the server's `held`) is parked too, with the
+   chip `hold` when no parking label names a better one: the stage engine
+   leaves it "Open · on hold" and agents do not act on it until the hold goes
+   (projectbluefin/utah#551 sat in Unclaimed).
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
    `hive/covered-by-pr` (or `stage/040-covered-by-pr` and any later mirrored
    PR stage), and `hive/likely-done`: an agent believes the work landed;
    verify and close. An issue also labelled `hive/verified-open` (the
    agent's verdict that the referenced PR did not finish the work) is not in
    this band because of `hive/likely-done`; it falls through to its usual band.
-   Other done labels still apply.
+   Nor is an issue that is parked and whose only done label is
+   `hive/likely-done`: the park is the later, stronger word
+   (projectbluefin/common#1328, an RFC parked on `needs-decision`). Other done
+   labels still apply. When the only done evidence is `stage/040-covered-by-pr`
+   (or a later mirrored PR stage), the ✓ signal reads `covered by an open PR
+   (stage/040) — check it merged before closing`, not `already done`.
 
 Precedence is confirm & close → parked → claimed → needs triage → unclaimed,
 so a label that parks an issue beats an assignment and done beats all other display states.
