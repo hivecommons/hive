@@ -271,7 +271,7 @@ func TestGraphQLPRBatchRefetchClearsStaleRepoEntries(t *testing.T) {
 	c.SetGraphQLPRBatchConfig(func() bool { return true }, func() int { return 50 })
 
 	// Another repo's entries must survive a refetch of org/repo.
-	c.storeGraphQLPRBatchNode("org/other", graphQLPRBatchNode{Number: 9, HeadRefOID: "sha-9", ReviewDecision: "APPROVED"})
+	c.storeGraphQLPRBatchNode("org/other", graphQLPRBatchNode{Number: 9, HeadRefOID: "sha-9", reviewDecisionNode: reviewDecisionNode{ReviewDecision: "APPROVED"}})
 
 	c.prefetchOpenPRDetailsGraphQL(context.Background(), "org", "repo", "org/repo")
 	for _, want := range []struct {

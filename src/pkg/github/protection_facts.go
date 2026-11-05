@@ -325,41 +325,43 @@ type reviewDecisionResponse struct {
 				HasNextPage bool   `json:"hasNextPage"`
 				EndCursor   string `json:"endCursor"`
 			} `json:"pageInfo"`
-			Nodes []struct {
-				Number                   int    `json:"number"`
-				ReviewDecision           string `json:"reviewDecision"`
-				LatestOpinionatedReviews struct {
-					Nodes []struct {
-						State             string    `json:"state"`
-						SubmittedAt       time.Time `json:"submittedAt"`
-						AuthorAssociation string    `json:"authorAssociation"`
-						Author            *struct {
-							Typename string `json:"__typename"`
-							Login    string `json:"login"`
-						} `json:"author"`
-					} `json:"nodes"`
-				} `json:"latestOpinionatedReviews"`
-				Comments struct {
-					TotalCount int `json:"totalCount"`
-				} `json:"comments"`
-				ReviewThreads struct {
-					TotalCount int `json:"totalCount"`
-				} `json:"reviewThreads"`
-				ClosingIssuesReferences struct {
-					Nodes []struct {
-						Number      int    `json:"number"`
-						Title       string `json:"title"`
-						State       string `json:"state"`
-						StateReason string `json:"stateReason"`
-						URL         string `json:"url"`
-						Repository  struct {
-							NameWithOwner string `json:"nameWithOwner"`
-						} `json:"repository"`
-					} `json:"nodes"`
-				} `json:"closingIssuesReferences"`
-			} `json:"nodes"`
+			Nodes []reviewDecisionNode `json:"nodes"`
 		} `json:"pullRequests"`
 	} `json:"repository"`
+}
+
+type reviewDecisionNode struct {
+	Number                   int    `json:"number"`
+	ReviewDecision           string `json:"reviewDecision"`
+	LatestOpinionatedReviews struct {
+		Nodes []struct {
+			State             string    `json:"state"`
+			SubmittedAt       time.Time `json:"submittedAt"`
+			AuthorAssociation string    `json:"authorAssociation"`
+			Author            *struct {
+				Typename string `json:"__typename"`
+				Login    string `json:"login"`
+			} `json:"author"`
+		} `json:"nodes"`
+	} `json:"latestOpinionatedReviews"`
+	Comments struct {
+		TotalCount int `json:"totalCount"`
+	} `json:"comments"`
+	ReviewThreads struct {
+		TotalCount int `json:"totalCount"`
+	} `json:"reviewThreads"`
+	ClosingIssuesReferences struct {
+		Nodes []struct {
+			Number      int    `json:"number"`
+			Title       string `json:"title"`
+			State       string `json:"state"`
+			StateReason string `json:"stateReason"`
+			URL         string `json:"url"`
+			Repository  struct {
+				NameWithOwner string `json:"nameWithOwner"`
+			} `json:"repository"`
+		} `json:"nodes"`
+	} `json:"closingIssuesReferences"`
 }
 
 // fetchReviewDecisions returns GitHub's review verdict for every open PR in
@@ -406,47 +408,7 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 			return nil
 		}
 		for _, n := range resp.Repository.PullRequests.Nodes {
-			st := prReviewState{
-				decision:      ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision))),
-				comments:      n.Comments.TotalCount,
-				reviewThreads: n.ReviewThreads.TotalCount,
-			}
-			for _, li := range n.ClosingIssuesReferences.Nodes {
-				if li.Number <= 0 {
-					continue
-				}
-				st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
-					Number:      li.Number,
-					Title:       li.Title,
-					Repo:        li.Repository.NameWithOwner,
-					State:       strings.ToLower(strings.TrimSpace(li.State)),
-					StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
-					URL:         li.URL,
-				})
-			}
-			for _, r := range n.LatestOpinionatedReviews.Nodes {
-				login := ""
-				typename := ""
-				if r.Author != nil {
-					login = r.Author.Login
-					typename = r.Author.Typename
-				}
-				state := ReviewDecision(strings.ToUpper(strings.TrimSpace(r.State)))
-				switch state {
-				case ReviewDecisionApproved:
-					st.approvals++
-				case ReviewDecisionChangesRequested:
-					if login != "" {
-						st.changesRequestedBy = append(st.changesRequestedBy, login)
-					}
-				}
-				if c.isTrustedHumanReviewAuthor(login, typename, r.AuthorAssociation) && (state == ReviewDecisionApproved || state == ReviewDecisionChangesRequested) && r.SubmittedAt.After(st.latestHumanAt) {
-					st.latestHumanState = state
-					st.latestHumanBy = login
-					st.latestHumanAt = r.SubmittedAt
-				}
-			}
-			out[n.Number] = st
+			out[n.Number] = c.reviewStateFromNode(n)
 		}
 		if !resp.Repository.PullRequests.PageInfo.HasNextPage || resp.Repository.PullRequests.PageInfo.EndCursor == "" {
 			break
@@ -454,6 +416,46 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 		vars["cursor"] = resp.Repository.PullRequests.PageInfo.EndCursor
 	}
 	return out
+}
+
+// reviewStateFromNode keeps the batch and standalone review queries consistent.
+func (c *Client) reviewStateFromNode(n reviewDecisionNode) prReviewState {
+	st := prReviewState{
+		decision:      ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision))),
+		comments:      n.Comments.TotalCount,
+		reviewThreads: n.ReviewThreads.TotalCount,
+	}
+	for _, li := range n.ClosingIssuesReferences.Nodes {
+		if li.Number <= 0 {
+			continue
+		}
+		st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
+			Number: li.Number, Title: li.Title, Repo: li.Repository.NameWithOwner,
+			State:       strings.ToLower(strings.TrimSpace(li.State)),
+			StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)), URL: li.URL,
+		})
+	}
+	for _, r := range n.LatestOpinionatedReviews.Nodes {
+		login, typename := "", ""
+		if r.Author != nil {
+			login, typename = r.Author.Login, r.Author.Typename
+		}
+		state := ReviewDecision(strings.ToUpper(strings.TrimSpace(r.State)))
+		switch state {
+		case ReviewDecisionApproved:
+			st.approvals++
+		case ReviewDecisionChangesRequested:
+			if login != "" {
+				st.changesRequestedBy = append(st.changesRequestedBy, login)
+			}
+		}
+		if c.isTrustedHumanReviewAuthor(login, typename, r.AuthorAssociation) && (state == ReviewDecisionApproved || state == ReviewDecisionChangesRequested) && r.SubmittedAt.After(st.latestHumanAt) {
+			st.latestHumanState = state
+			st.latestHumanBy = login
+			st.latestHumanAt = r.SubmittedAt
+		}
+	}
+	return st
 }
 
 func (c *Client) isTrustedHumanReviewAuthor(login, typename, association string) bool {
