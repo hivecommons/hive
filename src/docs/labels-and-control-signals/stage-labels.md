@@ -1166,12 +1166,20 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    If an adopted head is DCO-red, an empty signed commit is never enough.
    "Hive-authored" is decided the same way as head attribution above: an
    unsigned commit is the hive's own only when GitHub links its author or
-   committer to the App bot; git author/committer names and emails — even a
-   lane-looking `<lane>@<HIVE_GIT_BOT_EMAIL_DOMAIN>` address — are
-   contributor-controlled and never count. The stage pass caches that split
-   with the commit check (`dco_unsigned_hive`), so the decision does not
-   depend on which labels the PR currently carries. When every unsigned
-   commit is App-linked and the head lives in the **base repo**, an in-place
+   committer to the App bot, or its author to one of the hive's identities
+   (`project.ai_author`); git author/committer names — even a lane-looking
+   `<lane>@<HIVE_GIT_BOT_EMAIL_DOMAIN>` address — never count on their own.
+   GitHub derives that login linkage from the commit email and agents push
+   unsigned commits, so it is not proof of origin: anyone who can push to a
+   base-repo branch can author a commit as `project.ai_author` and have it
+   re-signed. Only collaborators with push access reach the in-place path,
+   so the hive trusts them not to do that
+   ([#16702](https://github.com/hivecommons/hive/issues/16702)). The stage
+   pass caches that split with the commit check (`dco_unsigned_hive`), so
+   the decision does not depend on which labels the PR currently carries; a
+   split cached before hive identities counted is read again once
+   (`dco_split_hive_identity`). When every unsigned commit is the hive's
+   and the head lives in the **base repo**, an in-place
    adoption stays in place and the stage engine itself re-signs the branch
    once per head (`reason=dco-rehomed`): it replays the PR's commits through
    the git-data API, keeping each author, message, tree and parents (merge
