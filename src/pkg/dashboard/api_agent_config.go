@@ -162,6 +162,13 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"definitionSource":    agentCfg.DefinitionSource,
 			"mode":                agentCfg.Mode,
 			"includeRepos":        includeRepos,
+			// Contributor-first lane keys (#16518). The grace is seconds, 0 when
+			// unset (the governor then uses DefaultContributorFirstGrace);
+			// contributorFirstDelegatable says whether the toggle can be turned
+			// on at all, so the panel can disable it and name the fix.
+			"contributorFirst":            agentCfg.ContributorFirst,
+			"contributorFirstGrace":       int64(agentCfg.ContributorFirstGrace.Seconds()),
+			"contributorFirstDelegatable": config.ContributorFirstDelegatable(name, s.deps.Config.Hub),
 			// The agent's repository scope (#6204), plus the hive's own repo
 			// list so the dialog can offer real choices instead of a free-text
 			// field the operator has to spell from memory.
@@ -421,6 +428,29 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			// An explicit operator choice; ApplyPack must not reconcile it
 			// back to the pack's value on the next restart.
 			agentCfg.OnDemandOwner = config.FieldOwnerOperator
+		}
+	}
+	// Contributor-first lane keys (#16518). Judged on this copy by the same
+	// rule the load applies, before anything below can persist a side effect,
+	// so a refusal answers 400 with the load's own message and saves nothing.
+	// 0 seconds clears the grace back to the default. A save that carries
+	// neither key is not judged on them.
+	_, cfSet := body["contributorFirst"]
+	_, cfGraceSet := body["contributorFirstGrace"]
+	if v, ok := body["contributorFirst"]; ok {
+		if b, ok := v.(bool); ok {
+			agentCfg.ContributorFirst = b
+		}
+	}
+	if v, ok := body["contributorFirstGrace"]; ok {
+		if f, ok := v.(float64); ok {
+			agentCfg.ContributorFirstGrace = time.Duration(int64(f)) * time.Second
+		}
+	}
+	if cfSet || cfGraceSet {
+		if err := config.ValidateContributorFirstAgent(name, agentCfg, s.deps.Config.Hub); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 	if v, ok := body["continuous"]; ok {

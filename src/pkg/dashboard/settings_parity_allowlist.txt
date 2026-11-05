@@ -578,8 +578,6 @@ agents.<key>.advisor.instructions # TODO #11854
 agents.<key>.advisor.max_consecutive_blocks # TODO #11854
 agents.<key>.advisor.model # TODO #11854
 agents.<key>.advisor.timeout_s # TODO #11854
-agents.<key>.contributor_first # TODO #11854
-agents.<key>.contributor_first_grace # TODO #11854
 agents.<key>.mode_owner # TODO #11854
 agents.<key>.standby.auto_dispatch # TODO #11854
 agents.<key>.standby.daily_cap_per_contributor # TODO #11854

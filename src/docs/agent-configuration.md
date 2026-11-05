@@ -1302,6 +1302,8 @@ agents:
 | `contributor_first` | Make a connected contributor relay acting as this role the lane's primary worker, and withhold the resident agent's kicks while one is connected. Default off; an absent key changes nothing. **The role must be one contributors may act as** — in `hub.contribute_delegatable_roles`, or one of the default `scanner`, `quality`, `outreach` — or the load fails: a contributor-first lane nobody may claim would sit inert while you believe contributors are taking the load. `supervisor` is never delegatable and is rejected. |
 | `contributor_first_grace` | How long kicks stay withheld after the last covering relay disappears. Default **10m**; negative fails the load. |
 
+Both keys are also on the agent's **General** tab in Settings (**Contributor-first** and **Contributor-first grace**), so a hive owner can switch a lane without editing `hive.yaml`; the save refuses exactly what the load refuses, with the same message, and takes effect on the next governor evaluation without a restart.
+
 What you see: the Governor section gains a **contributor-first** tile naming
 each covered lane and who covers it ("quality covered by alice, resident kicks
 withheld"), and during the grace it says when the resident agent resumes.
