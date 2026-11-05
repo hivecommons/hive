@@ -20,6 +20,12 @@ type CommitChecksSummary struct {
 	// DCO is 1 when a DCO context succeeded, -1 when one failed, 0 when the
 	// head carries none.
 	DCO int
+	// MissingRequired names the required contexts (branch protection or
+	// rulesets) with no status and no check run on the head, sorted. Only
+	// SummarizeCommitChecksRequired fills it. A PR opened with GITHUB_TOKEN
+	// triggers no workflow, so its required checks never report while every
+	// check that did run is green (projectbluefin/utah#1074).
+	MissingRequired []string
 }
 
 // SummarizeCommitChecks reads the combined status and check runs for sha
@@ -32,6 +38,20 @@ func SummarizeCommitChecks(ctx context.Context, client *gh.Client, owner, repo, 
 		return CommitChecksSummary{}, err
 	}
 	return summarizeChecks(statuses, runs), nil
+}
+
+// SummarizeCommitChecksRequired is SummarizeCommitChecks plus
+// MissingRequired against required (nil or empty: nothing is named).
+func SummarizeCommitChecksRequired(ctx context.Context, client *gh.Client, owner, repo, sha string, required map[string]bool) (CommitChecksSummary, error) {
+	statuses, runs, err := fetchCommitChecks(ctx, client, owner, repo, sha)
+	if err != nil {
+		return CommitChecksSummary{}, err
+	}
+	out := summarizeChecks(statuses, runs)
+	if len(required) > 0 {
+		out.MissingRequired = summarizeRequiredChecks(statuses, runs, required).Missing
+	}
+	return out, nil
 }
 
 // fetchCommitChecks reads every combined-status context and check run on sha.

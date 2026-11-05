@@ -70,6 +70,12 @@ type CheckSummary struct {
 	Total, Green, Pending int
 	// Red names every failing gating check, in a stable order.
 	Red []string
+	// Missing names the required checks with nothing reported on the head.
+	// They are not green: GitHub refuses the merge until they report, and a
+	// PR whose workflows never triggered waits on them for good
+	// (projectbluefin/utah#1074 read "4/4 checks green, ready for a human
+	// merge" with `contract` and `build_main` never run).
+	Missing []string
 	// Known is false when the head could not be read (API error): CI is
 	// then a pending gate, never a pass.
 	Known bool
@@ -576,6 +582,9 @@ func RouteHuman(e Evidence) Route {
 	case e.Checks.Pending > 0:
 		wait = append(wait, fmt.Sprintf("%d check(s) still running", e.Checks.Pending))
 	}
+	if e.Checks.Known && len(e.Checks.Missing) > 0 {
+		wait = append(wait, "required check(s) `"+strings.Join(e.Checks.Missing, "`, `")+"` not reported on this head (a PR opened with GITHUB_TOKEN triggers no workflow): GitHub will not merge it until they run")
+	}
 	if e.Soak > 0 && e.SoakElapsed < e.Soak {
 		// A head the lane has NOT admitted (trust blocks it) is still
 		// 060 while its soak runs; 095 pre-merge-soak is the lane's own
@@ -662,6 +671,9 @@ func summarize(e Evidence) string {
 		parts = append(parts, fmt.Sprintf("%d/%d checks green, %d pending", e.Checks.Green, e.Checks.Total, e.Checks.Pending))
 	default:
 		parts = append(parts, fmt.Sprintf("%d/%d checks green", e.Checks.Green, e.Checks.Total))
+	}
+	if e.Checks.Known && len(e.Checks.Missing) > 0 {
+		parts = append(parts, "required not reported: "+strings.Join(e.Checks.Missing, ", "))
 	}
 	switch e.DCO {
 	case DCOYes:
