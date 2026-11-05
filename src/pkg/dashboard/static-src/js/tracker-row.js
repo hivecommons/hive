@@ -299,12 +299,18 @@
       const sa = stageTrackerStageActor(item);
       const kindOf = k => k === 'maintainer' ? 'human' : String(k || '');
       if (sa && sa.login && STAGE_TRACKER_PR_PROGRESS_KINDS.indexOf(kindOf(sa.kind)) >= 0) return { who: '@' + String(sa.login).replace(/^@/, ''), kind: kindOf(sa.kind) };
-      // An issue's own author filed the issue; only a PR row (or an issue
-      // drawn through its PR) has a PR author to name.
-      if (!item || (item.kind !== 'pr' && !item.via_pr) || typeof stageTrackerReturnedAuthor !== 'function') return null;
-      const who = stageTrackerReturnedAuthor(item);
-      if (who.author && STAGE_TRACKER_PR_PROGRESS_KINDS.indexOf(kindOf(who.kind)) >= 0) return { who: '@' + who.author, kind: kindOf(who.kind) };
-      return null;
+      // An issue's own author filed the issue; only a PR row, or the one
+      // covering PR an issue is drawn through, has a PR author to name.
+      if (!item) return null;
+      let src = null;
+      if (item.kind === 'pr' && !item.via_pr) src = item;
+      else if (item.via_pr && Array.isArray(item.linked_prs)) {
+        const here = item.linked_prs.filter(lp => lp && (!Number(lp.drawn_under) || Number(lp.drawn_under) === (Number(item.number) || 0)));
+        if (here.length === 1) src = here[0];
+      }
+      const author = String((src && src.author) || '').trim().replace(/^@/, '');
+      const kind = kindOf(src && src.author_kind);
+      return author && STAGE_TRACKER_PR_PROGRESS_KINDS.indexOf(kind) >= 0 ? { who: '@' + author, kind } : null;
     }
 
     // The Fixing column word when nobody is fixing: a bot-authored PR the

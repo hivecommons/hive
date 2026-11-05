@@ -11,7 +11,7 @@ import "testing"
 // inactive column stays icon-only.
 func TestStageTrackerPRProgressActorChevronJS(t *testing.T) {
 	html := indexHTML(t)
-	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+"\n"+jsFunc(t, html, "stageTrackerReturnedAuthor")+stageTrackerRowsFixtureJS+`
+	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+stageTrackerRowsFixtureJS+`
 const lit = (html) => (/<li class="ham-seg active[^"]*"[^>]*>([\s\S]*?)<\/li>/.exec(strip(html)) || ['', ''])[1];
 const litWord = (html) => text(lit(html));
 const copyText = (html) => text((/<span class="ham-chevron-copy">([\s\S]*?)<\/span>(?:<svg|<span id=)/.exec(lit(html)) || ['', ''])[1]);
