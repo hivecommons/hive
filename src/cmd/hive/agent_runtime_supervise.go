@@ -52,9 +52,12 @@ type cruxRuntimeSupervision struct {
 	prober     runtimeProber
 	supervisor *cruxruntime.Supervisor
 	logger     *slog.Logger
-	interval   time.Duration
-	observe    func(class, key, message, diagnostics string)
-	clear      func(class, key string)
+	// interval is the poll-loop period; probeTimeout is the per-probe HTTP
+	// deadline. They are decoupled so a fast test ticker cannot starve the probe.
+	interval     time.Duration
+	probeTimeout time.Duration
+	observe      func(class, key, message, diagnostics string)
+	clear        func(class, key string)
 }
 
 // newCruxRuntimeSupervision prepares supervision for rt under cfg. It
@@ -76,7 +79,7 @@ func newCruxRuntimeSupervision(cfg cruxconfig.RuntimeConfig, rt crux.Runtime, lo
 			return nil
 		}
 	}
-	s := &cruxRuntimeSupervision{cfg: cfg, prober: p, logger: logger, interval: cruxRuntimeProbeInterval, observe: fleetreport.Observe, clear: fleetreport.Clear}
+	s := &cruxRuntimeSupervision{cfg: cfg, prober: p, logger: logger, interval: cruxRuntimeProbeInterval, probeTimeout: cruxRuntimeProbeInterval, observe: fleetreport.Observe, clear: fleetreport.Clear}
 	if cfg.Supervise == cruxconfig.SuperviseChild {
 		s.supervisor = &cruxruntime.Supervisor{Config: cfg, Logger: logger}
 	}
@@ -121,7 +124,7 @@ func (s *cruxRuntimeSupervision) watch(ctx context.Context) {
 // probe makes one health call so the client's Status reflects the socket
 // even when no agent traffic has exercised it.
 func (s *cruxRuntimeSupervision) probe(ctx context.Context) {
-	pctx, cancel := context.WithTimeout(ctx, s.interval)
+	pctx, cancel := context.WithTimeout(ctx, s.probeTimeout)
 	defer cancel()
 	_, _ = s.prober.Client().Health(pctx)
 }

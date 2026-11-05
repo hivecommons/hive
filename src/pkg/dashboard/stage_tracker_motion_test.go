@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -433,6 +435,7 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerWaitingOnPerson"),
 		jsFunc(t, html, "stageTrackerTrackRunning"),
+		jsFunc(t, html, "stageTrackerAgoWord"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
@@ -454,6 +457,7 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 		stageTrackerActedJS(t, html),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),
 		jsFunc(t, html, "stageTrackerPRPillsHtml"),
+		jsFunc(t, html, "stageTrackerBasePillHtml"),
 		jsFunc(t, html, "stageTrackerLinkedPRItem"),
 		jsFunc(t, html, "stageTrackerLinkedPROpen"),
 		jsFunc(t, html, "stageTrackerNestedOpenPRs"),
@@ -493,8 +497,8 @@ assert.deepStrictEqual(ols(stageTrackerRowHtml(next[2], stages, ctx)), [''], 'an
 assert.deepStrictEqual(ols(stageTrackerRowHtml(next[1], stages, ctx)), ['', ' data-ham-prev-col="4" data-ham-col="6"', ''], 'only the nested PR that moved is stamped (sub-rows sort furthest first)');
 assert.deepStrictEqual(ols(stageTrackerRowHtml(next[0], stages, { nowMs: now })), [''], 'no moves in ctx → no stamp');
 `
-	cmd := exec.Command(node, "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	// Over stdin: the lifted harness is past Linux's -e argument limit.
+	if out, err := runNodeStdin(node, script); err != nil {
 		t.Fatalf("node row stamp fixture failed: %v\n%s", err, out)
 	}
 }
@@ -569,6 +573,7 @@ func TestStageTrackerMotionPreviewSample(t *testing.T) {
 		jsFunc(t, html, "stageTrackerSoakLeft"),
 		jsFunc(t, html, "stageTrackerWaitingOnPerson"),
 		jsFunc(t, html, "stageTrackerTrackRunning"),
+		jsFunc(t, html, "stageTrackerAgoWord"),
 		jsFunc(t, html, "stageTrackerActivityTrackHtml"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
@@ -588,6 +593,7 @@ func TestStageTrackerMotionPreviewSample(t *testing.T) {
 		stageTrackerActedJS(t, html),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),
 		jsFunc(t, html, "stageTrackerPRPillsHtml"),
+		jsFunc(t, html, "stageTrackerBasePillHtml"),
 		jsFunc(t, html, "stageTrackerLinkedPRItem"),
 		jsFunc(t, html, "stageTrackerLinkedPROpen"),
 		jsFunc(t, html, "stageTrackerNestedOpenPRs"),
@@ -695,7 +701,13 @@ assert.deepStrictEqual(animated, [[claimed, review, 'wash'], [review, claimed, '
 // a re-render after clicks picks up where the preview left off
 assert.strictEqual(activeShort(stageTrackerMotionSectionHtml('wash', stages)), 'CI + Review');
 `
-	cmd := exec.Command(node, "-e", script)
+	// The lifted strip exceeds Linux's single-argument limit, so the script
+	// goes through a file rather than -e.
+	path := filepath.Join(t.TempDir(), "motion_preview_sample.js")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, path)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node motion preview sample fixture failed: %v\n%s", err, out)
 	}

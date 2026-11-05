@@ -237,6 +237,9 @@ type Server struct {
 	// delegatedJobs tracks "Let hive decide" jobs by repo#number
 	// (api_repo_item_decide_delegated.go).
 	delegatedJobs delegatedDecisionJobs
+	// reviewQuestionAuto is the reviewer-question auto-decide sweep's
+	// pacing and once-per-head ledger (review_question_autodecide.go).
+	reviewQuestionAuto reviewQuestionAutodecide
 	// operatorActionStore is the owner row-action ledger behind the
 	// activity monitor's ✓ badge (operator_actions.go), opened on first use.
 	operatorActionStore *operatorActionStore
@@ -2831,6 +2834,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// Backstop for closed items whose delivery never arrived or whose
 	// confirming read was refused (hivecommons/hive#14159, #14064).
 	s.maybeSweepClosedRows(time.Now().UTC())
+	// A reviewer's scope question on the hive's own green PR is the hive's
+	// to decide, not an 085 park (review_question_autodecide.go).
+	s.maybeAutoDecideReviewQuestions(status, time.Now().UTC())
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
@@ -3739,7 +3745,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active()}
+	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active(), ReviewQuestionsAutodecided1h: s.reviewQuestionsAutodecided1h(now)}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
@@ -3781,7 +3787,7 @@ type statusWithWebhooks struct {
 	*EvalLoopStatus
 	// MatrixEnabled reports whether the Matrix block is active (enabled with
 	// at least one repo, see config.MatrixConfig.Active) so the header shows
-	// the Matrix tab only on hives whose /api/matrix/lines will serve it.
+	// the Code activity entry only where /api/matrix/lines will serve it.
 	MatrixEnabled bool `json:"matrixEnabled"`
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
 	// machine (scheduled / draining / pulling / … / missed) with the drain
@@ -3800,6 +3806,10 @@ type statusWithWebhooks struct {
 	// config.gate_regressions is the safety gates a previous runtime
 	// overlay carried that this boot dropped (#16438).
 	Config *ConfigHealthStatus `json:"config,omitempty"`
+	// ReviewQuestionsAutodecided1h counts the reviewer questions the hive
+	// decided itself in the last hour instead of parking the PR at 085
+	// (review_question_autodecide.go, governor.review.auto_decide_questions).
+	ReviewQuestionsAutodecided1h int `json:"review_questions_autodecided_1h"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

@@ -584,7 +584,7 @@ func (s *Scheduler) buildAgentMessageFor(agentName, repo string, includeRepos bo
 	}
 }
 
-const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers. Prefer the compact form `hive-gh pr view <n>` / `hive-gh issue view <n>` / `hive-gh pr checks <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions); add `--full` only when you need the complete record."
+const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers. For merged PR history only, `gh pr list --state merged` (no `--search` or `-S`) may be used only when the wrapper permits it for your tier; this does not authorize open-work discovery. If refused, do not retry or bypass the restriction. Prefer the compact form `hive-gh pr view <n>` / `hive-gh issue view <n>` / `hive-gh pr checks <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions); add `--full` only when you need the complete record."
 
 func addGovernorWorkSourceRule(message string) string {
 	if message == "" || strings.Contains(message, governorWorkSourceRule) {

@@ -761,6 +761,12 @@
             });
             if (!escRes.ok) throw new Error(await saveErrorMessage(escRes));
             _configState.data.escalation = await escRes.json().catch(() => _configState.data.escalation);
+          } else if (_configState.type === 'governor' && section === 'governor') {
+            const govRes = await fetch('/api/config/governor', {
+              method: 'PATCH', headers: _inceptionAuthHeaders(), body: JSON.stringify(values)
+            });
+            if (!govRes.ok) throw new Error(await saveErrorMessage(govRes));
+            Object.assign(_configState.data, await govRes.json());
           } else if (_configState.type === 'governor' && section === 'auto-merge') {
             // auto_merge is a TOP-LEVEL config block, not under governor —
             // it saves through its own /api/config/auto-merge endpoint.

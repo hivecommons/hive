@@ -336,6 +336,13 @@ func humanizeStageReason(reason string) string {
 	if stageengine.ReasonIsPartialCover(r) {
 		return "the PR references it without closing it (partial)"
 	}
+	// "blocked: App lacks workflows permission" (derive_issue.go, a
+	// structured blocker's short text): already prose. The generic replacer
+	// below would turn its ": " into ":  " (hivecommons/docs#612 read
+	// "owed — blocked:  App lacks…").
+	if rest, ok := strings.CutPrefix(r, "blocked: "); ok {
+		return "blocked: " + strings.TrimSpace(rest)
+	}
 	if clause, ok := humanizeCoverReason(r); ok {
 		return clause
 	}
@@ -450,12 +457,16 @@ func unauthorizedStepWords(step string) string {
 	return strings.ReplaceAll(strings.TrimSpace(step), "-", " ")
 }
 
-// Tooltip for the unauthorized pill, per step; the generic form serves a
-// label whose stage reason does not (or no longer) names the step.
+// Tooltip for the hive-bot-lacks-permission pill, per step; the generic
+// form serves a label whose stage reason does not (or no longer) names the
+// step. Operator wording says "hive bot lacks permission", never
+// "unauthorized" (hivecommons/hive#16639): nobody did anything illegitimate,
+// the App installation is missing one permission. The label name
+// hive:unauthorized is a contract and stays.
 const (
-	stageTrackerUnauthorizedApproveRuns = "The hive's GitHub App lacks `actions: write`, so it cannot approve the workflow runs GitHub is holding for this head. A maintainer must click Approve and run on the PR's checks banner (or the Actions tab); see the hive:unauthorized comment for the run ids. Hive resumes, and clears the label, once the required checks report."
-	stageTrackerUnauthorizedGeneric     = "The hive's GitHub App lacks a permission for the next step, so only a person can take it; the hive:unauthorized comment on the PR names the permission and the step. Hive resumes, and clears the label, once the step is done."
-	stageTrackerUnauthorizedMergeWF     = "The hive's GitHub App lacks `workflows: write`, so it cannot merge this owner-approved PR that edits .github/workflows files. A maintainer must click Merge on GitHub (the approval already stands), or grant the App Workflows: Read and write so the hive can merge such PRs itself."
+	stageTrackerUnauthorizedApproveRuns = "The hive bot's GitHub App is missing the 'actions: write' permission needed to approve the workflow runs GitHub is holding for this head, so a person has to take that step: click Approve and run on the PR's checks banner (or the Actions tab); the `hive:unauthorized` comment on the PR lists the run ids. Hive resumes and clears the label once the required checks report."
+	stageTrackerUnauthorizedGeneric     = "The hive bot's GitHub App is missing a permission needed for the next step, so a person has to take that step. The `hive:unauthorized` comment on the PR names the permission and the action; hive resumes and clears the label once it's done."
+	stageTrackerUnauthorizedMergeWF     = "The hive bot's GitHub App is missing the 'workflows: write' permission needed to merge this owner-approved PR that edits .github/workflows files, so a person has to take that step: click Merge on GitHub (the approval already stands), or grant the App Workflows: Read and write so the hive can merge such PRs itself."
 )
 
 // stageTrackerUnauthorized derives the gate word and the tooltip for an
@@ -473,7 +484,7 @@ func stageTrackerUnauthorized(reason string) (step, tip string) {
 	if rest == stageengineprstage.UnauthorizedStepMergeWorkflowPath {
 		return step, stageTrackerUnauthorizedMergeWF
 	}
-	return step, "The hive's GitHub App lacks the permission to " + step + ", so only a person can take that step; the hive:unauthorized comment on the PR names the permission and the action. Hive resumes, and clears the label, once the step is done."
+	return step, "The hive bot's GitHub App is missing the permission needed to " + step + ", so a person has to take that step. The `hive:unauthorized` comment on the PR names the permission and the action; hive resumes and clears the label once it's done."
 }
 
 // stageTrackerManualMergeReason reports whether a bare stage reason is a
@@ -499,7 +510,7 @@ var stageTrackerHumanMergeReasonWords = map[string][2]string{
 	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repo does not allow the merge method this PR needs"},
 	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is off for this repo, so a person merges"},
 	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
-	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "GitHub does not let hive merge here; a person merges"},
+	stageengineprstage.HumanMergeReasonUnauthorized:      {"hive bot lacks permission", "The hive bot's GitHub App is missing the permission to merge here; a person merges"},
 	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
 	stageengineprstage.HumanMergeReasonBreakingChange:    {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
 }

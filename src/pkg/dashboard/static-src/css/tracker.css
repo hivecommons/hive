@@ -178,6 +178,8 @@
     .ham-repo-tint-4 { --ham-repo-tint: var(--ham-repo-tint-4); }
     .ham-repo-tint-5 { --ham-repo-tint: var(--ham-repo-tint-5); }
     .ham-repo-chip.ham-repo-primary { --ham-repo-tint: var(--text-muted); }
+    /* The PR's base branch: same height and type as the repo chip it follows, muted border, no tint. */
+    .ham-base-pill { flex: 0 0 auto; display: inline-block; font: inherit; font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.5; padding: 0 var(--sp-2); border-radius: var(--r-sm); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: baseline; }
     .ham-pr-line { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; overflow: hidden; }
     /* Group-by-repo header row: sticky under the column header while its
        rows scroll, caret toggle, chip, owner/repo, counts, and a mini
@@ -355,7 +357,12 @@
        done-style step that keeps its word (stage_tracker_remediation.go). */
     .ham-seg.active.ham-remediation-unassigned { background: color-mix(in srgb, var(--amber) 70%, var(--red)); }
     .ham-seg.done.ham-fix-pushed { color: var(--green); }
-    .ham-seg.done.ham-fix-pushed .ham-seg-t::before { content: '✓'; margin-right: var(--sp-1); }
+/* A done decision column that still names the blocker a person must
+   clear while a covering PR drives the strip (hivecommons/docs#612). */
+.ham-seg.done.ham-blocker-note { color: var(--amber); opacity: 1; }
+/* The "needs human" pill is a button: click scrolls to the Needs human line. */
+.ham-needs-human-pill { cursor: pointer; font: inherit; }
+.ham-needs-human-pill:hover, .ham-needs-human-pill:focus-visible { text-decoration: underline; }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.blank { visibility: hidden; }
     .ham-sub { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
@@ -383,6 +390,11 @@
     .ham-seg.ham-activity-track.done { background: var(--panel-strong); color: var(--green); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing { background: var(--panel-strong); color: var(--status-error); box-shadow: none; opacity: 1; }
     .ham-seg.ham-activity-track.failing .ham-ico { stroke-width: 2; }
+    /* A not-yet-run track in the current phase (CI unknown on a 050 row,
+       Review queued beside running CI) keeps the same muted field as its
+       done / failing neighbours — the glyph alone, neutral — so the current
+       phase stays a visibly filled location (hivecommons/hive#16599). */
+    .ham-seg.ham-activity-track.todo.ham-current { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; }
     /* Words without motion (checks not reported, unknown evidence, a row
        parked on a person): current-phase text on a muted field, never amber. */
     .ham-seg.ham-activity-track.pending { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
@@ -390,6 +402,33 @@
     .ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); animation: none; }
     .ham-seg.active.ham-settled-current::before { display: none; }
     .ham-seg.ham-activity-track.done.decided { background: var(--panel-strong); color: var(--muted); box-shadow: none; opacity: 1; animation: none; }
+    /* A stalled blocker track (nothing moves; the row waits on a person
+       or a late check) is ACTIVE like any other text-bearing track: the one
+       bright amber fill (hivecommons/hive#16643 — "an active chevron has
+       exactly one fill"). It is still, not pulsing; the person glyph and
+       the tooltip say why.
+       Active-track fill invariant: no rule sets a background on
+       .ham-activity-track.active beyond .ham-seg.active. */
+    .ham-seg.ham-activity-track.active.ham-stalled { animation: none; }
+    .ham-seg.ham-activity-track.active.ham-stalled::before { display: none; }
+    .ham-seg.ham-activity-track.ham-stalled .ham-actor-ico { margin-left: var(--sp-1); flex: 0 0 auto; }
+    /* The CI / Review glyph is a ring of steps (checks / perspectives,
+       hivecommons/hive#16599): filled clockwise from twelve — done in the
+       track's colour, failed red, the rest the muted track. While the
+       track runs the next step pulses. Tokens only; the SVG has no colour. */
+    .ham-ring { width: 14px; height: 14px; }
+    .ham-ring .ham-ring-seg, .ham-ring .ham-ring-track { stroke: var(--line-strong); }
+    .ham-ring .ham-ring-rest { stroke: color-mix(in srgb, currentColor 28%, transparent); }
+    .ham-ring .ham-ring-done { stroke: var(--green); }
+    .ham-ring-fail .ham-ring-done { stroke: var(--status-error); }
+    .ham-ring-live .ham-ring-done { stroke: var(--amber); }
+    .ham-ring-decided .ham-ring-done { stroke: var(--muted); }
+    .ham-ring .ham-ring-failed { stroke: var(--status-error); }
+    .ham-seg.active .ham-ring .ham-ring-done, .ham-seg.active .ham-ring .ham-ring-failed { stroke: var(--surface-0); }
+    .ham-seg.active .ham-ring .ham-ring-rest { stroke: color-mix(in srgb, var(--surface-0) 35%, transparent); }
+    .ham-ring .ham-ring-pulse { stroke: currentColor; animation: ham-ring-step 1.2s ease-in-out infinite; }
+    @keyframes ham-ring-step { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .ham-ring .ham-ring-pulse { animation: none; opacity: 0.7; } }
     /* The count words stay on one line and ellipsize instead of wrapping. */
     .ham-chevron-copy.ham-track-state .ham-ico { vertical-align: -2px; margin-right: 3px; }
     /* A settled verdict is the glyph alone (green passed / approved, red
@@ -683,6 +722,7 @@
     .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
     .merge-banner-head { font-weight: var(--fw-semibold); }
     .merge-banner-head .merge-banner-num { color: var(--amber); font-variant-numeric: tabular-nums; }
+    .merge-banner-head .merge-banner-by { font-weight: 500; }
     .merge-banner-text { margin-top: var(--sp-1); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .merge-banner-links { margin-top: var(--sp-2); display: flex; gap: var(--sp-4); font-size: var(--fs-xs); }
     .merge-banner-links button, .merge-banner-links a { border: 0; padding: 0; background: transparent; color: var(--accent); cursor: pointer; font: inherit; text-decoration: none; }

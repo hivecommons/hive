@@ -2561,6 +2561,12 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	incidents := map[string]bool{}
 	for i := range prs {
 		reported := c.enrichPRCI(ctx, &prs[i])
+		// Unreported checks may be workflow runs waiting on GitHub's
+		// approve-workflows gate (dependabot, forks); only a pending head
+		// pays for the extra listing (hivecommons/hive#16599).
+		if prs[i].CIStatus == "pending" && prs[i].CIActivity != nil {
+			prs[i].CIActivity.WorkflowApproval = c.workflowRunsAwaitingApproval(ctx, prs[i].Repo, prs[i].HeadSHA)
+		}
 		if prs[i].CIStatus == "failure" {
 			prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], incidents)
 		}
@@ -3344,6 +3350,9 @@ const (
 	prowLgtmLabel         = "lgtm"
 	prowLgtmStatusContext = "prow/lgtm"
 	prowStatusDescMaxLen  = 140
+
+	prowLgtmWarningMarker = "<!-- hive-prow-lgtm-status-warning -->"
+	prowWarningTimeout    = 15 * time.Second
 )
 
 // bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
@@ -3379,7 +3388,28 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 			"repo", owner+"/"+repoName, "number", number, "error", err)
 	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
-	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil {
+	// A caller that withdrew has nothing left to warn about; a caller whose
+	// deadline the status call spent still does. The warning gets its own
+	// bounded deadline but keeps following the caller's cancellation, and is
+	// posted once per PR, not once per sweep.
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return fmt.Errorf("Prow status reporting: %w", err)
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), prowWarningTimeout)
+	defer cancel()
+	if ctx.Err() == nil {
+		// Follow only an explicit withdrawal: the caller's deadline running
+		// out mid-warning is exactly the case the live context exists for.
+		defer context.AfterFunc(ctx, func() {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				cancel()
+			}
+		})()
+	}
+	if _, found, ferr := c.findOwnMarkerComment(wctx, owner, repoName, number, prowLgtmWarningMarker); ferr == nil && found {
+		return fmt.Errorf("Prow status reporting: %w", err)
+	}
+	if cerr := c.CreateIssueComment(wctx, owner+"/"+repoName, number, prowLgtmWarningMarker+"\n"+note); cerr != nil {
 		if c.logger != nil {
 			c.logger.Warn("could not post the prow/lgtm status warning comment",
 				"repo", owner+"/"+repoName, "number", number, "error", cerr)

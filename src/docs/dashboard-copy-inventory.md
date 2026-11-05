@@ -73,6 +73,19 @@ The new hover, verbatim (title line omitted):
 | `stageTrackerSelectionTriage` (`tracker-actions.js`) | selection bar lead button / bulk ⋯ menu entry, summary toast | — (no bulk Accept triage; one row at a time) | *Accept triage (4 selected)* / *Accept triage (2 of 4)* with the hint *skips the 2 not waiting on triage*; one toast *Accepted 4 issues* | `TestStageTrackerBulkAcceptTriage` |
 | Settings → Features → Auto-merge → "Merge only on current base" help (`renderGovFeatures`, `config-features.js`) and the Repos-tab override row / repo-card `current-base` chip ([#15335](https://github.com/hivecommons/hive/issues/15335)) | settingHelpMark popover, checkbox label, chip hover | — (new) | 56 (help), 5 (row label), 1 (chip) | `TestCurrentBaseSettingsMarkupNodeGuard` |
 
+
+## Merge train settings (hivecommons/hive#16677)
+
+These controls appear in **Settings → Auto-merge → Merge train**, immediately above Native GitHub merge queue (`renderGovFeatures`, `config-features.js`). Each label includes its YAML hint and a help popover.
+
+| Label | YAML key | Help text |
+|---|---|---|
+| Conflict-aware merge train | `auto_merge.merge_train.enabled` | Default on. Runs one front per overlap group so PRs changing the same files merge in order. False restores independent per-PR evaluation. |
+| Rebase attempts per front | `auto_merge.merge_train.max_rebase_attempts` | How many rebase-resolve requests one PR may make behind one front before it parks at stage/085 for a human decision. Default 2; 0 uses that default. |
+| Stall warning after | `governor.merge_train_stall_warn_s` | Seconds without progress before the Activity Monitor chip reads "Merge queue · stalled". Default 3600 seconds; 0 disables the warning. |
+
+`TestMergeTrainSettingsMarkup` holds the labels, help popovers, YAML hints and placement; `TestMergeTrainSettingsPatchRoundTrip` holds the saved values and audit actions.
+
 ## Totals
 
 | | Before | After |
@@ -102,9 +115,9 @@ old name).
 
 | Builder | Reaches | Before | After | Held by |
 |---|---|---|---|---|
-| `STAGE_TRACKER_TRAIN_STATE_WORD` (`tracker-words.js`) | chevron label, gate pill | `front` → *Next to merge*, `queued-behind` → *In merge queue* | both *Merge queued*; the place tells them apart | `TestStageTrackerMergeTrainStateSlugsNeverLeak` |
-| `stageTrackerTrainWord` | chevron label | *In merge queue · 2 of 6* / *front* (leaked) | *Merge queued · 1st* / *· 2nd* / *· 3rd* … + *· ~4m* countdown | `TestStageTrackerMergeTrainOrdinalWords` |
-| `stageTrackerTrainOrdinalOfN` + `stageTrackerTrainTagSuffix` / `stageTrackerTrainTagTip` | chevron label, gate pill, provisional suffix, chevron hover | *Merge queued · 1st* twice over on a page with two trains (owner: "how are there 2 'merge queued 1st'?") | *Merge queued · 1st of 2*; past one train on the page *· train main.go* (overlap basename, else the head `#N`) ends the word and the hover leads *Train of 2 PRs overlapping main.go; merges after #15567.*; one train → no tag | `TestStageTrackerTrainTagOnTwoTrains` |
+| `STAGE_TRACKER_TRAIN_STATE_WORD` (`tracker-words.js`) | chevron label, gate pill | `front` → *Next to merge*, `queued-behind` → *In merge queue* | both *Queued for merge* (was *Merge queued*; one word with 080 and a recorded approval, #16653); the place tells them apart | `TestStageTrackerMergeTrainStateSlugsNeverLeak` |
+| `stageTrackerTrainWord` | chevron label | *In merge queue · 2 of 6* / *front* (leaked) | *Queued for merge · 1st* / *· 2nd* / *· 3rd* … + *· ~4m* countdown | `TestStageTrackerMergeTrainOrdinalWords` |
+| `stageTrackerTrainOrdinalOfN` + `stageTrackerTrainTagSuffix` / `stageTrackerTrainTagTip` | chevron label, gate pill, provisional suffix, chevron hover | *Merge queued · 1st* twice over on a page with two trains (owner: "how are there 2 'merge queued 1st'?") | *Queued for merge · 1st of 2*; past one train on the page *· train main.go* (overlap basename, else the head `#N`) ends the word and the hover leads *Train of 2 PRs overlapping main.go; merges after #15567.*; one train → no tag | `TestStageTrackerTrainTagOnTwoTrains` |
 | `stageTrackerUnderRepair` → `stageTrackerAnchor` (Go: `stageTrackerTrainUnderRepair` → `stageTrackerItemColumn`) | chevron column | *Fixing · @hivecommons-hive[bot]* lit in the **Merge queue** column over the caption *fell back to Fixing — … — conflicting* (hive's own #15574: the refused merge's `merge-failed` gate still promoted the column) | the column follows the current state: under repair → CI / Review, whatever the stale gate or planner train says; the caption keeps the history | `TestStageTrackerItemColumnRatchet`, `TestStageTrackerFixingAfterMergeFailedColumn`, `stage_tracker_fixing_column.test.js` |
 | `stageTrackerLeftTrainNote` + `STAGE_TRACKER_LEFT_TRAIN_NOTE` (Go: `stageTrackerLeftTrainNote`, `left_train`) | row hover | *merge train · 2 PRs · 1st: #15405* over a row whose chevron read *Fixing* (hive's own #15405, a maintainer requested changes) | the fixing row rides no train (no header, no ordinal, no rail); its hover ends *Merge train: left the merge train while being fixed; rejoins when green*; a train of one is no train | `TestStageTrackerTrainTagOnTwoTrains`, `TestStageTrackerMergeTrainUnderRepairLeaves` |
 | `stageTrackerOrdinal` | chevron, hover, popover | — | `1st 2nd 3rd 4th … 11th 12th 13th 21st 22nd 23rd` | same |

@@ -68,7 +68,7 @@ func TestStageTrackerOperatorApprovalDoesNotHideCurrentReviewChanges(t *testing.
 				if d == nil || d.Effect != decidedEffectNone || d.Stage != 0 || d.CurrentBlocker == "" || d.Head != it.Head {
 					t.Fatalf("approval wrongly outranked current review: %+v", d)
 				}
-				if strings.Contains(d.Text, "merge queue takes it") || !strings.Contains(d.Text, "waiting on @thatguywob") {
+				if strings.Contains(d.Text, "Queued for merge") || !strings.Contains(d.Text, "waiting on @thatguywob") {
 					t.Fatalf("wrong precedence/explanation: %+v", d)
 				}
 				beforeStage, beforeReason := it.Stage, it.Reason

@@ -704,6 +704,25 @@ func webhookIssueDirtyTarget(event string, p webhookEventPayload) (int, bool) {
 	return 0, false
 }
 
+// webhookIssuePullRequestMerged reads the merge instant the `issue` object
+// of an `issues` / `issue_comment` delivery carries for a pull request
+// (`issue.pull_request.merged_at`). A bot's comment on a PR that just
+// merged used to produce a closed-but-not-merged snapshot — the tracker
+// then listed the merged PR in recently_closed and the SPA said "closed",
+// forfeiting the merge celebration (hivecommons/hive#16658).
+func webhookIssuePullRequestMerged(raw *json.RawMessage) bool {
+	if raw == nil || len(*raw) == 0 {
+		return false
+	}
+	var pr struct {
+		MergedAt *time.Time `json:"merged_at"`
+	}
+	if err := json.Unmarshal(*raw, &pr); err != nil {
+		return false
+	}
+	return pr.MergedAt != nil && !pr.MergedAt.IsZero()
+}
+
 // webhookItemHint is the payload's state for the issue or pull request an
 // `issues`, `issue_comment` or `pull_request*` delivery embeds; nil when the
 // event carries neither object.
@@ -723,7 +742,8 @@ func webhookItemHint(event string, p webhookEventPayload) *WebhookItemHint {
 		if p.Issue == nil || p.Issue.Number <= 0 {
 			return nil
 		}
-		h := &WebhookItemHint{Number: p.Issue.Number, IsPR: p.Issue.PullRequest != nil, State: p.Issue.State}
+		h := &WebhookItemHint{Number: p.Issue.Number, IsPR: p.Issue.PullRequest != nil, State: p.Issue.State,
+			Merged: webhookIssuePullRequestMerged(p.Issue.PullRequest)}
 		if p.Issue.UpdatedAt != nil {
 			h.UpdatedAt = *p.Issue.UpdatedAt
 		}

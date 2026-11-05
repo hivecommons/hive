@@ -586,44 +586,70 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 		Body:    "Implements widgets.\n\nHive-Run: acme/widget#44\n",
 		Detail:  stageDetail{DCO: stagelabels.DCONo, DCOTotal: 3, DCOUnsigned: 2},
 	}
-	if !adoptionNeedsDCORehome(obs, false) {
+	if !adoptionNeedsDCORehome(obs, false, false) {
 		t.Fatal("unsigned commits without branch push permission must re-home")
 	}
-	if !adoptionNeedsDCORehome(obs, true) {
+	if !adoptionNeedsDCORehome(obs, true, false) {
 		t.Fatal("unknown unsigned commit ownership must re-home")
 	}
 	obs.Detail.DCOUnsignedHive = 2
-	if !adoptionNeedsDCORehome(obs, true) {
+	if !adoptionNeedsDCORehome(obs, true, false) {
 		t.Fatal("a fork head must re-home even when only hive-authored commits are unsigned: the engine cannot rewrite a fork branch")
 	}
 	obs.Owner, obs.Repo, obs.HeadRepo = "acme", "widget", "acme/widget"
-	if adoptionNeedsDCORehome(obs, true) {
+	if adoptionNeedsDCORehome(obs, true, false) {
 		t.Fatal("branch push permission with only hive-authored unsigned commits on a base-repo head allows in-place repair")
 	}
-	if !adoptionNeedsDCORehome(obs, false) {
+	if !adoptionNeedsDCORehome(obs, false, false) {
 		t.Fatal("hive-authored unsigned commits without branch push permission must still re-home")
 	}
 	inPlace := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace}
-	if adoptedHeadNeedsDCORehome(obs, inPlace, true) {
+	if adoptedHeadNeedsDCORehome(obs, inPlace, true, false) {
 		t.Fatal("already adopted in place with App-owned unsigned commits and push access stays in place")
 	}
-	if !adoptedHeadNeedsDCORepair(obs, inPlace, true) {
+	if !adoptedHeadNeedsDCORepair(obs, inPlace, true, false) {
 		t.Fatal("that head is the in-place repair's job")
 	}
 	obs.HeadRepo = ""
-	if !adoptedHeadNeedsDCORehome(obs, inPlace, true) {
+	if !adoptedHeadNeedsDCORehome(obs, inPlace, true, false) {
 		t.Fatal("already adopted in place on a fork must re-home")
 	}
-	if !adoptedHeadNeedsDCORehome(obs, inPlace, false) {
+	if !adoptedHeadNeedsDCORehome(obs, inPlace, false, false) {
 		t.Fatal("already adopted in place without push access must re-home")
 	}
-	if adoptedHeadNeedsDCORehome(obs, stagelabels.Record{AdoptedHead: "aaa", AdoptedBy: 90, AdoptMode: stagelabels.AdoptModeSupersede}, false) {
+	if adoptedHeadNeedsDCORehome(obs, stagelabels.Record{AdoptedHead: "aaa", AdoptedBy: 90, AdoptMode: stagelabels.AdoptModeSupersede}, false, false) {
 		t.Fatal("a superseded adoption is never re-homed again")
 	}
 	obs.Detail.DCOUnsignedHive = 0
 	obs.Detail.DCOUnsigned = 0
-	if adoptionNeedsDCORehome(obs, false) {
+	if adoptionNeedsDCORehome(obs, false, false) {
 		t.Fatal("signed head does not need DCO re-home")
+	}
+	// A hive-authored PR (hivecommons/hive#16619) is never re-homed for
+	// sign-off: a pushable base-repo head whose unsigned commits are all
+	// the hive's is amended in place; one carrying someone else's unsigned
+	// commit is not signed by the App and waits (hivecommons/hive#16685);
+	// a fork head keeps its PR and waits.
+	own := obs
+	own.Author, own.Detail.DCOUnsigned, own.Detail.DCOUnsignedHive, own.Detail.DCOUnsignedOther = "thatguywob", 2, 2, 0
+	own.Owner, own.Repo, own.HeadRepo = "acme", "widget", "acme/widget"
+	if got := adoptionDCORepairMode(own, true, true); got != stagelabels.AdoptModeInPlace {
+		t.Fatalf("hive-authored base-repo head, all unsigned commits the hive's: mode=%q, want in-place amend", got)
+	}
+	own.Detail.DCOUnsignedHive, own.Detail.DCOUnsignedOther = 1, 1
+	if got := adoptionDCORepairMode(own, true, true); got != "" {
+		t.Fatalf("hive-authored base-repo head with a collaborator's unsigned commit: mode=%q, want wait for a person", got)
+	}
+	if adoptionNeedsDCORehome(own, true, true) || adoptedHeadNeedsDCORepair(own, inPlace, true, true) || adoptedHeadNeedsDCORehome(own, inPlace, true, true) {
+		t.Fatal("a collaborator's unsigned commit on a hive-authored PR must be neither signed by the App nor superseded")
+	}
+	own.Detail.DCOUnsignedHive, own.Detail.DCOUnsignedOther = 0, 2
+	own.HeadRepo = "thatguywob/widget"
+	if got := adoptionDCORepairMode(own, false, true); got != "" {
+		t.Fatalf("hive-authored fork head: mode=%q, want no re-home", got)
+	}
+	if adoptionNeedsDCORehome(own, false, true) || adoptedHeadNeedsDCORehome(own, inPlace, false, true) {
+		t.Fatal("a hive-authored PR must never be superseded for sign-off")
 	}
 	obs.Detail.DCOUnsigned = 2
 	body := AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true, "")

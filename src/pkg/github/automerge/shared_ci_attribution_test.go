@@ -42,10 +42,10 @@ func TestStageDCONormalizesCachedBotAttributionWithoutChangingSignoffs(t *testin
 	e, _, store := newStageEngine(t, srv.URL, &contributorLaneClock{at: time.Now()})
 	key := stageKey("acme", "widget", 42)
 	store.Observe(key, stagelabels.Fixing, stagelabels.LaneReasonHiveSignoffAttribution)
-	store.NoteDCO(key, "aaa", 3, 0, 0, 1)
+	store.NoteDCO(key, "aaa", 3, 0, 0, 1, true)
 	got, err := e.stageDCO(context.Background(), store, key, stageObservation{
 		Owner: "acme", Repo: "widget", Number: 42, HeadSHA: "aaa", Author: "dependabot[bot]",
-	})
+	}, StageLabelPolicy{})
 	if err != nil || got.total != 3 || got.unsigned != 0 || got.squashUnsafeHive != 0 {
 		t.Fatalf("cached bot attribution: %+v, %v", got, err)
 	}

@@ -338,3 +338,33 @@ func TestGraphQLPRBatchRefetchClearsStaleRepoEntries(t *testing.T) {
 		t.Fatalf("GraphQL calls = %d, want 2 (none while disabled)", got)
 	}
 }
+
+// hivecommons/hive#16615: a head with more contexts than one GraphQL page
+// (70 matrix jobs + statuses) was cached as a partial listing, so the
+// required `test` aggregate fell off the page and the dashboard reported
+// `CI 7/11 · required check "test" hasn't reported` on an all-green head.
+func TestGraphQLCheckRunsTruncatedContextsReportsNotOK(t *testing.T) {
+	node := `{"number":16615,"headRefOid":"d88928e","commits":{"nodes":[{"commit":{"oid":"d88928e","statusCheckRollup":{"state":"SUCCESS","contexts":{"totalCount":73,"nodes":[` +
+		`{"__typename":"CheckRun","id":"CR_1","databaseId":1,"name":"test (agent 1/5)","status":"COMPLETED","conclusion":"SUCCESS"},` +
+		`{"__typename":"CheckRun","id":"CR_2","databaseId":2,"name":"coverage","status":"COMPLETED","conclusion":"SUCCESS"}` +
+		`]}}}}]}}`
+	n := decodeGQLPRNode(t, node)
+	if !graphQLContextsTruncated(n) {
+		t.Fatalf("totalCount 73 with 2 nodes should be truncated")
+	}
+	if checks, ok := graphQLCheckRuns(n); ok || checks != nil {
+		t.Fatalf("truncated rollup: got ok=%v checks=%d, want ok=false nil so enrichPRCI falls back to paginated REST", ok, len(checks))
+	}
+
+	complete := decodeGQLPRNode(t, strings.Replace(node, `"totalCount":73`, `"totalCount":2`, 1))
+	if graphQLContextsTruncated(complete) {
+		t.Fatalf("totalCount == len(nodes) must not be truncated")
+	}
+	if checks, ok := graphQLCheckRuns(complete); !ok || len(checks) != 2 {
+		t.Fatalf("complete rollup: got ok=%v checks=%d, want ok=true 2", ok, len(checks))
+	}
+	legacy := decodeGQLPRNode(t, strings.Replace(node, `"totalCount":73,`, ``, 1))
+	if checks, ok := graphQLCheckRuns(legacy); !ok || len(checks) != 2 {
+		t.Fatalf("rollup without totalCount (older fixtures): got ok=%v checks=%d, want ok=true 2", ok, len(checks))
+	}
+}

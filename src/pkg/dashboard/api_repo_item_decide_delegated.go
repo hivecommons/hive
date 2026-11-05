@@ -678,8 +678,19 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		in.CIGreen, in.CIPending = ci.green, ci.pending
 		s.gatherDelegatedRecordedPark(repoFull, number, pr.GetHead().GetSHA(), &in)
 		in.SentinelReason = s.delegatedSentinelReason(repoFull, number, pr.GetHead().GetSHA(), req.SentinelReason)
-		if files, _, err := api.PullRequests.ListFiles(ctx, owner, repoName, number, &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}); err == nil && len(files) > 0 {
-			in.LowRiskPaths = true
+		var questionFiles []review.DecisionQuestionFile
+		opt := &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}
+		for {
+			files, resp, err := api.PullRequests.ListFiles(ctx, owner, repoName, number, opt)
+			if err != nil {
+				if in.Question != "" {
+					return in, fmt.Errorf("reading files to classify reviewer question for %s#%d: %w", repoFull, number, err)
+				}
+				break
+			}
+			if opt.Page == 0 && len(files) > 0 {
+				in.LowRiskPaths = true
+			}
 			for _, f := range files {
 				if !delegatedLowRiskPath(f.GetFilename()) {
 					in.LowRiskPaths = false
@@ -687,8 +698,21 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 				if delegatedWorkflowPath(f.GetFilename()) {
 					in.WorkflowPath = true
 				}
+				questionFiles = append(questionFiles, review.DecisionQuestionFile{Path: f.GetFilename(), Patch: f.GetPatch()})
+				if prev := f.GetPreviousFilename(); prev != "" && prev != f.GetFilename() {
+					questionFiles = append(questionFiles, review.DecisionQuestionFile{Path: prev})
+				}
 			}
+			if resp == nil || resp.NextPage == 0 {
+				break
+			}
+			opt.Page = resp.NextPage
 		}
+		class, _ := review.ClassifyDecisionQuestion(review.DecisionQuestionInput{
+			Question: in.Question, HiveAuthored: in.HiveAuthored || in.AdoptedByHive,
+			CIGreen: in.CIGreen, Files: questionFiles,
+		})
+		in.SignOffQuestion = class == review.DecisionQuestionPolicySignOff
 		if !in.TrustedAuthor && author != "" {
 			if perm, _, err := api.Repositories.GetPermissionLevel(ctx, owner, repoName, author); err == nil {
 				switch strings.ToLower(perm.GetPermission()) {
@@ -1005,7 +1029,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 				if _, err := client.RecordOperatorPullRequestApproval(ctx, repoFull, number, user); err != nil {
 					return notes, fmt.Errorf("approving PR: %w", err)
 				}
-				notes = append(notes, "`/lgtm` + `/approve` recorded; hive's merge sweep merges it once CI is green and the head has soaked")
+				notes = append(notes, "`/lgtm` + `/approve` recorded; hive merges it on its next merge pass once CI is green and the head has soaked")
 			}
 		case delegatedecision.ActionLabelsAdd:
 			for _, l := range a.Labels {

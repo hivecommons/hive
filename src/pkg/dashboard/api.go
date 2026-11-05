@@ -208,6 +208,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/stat-sources", s.handleStatSources)
 
 	s.mux.HandleFunc("GET /api/config/governor", s.handleGovernorConfigGet)
+	s.mux.HandleFunc("PATCH /api/config/governor", s.handleGovernorMergeTrainPatch)
 	s.mux.HandleFunc("GET /api/config/dashboard", s.handleDashboardSettingsGet)
 	s.mux.HandleFunc("PUT /api/config/dashboard", s.handleDashboardSettingsPut)
 	s.mux.HandleFunc("PUT /api/config/governor/sensing", s.handleGovernorSensing)
@@ -249,6 +250,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// lives on the governor Features tab — see api_config_automerge.go.
 	s.mux.HandleFunc("GET /api/config/auto-merge", s.handleAutoMergeGet)
 	s.mux.HandleFunc("PUT /api/config/auto-merge", s.handleAutoMergePut)
+	s.mux.HandleFunc("PATCH /api/config/auto-merge", s.handleAutoMergePut)
 	// convergence is a top-level Config field (not GovernorConfig); its UI
 	// lives on the governor Features tab — see api_config_convergence.go
 	// (#4263 off/shadow/enforce rollout). The soak endpoint is the

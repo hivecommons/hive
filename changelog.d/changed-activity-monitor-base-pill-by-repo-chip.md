@@ -1,0 +1,1 @@
+- Activity Monitor rows now draw a PR's base-branch pill (`v5`, `main`) right after the repo chip at the head of the row, before the issue number, instead of in the right-hand modifier cluster; the pill names its PR on hover ("PR #N targets v5") and rows with no linked PR show none. ([#16620](https://github.com/hivecommons/hive/issues/16620))

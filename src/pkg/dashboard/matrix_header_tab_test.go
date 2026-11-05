@@ -10,7 +10,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-func TestDashboardMatrixHeaderTabHiddenByDefault(t *testing.T) {
+func TestDashboardCodeActivityHeaderTabHiddenByDefault(t *testing.T) {
 	raw, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
 		t.Fatalf("reading embedded static/index.html: %v", err)
@@ -18,17 +18,27 @@ func TestDashboardMatrixHeaderTabHiddenByDefault(t *testing.T) {
 	html := string(raw)
 	start := strings.Index(html, `id="oc-matrix-tab"`)
 	if start < 0 {
-		t.Fatal("static/index.html missing the Matrix header tab")
+		t.Fatal("static/index.html missing the Code activity header tab")
 	}
 	open := html[strings.LastIndex(html[:start], "<a "):]
 	open = open[:strings.Index(open, ">")]
-	for _, want := range []string{`href="?kiosk=1&amp;view=matrix"`, ` hidden`, `nav-chip`} {
+	for _, want := range []string{`href="?kiosk=1&amp;view=reader"`, `target="_blank"`, `rel="noopener"`, ` hidden`, `nav-chip`} {
 		if !strings.Contains(open, want) {
-			t.Fatalf("Matrix header tab %q missing %q", open, want)
+			t.Fatalf("Code activity header tab %q missing %q", open, want)
 		}
 	}
+	if !strings.Contains(html[start:], `>Code activity</span></a>`) {
+		t.Fatal("toolbar entry must be labelled Code activity")
+	}
+	// One entry: the legacy oc-matrix-tab id is retained, with no side-by-side tab.
+	if strings.Count(html, `id="oc-matrix-tab"`) != 1 || strings.Contains(html, `id="oc-reader-tab"`) {
+		t.Fatal("toolbar must carry exactly one Code activity entry")
+	}
+	if strings.Contains(html, "view=matrix\"") {
+		t.Fatal("toolbar still links the retired Matrix view")
+	}
 	if !strings.Contains(html, "data.matrixEnabled") {
-		t.Fatal("static/index.html never toggles the Matrix tab from the status payload")
+		t.Fatal("static/index.html never toggles the Code activity tab from the status payload")
 	}
 }
 
