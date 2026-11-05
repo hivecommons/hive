@@ -295,6 +295,11 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.AgentsGitHubAPIHourlyCap = cap
 	c.AgentsGitHubAPIHourlyCapSet = capSet
 	c.AgentsSessionRecycle = recycle
+	if governor := mappingValueNode(&node, "governor"); governor != nil {
+		if stall := mappingValueNode(governor, "merge_train_stall_warn_s"); stall != nil && stall.Tag != "!!null" {
+			c.Governor.mergeTrainStallWarnSet = true
+		}
+	}
 	return nil
 }
 
@@ -1597,11 +1602,12 @@ type GovernorConfig struct {
 	// MergeTrainStallWarnS is how long, in seconds, a merge train's head
 	// may sit without progressing before the Activity Monitor marks the
 	// train stalled on the queued rows' chips and the dashboard writes one
-	// activity-log warning per hour (default DefaultMergeTrainStallWarnS,
-	// hivecommons/hive#15395).
-	MergeTrainStallWarnS       int `yaml:"merge_train_stall_warn_s,omitempty"`
-	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	// activity-log warning per hour (default DefaultMergeTrainStallWarnS;
+	// explicit zero disables warnings; hivecommons/hive#15395).
+	MergeTrainStallWarnS       int  `yaml:"merge_train_stall_warn_s,omitempty"`
+	mergeTrainStallWarnSet     bool `yaml:"-" json:"-"`
+	ConserveIntervalMultiplier int  `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int  `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -5272,10 +5278,16 @@ func (c *Config) CIFailureKickCooldown() time.Duration {
 	return DefaultCIFailureKickCooldownS * time.Second
 }
 
+// SetMergeTrainStallWarnS records an explicit value, including zero to disable warnings.
+func (c *Config) SetMergeTrainStallWarnS(seconds int) {
+	c.Governor.MergeTrainStallWarnS = seconds
+	c.Governor.mergeTrainStallWarnSet = true
+}
+
 // MergeTrainStallWarn is the effective governor.merge_train_stall_warn_s as
-// a duration (default one hour).
+// a duration (default one hour; explicit zero disables warnings).
 func (c *Config) MergeTrainStallWarn() time.Duration {
-	if c != nil && c.Governor.MergeTrainStallWarnS > 0 {
+	if c != nil && (c.Governor.mergeTrainStallWarnSet || c.Governor.MergeTrainStallWarnS > 0) {
 		return time.Duration(c.Governor.MergeTrainStallWarnS) * time.Second
 	}
 	return DefaultMergeTrainStallWarnS * time.Second
@@ -7168,6 +7180,13 @@ func (c Config) MarshalYAML() (interface{}, error) {
 	root := mappingNode(&node)
 	if root == nil {
 		return out, nil
+	}
+	if c.Governor.mergeTrainStallWarnSet && c.Governor.MergeTrainStallWarnS == 0 {
+		if governor := mappingValueNode(root, "governor"); governor != nil {
+			governor.Content = append(governor.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "merge_train_stall_warn_s"},
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "0"})
+		}
 	}
 	agents := mappingValueNode(root, "agents")
 	if agents == nil {

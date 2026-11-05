@@ -73,6 +73,7 @@ var auditSensitiveActions = map[string]bool{
 	"config_convergence":                    true,
 	"config_escalation":                     true,
 	"config_github":                         true,
+	"config_governor":                       true,
 	"config_governor_advisory":              true,
 	"config_governor_attribution":           true,
 	"config_governor_backup_key":            true,

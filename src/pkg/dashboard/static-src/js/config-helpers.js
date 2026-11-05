@@ -7,6 +7,11 @@
     function toggleConfigSwitch(el, section, key) {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
+      if (section === 'merge-train') {
+        el.setAttribute('aria-checked', String(isOn));
+        markDirtyMergeTrain(key, isOn);
+        return;
+      }
       if (section === 'native-queue') {
         el.setAttribute('aria-checked', String(isOn));
         markDirtyNativeQueue(key, isOn);
@@ -14,6 +19,11 @@
       }
       markDirty(section, key, isOn);
       if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();
+    }
+
+    function markDirtyMergeTrain(key, value) {
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).merge_train || {};
+      markDirty('auto-merge', 'merge_train', Object.assign({}, staged, { [key]: value }));
     }
 
     function markDirtyNativeQueue(key, value) {
