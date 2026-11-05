@@ -1055,6 +1055,23 @@ func TestStoreNoteDCOAppOnlySplitNotMarked(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#16710: a new head cached App-only must clear a stale
+// hive-identity marker; a same-head App-only refresh must keep it.
+func TestStoreNoteDCONewHeadClearsHiveIdentityMarker(t *testing.T) {
+	s := NewStore("", nil)
+	key := Key("acme/widget", 10)
+	s.items[key] = Record{DCOHead: "a", DCOTotal: 2, DCOUnsigned: 1, DCOUnsignedOther: 1, DCOSquashUnsafeKnown: true}
+	s.NoteDCO(key, "a", 2, 1, 0, 0, true)
+	s.NoteDCO(key, "a", 2, 1, 0, 0, false)
+	if r, _ := s.Get(key); !r.DCOSplitHiveIdentity {
+		t.Fatalf("same-head App-only refresh cleared the marker: %+v", r)
+	}
+	s.NoteDCO(key, "b", 2, 1, 1, 0, false)
+	if r, _ := s.Get(key); r.DCOSplitHiveIdentity || r.DCOHead != "b" {
+		t.Fatalf("stale marker survived a new App-only head: %+v", r)
+	}
+}
+
 func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })
