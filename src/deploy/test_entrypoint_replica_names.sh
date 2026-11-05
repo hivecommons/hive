@@ -29,6 +29,15 @@ fi
 # Intentionally execute the extracted shipped helper.
 . "$HELPERS"
 unset HIVE_LEVEL
+export HIVE_STATE_FILE="$WORK/hive-state.json"
+export HIVE_PACK_DIRS="$WORK/packs"
+mkdir -p "$HIVE_PACK_DIRS"
+cat > "$HIVE_PACK_DIRS/level-5.yaml" <<'YAML'
+level: 5
+agents:
+  - name: strategist
+  - name: architect
+YAML
 
 expect() {
   local desc="$1" want="$2" cfg="$WORK/hive.yaml" got
@@ -140,6 +149,32 @@ review:
 YAML
 
 expect "an empty config prints nothing" "" <<'YAML'
+YAML
+
+# #16803: the runtime applies the ACMM pack from the config's acmm_level or the
+# persisted level (planACMMBoot), not only HIVE_LEVEL, so pack agents need a
+# pre-created token cache in all three cases.
+expect "no ACMM level adds no pack agents" "scanner" <<'YAML'
+agents:
+  scanner: {backend: claude}
+YAML
+
+expect "config acmm_level adds the pack agents" "architect scanner strategist" <<'YAML'
+acmm_level: 5
+agents:
+  scanner: {backend: claude}
+YAML
+
+printf '{"acmm_level": 5}\n' > "$HIVE_STATE_FILE"
+expect "persisted acmm_level adds the pack agents" "architect scanner strategist" <<'YAML'
+agents:
+  scanner: {backend: claude}
+YAML
+rm -f "$HIVE_STATE_FILE"
+
+HIVE_LEVEL=5 expect "HIVE_LEVEL adds the pack agents" "architect scanner strategist" <<'YAML'
+agents:
+  scanner: {backend: claude}
 YAML
 
 echo "Results: $PASS passed, $FAIL failed"
