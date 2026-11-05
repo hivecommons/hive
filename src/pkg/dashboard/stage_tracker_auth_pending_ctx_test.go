@@ -69,8 +69,14 @@ assert.ok(pop.indexOf('data-ham-act="decide:queue-merge"') >= 0, pop);
 // The row pill and the selection bar follow the same actx.
 const pill = stageTrackerLeadPillHtml(mergePR, stageTrackerFlatActions(stageTrackerRowActions(mergePR, actx))['decide:queue-merge']);
 assert.ok(pill.indexOf('aria-disabled') < 0, pill);
+// ("Release hold" is greyed as not applicable — the row is not held — which
+// is the row's state, not the viewer's; the role-gated chips are live.)
 const bar = stageTrackerSelBarHtml([mergePR], stageTrackerSelectionActions([mergePR], () => actx));
-assert.ok(bar.indexOf('aria-disabled') < 0, bar);
+assert.ok(bar.indexOf(STAGE_TRACKER_WHY_ROLE) < 0 && bar.indexOf(STAGE_TRACKER_WHY_WRITE) < 0, bar);
+for (const id of ['decide:delegate', 'needs-human', 'hold']) {
+  const chip = bar.match(new RegExp('<button[^>]*data-arg0="' + id + '"[^>]*>'));
+  assert.ok(chip && chip[0].indexOf('aria-disabled') < 0, id + ' chip: ' + (chip ? chip[0] : 'missing'));
+}
 
 // Auth lands as a merger: the actx is real, the pills stay enabled, and the
 // tracker is repainted exactly once for the change.
