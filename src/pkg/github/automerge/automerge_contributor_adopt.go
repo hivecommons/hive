@@ -1977,9 +1977,8 @@ func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.S
 		return 0, nil
 	}
 	if prev.HivePushedHead(obs.HeadSHA) {
-		store.MarkAdoptedHead(key, obs.HeadSHA)
 		c.info("stage labels: adopted PR advanced by recorded hive push", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
-		return 0, nil
+		return c.checkAdoptedPushIntent(ctx, store, key, obs, prev)
 	}
 	app := c.transport.AppBotLogin()
 	commit, _, err := c.gh.Repositories.GetCommit(ctx, obs.Owner, obs.Repo, obs.HeadSHA, nil)
@@ -1991,9 +1990,8 @@ func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.S
 	}
 	if commitByApp(commit, app) {
 		store.MarkHivePushedHead(key, obs.HeadSHA)
-		store.MarkAdoptedHead(key, obs.HeadSHA)
 		c.info("stage labels: adopted PR advanced by the hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "pusher", commitIdentity(commit))
-		return 0, nil
+		return c.checkAdoptedPushIntent(ctx, store, key, obs, prev)
 	}
 	if !policy.AdoptionStrictAttribution {
 		store.MarkAdoptedHead(key, obs.HeadSHA)
@@ -2309,7 +2307,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 			n, err := c.postAdoptionEscalationNote(ctx, store, key, obs, adoptionWorkflowRefusedReason, AdoptionWorkflowRefusedComment(obs), "stage labels: workflow-path refusal note failed")
 			return esc, n, err
 		}
-		if rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionChildClosedTwice || rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionCopyFailed {
+		if rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionChildClosedTwice || rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionCopyFailed || rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionFixerReverts {
 			return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
 		}
 		stalled := ""

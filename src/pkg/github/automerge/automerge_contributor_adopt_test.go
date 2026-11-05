@@ -36,7 +36,11 @@ type adoptAPI struct {
 	// compareFiles are the base-side files served by GET compare/head...base;
 	// failCompare makes it answer 500.
 	compareFiles []string
-	failCompare  bool
+	// comparePatches, when set for a head, are the files (filename, status,
+	// patch) GET compare/<base>...<head> serves for it: the PR's diff the
+	// intent check reads (automerge_adoption_intent.go).
+	comparePatches map[string][]map[string]string
+	failCompare    bool
 	// prFiles are the files served by GET pulls/n/files (the adopted PR's
 	// diff); failPRFiles makes it answer 500.
 	prFiles     []map[string]any
@@ -272,6 +276,9 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		files := []map[string]string{}
 		for _, f := range a.compareFiles {
 			files = append(files, map[string]string{"filename": f})
+		}
+		if _, head, ok := strings.Cut(strings.TrimPrefix(path, "/repos/acme/widget/compare/"), "..."); ok && a.comparePatches[head] != nil {
+			files = a.comparePatches[head]
 		}
 		payload := map[string]any{"files": files, "behind_by": a.compareBehind}
 		if a.compareBase != "" {

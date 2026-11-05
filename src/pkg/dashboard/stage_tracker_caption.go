@@ -354,6 +354,8 @@ func humanizeStageReason(reason string) string {
 		return "the hive's copies of this PR were closed without merging twice within an hour"
 	case stagelabels.LaneReasonAdoptionCopyFailed:
 		return "the hive's copy of this PR failed and this PR was reopened"
+	case stagelabels.LaneReasonAdoptionFixerReverts:
+		return "fixing CI would undo this PR's change: the hive's push removed most of what the PR changes"
 	case "held":
 		return "held by a hold label"
 	case "label:needs-rebase":

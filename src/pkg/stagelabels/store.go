@@ -2240,6 +2240,14 @@ const AdoptionReopenWindow = 24 * time.Hour
 // across two heads, or could not be pushed: a person must decide.
 const LaneReasonAdoptionCopyFailed = "adoption-copy-failed"
 
+// LaneReasonAdoptionFixerReverts is the 085 reason for an in-place adopted
+// PR whose hive push undid most of the PR's own change: the net diff against
+// the base kept less than half of the lines the PR changed before the push
+// (projectbluefin/utah#1091, where the fixer re-added the 25 triage entries
+// the PR removed and announced a merge). Fixing CI that way would undo the
+// PR, so the author or a maintainer decides. It holds until the head moves.
+const LaneReasonAdoptionFixerReverts = "adoption-fixer-reverts-pr"
+
 // MarkSupersededClosedFirst records that the original was closed as soon
 // as superseding PR `by` existed (close-first supersession). The copy is
 // still polled; see CloseFirstPollDue. open is true when GitHub refused

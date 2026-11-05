@@ -1,9 +1,11 @@
 package github
 
 import (
+	"context"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Agent status notes the policies tell an agent to leave as a PR/issue
@@ -39,4 +41,43 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// Awaiting-CI notes on an in-place adopted PR whose head the hive itself
+// pushed (projectbluefin/utah#1091): "sweep will merge when green" is only
+// true once the stage pass has checked that the push keeps the PR's own
+// change (automerge checkAdoptedPushIntent). Until then the note says the
+// check is pending; after a refusal it says the sweep will not merge.
+const (
+	awaitingCIIntentPendingNote = "hive/awaiting-ci: CI pending — the hive first checks that this push keeps the PR's own change; the sweep merges only after that check passes."
+	awaitingCIIntentRefusedNote = "hive/awaiting-ci: CI pending, but the sweep will not merge this head: the hive's push undoes this PR's own change (see the hive's note on this PR)."
+)
+
+// adoptedAwaitingCINote rewrites an awaiting-ci note on an in-place adopted
+// PR whose current head the adoption record has not taken yet (its intent
+// check is pending) or has refused. Any other body is returned unchanged; an
+// unreadable PR keeps the agent's text.
+func (c *Client) adoptedAwaitingCINote(ctx context.Context, repo string, number int, body string) string {
+	if relayStatusNoteKey(body) != prstatus.KeyAgentNotePrefix+agentNoteAwaitingCI {
+		return body
+	}
+	owner, name := c.splitRepo(repo)
+	rec, ok := stagelabels.Shared().Get(stagelabels.Key(owner+"/"+name, number))
+	if !ok || !rec.AdoptedInPlace() {
+		return body
+	}
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	if err != nil {
+		return body
+	}
+	head := pr.GetHead().GetSHA()
+	switch {
+	case head == "":
+		return body
+	case rec.AdoptionEscalated(head) && rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionFixerReverts:
+		return awaitingCIIntentRefusedNote
+	case head != rec.AdoptedHead && rec.YieldedHead != head:
+		return awaitingCIIntentPendingNote
+	}
+	return body
 }

@@ -113,6 +113,8 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Question = "The hive's copies of this PR were closed without merging twice within an hour, so the hive stopped opening copies. Reopen the last copy (#" + strconv.Itoa(it.AdoptedBy) + "), give direction, or close it?"
 	case rebaseFailedTwice:
 		d.Question = "The hive adopted this PR but its fixer could not resolve the conflicts with the base in two attempts. Adopt the commits into a fresh branch, give direction, or close it as superseded?"
+	case lower == stagelabels.LaneReasonAdoptionFixerReverts:
+		d.Question = "The hive adopted this PR, but the commit it pushed to fix CI undoes most of the PR's own change, so the hive will not merge it. Wait for what the PR depends on, revert the hive's commit, give direction, or close it?"
 	case lower == stagelabels.LaneReasonAdoptionCopyFailed:
 		d.Question = "The hive's copy of this PR (#" + strconv.Itoa(it.AdoptedBy) + ") failed, so this PR was reopened. Ask the hive to supersede it again, give direction, or close it?"
 	case adoptionStalled:

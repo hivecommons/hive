@@ -1038,7 +1038,20 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      admits it under the hive's own authority
      (`contributor-lane:adopted-by-hive`, `governor.labels.stage.adoption.auto_merge`,
      default `true`) without the original author's trust tier, so 074 moves
-     to 095/097 and merges instead of parking on a maintainer `/lgtm`. A later head keeps that ownership
+     to 095/097 and merges instead of parking on a maintainer `/lgtm`.
+     Each hive push is first checked against the PR's own change
+     (`automerge_adoption_intent.go`): the PR's diff against its base
+     (three-dot, so a merge of the base is not counted) must still carry at
+     least half of the lines it changed before the push. A push that undoes
+     more is refused: the PR goes to `stage/085-needs-decision` with reason
+     `adoption-fixer-reverts-pr` and one "Fixing CI would undo this PR's
+     change" note, the contributor lane will not merge that head, and the
+     next push re-checks (projectbluefin/utah#1091: the fixer re-added the 25
+     entries the PR removed). Until the check has passed, the lane refuses
+     the head as `contributor-lane:adoption-intent-pending` and the relay
+     rewrites an agent's `hive/awaiting-ci: … sweep will merge when green`
+     note on it to say the check comes first. A diff of 300 files or more is
+     not judged. A later head keeps that ownership
      only when the commit's GitHub-linked author/committer is the App bot
      (the stage store remembers SHAs that already passed that check; it is
      not a separate evidence source)
