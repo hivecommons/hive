@@ -55,8 +55,8 @@ advisory only and never changes the applied ACMM level
 It recommends at most one level at a time through `levelStep = 1`
 (`src/pkg/acmmadvisor/acmmadvisor.go:38`) and computes the next target as
 `level + levelStep` (`src/pkg/acmmadvisor/acmmadvisor.go:220`). The dashboard
-wires the same signal path to `GET /api/acmm-recommendation`
-(`src/pkg/dashboard/api.go:252`) and keeps human approval on level changes via
+[registers](../../pkg/dashboard/api.go) `GET /api/acmm-recommendation` with
+`handleACMMRecommendation` and keeps human approval on level changes via
 `handlePackSetLevel` (`src/pkg/dashboard/api_packs.go:751`).
 
 There is also a current per-repo checkout-root mechanism, but not the exact
