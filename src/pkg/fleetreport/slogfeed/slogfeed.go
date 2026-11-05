@@ -254,15 +254,17 @@ func automergeMergeGuardSkip(r slog.Record) bool {
 	return reason == "base-refresh:merge-guard" && strings.Contains(err, "destination merge already in progress")
 }
 
-// failClosedStatus500 reports whether r is one of the two gates that fail
-// closed when GitHub answers the combined-status read with a 500: the
-// merge-eligible lane gate and the trusted-author automerge sweep skip. The PR
-// is retried next tick, so the transient 5xx is expected behaviour
-// (hivecommons/hive#15785, #15786). A 500 elsewhere stays reportable.
+// failClosedStatus500 reports whether r is one of the callers that fail closed
+// when GitHub answers the combined-status read with a 500: the merge-eligible
+// lane gate, the trusted-author automerge sweep skip and the stage-label check
+// digest. The PR is retried next tick, so the transient 5xx is expected
+// behaviour (hivecommons/hive#15785, #15786, #16778). A 500 elsewhere stays
+// reportable.
 func failClosedStatus500(r slog.Record) bool {
 	switch strings.TrimSpace(r.Message) {
 	case "merge-eligible lane gate could not evaluate PR; leaving it listed",
-		"trusted-author automerge sweep skipped PR":
+		"trusted-author automerge sweep skipped PR",
+		"stage labels: check digest failed":
 	default:
 		return false
 	}
