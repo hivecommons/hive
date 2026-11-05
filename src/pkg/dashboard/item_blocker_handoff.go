@@ -48,7 +48,7 @@ func (s *Server) executeWorkflowsHandoff(ctx context.Context, repo string, numbe
 			}
 		}
 		if !alreadyRouted {
-			if rollbackErr := gh.RemoveLabel(ctx, repo, number, ghpkg.WorkflowsLaneLabel); rollbackErr != nil {
+			if rollbackErr := gh.RemoveLabel(ctx, repo, number, ghpkg.WorkflowsLaneLabel); rollbackErr != nil { // writeback:solicited rollback of dashboard handoff
 				return RowActionResult{}, fmt.Errorf("recording workflows handoff: %w; removing routing label: %v", err, rollbackErr)
 			}
 		}

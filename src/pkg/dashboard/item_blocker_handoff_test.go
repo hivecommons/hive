@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"net/http"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -88,8 +89,13 @@ func TestWorkflowsHandoffRespectsHoldAndRollsBackFailure(t *testing.T) {
 		s, mock := setupWorkflowsHandoff(t)
 		mock.commentError = http.StatusForbidden
 		w := postBlockerAction(t, s, "handoff", "writer")
-		if w.Code != http.StatusBadGateway || !strings.Contains(strings.Join(mock.removed, ","), ghpkg.WorkflowsLaneLabel) {
+		if w.Code != http.StatusBadGateway || !strings.Contains(strings.Join(mock.removed, ","), path.Base(ghpkg.WorkflowsLaneLabel)) {
 			t.Fatalf("failure: %d removed=%v", w.Code, mock.removed)
+		}
+		for _, label := range []string{"needs-decision", "stage/045-needs-decision"} {
+			if !strings.Contains(strings.Join(mock.added, ","), label) {
+				t.Fatalf("park not restored: labels=%v", mock.added)
+			}
 		}
 		if stageTrackerBlockerFor("testorg/testrepo", 7) == nil {
 			t.Fatal("failure cleared blocker")
