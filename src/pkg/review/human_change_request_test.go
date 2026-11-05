@@ -324,3 +324,75 @@ func TestHumanChangeRequestPromptSectionCarriesEveryDecisionLine(t *testing.T) {
 		t.Fatal("answer leaked onto another head")
 	}
 }
+
+// Danathar/dns-failover#155: on a hive without review.require_approval the
+// planner returned before reading any answer, so a `/hive decision
+// <instruction>` moved the PR to 070-fixing and no agent was told. With
+// AnsweredHeadsOnly the answered head gets its fix kick exactly as the full
+// planner would give it, nothing else is planned, and every other PR's state
+// is left as loaded.
+func TestPlanDispatchAnsweredHeadsOnlyWhileReviewIsOff(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 33, 0, 0, time.UTC)
+	answered := liveCasePR()
+	req := liveCaseRequest()
+	answered.HumanChangeRequest = &req
+	unanswered := liveCasePR()
+	unanswered.Number, unanswered.HeadSHA = liveCaseNumber+1, "0ther"
+	other := PendingReview{Repo: liveCaseRepo, Number: 9001, HeadSHA: "abc", Perspective: PerspectiveSecurity, Agent: DefaultFixerAgent, Dispatched: now.Add(-time.Hour)}
+	otherHold := HumanReviewHold{Repo: liveCaseRepo, Number: 9002, HeadSHA: "def", Reason: "review fix cap reached (6/6)"}
+	state := DispatchState{
+		Pending: []PendingReview{other},
+		Human:   []HumanReviewHold{otherHold, {Repo: liveCaseRepo, Number: liveCaseNumber, HeadSHA: liveCaseHead, Reason: "reviewer verdict requires_human"}},
+	}
+	for _, off := range []DispatchOptions{{RequireApproval: false, FanOut: true}, {RequireApproval: true, FanOut: false}} {
+		opts := humanRequestOpts()
+		opts.RequireApproval, opts.FanOut, opts.Now = off.RequireApproval, off.FanOut, now
+
+		// Without the mode nothing is planned (the old behaviour).
+		if plan := PlanDispatch([]PullRequest{answered, unanswered}, Artifact{Items: []Aggregate{liveCaseAggregate()}}, state, opts); len(plan.FixKicks)+len(plan.ReviewKicks) != 0 {
+			t.Fatalf("require_approval=%t fan_out=%t without AnsweredHeadsOnly planned %+v", off.RequireApproval, off.FanOut, plan)
+		}
+
+		opts.AnsweredHeadsOnly = true
+		plan := PlanDispatch([]PullRequest{answered, unanswered}, Artifact{Items: []Aggregate{liveCaseAggregate()}}, state, opts)
+		if len(plan.FixKicks) != 1 || plan.FixKicks[0].Number != liveCaseNumber || plan.FixKicks[0].HeadSHA != liveCaseHead || !strings.Contains(plan.FixKicks[0].Message, "> "+liveCaseBody) {
+			t.Fatalf("fix kicks = %+v, want one for the answered head quoting the instruction", plan.FixKicks)
+		}
+		if len(plan.ReviewKicks) != 0 {
+			t.Fatalf("review kicks = %+v, want none while review dispatch is off", plan.ReviewKicks)
+		}
+		if len(plan.State.Pending) != 1 || plan.State.Pending[0] != other {
+			t.Fatalf("pending = %+v, want the other PR's row untouched", plan.State.Pending)
+		}
+		if len(plan.State.Human) != 1 || plan.State.Human[0] != otherHold {
+			t.Fatalf("human holds = %+v, want only the answered head's hold cleared", plan.State.Human)
+		}
+		if !plan.State.GeneratedAt.Equal(now) {
+			t.Fatalf("generated at = %v, want the state stamped so it is persisted", plan.State.GeneratedAt)
+		}
+
+		// Next cycle: one kick per head.
+		again := PlanDispatch([]PullRequest{answered}, Artifact{Items: []Aggregate{liveCaseAggregate()}}, plan.State, opts)
+		if len(again.FixKicks) != 0 || len(again.FixExclusions) != 1 || again.FixExclusions[0].Reason != FixDispatchExcludedPending {
+			t.Fatalf("second cycle = kicks %+v exclusions %+v, want the pending fix to dedupe", again.FixKicks, again.FixExclusions)
+		}
+
+		// Nothing answered: nothing stamped, so an idle cycle writes nothing.
+		idle := PlanDispatch([]PullRequest{unanswered}, Artifact{}, state, opts)
+		if !idle.State.GeneratedAt.IsZero() || len(idle.FixKicks) != 0 {
+			t.Fatalf("idle plan = %+v, want nothing planned or stamped", idle)
+		}
+	}
+}
+
+// With review dispatch on, AnsweredHeadsOnly changes nothing.
+func TestPlanDispatchAnsweredHeadsOnlyIgnoredWhileReviewIsOn(t *testing.T) {
+	pr := liveCasePR()
+	moved := pr
+	moved.Number, moved.HeadSHA = liveCaseNumber+1, "f00dfeed"
+	opts := humanRequestOpts()
+	opts.AnsweredHeadsOnly = true
+	if plan := PlanDispatch([]PullRequest{moved}, Artifact{}, DispatchState{}, opts); len(plan.ReviewKicks) == 0 {
+		t.Fatal("an unreviewed head was not reviewed with review dispatch on")
+	}
+}
