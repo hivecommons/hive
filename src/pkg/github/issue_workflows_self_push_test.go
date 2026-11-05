@@ -139,11 +139,30 @@ func TestSweepWorkflowsBlockersReleasesGrantedBlockers(t *testing.T) {
 	l.Record("o/other", 7, itemblocker.Blocker{Kind: itemblocker.CapabilityWorkflowsPermission, Since: since}, "the hive app cannot push .github/workflows/")
 	l.Record("o/testsuite", 1073, itemblocker.Blocker{Kind: itemblocker.HumanOnlyCLA, Since: since}, "sign the CLA")
 	l.Record("o/testsuite", 1080, itemblocker.Blocker{Kind: itemblocker.CapabilityBranchProtection, Since: since}, "cannot edit the ruleset")
+	// testsuite#1037's shape: a fork PR, whose branch takes no workflow push
+	// from the App whatever the grant.
+	l.Record("o/testsuite", 1037, itemblocker.Blocker{Kind: itemblocker.CapabilityWorkflowsPermission, Since: since}, "the fixer's push was refused")
+	// A same-repo PR is pushable like an issue.
+	l.Record("o/testsuite", 1089, itemblocker.Blocker{Kind: itemblocker.CapabilityWorkflowsPermission, Since: since}, "the hive app cannot push .github/workflows/")
 
 	var mu sync.Mutex
 	var labelled []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/o/testsuite/issues/1059":
+			_, _ = w.Write([]byte(`{"number":1059}`))
+			return
+		case "/repos/o/testsuite/issues/1037", "/repos/o/testsuite/issues/1089":
+			_, _ = w.Write([]byte(`{"number":1,"pull_request":{"url":"x"}}`))
+			return
+		case "/repos/o/testsuite/pulls/1037":
+			_, _ = w.Write([]byte(`{"number":1037,"head":{"repo":{"full_name":"arteeh/testsuite"}}}`))
+			return
+		case "/repos/o/testsuite/pulls/1089":
+			_, _ = w.Write([]byte(`{"number":1089,"head":{"repo":{"full_name":"o/testsuite"}}}`))
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels") {
 			var body []string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -169,8 +188,15 @@ func TestSweepWorkflowsBlockersReleasesGrantedBlockers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	if len(released) != 1 || released[0].Number != 1059 {
-		t.Fatalf("released = %+v, want only o/testsuite#1059", released)
+	got := []int{}
+	for _, e := range released {
+		got = append(got, e.Number)
+	}
+	if len(got) != 2 || got[0] != 1059 || got[1] != 1089 {
+		t.Fatalf("released = %v, want o/testsuite#1059 (issue) and #1089 (same-repo PR)", got)
+	}
+	if _, blocked := l.Blocking("o/testsuite", 1037); !blocked {
+		t.Fatal("a fork PR's workflows blocker must stay: the App cannot push workflow files to a fork")
 	}
 	if _, blocked := l.Blocking("o/testsuite", 1059); blocked {
 		t.Fatal("#1059 still blocked")
@@ -186,7 +212,7 @@ func TestSweepWorkflowsBlockersReleasesGrantedBlockers(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(labelled) != 1 || labelled[0] != "/repos/o/testsuite/issues/1059/labels="+WorkflowsLaneLabel {
+	if len(labelled) != 2 || labelled[0] != "/repos/o/testsuite/issues/1059/labels="+WorkflowsLaneLabel {
 		t.Fatalf("labels written = %v", labelled)
 	}
 

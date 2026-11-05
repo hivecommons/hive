@@ -208,16 +208,43 @@ func (c *Client) WorkflowsPushable(ctx context.Context, repo string) bool {
 }
 
 // CapabilityAvailable is the blocker ledger's check (blocker.Ledger
-// SetCapabilityCheck): a workflows-permission blocker on repo is refuted
-// when WorkflowsPushable holds. Other kinds are never refuted here.
+// SetCapabilityCheck): a workflows-permission blocker on repo#number is
+// refuted when WorkflowsPushable holds and the item is not a fork PR. A fork
+// branch takes no workflow-file push from the App whatever the installation
+// grants (projectbluefin/testsuite#1037: the fixer's pushes were refused
+// three times), so that blocker stands. Other kinds are never refuted here.
 // The ledger keys webhook reports by the configured repo name, which may be
-// short, so the lane lookup gets owner/repo.
-func (c *Client) CapabilityAvailable(repo string, k itemblocker.Kind) bool {
+// short, so the lookups get owner/repo.
+func (c *Client) CapabilityAvailable(repo string, number int, k itemblocker.Kind) bool {
 	if c == nil || k != itemblocker.CapabilityWorkflowsPermission {
 		return false
 	}
 	owner, name := c.splitRepo(repo)
-	return c.WorkflowsPushable(context.Background(), owner+"/"+name)
+	ctx := context.Background()
+	if !c.WorkflowsPushable(ctx, owner+"/"+name) {
+		return false
+	}
+	fork, known := c.forkPR(ctx, owner, name, number)
+	return known && !fork
+}
+
+// forkPR reports whether owner/name#number is a pull request whose head is
+// in another repository (or a deleted one). known is false when GitHub
+// cannot be read.
+func (c *Client) forkPR(ctx context.Context, owner, name string, number int) (fork, known bool) {
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return false, false
+	}
+	if !issue.IsPullRequest() {
+		return false, true
+	}
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	if err != nil {
+		return false, false
+	}
+	head := pr.GetHead().GetRepo().GetFullName()
+	return head == "" || !strings.EqualFold(head, owner+"/"+name), true
 }
 
 // SweepWorkflowsBlockers re-checks the blocker ledger's capability blockers

@@ -15,15 +15,18 @@ func TestObserveSkipsRefutedCapabilityBlocker(t *testing.T) {
 
 	l := NewLedger("")
 	var asked []Kind
-	l.SetCapabilityCheck(func(repo string, k Kind) bool {
+	l.SetCapabilityCheck(func(repo string, number int, k Kind) bool {
 		asked = append(asked, k)
-		return repo == "o/held"
+		return repo == "o/held" && number != 4
 	})
 	if e, _ := l.Observe("o/held", 1, report, at); e.Blocks() || e.Reason == "" {
 		t.Fatalf("refuted report: %+v, want no blocker and the reason kept", e)
 	}
 	if e, _ := l.Observe("o/lacking", 2, report, at); !e.Blocks() || e.Blocker.Kind != CapabilityWorkflowsPermission {
 		t.Fatalf("unrefuted report: %+v, want a workflows blocker", e)
+	}
+	if e, _ := l.Observe("o/held", 4, report, at); !e.Blocks() {
+		t.Fatalf("the check is asked per item: %+v, want #4 blocked", e)
 	}
 	asked = nil
 	if e, _ := l.Observe("o/held", 3, "needs-human: the contributor must sign the CLA", at); !e.Blocks() || len(asked) != 0 {
@@ -40,7 +43,7 @@ func TestRecheckCapabilitiesReleasesOnlyRefuted(t *testing.T) {
 	l.Record("o/a", 1, Blocker{Kind: CapabilityWorkflowsPermission, Since: since}, "r")
 	l.Record("o/b", 2, Blocker{Kind: CapabilityWorkflowsPermission, Since: since}, "r")
 	l.Record("o/a", 3, Blocker{Kind: HumanOnlyCLA, Since: since}, "cla")
-	released := l.RecheckCapabilities(func(repo string, k Kind) bool { return repo == "o/a" })
+	released := l.RecheckCapabilities(func(repo string, number int, k Kind) bool { return repo == "o/a" })
 	if len(released) != 1 || released[0].Number != 1 {
 		t.Fatalf("released = %+v, want o/a#1 only", released)
 	}

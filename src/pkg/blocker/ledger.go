@@ -57,27 +57,28 @@ type Ledger struct {
 	now     func() time.Time
 	loaded  bool
 	// capabilityCheck refutes a capability report (SetCapabilityCheck).
-	capabilityCheck func(repo string, k Kind) bool
+	capabilityCheck func(repo string, number int, k Kind) bool
 }
 
 // SetCapabilityCheck installs the check Observe asks before it records a
 // capability blocker: true means the hive verified it holds that capability
-// on repo (for workflows: the installation grants `workflows: write` and a
-// lane whose token asks for it serves the repo), so an agent's "the App
-// cannot push workflow files" is not recorded as a blocker
-// (projectbluefin/testsuite#1059). Nil, the default, records every report.
-func (l *Ledger) SetCapabilityCheck(fn func(repo string, k Kind) bool) {
+// for that item (for workflows: the installation grants `workflows: write`,
+// a lane whose token asks for it serves the repo, and the item is not a fork
+// PR), so an agent's "the App cannot push workflow files" is not recorded
+// as a blocker (projectbluefin/testsuite#1059). Nil, the default, records
+// every report.
+func (l *Ledger) SetCapabilityCheck(fn func(repo string, number int, k Kind) bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.capabilityCheck = fn
 }
 
 // capabilityHeld runs the check outside the ledger lock: it may read GitHub.
-func (l *Ledger) capabilityHeld(repo string, k Kind) bool {
+func (l *Ledger) capabilityHeld(repo string, number int, k Kind) bool {
 	l.mu.Lock()
 	fn := l.capabilityCheck
 	l.mu.Unlock()
-	return fn != nil && k.IsCapability() && fn(repo, k)
+	return fn != nil && k.IsCapability() && fn(repo, number, k)
 }
 
 // NewLedger returns a ledger backed by path (loaded lazily; a missing or
@@ -162,7 +163,7 @@ func (l *Ledger) Observe(repo string, number int, text string, at time.Time) (En
 		}
 		return l.RecordReason(repo, number, NormalizeReason(text), at), true
 	}
-	if l.capabilityHeld(repo, b.Kind) {
+	if l.capabilityHeld(repo, number, b.Kind) {
 		// The hive holds the capability the report says is missing: keep the
 		// reason for the loop guard, park nothing on it.
 		return l.RecordReason(repo, number, NormalizeReason(text), at), true
@@ -305,18 +306,18 @@ func (l *Ledger) ClearKind(k Kind) int {
 	return n
 }
 
-// RecheckCapabilities lifts every capability blocker that held(repo, kind)
+// RecheckCapabilities lifts every capability blocker that held(repo, number, kind)
 // now refutes and returns the released entries as they were. It is the
 // scheduled form of the dashboard's Re-check permissions, per item rather
 // than per kind, so a blocker on a repo no capable lane serves stays. held
 // runs outside the ledger lock; a blocker that changed kind meanwhile is kept.
-func (l *Ledger) RecheckCapabilities(held func(repo string, k Kind) bool) []Entry {
+func (l *Ledger) RecheckCapabilities(held func(repo string, number int, k Kind) bool) []Entry {
 	if held == nil {
 		return nil
 	}
 	var refuted []Entry
 	for _, e := range l.Blockers() {
-		if e.Blocker.Kind.IsCapability() && held(e.Repo, e.Blocker.Kind) {
+		if e.Blocker.Kind.IsCapability() && held(e.Repo, e.Number, e.Blocker.Kind) {
 			refuted = append(refuted, e)
 		}
 	}
