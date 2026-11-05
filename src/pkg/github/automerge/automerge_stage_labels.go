@@ -898,6 +898,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		result.Items++
 		c.foldHumanReturnLabel(ctx, store, list)
 		c.foldRecordedDecision(ctx, list)
+		c.foldForkGuard(ctx, tracker, store, list, now)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
 		if verdict.Rank == stageRankNone {

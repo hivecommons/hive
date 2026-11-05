@@ -3,6 +3,7 @@ package automerge
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -283,6 +284,17 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		return 0, nil
 	}
 	checks, asks, human := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
+	// A fork guard is a maintainer's to clear (hivecommons/hive#14273): the
+	// author is never asked to fix it, and a head red on nothing else is not
+	// nudged at all — no nudge, no adoption grace
+	// (projectbluefin/utah-packages#869).
+	if kept := withoutForkGuard(checks, obs.ForkGuardChecks); len(kept) < len(checks) {
+		checks = kept
+		if len(checks) == 0 && len(asks) == 0 {
+			c.debug("stage labels: contributor nudge skipped, only a fork guard is red", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "checks", obs.ForkGuardChecks)
+			return 0, nil
+		}
+	}
 	n := ContributorNudge{
 		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
 		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
@@ -304,6 +316,21 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt", now)
 	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
 	return 1, nil
+}
+
+// withoutForkGuard drops the fork-guard checks from a nudge's failing
+// checks; checks is returned unchanged when there is no guard.
+func withoutForkGuard(checks, guard []string) []string {
+	if len(guard) == 0 {
+		return checks
+	}
+	var out []string
+	for _, name := range checks {
+		if !slices.Contains(guard, strings.TrimSpace(name)) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // resolveNudge tells the sink a PR that was in stage 072 last cycle has

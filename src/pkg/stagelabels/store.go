@@ -145,6 +145,14 @@ type Record struct {
 	// head: a mention is an email, and the same cause on a new head is the
 	// same ask.
 	MentionCause string `json:"mention_cause,omitempty"`
+	// ForkGuardChecks are the checks last seen refusing this PR only
+	// because it is from a fork (hgithub.PullRequest.ForkGuardChecks,
+	// hivecommons/hive#14273). They outlive the head: the policy answers
+	// only for the head the last CI-enriched enumeration saw, and a fork
+	// guard refuses every head of the PR, so the stage pass reads a later
+	// head red on nothing else as the same guard instead of handing it back
+	// to its author (projectbluefin/utah-packages#862, #869).
+	ForkGuardChecks []string `json:"fork_guard_checks,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
 	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
@@ -2217,6 +2225,20 @@ func (s *Store) NoteAdoptDiffFence(key, reason string) {
 		return
 	}
 	r.AdoptDiffFence = reason
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteForkGuard records the checks fresh evidence showed refusing the PR
+// only because it is from a fork, on an existing record.
+func (s *Store) NoteForkGuard(key string, checks []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || len(checks) == 0 || slices.Equal(r.ForkGuardChecks, checks) {
+		return
+	}
+	r.ForkGuardChecks = append([]string(nil), checks...)
 	s.items[key] = r
 	s.dirty = true
 }

@@ -663,6 +663,15 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	if !due {
 		return 0, nil
 	}
+	if !requested && !forced && adoptionForkGuardOnly(obs) {
+		// The guard asks a maintainer to publish the branch; an in-place
+		// push cannot turn it green and an automatic copy would publish it
+		// without that maintainer (projectbluefin/utah-packages#862). The
+		// PR stays parked at 085; nothing is recorded, so a maintainer's
+		// adopt-supersede request still goes through.
+		c.debug("stage labels: adoption due but only a fork guard is red; left for a maintainer", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "checks", obs.ForkGuardChecks)
+		return 0, nil
+	}
 	if l := adoptionBlocked(obs.Labels); l != "" {
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
@@ -1934,6 +1943,18 @@ func adoptionCIPending(obs stageObservation) bool {
 // so it is nothing a person must decide (hivecommons/hive#13040).
 func adoptionOptionalCheckOnly(obs stageObservation) bool {
 	return strings.HasPrefix(nonEmpty(obs.Reason, obs.LaneReason), stageReasonOptionalCheckFailing) && !verdictBlocks(obs.Detail) && !verdictNeedsHuman(obs.Detail)
+}
+
+// adoptionForkGuardOnly reports a head whose only blocker is a fork guard:
+// every red check refuses the PR only because it is from a fork
+// (ForkGuardChecks, hivecommons/hive#14273) and the stage reason is that
+// guard or the red CI it explains. A review or DCO ask is still adoptable.
+func adoptionForkGuardOnly(obs stageObservation) bool {
+	if len(obs.ForkGuardChecks) == 0 {
+		return false
+	}
+	r := nonEmpty(obs.Reason, obs.LaneReason)
+	return strings.HasPrefix(r, stageReasonForkGuard) || strings.HasPrefix(r, stageReasonOptionalCheckFailing) || classifyCIReason(r) == ciReasonRed
 }
 
 // adoptionStale reports whether the adopted head has sat unchanged for the
