@@ -562,6 +562,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		stageTrackerApplyRemediation(&activityItem, dispatchState, status, stageTrackerFixerAgent(cfg), now)
 		it.CodeActivity, it.Remediation, it.ReviewActivity, it.DisplayColumn, it.Caption = activityItem.CodeActivity, activityItem.Remediation, activityItem.ReviewActivity, activityItem.DisplayColumn, activityItem.Caption
 		stageTrackerApplyReworkOwedBy(it)
+		stageTrackerApplyTrainQueuedCaption(it)
 	}
 	stageTrackerApplyReauthor(resp.Items, store, status.GitHubBaseURL, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
