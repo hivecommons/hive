@@ -43,7 +43,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--step-kind release --release-tag <tag> --release-target <sha>]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-on-pr <n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -65,6 +65,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--release-tag` | — | issue, comment | release tag from the repository's version source |
 | `--release-target` | — | issue, comment | full lowercase 40-character commit SHA for the proposed release |
 | `--needs-decision` | — | issue, comment | park the new issue, or the existing issue being commented on, on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)). On both subcommands a Hive-authored non-risk question is downgraded instead of parked under `project.agent_issue_decision_policy: resolve` (the default); a typed `--step-kind` owner step always parks |
+| `--withdraw-decision` | — | comment | take back a decision park you placed yourself; see [Withdrawing your own park](#withdrawing-your-own-park). Cannot be combined with `--needs-decision` |
 | `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"`. A request that declares `--parent` or `--blocked-by` needs no reason: it is a distinct DAG node and never takes the file-set, component or canonical-subject folds, and a genuine create reports `consolidation_skipped_reason` as `parent` or `blocked_by` ([#16065](https://github.com/hivecommons/hive/issues/16065)) |
 | `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
@@ -196,6 +197,33 @@ Hive posts records the done decision, and that reply is what tells the lane
 that next picks the issue up to re-check the step and close the issue once the
 fix is verified — nothing else routes it. The flag applies only to `issue` and
 `comment`; on any other kind the script exits `2` and writes nothing.
+
+#### Withdrawing your own park
+
+When the question goes away while the issue is parked (you found a cause that
+needs no choice, or an open PR already carries the answer and closes the
+issue), take the park back instead of leaving the owner to answer it:
+
+```
+hive-open-issue comment --repo <owner/repo> <number> --withdraw-decision \
+  --body "No decision is needed any more: PR #176 fixes the cause and closes this issue."
+```
+
+The watcher refuses the request, writing nothing, unless the issue is parked
+on a decision (`stage/045-needs-decision` or the configured needs-decision
+label), carries no `needs-human` (a person lifts that), and the newest Hive
+park text on it — the issue body of a Hive-filed issue or a later Hive comment
+carrying the `<!-- hive:owner-step -->` marker, since the last accepted `/hive`
+command — ends in your own `— hive: agent=<you>` line. Like a park it needs
+`label` in the lane's write allowlist. It then posts the comment with a hidden
+`<!-- hive:park-withdrawn by=<agent> -->` marker, lifts the park through the
+stage engine (the issue re-derives: `040-covered-by-pr` when an open PR covers
+it, else `010-actionable`), removes an operator-renamed decision label, and
+deletes the "What to reply" notice so it stops offering the options you took
+back. `approved-direction` is not added: no one decided anything. A retry after
+the comment went up only finishes the lift. Never withdraw a park another lane
+or a person placed; the watcher refuses it
+([Danathar/openaudible-autoupdate#177](https://github.com/Danathar/openaudible-autoupdate/issues/177)).
 
 #### Recording a release-only owner step
 
