@@ -132,10 +132,6 @@ func (c *Client) inheritDeferredDecisions(ctx context.Context, displayRepo, owne
 		if !askDefersTo(issue.GetBody(), open[0].Number) {
 			continue
 		}
-		item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: labels, CreatedAt: issue.GetCreatedAt().Time})
-		if d := c.WritebackAllowed(displayRepo, item, writeback.KindNeedsDecisionComment, "inherit decision from linked issue"); !d.Allowed {
-			continue
-		}
 		removed, err := c.clearIssueParkingLabels(ctx, owner, repo, number, labels, from.Actor, false)
 		if err != nil {
 			if c.logger != nil {
@@ -144,7 +140,13 @@ func (c *Client) inheritDeferredDecisions(ctx context.Context, displayRepo, owne
 			continue
 		}
 		note := renderDecisionInheritedNote(from, removed)
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil && c.logger != nil { // writeback:gated
+		// The note is unsolicited; a gate refusal keeps the un-park and skips it.
+		item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: labels, CreatedAt: issue.GetCreatedAt().Time})
+		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+			if c.logger != nil {
+				c.logger.Info("unpark sweep: write-back gate withheld the inherited-decision note", "repo", displayRepo, "issue", number, "reason", d.Reason)
+			}
+		} else if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil && c.logger != nil { // writeback:gated
 			c.logger.Warn("unpark sweep: could not post the inherited-decision note", "repo", displayRepo, "issue", number, "error", err)
 		}
 		event := IssueUnparkEvent{Repo: displayRepo, Number: number, Actor: from.Actor, Decision: from.Decision, CommentURL: from.CommentURL}
