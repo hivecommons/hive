@@ -313,7 +313,10 @@ func (c *Engine) reopenSupersededOriginal(ctx context.Context, store *stagelabel
 		// Not a pause: the contributor_adopt policy changed after the hive
 		// closed this PR, so the reopen that would undo that close no
 		// longer clears the gate. The PR stays closed until the policy
-		// allows it again or a person reopens it; say so loudly.
+		// allows it again or a person reopens it; say so loudly, once per head and refusal.
+		if !c.markTerminalHoldLogged(owner, repo, number, rec.AdoptedHead, "close-first-reopen-refused:"+d.Reason+":"+d.Detail) {
+			return 0, nil
+		}
 		c.warn("stage labels: close-first original reopen refused by the write-back gate; hive-closed PR stays closed until the contributor_adopt policy allows the reopen or a person reopens it", gateArgs...)
 		return 0, nil
 	}
