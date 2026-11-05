@@ -222,7 +222,7 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	if band == "waiting" {
 		chip = issueLabelChip(labels)
 	}
-	return IssueBandInfo{Band: band, Role: role, Acknowledged: acknowledged, Held: held, HoldReason: heldReason(issue.Labels, false, ""), Stale: stale, Signals: signals, Chip: chip}
+	return IssueBandInfo{Band: band, Role: role, Acknowledged: acknowledged, Held: held, HoldReason: heldReason(issue.Labels, false, "", nil), Stale: stale, Signals: signals, Chip: chip}
 }
 
 // issueLabelChip returns the chip word for the highest-precedence waiting
@@ -339,7 +339,7 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	if stale {
 		signals = append(signals, Signal{Glyph: "🕒", Label: fmt.Sprintf("stale: no activity > %dd", norm.StaleDays)})
 	}
-	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID, pr.ReporterTrustReason), Stale: stale, Signals: signals}
+	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID, pr.HoldSources, pr.ReporterTrustReason), Stale: stale, Signals: signals}
 }
 
 // prBandFlags reports the merge-state facts every PR band is chosen from.
@@ -692,23 +692,30 @@ func containsAnyHoldLabel(s string, needles []string) bool {
 	return false
 }
 
-func heldReason(labels []string, hiveAttributed bool, hiveID string, evidence ...string) string {
+// heldReason is the hold tooltip / hold_reason. It names a hold label only
+// when the item wears one: a PR held by its sentinel alert or a policy hold
+// alone was told to wait "until the hold label is removed" and that its
+// (absent) generic hold was "usually the ACMM level gate"
+// (projectbluefin/homebrew-tap#60, testsuite#1108). The ACMM sentence is kept
+// for a generic hold whose recorded sources are unknown or name the level
+// gate, not for one the holdguard or another gate set (utah-packages#878).
+func heldReason(labels []string, hiveAttributed bool, hiveID string, sources []string, evidence ...string) string {
 	held := holdLabels(labels, hiveID)
 	parts := make([]string, 0, 3)
-	labelText := ""
 	if len(held) > 0 {
 		quoted := make([]string, 0, len(held))
 		for _, label := range held {
 			quoted = append(quoted, "`"+label+"`")
 		}
-		labelText = " — label " + strings.Join(quoted, ", ")
+		parts = append(parts, "On hold — label "+strings.Join(quoted, ", ")+": agents will not act on this until the hold label is removed")
+	} else {
+		parts = append(parts, "On hold: agents will not act on this until what holds it is cleared")
 	}
-	parts = append(parts, "On hold"+labelText+": agents will not act on this until the hold label is removed")
 	if len(evidence) > 0 && evidence[0] != "" {
 		parts = append(parts, evidence[0]+", a maintainer must review this")
 		return strings.Join(parts, "; ")
 	}
-	if hiveAttributed {
+	if hiveAttributed && len(held) > 0 && (len(sources) == 0 || slices.Contains(sources, github.HoldSourceLevelGate)) {
 		parts = append(parts, "opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator")
 	}
 	for _, label := range labels {

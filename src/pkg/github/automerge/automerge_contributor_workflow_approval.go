@@ -131,7 +131,7 @@ func (c *Engine) workflowFenceReleased(ctx context.Context, displayRepo, owner, 
 	}
 	if !hasCommentWithPrefix(comments, workflowApprovalMarker(headSHA)) {
 		c.info("workflow-path fence released by owner approval", "repo", displayRepo, "pr", number, "login", approver, "head", headSHA)
-		if err := c.commentWorkflowApproval(ctx, owner, repo, number, headSHA, approver, verdictState); err != nil {
+		if err := c.commentWorkflowApproval(ctx, owner, repo, number, headSHA, approver, verdictState, approval.CarriedOverBaseMerge); err != nil {
 			c.warn("workflow-path fence: could not post audit comment", "repo", displayRepo, "pr", number, "head", headSHA, "error", err)
 		}
 	}
@@ -149,6 +149,9 @@ type workflowApproval struct {
 	// AnswersVerdict: the typed comment was recorded as the person's
 	// answer to the reviewer's requires_human question on the head.
 	AnswersVerdict bool
+	// CarriedOverBaseMerge: the review approved an earlier commit and head
+	// adds only base merges that leave the PR's diff unchanged.
+	CarriedOverBaseMerge bool
 }
 
 // recordTypedApprovalDecision records a typed `/hive decision approve` as
@@ -226,8 +229,8 @@ func (c *Engine) typedDecisionApprovalAnswer(ctx context.Context, displayRepo, o
 // bound to headSHA: an APPROVED review on the head first, then an approval
 // comment (dashboard-posted or typed) among comments bound to it.
 func (c *Engine) workflowFenceApproval(ctx context.Context, owner, repo string, pr *gh.PullRequest, number int, headSHA string, comments []*gh.IssueComment) (workflowApproval, bool) {
-	if login, ok := c.latestTrustedHumanApproval(ctx, owner, repo, number, headSHA); ok {
-		return workflowApproval{Login: login}, true
+	if login, carried, ok := c.latestTrustedHumanApprovalReach(ctx, owner, repo, number, headSHA); ok {
+		return workflowApproval{Login: login, CarriedOverBaseMerge: carried}, true
 	}
 	approval, ok := c.latestTrustedCommentApproval(owner, repo, pr, number, headSHA, comments)
 	if !ok {
@@ -343,7 +346,7 @@ func workflowApprovalMarker(headSHA string) string {
 // owner told only "merges once the gates clear" while the verdict still
 // held the PR waited hours for a merge that never came
 // (Danathar/zfs-aurora-complex#254).
-func workflowApprovalComment(headSHA, approver string, verdictState int) string {
+func workflowApprovalComment(headSHA, approver string, verdictState int, carried bool) string {
 	gates := "the hive merges this PR itself once the usual gates (CI, soak, holds, review verdict) are clear."
 	switch verdictState {
 	case workflowApprovalVerdictAnswered:
@@ -351,15 +354,21 @@ func workflowApprovalComment(headSHA, approver string, verdictState int) string 
 	case workflowApprovalVerdictOpen:
 		gates = "the review swarm's `requires_human` verdict on this head still holds the PR. A trusted merger's `/hive decision approve` reply (or the dashboard's approval) answers it, as does a `/hive approve` reply posted after the verdict; then the hive merges this PR itself once the usual gates (CI, soak, holds) are clear."
 	}
+	approved := "approved head `" + shortSHA(headSHA) + "`"
+	if carried {
+		// The review was on an earlier commit; head only merges the base in
+		// (reviewReachesHead), so say so rather than claim this head.
+		approved = "approved this PR's change, carried over a base merge to head `" + shortSHA(headSHA) + "` (PR diff unchanged)"
+	}
 	return workflowApprovalMarker(headSHA) + " by=" + strings.ToLower(approver) + " -->\n" +
-		"@" + approver + " approved head `" + shortSHA(headSHA) + "`, which edits CI workflow / action files. That explicit owner approval releases the contributor lane's workflow-path fence: " + gates + " A new push re-arms the fence until the new head is approved again."
+		"@" + approver + " " + approved + ", which edits CI workflow / action files. That explicit owner approval releases the contributor lane's workflow-path fence: " + gates + " A new push re-arms the fence until the new head is approved again."
 }
 
 // commentWorkflowApproval posts the audit comment once per head: an existing
 // marker on the PR, or a prior effects claim, suppresses it.
-func (c *Engine) commentWorkflowApproval(ctx context.Context, owner, repo string, number int, headSHA, approver string, verdictState int) error {
+func (c *Engine) commentWorkflowApproval(ctx context.Context, owner, repo string, number int, headSHA, approver string, verdictState int, carried bool) error {
 	marker := workflowApprovalMarker(headSHA)
-	body := workflowApprovalComment(headSHA, approver, verdictState)
+	body := workflowApprovalComment(headSHA, approver, verdictState, carried)
 	_, err := effects.Execute(hgithub.WithRESTCaller(ctx, workflowApprovalRESTCaller), c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueComment,

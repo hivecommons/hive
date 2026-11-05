@@ -287,7 +287,7 @@ func TestReconcileReviewBacklogBlocks(t *testing.T) {
 // A closed-unmerged source PR never closes the item: the note unblocks it
 // and asks for re-triage (maintainer decision on #13849).
 func TestReviewBacklogRetriageNote(t *testing.T) {
-	note := reviewBacklogRetriageNote("o/r", 6)
+	note := reviewBacklogRetriageNote("o/r", 6, "")
 	for _, want := range []string{blockedUnblockedMarker, reviewBacklogRetriageMarker, "source PR o/r#6 closed unmerged — re-triage against current base"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q: %q", want, note)

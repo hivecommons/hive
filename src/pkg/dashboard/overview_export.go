@@ -263,7 +263,7 @@ func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsCon
 		for _, issue := range frontendRepoIssues(repo, true) {
 			issue.Repo = nonEmpty(issue.Repo, repoName)
 			info := IssueBand(issue, true, cfg, now, selfAuthorizationHoldActive)
-			info.HoldReason = heldReason(issue.Labels, false, status.HiveID)
+			info.HoldReason = heldReason(issue.Labels, false, status.HiveID, nil)
 			ownership := ownershipFor(repo.Ownership, ownershipKindIssue, issue.Number)
 			slice := overviewIssueChartSlice(issue, ownership)
 			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, true) {
@@ -368,6 +368,16 @@ func (s *Server) overviewPRItems(status *StatusPayload, cfg config.DashboardIssu
 				continue
 			}
 			out = append(out, overviewPRItem{pr: entry.pr, verdict: entry.verdict, held: true, info: info, ownership: ownership, slice: slice})
+		}
+		for _, entry := range frontendRepoDraftPRs(repo) {
+			entry.pr.Repo = nonEmpty(entry.pr.Repo, repoName)
+			info := prBand(entry.pr, nil, false, cfg, now, autoMergeLabel, status.HiveID)
+			ownership := ownershipFor(repo.Ownership, ownershipKindPR, entry.pr.Number)
+			slice := overviewPRChartSlice(entry.pr, nil, ownership, autoMergeLabel)
+			if !filters.matchBand(info.Band) || !filters.matchSlice(slice) || !filters.matchFlags(info.Stale, false) {
+				continue
+			}
+			out = append(out, overviewPRItem{pr: entry.pr, info: info, ownership: ownership, slice: slice})
 		}
 	}
 	return out
@@ -496,6 +506,26 @@ func frontendRepoPRs(repo FrontendRepo, held bool) []frontendPR {
 		if pr, ok := frontendPullRequest(raw); ok {
 			out = append(out, pr)
 		}
+	}
+	return out
+}
+
+// frontendRepoDraftPRs are the repo's open drafts as band entries. The
+// enumeration sidelines drafts (github.RepoWorkPR, bucket "draft") instead of
+// listing them with OpenPrs / HeldPrs, so the PR bands never saw one: the
+// Draft band read 0 hive-wide while projectbluefin/common#1532, #1626 and
+// server#585 were open drafts.
+func frontendRepoDraftPRs(repo FrontendRepo) []frontendPR {
+	var out []frontendPR
+	for _, raw := range repo.NonActionablePrs {
+		w, ok := repoWorkPR(raw)
+		if !ok || !w.Draft {
+			continue
+		}
+		out = append(out, frontendPR{pr: github.PullRequest{
+			Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: append([]string(nil), w.Labels...),
+			Draft: true, URL: w.URL, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed,
+		}})
 	}
 	return out
 }

@@ -32,6 +32,14 @@ func TestDeriveIssueTable(t *testing.T) {
 		reason  string
 	}{
 		{"actionable", nil, stagelabels.Actionable, false, "actionable"},
+		{"dependency dashboard parked by a bot", func(f *Facts) {
+			f.Issue.Bucket = BucketDependencyDashboard
+			f.Park.NeedsHuman = true
+		}, stagelabels.None, false, "standing meta issue, not work: dependency_dashboard"},
+		{"hive advisory with a decision label", func(f *Facts) {
+			f.Issue.Bucket = BucketHiveAdvisory
+			f.Park.DecisionLabel = "stage/045-needs-decision"
+		}, stagelabels.None, false, "standing meta issue, not work: hive_advisory"},
 		{"reporter triage bucket", func(f *Facts) {
 			f.Issue.Bucket = BucketReporterTriage
 			f.Issue.TriageAwaiting = "reporter-trust gate: awaiting the triage label"

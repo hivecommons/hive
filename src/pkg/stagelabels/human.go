@@ -70,6 +70,12 @@ type CheckSummary struct {
 	Total, Green, Pending int
 	// Red names every failing gating check, in a stable order.
 	Red []string
+	// Missing names the required checks with nothing reported on the head.
+	// They are not green: GitHub refuses the merge until they report, and a
+	// PR whose workflows never triggered waits on them for good
+	// (projectbluefin/utah#1074 read "4/4 checks green, ready for a human
+	// merge" with `contract` and `build_main` never run).
+	Missing []string
 	// Known is false when the head could not be read (API error): CI is
 	// then a pending gate, never a pass.
 	Known bool
@@ -576,6 +582,9 @@ func RouteHuman(e Evidence) Route {
 	case e.Checks.Pending > 0:
 		wait = append(wait, fmt.Sprintf("%d check(s) still running", e.Checks.Pending))
 	}
+	if e.Checks.Known && len(e.Checks.Missing) > 0 {
+		wait = append(wait, "required check(s) `"+strings.Join(e.Checks.Missing, "`, `")+"` not reported on this head (a PR opened with GITHUB_TOKEN triggers no workflow): GitHub will not merge it until they run")
+	}
 	if e.Soak > 0 && e.SoakElapsed < e.Soak {
 		// A head the lane has NOT admitted (trust blocks it) is still
 		// 060 while its soak runs; 095 pre-merge-soak is the lane's own
@@ -662,6 +671,9 @@ func summarize(e Evidence) string {
 		parts = append(parts, fmt.Sprintf("%d/%d checks green, %d pending", e.Checks.Green, e.Checks.Total, e.Checks.Pending))
 	default:
 		parts = append(parts, fmt.Sprintf("%d/%d checks green", e.Checks.Green, e.Checks.Total))
+	}
+	if e.Checks.Known && len(e.Checks.Missing) > 0 {
+		parts = append(parts, "required not reported: "+strings.Join(e.Checks.Missing, ", "))
 	}
 	switch e.DCO {
 	case DCOYes:
@@ -877,7 +889,14 @@ func DecisionActions(r Route) string {
 	}
 	var steps []string
 	head := "`" + ShortSHA(r.Head) + "`"
-	if r.ManualMerge {
+	if approver := strings.TrimPrefix(strings.TrimSpace(r.HumanApprover), "@"); approver != "" && (r.ManualMerge || r.Verdict == VerdictRequiresHuman) {
+		// The approval this step would ask for is already recorded on the
+		// head: it released the fence and answered requires_human, so the
+		// park is for another reason (projectbluefin/utah#1078 kept asking
+		// "a trusted merger approves this head" next to "approved by
+		// @Danathar"). Say it is done; the reasons name what is left.
+		steps = append(steps, "nothing more to approve: @"+approver+" approved this head ("+head+"); resolve the other reasons listed above")
+	} else if r.ManualMerge {
 		// Only `/hive decision approve` (typed or from the dashboard) and
 		// an Approve review release the fence; `/hive approve` never does
 		// (hivecommons/hive#14672). The first two also answer a
@@ -900,11 +919,7 @@ func DecisionActions(r Route) string {
 	}
 	for _, h := range r.Holds {
 		if h == "hold" && r.Hold.SelfImposed() {
-			reason := strings.TrimSpace(r.Hold.Reason)
-			if reason == "" {
-				reason = "its own gate"
-			}
-			steps = append(steps, "The hive set `hold` itself for "+reason+". **Release** it (dashboard row menu → Release hold, or remove the `hold` label) and the lane merges on its next pass once the other gates are clear, or **keep** it until a maintainer has reviewed the issue's reporter; `/hive approve` does not remove it")
+			steps = append(steps, selfImposedHoldStep(r.Hold))
 			continue
 		}
 		steps = append(steps, "resolve the reason for `"+h+"` and have a maintainer remove that label (`/hive approve` does not remove it)")
@@ -921,6 +936,29 @@ func DecisionActions(r Route) string {
 		b.WriteString("\n- " + s + ".")
 	}
 	return b.String()
+}
+
+// selfImposedHoldStep is the release step for a `hold` the hive set itself,
+// worded for the gate that set it. Only the reporter-trust gate's hold is
+// released into an unattended merge; a human-merge-path hold stays a
+// person's merge whatever the label says (projectbluefin/utah#1097,
+// projectbluefin/finpilot#627 were told the lane would merge them); a hold
+// the hive can attribute only to its label event names no gate it cannot see.
+func selfImposedHoldStep(h *HoldProvenance) string {
+	reason := strings.TrimSpace(h.Reason)
+	switch {
+	case h.ReporterTrust():
+		if reason == "" {
+			reason = "its own gate"
+		}
+		return "The hive set `hold` itself for " + reason + ". **Release** it (dashboard row menu → Release hold, or remove the `hold` label) and the lane merges on its next pass once the other gates are clear, or **keep** it until a maintainer has reviewed the issue's reporter; `/hive approve` does not remove it"
+	case h.HumanMergePath():
+		return "The hive set `hold` because this PR changes " + HumanMergePathReason + ": the hive never merges it, so a maintainer reviews it and merges it by hand; removing `hold` does not hand it back to the lane"
+	}
+	if reason == "" {
+		return "The hive set `hold` itself; its notice on this PR names the gate. Resolve that, then remove the `hold` label; `/hive approve` does not remove it"
+	}
+	return "The hive set `hold` itself for " + reason + ". Resolve that, then remove the `hold` label; `/hive approve` does not remove it"
 }
 
 // HumanAuthorOwesAnswer reports whether a requires_human verdict on a PR a

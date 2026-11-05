@@ -312,7 +312,7 @@ A panel is **Not enough data** when the graded denominator is below `EV_GRADE_MI
 
 ## What a new push does
 
-A push changes `head_sha`, so earlier verdicts no longer describe the code. Hive starts a new bundle for the new head with `previous_bundle_id` set, and re-reviews. The old bundle is left untouched and remains verifiable.
+A push changes `head_sha`, so earlier verdicts no longer describe the code. Hive starts a new bundle for the new head with `previous_bundle_id` set, and re-reviews. The old bundle is left untouched and remains verifiable. The reviewer prompt pins evidence to the head it reviews: every code citation must be read at that head, and CI evidence (a check run, job or log) counts only when its `head_sha` is that head. A run on the previous head is left out or named as the previous head's (projectbluefin/homebrew-tap#60 cited a job from the head before).
 
 ## How to read the hub evidence view
 
