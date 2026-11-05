@@ -2438,8 +2438,39 @@ func reviewCIPending(pr github.PullRequest) bool {
 	return pr.CIStatus == "pending" && pr.CIRealCheckRunsKnown && pr.CIRealCheckRuns > 0
 }
 
+// reviewPlanChangeRequests is the decision ledger the review planner reads;
+// tests swap it.
+var reviewPlanChangeRequests = func() review.HumanChangeRequestStore { return review.DefaultHumanChangeRequests() }
+
+// anyAnsweredReviewHead reports whether any open or held PR's current head
+// carries a maintainer's answer.
+func anyAnsweredReviewHead(cfg *config.Config, actionable *github.ActionableResult, answered func(fullRepo string, pr github.PullRequest) bool) bool {
+	for _, items := range [][]github.PullRequest{actionable.PRs.Items, actionable.PRs.Held} {
+		for _, pr := range items {
+			if fullRepo := fullRepoName(pr.Repo, cfg.Project.Org); fullRepo != "" && pr.Number > 0 && answered(fullRepo, pr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, ghr reviewPlannerGitHub, logger *slog.Logger) review.DispatchPlan {
-	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
+	if cfg == nil || actionable == nil {
+		return review.DispatchPlan{}
+	}
+	// With review dispatch off, a maintainer's answer on a head (a
+	// changes_requested review or `/hive decision <instruction>`) is still
+	// handed to the author agent: the decision reply promises a new head,
+	// and the PR sits at 070-fixing waiting for it (Danathar/dns-failover#155
+	// waited with no fix kick on a hive without review.require_approval).
+	// Only answered heads are planned; with none, nothing is loaded.
+	answeredOnly := !cfg.Review.RequireApproval || !cfg.Review.FanOut
+	changeRequests := reviewPlanChangeRequests()
+	answered := func(fullRepo string, pr github.PullRequest) bool {
+		return review.HumanChangeRequestFor(changeRequests, fullRepo, pr.Number, pr.HeadSHA) != nil
+	}
+	if answeredOnly && !anyAnsweredReviewHead(cfg, actionable, answered) {
 		return review.DispatchPlan{}
 	}
 	botRoute := reviewBotAuthorRoute(cfg)
@@ -2471,6 +2502,9 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 				continue
 			}
 			seenPRs[key] = true
+			if answeredOnly && !answered(fullRepo, pr) {
+				continue
+			}
 			// review.require_labels: an unlabelled PR is never dispatched
 			// to the swarm. The relay refuses it independently.
 			if !cfg.Review.AdmitsPRLabels(pr.Labels) {
@@ -2540,7 +2574,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 			// A maintainer's changes_requested review or `/hive decision`
 			// on this head (hivecommons/hive#13041): the planner kicks the
 			// fix lane with it instead of reviewing the head again.
-			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
+			HumanChangeRequest: review.HumanChangeRequestFor(changeRequests, fullRepo, pr.Number, pr.HeadSHA),
 			// The compare from the last judged head, for the delta
 			// re-review, its trivial skip and the hive base-sync carry
 			// (review.delta_rereview).
@@ -2588,6 +2622,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
 		RequireApproval:      cfg.Review.RequireApproval,
 		FanOut:               cfg.Review.FanOut,
+		AnsweredHeadsOnly:    answeredOnly,
 		MaxParallelReviews:   cfg.Review.EffectiveMaxParallelReviews(),
 		MaxPerspectivesPerPR: cfg.Review.MaxPerspectivesPerPR,
 		Perspectives:         reviewPerspectiveSet(cfg, logger),

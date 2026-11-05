@@ -2,9 +2,11 @@ package dashboard
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -40,6 +42,73 @@ type reviewSwarmState struct {
 	// releases are the persons' releases of verdict holds the self-merge
 	// sweep recorded (#12962).
 	releases map[string]github.ReviewHoldRelease
+	// answer returns the trusted human's recorded answer standing against a
+	// PR head (review.DecisionAnswerFor over the decision ledger the
+	// un-park sweep writes); nil reads as no answer.
+	answer func(repo string, number int, head string) (review.HumanChangeRequest, bool)
+}
+
+// ownershipDecisionAnswers is the decision ledger ownership reads; tests swap
+// it.
+var ownershipDecisionAnswers = func() review.HumanChangeRequestStore { return review.DefaultHumanChangeRequests() }
+
+// decisionAnswerLookup reads the ledger by the PR's full name: snapshot rows
+// may carry the bare repository name, the ledger records owner/repo.
+func decisionAnswerLookup(org string) func(repo string, number int, head string) (review.HumanChangeRequest, bool) {
+	return func(repo string, number int, head string) (review.HumanChangeRequest, bool) {
+		full := strings.TrimSpace(repo)
+		if !strings.Contains(full, "/") && strings.TrimSpace(org) != "" {
+			full = strings.TrimSpace(org) + "/" + full
+		}
+		return review.DecisionAnswerFor(ownershipDecisionAnswers(), full, number, head)
+	}
+}
+
+// answeredChangeRequest is the person's instruction that answered the review
+// verdict holds on pr's current head: recorded on that head, after every
+// verdict hold began, and an instruction rather than a bare approval (an
+// approval leaves the merge to the release rules, #12962). A verdict drawn
+// after the answer is a new question, so it stands.
+func (e ownershipEnv) answeredChangeRequest(pr github.PullRequest, holds []pipeline.ReviewHold) (review.HumanChangeRequest, bool) {
+	if e.reviewSwarm.answer == nil || strings.TrimSpace(pr.HeadSHA) == "" {
+		return review.HumanChangeRequest{}, false
+	}
+	req, ok := e.reviewSwarm.answer(pr.Repo, pr.Number, pr.HeadSHA)
+	if !ok || req.IsApproval() {
+		return review.HumanChangeRequest{}, false
+	}
+	verdictHeld := false
+	for _, h := range holds {
+		if !answerableReviewHold(h) {
+			continue
+		}
+		verdictHeld = true
+		if !h.Since.IsZero() && !req.RecordedAt.After(h.Since) {
+			return review.HumanChangeRequest{}, false
+		}
+	}
+	return req, verdictHeld
+}
+
+// answerableReviewHold reports whether a person's answer settles h: a
+// requires_human or reject verdict does; the dispatcher's hold and the
+// fix-loop cap stay with the owner whatever was answered.
+func answerableReviewHold(h pipeline.ReviewHold) bool {
+	return h.Kind == pipeline.ReviewHoldRequiresHuman || h.Kind == pipeline.ReviewHoldReject
+}
+
+// answeredWaitReason says who has the ball after a person answered the
+// review: the author agent is fixing the head.
+func answeredWaitReason(req review.HumanChangeRequest) string {
+	who := "You"
+	if a := strings.TrimSpace(req.Actor); a != "" {
+		who = "@" + a
+	}
+	when := ""
+	if !req.RecordedAt.IsZero() {
+		when = " at " + req.RecordedAt.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("%s answered Hive's review on this head%s; the hive is fixing it, and the review comes back to you if the new head needs you", who, when)
 }
 
 // loadReviewSwarm loads the verdict artifact, the dispatch state, the
@@ -101,6 +170,25 @@ func (e ownershipEnv) reviewHoldOwnership(pr github.PullRequest, withinAdjudicat
 	holds := e.reviewHolds(pr)
 	if len(holds) == 0 {
 		return Ownership{}, false
+	}
+	// A person already answered the verdict on this head with an
+	// instruction (`/hive decision <text>`, a changes-requested review):
+	// the ball is with the author agent until it pushes a new head or the
+	// swarm asks again. Danathar/dns-failover#155 stayed "Hive's review needs
+	// a human decision" for over an hour after the hive moved it to
+	// 070-fixing on the owner's answer. A dispatcher hold (fix cap, no
+	// fixer) or the loop cap is still the owner's.
+	if req, ok := e.answeredChangeRequest(pr, holds); ok {
+		var rest []pipeline.ReviewHold
+		for _, h := range holds {
+			if !answerableReviewHold(h) {
+				rest = append(rest, h)
+			}
+		}
+		if len(rest) == 0 {
+			return waitingElsewhereFor(answeredWaitReason(req)), true
+		}
+		holds = rest
 	}
 	pick := func(kind string) (pipeline.ReviewHold, bool) {
 		for _, h := range holds {

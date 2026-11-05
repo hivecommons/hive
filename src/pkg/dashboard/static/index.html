@@ -60199,6 +60199,34 @@ function burnAreaChart() {
     }
 
     // ── Agent Tab Renderers ──
+    // Contributor-first lane keys (agents.<name>.contributor_first and
+    // contributor_first_grace, #16518). The toggle can only be turned on for a
+    // role contributors may act as, the same rule the load enforces; the
+    // server says which (contributorFirstDelegatable), and a role that is not
+    // gets a disabled toggle and the one line that names the fix.
+    function agentContributorFirstControlsHtml(g, agentName) {
+      const delegatable = g.contributorFirstDelegatable === true;
+      const on = g.contributorFirst === true;
+      const name = String(agentName || '');
+      let why = '';
+      if (!delegatable) {
+        if (name === 'supervisor') why = 'The supervisor role is never delegatable to contributors.';
+        else if (name !== name.toLowerCase()) why = 'Relays claim roles in lower case, so an agent whose name has capitals cannot be covered.';
+        else why = `Not available: add <code>${esc(name)}</code> to <code>hub.contribute_delegatable_roles</code> so contributors may act as this role.`;
+      }
+      const tip = `When on, a connected contributor relay acting as this role becomes the lane's primary worker and the resident agent's kicks are withheld. Kicks resume on the normal cadence once no relay has covered the role for the grace below. Budget pause and standby are unaffected, and a manual Kick still works. The role must be one contributors may act as (hub.contribute_delegatable_roles, or the default scanner, quality and outreach).`;
+      const graceTip = `How long the resident agent's kicks stay withheld after the last relay covering this role disconnects, so a relay can reconnect without the resident agent being kicked in between. Use s, m or h, e.g. 10m. Leave blank for the default, 10m.`;
+      const grace = Number(g.contributorFirstGrace) || 0;
+      return `<div class="config-toggle">
+          <div class="config-toggle-switch ${on ? 'on' : ''} ${delegatable ? '' : 'disabled'}" id="cfg-contributor-first" data-action="${delegatable ? 'toggleConfigSwitch' : ''}" data-section="general" data-key="contributorFirst" data-disabled="${delegatable ? 'false' : 'true'}"></div>
+          <span class="config-toggle-label">Contributor-first ${yamlHint('agents.<key>.contributor_first')} ${settingHelpMark('agent-configuration', 'contributor-first-lanes-contributor_first', 'Contributor-first', tip)}</span>
+        </div>
+        ${delegatable ? '' : `<div class="text-muted" id="cfg-contributor-first-disabled" style="font-size:0.7rem">${why}</div>`}
+        <div class="config-field">
+          <label>Contributor-first grace ${yamlHint('agents.<key>.contributor_first_grace')} ${settingHelpMark('agent-configuration', 'contributor-first-lanes-contributor_first', 'Contributor-first grace', graceTip)}</label>
+          <input type="text" id="cfg-contributor-first-grace" value="${grace > 0 ? cadenceToHuman(grace) : ''}" placeholder="10m" data-change-action="contributorFirstGraceChanged">
+        </div>`;
+    }
     function renderAgentGeneral(g) {
       const agentName = _configState.agent || '';
       const isCreate = _configState.isCreate === true;
@@ -60338,6 +60366,7 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${g.onDemand === true ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
           <span class="config-toggle-label">On Demand ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'On Demand', `When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.`)}${g.onDemand === true ? ' ' + statusBadgeHTML('on_demand', 'on demand', '', '') : ''}</span>
         </div>
+        ${isCreate ? '' : agentContributorFirstControlsHtml(g, agentName)}
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.includeRepos !== false ? 'on' : ''}" id="cfg-include-repos" data-action="toggleConfigSwitch" data-section="general" data-key="includeRepos"></div>
           <span class="config-toggle-label">Include Repos in Kicks ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Include Repos in Kicks', `Append monitored repo information to the kick dialog. Disable for agents that don't need repo context (e.g. outreach).`)}</span>
@@ -73365,6 +73394,8 @@ function burnAreaChart() {
       gh33: function (event, A) { markDirty('general','sortOrder',parseInt(this.value,10)); },
       gh34: function (event, A) { markDirty('general','replicas',Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)));this.value=Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)); },
       gh35: function (event, A) { markDirty('general','staleTimeout',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value)); },
+      // Contributor-first grace (#16518): blank or unparseable saves 0, which clears it to the 10m default.
+      contributorFirstGraceChanged: function (event, A) { const secs=cadenceFromHuman(this.value);markDirty('general','contributorFirstGrace',secs);this.value=secs>0?cadenceToHuman(secs):''; },
       // Repo scope (#6204). An empty field is meaningful — it CLEARS the scope
       // and returns the agent to hive-wide — so it marks dirty with [] rather
       // than skipping, which is why it cannot just reuse gh36.

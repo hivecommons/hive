@@ -17,30 +17,47 @@ import (
 // load fails and names the fix.
 func (c *Config) validateContributorFirst() error {
 	for _, name := range sortedAgentNames(c.Agents) {
-		agent := c.Agents[name]
-		label := agentSourceLabel(name, agent.SourceFile())
-		if agent.ContributorFirstGrace < 0 {
-			return fmt.Errorf("agent %s: contributor_first_grace must not be negative (got %s; omit it for the default %s)",
-				label, agent.ContributorFirstGrace, DefaultContributorFirstGrace)
-		}
-		if !agent.ContributorFirst {
-			continue
-		}
-		role := strings.ToLower(strings.TrimSpace(name))
-		// Relays request roles in lower case and the hub looks the agent up by
-		// that spelling (contribute_agent_roles.go), so a contributor-first
-		// agent with a mixed-case name could never be covered. Reject it for
-		// the same reason as an undelegatable role: the flag would be inert.
-		if role != name {
-			return fmt.Errorf("agent %s: contributor_first is true but the agent name is not lower-case — relays claim roles in lower case, so %q could never be covered", label, name)
-		}
-		if role == "supervisor" {
-			return fmt.Errorf("agent %s: contributor_first is true but the supervisor role is never delegatable to contributors", label)
-		}
-		if !c.Hub.IsContributeRoleDelegatable(role) {
-			return fmt.Errorf("agent %s: contributor_first is true but %q is not a role contributors may act as — add it to hub.contribute_delegatable_roles (the default list is scanner, quality and outreach)",
-				label, role)
+		if err := ValidateContributorFirstAgent(name, c.Agents[name], c.Hub); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// ValidateContributorFirstAgent checks one agent's contributor-first keys
+// against the hub block. It is the per-agent body of validateContributorFirst,
+// exported so the dashboard's General-tab save refuses exactly what a load
+// would, with the same message.
+func ValidateContributorFirstAgent(name string, agent AgentConfig, hub HubConfig) error {
+	label := agentSourceLabel(name, agent.SourceFile())
+	if agent.ContributorFirstGrace < 0 {
+		return fmt.Errorf("agent %s: contributor_first_grace must not be negative (got %s; omit it for the default %s)",
+			label, agent.ContributorFirstGrace, DefaultContributorFirstGrace)
+	}
+	if !agent.ContributorFirst {
+		return nil
+	}
+	role := strings.ToLower(strings.TrimSpace(name))
+	// Relays request roles in lower case and the hub looks the agent up by
+	// that spelling (contribute_agent_roles.go), so a contributor-first
+	// agent with a mixed-case name could never be covered. Reject it for
+	// the same reason as an undelegatable role: the flag would be inert.
+	if role != name {
+		return fmt.Errorf("agent %s: contributor_first is true but the agent name is not lower-case — relays claim roles in lower case, so %q could never be covered", label, name)
+	}
+	if role == "supervisor" {
+		return fmt.Errorf("agent %s: contributor_first is true but the supervisor role is never delegatable to contributors", label)
+	}
+	if !hub.IsContributeRoleDelegatable(role) {
+		return fmt.Errorf("agent %s: contributor_first is true but %q is not a role contributors may act as — add it to hub.contribute_delegatable_roles (the default list is scanner, quality and outreach)",
+			label, role)
+	}
+	return nil
+}
+
+// ContributorFirstDelegatable reports whether contributor_first could be
+// turned on for the agent named name: the same name and role rules
+// ValidateContributorFirstAgent applies, without the grace check.
+func ContributorFirstDelegatable(name string, hub HubConfig) bool {
+	return ValidateContributorFirstAgent(name, AgentConfig{ContributorFirst: true}, hub) == nil
 }
