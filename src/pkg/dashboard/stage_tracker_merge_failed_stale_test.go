@@ -130,6 +130,6 @@ assert.strictEqual(stageTrackerPriorHeadMergeFailedNote({}), '');
 
 // A live refusal on the current head still reads "Merge failed".
 const liveInfo = stageTrackerMergeGateInfo(row({ state: 'merge-failed', merge_failed: raw, merge_failed_kind: 'protection', merge_failed_text: 'branch protection blocks it', merge_failed_at: new Date(now - 9000).toISOString(), sweep_running: false }), now);
-assert.strictEqual(liveInfo.word + ' · ' + liveInfo.detail, 'Merge failed · branch protection');
+assert.strictEqual(liveInfo.word + ' · ' + liveInfo.detail, 'Queued for merge · branch protection pending');
 `)
 }

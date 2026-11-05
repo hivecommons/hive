@@ -146,6 +146,11 @@ type IssueRequest struct {
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue and comment
 	// OwnerStep records a typed proposal; it does not authorize execution.
 	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"` // requires NeedsDecision
+	// WithdrawDecision takes back a decision park the requesting agent
+	// placed itself (issue_park_withdraw.go): the comment says why, and the
+	// watcher lifts the park and removes the "What to reply" notice. Like a
+	// park it needs the label op in the lane's allowlist.
+	WithdrawDecision bool `json:"withdraw_decision,omitempty"` // comment only
 	// NoConsolidateReason is the caller's escape hatch from open-issue
 	// consolidation (#14360): when set, the watcher files a new issue instead
 	// of folding the request into an existing one, and records the reason.
@@ -484,6 +489,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	if shapeErr == "" {
 		shapeErr = issueOwnerStepShapeError(req, kind)
 	}
+	if shapeErr == "" && req.WithdrawDecision && (kind != "comment" || req.NeedsDecision) {
+		shapeErr = "withdraw_decision applies to a comment only and cannot be combined with needs_decision"
+	}
 	if shapeErr != "" {
 		c.writeIssueResult(path, IssueResponse{OK: false, Error: shapeErr, At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
@@ -520,7 +528,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	// A comment that parks the item applies a hive-controlled label, so the
 	// lane must hold the label op too: commenting on an issue and taking it
 	// out of the actionable queue are different privileges (#12334).
-	if kind == "comment" && req.NeedsDecision {
+	if kind == "comment" && (req.NeedsDecision || req.WithdrawDecision) {
 		if reason, refused := c.refuseWrite(req.Agent, WriteOpLabel, req.Repo, req.Number); refused {
 			c.denyIssueRequest(path, req, reason, nowFn)
 			return
@@ -675,6 +683,19 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				break
 			}
 		}
+		var withdraw *parkWithdrawal
+		if req.WithdrawDecision {
+			var refusal string
+			refusal, withdraw, err = c.decisionParkWithdrawal(ctx, req)
+			if err != nil {
+				break
+			}
+			if refusal != "" {
+				c.denyIssueRequest(path, req, refusal, nowFn)
+				return
+			}
+			body = strings.TrimRight(body, "\n") + "\n\n" + parkWithdrawnMarker(req.Agent)
+		}
 		var parkBlocked bool
 		if req.BlockedOnPR > 0 {
 			settled, merged, pErr := c.pullRequestSettledDetails(ctx, req.Repo, req.BlockedOnPR)
@@ -712,31 +733,35 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			// the comment records the decision and the owner-step marker is
 			// withheld so the unpark menu does not offer `/hive done`.
 			issueDecisionDowngrade = c.issueDecisionDowngradeForComment(req, body)
-			if !issueDecisionDowngrade.Active {
+			// The one plain label this path adds: an operator-renamed
+			// decision label for a park (not a stage spelling the engine
+			// writes, so it goes on first, as the create path puts it in
+			// the create's labels, #12329: the hard-suppress filter reads
+			// it), or, for a workflow-only change handed to the lane that
+			// can push it, the label that routes the issue there
+			// (scheduler routeWorkflowsLane) while nothing parks it.
+			_, parkLabel, _ := c.partitionStageRequestLabels([]string{c.needsDecisionLabel()})
+			plainLabel := ""
+			switch {
+			case !issueDecisionDowngrade.Active && !stagelabels.IsStageLabel(strings.ToLower(parkLabel)):
+				plainLabel = parkLabel
+			case issueDecisionDowngrade.Lane != "":
+				plainLabel = WorkflowsLaneLabel
+			}
+			if plainLabel != "" {
+				err = c.AddLabels(ctx, req.Repo, req.Number, []string{plainLabel})
+			}
+			if err == nil && !issueDecisionDowngrade.Active {
 				// The park is a Parked fact for the stage engine, the same
 				// path a `label` request takes: the engine derives and
-				// writes the stage. An operator-renamed decision label is
-				// not a stage spelling the engine writes, so it goes on
-				// first, as the create path puts it in the create's labels
-				// (#12329): the hard-suppress filter reads that label.
-				_, parkLabel, _ := c.partitionStageRequestLabels([]string{c.needsDecisionLabel()})
-				if !stagelabels.IsStageLabel(strings.ToLower(parkLabel)) {
-					err = c.AddLabels(ctx, req.Repo, req.Number, []string{parkLabel})
-				}
-				if err == nil {
-					err = c.StageFacts().Parked(ctx, c.IssueStageRef(req.Repo, req.Number), parkLabel)
-				}
+				// writes the stage.
+				err = c.StageFacts().Parked(ctx, c.IssueStageRef(req.Repo, req.Number), parkLabel)
 				if err == nil {
 					err = c.verifyIssueParkLanded(ctx, req.Repo, req.Number, parkLabel)
 				}
-			} else if issueDecisionDowngrade.Lane != "" {
-				// A workflow-only change goes to the lane that can push
-				// it: the label routes the issue there (scheduler
-				// routeWorkflowsLane), and nothing parks it.
-				err = c.AddLabels(ctx, req.Repo, req.Number, []string{WorkflowsLaneLabel})
 			}
 		}
-		if err == nil {
+		if err == nil && (withdraw == nil || !withdraw.posted) {
 			commentBody := issueOwnerStepBody(body, req.NeedsDecision && !issueDecisionDowngrade.Active, req.OwnerStep)
 			if issueDecisionDowngrade.Lane != "" {
 				commentBody = appendWorkflowsHandoff(commentBody, issueDecisionDowngrade)
@@ -759,6 +784,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			if errors.Is(err, ErrIssueCommentBudget) {
 				c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
 				return
+			}
+		}
+		if err == nil && withdraw != nil {
+			// After the comment, so the reason is on the issue before the
+			// park lifts; a retry after a failed lift finds the comment up
+			// (withdraw.posted) and only lifts.
+			if label := c.renamedParkLabel(withdraw); label != "" {
+				err = c.RemoveLabel(ctx, req.Repo, req.Number, label)
+			}
+			if err == nil {
+				err = c.withdrawDecisionPark(ctx, req, withdraw)
 			}
 		}
 		if err == nil && parkBlocked {
@@ -1003,6 +1039,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 	if kind == "comment" && req.NeedsDecision && !issueDecisionDowngrade.Active {
 		extra = append(extra, "parked", c.needsDecisionLabel())
+	}
+	if kind == "comment" && req.WithdrawDecision {
+		extra = append(extra, "withdrew_park", c.needsDecisionLabel())
 	}
 	if kind == "label" {
 		extra = []string{

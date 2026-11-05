@@ -220,3 +220,53 @@ func TestAssignHiveStillAdminOnlyForUserFirstFlow(t *testing.T) {
 		t.Fatalf("admin assign did not claim the placeholder: %+v", h)
 	}
 }
+
+// TestDashboardSpokePointer guards the "your hive is not the hub" callout and
+// the two row affordances it points at. The incident it exists for: a new
+// owner read "Open your hive dashboard → Guide (top navbar)" on My Hives and
+// replied "I do not see any guide or setting option" — because the hub lists
+// hives and the Guide lives inside the hive. The callout, the ↗ glyph on the
+// hive-name link and the ⋮ hint are all string-built markup, so this is the
+// only place their wiring is asserted.
+func TestDashboardSpokePointer(t *testing.T) {
+	html := dashScript(t)
+	for _, fn := range []string{
+		"renderSpokePointer",
+		"dismissSpokePointer",
+		"spokeAttentionKinds",
+		"spokePointerDismissed",
+		"spokeOpenLink",
+	} {
+		if !strings.Contains(html, "function "+fn+"(") {
+			t.Errorf("dashboardHTML is missing a definition for %s()", fn)
+		}
+	}
+	for _, want := range []string{
+		// Container the renderer writes into, above the usage/attention strip.
+		`id="spoke-pointer"`,
+		// Drawn from the same render pass as the alerts panel it reads.
+		"renderAlertsPanel();",
+		"renderSpokePointer(assignedAll);",
+		// Dismissal is per viewer + hive and re-arms on a new attention kind.
+		"LS_SPOKE_POINTER_PREFIX",
+		"localStorage.setItem(spokePointerKey(",
+		// The callout's hive link reuses the row's href decision (SSO /open).
+		"ssoDisplayLink(dh, isHostedRow && rb ? rb : '', text, cls)",
+		// Row affordances: the ↗ glyph on the bold hive-name link, and the
+		// ⋮ hint naming what the row menu manages.
+		`class="open-glyph"`,
+		"Manage: permissions, pause, funding, delete…",
+		`title="' + HIVE_MENU_HINT + '"`,
+		// Copy the incident turned on: where the Guide actually is.
+		"live inside the hive",
+		"Install the Forge App",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboardHTML is missing %q", want)
+		}
+	}
+	// Admin viewers never see the callout: their My Hives is the fleet.
+	if !strings.Contains(html, "if (_isAdmin || !_spokePointerHives.length)") {
+		t.Error("renderSpokePointer must short-circuit for hub admins")
+	}
+}

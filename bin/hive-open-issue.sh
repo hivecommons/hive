@@ -17,7 +17,7 @@
 #
 # Usage (drop-in for the common gh shapes):
 #   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>]
-#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
+#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision|--withdraw-decision] [--blocked-on-pr <n>]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -55,6 +55,15 @@
 # the body. Either shape tags the text so the notice offers /hive done; the
 # owner's /hive done reply records the done decision, and the lane that next
 # picks the issue up re-checks the step and closes it once verified.
+#
+# --withdraw-decision (comment only) takes back a decision park you placed
+# yourself, when the question is gone: a fix you or another lane found needs
+# no choice, or an open PR already carries the answer and closes the issue.
+# The body says why in one or two sentences. The watcher refuses it unless
+# the issue is parked on a decision (not `needs-human`) and the newest park
+# text is yours; it then lifts the park, removes the "What to reply" notice
+# and marks the comment, so the issue leaves the owner's queue without an
+# owner reply. Never withdraw a park another lane or a person placed.
 #
 # --no-consolidate <reason> (issue only) asks the watcher not to fold this
 # request into an existing open issue (hivecommons/hive#14360); use it when the
@@ -137,6 +146,7 @@ PARENT=""
 BLOCKED_BY=()
 CLOSE_ON_MERGE=0
 NEEDS_DECISION=0
+WITHDRAW_DECISION=0
 STEP_KIND=""; RELEASE_TAG=""; RELEASE_TARGET=""; STEP_REQUESTED=0
 BLOCKED_ON_PR=""
 NO_CONSOLIDATE=""
@@ -146,7 +156,7 @@ LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --no-consolidate, --blocked-on-pr, --step-kind, --release-tag, --release-target, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --withdraw-decision, --no-consolidate, --blocked-on-pr, --step-kind, --release-tag, --release-target, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -175,6 +185,7 @@ while [ $# -gt 0 ]; do
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     --close-on-merge) CLOSE_ON_MERGE=1; shift;;
     --needs-decision) NEEDS_DECISION=1; shift;;
+    --withdraw-decision) WITHDRAW_DECISION=1; shift;;
     --step-kind|--release-tag|--release-target)
       STEP_REQUESTED=1
       if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
@@ -241,6 +252,15 @@ fi
 
 if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ] && [ "$KIND" != "comment" ]; then
   echo "hive-open-issue: --needs-decision only applies when creating an issue or commenting on one; nothing was written." >&2
+  exit 2
+fi
+
+if [ "$WITHDRAW_DECISION" -eq 1 ] && [ "$KIND" != "comment" ]; then
+  echo "hive-open-issue: --withdraw-decision only applies to a comment; nothing was written." >&2
+  exit 2
+fi
+if [ "$WITHDRAW_DECISION" -eq 1 ] && [ "$NEEDS_DECISION" -eq 1 ]; then
+  echo "hive-open-issue: --withdraw-decision and --needs-decision cannot be combined; nothing was written." >&2
   exit 2
 fi
 
@@ -376,10 +396,11 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" "$NO_CONSOLIDATE" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" "$NO_CONSOLIDATE" "$WITHDRAW_DECISION" <<'PY'
 import json, os, re, sys
 temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr = sys.argv[1:18]
 no_consolidate = sys.argv[22]
+withdraw_decision = sys.argv[23]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -416,6 +437,9 @@ if kind == "comment":
     # the configured needs-decision label before posting (hivecommons/hive#12329).
     if needs_decision == "1":
         req["needs_decision"] = True
+    # --withdraw-decision takes back the caller's own decision park.
+    if withdraw_decision == "1":
+        req["withdraw_decision"] = True
 elif kind == "claim":
     # The watcher applies the hive/claimed-by-<agent> label; number is all it
     # needs. No body/title/labels.
@@ -495,6 +519,9 @@ if [ "$KIND" = "comment" ]; then
   echo "hive-open-issue: requested comment on $REPO#$NUMBER as the App bot"
   if [ "$NEEDS_DECISION" -eq 1 ]; then
     echo "hive-open-issue: will park $REPO#$NUMBER on a maintainer decision (needs-decision label)"
+  fi
+  if [ "$WITHDRAW_DECISION" -eq 1 ]; then
+    echo "hive-open-issue: will withdraw your decision park on $REPO#$NUMBER (refused if the park is not yours)"
   fi
   if [ -n "${BLOCKED_ON_PR:-}" ]; then
     echo "hive-open-issue: will park the issue on $REPO#$BLOCKED_ON_PR (blocked label; help wanted removed; no one is @-mentioned)"

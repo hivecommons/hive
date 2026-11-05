@@ -81,6 +81,7 @@
         }
       }
       // Guarded: the test harnesses load helpers by name.
+      if (typeof stageTrackerHiveReviewerChipText === 'function' && stageTrackerHiveReviewerChipText(item)) return stageTrackerHiveReviewerChipText(item);
       const text = 'waiting on ' + (a.author ? '@' + a.author : 'author');
       return typeof stageTrackerReworkSuffix === 'function' ? stageTrackerReworkSuffix(text, item) : text;
     }
@@ -202,8 +203,10 @@
     // Pill text with the indicator placed just before the @login (or
     // leading, when the text names nobody): "waiting on [robot ●] @hanthor".
     function stageTrackerPresenceInPillHtml(item, text) {
-      const dot = stageTrackerPresenceDotHtml(item, Date.now());
       const t = String(text || '');
+      // The hive's own turn: no author presence glyph on the pill.
+      if (typeof stageTrackerReReviewOwedByHive === 'function' && stageTrackerReReviewOwedByHive(item)) return esc(t);
+      const dot = stageTrackerPresenceDotHtml(item, Date.now());
       if (!dot) return esc(t);
       const i = t.indexOf('@');
       if (i < 0) return dot + esc(t);
@@ -217,6 +220,8 @@
     function stageTrackerPresenceChipText(item) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
+      // Guarded: the test harnesses load helpers by name.
+      if (typeof stageTrackerHiveReviewerChipText === 'function' && stageTrackerHiveReviewerChipText(item)) return stageTrackerHiveReviewerChipText(item);
       const ownPR = item && item.kind === 'pr' && item.author_kind === 'human' && p.kind === 'human' && String(item.author || '').toLowerCase() === String(p.login).toLowerCase();
       const text = 'waiting on @' + p.login + (ownPR ? ' to push' : '');
       // Guarded: the test harnesses load helpers by name.
@@ -340,6 +345,35 @@
       if (r.state === 'requested' && r.evidence === 'queued') return 'queued';
       return STAGE_TRACKER_REWORK_WORDS[r.state];
     }
+    // "re-review pending" means the HIVE's reviewer owes a pass on the new
+    // head, not the author (hivecommons/hive#16615: "are we waiting on the
+    // clanker or are we in CI?"). The backend says so with
+    // `rework.owed_by: "hive-reviewer"` once the pushed head carries
+    // nothing the author must fix (red CI, findings, a conflict nobody
+    // rebases) and "author" while it does; older payloads without the
+    // field are read the same way from the activities.
+    const STAGE_TRACKER_REWORK_OWED_BY_HIVE = 'hive-reviewer';
+    function stageTrackerReReviewOwedByHive(item) {
+      const r = stageTrackerReworkOf(item);
+      if (!r || r.state !== 'pushed') return false;
+      if (r.owed_by) return r.owed_by === STAGE_TRACKER_REWORK_OWED_BY_HIVE;
+      const on = k => { const a = item[k + '_activity']; return a && (!a.head || !item.head || a.head === item.head) ? a.state || 'unknown' : 'unknown'; };
+      if (on('ci') === 'failing' || on('review') === 'changes_requested') return false;
+      if (/conflict/i.test(String(item.reason || '')) && !item.rebase) return false;
+      return true;
+    }
+    // "re-review of d88928e" — the owed pass, named by head.
+    function stageTrackerReReviewWord(item) {
+      const r = stageTrackerReworkOf(item);
+      const sha = String((r && r.head) || item.head || '').slice(0, 7);
+      return 're-review' + (sha ? ' of ' + sha : ' pending');
+    }
+    // "waiting on 🐝 hive reviewer · re-review of d88928e"; '' when the
+    // author still owes the next move.
+    function stageTrackerHiveReviewerChipText(item) {
+      if (!stageTrackerReReviewOwedByHive(item)) return '';
+      return 'waiting on 🐝 hive reviewer · ' + stageTrackerReReviewWord(item);
+    }
     // "waiting on @x · acknowledged" — the pill text with the pickup word.
     function stageTrackerReworkSuffix(text, item) {
       const w = stageTrackerReworkWord(item);
@@ -358,7 +392,7 @@
       const since = when(r.since);
       switch (r.state) {
         case 'pushed':
-          return who + ' pushed a new head' + (since ? ' ' + since : '') + ' · re-review pending';
+          return who + ' pushed a new head' + (since ? ' ' + since : '') + (stageTrackerReReviewOwedByHive(item) ? ' · hive reviewer owes the ' + stageTrackerReReviewWord(item) : ' · re-review pending');
         case 'in_progress':
           return who + "'s clanker picked up the rework" + (since ? ' ' + since : '') + (r.mode ? ' (' + r.mode + ')' : '');
         case 'acknowledged':

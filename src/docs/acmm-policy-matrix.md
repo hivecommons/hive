@@ -16,6 +16,27 @@ issues. The **KB** is the knowledge base of reusable facts; an **RFC** is a
 request for comments on a proposed design. For a first deployment's trust
 choices, start with [Securing your hive](securing-your-hive.md).
 
+## Repository E2E detection
+
+The codebase evaluator's `acmm:prereq-e2e` prerequisite accepts the existing
+Playwright/Cypress configuration and E2E directory conventions, as well as
+GitHub Actions workflow files named `test*-install*.yml`, `test*-boot*.yml`,
+or `*e2e*.yml` (also `.yaml`). These workflow alternatives cover projects
+whose end-to-end boundary is installing and booting a system rather than
+driving a web browser.
+
+Workflow patterns use Go `path.Match` semantics on the file basename, only
+inside the literal `.github/workflows` directory. They do not recurse, match
+directories named like workflow files, or accept an unrelated CI workflow
+just because it exists. Detection remains a file-existence heuristic, not
+proof that a workflow passes or that its contents implement an E2E test;
+maintainers must keep these paths backed by real coverage rather than add
+empty directories or dummy workflows to satisfy the criterion.
+
+An evaluator fix takes effect only after a release containing it is deployed.
+After deployment, refresh the ACMM evaluation (subject to its refresh debounce)
+before closing an existing false-negative gap issue.
+
 ## Policy Modes
 
 The four policy tiers below describe the main autonomy ladder. The roster also

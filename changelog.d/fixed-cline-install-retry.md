@@ -1,0 +1,1 @@
+- Hive and contributor image builds retry Cline installation with fresh npm metadata up to four times to tolerate transient registry propagation failures ([#16666](https://github.com/hivecommons/hive/issues/16666)).

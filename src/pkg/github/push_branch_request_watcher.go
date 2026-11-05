@@ -405,6 +405,18 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 	}
 	sha = strings.TrimSpace(sha)
 
+	// Every commit a hive identity authors must carry its sign-off before it
+	// leaves the checkout. An unsigned hive commit on a published branch is
+	// what later makes the automerge DCO stage re-author the PR
+	// (hivecommons/hive#16619); refusing it here keeps the fix at the source.
+	// Hooks are neutralised by pushBranchGitEnv, so the relay checks itself.
+	if log, err := pushBranchExec(ctx, req.Dir, env, "git", "log", "--no-merges", "--format="+unsignedHiveCommitFormat, sha, "--not", "--remotes"); err == nil {
+		if bad := unsignedHiveCommits(log, c.pushHiveIdentities()); len(bad) > 0 {
+			c.denyPushBranchRequest(path, req, fmt.Sprintf("commit %s is authored by hive identity %q without a Signed-off-by trailer; hive-authored commits must be signed off at creation (git commit -s)", bad[0].SHA, bad[0].Author), nowFn)
+			return
+		}
+	}
+
 	args := []string{"push"}
 	if req.ForceWithLease {
 		args = append(args, "--force-with-lease")
@@ -492,4 +504,80 @@ func WritePushBranchRequest(dir string, req PushBranchRequest) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// unsignedHiveCommitFormat is the git log format unsignedHiveCommits parses:
+// one record per commit, fields split by US (0x1f), records by RS (0x1e).
+const unsignedHiveCommitFormat = "%H%x1f%an%x1f%ae%x1f%B%x1e"
+
+// unsignedHiveCommit names a commit the push relay refuses.
+type unsignedHiveCommit struct {
+	SHA    string
+	Author string
+}
+
+// pushHiveIdentities lists the logins whose commits must be signed off: the
+// App bot and the configured hive identity (ai_author + App login).
+func (c *Client) pushHiveIdentities() []string {
+	var ids []string
+	if c.appBotLogin != "" {
+		ids = append(ids, c.appBotLogin)
+	}
+	id := c.getHiveIdentity()
+	ids = append(ids, id.AIAuthor, id.AppLogin)
+	return ids
+}
+
+// unsignedHiveCommits parses `git log --format=unsignedHiveCommitFormat`
+// output and returns the commits authored by one of logins (by name, or by a
+// GitHub noreply / App-slug address) whose message has no Signed-off-by
+// trailer. Commits by anyone else are not the relay's concern; the DCO check
+// on the PR handles those.
+func unsignedHiveCommits(log string, logins []string) []unsignedHiveCommit {
+	var bad []unsignedHiveCommit
+	for _, rec := range strings.Split(log, "\x1e") {
+		rec = strings.TrimSpace(rec)
+		if rec == "" {
+			continue
+		}
+		f := strings.SplitN(rec, "\x1f", 4)
+		if len(f) < 4 {
+			continue
+		}
+		sha, name, email, msg := strings.TrimSpace(f[0]), strings.TrimSpace(f[1]), strings.TrimSpace(f[2]), f[3]
+		login := hiveIdentityForCommitter(name, email, logins)
+		if login == "" || signedTrailerLineRE.MatchString(msg) {
+			continue
+		}
+		bad = append(bad, unsignedHiveCommit{SHA: sha, Author: login})
+	}
+	return bad
+}
+
+// hiveIdentityForCommitter returns the login in logins that name/email
+// belongs to, or "" when the committer is not a hive identity. A login
+// matches its own name, "<login>@users.noreply.github.com",
+// "<id>+<login>@users.noreply.github.com", and (for "<slug>[bot]") the
+// bracket-free "<slug>@…" address signedTrailerEmail derives.
+func hiveIdentityForCommitter(name, email string, logins []string) string {
+	email = strings.ToLower(email)
+	local := email
+	if i := strings.IndexByte(email, '@'); i >= 0 {
+		local = email[:i]
+	}
+	if i := strings.IndexByte(local, '+'); i >= 0 {
+		local = local[i+1:]
+	}
+	for _, login := range logins {
+		login = strings.TrimSpace(login)
+		if login == "" {
+			continue
+		}
+		slug := strings.TrimSuffix(login, "[bot]")
+		if strings.EqualFold(name, login) || strings.EqualFold(name, slug) ||
+			strings.EqualFold(local, login) || strings.EqualFold(local, slug) {
+			return login
+		}
+	}
+	return ""
 }

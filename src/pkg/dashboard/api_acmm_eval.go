@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	pathpkg "path"
 	"sort"
 	"strconv"
 	"strings"
@@ -770,8 +771,8 @@ func newestHiveActivity(repo collect.RepoActivity) time.Time {
 	return newest
 }
 
-// patternExists checks if a file or directory path exists, using the
-// pre-fetched directory cache when possible.
+// patternExists checks a literal file/directory path or a path.Match glob in
+// a file's basename. Parent directories are literal, not recursive globs.
 func (s *Server) patternExists(ctx context.Context, owner, repo, path string, dirCache map[string]map[string]bool) bool {
 	isDir := strings.HasSuffix(path, "/")
 	cleanPath := strings.TrimSuffix(path, "/")
@@ -781,6 +782,44 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 	if idx := strings.LastIndex(cleanPath, "/"); idx >= 0 {
 		parent = cleanPath[:idx]
 		base = cleanPath[idx+1:]
+	}
+
+	if strings.ContainsAny(base, "*?[") && !isDir {
+		entries, ok := dirCache[parent]
+		if !ok {
+			ghClient := s.deps.GHClient.GoGitHub()
+			if ghClient == nil {
+				return false
+			}
+			_, contents, _, err := ghClient.Repositories.GetContents(github.WithRESTCaller(ctx, "hive:acmm_pattern_exists"), owner, repo, parent, nil)
+			if err != nil {
+				// Cache the miss so sibling glob patterns under the same
+				// parent do not each re-issue the failed listing.
+				if dirCache != nil {
+					dirCache[parent] = map[string]bool{}
+				}
+				return false
+			}
+			entries = make(map[string]bool, len(contents))
+			for _, entry := range contents {
+				entries[entry.GetName()] = true
+				if entry.GetType() == "dir" {
+					entries[entry.GetName()+"/"] = true
+				}
+			}
+			if dirCache != nil {
+				dirCache[parent] = entries
+			}
+		}
+		for name, exists := range entries {
+			if !exists || strings.HasSuffix(name, "/") || entries[name+"/"] {
+				continue
+			}
+			if matched, _ := pathpkg.Match(base, name); matched {
+				return true
+			}
+		}
+		return false
 	}
 
 	if entries, ok := dirCache[parent]; ok {
