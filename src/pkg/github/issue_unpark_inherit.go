@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // A decision park that defers to another one ("Answer on #511; the same
@@ -138,7 +140,14 @@ func (c *Client) inheritDeferredDecisions(ctx context.Context, displayRepo, owne
 			continue
 		}
 		note := renderDecisionInheritedNote(from, removed)
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil && c.logger != nil {
+		// The note is unsolicited, so it consults the gate like the other
+		// decision-park comments; a refusal keeps the un-park and skips it.
+		item := c.WritebackItemForIssue(Issue{Number: number, Author: safeGetLogin(issue.GetUser()), Labels: labels, CreatedAt: issue.GetCreatedAt().Time})
+		if d := c.WritebackAllowed(owner+"/"+repo, item, writeback.KindNeedsDecisionComment, note); !d.Allowed {
+			if c.logger != nil {
+				c.logger.Info("unpark sweep: write-back gate withheld the inherited-decision note", "repo", displayRepo, "issue", number, "reason", d.Reason)
+			}
+		} else if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil && c.logger != nil { // writeback:gated
 			c.logger.Warn("unpark sweep: could not post the inherited-decision note", "repo", displayRepo, "issue", number, "error", err)
 		}
 		event := IssueUnparkEvent{Repo: displayRepo, Number: number, Actor: from.Actor, Decision: from.Decision, CommentURL: from.CommentURL}
