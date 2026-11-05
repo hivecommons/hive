@@ -21,6 +21,7 @@ import (
 // meta issues (hive_advisory, dependency_dashboard) are listed too: the
 // tracker is the canonical open-items set the Overview tile counts
 // (hivecommons/hive#13434), so its total equals the tile's by construction.
+// The SPA does not draw them as rows (stage_tracker_standing_meta_test.go).
 func TestStageTrackerListsSidelinedItems(t *testing.T) {
 	now := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
 	s, store := stageTrackerFixture(t, now)

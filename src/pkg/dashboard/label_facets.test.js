@@ -32,7 +32,7 @@ const src = [
   constLine('STAGE_TRACKER_PAGE_SIZES'), constLine('STAGE_TRACKER_DEFAULT_PAGE_SIZE'), constLine('STAGE_TRACKER_LABEL_CHIP_LIMIT'),
   constLine('STAGE_TRACKER_AGE_MS'), constLine('STAGE_TRACKER_LABEL_FAMILIES'), constLine('STAGE_TRACKER_SORTS'), constLine('STAGE_TRACKER_ACTED_FILTERS'),
   constLine('STAGE_TRACKER_NEEDS_HUMAN_STAGES'), constLine('STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES'), constLine('STAGE_TRACKER_NEEDS_HUMAN_MODS'),
-  fnSrc('stageTrackerDefaultFilter'), fnSrc('stageTrackerNormalizeFilter'), fnSrc('stageTrackerLabelFamily'),
+  fnSrc('stageTrackerDefaultFilter'), fnSrc('stageTrackerNormalizeFilter'), fnSrc('stageTrackerLabelFamily'), fnSrc('stageTrackerIsStandingMeta'),
   pick('label facet helpers begin', 'label facet helpers end'),
   pick('label facet model begin', 'label facet model end'),
 ].join('\n');
@@ -98,4 +98,12 @@ test('needs-human / on-hold facets: count equals what the filter predicate accep
   assert.deepStrictEqual(h.stageTrackerLabelFacets(items, F({ onHold: true })).onHold.on, true);
   assert.deepStrictEqual([h.stageTrackerLabelFacets([], F()).needsHuman.count, h.stageTrackerLabelFacets([], F()).onHold.count], [0, 0], 'chips always exist');
   assert.strictEqual(h.stageTrackerLabelDialogData(h.stageTrackerLabelFacets(items, F({ needsHuman: true, onHold: true })), '').selected, 2);
+});
+
+test('a standing meta issue (bot Dependency Dashboard, Hive Advisory Report) offers no chips and no facet counts', () => {
+  const deps = Object.assign(item(52, ['needs-kind', 'triage/accepted']), { bucket: 'dependency_dashboard', stage: 85 });
+  const advisory = Object.assign(item(53, ['hive/advisory']), { bucket: 'hive_advisory' });
+  const fac = h.stageTrackerLabelFacets([item(1, ['bug']), deps, advisory], F());
+  assert.deepStrictEqual(fac.all.map(x => x.label), ['bug']);
+  assert.strictEqual(fac.needsHuman.count, 0, 'a dashboard parked at 085 is not a needs-human row');
 });

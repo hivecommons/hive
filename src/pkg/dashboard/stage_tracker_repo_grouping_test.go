@@ -215,6 +215,8 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerVisible"),
 		jsFunc(t, html, "stageTrackerIsReviewNote"),
+		jsFunc(t, html, "stageTrackerIsStandingMeta"),
+		jsFunc(t, html, "stageTrackerStandingCount"),
 		jsFunc(t, html, "stageTrackerFoldedReviewNotes"),
 		jsFunc(t, html, "stageTrackerReviewNotesHtml"),
 		jsFunc(t, html, "stageTrackerFoldedCount"),
