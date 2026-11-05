@@ -53,11 +53,21 @@ func TestRepoOwnershipCountsDeferringParkOnce(t *testing.T) {
 			row(tu, 531, config.DefaultNeedsDecisionLabel, "Danathar/tududi#540"), // blocked by a needs-human park
 			row(tu, 540, config.DefaultNeedsHumanLabel),
 			row(tu, 532, config.DefaultNeedsDecisionLabel, "Danathar/other#7"),
+			// Two asks blocked by each other, and a three-ask loop: each
+			// stays an ask rather than all waiting on one another. An ask
+			// blocked by a member of a loop it is not in still waits.
+			row(tu, 550, config.DefaultNeedsDecisionLabel, "Danathar/tududi#551"),
+			row(tu, 551, config.DefaultNeedsDecisionLabel, "Danathar/tududi#550"),
+			row(tu, 560, config.DefaultNeedsDecisionLabel, "Danathar/tududi#561"),
+			row(tu, 561, config.DefaultNeedsDecisionLabel, "Danathar/tududi#562"),
+			row(tu, 562, config.DefaultNeedsDecisionLabel, "Danathar/tududi#560"),
+			row(tu, 570, config.DefaultNeedsDecisionLabel, "Danathar/tududi#550"),
 		}},
 		{Name: "other", Full: other, NonActionableIssues: []any{row(other, 7, config.DefaultNeedsDecisionLabel)}},
 	}
 	decideRepoOwnership(repos, config.DashboardIssueBandsConfig{}, ownershipEnv11565(5))
-	want := map[int]string{511: "", 512: "#511", 528: "#511", 530: "", 531: "", 532: "Danathar/other#7"}
+	want := map[int]string{511: "", 512: "#511", 528: "#511", 530: "", 531: "", 532: "Danathar/other#7",
+		550: "", 551: "", 560: "", 561: "", 562: "", 570: "#550"}
 	for n, blocker := range want {
 		d := ownershipFor(repos[0].Ownership, ownershipKindIssue, n)
 		if blocker == "" {

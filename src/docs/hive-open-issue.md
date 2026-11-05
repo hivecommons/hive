@@ -167,7 +167,9 @@ reads as "Waits on the decision on #N", not as your turn
 ([Danathar/tududi#512](https://github.com/Danathar/tududi/issues/512)). A
 blocker that is ordinary open work, a `needs-human` park, or an issue the
 snapshot does not carry leaves the park your turn: that decision is still the
-owner's to make, and a link alone never hides it.
+owner's to make, and a link alone never hides it. Asks blocked by each other
+(directly or round a loop) all stay your turn, so a loop never hides every
+one of them.
 
 When a `--needs-decision` park (issue or comment) gives no `--blocked-by`, the
 watcher links it itself if the text asks a decision another open issue already
