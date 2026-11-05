@@ -701,6 +701,9 @@ func stageTrackerReviewActivity(pr github.PullRequest, bundle *evidence.Bundle, 
 				out.Blocker = stageTrackerFixerExhaustedSummary(agg)
 			case "requires_human":
 				out.State, out.Caption = "human_decision", "Review findings · needs owner sign-off"
+				if trackerAggregateSignOffOnly(*agg) {
+					out.Caption = "Waiting on a human approver · reviewer verified, needs sign-off"
+				}
 				out.Blocker = agg.DecisionQuestion
 			}
 		}
@@ -908,4 +911,20 @@ func stageTrackerApplyCodeActivity(it *StageTrackerItem, dispatch review.Dispatc
 			it.Caption += " · " + out.Actor
 		}
 	}
+}
+
+// trackerAggregateSignOffOnly reports a requires_human aggregate whose
+// perspectives asked an approver a question and none found code to change:
+// the review verified the head and only a person's sign-off is owed
+// (hivecommons/hive#16607).
+func trackerAggregateSignOffOnly(agg review.Aggregate) bool {
+	if !agg.DecisionRequested || strings.TrimSpace(agg.DecisionQuestion) == "" {
+		return false
+	}
+	for _, v := range agg.Perspectives {
+		if v == review.VerdictChangesRequested || v == review.VerdictReject {
+			return false
+		}
+	}
+	return true
 }

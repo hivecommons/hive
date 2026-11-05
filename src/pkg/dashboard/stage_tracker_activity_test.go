@@ -671,3 +671,23 @@ func TestStageTrackerActivityCIRunningWhileChecksPending(t *testing.T) {
 		}
 	}
 }
+
+// A requires_human aggregate whose perspectives only asked an approver a
+// question (no changes_requested) is a verified head waiting on sign-off,
+// not "findings" (hivecommons/hive#16607); one requesting changes is not.
+func TestTrackerAggregateSignOffOnly(t *testing.T) {
+	signOff := review.Aggregate{Verdict: review.VerdictRequiresHuman, DecisionRequested: true, DecisionQuestion: "@owner confirm?",
+		Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveSecurity: review.VerdictRequiresHuman, review.PerspectiveStyle: review.VerdictRequiresHuman}}
+	if !trackerAggregateSignOffOnly(signOff) {
+		t.Fatalf("sign-off aggregate not recognised: %+v", signOff)
+	}
+	withFix := signOff
+	withFix.Perspectives = map[review.Perspective]review.Verdict{review.PerspectiveSecurity: review.VerdictRequiresHuman, review.PerspectiveCorrectness: review.VerdictChangesRequested}
+	noQuestion := signOff
+	noQuestion.DecisionRequested, noQuestion.DecisionQuestion = false, ""
+	for name, agg := range map[string]review.Aggregate{"changes requested sibling": withFix, "no question": noQuestion} {
+		if trackerAggregateSignOffOnly(agg) {
+			t.Errorf("%s: wrongly recognised as sign-off only", name)
+		}
+	}
+}

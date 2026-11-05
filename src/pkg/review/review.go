@@ -454,6 +454,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	var decisionQuestions []string
 	var hasReject, hasChanges, unresolvedRequiresHuman, riskEscalation bool
 	var selfAuthoredHumanWithConcreteRemediation, selfAuthoredHumanWithoutRemediation bool
+	var signOffAsk, requiresHumanBeyondSignOff bool
 	for i, r := range reports {
 		effective := effectiveReports[i]
 		if agg.Repo == "" {
@@ -490,6 +491,11 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		case VerdictChangesRequested:
 			hasChanges = true
 		case VerdictRequiresHuman:
+			if reportAsksForSignOff(r) {
+				signOffAsk = true
+			} else {
+				requiresHumanBeyondSignOff = true
+			}
 			if selfAuthoredRequiresHumanReportIsResolvable(r, opts) {
 				if reportHasConcreteRemediation(r) {
 					selfAuthoredHumanWithConcreteRemediation = true
@@ -530,7 +536,8 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	sortReasons(agg.Reasons)
 	sort.Strings(agg.HumanSummaries)
 
-	if hiveSupersedingFixRoute(agg, opts, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman) {
+	signOffOnly := signOffAsk && !requiresHumanBeyondSignOff && !hasReject && !hasChanges
+	if hiveSupersedingFixRoute(agg, opts, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman, signOffOnly) {
 		// Owner rule: a PR the hive created to supersede another PR auto-
 		// merges with no operator decision. A reviewer's requires_human —
 		// a risk-class question, a security-sensitive finding — is a
@@ -945,14 +952,40 @@ const HiveSupersedingFixRouteReason = "hive-authored superseding PR: reviewer re
 // reject stays a reject: it is an emergent problem with the PR, not a
 // finding to fix. Everything the self-authored path already resolves on
 // its own (non-risk questions, concrete remediation) keeps that path.
-func hiveSupersedingFixRoute(agg Aggregate, opts AggregateOptions, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman bool) bool {
-	if !agg.HiveSuperseding || !agg.HiveAuthored || opts.HiveSupersedingAutoMergeOff || hasReject {
+//
+// signOffOnly is the one requires_human the fixer cannot answer: every
+// perspective explicitly deferred a maintainer decision and none raised a
+// finding above informational severity (reportAsksForSignOff). Routing that
+// to the fixer dispatched six no-op fix kicks, exhausted the cycle, and
+// re-authored the same change three times (#16398 → #16456 → #16607) while
+// the approver who was asked never saw a decision pill. It stays a
+// decision-requested requires_human, which the stage engine parks at 085
+// needs-decision with approve / request-changes options.
+func hiveSupersedingFixRoute(agg Aggregate, opts AggregateOptions, hasReject, decisionRequested, riskEscalation, unresolvedRequiresHuman, signOffOnly bool) bool {
+	if !agg.HiveSuperseding || !agg.HiveAuthored || opts.HiveSupersedingAutoMergeOff || hasReject || signOffOnly {
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
 		return false
 	}
 	return unresolvedRequiresHuman || (decisionRequested && riskEscalation)
+}
+
+// reportAsksForSignOff reports whether a requires_human report (the caller
+// has already established the effective verdict) is a pure approver
+// question: it explicitly requested a maintainer decision and carries no
+// in-scope finding above informational severity, so there is no code change
+// an agent could make to clear it.
+func reportAsksForSignOff(r PerspectiveReport) bool {
+	if !r.DecisionRequested {
+		return false
+	}
+	for _, f := range r.Findings {
+		if InScopeFinding(f) && severityRank(f.Severity) > severityRank(outputschema.SeverityInfo) {
+			return false
+		}
+	}
+	return true
 }
 
 func reportsHiveSuperseding(reports []PerspectiveReport) bool {
