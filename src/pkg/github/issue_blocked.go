@@ -498,7 +498,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 						logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 						continue
 					}
-					note := blockedUnblockedMarker + fmt.Sprintf("\nUnblocked: %s#%d (superseding #%d) is no longer open. This issue is actionable again.", prRepo, supersededBy, prNumber)
+					note := blockedSupersededSettledNote(prRepo, supersededBy, prNumber, c.unblockAdmission(t.labels))
 					c.postUnblockedNote(ctx, t.repo, t.number, note, logger)
 					res.Unblocked++
 					logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(supersededBy), "superseded", prNumber)
@@ -542,7 +542,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 				logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 				continue
 			}
-			note := blockedPRSettledNote(prRepo + "#" + strconv.Itoa(prNumber))
+			note := blockedPRSettledNote(prRepo+"#"+strconv.Itoa(prNumber), c.unblockAdmission(t.labels))
 			c.postUnblockedNote(ctx, t.repo, t.number, note, logger)
 			res.Unblocked++
 			logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(prNumber))
@@ -622,8 +622,88 @@ const blockedMarkerlessNote = blockedUnblockedMarker + "\nUnblocked: the `blocke
 
 // blockedPRSettledNote is the note posted when the PR a blocked issue
 // waited on (pr, "owner/repo#N") has merged or closed.
-func blockedPRSettledNote(pr string) string {
+func blockedPRSettledNote(pr, admission string) string {
+	if admission != "" {
+		return blockedUnblockedMarker + "\nUnblocked: " + pr + " is no longer open. Unblocked — waiting for a maintainer to admit it: " + admission
+	}
 	return blockedUnblockedMarker + "\nUnblocked: " + pr + " is no longer open; re-triaging."
+}
+
+// blockedSupersededSettledNote is the note posted when the PR that superseded
+// an issue's blocker is no longer open either.
+func blockedSupersededSettledNote(prRepo string, supersededBy, prNumber int, admission string) string {
+	lead := blockedUnblockedMarker + fmt.Sprintf("\nUnblocked: %s#%d (superseding #%d) is no longer open.", prRepo, supersededBy, prNumber)
+	if admission != "" {
+		return lead + " Unblocked — waiting for a maintainer to admit it: " + admission
+	}
+	return lead + " This issue is actionable again."
+}
+
+// unblockAdmission is "" when project.issue_filter admits an issue with
+// these labels once `blocked` is gone; otherwise the sentence an unblock note
+// ends with instead of "actionable": nothing works an un-admitted issue
+// until a maintainer admits it (projectbluefin/website#987 had no
+// triage/accepted and was told it was actionable).
+func (c *Client) unblockAdmission(labels []string) string {
+	after := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if !strings.EqualFold(strings.TrimSpace(l), BlockedLabel) {
+			after = append(after, l)
+		}
+	}
+	filter := c.getIssueFilter()
+	if filter.Admits(after) {
+		return ""
+	}
+	var required []string
+	if notice, ok := filter.(IssueFilterNoticeConfig); ok {
+		required = notice.RequireLabelsForNotice()
+	}
+	const lead = "`project.issue_filter` admits "
+	switch len(required) {
+	case 0:
+		return lead + "only issues carrying one of its required labels, and a maintainer adding one admits this one."
+	case 1:
+		return lead + "only issues labelled " + quoteLabels(required) + ", and a maintainer adding it admits this one."
+	default:
+		return lead + "only issues carrying one of " + quoteLabels(required) + ", and a maintainer adding one admits this one."
+	}
+}
+
+// unblockNoteRefRE reads the PR an unblock note is about: "Unblocked:
+// owner/repo#N …" or "Unblocked: source PR owner/repo#N …".
+var unblockNoteRefRE = regexp.MustCompile(`Unblocked: (?:source PR )?([\w.-]+/[\w.-]+)#(\d+)\b`)
+
+// unblockAlreadyNoted reports whether an unblock note about the same PR as
+// note is already on the issue, newer than the newest blocked-on marker
+// comment: the block on that PR was lifted already, by the other sweep or an
+// earlier pass. projectbluefin/website#987 got the review-backlog sweep's
+// "merged … actionable now" and, 8s later, the blocked sweep's "no longer
+// open; re-triaging" for the same #986. A note naming no PR (deadline,
+// marker-less) is never matched here.
+func unblockAlreadyNoted(comments []*gh.IssueComment, note string) bool {
+	m := unblockNoteRefRE.FindStringSubmatch(note)
+	if m == nil {
+		return false
+	}
+	short := m[1]
+	if i := strings.LastIndex(short, "/"); i >= 0 {
+		short = short[i+1:]
+	}
+	same := regexp.MustCompile(`(?i)Unblocked: (?:source PR )?(?:[\w.-]+/)?` + regexp.QuoteMeta(short) + `#` + m[2] + `\b`)
+	for i := len(comments) - 1; i >= 0; i-- {
+		body := comments[i].GetBody()
+		if strings.Contains(body, blockedUnblockedMarker) {
+			if same.MatchString(body) {
+				return true
+			}
+			continue
+		}
+		if _, _, ok := ParseBlockedOnMarker(body); ok {
+			return false
+		}
+	}
+	return false
 }
 
 // blockedLabelActor returns the login that most recently applied `blocked`
@@ -716,6 +796,11 @@ func (c *Client) postUnblockedNote(ctx context.Context, repo string, number int,
 			c.noteCommentSuppressed()
 			return
 		}
+	}
+	if unblockAlreadyNoted(comments, note) {
+		logger.Info("blocked sweep: the block on this PR was already lifted with a note; not posting a second", "repo", repo, "issue", number)
+		c.noteCommentSuppressed()
+		return
 	}
 	// The attention pilot folds dependency progress into the issue's
 	// status card whatever github.notifications.mode says.
