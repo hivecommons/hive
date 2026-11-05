@@ -283,7 +283,7 @@ func TestSSOHandoff_FailuresTerminateWithoutRedirecting(t *testing.T) {
 			hubProxied: true,
 			hubSecret:  "",
 			query:      func() string { return "token=anything" },
-			wantStatus: http.StatusServiceUnavailable,
+			wantStatus: http.StatusUnauthorized,
 			wantCode:   ssoErrNoSecret,
 		},
 		{
@@ -343,6 +343,38 @@ func TestSSOHandoff_FailuresTerminateWithoutRedirecting(t *testing.T) {
 			// No session may be established on a failed handoff.
 			if c := sessionCookie(w); c != nil && c.Value != "" && c.MaxAge >= 0 {
 				t.Errorf("failed handoff established a session cookie %q", c.Value)
+			}
+		})
+	}
+}
+
+// TestSSOHandoff_SignInFailuresAreNotGatewayIntercepted guards #16652: the
+// hosted spoke's Ingress replaces any upstream 502/503 with the "Hive is
+// restarting" error backend, so an SSO failure the user can fix by signing in
+// must never answer with those statuses — otherwise the sign-in prompt is
+// swapped for a page that looks like a crashed application.
+func TestSSOHandoff_SignInFailuresAreNotGatewayIntercepted(t *testing.T) {
+	tests := []struct {
+		name      string
+		hubSecret string
+		query     string
+	}{
+		{name: "no verification key configured on the spoke", hubSecret: "", query: "token=anything"},
+		{name: "missing token", hubSecret: testHubSecret, query: ""},
+		{name: "malformed token", hubSecret: testHubSecret, query: "token=not-a-real-token"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSSOServer(t, true, "shared-secret-token")
+			t.Setenv("HIVE_HUB_SECRET", tc.hubSecret)
+
+			w := ssoGet(t, s, tc.query)
+
+			if w.Code < 400 || w.Code >= 500 {
+				t.Fatalf("status = %d, want a 4xx: a 5xx (502/503 in particular) is replaced by the gateway's outage page", w.Code)
+			}
+			if !strings.Contains(w.Body.String(), `href="/">Sign in with GitHub`) {
+				t.Errorf("failed handoff must offer the regular sign-in prompt; body=%q", w.Body.String())
 			}
 		})
 	}

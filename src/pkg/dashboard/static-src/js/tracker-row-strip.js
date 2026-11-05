@@ -65,21 +65,36 @@
         const failed = n('checks_failed');
         const names = matches && Array.isArray(a.checks_failing) ? a.checks_failing : [];
         const count = 'CI ' + (total ? passed + '/' + total : '?/?');
-        const failing = failed ? failed + ' failing' + (names.length ? ' (' + names.slice(0, 2).join(', ') + (names.length > 2 ? ', …' : '') + ')' : '') : '';
+        // A check name inside the words wears single quotes ('test' not
+        // reported) so it stands apart from the words around it.
+        const q = n => "'" + n + "'";
+        const failing = failed ? failed + ' failing' + (names.length ? ' (' + names.slice(0, 2).map(q).join(', ') + (names.length > 2 ? ', …' : '') + ')' : '') : '';
         const blocker = matches && a.blocker ? String(a.blocker) : '';
+        // The unfinished count carries information; "no verdict yet" or a
+        // bare "running" beside 12/66 did not (hivecommons/hive#16630). The
+        // last one or two unfinished names are spelled out.
+        const pendingNames = matches && Array.isArray(a.checks_pending) ? a.checks_pending.map(String).filter(Boolean) : [];
+        const pendingCount = total ? Math.max(total - passed - failed, pendingNames.length) : pendingNames.length;
+        const pending = verb => !pendingCount ? verb : pendingNames.length && pendingNames.length <= STAGE_TRACKER_PENDING_CHECKS_NAMED ? pendingNames.map(q).join(', ') + ' ' + verb : pendingCount + ' ' + verb;
         switch (state) {
           case 'passing': return count + ' passed';
-          case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + blocker + ')' : ''));
-          case 'running': return count + ' · running' + (failing ? ' · ' + failing : '');
-          case 'queued': return count + ' · queued' + (failing ? ' · ' + failing : '');
-          case 'skipped': return count + ' · ' + (blocker ? blocker + ' skipped' : 'skipped');
+          case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + q(blocker) + ')' : ''));
+          case 'running': return count + ' · ' + pending('running') + (failing ? ' · ' + failing : '');
+          case 'queued': return count + ' · ' + pending('queued') + (failing ? ' · ' + failing : '');
+          case 'skipped': return count + ' · ' + (blocker ? q(blocker) + ' skipped' : 'skipped');
           case 'missing': {
             if (stageTrackerWorkflowApprovalPending(a) > 0) return count + ' · waiting on workflow approval' + (failing ? ' · ' + failing : '');
-            return count + ' · ' + (passed ? (blocker ? blocker + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
+            return count + ' · ' + (passed ? (blocker ? q(blocker) + ' not reported' : 'not all reported') : 'no checks reported yet') + (failing ? ' · ' + failing : '');
           }
-          // An unfinished ring with no settled word is still running
-          // (hivecommons/hive#16631).
-          default: return count + ' · ' + (total ? (passed + failed < total ? 'running' + (failing ? ' · ' + failing : '') : 'no verdict yet') : 'no checks reported yet');
+          default: {
+            if (!total) return count + ' · no checks reported yet';
+            if (failing) return count + ' · ' + failing + (pendingCount ? ' · ' + pending('running') : '');
+            // A blocker here is a phrase ("commit statuses not observed") or
+            // the one check whose result cannot be read.
+            if (blocker) return count + ' · ' + (/\s/.test(blocker) ? blocker : q(blocker) + ' unclear');
+            if (pendingCount) return count + ' · ' + pending('running');
+            return count + ' · required set unknown';
+          }
         }
       }
       const total = n('perspectives_total');
@@ -112,6 +127,10 @@
         case 'adjudicating': return count + ' · ' + (actor ? actor + ' adjudicating' : 'adjudicating');
         case 'assigned': return count + ' · ' + (actor ? actor + ' queued' : 'queued') + stageTrackerQueueAheadWord(a);
         case 'unassigned': return count + ' · queued' + stageTrackerQueueAheadWord(a);
+        // Derived from the PR's own state when no reviewer has touched the
+        // head (stage_tracker_review_fallback.go): the words are the
+        // statement itself (hivecommons/hive#16661).
+        case 'waiting_ci': case 'not_started': case 'not_requested': case 'closed': case 'unverified': return a.caption || count;
         default: return count + ' · ' + (newHead ? reReview : total && done ? 'perspectives' : 'queued');
       }
     }
@@ -122,6 +141,9 @@
     // person's click moves them, so the chevron names the wait and wears
     // the person icon (hivecommons/hive#16599).
     const STAGE_TRACKER_WORKFLOW_APPROVAL_BLOCKER = 'workflow-approval-required:';
+    // Up to this many unfinished check names are spelled out in the CI
+    // chevron word; beyond it the count speaks (hivecommons/hive#16630).
+    const STAGE_TRACKER_PENDING_CHECKS_NAMED = 2;
     const STAGE_TRACKER_WORKFLOW_APPROVAL_TIP = 'Needs a maintainer to approve the workflow runs on GitHub before the checks can start';
     function stageTrackerWorkflowApprovalPending(a) {
       if (!a) return 0;
@@ -251,6 +273,8 @@
       return total > 0 && done < total && !settledWords.includes(a.state);
     }
 
+    // Pure: "12m ago" beside a timestamp; "just now" under a minute.
+    function stageTrackerAgoWord(atMs, nowMs) { const mins = Math.floor((nowMs - atMs) / 60000); return !Number.isFinite(mins) || mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago' : mins < 1440 ? Math.floor(mins / 60) + 'h ago' : Math.floor(mins / 1440) + 'd ago'; }
     // Evidence is supplied independently by the backend. A native 050 label
     // cannot say who reviews, whether checks run, or whether an author codes.
     // The chevron wears its glyph plus the count words from
@@ -266,16 +290,27 @@
       const name = kind === 'ci' ? 'CI' : 'Review';
       const a = item && item[kind + '_activity'];
       const matches = a && item.head && a.head === item.head;
-      let caption = matches ? a.caption || name + ' unknown' : name + ' unknown';
+      // No evidence for the head is still a statement with a next step —
+      // never "activity unknown" (hivecommons/hive#16661).
+      const noData = name + ' · no data for head ' + (item.head ? String(item.head).slice(0, 7) : 'unknown') + ' yet · refreshing';
+      let caption = matches ? a.caption || noData : noData;
+      // A legacy "CI unknown · reason" caption keeps its reason behind the statement.
+      caption = caption.replace(/^(CI|Review) unknown(?= ·|$)/, noData);
       const observed = matches && a.observed_at ? Date.parse(a.observed_at) : NaN;
       const activityFreshMS = 2 * 60 * 1000;
       const clock = Number(nowMs) || Date.now();
       const stale = Number.isFinite(observed) && (clock - observed > activityFreshMS || observed > clock);
       const current = sg.state === 'active';
       const state = matches ? a.state || 'unknown' : 'unknown';
-      const known = matches && state !== 'unknown' && Number.isFinite(observed) && !stale;
-      const active = known && a.active;
-      if (matches && !known && state !== 'unknown') caption = name + ' activity unknown · last observed ' + state + ' · ' + caption;
+      // A settled verdict on the head stays known as its observation
+      // ages; only motion needs a fresh observation (hivecommons/hive#16617).
+      const settledState = ['approved', 'changes_requested', 'human_decision', 'passing', 'failing', 'skipped', 'missing', 'waiting_ci', 'not_started', 'not_requested', 'closed', 'unverified'].includes(state);
+      const fresh = Number.isFinite(observed) && !stale;
+      const known = matches && state !== 'unknown' && (settledState || fresh);
+      const active = known && fresh && a.active;
+      const perspectives = matches && kind === 'review' && Array.isArray(a.perspectives) ? a.perspectives : [];
+      const perspectiveMark = v => v === 'approve' ? '✓' : ['changes_requested', 'reject'].includes(v) ? '✗' : v === 'requires_human' ? 'requires human' : String(v || '?');
+      const perspectiveLine = p => String(p.name || 'perspective') + ' ' + perspectiveMark(p.verdict) + (p.summary ? ': ' + p.summary : '');
       const ownsPR = item.kind === 'pr' || item.via_pr;
       const text = typeof stageTrackerTrackWord === 'function' ? stageTrackerTrackWord(item, kind, current) : (matches ? a.caption || name + ' ' + state : '');
       const finished = matches && (state === 'passing' || state === 'approved');
@@ -298,23 +333,34 @@
       const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
-      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString();
+      const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString() + ' (' + stageTrackerAgoWord(observed, clock) + ')';
       const since = matches && a.since && Number.isFinite(Date.parse(a.since)) ? ' · since ' + new Date(a.since).toISOString() : '';
-      let blocker = matches && a.blocker ? ' · ' + a.blocker : '';
       // A sign-off ask: the tooltip carries the question itself (who should
       // decide what, and why — "workflow change from a fork") when the
       // review evidence did not already quote it.
       const ask = matches && state === 'human_decision' && item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question) : '';
-      if (ask && blocker.indexOf(ask) < 0) blocker += ' · ' + ask;
       // The backend's plain-language sentence behind the caption rides in
       // the tooltip only; the chevron clamps the caption.
-      const detail = matches && a.detail ? ' · ' + a.detail : '';
-      let tip = caption + blocker + detail + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
+      const detail = matches && a.detail ? String(a.detail) : '';
+      const sinceAgo = matches && a.since && Number.isFinite(Date.parse(a.since)) && settledState ? ' · ' + stageTrackerAgoWord(Date.parse(a.since), clock) : '';
+      // Each fact once (hivecommons/hive#16630): the count word, then the
+      // caption unless the detail sentence already spells it out, then the
+      // blocker and the ask unless an earlier fact already names them.
+      const facts = [];
+      const say = fact => { if (fact && !facts.some(f => f.toLowerCase().includes(fact.toLowerCase()))) facts.push(fact); };
+      say(text);
+      if (!(text && detail)) say(caption);
+      say(detail);
+      if (matches && a.blocker) say(String(a.blocker));
+      say(ask);
+      let tip = facts.join(' · ') + sinceAgo + (perspectives.length ? ' · ' + perspectives.map(perspectiveLine).join(' · ') : '') + ' · head ' + (item.head || 'unknown') + ' · ' + source + ' · ' + freshness + since;
       const code = item.code_activity;
       const codeNote = code && code.head === item.head && Number(item.display_column) === 50 &&
         ((kind === 'review' && code.state === 'waiting_fixer') || (kind === 'ci' && code.state === 'waiting_ci')) ? code.caption : '';
       if (codeNote) tip += ' · code source ' + (code.source || 'unavailable') + ' · observed ' + (code.observed_at || 'unknown') + ' · since ' + (code.since || 'unknown') + (code.blocker ? ' · ' + code.blocker : '');
-      const contextWord = kind === 'review' && sg.state === 'active' && !codeNote && sg.detour ? sg.detour.text : '';
+      // The detour's words ride along, minus the code lane's "activity unknown"
+      // (the Review tooltip states what is observed, hivecommons/hive#16661).
+      const contextWord = kind === 'review' && sg.state === 'active' && !codeNote && sg.detour ? String(sg.detour.text || '').replace(/ · activity unknown$/, ' · no fix work observed yet').replace(/^Code activity unknown$/, 'no code work observed yet') : '';
       let decided = kind === 'review' && sg.state === 'active' && item.decided && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
       const codeObserved = Date.parse(code && code.observed_at || '');
       const codeFresh = code && code.head === item.head && code.source === 'fix-dispatch+successful-edit+verified-git-worktree' && code.active && code.state === 'fixing' && Number.isFinite(codeObserved) && codeObserved <= clock && clock - codeObserved <= activityFreshMS;
@@ -336,7 +382,7 @@
       const evidenceLink = ownsPR && evidenceURL ? `<a href="${esc(evidenceURL)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open current-head ' + name + ' evidence')}">${icon}${word}</a>` : icon + word;
       const routeState = (sg.state || 'todo') + (sg.detour ? ' detoured' : '');
       const hold = item.hold;
-      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + (text ? text + ' · ' : '') + tip +
+      const fullTip = (current ? 'Current pipeline phase · ' : '') + name + ': ' + tip +
         (matches && a.actor ? ' · actor ' + a.actor : '') +
         (codeNote || contextWord ? ' · ' + (codeNote || contextWord) : '') +
         (hold ? ' · ' + (hold.pill || 'Held by @' + hold.by) + (hold.reason ? ' · ' + hold.reason : '') : '') +
@@ -552,13 +598,14 @@
       const tracks = (item.kind === 'pr' || item.via_pr) && item.head ? ['ci', 'review'].map(kind => {
         const a = item[kind + '_activity'];
         const name = kind === 'ci' ? 'CI' : 'Review';
-        if (!a || a.head !== item.head) return name + ' unknown';
+        const noData = name + ' · no data for head ' + String(item.head).slice(0, 7) + ' yet · refreshing';
+        if (!a || a.head !== item.head) return noData;
         const observed = Date.parse(a.observed_at || '');
         const activityFreshMS = 2 * 60 * 1000;
         const clock = Number(nowMs) || Date.now();
         const fresh = Number.isFinite(observed) && observed <= clock && clock - observed <= activityFreshMS;
-        if ((a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state)) && !fresh) return name + ' activity unknown · last observed ' + (a.state || 'unknown');
-        return (a.caption || name + ' unknown') + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · stale observation' : '');
+        const moving = a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state);
+        return (a.caption || noData).replace(/^(CI|Review) unknown(?= ·|$)/, noData) + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · last observed ' + stageTrackerAgoWord(observed, clock) + (moving ? ' · refreshing' : '') : '');
       }).join(' · ') : '';
       return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
     }

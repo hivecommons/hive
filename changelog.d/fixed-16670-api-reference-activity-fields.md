@@ -1,0 +1,1 @@
+- API reference now lists the check-count and perspective fields of stage-tracker activity observations ([#16670](https://github.com/hivecommons/hive/issues/16670)).

@@ -3,6 +3,10 @@ package dashboard
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The activity monitor row menu's "Accept triage" (Hub Admin request): shown
@@ -134,4 +138,34 @@ let refreshed = 0; function stageTrackerAfterActions() { refreshed++; }
   assert.strictEqual(_stageTracker.items[1].stage, 15);
 })().catch(e => { console.error(e); process.exit(1); });
 `)
+}
+
+// A row whose labels carry triage/accepted but no stage label and no engine
+// record (hivecommons/hive#16652: the click landed, the pod rolled before
+// the engine's pass) reads 010 Actionable, not 000-new; the same labels
+// with needs-triage still on stay 000-new.
+func TestStageTrackerAcceptedTriageWithoutStageLabelIsNotNew(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	t.Cleanup(github.ResetWebhookTrackerForTestWithClock(func() time.Time { return now }))
+	s, store := stageTrackerFixture(t, now)
+	opened := now.Add(-7 * time.Minute)
+	accepted := github.RepoWorkIssue{Repo: "acme/console", Number: 16652, Title: "lack of SSO looks like crashed application", Author: "pat", AuthorIsHuman: true, Labels: []string{"bug", "help wanted", "triage/accepted"}, CreatedAt: opened, UpdatedAt: opened, Bucket: "reporter_triage", Reason: "Awaiting maintainer triage label"}
+	waiting := github.RepoWorkIssue{Repo: "acme/console", Number: 16653, Title: "Still waiting", Author: "pat", AuthorIsHuman: true, Labels: []string{"bug", "triage/accepted", "needs-triage"}, CreatedAt: opened, UpdatedAt: opened, Bucket: "reporter_triage", Reason: "Awaiting maintainer triage label"}
+	s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{
+		{Repo: "acme/console", Number: 16652, State: "open", Title: accepted.Title, Author: "pat", Labels: accepted.Labels, UpdatedAt: opened,
+			Patch: github.WebhookItemPatch{Bucket: github.WebhookBucketUnknown, WorkIssue: &accepted}},
+		{Repo: "acme/console", Number: 16653, State: "open", Title: waiting.Title, Author: "pat", Labels: waiting.Labels, UpdatedAt: opened,
+			Patch: github.WebhookItemPatch{Bucket: github.WebhookBucketUnknown, WorkIssue: &waiting}},
+	})
+	resp := s.buildStageTracker(s.status, store, now)
+	it := trackerItem(t, resp, "issue", 16652)
+	if it.Stage != stagelabels.Actionable.Number() || it.StageSlug == StageTrackerNewSlug || it.New != nil {
+		t.Fatalf("#16652 = stage %d slug %q new %+v, want 010 actionable", it.Stage, it.StageSlug, it.New)
+	}
+	if hasMod(it, modNeedsTriage) {
+		t.Fatalf("#16652 still asks for triage: %+v", it)
+	}
+	if other := trackerItem(t, resp, "issue", 16653); other.Stage != 0 || other.StageSlug != StageTrackerNewSlug {
+		t.Fatalf("#16653 = stage %d slug %q, want 000-new while needs-triage is on", other.Stage, other.StageSlug)
+	}
 }
