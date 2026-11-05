@@ -13,7 +13,8 @@ package automerge
 // (projectbluefin/utah-packages#877).
 //
 // So a trusted APPROVED review reaches head when either
-//   - it was submitted at or after the head commit's date, or
+//   - GitHub reports it on head and head is not a merge, or it was
+//     submitted at or after the head commit's date, or
 //   - head is a chain of base merges (BaseMergeParent: the PR's diff
 //     unchanged, whoever merged) back to the commit the review approved, or
 //     to a commit no newer than the review. The approval is then "carried
@@ -95,7 +96,10 @@ func (c *Engine) walkApprovalToHead(ctx context.Context, owner, repo string, num
 	if err != nil || commit == nil {
 		return approvalReach{}, false
 	}
-	if reviewed == head && !submitted.Before(commitDate(commit)) {
+	if reviewed == head && (len(commit.Parents) < 2 || !submitted.Before(commitDate(commit))) {
+		// GitHub moves a review only onto a merge, so a review it reports on
+		// a non-merge head approved that head, whatever the pusher's clock
+		// wrote as its date.
 		return approvalReach{ok: true}, true
 	}
 	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)

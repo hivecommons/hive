@@ -97,6 +97,7 @@ func TestApprovalBindsToApprovedContent(t *testing.T) {
 		wantCarried bool
 	}{
 		{name: "submitted after the head commit", review: ownerReview("f166", approvedAt), head: "f166", wantOK: true},
+		{name: "non-merge head dated after the review (pusher clock ahead)", review: ownerReview("f166", "2026-11-02T23:40:00Z"), head: "f166", wantOK: true},
 		{name: "GitHub moved it onto a merge-only head", review: ownerReview("merge1", approvedAt), head: "merge1", wantOK: true, wantCarried: true},
 		{name: "GitHub moved it onto a head with a content delta", review: ownerReview("merge2", approvedAt), head: "merge2"},
 		{name: "on the previous head, base merge since", review: ownerReview("f166", approvedAt), head: "merge1", wantOK: true, wantCarried: true},
