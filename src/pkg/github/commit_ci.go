@@ -547,6 +547,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 
 	allCheckRuns = checkRunsOnHead(allCheckRuns, sha)
+	if opts.PRNumber > 0 {
+		allCheckRuns = checkRunsForPR(ctx, client, owner, repo, allCheckRuns, opts.PRNumber)
+	}
 	dcoSatisfied := dcoContextSucceeded(allStatuses, allCheckRuns)
 
 	noteActivity := func(at time.Time) {
@@ -1109,6 +1112,78 @@ func groupedCheckRuns(checks []*gh.CheckRun) map[checkRunIdentity][]*gh.CheckRun
 		}
 	}
 	return groups
+}
+
+// checkRunsForPR drops the red check runs another pull request produced on
+// this head. GitHub lists check runs per commit, and two PRs can share a
+// head: projectbluefin/utah-packages#890 (an in-repo branch) was returned to
+// its author for "Failing checks: Canary" 41 seconds after it opened, on the
+// Canary run of the fork PR #878 at the same SHA, while #890's own Canary had
+// not started. A run naming pull requests counts only when it names this one.
+// A red run naming none (GitHub omits fork PRs there) counts only when its
+// check suite ran for this PR's head branch. Lookups that fail keep the run,
+// so a doubt can only over-block. Green and running runs are kept as they
+// are: only a red one can return a PR to its author.
+func checkRunsForPR(ctx context.Context, client *gh.Client, owner, repo string, checks []*gh.CheckRun, number int) []*gh.CheckRun {
+	var (
+		headRef      string
+		headRefRead  bool
+		suiteBranch  = map[int64]string{}
+		out          = make([]*gh.CheckRun, 0, len(checks))
+		prHeadBranch = func() string {
+			if !headRefRead {
+				headRefRead = true
+				if pr, _, err := client.PullRequests.Get(ctx, owner, repo, number); err == nil {
+					headRef = pr.GetHead().GetRef()
+				}
+			}
+			return headRef
+		}
+	)
+	for _, cr := range checks {
+		if cr == nil || cr.GetStatus() != "completed" || !checkConclusionIsRed(cr.GetConclusion()) {
+			out = append(out, cr)
+			continue
+		}
+		if len(cr.PullRequests) > 0 {
+			if checkRunNamesPR(cr, owner, repo, number) {
+				out = append(out, cr)
+			}
+			continue
+		}
+		suiteID := cr.GetCheckSuite().GetID()
+		if suiteID == 0 {
+			out = append(out, cr)
+			continue
+		}
+		branch, ok := suiteBranch[suiteID]
+		if !ok {
+			if suite, _, err := client.Checks.GetCheckSuite(ctx, owner, repo, suiteID); err == nil {
+				branch = suite.GetHeadBranch()
+			}
+			suiteBranch[suiteID] = branch
+		}
+		if ref := prHeadBranch(); branch != "" && ref != "" && branch != ref {
+			continue
+		}
+		out = append(out, cr)
+	}
+	return out
+}
+
+// checkRunNamesPR reports whether the check run's pull_requests list names
+// owner/repo#number. An entry without a base repository counts on its number.
+func checkRunNamesPR(cr *gh.CheckRun, owner, repo string, number int) bool {
+	for _, pr := range cr.PullRequests {
+		if pr.GetNumber() != number {
+			continue
+		}
+		base := pr.GetBase().GetRepo()
+		if base == nil || base.GetName() == "" || strings.EqualFold(base.GetName(), repo) && (base.GetOwner().GetLogin() == "" || strings.EqualFold(base.GetOwner().GetLogin(), owner)) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkRunsOnHead(checks []*gh.CheckRun, head string) []*gh.CheckRun {
