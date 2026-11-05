@@ -304,7 +304,12 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   lacks `actions: write`) is recorded once, never retried for that head,
   logged as `workflow approval refused; needs workflow approval on GitHub`,
   and the caption becomes `CI waiting · needs workflow approval on GitHub`
-  on every later cycle, including ones that skip the sweep. The sweep uses
+  on every later cycle, including ones that skip the sweep. That refusal
+  is bound to the head: granting the App **Actions: Read and write**
+  afterwards does not make the hive retry a head it already recorded a
+  refusal for — the operator approves that run on GitHub, or a new push to
+  the PR (a new head) or a hive restart (the ledger is in memory) lets the
+  sweep attempt it again. The sweep uses
   the App token, so it needs **Actions: Read and write** on the App
   ([github-app-setup.md](../github-app-setup.md)); it runs alongside the
   older `/ok-to-test` path, in which the contributor lane posts a comment
