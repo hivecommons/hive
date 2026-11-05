@@ -146,6 +146,48 @@ _run_test() {
   PASSED=$((PASSED + 1))
 }
 
+# _run_test with the output checked too: the staff-agent enumeration denial
+# must name the reads that still work.
+_run_test_staff_gate() {
+  local expected_rc="$1" want_match="$2" want_absent="$3" desc="$4"
+  shift 4
+
+  local output rc=0
+  rm -f "${WORK_DIR}/contributor-marker"
+  output="$(env \
+    HIVE_AGENT="ci-maintainer" \
+    HIVE_AGENT_DISPLAY_NAME="ci-maintainer" \
+    HIVE_AGENT_ID="ci-maintainer" \
+    MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
+    GH_TOKEN="test-token-mock" \
+    bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
+
+  if [[ "$rc" != "$expected_rc" ]]; then
+    echo "FAIL: $desc"
+    echo "  expected exit code $expected_rc, got $rc"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  if [[ "$want_match" != "-" ]] && ! grep -qE -- "$want_match" <<<"$output"; then
+    echo "FAIL: $desc"
+    echo "  expected output to match /${want_match}/"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  if [[ "$want_absent" != "-" ]] && grep -qE -- "$want_absent" <<<"$output"; then
+    echo "FAIL: $desc"
+    echo "  expected output NOT to match /${want_absent}/"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
 _run_test_spoof() {
   local expected_rc="$1"
   local desc="$2"
@@ -445,6 +487,34 @@ _run_test_identity_failure 1 "issue list --author test-bot[bot] when identity lo
 
 _run_test_cached_env_spoof 1 "issue list --author env-seeded identity cache octocat (blocked)" \
   issue list --repo test/repo --author octocat
+
+echo ""
+echo "=== Staff agents: the enumeration denial names the reads that work ==="
+
+# Danathar/dns-failover#152: ci-maintainer read "listing is blocked" as "no way
+# to look up merged PRs" and parked a red audit-trail check for the owner. The
+# gate stays as it is; the denial says which reads reach merged PRs.
+ENUM_DENY='reason=enumeration_disabled'
+_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state merged (still blocked: the gate is unchanged)" \
+  pr list --repo test/repo --state merged --json number,title,body
+_run_test_staff_gate 1 "$ENUM_DENY" "-" "pr list --state open (blocked)" \
+  pr list --repo test/repo --state open
+_run_test_staff_gate 1 "author_mismatch" "-" "pr list --author foreign-user (still the --author gate)" \
+  pr list --repo test/repo --author foreign-user
+_run_test_staff_gate 1 "gh search prs --repo <owner/repo> --merged --json" "-" "denial names the merged-PR search" \
+  pr list --repo test/repo
+_run_test_staff_gate 1 "gh api repos/<owner/repo>/pulls\\?state=closed' \\(GET; merged ones carry merged_at\\)" "-" "denial names the GET api read" \
+  issue list --repo test/repo
+_run_test_staff_gate 1 "gh search prs\\|issues --repo <owner/repo> <terms>' without --author" "-" "denial names authorless search" \
+  pr list --repo test/repo
+_run_test_staff_gate 1 "$ENUM_DENY" "gh pr list --state merged" "denial does not offer a merged pr list" \
+  pr list --repo test/repo
+
+# ...and those reads really are allowed.
+_run_test_staff_gate 0 "-" "BLOCKED" "authorless search prs --merged --json (allowed, as the denial says)" \
+  search prs --repo test/repo --merged --json number,title,body,author,closedAt
+_run_test_staff_gate 0 "-" "BLOCKED" "GET api repos/<o>/<r>/pulls?state=closed (allowed, as the denial says)" \
+  api 'repos/test/repo/pulls?state=closed&per_page=100'
 
 echo ""
 echo "=== Contributor mode tests ==="
