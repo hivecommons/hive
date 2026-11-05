@@ -44,13 +44,58 @@ func (c *Client) onlyDecisionParked(labels []string) bool {
 	return len(parking) > 0
 }
 
+// hasNeedsDecisionLabel reports whether any label is a needs-decision park
+// label.
+func (c *Client) hasNeedsDecisionLabel(labels []string) bool {
+	for _, label := range labels {
+		if c.isNeedsDecisionLabel(label) {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionToInherit returns the decision a deferring park may take from the
+// un-park event on its blocker, or false. Only a decision counts: a
+// `/hive done` ("the owner-only step is done") or a release approval
+// answers the blocker's own owner step, not the question the deferring
+// park asked. The blocker must have been a decision park when this pass
+// read it (its labels before the un-park), so a `/hive approve` clearing a
+// `blocked` or `needs-human` park never stands in for a decision.
+func (c *Client) decisionToInherit(from IssueUnparkEvent, blocker *gh.Issue) (IssueUnparkEvent, bool) {
+	if blocker == nil || blocker.IsPullRequest() || from.ReleaseTag != "" || from.ReleaseURL != "" {
+		return IssueUnparkEvent{}, false
+	}
+	if strings.TrimSpace(from.Decision) == "" || from.Decision == unparkDoneDecision {
+		return IssueUnparkEvent{}, false
+	}
+	if !c.hasNeedsDecisionLabel(issueLabelNames(blocker.Labels)) {
+		return IssueUnparkEvent{}, false
+	}
+	return from, true
+}
+
 // inheritDeferredDecisions un-parks the open decision parks in one repo
-// whose only open "blocked by" issue is one this pass un-parked on a
-// maintainer's decision (decided, by number). Each takes the same actor and
-// decision and gets one note saying where it was answered. A failed read or
-// write skips that issue: it stays an ask of its own, as before.
-func (c *Client) inheritDeferredDecisions(ctx context.Context, displayRepo, owner, repo string, issues []*gh.Issue, decided map[int]IssueUnparkEvent, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) {
+// whose body defers to their only open "blocked by" issue (askDefersTo:
+// "Answer on #N; the same choice applies here") when that issue was a
+// decision park this pass un-parked on a maintainer's decision (decided,
+// by number). Each takes the same actor and decision and gets one note
+// saying where it was answered. A park whose only blocker is a genuine
+// dependency, or whose blocker was answered with `/hive done` or a release
+// approval, stays its own ask. A failed read or write skips that issue: it
+// stays an ask of its own, as before. The pass's maxActions budget counts
+// each inherited un-park like any other write.
+func (c *Client) inheritDeferredDecisions(ctx context.Context, displayRepo, owner, repo string, issues []*gh.Issue, decided map[int]IssueUnparkEvent, maxActions int, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) {
+	byNumber := make(map[int]*gh.Issue, len(issues))
 	for _, issue := range issues {
+		if issue != nil {
+			byNumber[issue.GetNumber()] = issue
+		}
+	}
+	for _, issue := range issues {
+		if maxActions > 0 && result.actions() >= maxActions {
+			return
+		}
 		if issue == nil || issue.IsPullRequest() {
 			continue
 		}
@@ -77,6 +122,12 @@ func (c *Client) inheritDeferredDecisions(ctx context.Context, displayRepo, owne
 		}
 		from, ok := decided[open[0].Number]
 		if !ok {
+			continue
+		}
+		if from, ok = c.decisionToInherit(from, byNumber[open[0].Number]); !ok {
+			continue
+		}
+		if !askDefersTo(issue.GetBody(), open[0].Number) {
 			continue
 		}
 		removed, err := c.clearIssueParkingLabels(ctx, owner, repo, number, labels, from.Actor, false)

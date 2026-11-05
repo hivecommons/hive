@@ -19,27 +19,65 @@ func TestSweepIssueUnparkCommandsDeferringParkInheritsDecision(t *testing.T) {
 		number int
 		state  string
 	}
+	const deferringBody = "Answer on #511; the same choice applies here."
 	for _, tc := range []struct {
 		name     string
 		labels   []string
 		blockers []blocker
 		inherit  bool
+		// body is #512's text; "" means deferringBody.
+		body string
+		// blockerLabels are #511's park labels before the sweep; nil means
+		// the needs-decision stage label.
+		blockerLabels []string
+		// command is the owner's reply on #511; "" means a decision.
+		command string
+		// maxActions caps the pass; 0 means the default.
+		maxActions int
 	}{
-		{"only blocker is the decided park", []string{NeedsDecisionStageLabel}, []blocker{{"org/repo", 511, "open"}}, true},
-		{"closed blockers do not count", []string{NeedsDecisionStageLabel}, []blocker{{"org/repo", 511, "open"}, {"other/repo", 7, "closed"}}, true},
-		{"another open blocker", []string{NeedsDecisionStageLabel}, []blocker{{"org/repo", 511, "open"}, {"org/repo", 600, "open"}}, false},
-		{"blocker in another repo", []string{NeedsDecisionStageLabel}, []blocker{{"other/repo", 511, "open"}}, false},
-		{"blocker not decided", []string{NeedsDecisionStageLabel}, []blocker{{"org/repo", 600, "open"}}, false},
-		{"also parked on a person", []string{"needs-human", NeedsDecisionStageLabel}, []blocker{{"org/repo", 511, "open"}}, false},
-		{"no blockers", []string{NeedsDecisionStageLabel}, nil, false},
+		{name: "only blocker is the decided park", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, inherit: true},
+		{name: "closed blockers do not count", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}, {"other/repo", 7, "closed"}}, inherit: true},
+		{name: "another open blocker", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}, {"org/repo", 600, "open"}}},
+		{name: "blocker in another repo", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"other/repo", 511, "open"}}},
+		{name: "blocker not decided", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 600, "open"}}},
+		{name: "also parked on a person", labels: []string{"needs-human", NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}},
+		{name: "no blockers", labels: []string{NeedsDecisionStageLabel}, blockers: nil},
+		// The body must defer to the blocker: a decision park blocked by
+		// ordinary work is still the owner's to make.
+		{name: "body does not defer to the blocker", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, body: "Needs the rc tag from #511 to land first. Which installer should ship?"},
+		{name: "body defers to a different issue", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, body: "Answer on #600; the same choice applies here."},
+		// The blocker must have been a decision park: a `/hive approve` on a
+		// blocked or needs-human park answers nothing the deferring park asked.
+		{name: "blocker was parked blocked, not on a decision", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, blockerLabels: []string{"blocked"}, command: "/hive approve"},
+		{name: "blocker was parked on a person only", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, blockerLabels: []string{"needs-human"}, command: "/hive approve"},
+		// `/hive done` reports an owner-only step, not a decision.
+		{name: "blocker answered with /hive done", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, command: "/hive done"},
+		// The pass's action budget counts the inherited un-park too.
+		{name: "action budget spent on the blocker", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, maxActions: 1},
+		{name: "action budget leaves room", labels: []string{NeedsDecisionStageLabel}, blockers: []blocker{{"org/repo", 511, "open"}}, maxActions: 2, inherit: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			decided := parkedIssue(511, humanComment(41, "owner", "/hive decision keep the rc tag"))
-			decided.Labels = []wireLabel{{Name: NeedsDecisionStageLabel}}
+			command := tc.command
+			if command == "" {
+				command = "/hive decision keep the rc tag"
+			}
+			decided := parkedIssue(511, humanComment(41, "owner", command))
+			decided.Labels = nil
+			blockerLabels := tc.blockerLabels
+			if blockerLabels == nil {
+				blockerLabels = []string{NeedsDecisionStageLabel}
+			}
+			for _, l := range blockerLabels {
+				decided.Labels = append(decided.Labels, wireLabel{Name: l})
+			}
+			body := tc.body
+			if body == "" {
+				body = deferringBody
+			}
 			deferring := unparkWireIssue{
 				Number: 512,
 				Title:  "v2.0.0-rc.1 tag",
-				Body:   "Answer on #511; the same choice applies here.",
+				Body:   body,
 				User:   wireUser{Login: "hive[bot]"},
 			}
 			for _, l := range tc.labels {
@@ -64,9 +102,21 @@ func TestSweepIssueUnparkCommandsDeferringParkInheritsDecision(t *testing.T) {
 			t.Cleanup(server.Close)
 			c := newTestClient(t, server, "org", []string{"repo"})
 
-			result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+			result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{MaxActions: tc.maxActions})
 			if err != nil {
 				t.Fatalf("sweep: %v", err)
+			}
+			if tc.maxActions > 0 && result.actions() > tc.maxActions {
+				t.Fatalf("pass exceeded MaxActions=%d: %d actions, unparked=%+v", tc.maxActions, result.actions(), result.Unparked)
+			}
+			var blockerUnparked bool
+			for _, event := range result.Unparked {
+				if event.Number == 511 {
+					blockerUnparked = true
+				}
+			}
+			if !blockerUnparked {
+				t.Fatalf("#511 was not un-parked by the owner's reply: %+v", result.Unparked)
 			}
 			var inherited *IssueUnparkEvent
 			for i, event := range result.Unparked {

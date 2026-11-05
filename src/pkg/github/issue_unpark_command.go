@@ -428,7 +428,7 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			for _, event := range result.Unparked[unparkedBefore:] {
 				decided[event.Number] = event
 			}
-			c.inheritDeferredDecisions(ctx, repo, owner, repoName, issues, decided, result, opts.Audit)
+			c.inheritDeferredDecisions(ctx, repo, owner, repoName, issues, decided, maxActions, result, opts.Audit)
 		}
 		// Reminders, closure clean-up and the per-repo attention queue
 		// (attention pilot, hivecommons/hive#16361, #16362) run after this
