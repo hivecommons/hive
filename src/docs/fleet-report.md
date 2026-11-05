@@ -208,6 +208,14 @@ select a model or set the gateway default in Model Gateways — not an
 failures still log `inference translate request failed` at ERROR and stay
 under `inference_upstream_error`.
 
+It also skips `inference agent answered kick with prose only, sending action nudge`
+(`src/crux/agent/manager_kick.go`): the prose-only watchdog sends at most one
+action nudge per kick and counts it in the agent's `ActionNudges`, so the WARN
+records a recovery action, not its failure. Repeating this notice across kicks
+is not a repeated runtime defect (hivecommons/hive#16795). The WARN and its
+`minutes_since_kick` / `total_action_nudges` fields stay in local logs; actual
+nudge-delivery failures remain eligible for reporting when repeated.
+
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
 busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI
