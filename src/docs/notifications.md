@@ -62,6 +62,8 @@ All three channels are optional. Configure one channel or several. Webhook URLs 
 
 Hive posts the notification body to `<server>/<topic>` and sets `Title` and `Priority` headers. Priorities are `high`, `default`, or `low`.
 
+When ntfy returns HTTP 429, Hive pauses ntfy delivery until the `Retry-After` deadline (positive seconds or a future HTTP date). If the header is absent or unusable, the cooldown starts at one minute and doubles on subsequent rate limits up to one hour, resetting after successful delivery. Notifications during the cooldown are dropped without replay; new notifications resume delivery after it expires. Slack and Discord delivery continue independently.
+
 Self-hosted ntfy works the same way as ntfy.sh as long as the Hive process can reach the HTTPS endpoint. On the public ntfy.sh server, choose a hard-to-guess topic because anyone who knows the topic can subscribe to it.
 
 ### Slack
