@@ -650,6 +650,8 @@ A merged PR covered only part of the issue ([#11931](https://github.com/hivecomm
 
 A `hive/likely-done` / already-done claim from a merged PR was checked and the issue is NOT finished ([#11931](https://github.com/hivecommons/hive/issues/11931)): the agent that verified it labels the issue (`src/pkg/scheduler/kickmessage.go` "verify once" instruction) so later kicks say "already verified — implement the rest" and the claim sync never re-applies `hive/likely-done` from the same stale claim (`src/pkg/github/prclaims.go`). Merged-PR evidence, orthogonal to the stage: the issue keeps moving `010 → 020 → 030 → 040` as new work starts.
 
+The two verdicts never stand together. When the label relay adds `hive/verified-open` it removes `hive/already-done` and `hive/likely-done`, and a contributor's verified already-done removes `hive/verified-open`. An issue that already wears both (projectbluefin/testsuite#1023: already-done at 01:47Z, verified-open at 03:13Z) is settled by the issue stage sweep from the issue's label events: the later add stands and the other label comes off, through the write-back gate (`src/pkg/github/done_verdict_labels.go`). Only the default `hive/already-done` spelling is reconciled, not a renamed `hub.contribute_already_done_label`.
+
 **Who applies it:** Agent (verify-once kick) / Hive.
 
 **Checked by:** Verify-once kick path, PR-claim label sync and close-on-merge. **When:** Verify-once kick, claim sync.
