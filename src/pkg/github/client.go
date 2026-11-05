@@ -2077,7 +2077,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReasonFor(repo, issue.GetNumber(), issue.GetBody()))
 			setBlockedRowFacts(&row, issue.GetBody(), blockedCounts[issue.GetNumber()])
 			details = append(details, row)
 			continue
