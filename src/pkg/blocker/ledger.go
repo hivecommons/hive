@@ -58,6 +58,27 @@ type Ledger struct {
 	loaded  bool
 	// capabilityCheck refutes a capability report (SetCapabilityCheck).
 	capabilityCheck func(repo string, number int, k Kind) bool
+	// proofCheck confirms a quoted rejection proves the gap (SetProofCheck).
+	proofCheck func(text string) bool
+}
+
+// SetProofCheck installs the check Observe asks before it marks a quoted
+// GitHub rejection as proof (Blocker.Proven): true when the quote came from a
+// reporter whose own token asks for the permission. A contributor-tier lane
+// quoting GitHub's refusal shows only that its own token lacks `workflows`,
+// not that the App does, so its blocker stays refutable. Nil, the default,
+// trusts every quote.
+func (l *Ledger) SetProofCheck(fn func(text string) bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.proofCheck = fn
+}
+
+func (l *Ledger) proofHolds(text string) bool {
+	l.mu.Lock()
+	fn := l.proofCheck
+	l.mu.Unlock()
+	return fn == nil || fn(text)
 }
 
 // SetCapabilityCheck installs the check Observe asks before it records a
@@ -163,6 +184,9 @@ func (l *Ledger) Observe(repo string, number int, text string, at time.Time) (En
 		}
 		return l.RecordReason(repo, number, NormalizeReason(text), at), true
 	}
+	if b.Proven && !l.proofHolds(text) {
+		b.Proven = false
+	}
 	if !b.Proven && l.capabilityHeld(repo, number, b.Kind) {
 		// The hive holds the capability the report says is missing: keep the
 		// reason for the loop guard, park nothing on it.
@@ -192,6 +216,12 @@ func (l *Ledger) Record(repo string, number int, b Blocker, reason string) Entry
 	e.Repo, e.Number = repo, number
 	if e.Blocker != nil && e.Blocker.Kind == b.Kind && !e.Blocker.Since.IsZero() && e.Blocker.Since.Before(b.Since) {
 		b.Since = e.Blocker.Since
+	}
+	// Evidence outlives a later unquoted re-report of the same kind, which
+	// lands here whenever the capability check could not refute it (an
+	// unreadable installation): Proven must not drop with it.
+	if e.Blocker != nil && e.Blocker.Kind == b.Kind && e.Blocker.Proven {
+		b.Proven = true
 	}
 	e.Blocker = &b
 	e.Reason = reason

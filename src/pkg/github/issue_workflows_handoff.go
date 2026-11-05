@@ -234,6 +234,16 @@ func (c *Client) CapabilityAvailable(repo string, number int, k itemblocker.Kind
 	return known && !fork
 }
 
+// WorkflowsRejectionProves is the blocker ledger's proof check
+// (blocker.Ledger SetProofCheck): a quoted GitHub rejection of a workflow
+// push proves the App lacks `workflows` only when the reporting lane's own
+// token asks for it. The reporter is the text's `— hive: agent=` trailer; a
+// report without one (a person pasting the error) is trusted.
+func (c *Client) WorkflowsRejectionProves(text string) bool {
+	agent := trailerAgent(text)
+	return agent == "" || c.workflowsSelfPushFor(agent)
+}
+
 // forkPR reports whether owner/name#number is a pull request whose head is
 // in another repository (or a deleted one). known is false when GitHub
 // cannot be read.

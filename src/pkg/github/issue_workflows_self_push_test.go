@@ -262,3 +262,19 @@ func TestCreateWorkflowsParkRefusedForMergerTier(t *testing.T) {
 		t.Fatalf("body must carry the self-push note and no owner-step marker:\n%s", p.Body)
 	}
 }
+
+func TestWorkflowsRejectionProvesByReporterTier(t *testing.T) {
+	c := &Client{}
+	c.SetWorkflowsSelfPushFunc(func(agent string) bool { return agent == "scanner" })
+	quote := "refusing to allow a GitHub App to create or update workflow `.github/workflows/e2e.yml` without `workflows` permission"
+	for text, want := range map[string]bool{
+		quote + "\n\n— hive: agent=scanner backend=claude":                           true,
+		quote + "\n\n— hive: agent=scanner backend=claude\n<!-- hive:owner-step -->": true,
+		quote + "\n\n— hive: agent=ci-maintainer backend=claude":                     false,
+		quote: true,
+	} {
+		if got := c.WorkflowsRejectionProves(text); got != want {
+			t.Errorf("WorkflowsRejectionProves(%q) = %v, want %v", text, got, want)
+		}
+	}
+}

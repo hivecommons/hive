@@ -165,6 +165,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// rebuilt client re-installs its check.
 	client.SetWorkflowsSelfPushFunc(b.cfg.AgentPushesWorkflows)
 	itemblocker.Shared().SetCapabilityCheck(client.CapabilityAvailable)
+	itemblocker.Shared().SetProofCheck(client.WorkflowsRejectionProves)
 	client.SetReporterConfirmationEnabledFunc(func() bool {
 		return b.cfg.Issues.ReporterConfirmationEnabled()
 	})

@@ -1,6 +1,7 @@
 package blocker
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -88,5 +89,43 @@ func TestQuotedWorkflowsRejectionIsProven(t *testing.T) {
 		if got := QuotesWorkflowsRejection(text); got != want {
 			t.Errorf("QuotesWorkflowsRejection(%q) = %v, want %v", text, got, want)
 		}
+	}
+}
+
+// A same-kind re-report without the quote, recorded while the check could
+// not refute it, keeps the earlier evidence (#16811 review).
+func TestProvenSurvivesUnquotedReReport(t *testing.T) {
+	at := time.Date(2026, 11, 5, 21, 0, 0, 0, time.UTC)
+	l := NewLedger("")
+	l.Observe("o/r", 1, "needs-human: refusing to allow a GitHub App to create or update workflow `.github/workflows/e2e.yml` without `workflows` permission", at)
+	held := false
+	l.SetCapabilityCheck(func(string, int, Kind) bool { return held })
+	e, _ := l.Observe("o/r", 1, "needs-human: the App cannot push workflow files", at.Add(time.Hour))
+	if !e.Blocks() || !e.Blocker.Proven {
+		t.Fatalf("re-report dropped the evidence: %+v", e)
+	}
+	held = true
+	if got := l.RecheckCapabilities(func(string, int, Kind) bool { return held }); len(got) != 0 {
+		t.Fatalf("re-check released a proven blocker after an unquoted re-report: %+v", got)
+	}
+}
+
+// A quoted rejection is proof only when the proof check accepts its
+// reporter: a contributor-tier lane's quote stays refutable.
+func TestQuotedRejectionProofIsReporterChecked(t *testing.T) {
+	at := time.Date(2026, 11, 5, 21, 0, 0, 0, time.UTC)
+	quote := "needs-human: refusing to allow a GitHub App to create or update workflow `.github/workflows/e2e.yml` without `workflows` permission\n— hive: agent=ci-maintainer"
+	l := NewLedger("")
+	l.SetProofCheck(func(text string) bool { return !strings.Contains(text, "agent=ci-maintainer") })
+	l.SetCapabilityCheck(func(string, int, Kind) bool { return false })
+	if e, _ := l.Observe("o/r", 1, quote, at); !e.Blocks() || e.Blocker.Proven {
+		t.Fatalf("contributor quote: %+v, want an unproven blocker", e)
+	}
+	if got := l.RecheckCapabilities(func(string, int, Kind) bool { return true }); len(got) != 1 {
+		t.Fatalf("an unproven contributor quote must be releasable: %+v", got)
+	}
+	scanner := strings.Replace(quote, "ci-maintainer", "scanner", 1)
+	if e, _ := l.Observe("o/r", 2, scanner, at); !e.Blocker.Proven {
+		t.Fatalf("merger-tier quote: %+v, want proven", e)
 	}
 }
