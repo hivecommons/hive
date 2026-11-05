@@ -12,6 +12,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func TestWorkflowApprovalTrusted(t *testing.T) {
@@ -150,7 +151,20 @@ func newWorkflowApprovalFixture(t *testing.T) (*Client, *workflowApprovalFixture
 	}))
 	t.Cleanup(srv.Close)
 	c := newTestClient(t, srv, "org", []string{"repo"})
+	c.workflowApprovals.stageStore = stagelabels.NewStore("", nil)
 	return c, f, []PullRequest{gatedPR("dependabot[bot]", gatedRun(11, "head1", "outsider"), gatedRun(12, "head1", "outsider"))}
+}
+
+// admitHead records a person's dashboard Approve of head on org/repo#7's
+// stage record, the way api_repo_item_decision.go does.
+func admitHead(t *testing.T, c *Client, head string) {
+	t.Helper()
+	key := stagelabels.Key("org/repo", 7)
+	store := c.workflowApprovals.stageStore
+	store.Observe(key, stagelabels.ReviewPending, "test")
+	if !store.NoteAdmission(key, head, stagelabels.OperatorApprovalAdmission("owner"), time.Now()) {
+		t.Fatal("NoteAdmission refused the record")
+	}
 }
 
 func gatedPR(author string, runs ...*gh.WorkflowRun) PullRequest {
@@ -256,14 +270,47 @@ func TestSweepWorkflowApprovalsUntrustedThenAdmitted(t *testing.T) {
 	if stats := c.WorkflowApprovalsStatus(); stats.Denied != 2 {
 		t.Fatalf("denials not counted once per head: %+v", stats)
 	}
+	// The automerge label alone is not an admission: it is not bound to a
+	// head and says nothing about who applied it.
 	f.mu.Lock()
 	f.fresh.Labels = []*gh.Label{{Name: gh.Ptr(c.AutoMergeLabel())}}
 	f.mu.Unlock()
 	prs := []PullRequest{gatedPR("outsider", gatedRun(11, "head1", "outsider"))}
 	prs[0].Labels = []string{c.AutoMergeLabel()}
 	c.SweepWorkflowApprovals(context.Background(), prs, config.GovernorCIConfig{})
+	if posts, _ := f.counts(); posts != 0 {
+		t.Fatalf("bare automerge label released the head: posts=%d", posts)
+	}
+	// A person's admission of this head does.
+	admitHead(t, c, "head1")
+	c.SweepWorkflowApprovals(context.Background(), prs, config.GovernorCIConfig{})
 	if posts, _ := f.counts(); posts != 1 {
 		t.Fatalf("owner admission did not release the head: posts=%d", posts)
+	}
+}
+
+// A contributor admitted at one head pushes another: the admission was for
+// what the person read, so the new head's gated runs wait for a person.
+func TestSweepWorkflowApprovalsAdmissionIsHeadBound(t *testing.T) {
+	c, f, _ := newWorkflowApprovalFixture(t)
+	admitHead(t, c, "head1")
+	f.mu.Lock()
+	f.fresh.User.Login = gh.Ptr("outsider")
+	f.fresh.Head.SHA = gh.Ptr("head2")
+	f.fresh.Labels = []*gh.Label{{Name: gh.Ptr(c.AutoMergeLabel())}}
+	f.mu.Unlock()
+	next := gatedPR("outsider", gatedRun(21, "head2", "outsider"))
+	next.HeadSHA, next.CIActivity.Head = "head2", "head2"
+	next.Labels = []string{c.AutoMergeLabel()}
+	c.SweepWorkflowApprovals(context.Background(), []PullRequest{next}, config.GovernorCIConfig{})
+	if posts, reads := f.counts(); posts != 0 || reads != 0 {
+		t.Fatalf("admission at head1 approved head2: posts=%d fresh reads=%d", posts, reads)
+	}
+	if stats := c.WorkflowApprovalsStatus(); stats.Denied != 1 || stats.Approved != 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !c.workflowApprovalAdmitted("org/repo", 7, "head1") || c.workflowApprovalAdmitted("org/repo", 7, "head2") || c.workflowApprovalAdmitted("org/repo", 8, "head1") {
+		t.Fatal("admission lookup is not bound to repo, number and head")
 	}
 }
 

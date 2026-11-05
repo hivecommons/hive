@@ -418,7 +418,9 @@ governor:
   # ci:
   #   auto_approve_workflows: true
   #   auto_approve_workflow_actors: ['dependabot[bot]', 'renovate[bot]']
-  # An explicit [] trusts only this hive's App and owner-admitted PRs.
+  # An explicit [] trusts only this hive's App and heads a person admitted
+  # from the dashboard (Approve); the automerge label alone never counts.
+  # Approving uses the App token: the App needs Actions: Read and write.
   eval_interval_s: 300                    # Seconds between governor evaluations
   eval_interval_max_s: 1800               # Cap when API budget mode stretches evals
   eval_interval_webhook_s: 900            # Base interval while GitHub webhooks are healthy (see /api/webhook/github)

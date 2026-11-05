@@ -270,8 +270,11 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   GitHub`. Right after it, the eval cycle runs the workflow-approval sweep,
   which approves a head's gated `pull_request` runs **at most once per PR
   head** ([#16603](https://github.com/hivecommons/hive/issues/16603)) when
-  the head is trusted: the PR carries the owner's automerge admission label
-  (`lgtm` by default), or the PR author or the run's triggering actor is
+  the head is trusted: a person admitted **this head** (a verified owner's
+  or merger's dashboard Approve, recorded on the stage record and dropped
+  by the next push — [#15136](https://github.com/hivecommons/hive/issues/15136);
+  the automerge label on its own never counts, since it is bound to no head
+  and names no approver), or the PR author or the run's triggering actor is
   this hive's App or is listed in `governor.ci.auto_approve_workflow_actors`
   (default `['dependabot[bot]', 'renovate[bot]']`; an explicit `[]` trusts
   only the App and owner admission). Runs of other events (for example
@@ -292,7 +295,13 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   lacks `actions: write`) is recorded once, never retried for that head,
   logged as `workflow approval refused; needs workflow approval on GitHub`,
   and the caption becomes `CI waiting · needs workflow approval on GitHub`
-  on every later cycle, including ones that skip the sweep. Each approved
+  on every later cycle, including ones that skip the sweep. The sweep uses
+  the App token, so it needs **Actions: Read and write** on the App
+  ([github-app-setup.md](../github-app-setup.md)); it runs alongside the
+  older `/ok-to-test` path, in which the contributor lane posts a comment
+  and the repository's own `hive-ok-to-test` workflow approves with its
+  `GITHUB_TOKEN` — operators who want to stay on Actions: Read and that
+  path alone set `governor.ci.auto_approve_workflows: false`. Each approved
   run logs one `approved gated workflow run` INFO line; counts since boot
   are at `/api/status` `workflow_approvals` (`approved`, `denied`,
   `permission_errors`, `last`). Approved runs execute the head's workflow

@@ -8,7 +8,8 @@ type GovernorCIConfig struct {
 	// on trusted PR heads; false leaves the gate to a person.
 	AutoApproveWorkflows *bool `yaml:"auto_approve_workflows,omitempty" json:"auto_approve_workflows,omitempty"`
 	// AutoApproveWorkflowActors are the PR authors / triggering actors
-	// trusted besides the hive's App and owner-admitted PRs. Unset means
+	// trusted besides the hive's App and heads a person admitted from the
+	// dashboard (stage-record admission, head-bound). Unset means
 	// DefaultAutoApproveWorkflowActors; an explicit [] trusts neither.
 	AutoApproveWorkflowActors *[]string `yaml:"auto_approve_workflow_actors,omitempty" json:"auto_approve_workflow_actors,omitempty"`
 }

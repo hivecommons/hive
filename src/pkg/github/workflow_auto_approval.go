@@ -11,6 +11,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -44,6 +45,9 @@ type workflowApprovalLedger struct {
 	mu       sync.Mutex
 	attempts map[workflowApprovalKey]workflowApprovalAttempt
 	status   WorkflowApprovalsStatus
+	// stageStore is where owner admissions are read from; nil means the
+	// process-wide stagelabels.Shared(). Tests inject their own.
+	stageStore *stagelabels.Store
 }
 
 // WorkflowApprovalsStatus is /api/status.workflow_approvals: decisions
@@ -100,6 +104,38 @@ func (l *workflowApprovalLedger) touchLocked(key workflowApprovalKey, now time.T
 	return attempt
 }
 
+// touch marks the head live and returns its entry as it was.
+func (l *workflowApprovalLedger) touch(key workflowApprovalKey, now time.Time) workflowApprovalAttempt {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.touchLocked(key, now)
+}
+
+// markDeniedCounted notes that the head's denials went into the counters,
+// so a later pass over the same head does not count them again.
+func (l *workflowApprovalLedger) markDeniedCounted(key workflowApprovalKey) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	attempt := l.attempts[key]
+	attempt.deniedCounted = true
+	l.attempts[key] = attempt
+}
+
+// claim takes the head's one approval pass. It returns false when another
+// pass (a concurrent cycle, or an earlier one on the same head) already
+// has it; the once-per-head invariant lives here, not with callers.
+func (l *workflowApprovalLedger) claim(key workflowApprovalKey) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	attempt := l.attempts[key]
+	if attempt.attempted {
+		return false
+	}
+	attempt.attempted = true
+	l.attempts[key] = attempt
+	return true
+}
+
 func (l *workflowApprovalLedger) record(key workflowApprovalKey, runID int64, outcome string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -142,10 +178,10 @@ func (c *Client) workflowApprovalWithLedger(repo string, number int, head string
 	return &out
 }
 
-// workflowApprovalTrusted is the trust policy: the owner admitted the PR
-// (automerge label), or the PR author or the run's triggering actor is the
-// hive's App or in the allowlist. A trusted author covers every gated run
-// on the head, since the code under test is theirs.
+// workflowApprovalTrusted is the trust policy: a person admitted this very
+// head (workflowApprovalAdmitted), or the PR author or the run's triggering
+// actor is the hive's App or in the allowlist. A trusted author covers
+// every gated run on the head, since the code under test is theirs.
 func workflowApprovalTrusted(author, actor, app string, admitted bool, actors []string) bool {
 	if admitted {
 		return true
@@ -202,18 +238,27 @@ func (c *Client) workflowApprovalHeld(labels []string) bool {
 	return c.isHeld(labels) || c.isExempt(labels) || c.sentinelBlockedLabel(labels) != ""
 }
 
-func (c *Client) workflowApprovalAdmitted(labels []string) bool {
-	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), c.AutoMergeLabel()) {
-			return true
-		}
+// workflowApprovalAdmitted reports whether a person's approval admitted
+// exactly this head: the stage record's admission (hivecommons/hive#15136),
+// which the dashboard Approve writes for a verified owner or merger and
+// which a new push drops. The automerge label on its own never counts: it
+// is not bound to a head and says nothing about who applied it, so a
+// contributor admitted at one head could otherwise push another with
+// edited workflow files and have its runs approved without a human click.
+func (c *Client) workflowApprovalAdmitted(repo string, number int, head string) bool {
+	if c == nil || strings.TrimSpace(head) == "" {
+		return false
 	}
-	return false
+	store := c.workflowApprovals.stageStore
+	if store == nil {
+		store = stagelabels.Shared()
+	}
+	rec, ok := store.Get(stagelabels.Key(repo, number))
+	return ok && rec.Admission(head) != ""
 }
 
 // splitTrustedWorkflowRuns partitions the approvable gated runs by policy.
-func (c *Client) splitTrustedWorkflowRuns(runs []*gh.WorkflowRun, number int, head, headRepo, author string, labels, actors []string) (trusted, denied []*gh.WorkflowRun) {
-	admitted := c.workflowApprovalAdmitted(labels)
+func (c *Client) splitTrustedWorkflowRuns(runs []*gh.WorkflowRun, number int, head, headRepo, author string, admitted bool, actors []string) (trusted, denied []*gh.WorkflowRun) {
 	app := c.AppBotLogin()
 	for _, run := range runs {
 		if !workflowRunApprovable(run, number, head, headRepo) {
@@ -251,19 +296,16 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 			continue
 		}
 		wa := a.WorkflowApproval
-		c.workflowApprovals.mu.Lock()
-		previous := c.workflowApprovals.touchLocked(key, time.Now())
-		c.workflowApprovals.mu.Unlock()
+		previous := c.workflowApprovals.touch(key, time.Now())
 		if previous.attempted {
 			continue
 		}
-		trusted, denied := c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, "", pr.Author, pr.Labels, actors)
+		admitted := c.workflowApprovalAdmitted(key.repo, pr.Number, pr.HeadSHA)
+		// This first split only counts denials off the listing; its trusted
+		// set is discarded and recomputed after the fresh PR read below.
+		trusted, denied := c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, "", pr.Author, admitted, actors)
 		if len(denied) > 0 && !previous.deniedCounted {
-			c.workflowApprovals.mu.Lock()
-			attempt := c.workflowApprovals.attempts[key]
-			attempt.deniedCounted = true
-			c.workflowApprovals.attempts[key] = attempt
-			c.workflowApprovals.mu.Unlock()
+			c.workflowApprovals.markDeniedCounted(key)
 			for _, run := range denied {
 				c.workflowApprovals.record(key, run.GetID(), "denied")
 			}
@@ -283,7 +325,7 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 		if c.workflowApprovalHeld(labels) || headRepo == "" {
 			continue
 		}
-		trusted, _ = c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, headRepo, fresh.GetUser().GetLogin(), labels, actors)
+		trusted, _ = c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, headRepo, fresh.GetUser().GetLogin(), admitted, actors)
 		if len(trusted) == 0 {
 			continue
 		}
@@ -294,13 +336,7 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 		}
 		// Claim before the first POST: neither a concurrent cycle nor an
 		// unchanged head repeats the pass, even after a partial failure.
-		c.workflowApprovals.mu.Lock()
-		attempt := c.workflowApprovals.attempts[key]
-		claimed := !attempt.attempted
-		attempt.attempted = true
-		c.workflowApprovals.attempts[key] = attempt
-		c.workflowApprovals.mu.Unlock()
-		if !claimed {
+		if !c.workflowApprovals.claim(key) {
 			continue
 		}
 		approved := false
