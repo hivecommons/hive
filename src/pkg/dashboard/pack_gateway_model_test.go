@@ -3,6 +3,7 @@ package dashboard
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -605,6 +606,107 @@ func TestApplyPackKeepsGatewayModelAfterOverridesLost(t *testing.T) {
 	}
 	if got := srv.deps.Config.Agents["reviewer"].Model; got != "" {
 		t.Errorf("reviewer model=%q, want gateway default", got)
+	}
+}
+
+// #16740: the retained model is not enough if a later level forgets the
+// gateway placement and creates its new agents on the pack CLI.
+func TestApplyPackKeepsGatewayPlacementAfterOverridesLost(t *testing.T) {
+	const model = "ibm/granite-4-h-small"
+	for _, gateway := range []string{"litellm", "cb"} {
+		t.Run(gateway, func(t *testing.T) {
+			srv := gatewayModelHive(t, "override", model)
+			if gateway == "cb" {
+				srv.deps.Config.Governor.Gateways = []config.GatewayConfig{{
+					Name: gateway, Kind: config.GatewayKindLiteLLM, Endpoint: "https://litellm.example.test",
+				}}
+				// Match production wiring so overrides accept configured gateway names.
+				host, ok := srv.deps.AgentMgr.(crux.Host)
+				if !ok {
+					t.Fatal("test runtime does not expose host wiring")
+				}
+				host.SetGatewayBackendChecker(func(backend string) bool {
+					return srv.deps.Config.Governor.ResolveGateway(backend) != nil
+				})
+			}
+			for _, name := range []string{"scanner", "quality", "guide"} {
+				if err := srv.deps.AgentMgr.SetBackendOverride(name, gateway); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := srv.ApplyPack(2); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"scanner", "quality", "guide"} {
+				if got := srv.deps.Config.Agents[name]; got.Backend != gateway || !got.BackendIsPackOwned() {
+					t.Fatalf("%s backend=%q owner=%q, want the pack-copied gateway before override loss", name, got.Backend, got.BackendOwner)
+				}
+				if err := srv.deps.AgentMgr.SetBackendOverride(name, ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := srv.deps.AgentMgr.SetModelOverride(name, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, exists := srv.deps.Config.Agents["ci-maintainer"]; exists {
+				t.Fatal("L2 unexpectedly created ci-maintainer")
+			}
+			for i := range 2 {
+				if _, err := srv.ApplyPack(3); err != nil {
+					t.Fatal(err)
+				}
+				got := srv.deps.Config.Agents["ci-maintainer"]
+				if got.Backend != gateway || got.Model != model || !got.BackendIsPackOwned() || got.ModelOwner != config.FieldOwnerPack {
+					t.Errorf("apply %d: ci-maintainer backend=%q model=%q owners=%q/%q, want pack-owned %s/%s", i, got.Backend, got.Model, got.BackendOwner, got.ModelOwner, gateway, model)
+				}
+			}
+			// A fresh model pick must outrank every retained pack copy.
+			if err := srv.deps.AgentMgr.SetModelOverride("scanner", "new-operator-model"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := srv.ApplyPack(3); err != nil {
+				t.Fatal(err)
+			}
+			if got := srv.deps.Config.Agents["ci-maintainer"].Model; got != "new-operator-model" {
+				t.Errorf("ci-maintainer model=%q, want the new operator model", got)
+			}
+		})
+	}
+}
+
+func TestRetainedGatewayPlacementRequiresSharedAllowedGateway(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		backends      []string
+		operatorNames []string
+		deny          []string
+		want          string
+	}{
+		{"shared gateway retained", []string{"litellm"}, nil, nil, "litellm"},
+		{"one gateway agent", []string{"litellm", "copilot", "copilot"}, nil, nil, ""},
+		{"mixed gateways", []string{"litellm", "vllm", "litellm"}, nil, nil, ""},
+		{"disallowed gateway", []string{"litellm"}, nil, []string{"litellm"}, ""},
+		{"operator CLI vetoes fallback", []string{"litellm", "litellm", "copilot"}, []string{"guide"}, nil, ""},
+		{"one new operator gateway pick", []string{"vllm", "litellm", "litellm"}, []string{"scanner"}, nil, ""},
+		{"new operator gateway wins", []string{"vllm", "vllm", "litellm"}, []string{"scanner", "quality"}, nil, "vllm"},
+		{"pack CLI does not select gateway", []string{"copilot"}, nil, nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := gatewayHive(t, tt.backends...)
+			srv.deps.Config.Backends.Deny = tt.deny
+			for name, agent := range srv.deps.Config.Agents {
+				agent.BackendOwner = config.FieldOwnerPack
+				srv.deps.Config.Agents[name] = agent
+			}
+			for _, name := range tt.operatorNames {
+				agent := srv.deps.Config.Agents[name]
+				agent.BackendOwner = config.FieldOwnerOperator
+				srv.deps.Config.Agents[name] = agent
+			}
+			if got := srv.hiveGatewayBackend(srv.hiveAgentBackends(), "reviewer", nil); got != tt.want {
+				t.Errorf("gateway=%q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
