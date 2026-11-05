@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -440,13 +441,14 @@ func setMergeEligibleLaneGate(g github.MergeRequestPolicyGate) {
 // refuses must not be listed merge-eligible: hive-merge on it is a wasted
 // attempt every kick, and the contributor lane merges it itself when ready.
 // It reuses the relay's gate (automerge.Engine.RelayMergeRefusal) rather than
-// restating the rule. Hive-authored PRs bypass the lane, and an unreadable
-// gate leaves the PR listed — the relay still re-checks it at merge time.
+// restating the rule. The gate itself owns author exemptions: hive attribution
+// describes provenance, not contributor trust. An unreadable gate leaves the
+// PR listed — the relay still re-checks it at merge time.
 func relayLaneRefusal(pr github.PullRequest, fullRepo string, logger *slog.Logger) string {
 	mergeEligibleLaneGateMu.RLock()
 	gate := mergeEligibleLaneGate
 	mergeEligibleLaneGateMu.RUnlock()
-	if gate == nil || hiveAuthoredPR(pr) {
+	if gate == nil {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -460,6 +462,21 @@ func relayLaneRefusal(pr github.PullRequest, fullRepo string, logger *slog.Logge
 		logger.Info("excluding PR from merge-eligible: contributor lane refuses the merge relay", "repo", fullRepo, "number", pr.Number, "refusal", refusal)
 	}
 	return refusal
+}
+
+// relayRefusalNeedsMaintainer reports trust admission failures using the
+// stage engine's existing classification. Soak, head age and pending review
+// are temporary gates, not requests for a maintainer merge.
+func relayRefusalNeedsMaintainer(refusal string) bool {
+	if !strings.HasPrefix(refusal, automerge.RelayMergeRefusalPrefix) {
+		return false
+	}
+	_, reason, ok := strings.Cut(refusal, ": ")
+	if !ok {
+		return false
+	}
+	reason, _, _ = strings.Cut(reason, " (")
+	return prstage.HumanMergeReason(reason) == prstage.HumanMergeReasonUntrustedAuthor
 }
 
 // mergeableJSON renders a tri-state mergeability verdict for the
@@ -1093,7 +1110,15 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 
 	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
 
+	type maintainerMergePR struct {
+		Number  int    `json:"number"`
+		Repo    string `json:"repo"`
+		Title   string `json:"title"`
+		HeadSHA string `json:"head_sha,omitempty"`
+		Reason  string `json:"reason"`
+	}
 	var eligible []eligiblePR
+	var needsMaintainer []maintainerMergePR
 	var failing []failingPR
 	// escalated holds the escalated (needs-human) hive PRs that did NOT land
 	// in the failing bucket — conflicted, green or pending ones
@@ -1180,6 +1205,11 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			if refusal := relayLaneRefusal(pr, fullRepo, logger); refusal != "" {
 				bucket = mergeBucketSkip
 				verdict = github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: refusal}
+				if relayRefusalNeedsMaintainer(refusal) {
+					needsMaintainer = append(needsMaintainer, maintainerMergePR{
+						Number: pr.Number, Repo: fullRepo, Title: pr.Title, HeadSHA: pr.HeadSHA, Reason: refusal,
+					})
+				}
 			}
 		}
 		verdicts[github.MergeVerdictKey(pr)] = verdict
@@ -1344,8 +1374,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	_ = os.MkdirAll("/var/run/hive-metrics", 0o755)
 
 	payload := map[string]any{
-		"generated_at":   time.Now().UTC().Format(time.RFC3339),
-		"merge_eligible": eligible,
+		"generated_at":           time.Now().UTC().Format(time.RFC3339),
+		"merge_eligible":         eligible,
+		"needs_maintainer_merge": needsMaintainer,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

@@ -461,15 +461,18 @@ func (s *Scheduler) buildMergeEligibleListFor(keep func(repo string) bool) strin
 // all) and caps the rendered list at limit (governor.kick_limits.max_prs,
 // hivecommons/hive#7368; 0 = uncapped).
 func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit int) string {
-	var payload struct {
-		Items []struct {
-			Number int    `json:"number"`
-			Repo   string `json:"repo"`
-			Title  string `json:"title"`
-			Queued bool   `json:"queued"`
-		} `json:"merge_eligible"`
+	type mergeRow struct {
+		Number int    `json:"number"`
+		Repo   string `json:"repo"`
+		Title  string `json:"title"`
+		Queued bool   `json:"queued"`
+		Reason string `json:"reason"`
 	}
-	if json.Unmarshal(data, &payload) != nil || len(payload.Items) == 0 {
+	var payload struct {
+		Items           []mergeRow `json:"merge_eligible"`
+		NeedsMaintainer []mergeRow `json:"needs_maintainer_merge"`
+	}
+	if json.Unmarshal(data, &payload) != nil {
 		return "(none)\n"
 	}
 	var b strings.Builder
@@ -490,7 +493,24 @@ func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit 
 		b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, queued, pr.Title))
 	}
 	if b.Len() == 0 {
-		return "(none)\n"
+		b.WriteString("(none)\n")
+	}
+	var needsMaintainer []mergeRow
+	for _, pr := range payload.NeedsMaintainer {
+		if keep == nil || keep(pr.Repo) {
+			needsMaintainer = append(needsMaintainer, pr)
+		}
+	}
+	if len(needsMaintainer) > 0 {
+		b.WriteString("\nNEEDS MAINTAINER MERGE (excluded from MERGE-ELIGIBLE; do not request hive-merge):\n")
+		b.WriteString("A maintainer can review and merge manually. A trusted merger can admit the current head with dashboard Approve or /hive decision approve. An operator can also grant an allowed contributor registry tier (when enabled), or resolve the verified hive claim on the linked closing issue. Agent review approval alone does not grant contributor trust.\n")
+		for i, pr := range needsMaintainer {
+			if limit > 0 && i >= limit {
+				b.WriteString(prListOverflowLine(len(needsMaintainer)-i, limit))
+				break
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s — %s: %s\n", pr.Number, pr.Repo, pr.Title, pr.Reason))
+		}
 	}
 	return b.String()
 }
