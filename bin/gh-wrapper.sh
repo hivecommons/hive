@@ -708,7 +708,12 @@ if [ "$_gh_author_scoped" = true ]; then
     # and point at whichever work-queue snapshot actually exists here.
     _actionable_hint="/var/run/hive-metrics/actionable.json"
     [ -f /data/last-actionable.json ] && _actionable_hint="/data/last-actionable.json"
-    _deny enumeration_disabled "gh $subcmd list is disabled for agents — ONLY listing/enumeration is blocked, writes like 'gh issue create' and 'hive-open-pr' are still ALLOWED; for the pre-filtered queue run 'cat ${_actionable_hint}' (a shell command, not a workspace file-read tool)."
+    #
+    # The message also names the reads that still work. Without them an agent
+    # took "listing is blocked" to mean it could not look up merged PRs at all,
+    # and parked a red audit-trail check for the owner instead of diagnosing it
+    # (Danathar/dns-failover#152).
+    _deny enumeration_disabled "gh $subcmd list is disabled for agents — ONLY listing/enumeration is blocked, writes like 'gh issue create' and 'hive-open-pr' are still ALLOWED; for the pre-filtered queue run 'cat ${_actionable_hint}' (a shell command, not a workspace file-read tool). Reads that still work: merged PRs via 'gh search prs --repo <owner/repo> --merged --json number,title,body,author,closedAt' or 'gh api repos/<owner/repo>/pulls?state=closed' (GET; merged ones carry merged_at), any 'gh search prs|issues --repo <owner/repo> <terms>' without --author, and 'gh pr view' / 'gh issue view <n>'."
   fi
 fi
 
