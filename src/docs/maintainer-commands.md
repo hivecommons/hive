@@ -111,7 +111,8 @@ most 300 characters, mentions defanged) and adds the replies that act on it,
 ([projectbluefin/utah#13](https://github.com/projectbluefin/utah/issues/13)).
 When the park quotes the change it asks for in a fenced code block, Hive also
 reads the patch of each named PR that merged, and of the merged PR that closed
-each named issue (at most three reads per issue). If that patch removes a line
+each named issue (at most three named items per issue, a closer read and a
+patch read each). If that patch removes a line
 of 16 or more characters the park quotes, in a file the park names, the change
 landed: the note says which PR and file ("#633 was closed by merged #635, which
 changed the lines this issue asks to change in `.github/workflows/build.yml`"),

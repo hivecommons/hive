@@ -93,6 +93,24 @@ func TestParkRecheckNamedPRMergedLandedTheChange(t *testing.T) {
 	wantNote(t, f.posted[0], "- #635 merged on 2026-10-04, changing the lines this issue asks to change in `.github/workflows/build.yml` (the park reason names it).", "has landed in #635")
 }
 
+// The budget is three named items, each a closer read and a patch read
+// (adjudicator on hivecommons/hive#16693: counting both reads let only two
+// issues be checked while the doc promised three).
+func TestParkRecheckLandedLookupBudget(t *testing.T) {
+	f := prParkedIssue(634, strings.Replace(park634, "the auto-opened run-failure issue #633.", "#631, #632, #633 and #636.", 1))
+	f.closedBy = map[int]int{}
+	f.prFiles = map[int][]map[string]any{}
+	for i, n := range []int{631, 632, 633, 636} {
+		f.timeline = append(f.timeline, prCrossRef("org/repo", n, false, "closed", parkT0.Add(time.Duration(i+1)*time.Hour), time.Time{}, "a run failure"))
+		f.closedBy[n] = n + 100
+		f.prFiles[n+100] = []map[string]any{prFile(".github/workflows/build.yml", "-# unrelated line, long enough to count\n")}
+	}
+	recheck(t, f)
+	if len(f.fileReads) != parkRecheckMaxLandedLookups {
+		t.Fatalf("patch reads = %v, want %d named items checked", f.fileReads, parkRecheckMaxLandedLookups)
+	}
+}
+
 // Everything short of the quoted lines landing keeps the plain note.
 func TestParkRecheckNoLandingKeepsPlainNote(t *testing.T) {
 	for _, tc := range []struct {

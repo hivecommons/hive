@@ -34,7 +34,8 @@ const parkRecheckLandedPrefix = "<!-- hive:park-recheck-landed by="
 // `fi` or `exit 1` is removed by unrelated changes all the time.
 const parkLandedMinLine = 16
 
-// parkRecheckMaxLandedLookups bounds the closer/patch reads per issue.
+// parkRecheckMaxLandedLookups bounds the named items a re-check reads a
+// closer and patch for, per issue.
 const parkRecheckMaxLandedLookups = 3
 
 var parkFenceRE = regexp.MustCompile("(?s)```[^\\n]*\\n(.*?)```")
@@ -129,8 +130,12 @@ func (c *Client) markParkLandings(ctx context.Context, text string, refs map[str
 		}
 		owner, repo := c.splitRepo(ref.repo)
 		pr := ref.number
+		// One lookup per named item checked (a closer read for an issue,
+		// then the patch read), so at most parkRecheckMaxLandedLookups
+		// items cost reads.
 		switch {
 		case ref.isPR && ref.mergedAt.After(start):
+			lookups++
 		case !ref.isPR:
 			lookups++
 			closer, found, err := c.resolveIssueClosingPR(ctx, ref.repo, owner, repo, ref.number, 0)
@@ -141,7 +146,6 @@ func (c *Client) markParkLandings(ctx context.Context, text string, refs map[str
 		default:
 			continue
 		}
-		lookups++
 		patches, err := c.prFilePatches(ctx, owner, repo, pr)
 		if err != nil {
 			continue

@@ -113,7 +113,8 @@ type parkChange struct {
 	copyOf string
 	// by, quote and link are the closing note a person left when the copy
 	// closed unmerged, if any.
-	by, quote, link string	// landedBy is the merged PR whose patch removes a line the park quotes,
+	by, quote, link string
+	// landedBy is the merged PR whose patch removes a line the park quotes,
 	// in landedFile, a file the park names (issue_park_recheck_landed.go):
 	// the park's change landed. landedBy equals ref when the named item is
 	// that PR.

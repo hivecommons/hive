@@ -66,6 +66,8 @@ type parkFake struct {
 	// reports for an issue; prFiles serves pulls/{n}/files.
 	closedBy map[int]int
 	prFiles  map[int][]map[string]any
+	// fileReads records the pulls/{n}/files reads, in order.
+	fileReads []int
 }
 
 func newParkFake(t *testing.T, f *parkFake) *httptest.Server {
@@ -147,6 +149,7 @@ func newParkFake(t *testing.T, f *parkFake) *httptest.Server {
 				"closedByPullRequestsReferences": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": nodes}}}}})
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "pulls/") && strings.HasSuffix(path, "/files"):
 			num, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "pulls/"), "/files"))
+			f.fileReads = append(f.fileReads, num)
 			if got, ok := f.prFiles[num]; ok {
 				_ = json.NewEncoder(w).Encode(got)
 				return
