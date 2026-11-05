@@ -2489,7 +2489,7 @@ func TestStageDCORereadsSplitCachedBeforeHiveIdentities(t *testing.T) {
 	if err != nil || got.unsigned != 1 || got.unsignedHive != 1 || got.unsignedOther != 0 || api.commitReads != 1 {
 		t.Fatalf("legacy split: %+v, %v, reads=%d; want hive=1 other=0 after one read", got, err, api.commitReads)
 	}
-	store.NoteDCO(key, obs.HeadSHA, got.total, got.unsigned, got.unsignedHive, got.squashUnsafeHive)
+	store.NoteDCO(key, obs.HeadSHA, got.total, got.unsigned, got.unsignedHive, got.squashUnsafeHive, true)
 	got, err = e.stageDCO(context.Background(), store, key, obs, policy)
 	if err != nil || got.unsignedHive != 1 || got.unsignedOther != 0 || api.commitReads != 1 {
 		t.Fatalf("refreshed split: %+v, %v, reads=%d; want the cache served", got, err, api.commitReads)
