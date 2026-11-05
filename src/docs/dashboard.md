@@ -777,6 +777,7 @@ means the situation cannot occur at that level.
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |
+| Issue parked on a decision (`needs_decision`) that an open or held PR authored by this hive's App closes (GitHub closing reference) | Not yours — "Waits on hive PR #N, which closes it"; the park label stays, so the ask comes back if the PR closes unmerged. A closing PR by anyone else leaves it `DECIDE` | same | same | same |
 | `blocked` with an open GitHub blocked-by link | Not yours — waiting on the linked item | same | same | same |
 | Actionable `blocked` issue with no blocked-by link recorded | As the unclaimed row until it has had no activity for the stale period, then Yours — `REVIEW` (`blocked_unexplained`: name the blocker or lift the label). Held and filtered issues keep their earlier row: their links are not read | same | same | same |
 | `Epic` · `2-discussing` · `needs-triage` on an issue | As the unclaimed row — still in the agent queue | same | same | same |
@@ -795,7 +796,8 @@ sweep detected as superseded by a merged PR, without `hive/keep-open` →
 ahead of any other hold source; (4)
 covered by an open PR → Not yours; (5) on an issue, a parking bucket, checked
 in the order `needs_human`, `needs_direction`, `needs_decision`, `needs_spec`
-→ `REVIEW`, `STEER`, `DECIDE`, `SPEC`; (6) untrusted reporter awaiting
+→ `REVIEW`, `STEER`, `DECIDE`, `SPEC`, except that a `needs_decision` park an
+open hive-authored PR closes is Not yours; (6) untrusted reporter awaiting
 admission → `ADMIT`; (7) awaiting reporter confirmation → Not yours until it
 has had no activity for the stale period, then `CLOSE`
 (`reporter_confirmation_stale`); (8) verified done but not closed → `CLOSE`;

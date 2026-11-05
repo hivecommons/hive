@@ -122,6 +122,15 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 			// the owner step open.
 			continue
 		}
+		if strings.Contains(body, parkWithdrawnMarkerPrefix) {
+			// The agent took its ask back: its options and recommendation
+			// go with it, so a later park starts from its own text.
+			ownerStep = false
+			m.releaseStep = nil
+			m.options, m.optionText, m.optionSource = nil, nil, ""
+			m.hasRecommendation, recommendationSource = false, ""
+			continue
+		}
 		if strings.Contains(body, unparkNoticeMarker) {
 			continue
 		}

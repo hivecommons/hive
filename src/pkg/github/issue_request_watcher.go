@@ -146,6 +146,11 @@ type IssueRequest struct {
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue and comment
 	// OwnerStep records a typed proposal; it does not authorize execution.
 	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"` // requires NeedsDecision
+	// WithdrawDecision takes back a decision park the requesting agent
+	// placed itself (issue_park_withdraw.go): the comment says why, and the
+	// watcher lifts the park and removes the "What to reply" notice. Like a
+	// park it needs the label op in the lane's allowlist.
+	WithdrawDecision bool `json:"withdraw_decision,omitempty"` // comment only
 	// NoConsolidateReason is the caller's escape hatch from open-issue
 	// consolidation (#14360): when set, the watcher files a new issue instead
 	// of folding the request into an existing one, and records the reason.
@@ -484,6 +489,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	if shapeErr == "" {
 		shapeErr = issueOwnerStepShapeError(req, kind)
 	}
+	if shapeErr == "" && req.WithdrawDecision && (kind != "comment" || req.NeedsDecision) {
+		shapeErr = "withdraw_decision applies to a comment only and cannot be combined with needs_decision"
+	}
 	if shapeErr != "" {
 		c.writeIssueResult(path, IssueResponse{OK: false, Error: shapeErr, At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
@@ -520,7 +528,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	// A comment that parks the item applies a hive-controlled label, so the
 	// lane must hold the label op too: commenting on an issue and taking it
 	// out of the actionable queue are different privileges (#12334).
-	if kind == "comment" && req.NeedsDecision {
+	if kind == "comment" && (req.NeedsDecision || req.WithdrawDecision) {
 		if reason, refused := c.refuseWrite(req.Agent, WriteOpLabel, req.Repo, req.Number); refused {
 			c.denyIssueRequest(path, req, reason, nowFn)
 			return
@@ -675,6 +683,19 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				break
 			}
 		}
+		var withdraw *parkWithdrawal
+		if req.WithdrawDecision {
+			var refusal string
+			refusal, withdraw, err = c.decisionParkWithdrawal(ctx, req)
+			if err != nil {
+				break
+			}
+			if refusal != "" {
+				c.denyIssueRequest(path, req, refusal, nowFn)
+				return
+			}
+			body = strings.TrimRight(body, "\n") + "\n\n" + parkWithdrawnMarker(req.Agent)
+		}
 		var parkBlocked bool
 		if req.BlockedOnPR > 0 {
 			settled, merged, pErr := c.pullRequestSettledDetails(ctx, req.Repo, req.BlockedOnPR)
@@ -731,7 +752,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				}
 			}
 		}
-		if err == nil {
+		if err == nil && (withdraw == nil || !withdraw.posted) {
 			commentBody := issueOwnerStepBody(body, req.NeedsDecision && !issueDecisionDowngrade.Active, req.OwnerStep)
 			if issueDecisionDowngrade.Active {
 				commentBody = appendHiveDecisionTaken(commentBody, issueDecisionDowngrade.Question)
@@ -752,6 +773,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			if errors.Is(err, ErrIssueCommentBudget) {
 				c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
 				return
+			}
+		}
+		if err == nil && withdraw != nil {
+			// After the comment, so the reason is on the issue before the
+			// park lifts; a retry after a failed lift finds the comment up
+			// (withdraw.posted) and only lifts.
+			if label := c.renamedParkLabel(withdraw); label != "" {
+				err = c.RemoveLabel(ctx, req.Repo, req.Number, label)
+			}
+			if err == nil {
+				err = c.withdrawDecisionPark(ctx, req, withdraw)
 			}
 		}
 		if err == nil && parkBlocked {
@@ -996,6 +1028,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 	if kind == "comment" && req.NeedsDecision && !issueDecisionDowngrade.Active {
 		extra = append(extra, "parked", c.needsDecisionLabel())
+	}
+	if kind == "comment" && req.WithdrawDecision {
+		extra = append(extra, "withdrew_park", c.needsDecisionLabel())
 	}
 	if kind == "label" {
 		extra = []string{
