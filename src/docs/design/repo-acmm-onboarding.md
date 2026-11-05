@@ -57,7 +57,7 @@ It recommends at most one level at a time through `levelStep = 1`
 `level + levelStep` (`src/pkg/acmmadvisor/acmmadvisor.go:220`). The dashboard
 wires the same signal path to `GET /api/acmm-recommendation`
 (`src/pkg/dashboard/api.go:252`) and keeps human approval on level changes via
-`handlePackSetLevel` (`src/pkg/dashboard/api_packs.go:572`).
+`handlePackSetLevel` (`src/pkg/dashboard/api_packs.go:751`).
 
 There is also a current per-repo checkout-root mechanism, but not the exact
 `governor.acmm.repo_roots` spelling from the RFC. On `v4`,
