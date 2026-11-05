@@ -44,7 +44,10 @@ type Outcome struct {
 	// Suppressed is set when the write-back gate kept the planned labels
 	// off the item (a contributor PR nobody opted in, below the level
 	// stage labels need): the stage is tracked internally only.
-	Suppressed bool
+	// SuppressedReason is the gate's reason, for the record and the
+	// dashboard.
+	Suppressed       bool
+	SuppressedReason string
 }
 
 // Changed reports whether any label was written.

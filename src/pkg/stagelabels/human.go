@@ -512,7 +512,13 @@ func RouteHuman(e Evidence) Route {
 		if len(e.ForkGuard) > 1 {
 			subject, verb, it = "checks", "refuse", "them"
 		}
-		decide = append(decide, subject+" `"+strings.Join(e.ForkGuard, "`, `")+"` "+verb+" pull requests from a fork, so neither the author nor the hive can turn "+it+" green: a maintainer must push this branch to the repository (or approve the run as the repository requires)")
+		// The run a maintainer dispatches proves one exact head
+		// (projectbluefin/utah-packages#862), so the ask names it.
+		run := "approve the run"
+		if h := ShortSHA(e.Head); h != "" {
+			run = "run or approve " + it + " for head `" + h + "`"
+		}
+		decide = append(decide, subject+" `"+strings.Join(e.ForkGuard, "`, `")+"` "+verb+" pull requests from a fork, so neither the author nor the hive can turn "+it+" green: a maintainer must push this branch to the repository (or "+run+" as the repository requires)")
 	}
 	approver := strings.TrimSpace(e.HumanApprover)
 	switch e.Verdict {
@@ -871,7 +877,14 @@ func DecisionActions(r Route) string {
 	}
 	var steps []string
 	head := "`" + ShortSHA(r.Head) + "`"
-	if r.ManualMerge {
+	if approver := strings.TrimPrefix(strings.TrimSpace(r.HumanApprover), "@"); approver != "" && (r.ManualMerge || r.Verdict == VerdictRequiresHuman) {
+		// The approval this step would ask for is already recorded on the
+		// head: it released the fence and answered requires_human, so the
+		// park is for another reason (projectbluefin/utah#1078 kept asking
+		// "a trusted merger approves this head" next to "approved by
+		// @Danathar"). Say it is done; the reasons name what is left.
+		steps = append(steps, "nothing more to approve: @"+approver+" approved this head ("+head+"); resolve the other reasons listed above")
+	} else if r.ManualMerge {
 		// Only `/hive decision approve` (typed or from the dashboard) and
 		// an Approve review release the fence; `/hive approve` never does
 		// (hivecommons/hive#14672). The first two also answer a

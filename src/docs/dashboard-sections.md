@@ -38,7 +38,7 @@ These words have a special meaning in Hive. Each entry explains them again the f
 - **Outside:** an open item that Hive's filters kept off its work list, for example because of a label.
 - **Band:** a group the dashboard puts an issue or pull request in, named after what it needs next. Bands are for display only.
 - **Needs-human:** waiting on a person, for example for a decision or a review. It is also the name of a label.
-- **Merge-eligible:** a pull request that passed every check Hive uses before it may merge it.
+- **Merge-eligible:** a pull request that passed every check Hive uses before it may merge it, and that Hive will merge: never one whose verdict is blocked or outstanding, or whose repo has auto-merge off. The auto-merge label counts only before the sweep has a verdict, and only when nothing blocks the pull request.
 
 **Who is who in the activity monitor** ([#15394](https://github.com/hivecommons/hive/issues/15394)). Every hover, menu and caption uses these five nouns and no others:
 

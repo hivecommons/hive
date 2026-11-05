@@ -419,7 +419,11 @@ type suppressingWriter struct {
 }
 
 func (w *suppressingWriter) Apply(context.Context, Ref, []string, stagelabels.Desired) (stagelabels.Outcome, error) {
-	return stagelabels.Outcome{Suppressed: w.suppress}, w.err
+	out := stagelabels.Outcome{Suppressed: w.suppress}
+	if w.suppress {
+		out.SuppressedReason = "needs-opt-in-label — #15312 carries none of hive-review"
+	}
+	return out, w.err
 }
 
 // TestReconcileRecordsSuppressedLabels: a write the gate kept off GitHub
@@ -434,8 +438,8 @@ func TestReconcileRecordsSuppressedLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, ok := store.Get(f.Ref.Key())
-	if !ok || rec.Stage == stagelabels.None || !rec.LabelsSuppressed {
-		t.Fatalf("suppressed write: record = %+v ok=%t, want stage kept with labels_suppressed", rec, ok)
+	if !ok || rec.Stage == stagelabels.None || !rec.LabelsSuppressed || rec.LabelsSuppressedReason != "needs-opt-in-label — #15312 carries none of hive-review" {
+		t.Fatalf("suppressed write: record = %+v ok=%t, want stage kept with labels_suppressed and the gate's reason", rec, ok)
 	}
 	w.err = errors.New("boom")
 	w.suppress = false
@@ -449,7 +453,7 @@ func TestReconcileRecordsSuppressedLabels(t *testing.T) {
 	if _, err := r.Reconcile(ctx, f); err != nil {
 		t.Fatal(err)
 	}
-	if rec, _ := store.Get(f.Ref.Key()); rec.LabelsSuppressed {
+	if rec, _ := store.Get(f.Ref.Key()); rec.LabelsSuppressed || rec.LabelsSuppressedReason != "" {
 		t.Fatalf("landed write left labels_suppressed set: %+v", rec)
 	}
 }

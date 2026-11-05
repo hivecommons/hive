@@ -300,11 +300,15 @@
       const review = prGitHubReview(pr);
       const matches = {
         waiting: !!held || prHasAnyLabel(pr, PR_HUMAN_GATE_LABELS.concat(cfg.waitingLabels || [])) || holdLabels(Array.from(labels)).length > 0,
-        eligible: (v && v.state === 'eligible') || prQueued(pr),
         blocked: (v && v.state === 'blocked') || (pr && pr.mergeable === 'no') || prCIFailing(pr),
         inReview: (v && v.state === 'outstanding') || !!(pr && pr.review_url) || !!review,
         draft: !!(pr && pr.draft)
       };
+      // Eligible only when Hive will merge it: an eligible verdict, or the
+      // queued label before a verdict exists with nothing blocking
+      // (bands.go prBandFlags).
+      matches.eligible = !(v && v.hand_merge) &&
+        ((v && v.state === 'eligible') || ((!v || !v.state || v.state === 'unknown') && !matches.blocked && prQueued(pr)));
       let band = 'open';
       if (matches.waiting) band = 'waiting';
       else if (matches.eligible) band = 'eligible';
@@ -334,7 +338,7 @@
       const cfg = repoIssueBandConfig();
       switch (band) {
         case 'waiting': return { label: 'Gated', rule: 'held, or labelled ' + Array.from(new Set(PR_HUMAN_GATE_LABELS.concat(cfg.waitingLabels || []).map(l => String(l).toLowerCase()))).join(', ') + ' — gated: automation does not continue until the hold is released or the label is removed' };
-        case 'eligible': return { label: 'Merge-eligible', rule: 'sweep verdict eligible, or queued for Hive auto-merge — nothing needed; it merges on its own' };
+        case 'eligible': return { label: 'Merge-eligible', rule: 'sweep verdict eligible, or queued for Hive auto-merge with nothing blocking before the sweep has a verdict — nothing needed; it merges on its own' };
         case 'blocked': return { label: 'Blocked', rule: 'blocked sweep verdict, merge conflicts, or failing CI' };
         case 'in-review': return { label: 'In review', rule: 'outstanding sweep verdict, a Hive review posted, or a GitHub review decision — nothing needed until the review resolves' };
         case 'draft': return { label: 'Draft', rule: 'draft on GitHub — nothing needed until it is marked ready for review' };
