@@ -121,6 +121,7 @@ var hiveSignalLabels = []string{
 	"hive/sentinel",
 	"hive/fleet",
 	"hive/handoff",
+	WorkflowsLaneLabel,
 	"hive/superseded",
 	"hive/keep-open",
 	"hive/in-progress",

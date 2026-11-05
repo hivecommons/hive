@@ -62,6 +62,12 @@ type parkFake struct {
 	edited    []string
 	labelOps  int
 	nextID    int64
+	// closedBy names the merged PR GitHub's closedByPullRequestsReferences
+	// reports for an issue; prFiles serves pulls/{n}/files.
+	closedBy map[int]int
+	prFiles  map[int][]map[string]any
+	// fileReads records the pulls/{n}/files reads, in order.
+	fileReads []int
 }
 
 func newParkFake(t *testing.T, f *parkFake) *httptest.Server {
@@ -128,6 +134,27 @@ func newParkFake(t *testing.T, f *parkFake) *httptest.Server {
 		case strings.Contains(path, "/labels"):
 			f.labelOps++
 			w.WriteHeader(http.StatusTeapot)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql"):
+			var q struct {
+				Variables struct {
+					Issue int `json:"issue"`
+				} `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&q)
+			nodes := []any{}
+			if pr, ok := f.closedBy[q.Variables.Issue]; ok {
+				nodes = append(nodes, map[string]any{"number": pr, "url": fmt.Sprintf("https://github.com/org/repo/pull/%d", pr), "merged": true, "mergedAt": prTS(parkT0.Add(time.Hour))})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{
+				"closedByPullRequestsReferences": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": nodes}}}}})
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "pulls/") && strings.HasSuffix(path, "/files"):
+			num, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "pulls/"), "/files"))
+			f.fileReads = append(f.fileReads, num)
+			if got, ok := f.prFiles[num]; ok {
+				_ = json.NewEncoder(w).Encode(got)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusTeapot)
