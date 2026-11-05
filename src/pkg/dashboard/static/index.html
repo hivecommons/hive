@@ -22496,16 +22496,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const data = typeof stageTrackerTerminalView === 'function' ? stageTrackerTerminalView(_stageTracker, Date.now()) : _stageTracker;
       return keys.map(k => stageTrackerItemByKey(data, k)).filter(Boolean);
     }
+    // Pure: whether the viewer's identity is still loading — the auth
+    // fetch (showGHAuthState) has not answered yet and nothing else has
+    // named a user or role. Unknown is not "read": on a hard reload the
+    // tracker's first paint lands before auth resolves, and gating the
+    // pills on 'read' here made them flash disabled for a poll interval
+    // (hivecommons/hive#16754).
+    function stageTrackerAuthPending() {
+      if (typeof window === 'undefined') return false;
+      return !window._hiveAuthKnown && window._hiveRole === undefined && !window._hiveUser;
+    }
     // What the signed-in viewer may do on this repo. Hold permission is
     // looked up lazily (the server answers 403 either way); needs-human is
-    // merger/owner only.
+    // merger/owner only. While the viewer's identity is still loading the
+    // ctx is optimistic — like canHold === null, unknown renders enabled
+    // and the server's 403 is the answer to a click that beat auth; the
+    // repaint showGHAuthState schedules settles the pills within the tick.
     function stageTrackerActionCtx(repo) {
+      const governor = (window._lastStatus && window._lastStatus.governor) || null;
+      if (stageTrackerAuthPending()) return { user: true, canHold: null, canHuman: true, authPending: true, login: '', governor };
       const role = window._hiveRole || 'read';
       const owner = dashboardRoleAtLeast(role, 'owner');
       const user = !!window._hiveUser || owner;
       if (typeof ensureRepoHoldPermission === 'function') ensureRepoHoldPermission(repo);
       const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
-      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor: (window._lastStatus && window._lastStatus.governor) || null };
+      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
     // "Needs human decision" pill on the Merge queue column) decides itself;
@@ -52490,6 +52505,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Quality loops & release health', label: 'Compliance posture windows', key: 'compliance.posture_checks.window_days', text: 'compliance posture look-back window history retention compliance.posture_checks.window_days compliance.posture_checks.history_days' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Swarm banner wording', key: 'swarm.event_name', text: 'swarm event name call to arms leaderboard title banner swarm.event_name swarm.call_to_arms swarm.leaderboard_title' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Tool approval inbox path', key: 'tool_approval.inbox_path', text: 'tool approval inbox pending approvals path tool_approval.inbox_path' },
+      { tab: 'Features', section: 'Auto-merge', label: 'Merge train', key: 'auto_merge.merge_train.enabled', text: 'merge train conflict overlap rebase attempts stall warning after seconds governor.merge_train_stall_warn_s auto_merge.merge_train.max_rebase_attempts' },
       { tab: 'Features', section: 'Auto-merge', label: 'Auto-merge sweep limits', key: 'auto_merge.min_head_age', text: 'auto merge max merges per sweep minimum head age required author role auto_merge.max_merges auto_merge.min_head_age auto_merge.trusted_authors.require_role bot takeover github-actions auto_merge.bot_takeover.enabled' },
       { tab: 'Features', section: 'Experimental', label: 'Long-running runs: checkpoints, triage and Spek recheck', key: 'runs.checkpoints.implement', text: 'runs checkpoints spec plan implement hold owner approval wait timeout severity triage clarify comment body length spek spektacular recheck cadence interval delta tasks discovery proxy timeout runs.checkpoints.spec runs.checkpoints.implement runs.wait_timeout_seconds runs.wait_severity runs.triage.min_body_chars runs.triage.clarify_comment runs.spektacular.binary runs.spektacular.recheck.enabled runs.spektacular.recheck.default_interval runs.spektacular.recheck.max_delta_tasks runs.spektacular.recheck.discovery_proxy runs.spektacular.recheck.discovery.enabled runs.spektacular.recheck.discovery.timeout runs.spektacular.recheck.discovery.max_total_items' },
       { tab: 'Features', section: 'Experimental', label: 'External execution: Flue, OMP and vibe-kanban', key: 'runs.external.flue.mode', text: 'external execution flue omp vibe kanban workbench report-only shadow endpoint workflow version project state dir mcp command runs.external.flue.mode runs.external.flue.endpoint runs.external.flue.workflow_version runs.external.omp.mode runs.external.omp.workflow_version runs.external.vibe_kanban.enabled runs.external.vibe_kanban.mode runs.external.vibe_kanban.project_id runs.external.vibe_kanban.state_dir runs.external.vibe_kanban.workflow_version runs.external.vibe_kanban.mcp_command' },
@@ -62064,6 +62080,47 @@ function burnAreaChart() {
               <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.approve_held_runs_for_registry_trusted</code>, <code>auto_merge.contributor_lane.owner_approval_releases_workflow_fence</code>, <code>auto_merge.contributor_lane.auto_promotion_scope</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
+          <div class="config-subgroup">Merge train</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${am.merge_train && am.merge_train.enabled === false ? '' : 'on'}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="merge-train" data-arg2="enabled" data-prevent="1" data-section="merge-train" data-key="enabled" role="switch" tabindex="0" aria-label="Conflict-aware merge train" aria-checked="${am.merge_train && am.merge_train.enabled === false ? 'false' : 'true'}"></div>
+            <span class="config-toggle-label">Conflict-aware merge train ${yamlHint('auto_merge.merge_train.enabled')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Conflict-aware merge train', `Default on. Runs one front per overlap group so PRs changing the same files merge in order. False restores independent per-PR evaluation.`)}</span>
+          </div>
+          <div class="config-field">
+            <label for="am-merge-train-attempts">Rebase attempts per front ${yamlHint('auto_merge.merge_train.max_rebase_attempts')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Rebase attempts per front', `How many rebase-resolve requests one PR may make behind one front before it parks at stage/085 for a human decision. Default 2; 0 uses that default.`)}</label>
+            <input id="am-merge-train-attempts" type="number" min="0" step="1" value="${esc(String((am.merge_train || {}).max_rebase_attempts ?? 2))}" data-change-action="markDirtyMergeTrain" data-arg0="max_rebase_attempts" data-arg-types="s,N">
+          </div>
+          <div class="config-field">
+            <label for="am-merge-train-stall">Stall warning after ${yamlHint('governor.merge_train_stall_warn_s')} ${settingHelpMark('operator-reference/README', 'notable-fields', 'Stall warning after', `Seconds without progress before the Activity Monitor chip reads &quot;Merge queue · stalled&quot;. Default 3600 seconds; 0 disables the warning.`)}</label>
+            <input id="am-merge-train-stall" type="number" min="0" step="1" value="${esc(String((_configState.data || {}).merge_train_stall_warn_s ?? 3600))}" data-change-action="markDirty" data-arg0="governor" data-arg1="merge_train_stall_warn_s" data-arg-types="s,s,N">
+            <p class="config-help">Seconds; 0 disables the stall warning.</p>
+          </div>
+          <div class="config-field">
+            <label>Native GitHub merge queue ${yamlHint('auto_merge.native_merge_queue')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native GitHub merge queue', `Default off. Hive controls admission and repair; GitHub tests and merges the synthetic group. Settings requires explicit repositories and exact repo#base pairs. Existing CI, trust, review, hold and attribution gates stay in force.`)}</label>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="enabled" data-prevent="1" data-section="native-queue" data-key="enabled" role="switch" tabindex="0" aria-label="Enable native GitHub merge queue" aria-checked="${am.native_merge_queue && am.native_merge_queue.enabled ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Enable native GitHub merge queue (default OFF) ${settingHelpMark('native-merge-queue', 'pilot-rollout', 'Enable native GitHub merge queue', `Operator opt-in only after the GitHub prerequisites below. Save applies the Hive hand-off policy; it does not create queues or change branch protection. Off preserves conventional direct merge on branches without a required queue; a queue-required branch remains parked, never bypassed.`)}</span>
+            </div>
+            <label>Native queue repositories ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue repositories', `Comma-separated owner/repo allow-list. Settings refuses enabled queues with an empty list. Start with hivecommons/hive only; other repositories retain direct mode.`)}</label>
+            <input type="text" value="${esc(((am.native_merge_queue || {}).repos || []).join(', '))}" placeholder="hivecommons/hive" data-change-action="markDirtyNativeQueue" data-arg0="repos" data-arg-types="s,w">
+            <label>Native queue bases ${yamlHint('auto_merge.native_merge_queue.bases[]')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue bases', `Comma-separated exact owner/repo#base pairs. Repository names ignore case; branch names preserve case. No wildcards. Start with hivecommons/hive#v5. Every pair must belong to a listed repository.`)}</label>
+            <input type="text" value="${esc(((am.native_merge_queue || {}).bases || []).join(', '))}" placeholder="hivecommons/hive#v5" data-change-action="markDirtyNativeQueue" data-arg0="bases" data-arg-types="s,w">
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="skip_current_base_gate" data-prevent="1" data-section="native-queue" data-key="skip_current_base_gate" role="switch" tabindex="0" aria-label="Native queue owns freshness" aria-checked="${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Queue owns freshness (default OFF) ${settingHelpMark('native-merge-queue', 'current-base-gate', 'Queue owns freshness', `Explicitly bypasses current-base and behind refresh only for opted-in repo/base pairs with an actual GitHub queue. Leave off until merge-group CI is proven and HIVE_NATIVE_QUEUE_FRESHNESS suppresses the external branch updater for the same pairs. Other branches retain coordinated refresh.`)}</span>
+            </div>
+            <label>Native queue probe TTL ${settingHelpMark('native-merge-queue', 'api-cost', 'Native queue probe TTL', `How long GitHub queue detection is cached per repo/base. Default 30m; 0 uses that default. Enter a non-negative Go duration, for example 30m.`)}</label>
+            <input type="text" value="${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}" data-change-action="markDirtyNativeQueue" data-arg0="probe_ttl" data-arg-types="s,w">
+            <p class="config-help">Configured: <strong>${am.native_merge_queue && am.native_merge_queue.enabled ? 'enabled' : 'disabled (default)'}</strong>.
+              Repositories: ${esc(((am.native_merge_queue || {}).repos || []).join(', ') || 'all watched repositories once enabled')}.
+              Bases: ${esc(((am.native_merge_queue || {}).bases || []).join(', ') || 'all queue bases (legacy YAML only)')}.
+              Queue owns freshness: ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'explicitly opted in' : 'no (default)'}.
+              Probe TTL: ${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}.</p>
+            <p class="config-help">Owner-only: stage these controls and click Save only after the
+              <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/native-merge-queue.md#pilot-rollout" target="_blank" rel="noopener noreferrer">checks and branch-rule rollout</a>.
+              Prerequisites: App installation authentication, withdrawal guards, trusted-base policy proof, equivalent required-check migration, MERGE method and a bounded pilot group.
+              Enabled here does not mean deployed or enabled in GitHub. Turning it off does not disable GitHub's queue or withdraw existing entries; drain those before rollback. Direct merge with coordinated refresh remains available; this is not Hive's visual train.
+              Integration-aware multi-agent orchestration is planned, not a selectable implementation.</p>
+          </div>
         </div>
         `)}
 
@@ -62137,33 +62194,6 @@ function burnAreaChart() {
           <div class="config-toggle">
             <div class="config-toggle-switch ${am.require_current_base_default ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="require_current_base_default"></div>
             <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
-          </div>
-          <div class="config-field">
-            <label>Native GitHub merge queue ${yamlHint('auto_merge.native_merge_queue')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native GitHub merge queue', `Default off. Hive controls admission and repair; GitHub tests and merges the synthetic group. Settings requires explicit repositories and exact repo#base pairs. Existing CI, trust, review, hold and attribution gates stay in force.`)}</label>
-            <div class="config-toggle">
-              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="enabled" data-prevent="1" data-section="native-queue" data-key="enabled" role="switch" tabindex="0" aria-label="Enable native GitHub merge queue" aria-checked="${am.native_merge_queue && am.native_merge_queue.enabled ? 'true' : 'false'}"></div>
-              <span class="config-toggle-label">Enable native GitHub merge queue (default OFF) ${settingHelpMark('native-merge-queue', 'pilot-rollout', 'Enable native GitHub merge queue', `Operator opt-in only after the GitHub prerequisites below. Save applies the Hive hand-off policy; it does not create queues or change branch protection. Off preserves conventional direct merge on branches without a required queue; a queue-required branch remains parked, never bypassed.`)}</span>
-            </div>
-            <label>Native queue repositories ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue repositories', `Comma-separated owner/repo allow-list. Settings refuses enabled queues with an empty list. Start with hivecommons/hive only; other repositories retain direct mode.`)}</label>
-            <input type="text" value="${esc(((am.native_merge_queue || {}).repos || []).join(', '))}" placeholder="hivecommons/hive" data-change-action="markDirtyNativeQueue" data-arg0="repos" data-arg-types="s,w">
-            <label>Native queue bases ${yamlHint('auto_merge.native_merge_queue.bases[]')} ${settingHelpMark('native-merge-queue', 'opting-in', 'Native queue bases', `Comma-separated exact owner/repo#base pairs. Repository names ignore case; branch names preserve case. No wildcards. Start with hivecommons/hive#v5. Every pair must belong to a listed repository.`)}</label>
-            <input type="text" value="${esc(((am.native_merge_queue || {}).bases || []).join(', '))}" placeholder="hivecommons/hive#v5" data-change-action="markDirtyNativeQueue" data-arg0="bases" data-arg-types="s,w">
-            <div class="config-toggle">
-              <div class="config-toggle-switch ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'on' : ''}" data-action="toggleConfigSwitch" data-keydown-action="toggleConfigSwitch" data-keys="Enter, " data-arg-types="t,s,s" data-arg1="native-queue" data-arg2="skip_current_base_gate" data-prevent="1" data-section="native-queue" data-key="skip_current_base_gate" role="switch" tabindex="0" aria-label="Native queue owns freshness" aria-checked="${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'true' : 'false'}"></div>
-              <span class="config-toggle-label">Queue owns freshness (default OFF) ${settingHelpMark('native-merge-queue', 'current-base-gate', 'Queue owns freshness', `Explicitly bypasses current-base and behind refresh only for opted-in repo/base pairs with an actual GitHub queue. Leave off until merge-group CI is proven and HIVE_NATIVE_QUEUE_FRESHNESS suppresses the external branch updater for the same pairs. Other branches retain coordinated refresh.`)}</span>
-            </div>
-            <label>Native queue probe TTL ${settingHelpMark('native-merge-queue', 'api-cost', 'Native queue probe TTL', `How long GitHub queue detection is cached per repo/base. Default 30m; 0 uses that default. Enter a non-negative Go duration, for example 30m.`)}</label>
-            <input type="text" value="${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}" data-change-action="markDirtyNativeQueue" data-arg0="probe_ttl" data-arg-types="s,w">
-            <p class="config-help">Configured: <strong>${am.native_merge_queue && am.native_merge_queue.enabled ? 'enabled' : 'disabled (default)'}</strong>.
-              Repositories: ${esc(((am.native_merge_queue || {}).repos || []).join(', ') || 'all watched repositories once enabled')}.
-              Bases: ${esc(((am.native_merge_queue || {}).bases || []).join(', ') || 'all queue bases (legacy YAML only)')}.
-              Queue owns freshness: ${am.native_merge_queue && am.native_merge_queue.skip_current_base_gate ? 'explicitly opted in' : 'no (default)'}.
-              Probe TTL: ${esc((am.native_merge_queue || {}).probe_ttl || '30m0s')}.</p>
-            <p class="config-help">Owner-only: stage these controls and click Save only after the
-              <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/native-merge-queue.md#pilot-rollout" target="_blank" rel="noopener noreferrer">checks and branch-rule rollout</a>.
-              Prerequisites: App installation authentication, withdrawal guards, trusted-base policy proof, equivalent required-check migration, MERGE method and a bounded pilot group.
-              Enabled here does not mean deployed or enabled in GitHub. Turning it off does not disable GitHub's queue or withdraw existing entries; drain those before rollback. Direct merge with coordinated refresh remains available; this is not Hive's visual train.
-              Integration-aware multi-agent orchestration is planned, not a selectable implementation.</p>
           </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
@@ -64569,6 +64599,11 @@ function burnAreaChart() {
     function toggleConfigSwitch(el, section, key) {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
+      if (section === 'merge-train') {
+        el.setAttribute('aria-checked', String(isOn));
+        markDirtyMergeTrain(key, isOn);
+        return;
+      }
       if (section === 'native-queue') {
         el.setAttribute('aria-checked', String(isOn));
         markDirtyNativeQueue(key, isOn);
@@ -64576,6 +64611,11 @@ function burnAreaChart() {
       }
       markDirty(section, key, isOn);
       if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();
+    }
+
+    function markDirtyMergeTrain(key, value) {
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).merge_train || {};
+      markDirty('auto-merge', 'merge_train', Object.assign({}, staged, { [key]: value }));
     }
 
     function markDirtyNativeQueue(key, value) {
@@ -66041,6 +66081,12 @@ function burnAreaChart() {
             });
             if (!escRes.ok) throw new Error(await saveErrorMessage(escRes));
             _configState.data.escalation = await escRes.json().catch(() => _configState.data.escalation);
+          } else if (_configState.type === 'governor' && section === 'governor') {
+            const govRes = await fetch('/api/config/governor', {
+              method: 'PATCH', headers: _inceptionAuthHeaders(), body: JSON.stringify(values)
+            });
+            if (!govRes.ok) throw new Error(await saveErrorMessage(govRes));
+            Object.assign(_configState.data, await govRes.json());
           } else if (_configState.type === 'governor' && section === 'auto-merge') {
             // auto_merge is a TOP-LEVEL config block, not under governor —
             // it saves through its own /api/config/auto-merge endpoint.
@@ -66911,7 +66957,23 @@ function burnAreaChart() {
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     }
 
+    /* The viewer's identity is known once showGHAuthState has run on either
+       path (or checkGHAuth gave up). Until then the stage tracker treats the
+       viewer as unknown rather than 'read' (stageTrackerAuthPending), so a
+       hard reload does not flash the decision pills disabled; when the
+       answer lands, repaint the tracker once — only if something changed. */
+    function hiveAuthResolved() {
+      const before = (window._hiveAuthKnown ? 'k' : '') + '|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
+      window._hiveAuthKnown = true;
+      return function() {
+        const after = 'k|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
+        if (after === before) return;
+        if (typeof renderStageTracker === 'function' && typeof _stageTracker !== 'undefined' && _stageTracker) renderStageTracker();
+      };
+    }
+
     function showGHAuthState(loggedIn, username, avatarURL, role, displayName) {
+      const repaintTracker = hiveAuthResolved();
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       const banner = document.getElementById('gh-auth-banner');
@@ -66975,6 +67037,7 @@ function burnAreaChart() {
         if (avatarWrap) avatarWrap.hidden = true;
       }
       if (typeof renderPublicKnowledgeControls === 'function') renderPublicKnowledgeControls();
+      repaintTracker();
     }
 
     /* renderMyHivesMenuItem (#9696): point the user menu's "My hives" entry at
@@ -67126,7 +67189,11 @@ function burnAreaChart() {
         const resp = await fetch('/api/gh-user-auth/status');
         const data = await resp.json();
         showGHAuthState(data.logged_in, data.username, data.avatar_url);
-      } catch (e) {}
+      } catch (e) {
+        /* Neither endpoint answered: the viewer is anonymous as far as the
+           page can tell. Say so, or the tracker waits on auth forever. */
+        hiveAuthResolved()();
+      }
     }
 
     function showSetupDetails(which) {

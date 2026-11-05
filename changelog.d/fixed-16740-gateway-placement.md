@@ -1,0 +1,1 @@
+- Pack agents added at higher ACMM levels keep the hive's inference gateway and model after runtime overrides are lost ([#16740](https://github.com/hivecommons/hive/issues/16740)).

@@ -597,6 +597,12 @@ func TestAdoptionCloseFirstReopenPolicyRefusalWarns(t *testing.T) {
 	if out := logs.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "hive-closed PR stays closed") || !strings.Contains(out, "writeback_reason="+writeback.ReasonOwnOnly) {
 		t.Fatalf("policy refusal not warned: %q", out)
 	}
+	logs.Reset()
+	h.clock.advance(adoptCheckInterval)
+	h.sweep()
+	if out := logs.String(); strings.Contains(out, "hive-closed PR stays closed") {
+		t.Fatalf("unchanged refusal warned again: %q", out)
+	}
 }
 
 func TestAdoptionCopyFailedMarkerIsSettled(t *testing.T) {

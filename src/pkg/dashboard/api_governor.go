@@ -226,6 +226,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"ttlSeconds":         cfg.Governor.Sensing.TTLSeconds,
 			"pullbackSeconds":    cfg.Governor.Sensing.PullbackSeconds,
 		},
+		"merge_train_stall_warn_s":  int(cfg.MergeTrainStallWarn() / time.Second),
 		"logging":                   loggingSectionResponse(cfg),
 		"dashboard":                 dashboardSettingsResponse(cfg),
 		"backends":                  backendsPolicyResponse(cfg),

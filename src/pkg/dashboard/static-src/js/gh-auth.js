@@ -47,7 +47,23 @@
       return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     }
 
+    /* The viewer's identity is known once showGHAuthState has run on either
+       path (or checkGHAuth gave up). Until then the stage tracker treats the
+       viewer as unknown rather than 'read' (stageTrackerAuthPending), so a
+       hard reload does not flash the decision pills disabled; when the
+       answer lands, repaint the tracker once — only if something changed. */
+    function hiveAuthResolved() {
+      const before = (window._hiveAuthKnown ? 'k' : '') + '|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
+      window._hiveAuthKnown = true;
+      return function() {
+        const after = 'k|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
+        if (after === before) return;
+        if (typeof renderStageTracker === 'function' && typeof _stageTracker !== 'undefined' && _stageTracker) renderStageTracker();
+      };
+    }
+
     function showGHAuthState(loggedIn, username, avatarURL, role, displayName) {
+      const repaintTracker = hiveAuthResolved();
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       const banner = document.getElementById('gh-auth-banner');
@@ -111,6 +127,7 @@
         if (avatarWrap) avatarWrap.hidden = true;
       }
       if (typeof renderPublicKnowledgeControls === 'function') renderPublicKnowledgeControls();
+      repaintTracker();
     }
 
     /* renderMyHivesMenuItem (#9696): point the user menu's "My hives" entry at
@@ -262,7 +279,11 @@
         const resp = await fetch('/api/gh-user-auth/status');
         const data = await resp.json();
         showGHAuthState(data.logged_in, data.username, data.avatar_url);
-      } catch (e) {}
+      } catch (e) {
+        /* Neither endpoint answered: the viewer is anonymous as far as the
+           page can tell. Say so, or the tracker waits on auth forever. */
+        hiveAuthResolved()();
+      }
     }
 
     function showSetupDetails(which) {
