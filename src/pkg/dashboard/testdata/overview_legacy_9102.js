@@ -479,9 +479,9 @@
 
     function overviewIssueCsvRow(item, band) {
       const issue = (item && (item.item || item.issue)) || item || {};
-      const info = (item && item.info) || issueBandInfo(issue);
-      const key = band || info.band;
       const held = !!(item && item.held);
+      const info = (item && item.info) || issueBandInfo(issue, held);
+      const key = band || info.band;
       return {
         band: issueBandLabel(key),
         band_rule: issueBandRule(key),
