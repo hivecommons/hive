@@ -317,7 +317,13 @@ func (s *Scheduler) classifierErrored(sanitized string, v ioscan.Verdict, err er
 		return ioscan.UnavailableRedactionMarker("error"), cv
 	}
 	s.recordClassifierSkip("error")
-	if s.logger != nil {
+	if s.logger != nil && strings.Contains(err.Error(), "no model endpoint resolved") {
+		// Unconfigured is an operator-config state, not a runtime defect; the
+		// wording avoids the fleet-report "failed open" keyword.
+		s.warnOnce("classifier-no-endpoint", "ioscan classifier not configured; semantic scan skipped (fail-open)",
+			"error", err,
+			"fix", classifierFixHint)
+	} else if s.logger != nil {
 		s.warnOnce("classifier-open-error:"+err.Error(), "ioscan classifier failed open; text passes on unclassified",
 			"error", err,
 			"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false")
