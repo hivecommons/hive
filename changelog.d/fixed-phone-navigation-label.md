@@ -1,0 +1,1 @@
+- Keep the dashboard navigation button label visible on phone-sized screens.

@@ -20,6 +20,9 @@ data:
   # ?kiosk=1 hides the page chrome for the unattended stream.
   DASHBOARD_PATH: "/activity/public?kiosk=1"
   TWITCH_INGEST: "rtmp://live.twitch.tv/app"
+  # Channel the key publishes to; the watchdog asks Twitch whether it is live
+  # and restarts ffmpeg (then the pod) when it is not.
+  TWITCH_CHANNEL_LOGIN: "hivecommonsfleet"
   VIDEO_SIZE: "1920x1080"
   FPS: "30"
   BITRATE: "4500k"
