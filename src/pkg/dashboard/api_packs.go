@@ -254,10 +254,16 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// With no gateway default_model the agent takes the model the
 			// operator's agents run there instead (hiveGatewayModel), so an
 			// agent an earlier apply left with none is repaired too.
+			// Retain a pack-placed gateway's model only when neither an
+			// operator model nor a gateway default is available. Operator-placed
+			// gateways must not retain an incompatible pack CLI model.
 			if onForeignGateway && !existing.ModelIsOperatorOwned() {
-				if gwModel := s.hiveGatewayModel(hiveBackends, pa.Name, existing.Backend); existing.Model != gwModel {
+				gwModel := s.hiveGatewayModel(hiveBackends, pa.Name, existing.Backend)
+				retainGatewayModel := gwModel == "" && existing.BackendIsPackOwned() &&
+					s.deps.Config.Governor.DefaultInferenceModel(existing.Backend) == ""
+				if !retainGatewayModel && existing.Model != gwModel {
 					s.logger.Info("setting pack model on gateway-routed agent to the gateway's model",
-						"agent", pa.Name, "backend", existing.Backend, "old_model", existing.Model, "gateway_model", gwModel, "pack_backend", packBackend)
+					"agent", pa.Name, "backend", existing.Backend, "old_model", existing.Model, "gateway_model", gwModel, "pack_backend", packBackend)
 					if existing.Model == "" {
 						gatewayModelFilled = append(gatewayModelFilled, pa.Name)
 					}
