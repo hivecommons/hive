@@ -1,0 +1,1 @@
+- Delegated decisions keep hive-authored superseding PRs parked when a reviewer sign-off question is recorded, showing the exact question for confirmation instead of automatically approving the PR.

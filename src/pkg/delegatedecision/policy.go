@@ -802,10 +802,10 @@ func decideAdoptedByHive(in Input, ref string) (Decision, bool) {
 const RuleHiveSuperseder = "hive-superseder-automerge"
 
 // decideHiveSuperseder applies RuleHiveSuperseder to the hive's own
-// superseding PR. Without a hard stop the PR is released (the lane merges
-// it once CI/review are clean; an ordinary reviewer finding is the fixer's,
-// not a decision). With a hard stop the delegate only recommends, naming
-// the stop, because that is exactly the case the owner reserved.
+// superseding PR. Without a hard stop or a recorded decision question the
+// PR is released (the lane merges it once CI/review are clean; an ordinary
+// reviewer finding is the fixer's, not a decision). A hard stop or a
+// sign-off question keeps the park and is named in the recommendation.
 func decideHiveSuperseder(in Input, ref string) (Decision, bool) {
 	if in.Kind != KindPR || !in.HiveSuperseding {
 		return Decision{}, false
@@ -814,6 +814,11 @@ func decideHiveSuperseder(in Input, ref string) (Decision, bool) {
 		return recommendOnly(RuleHiveSuperseder,
 			"the hive's superseding PR auto-merges by the owner's rule, except for the sentinel or an emergent problem — and this one has one: "+stop,
 			"look at "+ref+" ("+stop+"): clear the stop (acknowledge the sentinel finding, release the hold, or fix the head) and the lane merges it; else close it"), true
+	}
+	if question := strings.TrimSpace(in.Question); question != "" {
+		return recommendOnly(RuleHiveSuperseder,
+			"the hive's superseding PR has a recorded reviewer decision question; sign-off is still required even without a hard stop",
+			"answer the reviewer's question on "+ref+": "+question), true
 	}
 	if in.SentinelAlert {
 		return Decision{}, false
