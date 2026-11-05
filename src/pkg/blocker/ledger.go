@@ -255,6 +255,22 @@ func (l *Ledger) Clear(repo string, number int) {
 	_ = l.save()
 }
 
+// ClearItem lifts one blocker while retaining its history and the timestamp
+// that prevents older reports from re-establishing it.
+func (l *Ledger) ClearItem(repo string, number int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.load()
+	key := Key(repo, number)
+	if e, ok := l.entries[key]; ok && e.Blocker != nil {
+		e.Blocker = nil
+		e.Reapplied = false
+		e.ClearedAt = l.now()
+		l.entries[key] = e
+		_ = l.save()
+	}
+}
+
 // ClearKind lifts every blocker of kind k (the permission was granted) and
 // returns how many items it released. The entries stay so the loop guard
 // keeps its history; only the blocker goes.

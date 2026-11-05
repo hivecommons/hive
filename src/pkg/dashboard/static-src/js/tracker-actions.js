@@ -42,7 +42,7 @@
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
       'open:app-settings': 'Grant the App permission', 'blocker:recheck': 'Re-check permissions', 'blocker:patch': 'Prepare the patch for a person to push',
-      'blocker:close-partial': 'Mark partially-addressed and close', 'blocker:wait': 'Keep waiting',
+      'blocker:handoff': 'Hand to workflows lane', 'blocker:close-partial': 'Mark partially-addressed and close', 'blocker:wait': 'Keep waiting',
     };
     // Actions that end with a commit on the base branch — the lead
     // "Approve and let hive merge" (the hive's sweep merges on its next
@@ -646,7 +646,7 @@
     // offers the App settings link, a permission re-check and the disabled
     // patch hand-off; every blocker offers close-as-partial and wait). The
     // link opens for anyone; the rest need write access.
-    const STAGE_TRACKER_BLOCKER_ACTIONS = ['open:app-settings', 'blocker:recheck', 'blocker:patch', 'blocker:close-partial', 'blocker:wait'];
+    const STAGE_TRACKER_BLOCKER_ACTIONS = ['blocker:handoff', 'open:app-settings', 'blocker:recheck', 'blocker:patch', 'blocker:close-partial', 'blocker:wait'];
     function stageTrackerBlockerActions(item, ctx) {
       ctx = ctx || {};
       if (!item || !item.blocker || !item.decision_needed) return [];
@@ -1272,6 +1272,7 @@
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
+        case 'blocker:handoff': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/handoff', body: {} };
         case 'blocker:recheck': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/recheck', body: {} };
         case 'blocker:close-partial': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/close-partial', body: { comment: payload.comment || '' } };
         case 'decide:close-issue': return item.kind !== 'issue' || String(item.state || '').toLowerCase() === 'closed' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'close-issue', comment: payload.comment || '', type: 'issue' } };
@@ -1948,6 +1949,7 @@
           // Offered only from a "hasn't taken effect" toast the operator
           // has already read; no second confirmation.
           return {};
+        case 'blocker:handoff':
         case 'blocker:recheck':
           return {};
         case 'blocker:close-partial':
@@ -2098,7 +2100,7 @@
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
-      'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
+      'blocker:handoff': 'Handing to workflows lane…', 'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
       'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
