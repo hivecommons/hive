@@ -23,6 +23,9 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
         mergeable
         mergeStateStatus
         reviewDecision
+        latestOpinionatedReviews(first:50){nodes{state submittedAt authorAssociation author{__typename login}}}
+        comments(first:1){totalCount}
+        reviewThreads(first:1){totalCount}
         labels(first: 30) { nodes { name } }
         author { login }
         baseRefName
@@ -84,8 +87,8 @@ type graphQLPRBatchNode struct {
 	IsDraft          bool      `json:"isDraft"`
 	Mergeable        string    `json:"mergeable"`
 	MergeStateStatus string    `json:"mergeStateStatus"`
-	ReviewDecision   string    `json:"reviewDecision"`
-	Labels           struct {
+	reviewDecisionNode
+	Labels struct {
 		Nodes []struct {
 			Name string `json:"name"`
 		} `json:"nodes"`
@@ -110,18 +113,6 @@ type graphQLPRBatchNode struct {
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
-	ClosingIssuesReferences struct {
-		Nodes []struct {
-			Number      int    `json:"number"`
-			Title       string `json:"title"`
-			State       string `json:"state"`
-			StateReason string `json:"stateReason"`
-			URL         string `json:"url"`
-			Repository  struct {
-				NameWithOwner string `json:"nameWithOwner"`
-			} `json:"repository"`
-		} `json:"nodes"`
-	} `json:"closingIssuesReferences"`
 }
 
 type graphQLPRBatchContext struct {
@@ -429,6 +420,7 @@ func (c *Client) graphQLBatchCheckObservedAt(repo string, number int, headSHA st
 }
 
 func (c *Client) storeGraphQLPRBatchReview(repo string, n graphQLPRBatchNode) {
+	st := c.reviewStateFromNode(n.reviewDecisionNode)
 	c.prBatchMu.Lock()
 	defer c.prBatchMu.Unlock()
 	if c.prBatchReviews == nil {
@@ -439,19 +431,6 @@ func (c *Client) storeGraphQLPRBatchReview(repo string, n graphQLPRBatchNode) {
 	if byNumber == nil {
 		byNumber = map[int]prReviewState{}
 		c.prBatchReviews[key] = byNumber
-	}
-	st := prReviewState{decision: ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision)))}
-	for _, li := range n.ClosingIssuesReferences.Nodes {
-		if li.Number > 0 {
-			st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
-				Number:      li.Number,
-				Title:       li.Title,
-				Repo:        li.Repository.NameWithOwner,
-				State:       strings.ToLower(strings.TrimSpace(li.State)),
-				StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
-				URL:         li.URL,
-			})
-		}
 	}
 	byNumber[n.Number] = st
 }

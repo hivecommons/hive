@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -195,4 +196,81 @@ func mustTime(raw string) time.Time {
 		panic(err)
 	}
 	return t
+}
+
+func TestGraphQLPRBatchReviewSignalsParity(t *testing.T) {
+	for _, tt := range []struct {
+		decision string
+		reason   string
+	}{
+		{"REVIEW_REQUIRED", "an approving review is required by branch protection (1 given)"},
+		{"CHANGES_REQUESTED", "changes requested by @alice"},
+	} {
+		t.Run(tt.decision, func(t *testing.T) {
+			botReview := ""
+			changes := []string{"alice"}
+			approvedAt := "2026-10-01T10:00:00Z"
+			latestState, latestBy, latestAt := ReviewDecisionChangesRequested, "alice", "2026-10-02T10:00:00Z"
+			if tt.decision == "REVIEW_REQUIRED" {
+				botReview = `,{"state":"CHANGES_REQUESTED","submittedAt":"2026-10-05T10:00:00Z","authorAssociation":"MEMBER","author":{"__typename":"Bot","login":"robot[bot]"}}`
+				changes = append(changes, "robot[bot]")
+				approvedAt = "2026-10-04T10:00:00Z"
+				latestState, latestBy, latestAt = ReviewDecisionApproved, "bob", approvedAt
+			}
+			node := fmt.Sprintf(`{"number":42,"reviewDecision":%q,
+				"latestOpinionatedReviews":{"nodes":[
+					{"state":"APPROVED","submittedAt":%q,"authorAssociation":"MEMBER","author":{"__typename":"User","login":"bob"}},
+					{"state":"CHANGES_REQUESTED","submittedAt":"2026-10-02T10:00:00Z","authorAssociation":"OWNER","author":{"__typename":"User","login":"alice"}}%s
+				]},"comments":{"totalCount":7},"reviewThreads":{"totalCount":3},
+				"closingIssuesReferences":{"nodes":[{"number":9,"title":"issue","state":"OPEN","url":"https://example.com/9","repository":{"nameWithOwner":"org/repo"}}]}}`, tt.decision, approvedAt, botReview)
+			// The bot's opinion is counted exactly as in the standalone path,
+			// but cannot become the latest trusted human review.
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					Query string `json:"query"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Fatal(err)
+				}
+				for _, field := range []string{"latestOpinionatedReviews", "authorAssociation", "submittedAt", "reviewThreads", "comments"} {
+					if !strings.Contains(req.Query, field) {
+						t.Errorf("query missing %s", field)
+					}
+				}
+				calls.Add(1)
+				fmt.Fprintf(w, `{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[%s]}},"rateLimit":{"cost":4,"remaining":4996,"resetAt":"2026-10-08T23:00:00Z"}}}`, node)
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv, "org", []string{"repo"})
+			c.SetGraphQLPRBatchConfig(func() bool { return true }, func() int { return 50 })
+			c.prefetchOpenPRDetailsGraphQL(context.Background(), "org", "repo", "org/repo")
+			got := c.fetchReviewDecisions(context.Background(), "org/repo")[42]
+			want := prReviewState{
+				decision: ReviewDecision(tt.decision), approvals: 1,
+				changesRequestedBy: changes,
+				latestHumanState:   latestState, latestHumanBy: latestBy,
+				latestHumanAt: mustTime(latestAt), comments: 7, reviewThreads: 3,
+				linkedIssues: []PRLinkedIssue{{Number: 9, Title: "issue", Repo: "org/repo", State: "open", URL: "https://example.com/9"}},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("batch review state = %+v, want %+v", got, want)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("batch fetch made %d GraphQL calls, want 1", calls.Load())
+			}
+			pr := PullRequest{Repo: "org/repo", Number: 42}
+			newProtectionCollector(c).attach(context.Background(), &pr, nil)
+			if pr.Protection == nil || pr.Protection.ApprovalsGiven != 1 || pr.CommentCount != 7 || pr.ReviewThreadCount != 3 {
+				t.Fatalf("attached protection/signals = %+v", pr)
+			}
+			if reason, ok := pr.BranchProtectionBlockReason(); !ok || reason != tt.reason {
+				t.Fatalf("reason = %q, %v; want %q", reason, ok, tt.reason)
+			}
+			standalone := newTestClient(t, srv, "org", []string{"repo"})
+			if other := standalone.fetchReviewDecisions(context.Background(), "org/repo")[42]; !reflect.DeepEqual(got, other) {
+				t.Fatalf("batch = %+v; standalone = %+v", got, other)
+			}
+		})
+	}
 }

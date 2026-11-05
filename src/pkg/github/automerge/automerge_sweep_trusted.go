@@ -884,6 +884,15 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 // workflow-file refusal, so a head GitHub refused to update is not sent again
 // every tick (projectbluefin/utah#1001) until the head or the base moves.
 func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, baseSHA, reason string, fork bool) (AutoMergeSweepEvent, string, error) {
+	if fork {
+		if checks := c.waitingForkGuard(owner, repo, number, headSHA); len(checks) > 0 {
+			// projectbluefin/utah-packages#862: 13 merge-of-main heads while
+			// the PR waited on a maintainer's exact-head Canary run; each one
+			// discarded the run it waited for.
+			c.debug("automerge update-branch skipped: the head waits on a fork-guarded check a maintainer runs for that exact head", "repo", displayRepo, "pr", number, "head", headSHA, "checks", checks)
+			return AutoMergeSweepEvent{}, "required-check-failing:" + checks[0], nil
+		}
+	}
 	if c.branchUpdateWorkflowRefused(owner, repo, number, headSHA, baseSHA) {
 		c.debug("automerge update-branch not retried: GitHub refused it for this head and base", "repo", displayRepo, "pr", number, "head", headSHA, "base", baseSHA)
 		return AutoMergeSweepEvent{}, branchUpdateWorkflowRefusalReason(fork), nil
