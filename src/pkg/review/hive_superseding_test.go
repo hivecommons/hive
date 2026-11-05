@@ -3,17 +3,96 @@ package review
 import (
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 // hiveSupersederSecurityReport is a security-sensitive requires_human on a
-// PR the hive created to supersede another PR.
+// PR the hive created to supersede another PR, with a finding the fixer
+// can act on.
 func hiveSupersederSecurityReport() PerspectiveReport {
-	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman, outputschema.Finding{
+		Title: "token logged at debug level", Severity: outputschema.SeverityMedium, File: "auth.go", Line: 12,
+	})
 	r.HiveAuthored = true
 	r.HiveSuperseding = true
 	r.DecisionRequested = true
 	r.DecisionQuestion = "Should we accept this public-facing auth behavior change?"
 	return r
+}
+
+// hiveSupersederSignOffReport is the hivecommons/hive#16607 shape: every
+// perspective requires_human, each only asking an approver to confirm a
+// trust-boundary change, with at most an informational finding.
+func hiveSupersederSignOffReport(p Perspective) PerspectiveReport {
+	r := baseReport(p, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.HiveSuperseding = true
+	r.DecisionRequested = true
+	r.DecisionRiskHigh = true
+	r.DecisionQuestion = "@hanthor should confirm that the relay may now App-merge trusted-author pin-only PRs."
+	if p == PerspectiveSecurity {
+		r.Findings = []outputschema.Finding{{
+			Title: "relay now lifts the human-merge-path hold", Severity: outputschema.SeverityInfo,
+			Summary: "Needs approver sign-off, not a code fix.", File: "src/pkg/github/human_merge_paths.go", Line: 269,
+		}}
+	}
+	return r
+}
+
+// TestAggregateHiveSupersedingSignOffOnlyParksForDecision: when every
+// perspective's requires_human is a pure approver question with nothing
+// above an informational finding, the superseder rule has no fix to route.
+// The aggregate keeps the decision request so the stage engine parks the PR
+// at 085 needs-decision instead of kicking a fixer that has nothing to fix
+// until the cycle is exhausted and the PR is re-authored (#16398 → #16456
+// → #16607).
+func TestAggregateHiveSupersedingSignOffOnlyParksForDecision(t *testing.T) {
+	reports := []PerspectiveReport{
+		hiveSupersederSignOffReport(PerspectiveCorrectness),
+		hiveSupersederSignOffReport(PerspectiveSecurity),
+		hiveSupersederSignOffReport(PerspectiveStyle),
+	}
+	got := AggregateReports(reports, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle || got.MergeEligible {
+		t.Fatalf("aggregate = %+v, want requires_human park", got)
+	}
+	if !got.DecisionRequested || got.DecisionQuestion == "" {
+		t.Fatalf("aggregate = %+v, want the decision question preserved", got)
+	}
+	if hasReason(got.Reasons, HiveSupersedingFixRouteReason) {
+		t.Fatalf("reasons = %v, must not carry the fix-route reason", got.Reasons)
+	}
+	for p, v := range got.Perspectives {
+		if v != VerdictRequiresHuman {
+			t.Fatalf("perspective %s = %s, want requires_human kept", p, v)
+		}
+	}
+	if got.Normalize().Verdict != VerdictRequiresHuman {
+		t.Fatalf("Normalize() = %+v, must not re-route a decision request to the fixer", got.Normalize())
+	}
+}
+
+// TestAggregateHiveSupersedingSignOffWithActionableFindingRoutesToFixer:
+// a sibling perspective that found code to change keeps the owner's fixer
+// route; the sign-off park is only for a swarm with nothing to fix.
+func TestAggregateHiveSupersedingSignOffWithActionableFindingRoutesToFixer(t *testing.T) {
+	for name, extra := range map[string]PerspectiveReport{
+		"changes_requested sibling": func() PerspectiveReport {
+			r := baseReport(PerspectiveCorrectness, VerdictChangesRequested)
+			r.HiveAuthored, r.HiveSuperseding = true, true
+			return r
+		}(),
+		"requires_human with medium finding": hiveSupersederSecurityReport(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := AggregateReports([]PerspectiveReport{hiveSupersederSignOffReport(PerspectiveStyle), extra}, AggregateOptions{})
+			if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.DecisionRequested {
+				t.Fatalf("aggregate = %+v, want changes_requested fixer route", got)
+			}
+		})
+	}
 }
 
 // TestAggregateHiveSupersedingRiskRequiresHumanRoutesToFixer: the owner's

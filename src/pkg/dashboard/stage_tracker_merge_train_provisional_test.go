@@ -7,7 +7,7 @@ import (
 // The server seats no train member below 080 any more (hivecommons/
 // hive#15653 — stage_tracker_merge_train_overlap_test.go); the SPA keeps
 // the provisional words as the fallback for a payload that still does.
-// Ratchet (hive's own #15577: the chevron read "Merge queued · 1st" while
+// Ratchet (hive's own #15577: the chevron read "Queued for merge · 1st" while
 // the caption said "check build-and-test still running"): for every
 // stage × queue state the chevron headline — the gate chip's word, else
 // the train word — names the same blocker class as the stage: a row
@@ -37,7 +37,7 @@ const stages = [10, 20, 30, 50, 60, 70, 71, 72, 74, 80, 85, 90, 95, 100];
 const caption = 'Review swarm requested; waiting for a verdict on the current head — check build-and-test still running';
 // The blocker class a headline names: 'queue' when it leads with the merge
 // queue, 'stage' otherwise. A stage short of the gate must read 'stage'.
-const classOf = s => /^Merge queue/.test(String(s || '')) ? 'queue' : 'stage';
+const classOf = s => /^(Queued for merge|Merge queue)/.test(String(s || '')) ? 'queue' : 'stage';
 for (const stage of stages) for (const state of ['front', 'queued-behind']) for (const flag of [true, false, undefined]) {
   const pos = state === 'front' ? 1 : 2;
   const mt = { id: 'v5#15577', state, front: 15577, head_number: 15577, position: pos, size: 2, length: 2, head_state: stage < 80 ? 'ci' : 'ready', head_reason: stage < 80 ? 'waiting for CI' : '' };
@@ -61,7 +61,7 @@ for (const stage of stages) for (const state of ['front', 'queued-behind']) for 
     assert.ok(!/merges next/.test(info.tip), label + ' hover promises merges next: ' + info.tip);
     assert.ok(info.until === 0, label + ' no ETA countdown ahead of readiness');
   } else {
-    assert.ok(/^Merge queued · (1st|2nd)( of \d+)?$/.test(word), label + ' place word: ' + JSON.stringify(word));
+    assert.ok(/^Queued for merge · (1st|2nd)( of \d+)?$/.test(word), label + ' place word: ' + JSON.stringify(word));
   }
 }
 // hive's own #15577 exactly: 050, front, CI running — the chevron leads with CI / Review.

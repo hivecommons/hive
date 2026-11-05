@@ -49,7 +49,7 @@
         case 'applied': return 'done' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'no-op': return 'nothing changed' + (action.detail ? ': ' + stageTrackerActedPlain(action.detail) : '');
         case 'failed': return 'failed' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
-        case 'pending': return action.action === 'merge-now' ? 'rebasing, then merging…' : (action.action === 'queue-merge' ? 'approved — hive will merge on the next tick once CI is green' : 'the hive is deciding…');
+        case 'pending': return action.action === 'merge-now' ? 'rebasing, then merging…' : (action.action === 'queue-merge' ? 'queued for merge — hive merges it on its next pass once CI is green' : 'the hive is deciding…');
         case 'executing': return (action.detail ? stageTrackerActedPlain(action.detail) : 'decided — the hive is carrying it out…');
         case 'no-effect': return "hasn't taken effect" + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'blocked': return 'blocked' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');

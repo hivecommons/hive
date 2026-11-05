@@ -86,6 +86,15 @@ func stageTrackerRedSince(it *StageTrackerItem) (time.Time, string, bool) {
 // head has no review / CI verdict recorded yet.
 const stageTrackerFixRequestedWord = "Fix requested"
 
+// PR in progress chevron words for a red PR nobody has picked up. They
+// name the PR's lifecycle state — who owes the next head — never the CI
+// or review verdict, which is the CI / Review chevron's information and
+// stays in the detail (hivecommons/hive#16643).
+const (
+	prProgressUnassignedWord = "Unassigned"
+	prProgressFixOwedWord    = "fix owed"
+)
+
 // stageTrackerRemediationEvidence is the one place pickup evidence is read.
 // Each source is independent; the most recent evidence wins so a kick that
 // follows a push (the agent iterating) reads as remediating again.
@@ -320,7 +329,10 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 		out.Detail += ")."
 		it.DisplayColumn = trackerNumberPRInProgress
 	case out.State == "waiting_owner":
-		out.Caption = strings.Replace(out.Caption, " · not observed coding", " · "+strings.ToLower(redWord), 1)
+		// The PR in progress chevron speaks the PR's own lifecycle; the red
+		// word (CI failing / changes requested) is the CI or Review
+		// chevron's and rides only in the detail (hivecommons/hive#16643).
+		out.Caption = strings.Replace(out.Caption, " · not observed coding", " · "+prProgressFixOwedWord, 1)
 		out.Detail = redWord + redAt + "; no push, claim or fix kick seen since. A new head from @" + it.Author + ", a clanker claim or a hive adoption would move it."
 		it.DisplayColumn = trackerNumberPRInProgress
 	default:
@@ -329,7 +341,7 @@ func stageTrackerApplyRemediation(it *StageTrackerItem, dispatch review.Dispatch
 		if redSince.IsZero() {
 			out.Since = nil
 		}
-		out.Caption = redWord + " · unassigned"
+		out.Caption = prProgressUnassignedWord
 		if r := it.Rework; r != nil && r.Evidence == reworkEvidenceQueued && r.Actor != "" {
 			out.Caption += fmt.Sprintf(" · fixer queued, %d ahead", r.Ahead)
 			next = "@" + r.Actor + "'s clanker"

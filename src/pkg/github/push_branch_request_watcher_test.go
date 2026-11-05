@@ -99,10 +99,10 @@ func TestPushBranchRequestWatcher_PushesAndConsumes(t *testing.T) {
 	if !resp.OK || resp.Branch != "scanner/fix-1" || resp.SHA != "cafe1234" {
 		t.Errorf("result = %+v, want ok with branch and sha", resp)
 	}
-	if len(*calls) != 2 {
-		t.Fatalf("git calls = %d, want rev-parse + push", len(*calls))
+	if len(*calls) != 3 {
+		t.Fatalf("git calls = %d, want rev-parse + sign-off log + push", len(*calls))
 	}
-	push := (*calls)[1]
+	push := (*calls)[2]
 	joined := strings.Join(push.args, " ")
 	if push.dir != checkout ||
 		!strings.Contains(joined, "https://github.com/o/r.git") ||
@@ -136,10 +136,10 @@ func TestPushBranchRequestWatcher_ForceWithLease(t *testing.T) {
 	}
 	c.ProcessPushBranchRequestsOnce(context.Background())
 
-	if len(*calls) != 2 {
-		t.Fatalf("git calls = %d, want 2", len(*calls))
+	if len(*calls) != 3 {
+		t.Fatalf("git calls = %d, want 3", len(*calls))
 	}
-	if joined := strings.Join((*calls)[1].args, " "); !strings.Contains(joined, "--force-with-lease") || strings.Contains(joined, " --force ") {
+	if joined := strings.Join((*calls)[2].args, " "); !strings.Contains(joined, "--force-with-lease") || strings.Contains(joined, " --force ") {
 		t.Errorf("push args = %q, want --force-with-lease and never a plain --force", joined)
 	}
 }
@@ -390,5 +390,62 @@ func TestPushBranchGitEnv_NoHeader(t *testing.T) {
 	}
 	if !strings.Contains(joined, "core.hooksPath") || !strings.Contains(joined, os.DevNull) {
 		t.Errorf("env missing core.hooksPath override: %q", joined)
+	}
+}
+
+// A branch carrying a hive-authored commit without a Signed-off-by trailer
+// is refused before anything reaches GitHub (hivecommons/hive#16619); the
+// same commit by an outside contributor is the PR DCO check's business.
+func TestPushBranchRequestWatcher_RefusesUnsignedHiveCommit(t *testing.T) {
+	c := pushTestClient(t, "http://127.0.0.1:1")
+	c.SetHiveIdentity(HiveIdentity{AIAuthor: "thatguywob", AppLogin: "hivecommons-hive[bot]"})
+	dir := withPushDir(t)
+	var calls []pushExecCall
+	old := pushBranchExec
+	pushBranchExec = func(_ context.Context, _ string, _ []string, name string, args ...string) (string, error) {
+		calls = append(calls, pushExecCall{args: append([]string{name}, args...)})
+		switch args[0] {
+		case "rev-parse":
+			return "cafe1234\n", nil
+		case "log":
+			return "cafe1234\x1fthatguywob\x1fthatguywob@users.noreply.github.com\x1ffix: thing\n\nbody\n\x1e" +
+				"beef5678\x1fscanner\x1f280983584+hivecommons-hive[bot]@users.noreply.github.com\x1ffix: other\n\nSigned-off-by: scanner <x@y>\n\x1e", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { pushBranchExec = old })
+
+	reqPath, err := WritePushBranchRequest(dir, PushBranchRequest{Repo: "o/r", Branch: "scanner/fix-3", Dir: t.TempDir(), Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPushBranchRequestsOnce(context.Background())
+
+	resp := readPushBranchResult(t, reqPath)
+	if resp.OK || !strings.Contains(resp.Error, "cafe1234") || !strings.Contains(resp.Error, "thatguywob") || !strings.Contains(resp.Error, "Signed-off-by") {
+		t.Errorf("result = %+v, want a denial naming the unsigned hive commit", resp)
+	}
+	for _, call := range calls {
+		if call.args[1] == "push" {
+			t.Fatalf("unsigned hive commit was pushed: %v", call.args)
+		}
+	}
+	if _, err := os.Stat(reqPath + ".denied"); err != nil {
+		t.Errorf("denied request not parked: %v", err)
+	}
+}
+
+func TestUnsignedHiveCommits(t *testing.T) {
+	logins := []string{"hivecommons-hive[bot]", "thatguywob"}
+	log := "a1\x1fthatguywob\x1fthatguywob@users.noreply.github.com\x1fsubject\n\x1e" +
+		"a2\x1fscanner\x1f280983584+hivecommons-hive[bot]@users.noreply.github.com\x1fsubject\n\x1e" +
+		"a3\x1fhivecommons-hive[bot]\x1fhivecommons-hive@hive.kubestellar.io\x1fsubject\n\nSigned-off-by: hivecommons-hive[bot] <hivecommons-hive@hive.kubestellar.io>\n\x1e" +
+		"a4\x1fMallory\x1fmallory@example.com\x1fsubject\n\x1e"
+	got := unsignedHiveCommits(log, logins)
+	if len(got) != 2 || got[0].SHA != "a1" || got[0].Author != "thatguywob" || got[1].SHA != "a2" || got[1].Author != "hivecommons-hive[bot]" {
+		t.Errorf("unsignedHiveCommits = %+v, want a1 (ai_author) and a2 (App by noreply address) only", got)
+	}
+	if got := unsignedHiveCommits("", logins); len(got) != 0 {
+		t.Errorf("empty log flagged %+v", got)
 	}
 }

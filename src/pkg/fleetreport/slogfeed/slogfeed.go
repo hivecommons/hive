@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -165,6 +165,23 @@ func rateLimitedError(r slog.Record) bool {
 	limited := false
 	r.Attrs(func(a slog.Attr) bool {
 		if a.Key == "error" && fleetreport.IsGitHubRateLimited(a.Value.String()) {
+			limited = true
+			return false
+		}
+		return true
+	})
+	return limited
+}
+
+// sentinelPacingSkip handles the sentinel's per-item errors, which are logged
+// as detail rather than error. Other skipped PRs remain reportable.
+func sentinelPacingSkip(r slog.Record) bool {
+	if r.Message != "sentinel sweep: PR skipped" {
+		return false
+	}
+	limited := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "detail" && fleetreport.IsGitHubRateLimited(a.Value.String()) {
 			limited = true
 			return false
 		}

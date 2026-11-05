@@ -264,7 +264,7 @@ assert.ok(tooltip(row).includes('Flags: needs-rebase, needs-human') && tooltip(r
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 60 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active', T, 'todo cap'], '060 reviewed lights CI / Review, not the merge gate: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 80, caption: 'soak 20m left' }, stages, ctx);
-assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left · Next move: hive"'), 'chevron tooltip carries 080: ' + row);
+assert.ok(row.includes('<span class="ham-seg-t">Queued for merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left · Next move: hive"'), 'chevron tooltip carries 080: ' + row);
 
 // PR regressed from the queue back to review-pending: Review lit, "Sent back" in the tooltip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 103, kind: 'pr', stage: 70, modifiers: ['regressed', 'needs-rebase'], history: [{number:80,slug:'awaiting-merge-admission'},{number:100,slug:'merge-queue'},{number:70,slug:'fixing',from:100,regressed:true}] }, stages, ctx);
@@ -332,7 +332,7 @@ assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') &&
 assert.ok(row.includes('data-track="ci"') && row.includes('data-track="review"') && !row.includes('ham-actor-ico'), 'a native stage cannot identify the actual reviewer: ' + row);
 assert.ok(!row.includes('ham-author-ico ham-actor') && !row.includes('ham-actor-ico ham-author-'), 'actor icon must not carry the author colour classes: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 72, author_kind: 'clanker' }, stages, ctx);
-assert.ok(row.includes('Review unknown') && row.includes('CI unknown'), 'legacy author waits do not fabricate observed activity: ' + row);
+assert.ok(row.includes('Review · no data for head') && row.includes('CI · no data for head') && !row.includes('activity unknown'), 'legacy author waits do not fabricate observed activity: ' + row);
 // 071 needs-author: the owner wait returns to PR in progress without pretending coding.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{number:50,slug:'review-pending'},{number:71,slug:'needs-author',from:50}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active detoured', T, T, 'todo cap']);
@@ -461,7 +461,15 @@ assert.ok(!row.includes('ham-issue-refs-chip'), 'closing link draws no refs chip
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Tracker', stage: 40, claim_reference: true, is_tracker: true, children: { total: 3, completed: 1 }, linked_prs: [{ number: 203, title: 'Draft work', stage: 10, base_ref: 'v6' }] }, stages, ctx);
 assert.ok(row.includes('<span class="ham-badge ham-issue-refs-chip" title="' + STAGE_TRACKER_SOFT_LINK_TIP + '">refs</span>'), 'issue refs chip: ' + row);
 assert.ok(row.includes('<span class="ham-badge">tracker 1/3</span>'), 'tracker progress: ' + row);
-assert.ok(row.includes('<span class="ham-badge">v6</span>'), 'covering PR base: ' + row);
+// The base pill sits at the row head by the repo chip, before the issue #N,
+// with the PR it describes in its tooltip — not in the PR column's cluster.
+assert.ok(row.includes('<span class="ham-base-pill" title="PR #203 targets v6">v6</span>'), 'covering PR base pill: ' + row);
+assert.ok(row.indexOf('ham-base-pill') < row.indexOf('>#9</a>'), 'base pill precedes the issue ref: ' + row);
+assert.ok(!row.includes('<span class="ham-badge">v6</span>'), 'base no longer a right-hand badge: ' + row);
+assert.ok(!row.slice(row.indexOf('ham-head-pr'), row.indexOf('ham-since')).includes('>v6<'), 'base absent from the PR column: ' + row);
+// No PR, no pill; a PR row carries its own base.
+assert.ok(!stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', title: 'Bare', stage: 10 }, stages, ctx).includes('ham-base-pill'), 'no PR → no base pill');
+assert.ok(stageTrackerRowHtml({ repo: 'acme/console', number: 204, kind: 'pr', title: 'Own row', stage: 60, base_ref: 'v5' }, stages, ctx).includes('<span class="ham-base-pill" title="PR #204 targets v5">v5</span>'), 'PR row base pill');
 
 // 040 shares the PR in progress column with 030; the chevron tooltip names the real stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Ordering drifts', stage: 40, linked_prs: [{ number: 103, title: 'Backport', author_kind: 'clanker', stage: 30 }, { number: 102, title: 'Fix it', url: 'u', author_kind: 'human', stage: 70, stage_since: new Date(now - 3600000).toISOString(), modifiers: ['needs-rebase'], caption: 'Rebasing onto main' }] }, stages, ctx);
@@ -493,23 +501,24 @@ sr = subs(row);
   const cell = (head.match(/<li class="ham-seg ham-head-pr"[^>]*>([\s\S]*?)<\/li>/) || [])[1] || '';
   assert.ok(cell, 'sub-row header has one PR cell: ' + head);
   assert.ok(!/<br|<div|<p\b/.test(cell), 'no block-level element inside the PR cell: ' + cell);
-  const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"'), cell.lastIndexOf('<span class="ham-badge">v5</span>')];
-  assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, PR link, lineage chip, base pill in that order as siblings: ' + cell);
-  assert.ok(cell.indexOf('<span class="ham-badge">v5</span>') > cell.indexOf('</a>', cell.indexOf('<a class="ham-pr-ref"')), 'the base pill is a sibling after the PR link, not inside it: ' + cell);
+  const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<span class="ham-base-pill" title="PR #15343 targets v5">v5</span>'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"')];
+  assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, base pill, PR link, lineage chip in that order as siblings: ' + cell);
+  assert.ok(!cell.includes('<span class="ham-badge">v5</span>'), 'the base is no longer a trailing badge: ' + cell);
   assert.ok(/<a class="ham-pr-ref"[^>]*title="docs: remove duplicate README run routes · /.test(cell), 'the PR link hover starts with the full title: ' + cell);
   assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<span class="ham-badges">'), 'the lineage chip rides the PR cell ahead of the modifier chips, not the chip toolbar: ' + head);
   assert.strictEqual((head.match(/ham-lineage/g) || []).length, 1, 'the lineage chip is drawn once');
 }
 // The same order on an issue row with a single covering PR: lineage chip
-// before the base pill, both after the PR link.
+// after the PR link; the base pill leads the row by the repo chip instead.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'One PR', stage: 40, linked_prs: [{ number: 15343, title: 'T', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted', from_number: 15226 } }] }, stages, ctx);
 {
   const cell = prCell(row);
-  assert.ok(cell.indexOf('<a class="ham-pr-ref"') < cell.indexOf('ham-lineage') && cell.indexOf('ham-lineage') < cell.indexOf('<span class="ham-badge">v5</span>'), 'PR link, lineage, base pill: ' + cell);
+  assert.ok(cell.indexOf('<a class="ham-pr-ref"') < cell.indexOf('ham-lineage') && !cell.includes('>v5</span>'), 'PR link, lineage; no base pill in the PR cell: ' + cell);
+  assert.ok(row.indexOf('<span class="ham-base-pill" title="PR #15343 targets v5">v5</span>') < row.indexOf('>#9</a>'), 'base pill ahead of the issue ref: ' + row);
 }
 // An incomplete lineage has no chip and must not add an extra separator.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Empty lineage', stage: 40, linked_prs: [{ number: 15343, title: 'T', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted' } }] }, stages, ctx);
-assert.match(prCell(row), /<\/a> <span class="ham-badge">v5<\/span>/, 'empty lineage leaves one separator before the base pill');
+assert.match(prCell(row), /<\/a><span class="ham-badges">/, 'empty lineage leaves no stray separator after the PR link');
 assert.ok(!prCell(row).includes('ham-lineage'), 'empty lineage renders no chip');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', stage: 30 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'kick running, no PR yet: the issue lights PR in progress and draws the steps ahead');
@@ -550,11 +559,11 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // is what the chevron says, the actor is whose move it is. The active
 // chevron now leads with its stage icon, so the regex skips that svg.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Queued for merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   if ([50, 60, 70, 71, 72, 74].includes(st)) {
     assert.ok(r.includes('data-track="ci"') && r.includes('data-track="review"'), 'pre-gate tracks remain separate at ' + st);
-    assert.ok(r.includes('CI unknown') && r.includes('Review unknown'), 'legacy labels alone cannot supply activity at ' + st);
+    assert.ok(r.includes('CI · no data for head') && r.includes('Review · no data for head'), 'legacy labels alone cannot supply activity at ' + st);
     continue;
   }
   const m = /aria-current="step"><span class="ham-chevron-info (?:config-info|ham-chevron-decision)"[^>]*><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-chevron-copy"><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
@@ -651,9 +660,9 @@ expectTitles(row, ['a.ham-ref', 'span.ham-title', 'a.ham-pr-ref'], 'issue with o
 assert.ok(/<a class="ham-pr-ref"[^>]*title="The one PR Author: hive · @hive-bot · linked PR, shown on its issue&#39;s row"/.test(row), 'the PR link also explains the shared row: ' + row);
 // tracker-cues: with no agent on the item the chevron is static (waiting);
 // the pulse and the "Working now" lead need a worker in ctx.workers.
-assert.ok(row.includes('CI unknown') && row.includes('Review unknown') && !strip(row).includes('data-motion='), 'a stage label alone supplies no activity: ' + row);
+assert.ok(row.includes('CI · no data for head') && row.includes('Review · no data for head') && !strip(row).includes('data-motion='), 'a stage label alone supplies no activity: ' + row);
 row = stageTrackerRowHtml(g[1], stages, Object.assign({}, ctx, { workers: { 'g/r#21': { agent: 'scout', action: 'agent_comment_created', at: new Date(now - 120000).toISOString() } } }));
-assert.ok(row.includes('Review unknown') && !strip(row).includes('data-motion='), 'a generic commenter is not a current-head reviewer: ' + row);
+assert.ok(row.includes('Review · no data for head') && !strip(row).includes('data-motion='), 'a generic commenter is not a current-head reviewer: ' + row);
 assert.ok(/class="ham-row cue-working"/.test(row), 'the row carries the working cue: ' + row);
 assert.ok(!/<li class="ham-seg active" data-motion=[^>]*title="Claimed"/.test(stageTrackerRowHtml(g[0], stages, ctx)), 'Claimed is static: no data-motion');
 // Issue with two PRs: #N link + title on the issue line, nothing lit there;
@@ -697,19 +706,19 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 // settled-current. The ≤2 invariant itself runs on every fixture above.
 {
   const seen = new Date(now - 60000).toISOString();
-  const unreported = { head: 'f269349', state: 'missing', caption: 'CI waiting · required check "test" hasn\'t reported for this head yet', checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen };
+  const unreported = { head: 'f269349', state: 'missing', caption: "CI waiting · required check 'test' hasn't reported for this head yet", checks_passed: 7, checks_total: 11, blocker: 'test', source: 'checks', observed_at: seen };
   const lit = (html) => litChevrons(strip(html));
   const three = stageTrackerRowHtml({ repo: 'acme/console', number: 16509, kind: 'pr', stage: 74, display_column: 30, head: 'f269349', author: 'thatguywob', author_kind: 'human',
     code_activity: { head: 'f269349', state: 'adopted', caption: 'Adopted by hive · activity', source: 'adoption', observed_at: seen }, ci_activity: unreported,
     review_activity: { head: 'f269349', state: 'human_decision', caption: 'Review findings · human decision', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(three), 1, 'adopted + unreported CI + decided review lights one chevron: ' + strip(three));
-  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · test not reported · /.test(three), 'unreported checks are the neutral icon, words in the tooltip: ' + three);
+  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · &#39;test&#39; not reported · /.test(three), 'unreported checks are the neutral icon, words in the tooltip: ' + three);
   const owner = stageTrackerRowHtml({ repo: 'acme/console', number: 16268, kind: 'pr', stage: 71, display_column: 30, head: 'f269349', author: 'hanthor', author_kind: 'human',
     code_activity: { head: 'f269349', state: 'waiting_owner', caption: 'Waiting for @hanthor · not observed coding', actor: 'hanthor', source: 'native-author-wait', observed_at: seen }, ci_activity: unreported,
     review_activity: { head: 'f269349', state: 'approved', caption: 'Review approved', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(owner), 1, 'with the contributor: only the stage chevron is lit: ' + strip(owner));
   assert.ok(/<li class="ham-seg active detoured"[^>]*aria-current="step"/.test(owner) && owner.includes('Waiting for @hanthor'), owner);
-  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · test not reported · /.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*data-verdict="pass"[^>]*>[\s\S]*?ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg><\/span>[\s\S]*?Review: Review 5\/5 approved · /.test(owner), 'with the contributor both tracks are icons alone, words in the tooltips: ' + owner);
+  assert.ok(/<li class="ham-seg ham-activity-track todo" data-track="ci"[^>]*title="CI: CI 7\/11 · &#39;test&#39; not reported · /.test(owner) && /<li class="ham-seg ham-activity-track done" data-track="review"[^>]*data-verdict="pass"[^>]*>[\s\S]*?ham-track-verdict"><svg [^>]*>[\s\S]*?<\/svg><\/span>[\s\S]*?Review: Review 5\/5 approved · /.test(owner), 'with the contributor both tracks are icons alone, words in the tooltips: ' + owner);
   const busy = stageTrackerRowHtml({ repo: 'acme/console', number: 16456, kind: 'pr', stage: 70, display_column: 30, head: 'f269349', author: 'hive[bot]', author_kind: 'hive',
     code_activity: { head: 'f269349', state: 'remediating', caption: 'Remediating · scanner · 4m', actor: 'scanner', active: true, source: 'fix-dispatch', observed_at: seen },
     ci_activity: { head: 'f269349', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
@@ -719,7 +728,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
   // chevron; CI 11/11 is green words (done), the review finding red words
   // (failing), neither a fill.
   const changes = stageTrackerRowHtml({ repo: 'acme/console', number: 16456, kind: 'pr', stage: 70, display_column: 30, head: 'f269349', author: 'hive[bot]', author_kind: 'hive',
-    code_activity: { head: 'f269349', state: 'unassigned', caption: 'Changes requested · unassigned · next: scanner', source: 'no-pickup-evidence', since: seen, observed_at: seen },
+    code_activity: { head: 'f269349', state: 'unassigned', caption: 'Unassigned · next: scanner', source: 'no-pickup-evidence', since: seen, observed_at: seen },
     ci_activity: { head: 'f269349', state: 'passing', caption: 'CI green', checks_passed: 11, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: 'f269349', state: 'changes_requested', caption: 'Review findings · changes requested', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen, since: seen } }, stages, ctx);
   assert.strictEqual(lit(changes), 1, 'changes requested in PR in progress: one filled chevron: ' + strip(changes));
@@ -797,13 +806,13 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
     review_activity: { head: '9bdf058', state: 'reviewing', active: true, caption: 'Review 2/5 · in progress', perspectives_done: 2, perspectives_total: 5, source: 'verified-review-bundle+stage-review-pending', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(progress), 1, 'review in progress lights the Review column only: ' + strip(progress));
   assert.ok(/<li class="ham-seg ham-activity-track active ham-current" data-track="review"[^>]*data-motion="active"[^>]*>[\s\S]*?Review 2\/5 · in progress<\/span>/.test(progress), progress);
-  assert.ok(/<li class="ham-seg ham-activity-track todo ham-current" data-track="ci"[^>]*>[\s\S]*?<svg class="ham-ico ham-ring ham-ring-pass"[^>]*data-ring-done="7"[\s\S]*?<\/svg><\/span><span id=/.test(progress) && progress.includes('CI: CI 7/11 · test not reported · '), 'unreported checks are the neutral ring, words in the tooltip: ' + progress);
+  assert.ok(/<li class="ham-seg ham-activity-track todo ham-current" data-track="ci"[^>]*>[\s\S]*?<svg class="ham-ico ham-ring ham-ring-pass"[^>]*data-ring-done="7"[\s\S]*?<\/svg><\/span><span id=/.test(progress) && progress.includes("CI: CI 7/11 · &#39;test&#39; not reported · "), 'unreported checks are the neutral ring, words in the tooltip: ' + progress);
   assert.ok(/<svg class="ham-ico ham-ring ham-ring-live ham-ring-running" [^>]*data-ring-total="5" data-ring-done="2"/.test(progress) && (progress.match(/ham-ring-pulse/g) || []).length === 1, 'the review ring pulses its next step: ' + progress);
   const both = stageTrackerRowHtml({ repo: 'acme/promptargs', number: 427, kind: 'pr', stage: 50, display_column: 50, head: '9bdf058', author: 'hive[bot]', author_kind: 'hive',
     ci_activity: { head: '9bdf058', state: 'running', active: true, caption: 'CI running', checks_passed: 4, checks_total: 11, source: 'checks', observed_at: seen },
     review_activity: { head: '9bdf058', state: 'adjudicating', active: true, caption: 'Review 5/5 · verdicts in · aggregating', perspectives_done: 5, perspectives_total: 5, source: 'verified-review-bundle', observed_at: seen } }, stages, ctx);
   assert.strictEqual(lit(both), 2, 'CI running + adjudicating: both tracks, no third: ' + strip(both));
-  assert.ok(both.includes('CI 4/11 · running</span>') && both.includes('Review 5/5 · adjudicating</span>'), both);
+  assert.ok(both.includes('CI 4/11 · 7 running</span>') && both.includes('Review 5/5 · adjudicating</span>'), both);
 }
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);

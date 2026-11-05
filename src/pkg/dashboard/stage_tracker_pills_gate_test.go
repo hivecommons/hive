@@ -133,7 +133,7 @@ func TestStageTrackerDeferredPillsPayload(t *testing.T) {
 	if !strings.Contains(string(raw), `"modifiers":[],"deferred_modifiers":["sentinel","needs-human"]`) || !strings.Contains(string(raw), `"sentinel_alert":true`) {
 		t.Fatalf("payload: %s", raw)
 	}
-	if held := trackerItem(t, resp, "pr", 141); held.Stage != 72 || !hasMod(held, modUnauthorized) || len(held.DeferredModifiers) != 0 || held.UnauthorizedStep != "approve workflow runs" || !strings.Contains(held.Unauthorized, "`actions: write`") {
+	if held := trackerItem(t, resp, "pr", 141); held.Stage != 72 || !hasMod(held, modUnauthorized) || len(held.DeferredModifiers) != 0 || held.UnauthorizedStep != "approve workflow runs" || !strings.Contains(held.Unauthorized, "'actions: write'") {
 		t.Fatalf("PR 141 = stage %d mods %v deferred %v step %q", held.Stage, held.Modifiers, held.DeferredModifiers, held.UnauthorizedStep)
 	}
 	if refused := trackerItem(t, resp, "pr", 142); refused.Stage != 50 || hasMod(refused, modUnauthorized) || !slices.Equal(refused.DeferredModifiers, []string{modUnauthorized}) || refused.UnauthorizedStep != "merge" {
@@ -225,7 +225,7 @@ const gate80 = { kind: 'pr', stage: 80, modifiers: [], sentinel_alert: true, hea
 assert.ok(stageTrackerChipsHtml(gate80).includes('ham-badge-sentinel'), 'sentinel chip at 080');
 // Actionable-now pills show wherever the row stands.
 assert.ok(stageTrackerChipsHtml({ kind: 'pr', stage: 50, modifiers: ['hold'], deferred_modifiers: ['needs-human'] }).includes('>hold<'));
-assert.ok(stageTrackerChipsHtml({ kind: 'pr', stage: 72, modifiers: ['unauthorized'], unauthorized: 'needs actions: write' }).includes('>unauthorized<'));
+assert.ok(stageTrackerChipsHtml({ kind: 'pr', stage: 72, modifiers: ['unauthorized'], unauthorized: 'needs actions: write' }).includes('>hive bot lacks permission<'));
 assert.ok(stageTrackerNeedsAttention({ kind: 'pr', stage: 50, modifiers: ['hold'], deferred_modifiers: ['needs-human'] }));
 // A payload without the field (older server) renders exactly as before.
 assert.ok(stageTrackerChipsHtml({ kind: 'pr', stage: 50, modifiers: ['needs-human'], sentinel_alert: true }).includes('ham-badge-sentinel'));

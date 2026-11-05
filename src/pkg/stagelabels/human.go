@@ -445,11 +445,16 @@ func RouteHuman(e Evidence) Route {
 			}
 			return Route{Stage: NeedsDecision, Reasons: reasons, LaneReason: LaneReasonHiveSupersederHardStopPrefix + token, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: strings.TrimSpace(e.HumanApprover), Hold: e.Hold}
 		}
-		if e.Verdict == VerdictRequiresHuman && strings.TrimSpace(e.HumanApprover) == "" {
+		if e.Verdict == VerdictRequiresHuman && strings.TrimSpace(e.HumanApprover) == "" && strings.TrimSpace(e.DecisionQuestion) == "" {
 			// Owner rule: the reviewer's finding — security-sensitive
 			// included — is the fixer's to address, not a person's to rule
 			// on. The aggregate routes it as changes_requested; the stage
-			// says so rather than "needs your decision".
+			// says so rather than "needs your decision". A verdict that
+			// still carries its decision question is the one case the
+			// aggregate left for a person (a pure approver sign-off with
+			// nothing to fix, hivecommons/hive#16607): no fixer is
+			// dispatched for it, so captioning it "goes to the fixer"
+			// parked it on 070 with nobody on it; it falls through to 085.
 			note(HiveSupersederAutoMergeCaption+": the reviewer's finding @"+ShortSHA(e.Head)+" goes to the fixer", LaneReasonHiveSupersederFix)
 		}
 	}
