@@ -269,6 +269,14 @@ else
   fi
 fi
 
+# Execute the real Cline install RUN bodies with mocked npm/links/sleep. This
+# keeps the bounded retry covered by the existing supply-chain CI step.
+if python3 "$V2_DIR/deploy/test_cline_install_retry.py"; then
+  pass "Cline installs tolerate transient registry failures and fail closed"
+else
+  fail "Cline install retry behavior"
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1

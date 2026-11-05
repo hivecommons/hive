@@ -34,7 +34,8 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
               oid
               statusCheckRollup {
                 state
-                contexts(first: 50) {
+                contexts(first: 100) {
+                  totalCount
                   nodes {
                     __typename
                     ... on CheckRun { id databaseId name conclusion status detailsUrl startedAt completedAt checkSuite { app { databaseId } commit { oid } } }
@@ -102,7 +103,8 @@ type graphQLPRBatchNode struct {
 				StatusCheckRollup *struct {
 					State    string `json:"state"`
 					Contexts struct {
-						Nodes []graphQLPRBatchContext `json:"nodes"`
+						TotalCount int                     `json:"totalCount"`
+						Nodes      []graphQLPRBatchContext `json:"nodes"`
 					} `json:"contexts"`
 				} `json:"statusCheckRollup"`
 			} `json:"commit"`
@@ -304,8 +306,19 @@ func graphQLMergeable(raw string) *bool {
 	}
 }
 
+// graphQLCheckRuns converts a PR node's statusCheckRollup into check runs. It
+// reports ok=false when the rollup is absent OR when GitHub truncated the
+// contexts page: a head with more contexts than one page holds (a 70-job
+// matrix plus statuses) would otherwise be cached as a partial listing, and
+// enrichPRCI would read the missing required checks as "never reported"
+// (hivecommons/hive#16615 showed `CI 7/11 · required check "test" hasn't
+// reported` while every check was green). The caller falls back to the
+// paginated REST listing instead.
 func graphQLCheckRuns(n graphQLPRBatchNode) ([]*gh.CheckRun, bool) {
 	if len(n.Commits.Nodes) == 0 || n.Commits.Nodes[0].Commit.StatusCheckRollup == nil {
+		return nil, false
+	}
+	if graphQLContextsTruncated(n) {
 		return nil, false
 	}
 	var out []*gh.CheckRun
@@ -354,6 +367,16 @@ func graphQLCheckRuns(n graphQLPRBatchNode) ([]*gh.CheckRun, bool) {
 		out = append(out, run)
 	}
 	return out, true
+}
+
+// graphQLContextsTruncated reports whether the rollup's contexts connection
+// holds fewer nodes than GitHub says exist for the head.
+func graphQLContextsTruncated(n graphQLPRBatchNode) bool {
+	if len(n.Commits.Nodes) == 0 || n.Commits.Nodes[0].Commit.StatusCheckRollup == nil {
+		return false
+	}
+	contexts := n.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts
+	return contexts.TotalCount > len(contexts.Nodes)
 }
 
 func statusFromStatusContext(state string) string {

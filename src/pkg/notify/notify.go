@@ -100,7 +100,9 @@ func (n *Notifier) sendNtfy(title, message string, priority Priority) {
 
 // logNtfyError deduplicates repeated ntfy errors within a window.
 // Logs the first occurrence immediately, then a summary when the error
-// class changes or the window expires.
+// class changes or the window expires. The summary is logged at INFO level
+// (not WARN) because the first occurrence already warned; a WARN per window
+// would itself surface as an unclassified_error_repeated selfreport.
 func (n *Notifier) logNtfyError(msg, errDetail string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -115,7 +117,7 @@ func (n *Notifier) logNtfyError(msg, errDetail string) {
 
 	// Flush previous suppressed count
 	if n.ntfyErrCount > 0 {
-		n.logger.Warn("ntfy errors suppressed",
+		n.logger.Info("ntfy errors suppressed",
 			"message", n.lastNtfyErr,
 			"suppressed_count", n.ntfyErrCount,
 			"window_seconds", errorDedupeWindowSeconds,

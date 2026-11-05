@@ -142,6 +142,12 @@ type StageLabelPolicy struct {
 	// (dashboard.authorized_users). Their PRs, like author/human ones, are
 	// never adopted (hivecommons/hive#15202). nil = unknown.
 	OwnerAuthor func(login string) bool
+	// HiveAuthor reports whether login is one of this hive's own PR-authoring
+	// identities (project.ai_author, the App bot: hgithub.HiveIdentity). A
+	// squash of such a PR attributes the hive's commits to the hive itself,
+	// so a sign-off re-home never applies to it (hivecommons/hive#16619:
+	// the hive superseded its own clanker's approved PR). nil = unknown.
+	HiveAuthor func(login string) bool
 	// SharedCIIncident returns the open [shared-ci] incident the PR
 	// (repo "owner/name", number, head SHA) is deferred to, or 0. A red PR
 	// deferred to one is kept out of 070/072 and never nudged
@@ -1069,7 +1075,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// zero record for the head would be served back if the
 				// same head later stopped matching.
 				var err error
-				stats, err = c.stageDCO(ctx, store, key, obs)
+				stats, err = c.stageDCO(ctx, store, key, obs, policy)
 				if err != nil {
 					c.warn("stage labels: dco commit check failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 					if firstErr == nil {

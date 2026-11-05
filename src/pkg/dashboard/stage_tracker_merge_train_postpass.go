@@ -361,7 +361,7 @@ func stageTrackerSoakLeftOf(it *StageTrackerItem, now time.Time) time.Duration {
 // holds a live seat behind a front the view merely draws below the
 // merge queue (its 080 record lagging the engine's evaluation), the row
 // keeps the seat's words — "behind #15771 (tracker-row.js)" — never
-// "Ready for auto merge · checking now" (hive's own #15834 read so for
+// "Queued for merge · checking now" (hive's own #15834 read so for
 // twenty minutes): the gate carries the seat and the front's hint says
 // it leads. No merge_train rides, so no header counts a train of one.
 func stageTrackerKeepSeatWordsOrLeave(it *StageTrackerItem, items []StageTrackerItem) {

@@ -150,6 +150,7 @@ func (c *Client) signBranch(ctx context.Context, owner, repo, base, head string)
 		return "", 0, err
 	}
 	headline, body := signedCommitMessage(comparison.Commits)
+	body = ensureSignedOffBy(body, c.appBotLogin)
 
 	// Scratch ref at the merge base. Delete a leftover from a crashed run
 	// first: CreateRef 422s on an existing ref.
@@ -382,6 +383,22 @@ func signedTrailerEmail(email string) string {
 func BotSignedOffByTrailer(login string) string {
 	login = strings.TrimSpace(login)
 	return "Signed-off-by: " + login + " <" + signedTrailerEmail(login+"@"+signedTrailerNoreplyDomain) + ">"
+}
+
+// ensureSignedOffBy appends the App's own DCO trailer to a signed commit's
+// body when none of the folded agent commits carried one. The commit is
+// authored by the App bot, so an unsigned body would publish a hive-authored
+// commit without sign-off (hivecommons/hive#16619); the trailer is the one
+// BotSignedOffByTrailer derives, or nothing when the App login is unknown.
+func ensureSignedOffBy(body, appLogin string) string {
+	if strings.TrimSpace(appLogin) == "" || signedTrailerLineRE.MatchString(body) {
+		return body
+	}
+	trailer := BotSignedOffByTrailer(appLogin)
+	if strings.TrimSpace(body) == "" {
+		return trailer
+	}
+	return strings.TrimRight(body, "\n") + "\n\n" + trailer
 }
 
 // signedTrailersBracketFree rewrites every Signed-off-by line in msg through

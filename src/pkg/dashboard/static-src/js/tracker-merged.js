@@ -116,7 +116,11 @@
       // no count — instead of letting the row vanish in silence.
       const closed = stageTrackerNewlyClosed(d, _stageTrackerMergeState, next, _stageTrackerPRItems, _stageTrackerClosedNoted);
       const closedItems = closed.map(k => prevItems[k] || _stageTrackerPRLast[k]);
-      closed.forEach(k => { _stageTrackerClosedNoted[k] = true; delete next[k]; delete _stageTrackerPRLast[k]; });
+      // The closed key stays comparable (false), not deleted: a close the
+      // server later corrects to a merge — a bot's comment on a just-merged
+      // PR read as "closed" before the merge fact landed — still flips
+      // false → true and celebrates (hivecommons/hive#16658).
+      closed.forEach(k => { _stageTrackerClosedNoted[k] = true; delete _stageTrackerPRLast[k]; });
       _stageTrackerMergeState = next;
       // A merged PR is no longer in this payload, so its last host survives.
       if (typeof stageTrackerPRHosts === 'function') Object.assign(_stageTrackerPRHost, stageTrackerPRHosts(d));
@@ -483,6 +487,30 @@
       by = String(by || '').trim();
       if (!by) return '';
       return by === 'hive' ? 'by hive' : 'by @' + by;
+    }
+    // Pure: the merger as the merge toast's head names them — "🐝 hive"
+    // for the hive's own merge, "@login" for anyone else, '' unknown.
+    function stageTrackerMergerText(by) {
+      by = String(by || '').trim();
+      if (!by) return '';
+      return by === 'hive' ? '🐝 hive' : '@' + by;
+    }
+    // Pure: who merged the PR at key, from the payload's terminal facts —
+    // recently_merged (audit + ledger, any merger) and the ledger's recent
+    // list — then the terminal fact this tab already holds. '' unknown.
+    function stageTrackerMergedByOf(key, d) {
+      const n = Number(String(key || '').slice(String(key || '').lastIndexOf('/pr#') + 4)) || 0;
+      const repo = String(key || '').slice(0, String(key || '').lastIndexOf('/pr#')).toLowerCase();
+      if (!n || !repo) return '';
+      const short = repo.slice(repo.lastIndexOf('/') + 1);
+      const ledger = d && d.merged && Array.isArray(d.merged.recent) ? d.merged.recent : [];
+      for (const m of (d && Array.isArray(d.recently_merged) ? d.recently_merged : []).concat(ledger)) {
+        if (!m || Number(m.number) !== n || !m.merged_by) continue;
+        const r = String(m.repo || '').toLowerCase();
+        if (r === repo || (r.indexOf('/') < 0 && r === short)) return String(m.merged_by).trim();
+      }
+      const fact = typeof _stageTrackerTerminalFacts !== 'undefined' && _stageTrackerTerminalFacts ? _stageTrackerTerminalFacts[key] : null;
+      return fact && fact.merged_by ? String(fact.merged_by).trim() : '';
     }
     // Pure: the popover's inner HTML.
     function stageTrackerMergedPopHtml(txt, nowMs) {
@@ -996,7 +1024,7 @@
         const banner = stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
         setTimeout(() => {
           const row = rowKey && el ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
-          if (row) celebrateRow(row, { kind: 'merged', key, number, merged_by: fact && fact.merged_by });
+          if (row) celebrateRow(row, { kind: 'merged', key, number, merged_by: (fact && fact.merged_by) || stageTrackerMergedByOf(key, typeof _stageTracker !== 'undefined' ? _stageTracker : null) });
           else celebrateDetached(key, banner);
         }, i * STAGE_TRACKER_CELEBRATE_STAGGER_MS);
       });
@@ -1148,13 +1176,17 @@
       const url = String(b.url || (b.pr && b.pr.url) || '').match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/);
       return url ? url[1] : repo;
     }
+    // The head names the merger whoever they are — "#16644 merged by
+    // @clubanderson", "#16645 merged by 🐝 hive" — a merge by hand is
+    // celebrated exactly like the hive's own (hivecommons/hive#16658).
     function stageTrackerMergeBannerText(b, nowMs) {
       const d = new Date(b.at || nowMs);
       const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       const who = stageTrackerMergedByText(b.merged_by);
+      const merger = stageTrackerMergerText(b.merged_by);
       const paren = [b.lane || '', who, hm].filter(Boolean).join(', ');
       const num = stageTrackerMergeBannerNumber(b);
-      return { number: num, head: `${num ? '#' + num + ' ' : ''}merged${b.preview ? ' (test)' : ''}`, text: `${b.title || b.repo || ''}${paren ? ' (' + paren + ')' : ''}`.trim() };
+      return { number: num, merger, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, text: `${b.title || b.repo || ''}${paren ? ' (' + paren + ')' : ''}`.trim() };
     }
     // Stateful: a persistent banner, bottom right, for one merge — stays
     // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
@@ -1170,6 +1202,7 @@
       const repo = stageTrackerMergeBannerRepo(b);
       const recent = repo ? ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergeBannerRepo(e).toLowerCase() === repo.toLowerCase() && stageTrackerMergeBannerNumber(e) === stageTrackerMergeBannerNumber(b)) : null;
       const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b, { repo });
+      if (!info.merged_by && !b.preview) info.merged_by = stageTrackerMergedByOf(b.key, typeof _stageTracker !== 'undefined' ? _stageTracker : null);
       const num = stageTrackerMergeBannerNumber(info);
       const repoChip = stageTrackerRepoChipHtml(repo, { repoChips: { primary: stageTrackerPrimaryRepo(), active: _stageTrackerFilter.repo } });
       // A live merge the ledger has not listed yet still links: the key carries owner/name.
@@ -1179,7 +1212,7 @@
       el.className = 'merge-banner';
       el.setAttribute('role', 'status');
       if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) { toastCountdownCancel(box.children[0]); box.children[0].remove(); }
       toastCountdownBar(el, stageTrackerMergeBannerMs(), () => stageTrackerMergeBannerDismiss(el));
