@@ -15,7 +15,8 @@ import (
 
 // StageTrackerActivity keeps independent observations separate from the lane's
 // native stage and next mover. Worker activity requires assignment AND worker;
-// CI activity comes only from observed required checks.
+// CI activity uses the resolved required set when branch protection is known,
+// otherwise every check run observed on the head.
 type StageTrackerActivity struct {
 	Head    string `json:"head"`
 	State   string `json:"state"`
