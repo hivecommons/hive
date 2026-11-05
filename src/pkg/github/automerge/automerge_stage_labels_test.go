@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -2434,6 +2435,64 @@ func TestDCOCommitStatsForHiveCountsHiveIdentities(t *testing.T) {
 	}
 	if old := dcoCommitStatsForSquashAuthor(commits, testHiveAppBotLogin, "thatguywob", true); old != stats {
 		t.Fatalf("dcoCommitStatsForSquashAuthor=%+v, want App-only split %+v", old, stats)
+	}
+}
+
+// hivecommons/hive#16703: the squash-unsafe count uses the same ownership
+// rule as the unsigned split, so a signed commit GitHub links to a hive
+// identity is the hive's to misattribute on a PR a squash would credit to
+// someone else.
+func TestDCOCommitStatsForHiveSquashUnsafeCountsHiveIdentities(t *testing.T) {
+	commits := []*gh.RepositoryCommit{
+		{Author: &gh.User{Login: gh.Ptr("thatguywob")}, Commit: &gh.Commit{Message: gh.Ptr("hive fix\n\nSigned-off-by: Hive <hive@users.noreply.github.com>")}, Parents: []*gh.Commit{{}}},
+		{Author: &gh.User{Login: gh.Ptr("collaborator")}, Commit: &gh.Commit{Message: gh.Ptr("drive-by\n\nSigned-off-by: C <c@x>")}, Parents: []*gh.Commit{{}}},
+	}
+	isHive := func(login string) bool { return strings.EqualFold(login, "thatguywob") }
+	if stats := dcoCommitStatsForHive(commits, testHiveAppBotLogin, "person", false, isHive); stats.unsigned != 0 || stats.squashUnsafeHive != 1 {
+		t.Fatalf("with hive identities: %+v, want squashUnsafeHive=1", stats)
+	}
+	if stats := dcoCommitStatsForHive(commits, testHiveAppBotLogin, "person", true, isHive); stats.squashUnsafeHive != 0 {
+		t.Fatalf("self squash: %+v, want squashUnsafeHive=0", stats)
+	}
+	if stats := dcoCommitStatsForHive(commits, testHiveAppBotLogin, "person", false, nil); stats.squashUnsafeHive != 0 {
+		t.Fatalf("nil predicate: %+v, want App-only squashUnsafeHive=0", stats)
+	}
+}
+
+// hivecommons/hive#16701: a split cached before hive identities counted filed
+// a project.ai_author commit as "other"; stageDCO reads that head's commits
+// once more so the hive's own commit can be re-signed, then trusts the
+// refreshed cache.
+func TestStageDCORereadsSplitCachedBeforeHiveIdentities(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, commitDetails: map[int][]stageCommitFixture{
+		42: {{message: "hive fix", authorLogin: "thatguywob"}},
+	}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	e, _, _ := newStageEngine(t, srv.URL, &contributorLaneClock{at: time.Now()})
+	key := stageKey("acme", "widget", 42)
+	path := filepath.Join(t.TempDir(), "legacy.json")
+	data, err := json.Marshal(map[string]stagelabels.Record{key: {DCOHead: "aaa", DCOTotal: 1, DCOUnsigned: 1, DCOUnsignedOther: 1, DCOSquashUnsafeKnown: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := stagelabels.NewStore(path, nil)
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	policy := StageLabelPolicy{HiveAuthor: func(login string) bool { return strings.EqualFold(login, "thatguywob") }}
+	obs := stageObservation{Owner: "acme", Repo: "widget", Number: 42, HeadSHA: "aaa", Author: "thatguywob"}
+	got, err := e.stageDCO(context.Background(), store, key, obs, policy)
+	if err != nil || got.unsigned != 1 || got.unsignedHive != 1 || got.unsignedOther != 0 || api.commitReads != 1 {
+		t.Fatalf("legacy split: %+v, %v, reads=%d; want hive=1 other=0 after one read", got, err, api.commitReads)
+	}
+	store.NoteDCO(key, obs.HeadSHA, got.total, got.unsigned, got.unsignedHive, got.squashUnsafeHive)
+	got, err = e.stageDCO(context.Background(), store, key, obs, policy)
+	if err != nil || got.unsignedHive != 1 || got.unsignedOther != 0 || api.commitReads != 1 {
+		t.Fatalf("refreshed split: %+v, %v, reads=%d; want the cache served", got, err, api.commitReads)
 	}
 }
 

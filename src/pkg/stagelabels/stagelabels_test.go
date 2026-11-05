@@ -1027,6 +1027,18 @@ func TestStoreNoteDCOSplitAndAdoptReason(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#16701: NoteDCO marks the split as computed with hive
+// identities, including on a legacy record whose counts are unchanged.
+func TestStoreNoteDCOMarksHiveIdentitySplit(t *testing.T) {
+	s := NewStore("", nil)
+	key := Key("acme/widget", 8)
+	s.items[key] = Record{DCOHead: "a", DCOTotal: 2, DCOUnsigned: 1, DCOUnsignedOther: 1, DCOSquashUnsafeKnown: true}
+	s.NoteDCO(key, "a", 2, 1, 0, 0)
+	if r, _ := s.Get(key); !r.DCOSplitHiveIdentity || r.DCOUnsignedOther != 1 {
+		t.Fatalf("legacy record not marked: %+v", r)
+	}
+}
+
 func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })

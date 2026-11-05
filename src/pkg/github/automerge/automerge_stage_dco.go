@@ -66,8 +66,9 @@ func dcoCommitStatsForSquashAuthor(commits []*gh.RepositoryCommit, appLogin, prA
 }
 
 // dcoCommitStatsForHive is dcoCommitStatsForSquashAuthor with the hive's own
-// identities (isHive, StageLabelPolicy.HiveAuthor) counted as the hive's when
-// splitting unsigned commits; a nil isHive counts only the App bot.
+// identities (isHive, StageLabelPolicy.HiveAuthor) counted as the hive's, both
+// when splitting unsigned commits and when counting squash-unsafe signed ones
+// (hivecommons/hive#16703); a nil isHive counts only the App bot.
 func dcoCommitStatsForHive(commits []*gh.RepositoryCommit, appLogin, prAuthor string, selfSquash bool, isHive func(login string) bool) dcoStats {
 	var stats dcoStats
 	for _, rc := range commits {
@@ -83,7 +84,7 @@ func dcoCommitStatsForHive(commits []*gh.RepositoryCommit, appLogin, prAuthor st
 			} else {
 				stats.unsignedOther++
 			}
-		} else if !selfSquash && dcoCommitByHive(rc, appLogin) && !messageHasPRAuthorSignoff(msg, prAuthor) {
+		} else if !selfSquash && dcoCommitOwnedByHive(rc, appLogin, isHive) && !messageHasPRAuthorSignoff(msg, prAuthor) {
 			stats.squashUnsafeHive++
 		}
 	}
@@ -102,9 +103,20 @@ func dcoCommitByHive(commit *gh.RepositoryCommit, appLogin string) bool {
 // dcoCommitOwnedByHive is dcoCommitByHive that also counts a commit GitHub
 // links (by author login) to one of the hive's own identities (isHive:
 // project.ai_author, the login the hive's agents push as). Only GitHub's
-// linkage counts here too: git author names and emails never do, so a
-// collaborator's unsigned commit stays "other" and is never signed by the
-// App (hivecommons/hive#16685).
+// linkage counts here too, never the git author name, so a collaborator's
+// unsigned commit under their own email stays "other" and is never signed by
+// the App (hivecommons/hive#16685).
+//
+// Trust assumption (hivecommons/hive#16702): GitHub derives the login from
+// the git author email and the hive's agents push plain, unsigned git
+// commits (app_signed_commits re-authors only the PR's opening head), so
+// neither Commit.Verification nor the committer can tell an agent's commit
+// from one a pusher authored with project.ai_author's email. Requiring
+// either would stop the hive re-signing its own fix commits. The in-place
+// path that acts on this split needs a base-repo head the App can push
+// (adoptionDCORepairMode), so only collaborators with push access can
+// present such a commit, and they are trusted not to. commitByApp has the
+// same property for the App bot login.
 func dcoCommitOwnedByHive(commit *gh.RepositoryCommit, appLogin string, isHive func(login string) bool) bool {
 	if dcoCommitByHive(commit, appLogin) {
 		return true
@@ -128,7 +140,10 @@ func (c *Engine) stageDCO(ctx context.Context, store *stagelabels.Store, key str
 	}
 	appLogin := c.transport.AppBotLogin()
 	selfSquash := botSquashAuthor(obs.Author) || hiveAuthoredPR(obs, policy, appLogin)
-	if rec, ok := store.Get(key); ok {
+	// A split cached before hive identities counted (hivecommons/hive#16701) filed
+	// project.ai_author commits as "other"; read the commits once more so
+	// a hive-authored head is re-signed rather than left waiting.
+	if rec, ok := store.Get(key); ok && (policy.HiveAuthor == nil || rec.DCOSplitHiveIdentity) {
 		if t, u, cached := rec.DCOFor(obs.HeadSHA); cached {
 			// Records cached before the ownership split existed carry
 			// none; an in-place adoption decides repair-vs-rehome on it,
