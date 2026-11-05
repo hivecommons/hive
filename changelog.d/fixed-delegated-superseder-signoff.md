@@ -1,1 +1,1 @@
-- Delegated decisions keep hive-authored superseding PRs parked when a reviewer sign-off question is recorded, showing the exact question for confirmation instead of automatically approving the PR.
+- Delegated decisions keep hive-authored superseding PRs parked when a reviewer policy sign-off question is recorded, showing the exact question for confirmation while scope and follow-up questions remain eligible for automatic approval. Scope and follow-up questions still auto-decide under the superseder rule.

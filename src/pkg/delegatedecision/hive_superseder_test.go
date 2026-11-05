@@ -46,20 +46,25 @@ func TestDecideHiveSupersederDecisionQuestion(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		question string
+		signOff  bool
 		stop     string
 		sentinel bool
 		want     Verdict
 		contains string
 	}{
-		{name: "sign-off only", question: " \t" + question + "\n", want: VerdictRecommendOnly, contains: question},
-		{name: "whitespace only", question: " \t\n", want: VerdictApprove, contains: "auto-merging once CI/review are clean"},
-		{name: "hard stop takes precedence", question: question, stop: "sentinel-unacknowledged", sentinel: true, want: VerdictRecommendOnly, contains: "clear the stop"},
-		{name: "question with sentinel", question: question, sentinel: true, want: VerdictRecommendOnly, contains: question},
+		{name: "sign-off only", question: " \t" + question + "\n", signOff: true, want: VerdictRecommendOnly, contains: question},
+		{name: "scope question", question: "@clubanderson should confirm the merge-request relay may lift the hold…", want: VerdictApprove, contains: "auto-merging once CI/review are clean"},
+		{name: "scope question auto-decides", question: "Should this merge ahead of the docs follow-up?", want: VerdictApprove, contains: "auto-merging once CI/review are clean"},
+		{name: "unclassified wording does not imply sign-off", question: question, want: VerdictApprove, contains: "auto-merging once CI/review are clean"},
+		{name: "whitespace only", question: " \t\n", signOff: true, want: VerdictApprove, contains: "auto-merging once CI/review are clean"},
+		{name: "hard stop takes precedence", question: question, signOff: true, stop: "sentinel-unacknowledged", sentinel: true, want: VerdictRecommendOnly, contains: "clear the stop"},
+		{name: "scope question with hard stop", question: "Should the docs update be a follow-up?", stop: "ci-red", want: VerdictRecommendOnly, contains: "clear the stop"},
+		{name: "question with sentinel", question: question, signOff: true, sentinel: true, want: VerdictRecommendOnly, contains: question},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := Input{Repo: "hivecommons/hive", Kind: KindPR, Number: 16607, Author: "hivecommons-hive[bot]",
 				Body: "Supersedes #16456", HiveAuthored: true, TrustedAuthor: true, HiveSuperseding: true, CIGreen: true,
-				Question: tc.question, HiveSupersederHardStop: tc.stop, SentinelAlert: tc.sentinel,
+				Question: tc.question, SignOffQuestion: tc.signOff, HiveSupersederHardStop: tc.stop, SentinelAlert: tc.sentinel,
 				Reasons: []string{"decision-requested"}}
 			d := Run(in)
 			if d.Verdict != tc.want || d.Rule != RuleHiveSuperseder || !strings.Contains(d.Text, tc.contains) {
