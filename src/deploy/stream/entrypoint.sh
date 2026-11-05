@@ -29,11 +29,16 @@
 # PTS gap the Twitch player reads as "buffering" (hivecommons/hive#16440).
 # Audio packets are tiny, so the audio queue stays deep.
 #
-# Stall watchdog: ffmpeg's -progress file is sampled every WATCHDOG_EVERY s;
-# no new frames for STALL_FRAMES_SECONDS or speed < SLOW_SPEED for SLOW_SECONDS
-# logs WARN with the stats and SIGTERMs ffmpeg so ffmpeg_loop restarts it. The
-# last 20 samples, the last stall and the restart count are published to
-# $RUN_DIR/health.json for the healthcheck and for operators.
+# Watchdog (stream-watchdog.sh, run alongside ffmpeg_loop): samples ffmpeg's
+# -progress file every WATCHDOG_EVERY s and asks Twitch whether
+# TWITCH_CHANNEL_LOGIN is actually live every LIVE_CHECK_EVERY s. A stall, or
+# LIVE_OFFLINE_THRESHOLD consecutive "offline" answers, SIGTERMs ffmpeg so
+# ffmpeg_loop relaunches it; LIVE_RESTART_LIMIT relaunches with the channel
+# still offline make the watchdog exit, which ends this supervisor so the
+# orchestrator restarts the container. It touches $RUN_DIR/stream-healthy only
+# while frames advance and the channel is live; healthcheck.sh turns a stale
+# heartbeat into a failed liveness probe. ffmpeg sitting at speed=1x after
+# Twitch dropped the ingest session is exactly the failure this catches.
 set -euo pipefail
 
 : "${DASHBOARD_URL:?DASHBOARD_URL is required (https origin of the hive dashboard)}"
@@ -63,11 +68,11 @@ PULSE_SINK_NAME="${PULSE_SINK_NAME:-hive}"
 DISPLAY_NUM="${DISPLAY_NUM:-:99}"
 AUTHPROXY_LISTEN="${AUTHPROXY_LISTEN:-127.0.0.1:8099}"
 RUN_DIR="${RUN_DIR:-/run/stream}"
-WATCHDOG_EVERY="${WATCHDOG_EVERY:-10}"          # seconds between progress-file samples
-STALL_FRAMES_SECONDS="${STALL_FRAMES_SECONDS:-30}" # restart ffmpeg after this long with no new frames
-SLOW_SPEED="${SLOW_SPEED:-0.90}"                # restart ffmpeg when speed stays below this…
-SLOW_SECONDS="${SLOW_SECONDS:-60}"              # …for this long
-HEALTH_SAMPLES="${HEALTH_SAMPLES:-20}"          # progress samples kept in health.json
+# Watchdog knobs (WATCHDOG_EVERY, STALL_FRAMES_SECONDS, SLOW_SPEED, SLOW_SECONDS,
+# HEALTH_SAMPLES, TWITCH_CHANNEL_LOGIN, LIVE_CHECK_EVERY, LIVE_GRACE_SECONDS,
+# LIVE_OFFLINE_THRESHOLD, LIVE_RESTART_BACKOFF_MIN/MAX, LIVE_RESTART_LIMIT,
+# TWITCH_LIVE_CHECK_CLIENT_ID, TWITCH_HELIX_CLIENT_ID/_SECRET) are read with
+# their defaults by stream-watchdog.sh, which inherits this environment.
 BACKOFF_MIN=2
 BACKOFF_MAX=60
 KEYINT=$(( FPS * 2 ))                          # Twitch wants a 2 s keyframe interval
@@ -111,10 +116,16 @@ mkdir -p "$RUN_DIR/profile"; rm -f "$RUN_DIR/done"
 export XDG_RUNTIME_DIR="$RUN_DIR/pulse" PULSE_SERVER="unix:$RUN_DIR/pulse/native"
 mkdir -p "$XDG_RUNTIME_DIR"; chmod 0700 "$XDG_RUNTIME_DIR"
 PROGRESS="$RUN_DIR/ffmpeg-progress.txt"
-: > "$PROGRESS"
+FFMPEG_PID="$RUN_DIR/ffmpeg.pid"
+FFMPEG_STARTED="$RUN_DIR/ffmpeg.started"
+HEALTH_JSON="$RUN_DIR/health.json"
+HEARTBEAT_FILE="$RUN_DIR/stream-healthy"
+export RUN_DIR PROGRESS FFMPEG_PID FFMPEG_STARTED HEALTH_JSON HEARTBEAT_FILE
+: > "$PROGRESS"; rm -f "$FFMPEG_PID" "$FFMPEG_STARTED" "$HEARTBEAT_FILE"
 log() { printf '%s stream: %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
 pids=()
+# shellcheck disable=SC2329  # invoked via the trap below
 cleanup() { trap - EXIT INT TERM; log "shutting down"; kill "${pids[@]}" 2>/dev/null || true; wait 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
@@ -222,8 +233,6 @@ sink() {
 # wallclock video timeline instead of drifting away from it.
 AUDIO_IN=(-thread_queue_size "$AUDIO_QUEUE" -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100")
 [ "$STREAM_AUDIO" = pulse ] && AUDIO_IN=(-thread_queue_size "$AUDIO_QUEUE" -f pulse -i "${PULSE_SINK_NAME}.monitor")
-FFMPEG_PID="$RUN_DIR/ffmpeg.pid"
-HEALTH_JSON="$RUN_DIR/health.json"
 ffmpeg_loop() {
   local backoff=$BACKOFF_MIN out limit=() rc=0 fpid
   out="$(sink)" || exit 1
@@ -244,7 +253,7 @@ ffmpeg_loop() {
       -af aresample=async=1 -c:a aac -b:a 128k -ac 2 -ar 44100 -shortest "${limit[@]}" \
       $out > >(sed -u "s#${TWITCH_STREAM_KEY:-__none__}#***#g") 2>&1 &
     fpid=$!
-    echo "$fpid" > "$FFMPEG_PID"
+    echo "$fpid" > "$FFMPEG_PID"; date +%s > "$FFMPEG_STARTED"
     wait "$fpid" && rc=0 || rc=$?
     rm -f "$FFMPEG_PID"
     if (( STREAM_SECONDS > 0 )); then
@@ -259,64 +268,10 @@ ffmpeg_loop() {
 ffmpeg_loop &
 pids+=($!)
 
-# Last value of key= in the tail of the progress file ("" if absent).
-progress_val() { { printf '%s\n' "$1" | grep -a "^$2=" | tail -1 | cut -d= -f2 | tr -d ' x'; } || true; }
-# health.json: last HEALTH_SAMPLES watchdog samples, last stall, restart count.
-# Values are numbers and ISO timestamps only, so no JSON escaping is needed.
-write_health() {
-  local state=$1 last_stall=$2 restarts=$3; shift 3
-  local tmp="$HEALTH_JSON.tmp" first=1 s
-  {
-    printf '{"updated":"%s","state":"%s","watchdog_restarts":%d,"last_stall":%s,"samples":[' \
-      "$(date -u +%FT%TZ)" "$state" "$restarts" "${last_stall:-null}"
-    for s in "$@"; do
-      (( first )) || printf ','
-      first=0; printf '%s' "$s"
-    done
-    printf ']}\n'
-  } > "$tmp" && mv -f "$tmp" "$HEALTH_JSON"
-}
-watchdog_loop() {
-  local prev_frame=-1 stall_since=0 slow_since=0 restarts=0 last_stall="" samples=()
-  local blk frame fps speed bitrate drop dup now delta slow reason state sample fpid
-  while :; do
-    sleep "$WATCHDOG_EVERY"
-    blk="$(tail -c 4096 "$PROGRESS" 2>/dev/null || true)"
-    frame=$(progress_val "$blk" frame); now=$(date +%s)
-    if [ -z "$frame" ]; then prev_frame=-1; stall_since=0; slow_since=0; continue; fi
-    fps=$(progress_val "$blk" fps); speed=$(progress_val "$blk" speed)
-    bitrate=$(progress_val "$blk" bitrate); drop=$(progress_val "$blk" drop_frames); dup=$(progress_val "$blk" dup_frames)
-    # A fresh ffmpeg truncates the progress file, so a smaller frame counter is a restart, not a stall.
-    (( prev_frame < 0 || frame < prev_frame )) && prev_frame=$frame
-    delta=$(( frame - prev_frame )); prev_frame=$frame
-    if (( delta == 0 )); then (( stall_since == 0 )) && stall_since=$now; else stall_since=0; fi
-    slow=$(awk -v s="${speed:-1}" -v t="$SLOW_SPEED" 'BEGIN { print (s + 0 < t + 0) ? 1 : 0 }')
-    if (( slow )); then (( slow_since == 0 )) && slow_since=$now; else slow_since=0; fi
-    sample=$(printf '{"t":"%s","frame":%d,"dframe":%d,"fps":"%s","speed":"%s","bitrate":"%s","drop":"%s","dup":"%s"}' \
-      "$(date -u +%FT%TZ)" "$frame" "$delta" "${fps:-?}" "${speed:-?}" "${bitrate:-?}" "${drop:-?}" "${dup:-?}")
-    samples+=("$sample"); (( ${#samples[@]} > HEALTH_SAMPLES )) && samples=("${samples[@]:1}")
-    reason=""; state=ok
-    (( slow_since > 0 && now - slow_since >= SLOW_SECONDS )) && reason="speed ${speed}x < ${SLOW_SPEED}x for $(( now - slow_since ))s"
-    (( stall_since > 0 && now - stall_since >= STALL_FRAMES_SECONDS )) && reason="no new frames for $(( now - stall_since ))s"
-    (( slow_since > 0 || stall_since > 0 )) && state=degraded
-    if [ -n "$reason" ]; then
-      state=stalled
-      log "WARN watchdog: ${reason} (frame=${frame} dframe=${delta} fps=${fps:-?} speed=${speed:-?}x bitrate=${bitrate:-?} drop=${drop:-?} dup=${dup:-?})"
-      fpid=$(cat "$FFMPEG_PID" 2>/dev/null || true)
-      if [ -n "$fpid" ] && kill -0 "$fpid" 2>/dev/null; then
-        log "WARN watchdog: restarting ffmpeg (pid ${fpid})"
-        kill -TERM "$fpid" 2>/dev/null || true
-        restarts=$(( restarts + 1 ))
-      else
-        log "WARN watchdog: ffmpeg is not running; leaving the restart to ffmpeg_loop"
-      fi
-      last_stall=$(printf '{"t":"%s","reason":"%s","frame":%d,"speed":"%s"}' "$(date -u +%FT%TZ)" "$reason" "$frame" "${speed:-?}")
-      stall_since=0; slow_since=0; prev_frame=-1
-    fi
-    write_health "$state" "$last_stall" "$restarts" "${samples[@]}"
-  done
-}
-watchdog_loop &
+# ---- 6. watchdog: ffmpeg progress + Twitch live check ----------------------
+# Separate script so test-stream-watchdog.sh can drive its decisions with a
+# fake ffmpeg and a stubbed live check. Its exit ends this supervisor.
+"$(dirname "$0")/stream-watchdog.sh" &
 pids+=($!)
 
 wait -n "${pids[@]}" || true

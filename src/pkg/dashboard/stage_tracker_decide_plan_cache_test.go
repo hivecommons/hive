@@ -250,8 +250,30 @@ func TestStageTrackerDelegatePreviewSkeletonPrefetch(t *testing.T) {
   assert.ok(/<button[^>]*class="[^"]*cancel"[^>]*data-initial-focus>Cancel<\/button>/.test(sk) && !/cancel"[^>]*disabled/.test(sk), 'Cancel is enabled and focused: ' + sk);
   assert.ok(/<button[^>]*primary" disabled aria-disabled="true">Let hive do that<\/button>/.test(sk), 'Let hive do that waits for the plan: ' + sk);
   assert.ok(/ham-plan-merge" hidden>/.test(sk), sk);
-  const err = stageTrackerDelegatePlanErrorContent('o/r#4', [{ ref: 'o/r#4', error: 'HTTP 502' }]);
-  assert.ok(err.includes('role="alert"') && err.includes('Could not preview o/r#4 (HTTP 502)') && err.includes('ham-plan-retry">Retry</button>'), err);
+  // The inline error names the hive, says why in its words, and says the
+  // decision stays off without a preview (hivecommons/hive#16776). An
+  // unexplained HTTP failure offers Retry.
+  const err = stageTrackerDelegatePlanErrorContent('o/r#4', [{ ref: 'o/r#4', error: 'HTTP 500', status: 500, reason: 'http' }], 'hive.example');
+  assert.ok(err.includes('role="alert"') && err.includes('Could not preview o/r#4: the hive at hive.example answered HTTP 500 — HTTP 500.') && err.includes('ham-plan-retry">Retry</button>'), err);
+  assert.ok(err.includes(STAGE_TRACKER_PLAN_NO_PREVIEW_NO_DECISION), err);
+  // The hosted gateway's generic 502 page is named as such, not as the hive's answer.
+  const gw = stageTrackerDelegatePlanFailure({ repo: 'o/r', kind: 'pr', number: 4 }, 502, { ok: false, error: 'hive unavailable', detail: 'restarting' });
+  assert.strictEqual(gw.reason, 'gateway'); assert.strictEqual(gw.retryable, true);
+  const gwLines = stageTrackerDelegatePlanFailureLines(gw, 'the hive at hive.example');
+  assert.ok(gwLines[0].includes('did not answer (HTTP 502 from the gateway') && gwLines[1].includes('Retry in a few seconds'), gwLines);
+  // The server's structured failures: a merged PR is final (no Retry);
+  // a GitHub failure after the server's own retries says how many and offers Retry.
+  const closed = stageTrackerDelegatePlanFailure({ repo: 'o/r', kind: 'pr', number: 4 }, 409, { ok: false, error: 'o/r#4 is not open', reason: 'not-open', retryable: false, hint: 'o/r#4 is closed on GitHub — refresh.', hive: 'Hive Commons' });
+  const closedHtml = stageTrackerDelegatePlanErrorContent('o/r#4', [closed], 'hive.example');
+  assert.ok(closedHtml.includes('Hive Commons reports it is no longer open.') && closedHtml.includes('o/r#4 is closed on GitHub — refresh.') && !closedHtml.includes('ham-plan-retry'), closedHtml);
+  const ghf = stageTrackerDelegatePlanFailure({ repo: 'o/r', kind: 'pr', number: 4 }, 424, { ok: false, error: 'reading checks: 500', reason: 'github', retryable: true, attempts: 3, elapsed_ms: 12400, hint: 'GitHub failed; Retry.', hive: 'Hive Commons' });
+  const ghLines = stageTrackerDelegatePlanFailureLines(ghf, 'Hive Commons');
+  assert.strictEqual(ghLines[0], 'Could not preview o/r#4: Hive Commons could not read it from GitHub after 3 attempts over 12s.');
+  assert.strictEqual(ghLines[1], 'GitHub failed; Retry. (reading checks: 500)');
+  assert.ok(stageTrackerDelegatePlanErrorContent('o/r#4', [ghf]).includes('ham-plan-retry'));
+  assert.strictEqual(stageTrackerDelegatePlanRetryable([closed]), false);
+  assert.strictEqual(stageTrackerDelegatePlanRetryable([closed, ghf]), true);
+  assert.strictEqual(stageTrackerDelegatePlanFailure({ repo: 'o/r', kind: 'pr', number: 4 }, 0, { error: 'Load failed', reason: 'network', retryable: true }).reason, 'network');
   assert.strictEqual(stageTrackerDelegatePlanSubject([item, item]), '2 items');
 
   const plan = { would: 'approve', summary: 'Approve o/r#4.', why: 'The question has one sane answer.', consequences: ['o/r#4 moves on'], alternatives: [] };
@@ -293,10 +315,10 @@ func TestStageTrackerDelegatePreviewSkeletonPrefetch(t *testing.T) {
 
   // A failed plan reads inline (no toast) and runs nothing.
   dialogs.length = 0;
-  reply = () => ({ ok: false, status: 502, json: async () => ({ error: 'GitHub timed out' }) });
+  reply = () => ({ ok: false, status: 424, json: async () => ({ error: 'GitHub timed out', reason: 'github', retryable: true, hint: 'Retry.', hive: 'Hive Commons' }) });
   assert.strictEqual(await stageTrackerActionPayload([item], 'decide:delegate'), null);
   assert.deepStrictEqual(dialogs.map(d => d.kind), ['plan-error']);
-  assert.ok(dialogs[0].cfg.html.includes('Could not preview o/r#4 (GitHub timed out)') && dialogs[0].cfg.html.includes('Retry'), dialogs[0].cfg.html);
+  assert.ok(dialogs[0].cfg.html.includes('Could not preview o/r#4: Hive Commons could not read it from GitHub.') && dialogs[0].cfg.html.includes('Retry'), dialogs[0].cfg.html);
 
   // Only an enabled Let hive decide (or one in a submenu) prefetches from the menu.
   assert.strictEqual(stageTrackerMenuOffersDelegate([{ id: 'decide:approve' }, { id: 'more', submenu: [{ id: 'decide:delegate' }] }]), true);

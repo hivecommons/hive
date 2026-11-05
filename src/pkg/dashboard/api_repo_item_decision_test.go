@@ -81,6 +81,11 @@ type repoItemDecisionMock struct {
 	commentStarted          chan struct{}
 	// editPaths records each PATCH path alongside edits.
 	editPaths []string
+	// checkRunsFailures is how many GET /check-runs answer 500 before the
+	// mock recovers (api.github.com's intermittent 500 on a long head);
+	// checkRunsCalls counts every GET /check-runs.
+	checkRunsFailures int
+	checkRunsCalls    int
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -202,6 +207,13 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				_, _ = io.WriteString(w, `{"state":"success","statuses":[{"context":"ci/test","state":"success"}]}`)
 			}
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs"):
+			m.checkRunsCalls++
+			if m.checkRunsFailures > 0 {
+				m.checkRunsFailures--
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
 			_, _ = io.WriteString(w, `{"total_count":0,"check_runs":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && !strings.HasSuffix(path, "/status") && !strings.HasSuffix(path, "/check-runs"):
 			sha := path[strings.LastIndex(path, "/")+1:]
