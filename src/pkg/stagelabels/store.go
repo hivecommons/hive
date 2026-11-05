@@ -2474,8 +2474,10 @@ func (s *Store) ClearHold(key string) { s.NoteHold(key, nil) }
 
 // NoteDCO caches the commit check for head on an existing record:
 // unsignedHive is the hive's share of the unsigned commits (App bot or a
-// hive identity), the rest is recorded as other.
-func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashUnsafeHive int) {
+// hive identity), the rest is recorded as other. hiveIdentity says the split
+// was computed with a hive identity configured; an App-only split leaves the
+// marker unset so configuring one later triggers the one-time re-read.
+func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashUnsafeHive int, hiveIdentity bool) {
 	if head == "" {
 		return
 	}
@@ -2485,12 +2487,14 @@ func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashU
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other && r.DCOSquashUnsafeHive == squashUnsafeHive && r.DCOSquashUnsafeKnown && r.DCOSplitHiveIdentity) {
+	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other && r.DCOSquashUnsafeHive == squashUnsafeHive && r.DCOSquashUnsafeKnown && (r.DCOSplitHiveIdentity || !hiveIdentity)) {
 		return
 	}
 	r.DCOHead, r.DCOTotal, r.DCOUnsigned, r.DCOUnsignedHive, r.DCOUnsignedOther, r.DCOSquashUnsafeHive = head, total, unsigned, unsignedHive, other, squashUnsafeHive
 	r.DCOSquashUnsafeKnown = true
-	r.DCOSplitHiveIdentity = true
+	if hiveIdentity {
+		r.DCOSplitHiveIdentity = true
+	}
 	s.items[key] = r
 	s.dirty = true
 }

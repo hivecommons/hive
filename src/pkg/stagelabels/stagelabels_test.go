@@ -998,18 +998,18 @@ func TestStoreNoteDCOSplitAndAdoptReason(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })
 	key := Key("acme/widget", 7)
-	s.NoteDCO(key, "a", 3, 2, 1, 0)
+	s.NoteDCO(key, "a", 3, 2, 1, 0, true)
 	s.NoteAdoptReason(key, "dco-rehome")
 	if _, ok := s.Get(key); ok {
 		t.Fatal("NoteDCO/NoteAdoptReason created a record")
 	}
 	s.Observe(key, ReturnedToContributor, "check-failing:dco")
-	s.NoteDCO(key, "a", 3, 2, 1, 0)
+	s.NoteDCO(key, "a", 3, 2, 1, 0, true)
 	r, _ := s.Get(key)
 	if t0, u, ok := r.DCOFor("a"); !ok || t0 != 3 || u != 2 || r.DCOUnsignedHive != 1 || r.DCOUnsignedOther != 1 || !r.DCOSplitKnown("a") || r.DCOSplitKnown("b") {
 		t.Fatalf("cached split: %+v", r)
 	}
-	s.NoteDCO(key, "a", 3, 2, 2, 0)
+	s.NoteDCO(key, "a", 3, 2, 2, 0, true)
 	if r, _ = s.Get(key); r.DCOUnsignedHive != 2 || r.DCOUnsignedOther != 0 || !r.DCOSplitKnown("a") {
 		t.Fatalf("hive share not updated: %+v", r)
 	}
@@ -1033,9 +1033,25 @@ func TestStoreNoteDCOMarksHiveIdentitySplit(t *testing.T) {
 	s := NewStore("", nil)
 	key := Key("acme/widget", 8)
 	s.items[key] = Record{DCOHead: "a", DCOTotal: 2, DCOUnsigned: 1, DCOUnsignedOther: 1, DCOSquashUnsafeKnown: true}
-	s.NoteDCO(key, "a", 2, 1, 0, 0)
+	s.NoteDCO(key, "a", 2, 1, 0, 0, true)
 	if r, _ := s.Get(key); !r.DCOSplitHiveIdentity || r.DCOUnsignedOther != 1 {
 		t.Fatalf("legacy record not marked: %+v", r)
+	}
+}
+
+// hivecommons/hive#16707: an App-only split (no hive identity configured)
+// must not be marked, so configuring one later triggers the re-read.
+func TestStoreNoteDCOAppOnlySplitNotMarked(t *testing.T) {
+	s := NewStore("", nil)
+	key := Key("acme/widget", 9)
+	s.items[key] = Record{DCOHead: "a", DCOTotal: 2, DCOUnsigned: 1, DCOUnsignedOther: 1, DCOSquashUnsafeKnown: true}
+	s.NoteDCO(key, "a", 2, 1, 1, 0, false)
+	if r, _ := s.Get(key); r.DCOSplitHiveIdentity || r.DCOUnsignedHive != 1 {
+		t.Fatalf("app-only split marked or not stored: %+v", r)
+	}
+	s.NoteDCO(key, "a", 2, 1, 1, 0, true)
+	if r, _ := s.Get(key); !r.DCOSplitHiveIdentity {
+		t.Fatalf("hive-identity split not marked: %+v", r)
 	}
 }
 
