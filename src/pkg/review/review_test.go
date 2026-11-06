@@ -807,3 +807,40 @@ func TestAggregateReportsContributorUnbackedDecisionWithChangesRoutesToFixer(t *
 		t.Fatalf("aggregate = %+v, want the sibling change request to route to the fixer, question advisory", got)
 	}
 }
+
+// projectbluefin/utah-packages#890: the security review withheld approval on
+// a new App credential while intent-alignment asked for a PR-body edit. The
+// security hold is the contributor rule's one early exit to a person
+// (hivecommons/hive#15640); the sibling change request folded it into the
+// fix cycle and the PR went back to its author at 072 instead of 085.
+func TestAggregateReportsContributorSecurityHoldSurvivesSiblingChangeRequest(t *testing.T) {
+	sec := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	sec.Summary = "New App credential minted in a scheduled workflow; a maintainer must confirm the credential choice."
+	intent := baseReport(PerspectiveIntentAlignment, VerdictChangesRequested, outputschema.Finding{Title: "`Closes #874` contradicts the issue's own handoff", Severity: outputschema.SeverityMedium, ReviewScope: "in-scope"})
+	got := AggregateReports([]PerspectiveReport{sec, intent}, AggregateOptions{})
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle || got.MergeEligible {
+		t.Fatalf("aggregate = %+v, want the security hold kept for a person", got)
+	}
+	if !strings.Contains(got.DecisionFinding, "security review withheld approval") {
+		t.Fatalf("DecisionFinding = %q, want the security hold named", got.DecisionFinding)
+	}
+	if got.Perspectives[PerspectiveSecurity] != VerdictRequiresHuman {
+		t.Fatalf("perspectives = %v, want the security perspective left as requires_human", got.Perspectives)
+	}
+
+	// An unbacked requires_human beside a change request still goes to the fixer.
+	plain := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman)
+	plain.Summary = "Unclear whether the groundwork should land before its consumer."
+	changes := baseReport(PerspectiveCorrectness, VerdictChangesRequested, outputschema.Finding{Title: "nil deref", Severity: outputschema.SeverityMedium, ReviewScope: "in-scope"})
+	got = AggregateReports([]PerspectiveReport{plain, changes}, AggregateOptions{})
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("unbacked aggregate = %+v, want the fixer lane", got)
+	}
+
+	// The hive's own PR is not under the contributor rule: its fix cycle runs first.
+	sec.HiveAuthored, intent.HiveAuthored = true, true
+	got = AggregateReports([]PerspectiveReport{sec, intent}, AggregateOptions{})
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("hive-authored aggregate = %+v, want the fixer lane", got)
+	}
+}

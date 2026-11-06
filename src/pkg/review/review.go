@@ -625,6 +625,21 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			agg.Reasons = []string{fmt.Sprintf("fix cycle cap reached (%d/%d)", opts.FixAttempts, maxFix)}
 			return agg
 		}
+		if seenVerdicts[VerdictRequiresHuman] && contributorHandsFree(agg, opts) {
+			// A security finding is the contributor rule's one early exit
+			// to a person (hivecommons/hive#15640), and a sibling
+			// perspective's change request does not fold it into the fix
+			// cycle: the decision-marker path above already keeps it.
+			// projectbluefin/utah-packages#890 went back to its author at
+			// 072 for a PR-body edit while the security review's question
+			// about a new App credential waited on a maintainer.
+			if finding, backed := securityFindingAcross(reports, sensitivePaths); backed {
+				agg.DecisionFinding = finding
+				agg.Verdict = VerdictRequiresHuman
+				agg.RequiresHuman = true
+				return agg
+			}
+		}
 		agg.Verdict = VerdictChangesRequested
 		agg.FixCycle = true
 		markRequiresHumanPerspectivesAsChangesRequested(&agg)
