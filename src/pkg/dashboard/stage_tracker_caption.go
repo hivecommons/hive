@@ -171,6 +171,8 @@ const (
 // a merged or closed-unmerged blocker means for the row. It never adds the
 // `blocked` modifier: the label does that (finish), and an issue whose
 // label was lifted but whose body still carries the marker is not blocked.
+// When no PR marker or reason is at hand it falls through to
+// stageTrackerBlockedOnIssue for the `issue=` variant.
 func stageTrackerBlockedOnPR(it *StageTrackerItem, body, reason string, baseURL string, state func(repo string, number int) string) {
 	if it == nil || !slices.Contains(it.Modifiers, modBlocked) {
 		return
