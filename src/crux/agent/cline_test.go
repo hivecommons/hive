@@ -36,23 +36,23 @@ func TestClineLaunchAndObservation(t *testing.T) {
 
 func TestClineRefusesUntranslatablePolicy(t *testing.T) {
 	agent := &AgentProcess{Config: config.AgentConfig{Model: "openrouter/test", Tools: &config.ToolsConfig{Preset: "read-only"}}}
-	if err := validateClineLaunch(context.Background(), "must-not-execute", agent); err == nil || !strings.Contains(err.Error(), "policy") {
+	if err := validateClineLaunch(context.Background(), "must-not-execute", agent, ""); err == nil || !strings.Contains(err.Error(), "policy") {
 		t.Fatal(err)
 	}
 
 	agent.Config.Tools = nil
 	agent.Config.Connections = []config.ConnectionConfig{{Type: "mcp", URI: "https://must-not-use.invalid"}}
-	if err := validateClineLaunch(context.Background(), "must-not-execute", agent); err == nil {
+	if err := validateClineLaunch(context.Background(), "must-not-execute", agent, ""); err == nil {
 		t.Fatal("connections silently dropped")
 	}
 	agent.Config.Connections = nil
 	agent.Config.Model = "auto"
-	if err := validateClineLaunch(context.Background(), "must-not-execute", agent); err == nil || !strings.Contains(err.Error(), "provider/model") {
+	if err := validateClineLaunch(context.Background(), "must-not-execute", agent, ""); err == nil || !strings.Contains(err.Error(), "provider/model") {
 		t.Fatal("implicit provider accepted")
 	}
 	agent.Config.Model = "openrouter/test"
 	agent.Config.LaunchCmd = "cline --yolo"
-	if err := validateClineLaunch(context.Background(), "must-not-execute", agent); err == nil || !strings.Contains(err.Error(), "launch_cmd") {
+	if err := validateClineLaunch(context.Background(), "must-not-execute", agent, ""); err == nil || !strings.Contains(err.Error(), "launch_cmd") {
 		t.Fatal("override bypassed canonical runner")
 	}
 }

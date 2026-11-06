@@ -1010,7 +1010,21 @@ const PUBLIC_POST_PATHS = ['/api/contribute/register', '/api/contribute/reissue-
 // Device-flow sign-in runs before the visitor holds any credential. Matched
 // EXACTLY (query string aside), never by prefix, so a sibling route is not
 // opened by accident. /poll only completes a flow for the holder of its flow_id.
-const PUBLIC_EXACT_POST_PATHS = ['/api/gh-user-auth/start', '/api/gh-user-auth/poll'];
+//
+// The hive's two MCP endpoints authenticate their callers in the Go API. Those
+// callers do not hold the dashboard token, so a 401 here would refuse everyone
+// the endpoints exist for:
+//   /api/contribute/mcp  task MCP. The Go handler takes a per-launch token
+//                        (?token=, hub-launched agents) or a lease bearer
+//                        (remote contributors) and refuses everything else.
+//   /mcp/knowledge       public knowledge MCP. Anonymous by design; the Go API
+//                        serves it only while the owner's switch is on.
+// Neither credential is the dashboard token and bearerTokenMatches never reads
+// the query string, so hiveTokenVerified stays false: no X-Hive-Internal.
+const PUBLIC_EXACT_POST_PATHS = [
+  '/api/gh-user-auth/start', '/api/gh-user-auth/poll',
+  '/api/contribute/mcp', '/mcp/knowledge',
+];
 app.use((req, res, next) => {
   // SECURITY (CWE-306): decide ONCE, for every method, whether this request
   // actually presented the shared dashboard token. apiProxy injects the
@@ -1125,6 +1139,39 @@ app.use('/gh-setup', createProxyMiddleware({
     },
   },
 }));
+
+// Public read-only knowledge MCP (src/docs/public-knowledge-mcp.md). The Go
+// API serves POST /mcp/knowledge to anyone while the owner's "Public read-only
+// MCP" switch is on and refuses it otherwise. This route was missing here: an
+// anonymous POST got the token gate's 401, a POST with the dashboard token a
+// 404, and a GET the dashboard page, so the endpoint never worked through the
+// gateway. The proxy vouches for nobody on this route: X-Hive-Internal is
+// never added, not even for a request that presented the dashboard token, and
+// client-supplied identity headers are dropped.
+const knowledgeMcpProxy = createProxyMiddleware({
+  target: GO_API_URL,
+  changeOrigin: true,
+  on: {
+    proxyReq(proxyReq) {
+      proxyReq.removeHeader('X-Hive-Internal');
+      proxyReq.removeHeader('X-Hive-User');
+      proxyReq.removeHeader('X-Hive-Role');
+    },
+    error(err, req, res) {
+      console.error(`[knowledge-mcp-proxy] ${req.method} ${redactURL(req.url)} → ${err.message}`);
+      if (res.writeHead) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Go API unavailable', detail: err.message }));
+      }
+    },
+  },
+});
+app.post('/mcp/knowledge', knowledgeMcpProxy);
+// POST only, like the Go route: there is no SSE stream to GET.
+app.all('/mcp/knowledge', (_req, res) => {
+  res.setHeader('Allow', 'POST');
+  res.status(405).type('text/plain').send('Method Not Allowed');
+});
 
 function stripSensitiveTerminalQuery(rawUrl) {
   try {

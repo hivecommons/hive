@@ -1423,7 +1423,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	c.mu.Unlock()
 
 	turnEnvelopeID := h.persistTurnEnvelopeForAssignment(c, assignment, gen, prompt, chosen.labels)
-	mcp := h.mintTaskMCPForAssignment(identityOf(c), assignment, assignedAt.Add(leaseTTL), c.profile.GitHubUsername)
+	mcp := h.mintTaskMCPForAssignment(identityOf(c), assignment, assignedAt.Add(taskMCPLeaseTokenMaxTTL), c.profile.GitHubUsername)
 
 	// #8380: assert the issue claim for this lease — on the issue itself when
 	// the tier may write comments, on the lease alone otherwise. Runs after the

@@ -285,6 +285,9 @@ func (p readProvider) callWrite(ctx context.Context, tool string, args map[strin
 }
 
 func (p readProvider) ExecuteWrite(ctx context.Context, req adminmcp.WriteRequest) (any, error) {
+	if err := adminmcp.CheckRequestPath(req.Path); err != nil {
+		return nil, err
+	}
 	client, _, err := p.roster.activeClient()
 	if err != nil {
 		return nil, err
@@ -393,6 +396,9 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 // their query as a "?..." suffix; hivectl.Client takes the query separately
 // and would percent-encode a "?" left in the path (#9160).
 func getPath(ctx context.Context, client *hivectl.Client, path string) (any, error) {
+	if err := adminmcp.CheckRequestPath(path); err != nil {
+		return nil, err
+	}
 	apiPath, rawQuery, _ := strings.Cut(path, "?")
 	query, err := url.ParseQuery(rawQuery)
 	if err != nil {
