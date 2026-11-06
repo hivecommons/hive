@@ -444,7 +444,8 @@ setting.
 - **Paging.** `next_cursor` pages backwards. It names a history file by its first line's time
   and digest plus a byte offset, so a rotation (rename, then compression) between two calls
   neither repeats nor skips a line; a cursor whose file has left retention returns
-  `status: cursor_expired`.
+  `status: cursor_expired`. The digest covers at most the first 64 KiB of that line, so a file
+  that opens with a longer record can be paged like any other.
 - **Scrubbing.** Each line is scrubbed at read time before filtering: private-key blocks
   (scrubbed with overlap across the read region, so a key split by a page or rotation boundary,
   or one with no END marker, is redacted to the end of the result), then one precompiled
