@@ -439,8 +439,14 @@ func (p dashboardTaskMCPProvider) ciHealthSnapshot(scope taskmcp.Scope) taskmcp.
 	var input taskmcp.CICacheInput
 	cfg := p.config()
 	if cfg != nil {
-		input.RequiredChecks = append([]string(nil), cfg.AutoMerge.RequiredChecks...)
-		input.DefaultBranch = cfg.Project.PrimaryRepo
+		// The checks required for this task's repository: its own
+		// auto_merge.repos override when it has one, else the global list.
+		// default_branch stays empty: the hive keeps no default branch per
+		// repository, and the primary repository's name is not one.
+		required, _ := cfg.AutoMerge.RequiredCheckSetForRepo(scope.Repo)
+		for name := range required {
+			input.RequiredChecks = append(input.RequiredChecks, name)
+		}
 	}
 	input.States = map[string]string{}
 	input.FailingPRs = map[string]int{}
