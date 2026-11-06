@@ -37,7 +37,11 @@ func textCapMeta(originalBytes int) map[string]any {
 	}
 }
 
-// shrinkLists halves the longest top-level list until the envelope fits.
+// shrinkLists halves the largest top-level list until the envelope fits. Lists
+// are ranked by their encoded size, not their length: halving a long list of
+// small entries frees almost nothing, so ranking by length cut such lists
+// (and the answers in them) for no gain before it reached the list that was
+// actually over the cap.
 func shrinkLists(data any, originalBytes int) ([]byte, bool) {
 	var out map[string]any
 	switch x := data.(type) {
@@ -53,8 +57,9 @@ func shrinkLists(data any, originalBytes int) ([]byte, bool) {
 	}
 	prior, _ := out["_admin_mcp"].(map[string]any)
 	totals := map[string]int{}
+	sizes := listSizes(out)
 	for round := 0; round < maxShrinkRounds; round++ {
-		key := longestList(out)
+		key := largestList(sizes)
 		if key == "" {
 			return nil, false
 		}
@@ -62,7 +67,13 @@ func shrinkLists(data any, originalBytes int) ([]byte, bool) {
 		if _, seen := totals[key]; !seen {
 			totals[key] = len(items)
 		}
-		out[key] = items[:len(items)/2]
+		kept := items[:len(items)/2]
+		out[key] = kept
+		if len(kept) == 0 {
+			delete(sizes, key)
+		} else {
+			sizes[key] = encodedSize(kept)
+		}
 		out[key+"_truncated"] = true
 		meta := textCapMeta(originalBytes)
 		for k, v := range prior {
@@ -81,11 +92,33 @@ func shrinkLists(data any, originalBytes int) ([]byte, bool) {
 	return nil, false
 }
 
-func longestList(m map[string]any) string {
-	best, bestLen := "", 0
+// listSizes returns the encoded size of every non-empty top-level list.
+func listSizes(m map[string]any) map[string]int {
+	sizes := map[string]int{}
 	for k, v := range m {
-		if items, ok := v.([]any); ok && len(items) > bestLen {
-			best, bestLen = k, len(items)
+		if items, ok := v.([]any); ok && len(items) > 0 {
+			sizes[k] = encodedSize(items)
+		}
+	}
+	return sizes
+}
+
+func encodedSize(v any) int {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+// largestList names the list with the most encoded bytes. Equal sizes go to
+// the first name in sorted order, so the same result is cut the same way on
+// every call.
+func largestList(sizes map[string]int) string {
+	best, bestSize := "", 0
+	for k, size := range sizes {
+		if size > bestSize || (size == bestSize && best != "" && k < best) {
+			best, bestSize = k, size
 		}
 	}
 	return best
