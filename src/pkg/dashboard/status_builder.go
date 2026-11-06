@@ -2374,11 +2374,14 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult, govState governor.State, forge forgeOpenCounter) []FrontendRepo {
 	repos := make([]FrontendRepo, 0, len(cfg.Project.Repos))
 	repoRows := make(map[string]string, len(cfg.Project.Repos)*2)
-	for _, repoName := range cfg.Project.Repos {
-		full := repoName
+	qualify := func(repoName string) string {
 		if cfg.Project.Org != "" && !strings.Contains(repoName, "/") {
-			full = cfg.Project.Org + "/" + repoName
+			return cfg.Project.Org + "/" + repoName
 		}
+		return repoName
+	}
+	for _, repoName := range cfg.Project.Repos {
+		full := qualify(repoName)
 		repoRows[repoName] = repoName
 		repoRows[full] = repoName
 	}
@@ -2441,10 +2444,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 		// Prefixing the org unconditionally turned the latter into
 		// "laredo/laredo/cuga-agent" in the REPOSITORIES card and in every
 		// GitHub link built from it.
-		full := repoName
-		if cfg.Project.Org != "" && !strings.Contains(repoName, "/") {
-			full = cfg.Project.Org + "/" + repoName
-		}
+		full := qualify(repoName)
 
 		issueCount := 0
 		prCount := 0
