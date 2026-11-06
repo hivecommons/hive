@@ -328,7 +328,7 @@ func enforceHoldGuard(
 // pinned, and advancing a baseline that was never pinned would plant a wrong
 // one.
 //
-// Branches a dependency bot owns (dependencyBotBranch) are skipped too: the
+// Branches a dependency bot owns (github.DependencyBotBranch) are skipped too: the
 // bot rebases them itself, and a hive commit on the branch makes Renovate stop
 // rebasing it for good.
 func maintainHeldPRMergeability(
@@ -354,7 +354,7 @@ func maintainHeldPRMergeability(
 		if state != "behind" && state != "dirty" {
 			continue
 		}
-		if dependencyBotBranch(pr) {
+		if github.DependencyBotBranch(pr.HeadRef, pr.Author) {
 			logger.Debug("hold guard: held PR branch belongs to a dependency bot; leaving the base sync to the bot",
 				"repo", repo, "pr", pr.Number, "head_ref", pr.HeadRef, "author", pr.Author, "mergeable_state", state)
 			continue
@@ -446,17 +446,6 @@ func maintainHeldPRMergeability(
 		logger.Info("hold guard: merged base into held PR to keep it mergeable",
 			"repo", repo, "pr", pr.Number, "mergeable_state", state, "new_head", newHead)
 	}
-}
-
-// dependencyBotBranch reports whether a PR's head branch belongs to a
-// dependency bot that keeps it up to date itself: a `renovate/` head ref (any
-// Renovate deployment, whatever App it runs as) or a dependencyBots author.
-// Renovate refuses to rebase a branch once another identity has committed to
-// it, so a hive merge-from-base on such a branch strands it behind its base
-// for good (projectbluefin/utah#1097: three hive base merges, then "will not
-// automatically rebase … does not recognize the last commit author").
-func dependencyBotBranch(pr github.PullRequest) bool {
-	return strings.HasPrefix(pr.HeadRef, "renovate/") || dependencyBots[pr.Author]
 }
 
 // intentConfigFromCfg maps config.IntentConfig onto the intent package's

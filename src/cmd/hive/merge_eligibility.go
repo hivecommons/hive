@@ -853,8 +853,11 @@ const mergeTrainRebaseRequester = "merge-train"
 // would merge it unattended) whose head the hive can push to. Its rebase is
 // the hive's: the trusted-author lane never rebases, and the author is a
 // person who opened it through the hive and expects the hive to carry it.
+// A dependency bot's branch never is: the bot resolves its own conflicts,
+// and a fixer push would stop it rebasing the branch for good
+// (github.DependencyBotBranch).
 func trustedAuthorRebasePR(cfg *config.Config, fullRepo string, pr github.PullRequest) bool {
-	if cfg == nil || github.ReachableAction(pr) != github.ReachableActionPush {
+	if cfg == nil || github.ReachableAction(pr) != github.ReachableActionPush || github.DependencyBotBranch(pr.HeadRef, pr.Author) {
 		return false
 	}
 	policy := trustedAuthorPolicyFunc(cfg)()

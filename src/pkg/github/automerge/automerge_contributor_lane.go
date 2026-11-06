@@ -1394,7 +1394,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		if relay {
 			return eval, "behind", nil
 		}
-		_, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind", c.isForkPR(pr))
+		_, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind", pr)
 		return eval, reason, err
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
@@ -1466,7 +1466,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// approved head is worth an update-branch commit; a relay evaluation
 	// never updates the branch.
 	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
-		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr), stageLaneContributor); stop {
+		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", pr, stageLaneContributor); stop {
 			return eval, reason, err
 		}
 	}
@@ -1532,7 +1532,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	})
 	if err != nil {
 		if c.requiredChecksExpected(attempt, err) {
-			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(eval.pr))
+			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", eval.pr)
 		}
 		if reason := c.workflowFenceMergeUnauthorized(ctx, displayRepo, owner, repo, eval, err); reason != "" {
 			return AutoMergeSweepEvent{}, reason, nil

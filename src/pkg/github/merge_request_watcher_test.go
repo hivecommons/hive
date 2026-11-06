@@ -131,6 +131,64 @@ func TestMergeRequestWatcher_MergesAndConsumes(t *testing.T) {
 	}
 }
 
+// hive-merge --update-branch never merges the base into a dependency bot's
+// branch (projectbluefin/utah#1097: Renovate stops rebasing a branch once
+// the hive committed to it); the merge attempt still runs. An ordinary
+// branch is still updated first.
+func TestMergeRequestWatcher_UpdateBranchSkipsDependencyBotBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		headRef     string
+		author      string
+		wantUpdates int32
+	}{
+		{name: "renovate head ref", headRef: "renovate/go-deps"},
+		{name: "dependency bot author", headRef: "deps/bump", author: "dependabot[bot]"},
+		{name: "ordinary branch", headRef: "feature", wantUpdates: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var updates, merges atomic.Int32
+			green := greenFixture()
+			green.headRef, green.author = tc.headRef, tc.author
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if green.serveCI(w, r) {
+					return
+				}
+				switch {
+				case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/update-branch"):
+					updates.Add(1)
+					w.WriteHeader(http.StatusAccepted)
+					_, _ = io.WriteString(w, `{"message":"Updating pull request branch."}`)
+				case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge"):
+					merges.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"sha":"deadbeef","merged":true,"message":"Pull Request successfully merged"}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+
+			dir := t.TempDir()
+			mergeRequestDirForTest = dir
+			defer func() { mergeRequestDirForTest = "" }()
+
+			if _, err := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 42, Method: "squash", Agent: "scanner", UpdateBranch: true}); err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessMergeRequestsOnce(context.Background())
+
+			if got := updates.Load(); got != tc.wantUpdates {
+				t.Fatalf("update-branch calls = %d, want %d", got, tc.wantUpdates)
+			}
+			if got := merges.Load(); got != 1 {
+				t.Fatalf("merges = %d, want 1", got)
+			}
+		})
+	}
+}
+
 // A nil authorizer must fail closed — no merge, request quarantined .denied.
 func TestMergeRequestWatcher_NilAuthzFailsClosed(t *testing.T) {
 	merges := 0

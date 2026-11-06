@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 func TestCurrentBaseGate(t *testing.T) {
@@ -72,7 +74,7 @@ func TestCurrentBaseGate(t *testing.T) {
 			c.requireCurrentBase = func(repo string) bool {
 				return tc.optIn && strings.EqualFold(repo, "acme/widget")
 			}
-			event, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, tc.updateAllowed, "behind", false)
+			event, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, tc.updateAllowed, "behind", nil)
 			if stop != tc.wantStop || reason != tc.wantReason {
 				t.Fatalf("stop, reason = %v, %q; want %v, %q", stop, reason, tc.wantStop, tc.wantReason)
 			}
@@ -141,7 +143,7 @@ func TestCurrentBaseGateUpdateUnavailableFallback(t *testing.T) {
 			c.requireCurrentBase = func(string) bool { return true }
 			c.requireCurrentBaseStrict = func(string) bool { return tc.strict }
 			for tick := 0; tick < 2; tick++ {
-				_, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, true, "behind", tc.fork)
+				_, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, true, "behind", currentBaseTestPR(tc.fork, "feature", "alice", "behind"))
 				if err != nil {
 					t.Fatalf("tick %d: err = %v", tick, err)
 				}
@@ -151,6 +153,145 @@ func TestCurrentBaseGateUpdateUnavailableFallback(t *testing.T) {
 			}
 			if got := strings.Count(logs.String(), currentBaseFallbackMessage); got != tc.wantWarns {
 				t.Fatalf("fallback WARN lines over two ticks = %d, want %d (one per PR, not per sweep):\n%s", got, tc.wantWarns, logs.String())
+			}
+		})
+	}
+}
+
+// currentBaseTestPR is the lane's PR payload for currentBaseGate: head ref,
+// author and mergeable state, on a fork head or a same-repo branch.
+func currentBaseTestPR(fork bool, headRef, author, mergeableState string) *gh.PullRequest {
+	headRepo := "acme/widget"
+	if fork {
+		headRepo = "someone/widget"
+	}
+	return &gh.PullRequest{
+		Number:         gh.Ptr(7),
+		User:           &gh.User{Login: gh.Ptr(author)},
+		MergeableState: gh.Ptr(mergeableState),
+		Head:           &gh.PullRequestBranch{Ref: gh.Ptr(headRef), SHA: gh.Ptr("sha-head"), Repo: &gh.Repository{FullName: gh.Ptr(headRepo)}},
+		Base:           &gh.PullRequestBranch{Ref: gh.Ptr("main"), Repo: &gh.Repository{FullName: gh.Ptr("acme/widget")}},
+	}
+}
+
+// TestCurrentBaseGateLeavesDependencyBotBranchToTheBot pins
+// projectbluefin/utah#1097: a behind Renovate branch is never
+// update-branched (Renovate stops rebasing a branch once another identity
+// committed to it). A repo listed in auto_merge.require_current_base, or a
+// head GitHub itself reports behind under its up-to-date rule, holds as
+// "behind" for the bot to rebase; a repo gated only by the hive-wide default
+// merges it as tested. An ordinary PR on the same repo is still updated.
+func TestCurrentBaseGateLeavesDependencyBotBranchToTheBot(t *testing.T) {
+	const head = "sha-head"
+	cases := []struct {
+		name        string
+		pr          *gh.PullRequest
+		strict      bool
+		wantStop    bool
+		wantReason  string
+		wantUpdates int
+	}{
+		{name: "renovate bot on a listed repo holds", pr: currentBaseTestPR(false, "renovate/actions-checkout-5.x", "renovate[bot]", "clean"), strict: true, wantStop: true, wantReason: "behind"},
+		{name: "renovate head ref under another account holds", pr: currentBaseTestPR(false, "renovate/go-deps", "castrojo", "clean"), strict: true, wantStop: true, wantReason: "behind"},
+		{name: "dependabot author holds", pr: currentBaseTestPR(false, "dependabot/npm_and_yarn/x", "dependabot[bot]", "clean"), strict: true, wantStop: true, wantReason: "behind"},
+		{name: "github up-to-date rule holds on a default-gated repo", pr: currentBaseTestPR(false, "renovate/x", "renovate[bot]", "behind"), wantStop: true, wantReason: "behind"},
+		{name: "default-gated repo merges as tested", pr: currentBaseTestPR(false, "renovate/x", "renovate[bot]", "clean")},
+		{name: "ordinary PR is still updated", pr: currentBaseTestPR(false, "feature", "alice", "behind"), strict: true, wantStop: true, wantReason: basePreparationReady, wantUpdates: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			updates := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/compare/main..."+head:
+					_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
+				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
+					updates++
+					w.WriteHeader(http.StatusAccepted)
+					_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			c := newAutoMergeSweepClient(srv.URL)
+			c.requireCurrentBase = func(string) bool { return true }
+			c.requireCurrentBaseStrict = func(string) bool { return tc.strict }
+			event, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, true, "behind", tc.pr)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if stop != tc.wantStop || reason != tc.wantReason {
+				t.Fatalf("stop, reason = %v, %q; want %v, %q", stop, reason, tc.wantStop, tc.wantReason)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if updates != tc.wantUpdates || event.BranchUpdated != (tc.wantUpdates > 0) {
+				t.Fatalf("update-branch calls = %d (BranchUpdated %v), want %d", updates, event.BranchUpdated, tc.wantUpdates)
+			}
+		})
+	}
+}
+
+// TestUpdateBranchAndSkipLeavesDependencyBotBranchToTheBot pins the lanes'
+// GitHub-reported "behind" and required-checks-expected path: a dependency
+// bot's branch holds as "behind" with no update-branch call, and an ordinary
+// PR is still updated.
+func TestUpdateBranchAndSkipLeavesDependencyBotBranchToTheBot(t *testing.T) {
+	const head = "sha-head"
+	cases := []struct {
+		name        string
+		pr          *gh.PullRequest
+		wantReason  string
+		wantUpdates int
+	}{
+		{name: "renovate bot", pr: currentBaseTestPR(false, "renovate/actions-checkout-5.x", "renovate[bot]", "behind"), wantReason: "behind"},
+		{name: "mergeraptor bot", pr: currentBaseTestPR(false, "refresh-buildroot", "mergeraptor[bot]", "behind"), wantReason: "behind"},
+		{name: "renovate head ref", pr: currentBaseTestPR(false, "renovate/go-deps", "castrojo", "behind"), wantReason: "behind"},
+		{name: "ordinary PR", pr: currentBaseTestPR(false, "feature", "alice", "behind"), wantReason: "check-pending", wantUpdates: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			updates := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
+				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
+					updates++
+					w.WriteHeader(http.StatusAccepted)
+					_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			c := newAutoMergeSweepClient(srv.URL)
+			event, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, "behind", tc.pr)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if updates != tc.wantUpdates || event.BranchUpdated != (tc.wantUpdates > 0) {
+				t.Fatalf("update-branch calls = %d (BranchUpdated %v), want %d", updates, event.BranchUpdated, tc.wantUpdates)
 			}
 		})
 	}
