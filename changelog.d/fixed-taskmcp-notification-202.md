@@ -1,0 +1,1 @@
+- The task MCP endpoint now answers a notification-only POST (a request with no `id` and a `notifications/` method) with `202 Accepted` and no body, as MCP Streamable HTTP expects, instead of a `200` JSON-RPC result ([#16903](https://github.com/hivecommons/hive/issues/16903)).
