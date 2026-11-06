@@ -93,6 +93,12 @@ type delegatedDecisionRequest struct {
 	// Head is the PR head the tracker row showed; it only keys the
 	// preview's plan cache, so a push asks GitHub afresh.
 	Head string `json:"head,omitempty"`
+	// NoMerge decides without the merger role, so an approval is the
+	// `/lgtm` + `/approve` path and never an Approve review queued for
+	// auto-merge. Admin MCP always sends it (repository.item_delegate):
+	// queueing a merge is excluded there. It can only narrow what the
+	// caller's role allows.
+	NoMerge bool `json:"no_merge,omitempty"`
 }
 
 // delegatedDecisionJob is the wire shape of one job.
@@ -279,7 +285,7 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 		jsonResponse(w, snapshot)
 		return
 	}
-	mergerRole := config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleMerger) &&
+	mergerRole := !body.NoMerge && config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleMerger) &&
 		(!isOwnerRole(r.Header.Get("X-Hive-Role")) || r.Header.Get(ownerRoleVerifiedHeader) == "true")
 	run := func() {
 		ctx := context.Background()

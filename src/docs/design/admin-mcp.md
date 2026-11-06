@@ -91,9 +91,11 @@ Phase 3 adds the reusable contract that phases 4–6 extend. The MCP exposes two
 
 Writes are disabled by default on both transports. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` to enable them. Pending confirmations are durable: the dashboard endpoint stores them in `/data/admin-mcp-pending-confirmations.json` by default, and the stdio binary stores them under the user's config directory; both support `HIVE_ADMIN_MCP_PENDING_FILE` as an explicit path. The confirmation is not a capability for any other action: it is action-bound, hive-bound, one-use, and time-limited.
 
-The write contract deliberately goes through existing dashboard REST endpoints and sends only the dashboard token. It never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision. Audit attribution therefore falls back to the token-authenticated owner identity (the configured owner's login, or `owner`), as recorded below.
+The write contract deliberately goes through existing dashboard REST endpoints. A client never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision.
 
-Because a confirmed write re-authenticates with the dashboard token alone, the endpoint checks up front whether that can succeed for the current caller. When the dashboard enforces authentication and the caller was admitted some other way (a per-user session, hub proxy proof, or the internal header) rather than with `Authorization: Bearer <dashboard token>`, or when the spoke enforces direct-route authorization (which refuses the shared token), writes are reported as unavailable for that caller: `tools/list` and `exclusion_catalogue` show `writes_enabled: false` with the reason (`writes_unavailable_reason` in the catalogue), and `write_preview` refuses without minting a confirmation that could never execute.
+**A confirmed write runs as the caller the hive verified.** The stdio binary sends the dashboard token, so its writes run as the token-authenticated owner identity (the configured owner's login, or `owner`), as recorded below. The dashboard endpoint serves the confirm in-process: `authenticate` has already verified the caller of the `/api/admin/mcp` request (dashboard token, per-user session, hub proxy proof or the internal header) and stripped any identity the client asserted, so the write runs under that verified user, role and verified-owner marker — the same ones the read tools already carry — without re-entering `authenticate`. A hub-proxied or session caller can therefore write; every role check (`canToggleRepoHold`, `requireOwnerRole`, `requireMergerOrOwnerRole`) sees that caller; and the write is attributed to them. A pending confirmation records the actor that previewed it, and `write_confirm` from any other actor is refused with the confirmation put back unused, so a write runs as the person who saw its preview.
+
+The endpoint still checks up front whether a write can succeed for the current caller. A caller whose role is `read`, or a request carrying no verified identity on a hive that enforces authentication, is reported as unable to write: `tools/list` and `exclusion_catalogue` show `writes_enabled: false` with the reason (`writes_unavailable_reason` in the catalogue), and `write_preview` refuses without minting a confirmation that could never execute.
 
 ### Configuring the stdio binary
 
@@ -146,7 +148,10 @@ Two corollaries the client must honour:
 
 - It must never send `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`.
   `authenticate` strips inbound copies of all three before auth precisely because they are
-  forgeable, so sending them cannot grant anything and marks the client as suspect.
+  forgeable, so sending them cannot grant anything and marks the client as suspect. This binds
+  the client. The dashboard endpoint itself runs a confirmed write as the identity
+  `authenticate` verified on the request (see the write contract above), which is not a
+  client assertion.
 - The token goes in the `Authorization` header only. A `?token=` query parameter is rejected
   outright by `writeQueryTokenRejected`.
 
@@ -160,7 +165,8 @@ A token-bearing admin client therefore **cannot administer a direct-route spoke 
 That is correct behaviour on Hive's side and a hard limit on the client's applicability, not
 a gap to work around. The client is expected to detect it at connect time and say so,
 distinguishing it from a merely wrong token. `hivectl` has the same limitation for the same
-reason.
+reason. The dashboard endpoint reached with a per-user session is not token-bearing: it reads
+and writes as that signed-in user, at their allowlist role.
 
 ### Mode ladder — not a check, but the thing most worth previewing
 
@@ -384,6 +390,25 @@ read and to retry, rather than answer from mixed snapshots. A hive that predates
 reports none on either export, which never counts as a mismatch. The same
 `adminmcp.ReadReviewQueue` serves the dashboard endpoint and the stdio server.
 
+**`stage_tracker_read`** answers "what is on the Activity monitor?": it reads
+`GET /api/stage-tracker`, the payload the dashboard's Activity monitor draws, and returns the
+items with `stages[]` (number, slug, label, dwell, and how many items sit at each now) and the
+board's counts (`open_issues`, `open_prs`, `needs_human`, `on_hold`, `waiting_on_human`).
+Filters are applied in `pkg/adminmcp` after the read, so the stage counts always describe the
+whole board: `repo`, `kind`, `number` (the item itself), `q` (the monitor's search box — a
+number matches the item or a linked pull request or issue by number, other text matches
+titles, as `tracker-filter.js` does), `stage`, `needs_human`, `on_hold` and `waiting_on_you`.
+`view=summary` (the default) keeps the fields a row shows — stage, reason and caption, wait
+kind, decision question and options, linked items, blocker, hold, Sentinel state, merge gate,
+last operator action; `view=full` keeps every field, history and activity strips included.
+`recent=true` adds `recently_merged` and `recently_closed`, capped by `limit`. Pages are
+`limit` items from `offset`, with `next_offset` and `_admin_mcp.total` on a capped page. Before
+the board's first snapshot the endpoint answers `{"status":"initializing"}`, and the tool
+returns a `board_unavailable` refusal instead of an empty board; an item preview that cannot
+read the board says so (`on_board: "unknown"`) rather than reporting the item as absent.
+**`delegated_decision_status`** reads `GET .../items/{number}/decide-delegated`, the job a
+"Let hive decide" starts, so the outcome of `repository.item_delegate` can be read back.
+
 **`governor_setup_proposal`** (hive#10034) answers "set up these governors for me" for a new
 hive. It reads `GET /api/config/governor`, which already carries the repo count, cadence
 scope, scaling curve, effective and operator-pinned thresholds and budget, and returns one
@@ -511,6 +536,12 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | feature settings | `PUT /api/config/governor/features` | `requireOwnerRole`; pointer fields, nil means unchanged |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
+| re-evaluate now | `POST /api/repos/rescan` | none beyond write access |
+| accept triage | `POST /api/repos/{owner}/{repo}/items/{number}/accept-triage` | `canToggleRepoHold` |
+| mark needs-human | `POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human` | `requireMergerOrOwnerRole`; needs a user |
+| blocker re-check / hand-off / partial close | `POST /api/repos/{owner}/{repo}/items/{number}/blocker/{recheck,handoff,close-partial}` | `canToggleRepoHold`; needs a user |
+| decide | `POST /api/repos/{owner}/{repo}/items/{number}/decision` | `canToggleRepoHold`; needs a user; `merge-now` / `queue-merge` refused client-side |
+| let hive decide | `POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated` → `GET` same path (`delegated_decision_status`) | `delegateDecisionEnabled`, `canToggleRepoHold`; needs a user; always `no_merge` |
 | spend | `PUT /api/config/governor/budget`, `POST /api/config/governor/budget/reset`, `POST /api/budget-ignore` | `requireOwnerRole` |
 | contributors | `PUT /api/contributors/{id}/trust`, `PUT /api/contributors/{id}/agent-role`, `PUT /api/contributors/{id}/agent-role-grants`, `POST /api/contributors/{id}/revoke`, `/requeue`, `DELETE /api/contributors/{id}` | `requireOwnerRole` except `/requeue`, which remains `requireContributorWrite` |
 | backup | `POST /api/backup` | `requireOwnerRole` |
@@ -590,6 +621,33 @@ Phase 5 registers the fleet-level write operations under that contract:
   of the change in operator terms — a lower effective threshold engages a busier mode at a
   shallower queue, which raises agent cadence and spend — because the number alone does not tell
   an owner what it buys.
+
+The Activity monitor's row actions are registered as the `repository.rescan` and
+`repository.item_*` operations, each sending the request the dashboard's button sends
+(`stageTrackerActionRequest` in `tracker-actions.js`):
+
+- `repository.rescan` ("Re-evaluate now"), `repository.item_accept_triage`,
+  `repository.item_needs_human` (a reason is required),
+  `repository.item_blocker_recheck`, `repository.item_blocker_handoff` and
+  `repository.item_blocker_close_partial`. Item hold is the existing
+  `repository.item_hold`.
+- `repository.item_decision` is the Decide menu: `approve`, `direction` (needs the text),
+  `close-superseded`, `close-wontfix`, `close-read`, `close-issue`, `adopt`, `adopt-now`
+  (`adopt` with `force`), `re-author` and `reroute` (`to`, default `any`). The merge answers
+  `merge-now` and `queue-merge` are refused before any request; see the exclusions below.
+- `repository.item_delegate` is "Let hive decide", with `prs` for an issue's nested pull
+  requests and `rerun` for a stuck decision. It always sends `no_merge`, which makes the
+  handler decide without the merger role: an approval the decider reaches is the
+  `/lgtm` + `/approve` path, never an Approve review queued for auto-merge. Without it, a
+  merger's delegated approval would be the excluded queue-automerge reached another way. The
+  job runs in the background; `delegated_decision_status` reads its outcome.
+
+Each item preview reads the item off the Activity monitor first and shows its kind, stage,
+reason and decision question, so the confirm is against the state an operator would have
+seen; an item not on the board is said to be so. The item kind (`type`) comes from the board
+when the caller omits it. Decide, Let hive decide, the blocker actions and needs-human are
+recorded as a person's decision, which is why they need the verified caller described in the
+write contract: through the token path they would be recorded under the configured owner.
 
 ### Diagnostic reads
 
@@ -745,6 +803,11 @@ explicitly not to.
   capability change previews as "these agents gain this authority", whereas this is "this pull
   request, merged, now". Worth revisiting if a preview can be made to show the diff and the
   checks being merged.
+- **POST /api/repos/{owner}/{repo}/items/{number}/decision with merge-now or queue-merge.**
+  The Activity monitor's "Merge now as maintainer" and "Approve and let hive merge" answers are
+  the queue-automerge exclusion in another form: one merges at once, the other queues the
+  merge. repository.item_decision refuses both, and repository.item_delegate sends no_merge so
+  a delegated approval never queues one either.
 - **`PUT /api/config/agent/{name}/prompt`.** The kick hazard made permanent. Kick text reaches
   the CLI once and is confirmed verbatim for that reason; a prompt reaches it on *every*
   future kick, and Hive does not scan that path either. Verbatim confirmation is a reasonable
@@ -782,6 +845,12 @@ explicitly not to.
   after the preview and confirmation contract is implemented in phase 3.
 
 ## Known gap: attribution
+
+**Narrowed for the dashboard endpoint.** A confirmed write over the HTTP endpoint now runs as
+the caller the hive verified (see the write contract), so a session or hub-proxied caller's
+write is audited under their own login. What follows still holds for the dashboard token —
+the stdio binary, and an HTTP client that authenticates with the token — whose writes are
+the token holder's by definition.
 
 `requestUser` resolves the acting user from `X-Hive-User`, falling back to `"local"` only when
 that header is empty. The bearer-token middleware fills the header with the owner identity

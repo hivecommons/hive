@@ -360,6 +360,11 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 			return nil, err
 		}
 	}
+	if tool == adminmcp.ToolDelegatedDecisionStatus {
+		if _, err := adminmcp.DelegatedDecisionStatusPath(args); err != nil {
+			return nil, err
+		}
+	}
 	path, ok := readPath(tool, args)
 	if !ok {
 		return nil, &unsupportedToolError{tool: tool}
@@ -378,6 +383,12 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	}
 	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
 		return adminmcp.BandReadResult(tool, data, args)
+	}
+	if tool == adminmcp.ToolStageTrackerRead {
+		return adminmcp.StageTrackerReadResult(data, args)
+	}
+	if tool == adminmcp.ToolDelegatedDecisionStatus {
+		return data, nil
 	}
 	if tool == adminmcp.ToolGovernorSetup {
 		return adminmcp.GovernorSetupProposal(data)
@@ -549,6 +560,13 @@ func readPath(tool string, args map[string]any) (string, bool) {
 	}
 	if tool == adminmcp.ToolAdvisorRecords {
 		return adminmcp.AdvisorRecordsReadPath(args), true
+	}
+	if tool == adminmcp.ToolStageTrackerRead {
+		return adminmcp.StageTrackerReadPath(), true
+	}
+	if tool == adminmcp.ToolDelegatedDecisionStatus {
+		path, err := adminmcp.DelegatedDecisionStatusPath(args)
+		return path, err == nil
 	}
 	return adminmcp.ReadPath(tool, adminmcp.LimitFromArgs(args))
 }
