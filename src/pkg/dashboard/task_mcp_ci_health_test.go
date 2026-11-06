@@ -54,8 +54,8 @@ func TestTaskMCPCIHealthUsesTheRepositorysRequiredChecks(t *testing.T) {
 	}
 }
 
-// ci_health filled default_branch with project.primary_repo, a repository
-// name. The hive has no default branch on record, so the field is left out.
+// ci_health filled default_branch with the primary repository's name. The
+// hive has no default branch on record, so the field is left out.
 func TestTaskMCPCIHealthDoesNotReportTheRepoNameAsDefaultBranch(t *testing.T) {
 	s := newTestServer()
 	cfg := &config.Config{}
