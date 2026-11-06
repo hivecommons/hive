@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // The `hive/claimed-by-<who>` "who" modifier. One rule for the suffix lives
@@ -255,7 +256,21 @@ func removeLapsedClaimedByLabels(ctx context.Context, client *Client, in IssueSt
 	if live {
 		return 0
 	}
-	if err := client.RemoveLabelsFresh(ctx, in.Repo, in.Number, stale...); err != nil {
+	if client.WritebackGate() != nil {
+		fresh, _, err := client.client.Issues.Get(ctx, owner, name, in.Number)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("claimed-by label: issue read failed; keeping the label this cycle", "repo", in.Repo, "issue", in.Number, "error", err)
+			}
+			return 0
+		}
+		author := fresh.GetUser().GetLogin()
+		item := writeback.Item{Number: in.Number, IsPR: fresh.IsPullRequest(), Author: author, HiveAuthored: client.IsHiveAuthorLogin(author), Labels: extractLabels(fresh.Labels), CreatedAt: fresh.GetCreatedAt().Time}
+		if !client.WritebackAllowed(in.Repo, item, writeback.KindClaimComment, "remove lapsed agent claim labels").Allowed {
+			return 0
+		}
+	}
+	if err := client.RemoveLabelsFresh(ctx, in.Repo, in.Number, stale...); err != nil { // writeback:gated — claim label policy checked above
 		if logger != nil {
 			logger.Warn("claimed-by label: removing lapsed agent label failed", "repo", in.Repo, "issue", in.Number, "labels", stale, "error", err)
 		}

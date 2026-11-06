@@ -1,0 +1,1 @@
+- Honor write-back policy before removing lapsed agent claim labels from issues.

@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // A claim by a human principal replaces a hand-applied backend-named label
@@ -295,10 +296,13 @@ func TestSyncIssueStageLabels_RemovesLapsedAgentClaimedBy(t *testing.T) {
 		bodies      []string
 		fetchFail   bool
 		ledgerLive  bool
+		gateMode    writeback.RepoMode
 		wantRemoved string
 		wantRead    bool
 	}{
 		{name: "parked orphan, no marker, no ledger claim", labels: parked, wantRemoved: "hive/claimed-by-scanner", wantRead: true},
+		{name: "writeback disabled", labels: parked, gateMode: writeback.RepoModeOff, wantRead: true},
+		{name: "writeback enabled", labels: parked, gateMode: writeback.RepoModeFull, wantRemoved: "hive/claimed-by-scanner", wantRead: true},
 		{name: "parked, marker lapsed", labels: parked, bodies: []string{marker(now.Add(-3*time.Hour), now.Add(-time.Hour))}, wantRemoved: "hive/claimed-by-scanner", wantRead: true},
 		{name: "parked, live marker", labels: parked, bodies: []string{marker(now.Add(-30*time.Minute), now.Add(time.Hour))}, wantRead: true},
 		{name: "parked, live ledger claim", labels: parked, ledgerLive: true, wantRead: true},
@@ -330,6 +334,9 @@ func TestSyncIssueStageLabels_RemovesLapsedAgentClaimedBy(t *testing.T) {
 			t.Cleanup(srv.Close)
 			c := issueStageTestClient(t, srv, true)
 			c.appBotLogin = "hive[bot]"
+			if tt.gateMode != "" {
+				c.SetWritebackGate(writeback.New(writeback.Config{PerRepo: map[string]writeback.RepoOverride{"acme/widgets": {Mode: tt.gateMode}}}, writeback.Deps{}, ""))
+			}
 			c.SetIssueStageLabels(func() IssueStagePolicy {
 				return IssueStagePolicy{Enabled: true, AgentNames: []string{"scanner", "reviewer"}}
 			})
