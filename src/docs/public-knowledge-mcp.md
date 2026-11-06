@@ -9,7 +9,7 @@
 3. Ask the client to call `knowledge_search` with `{"query":"bluetooth"}`, or use the curl example. A successful tool result contains `query`, `count`, and `results`. For example, `{"query":"bluetooth","count":0,"results":[]}` is a successful search with no matching public notes, not a connection failure. Matches contain the public fact fields listed below. MCP clients may wrap that JSON in a tool-result content block.
 4. A disabled endpoint is closed, like any other private address of the hive. What you see depends on whether you are signed in to that hive:
    - not signed in: **401** and the hive's sign-in page (on a hosted hive, a redirect to the hub's sign-in);
-   - signed in, or the hive has no dashboard token: **404**.
+   - signed in, or the hive has neither a dashboard token nor a sign-in allowlist: **404**.
 
    Either way you do not need credentials, because an enabled endpoint asks for none. Confirm the URL and ask the owner whether sharing is on.
 5. To stop using the connection, remove `bluefin-hive` from the client configuration you added (in Claude Code, `claude mcp remove bluefin-hive`). To stop publishing for everyone, the **owner** turns the sharing switch off; this takes effect without a restart.
@@ -42,7 +42,7 @@ legacy env-only behavior remains unchanged.
 
 | Variable | Effect |
 |---|---|
-| `HIVE_PUBLIC_KNOWLEDGE=1` (`true`/`yes`/`on`) | Enables `POST /mcp/knowledge`. Unset or anything else → the path is closed: **404**, even to the owner, and **401** to a caller who is not signed in. |
+| `HIVE_PUBLIC_KNOWLEDGE=1` (`true`/`yes`/`on`) | Enables `POST /mcp/knowledge`. Unset or anything else → the path is closed: **404**, even to the owner, and **401** to a caller who is not signed in on a hive that requires sign-in. |
 | `HIVE_PUBLIC_KNOWLEDGE_TAGS=linux,troubleshooting` | Optional. Only facts carrying at least one listed tag are served. |
 
 Both the dashboard setting and env fallback are resolved on every request, so
