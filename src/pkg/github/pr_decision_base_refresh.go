@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -29,6 +31,18 @@ const baseRefreshMergeParents = 2
 // carry walks back through to reach the decided head (hivecommons/hive#15766).
 const baseRefreshMaxHops = 5
 
+// baseRefreshCompareFileCap is the most files GitHub lists for a compare,
+// however it is paginated; a compare that reaches it may be truncated.
+const baseRefreshCompareFileCap = 300
+
+// baseRefreshWebFlowLogin is the committer login GitHub puts on commits it
+// creates and signs itself, such as the update-branch merge.
+const baseRefreshWebFlowLogin = "web-flow"
+
+// ErrCompareFileCap reports a compare whose file list reached GitHub's
+// 300-file cap, so the diff cannot be verified file for file.
+var ErrCompareFileCap = errors.New("compare file list reached GitHub's 300-file cap")
+
 // BaseRefreshRepos is the slice of the repositories API the base-refresh
 // check reads: one commit lookup and two three-dot compares per new head.
 type BaseRefreshRepos interface {
@@ -46,9 +60,11 @@ type BaseRefreshChecker struct {
 }
 
 // HeadIsBaseRefreshOf reports whether newHead on owner/repo#number is a
-// merge commit authored by the App (appBotLogin) whose parents are oldHead
+// GitHub-verified merge commit created by the App (appBotLogin, see
+// CommitIsVerifiedAppMerge) whose parents are oldHead
 // and a commit on baseRef, and whose three-dot diff against baseRef is
-// file-for-file identical to oldHead's. That is exactly the head the
+// file-for-file identical to oldHead's (a compare at GitHub's 300-file cap
+// cannot show that and is false). That is exactly the head the
 // require_current_base gate produces when it merges the base into the
 // branch: the PR's content is unchanged, only its base moved. Any other
 // head change — a content commit (even one that also merged the base), a
@@ -127,7 +143,7 @@ func mergeIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo
 	if commit == nil || len(commit.Parents) != baseRefreshMergeParents {
 		return false
 	}
-	if !CommitByGitHubLogin(commit, appBotLogin) {
+	if !CommitIsVerifiedAppMerge(commit, appBotLogin) {
 		return false
 	}
 	first, second := strings.TrimSpace(commit.Parents[0].GetSHA()), strings.TrimSpace(commit.Parents[1].GetSHA())
@@ -159,6 +175,8 @@ func mergeIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo
 }
 
 // compareAllFiles walks every page of the three-dot compare base...head.
+// A file list at GitHub's cap is ErrCompareFileCap: past it GitHub drops
+// files silently, so the two diffs could differ in what it left out.
 func compareAllFiles(ctx context.Context, api BaseRefreshRepos, owner, repo, base, head string) (*gh.CommitsComparison, []*gh.CommitFile, error) {
 	opts := &gh.ListOptions{PerPage: 100}
 	var first *gh.CommitsComparison
@@ -173,6 +191,9 @@ func compareAllFiles(ctx context.Context, api BaseRefreshRepos, owner, repo, bas
 		}
 		if cmp != nil {
 			files = append(files, cmp.Files...)
+		}
+		if len(files) >= baseRefreshCompareFileCap {
+			return nil, nil, fmt.Errorf("compare %s...%s: %w", base, head, ErrCompareFileCap)
 		}
 		if resp == nil || resp.NextPage == 0 {
 			return first, files, nil
@@ -218,14 +239,31 @@ func sameChangedFiles(a, b []*gh.CommitFile) bool {
 }
 
 // CommitByGitHubLogin reports whether the commit's GitHub-attributed author
-// or committer is login ([bot] suffix tolerated, case-insensitive). Only the
-// server-resolved logins count, never the forgeable git name or email.
+// or committer is login ([bot] suffix tolerated, case-insensitive). GitHub
+// resolves those logins from the git author and committer emails, so on its
+// own this is attribution, not proof: anyone can author a commit as the
+// App's noreply address. Use CommitIsVerifiedAppMerge to trust a commit.
 func CommitByGitHubLogin(commit *gh.RepositoryCommit, login string) bool {
 	want := normalizeGitHubLogin(login)
 	if commit == nil || want == "" {
 		return false
 	}
 	return normalizeGitHubLogin(commit.GetAuthor().GetLogin()) == want || normalizeGitHubLogin(commit.GetCommitter().GetLogin()) == want
+}
+
+// CommitIsVerifiedAppMerge reports whether GitHub itself created the commit
+// for login, as it does for the App's update-branch merge: the signature is
+// one GitHub verified, the committer is web-flow (GitHub-created and
+// GitHub-signed, so GitHub set the author) or login itself, and the commit
+// is attributed to login. A signature binds the committer only, so a
+// verified commit committed by anyone else proves nothing about an author
+// login derived from a forgeable email (hivecommons/hive#16860).
+func CommitIsVerifiedAppMerge(commit *gh.RepositoryCommit, login string) bool {
+	if commit == nil || !commit.GetCommit().GetVerification().GetVerified() || !CommitByGitHubLogin(commit, login) {
+		return false
+	}
+	committer := normalizeGitHubLogin(commit.GetCommitter().GetLogin())
+	return committer == baseRefreshWebFlowLogin || committer == normalizeGitHubLogin(login)
 }
 
 func normalizeGitHubLogin(login string) string {
