@@ -16,10 +16,10 @@ It is available on the `v6` line only.
 
 ## Two ways to connect
 
-| Transport              | Where it runs                                | Use it when                                                                                                       |
-| ---------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **HTTP** (recommended) | `POST /api/admin/mcp` on the dashboard       | Your client accepts a plain JSON-RPC HTTP endpoint. Add one entry per hive.                                        |
-| **Stdio**              | the `hive-admin-mcp` binary on your machine  | Your client cannot use the HTTP endpoint, or you want one entry for several hives (`select_hive` is stdio-only). |
+| Transport              | Where it runs                               | Use it when                                                                                                      |
+| ---------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **HTTP** (recommended) | `POST /api/admin/mcp` on the dashboard      | Your client accepts a plain JSON-RPC HTTP endpoint. Add one entry per hive.                                      |
+| **Stdio**              | the `hive-admin-mcp` binary on your machine | Your client cannot use the HTTP endpoint, or you want one entry for several hives (`select_hive` is stdio-only). |
 
 Use HTTP whenever your client supports it. The running hub serves the HTTP tool
 catalogue, so it never drifts and there is nothing to rebuild after an upgrade.
@@ -41,11 +41,11 @@ rebuild it after each hub upgrade.
 How the hive is deployed decides which credential works, not the client. The
 endpoint accepts whatever the dashboard accepts:
 
-| Your hive                                                             | Credential                                       | Header                                    | You act as                                            |
-| --------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- | ----------------------------------------------------- |
-| Hosted by the hub (`https://<hive>.hive.hivecommons.dev`)             | Your GitHub token                                | `Authorization: Bearer <GitHub token>`    | Yourself, at your role on that hive                   |
-| Self-hosted, `dashboard.auth_token` set, no `authorized_users`        | The dashboard token                              | `Authorization: Bearer <dashboard token>` | The owner (the configured owner's login, or `owner`) |
-| Self-hosted spoke with an `authorized_users` allowlist (direct-route) | Your per-user session from `hivectl --server URL login` | `Cookie: hive_session=<session>`   | Yourself, at your allowlist role                      |
+| Your hive                                                             | Credential                                              | Header                                    | You act as                                           |
+| --------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------- |
+| Hosted by the hub (`https://<hive>.hive.hivecommons.dev`)             | Your GitHub token                                       | `Authorization: Bearer <GitHub token>`    | Yourself, at your role on that hive                  |
+| Self-hosted, `dashboard.auth_token` set, no `authorized_users`        | The dashboard token                                     | `Authorization: Bearer <dashboard token>` | The owner (the configured owner's login, or `owner`) |
+| Self-hosted spoke with an `authorized_users` allowlist (direct-route) | Your per-user session from `hivectl --server URL login` | `Cookie: hive_session=<session>`          | Yourself, at your allowlist role                     |
 
 ### Hosted by the hub: your GitHub token
 
@@ -215,6 +215,9 @@ on.
 
 - **Protocol:** stateless JSON-RPC 2.0. One request per POST, no SSE, no
   session id. `GET` returns 405.
+- **Ping and notifications:** `ping` is answered with an empty result. A
+  notification (any `notifications/...` method) is acknowledged with `200` and
+  `{"jsonrpc":"2.0","result":{}}`, never with an error.
 - **Size:** request bodies are capped at 64 KiB.
 - **Credential:** as in [Authentication](#authentication). Send
   `Authorization: Bearer` with your GitHub token (hosted by the hub) or the
@@ -301,11 +304,11 @@ rebuilding after each hub upgrade.
 
 ### Environment variables
 
-| Variable                       | Required | Meaning                                                                                                                                                                                         |
-| ------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HIVE_ADMIN_MCP_HIVES`         | Yes      | JSON array of `{"name","address","token"}`. All three fields are required and names must be unique. The binary exits with an error otherwise.                                                 |
-| `HIVE_ADMIN_MCP_ACTIVE`        | No       | Name of the hive active at start. Defaults to the first entry; an unknown name is an error.                                                                                                    |
-| `HIVE_ADMIN_MCP_ENABLE_WRITES` | No       | `1`, `true`, `yes` or `on` turns write tools on. Anything else leaves them off.                                                                                                                 |
+| Variable                       | Required | Meaning                                                                                                                                                                                                    |
+| ------------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HIVE_ADMIN_MCP_HIVES`         | Yes      | JSON array of `{"name","address","token"}`. All three fields are required and names must be unique. The binary exits with an error otherwise.                                                              |
+| `HIVE_ADMIN_MCP_ACTIVE`        | No       | Name of the hive active at start. Defaults to the first entry; an unknown name is an error.                                                                                                                |
+| `HIVE_ADMIN_MCP_ENABLE_WRITES` | No       | `1`, `true`, `yes` or `on` turns write tools on. Anything else leaves them off.                                                                                                                            |
 | `HIVE_ADMIN_MCP_PENDING_FILE`  | No       | Where pending write confirmations are stored. Default on stdio: `<user config dir>/hive/admin-mcp-pending-confirmations.json`. Default on the HTTP endpoint: `/data/admin-mcp-pending-confirmations.json`. |
 
 The dashboard process also reads `HIVE_ADMIN_MCP_ENABLE_WRITES` and
@@ -332,53 +335,53 @@ capped at 256 KiB.
 
 **Status and version**
 
-| Tool                 | Returns                                                                                   |
-| -------------------- | ----------------------------------------------------------------------------------------- |
-| `hive_status`        | Hive status summary                                                                       |
-| `fleet_status`       | Fleet state, including memory limit and out-of-memory kills (see note 1)                  |
-| `version_read`       | Running build from `/api/version` (see note 2)                                            |
-| `autonomy_readiness` | Autonomy readiness                                                                        |
-| `spend_read`         | Spend                                                                                     |
+| Tool                 | Returns                                                                  |
+| -------------------- | ------------------------------------------------------------------------ |
+| `hive_status`        | Hive status summary                                                      |
+| `fleet_status`       | Fleet state, including memory limit and out-of-memory kills (see note 1) |
+| `version_read`       | Running build from `/api/version` (see note 2)                           |
+| `autonomy_readiness` | Autonomy readiness                                                       |
+| `spend_read`         | Spend                                                                    |
 
 **Agents, runs and plans**
 
-| Tool                 | Returns                            |
-| -------------------- | ---------------------------------- |
-| `agents_list`        | Agents                             |
-| `runs_list`          | Runs                               |
-| `leases_list`        | Leases                             |
-| `claims_list`        | Issue claims                       |
-| `plans_list`         | Plans                              |
-| `contributors_list`  | Contributors                       |
-| `agent_nudge_status` | Outcome of a nudge; needs `agent`  |
+| Tool                 | Returns                           |
+| -------------------- | --------------------------------- |
+| `agents_list`        | Agents                            |
+| `runs_list`          | Runs                              |
+| `leases_list`        | Leases                            |
+| `claims_list`        | Issue claims                      |
+| `plans_list`         | Plans                             |
+| `contributors_list`  | Contributors                      |
+| `agent_nudge_status` | Outcome of a nudge; needs `agent` |
 
 **Issues, pull requests and the Activity monitor**
 
-| Tool                        | Returns                                                                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `issues_by_band`            | Issues grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                                 |
-| `prs_by_band`               | Pull requests grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                          |
-| `stage_tracker_read`        | The Activity monitor (see note 3)                                                                                                          |
-| `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number`                                            |
+| Tool                        | Returns                                                                                                                                                                    |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `issues_by_band`            | Issues grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                                                                 |
+| `prs_by_band`               | Pull requests grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                                                          |
+| `stage_tracker_read`        | The Activity monitor (see note 3)                                                                                                                                          |
+| `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number`                                                                            |
 | `review_queue`              | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset` |
 
 **Settings, knowledge and advice**
 
-| Tool                      | Returns                                                                                                                                                    |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool                      | Returns                                                                                                                                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `settings_read`           | A dashboard Settings view, read through the endpoint the Settings page uses, as the caller; optional `section` (default `governor`) and `agent` for the per-agent sections. See [Settings sections](#settings-sections) |
-| `knowledge_read`          | Knowledge entries                                                                                                                                          |
-| `hive_advisor`            | Hive advice                                                                                                                                                |
-| `advisor_records`         | Advisor records                                                                                                                                            |
-| `governor_setup_proposal` | Proposed governor setup: each setting with a reason, and the write operation and args that apply it                                                       |
-| `audit_log`               | Audit entries                                                                                                                                              |
+| `knowledge_read`          | Knowledge entries                                                                                                                                                                                                       |
+| `hive_advisor`            | Hive advice                                                                                                                                                                                                             |
+| `advisor_records`         | Advisor records                                                                                                                                                                                                         |
+| `governor_setup_proposal` | Proposed governor setup: each setting with a reason, and the write operation and args that apply it                                                                                                                     |
+| `audit_log`               | Audit entries                                                                                                                                                                                                           |
 
 **Logs**
 
-| Tool          | Returns                                                                                                    |
-| ------------- | ---------------------------------------------------------------------------------------------------------- |
-| `log_sources` | The log sources this hive can read, each marked available or not with a reason (see note 4)               |
-| `log_read`    | The hive's own log, or another `log_sources` source (see note 5). Needs the read-write role                |
+| Tool          | Returns                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| `log_sources` | The log sources this hive can read, each marked available or not with a reason (see note 4) |
+| `log_read`    | The hive's own log, or another `log_sources` source (see note 5). Needs the read-write role |
 
 **Notes**
 
@@ -386,8 +389,8 @@ capped at 256 KiB.
    limit (`memLimit`, `unlimited` when none is set, with `memLimitBytes`) and
    out-of-memory kill count (`oomKillCount`). See
    [Start records, crash traces and out-of-memory evidence](#start-records-crash-traces-and-out-of-memory-evidence).
-2. **`version_read`:** returns `currentCommit`, `branch`, `channel`,
-   `commitsBehind` and `behind`.
+2. **`version_read`:** returns `hash` and `short` (the running commit),
+   `branch`, `channel`, `commitsBehind` and `behind`.
    - Over stdio it also returns `stdio_build` (`version`, `sha`, `short`,
      `branch`) and `skew` (true when the stdio and hub short SHAs are both known
      and differ).
@@ -418,8 +421,10 @@ capped at 256 KiB.
 - `exclusion_catalogue` lists what the admin MCP will never do, and why.
 - `refuse_operation` explains the refusal for a named operation.
 
-Write tools (`write_preview`, `write_confirm`) appear only when writes are on.
-On stdio, `select_hive` is also available.
+Write tools (`write_preview`, `write_confirm`) are always listed. When writes
+are off, or not available to the caller, their `metadata.preview.enabled` is
+`false` with a note saying why, and a call is refused. On stdio, `select_hive`
+is also available.
 
 ### Settings sections
 
@@ -432,6 +437,8 @@ On stdio, `select_hive` is also available.
 - Secret values are never returned. Settings name the environment variable,
   file or header that supplies a secret, and the answer is scrubbed like every
   other read.
+- It takes no `limit`. A section is returned whole, however many agents or
+  entries it lists, bounded only by the 256 KiB text cap.
 
 The sections:
 
@@ -439,8 +446,8 @@ The sections:
   repos, budget, notifications, health, sensing, logging, security, features,
   hub, LiteLLM, watchdog, trajectory, classifier, release sentinel), `project`,
   `github_apps`, `authorized_users`, `dashboard`, `channels`, `escalation`,
-  `auto_merge`, `review`, `convergence`, `sla`, `advisor`, `advisory`,
-  `replan`, `question_autoclose`, `question_autoclose_schedule`,
+  `auto_merge`, `review`, `convergence`, `sla`, `triggers`, `advisor`,
+  `advisory`, `replan`, `question_autoclose`, `question_autoclose_schedule`,
   `fleet_report`, `work_source`, `project_observability`, `general_advanced`,
   `cadence_scope`, `threshold_scaling`, `backup`, `bob`, `inference_auth`,
   `gateways`, `backends`, `variables`, `write_surface`, `stat_sources`.
@@ -462,6 +469,34 @@ Not reachable:
 A test fails when the dashboard serves a new `GET /api/config` route that is
 neither a section nor one of these exclusions.
 
+### What a read masks
+
+Every read result is scrubbed in two ways.
+
+- **By shape:** GitHub tokens, JWTs, bearer tokens, private keys and similar
+  are replaced in any string, wherever they appear.
+- **By key:** a value under a key that contains `token`, `secret`, `password`,
+  `credential` or `authorization` is replaced by `[masked:...]`, unless it
+  cannot hold a credential:
+  - `true` or `false`, `null`, or an empty string, list or object;
+  - a timestamp (`token_expires_at`);
+  - a token count or rate (`totalTokens`, `tokens_per_coin`);
+  - the self-authorization hold settings (`selfAuthorizationHold`,
+    `repoSelfAuthorizationHold`), which are a merge policy and not a header.
+
+The name of an environment variable under a key such as `token_env` is a
+string like any other there, so it is masked too when it is set.
+
+How to read the result:
+
+- `[masked:token]` means a value is there and was withheld. An empty value
+  means nothing is set.
+- A list or object with content under such a key is masked whole (for example
+  `credentialWarnings` when there are warnings); read it on the dashboard.
+- The one exception is a token count block, an object under a count key such
+  as `tokens`: it is read like any other object, and the keys inside it are
+  judged by the same rules.
+
 ### Diagnostic reads
 
 These read-only tools (#11943) show what an operator would otherwise need a
@@ -473,16 +508,16 @@ shell for.
   and says what it cut. The shared `limit` does not apply.
 - Results carry the `untrusted_content` marker.
 
-| Tool                    | Wraps                                                | Required role                                       | Returns                                                                                                                         |
-| ----------------------- | ---------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Tool                    | Wraps                                                | Required role                                       | Returns                                                                                                                                |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent_log_read`        | `GET /api/agents/{name}/log`                         | Any authenticated role                              | The agent's live terminal log: the newest `max_bytes` (default 64 KiB, max 128 KiB); needs `agent`, optional `explain` (`only`/`hide`) |
-| `agent_kicks_list`      | `GET /api/agents/{name}/kicks`                       | Any authenticated role                              | The agent's archived kick logs, newest first; needs `agent`                                                                    |
-| `agent_kick_read`       | `GET /api/agents/{name}/kicks/{id}`                  | Any authenticated role                              | One archived kick log, same bounds as `agent_log_read`; needs `agent`, `kick_id`                                               |
-| `run_log_read`          | `GET /api/runs/{key}/log`                            | Read                                                | A run's stage log, same bounds; needs `run`, optional `stage`, `gen`, `tail`                                                   |
-| `run_detail_read`       | `GET /api/runs/{key}/detail`                         | Any authenticated role (pane tails need read-write) | A run's detail; the oldest events, stages, PRs and notes and the oldest raw log bytes are dropped first; needs `run`           |
-| `health_deep_read`      | `GET /api/health/deep`                               | None (public)                                       | The deep health check, whole                                                                                                   |
-| `prompt_history_read`   | `GET /api/prompt-history`                            | Read-write                                          | Delivered prompts, newest first; each prompt cut at 8 KiB (`cut`, `full_bytes`); optional `agent`, `window_hours`             |
-| `config_effective_read` | `GET /api/diag/config` (as `/api/config/provenance`) | Owner, verified by the hive                         | Every configuration key and environment name, with the layer that set it; optional `offset`                                    |
+| `agent_kicks_list`      | `GET /api/agents/{name}/kicks`                       | Any authenticated role                              | The agent's archived kick logs, newest first; needs `agent`                                                                            |
+| `agent_kick_read`       | `GET /api/agents/{name}/kicks/{id}`                  | Any authenticated role                              | One archived kick log, same bounds as `agent_log_read`; needs `agent`, `kick_id`                                                       |
+| `run_log_read`          | `GET /api/runs/{key}/log`                            | Read                                                | A run's stage log, same bounds; needs `run`, optional `stage`, `gen`, `tail`                                                           |
+| `run_detail_read`       | `GET /api/runs/{key}/detail`                         | Any authenticated role (pane tails need read-write) | A run's detail; the oldest events, stages, PRs and notes and the oldest raw log bytes are dropped first; needs `run`                   |
+| `health_deep_read`      | `GET /api/health/deep`                               | None (public)                                       | The deep health check, whole                                                                                                           |
+| `prompt_history_read`   | `GET /api/prompt-history`                            | Read-write                                          | Delivered prompts, newest first; each prompt cut at 8 KiB (`cut`, `full_bytes`); optional `agent`, `window_hours`                      |
+| `config_effective_read` | `GET /api/diag/config` (as `/api/config/provenance`) | Owner, verified by the hive                         | Every configuration key and environment name, with the layer that set it; optional `offset`                                            |
 
 **Plain-text logs** come back as `{text, content_type, truncated, bytes_total,
 bytes_returned, max_bytes, redactions}`. The dashboard's own plain-text
@@ -539,12 +574,12 @@ through the MCP at all; read the evidence once it is back.
 start writes one line, with its short identifier (`start`, 8 hex characters),
 its start time, and how the previous run ended in `previous.verdict`:
 
-| `previous.verdict`    | Meaning                                                                                                                                       |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clean`               | It finished shutting down.                                                                                                                    |
+| `previous.verdict`    | Meaning                                                                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `clean`               | It finished shutting down.                                                                                                               |
 | `not-closed`          | It stopped without finishing shutdown, for any reason: for example SIGKILL, the out-of-memory killer, a crash or a fatal start-up error. |
-| `self-upgrade-failed` | It exited after a failed self-upgrade.                                                                                                        |
-| `unknown`             | There is no record of a previous run.                                                                                                         |
+| `self-upgrade-failed` | It exited after a failed self-upgrade.                                                                                                   |
+| `unknown`             | There is no record of a previous run.                                                                                                    |
 
 The line also gives:
 
@@ -589,16 +624,16 @@ host. The gateway and the container start-up script are unchanged.
 Some evidence exists only outside the hive container, and the admin MCP cannot
 read it. The table gives the closest in-container substitute.
 
-| Host-only evidence                                                                                                              | In-container substitute                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unit restart counts (`systemctl show hive -p NRestarts`, Quadlet)                                                               | `starts`: one line per start, with how the run before it ended                                                                                                                  |
-| Container inspect (`podman inspect` / `docker inspect`: exit code, `OOMKilled`, restart count)                                 | `starts` (`not-closed`, `self-upgrade-failed`, `previous.memory`) and `fleet_status` `systemResources.oomKillCount` / `memLimit`                                               |
-| Kubernetes describe and events (`kubectl describe pod`, `kubectl get events`: last termination reason, probe failures, scheduling) | `starts` for how each run ended, and `health_deep_read` for what the probes see. Scheduling and probe events have none                                                      |
-| Node-level out-of-memory kills and evictions (kernel log, kubelet evictions)                                                    | `oomKillCount` counts kills inside the hive container only. A kill or eviction that ends the hive shows as `not-closed` in `starts`, with the last reading before it. Kills elsewhere on the node have none |
-| SELinux denials (`ausearch -m avc`, the host audit log)                                                                         | None. The refused operation's error may appear in the `hive` source                                                                                                             |
-| The gateway's own logs                                                                                                          | None. `requests` shows what reached the dashboard; requests the gateway refused are not in it                                                                                   |
-| The container start-up script's output                                                                                          | None for the script itself. `hive-output` keeps what the hive prints before its log is set up, and `proxy` keeps the auth proxy's output                                       |
-| The web terminal server's output                                                                                                | None. `agent_log_read` reads what the agent terminals show                                                                                                                      |
+| Host-only evidence                                                                                                                 | In-container substitute                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit restart counts (`systemctl show hive -p NRestarts`, Quadlet)                                                                  | `starts`: one line per start, with how the run before it ended                                                                                                                                              |
+| Container inspect (`podman inspect` / `docker inspect`: exit code, `OOMKilled`, restart count)                                     | `starts` (`not-closed`, `self-upgrade-failed`, `previous.memory`) and `fleet_status` `systemResources.oomKillCount` / `memLimit`                                                                            |
+| Kubernetes describe and events (`kubectl describe pod`, `kubectl get events`: last termination reason, probe failures, scheduling) | `starts` for how each run ended, and `health_deep_read` for what the probes see. Scheduling and probe events have none                                                                                      |
+| Node-level out-of-memory kills and evictions (kernel log, kubelet evictions)                                                       | `oomKillCount` counts kills inside the hive container only. A kill or eviction that ends the hive shows as `not-closed` in `starts`, with the last reading before it. Kills elsewhere on the node have none |
+| SELinux denials (`ausearch -m avc`, the host audit log)                                                                            | None. The refused operation's error may appear in the `hive` source                                                                                                                                         |
+| The gateway's own logs                                                                                                             | None. `requests` shows what reached the dashboard; requests the gateway refused are not in it                                                                                                               |
+| The container start-up script's output                                                                                             | None for the script itself. `hive-output` keeps what the hive prints before its log is set up, and `proxy` keeps the auth proxy's output                                                                    |
+| The web terminal server's output                                                                                                   | None. `agent_log_read` reads what the agent terminals show                                                                                                                                                  |
 
 **The role gate does not limit dashboard-token holders.** Whoever holds the
 dashboard token is the owner, and every read and write role check passes for an
@@ -634,31 +669,31 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 
 ### Registered operations
 
-| Area                       | Operations                                                                                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Agents                     | `agent.pause`, `agent.resume`, `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, `agent.interaction_tier` |
-| Fleet                      | `fleet.autonomy_level`                                                                                                                           |
-| Plans                      | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                    |
-| Governor                   | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                |
-| Repositories               | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                  |
-| Activity monitor row actions | see below                                                                                                                                      |
-| Budget                     | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                 |
-| Contributors               | `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, `contributor.delete` |
-| Backup                     | `backup.create` (the archive itself is not returned through MCP)                                                                                 |
-| Circuit breaker            | `circuit_breaker.engage`, `circuit_breaker.release`                                                                                              |
+| Area                         | Operations                                                                                                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agents                       | `agent.pause`, `agent.resume`, `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, `agent.interaction_tier` |
+| Fleet                        | `fleet.autonomy_level`                                                                                                                                               |
+| Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                        |
+| Governor                     | `governor.feature_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                     |
+| Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                      |
+| Activity monitor row actions | see below                                                                                                                                                            |
+| Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                     |
+| Contributors                 | `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, `contributor.delete`                    |
+| Backup                       | `backup.create` (the archive itself is not returned through MCP)                                                                                                     |
+| Circuit breaker              | `circuit_breaker.engage`, `circuit_breaker.release`                                                                                                                  |
 
 The Activity monitor's row actions:
 
-| Operation                                 | Button                                                                                                                                |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `repository.rescan`                       | Re-evaluate now                                                                                                                       |
-| `repository.item_accept_triage`           | Accept triage                                                                                                                         |
-| `repository.item_needs_human`             | Mark needs-human                                                                                                                      |
-| `repository.item_blocker_recheck`         | Re-check permissions                                                                                                                  |
-| `repository.item_blocker_handoff`         | Hand to workflows lane                                                                                                                |
-| `repository.item_blocker_close_partial`   | Mark partially-addressed and close                                                                                                    |
-| `repository.item_decision`                | Decide: approve, direction, close-superseded, close-wontfix, close-read, close-issue, adopt, adopt-now, re-author, reroute            |
-| `repository.item_delegate`                | Let hive decide; read the outcome with `delegated_decision_status`                                                                    |
+| Operation                               | Button                                                                                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `repository.rescan`                     | Re-evaluate now                                                                                                            |
+| `repository.item_accept_triage`         | Accept triage                                                                                                              |
+| `repository.item_needs_human`           | Mark needs-human                                                                                                           |
+| `repository.item_blocker_recheck`       | Re-check permissions                                                                                                       |
+| `repository.item_blocker_handoff`       | Hand to workflows lane                                                                                                     |
+| `repository.item_blocker_close_partial` | Mark partially-addressed and close                                                                                         |
+| `repository.item_decision`              | Decide: approve, direction, close-superseded, close-wontfix, close-read, close-issue, adopt, adopt-now, re-author, reroute |
+| `repository.item_delegate`              | Let hive decide; read the outcome with `delegated_decision_status`                                                         |
 
 The merge answers are not available, and a delegated decision made here never
 queues an auto-merge.
@@ -668,16 +703,16 @@ combining other operations.
 
 ## Troubleshooting
 
-| Symptom                                                      | Cause and fix                                                                                                                                                                                                                       |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "confirmation was previewed by another caller"               | Only the caller who ran `write_preview` can confirm it. Preview the write again yourself.                                                                                                                                           |
-| Write tools missing, or "writes unavailable"                 | Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` on the serving process, or read the reason `exclusion_catalogue` returns: a read-only role on this hive, or a request carrying no verified identity.                                         |
-| `select_hive` fails: "unreachable host"                      | Check the address and network.                                                                                                                                                                                                      |
-| `select_hive` fails: "wrong dashboard token"                 | The roster token does not match that hive.                                                                                                                                                                                          |
-| `select_hive` fails: "direct-route spoke refused shared token" | That spoke needs per-user access and cannot be administered with a token.                                                                                                                                                         |
-| 401 or 403 from a hive hosted by the hub                     | The GitHub token is invalid or expired, or your login has no role on that hive. Check the token with `curl -sH "Authorization: Bearer <token>" https://api.github.com/user`, and ask the hive's owner for access.                |
-| 405 on the HTTP endpoint                                     | You sent a GET; use POST.                                                                                                                                                                                                           |
-| Confirmation expired, or wrong hive                          | Run `write_preview` again on the hive you want to change.                                                                                                                                                                           |
+| Symptom                                                        | Cause and fix                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "confirmation was previewed by another caller"                 | Only the caller who ran `write_preview` can confirm it. Preview the write again yourself.                                                                                                                                                        |
+| A write is refused, or `metadata.preview.enabled` is `false`   | Read the note on the write tools, or the reason `exclusion_catalogue` returns. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` on the serving process; otherwise the caller has a read-only role on this hive, or the request carries no verified identity. |
+| `select_hive` fails: "unreachable host"                        | Check the address and network.                                                                                                                                                                                                                   |
+| `select_hive` fails: "wrong dashboard token"                   | The roster token does not match that hive.                                                                                                                                                                                                       |
+| `select_hive` fails: "direct-route spoke refused shared token" | That spoke needs per-user access and cannot be administered with a token.                                                                                                                                                                        |
+| 401 or 403 from a hive hosted by the hub                       | The GitHub token is invalid or expired, or your login has no role on that hive. Check the token with `curl -sH "Authorization: Bearer <token>" https://api.github.com/user`, and ask the hive's owner for access.                                |
+| 405 on the HTTP endpoint                                       | You sent a GET; use POST.                                                                                                                                                                                                                        |
+| Confirmation expired, or wrong hive                            | Run `write_preview` again on the hive you want to change.                                                                                                                                                                                        |
 
 For the design record behind this feature, see
 [`design/admin-mcp.md`](design/admin-mcp.md).

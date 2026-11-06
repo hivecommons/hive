@@ -29,7 +29,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	launchCmdOverride, missing := effectiveLaunchCmd(agent, backend)
 	if backend == "cline" {
-		if err := validateClineLaunch(ctx, "cline", agent); err != nil {
+		if err := validateClineLaunch(ctx, "cline", agent, m.project.TaskMCPURL); err != nil {
 			return err
 		}
 	}

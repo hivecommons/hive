@@ -298,7 +298,7 @@ func (c *Client) do(ctx context.Context, method, apiPath string, query url.Value
 
 func (c *Client) request(ctx context.Context, method, apiPath string, query url.Values, body any, headers http.Header) (*http.Request, error) {
 	target := *c.baseURL
-	target.Path = strings.TrimRight(c.baseURL.Path, "/") + "/" + strings.TrimLeft(apiPath, "/")
+	setEscapedPath(&target, strings.TrimRight(c.baseURL.EscapedPath(), "/")+"/"+strings.TrimLeft(apiPath, "/"))
 	target.RawQuery = query.Encode()
 
 	var reader io.Reader
@@ -342,6 +342,20 @@ func (c *Client) request(ctx context.Context, method, apiPath string, query url.
 		}
 	}
 	return req, nil
+}
+
+// setEscapedPath sets u's path from its percent-encoded form. Callers build
+// apiPath with url.PathEscape per segment, so it is the escaped path. Putting
+// it in u.Path alone, which holds the decoded form, made URL.String() escape
+// it a second time: "kiro-api-key%2Fclaude" went out as
+// "kiro-api-key%252Fclaude" and the hive read a name with a literal "%2F" in
+// it. A path that is not a valid encoding (a bare "%") is sent as it always
+// was, escaped whole.
+func setEscapedPath(u *url.URL, escaped string) {
+	u.Path, u.RawPath = escaped, ""
+	if decoded, err := url.PathUnescape(escaped); err == nil {
+		u.Path, u.RawPath = decoded, escaped
+	}
 }
 
 // responseError builds the APIError for a non-2xx response, appending the

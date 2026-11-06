@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -60,6 +61,10 @@ func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 		}
 		agents = append(agents, entry)
 	}
+	// Config.Agents is a map, so without a sort the order changes on every
+	// call. A reader that keeps only the first N (the admin MCP agents_list
+	// cap) then sees a different subset each time.
+	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
 	jsonResponse(w, agents)
 }
 

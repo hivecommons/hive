@@ -283,9 +283,11 @@ Three of task-mcp's disciplines apply unchanged, and for the same reasons:
 - **Hard caps.** Item counts and text sizes are bounded and truncation is disclosed, in the
   spirit of `MaxPageSize = 20` and `MaxTextBytes = 16 KiB`.
   The admin surface caps each result at `MaxTextBytes = 256 KiB` on both transports. An
-  oversized result is truncated, never turned into an error: the longest top-level lists are
-  shortened first (`<field>_truncated: true`), and a result that still does not fit becomes a
-  bounded `text_preview`; either way `_admin_mcp.truncated` is `true` with the original size.
+  oversized result is truncated, never turned into an error: the top-level list with the most
+  encoded bytes is halved first, then the next largest, until the result fits
+  (`<field>_truncated: true`; a long list of small entries is left whole when cutting it would
+  not help), and a result that still does not fit becomes a bounded `text_preview`; either way
+  `_admin_mcp.truncated` is `true` with the original size.
 
 To them the admin surface adds one the read-only sibling never needed: **no write happens on
 a single call.** Each write is previewed — reporting exactly what would change, on which
@@ -343,6 +345,8 @@ the usual `limit`.
 returned in full, even when `band` or `held` filters `rows[]` down, so a caller can map
 "Confirm & close" to `band=done` without knowing the `hive/*` label names. An unknown `band`
 gets the same `{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys.
+Every key `bands[]` can carry is a valid `band`: for issues that includes `outside`, the open
+issues the scanner kept off the agent queues, which the export adds after the donut's five.
 The tool never forwards `band`, `held`, `offset`, or `limit` to the Overview endpoint itself —
 that would compute `bands[]` counts and `rows[]` over only the already-filtered subset — so it
 fetches every band and row and filters/pages `rows[]` itself, disclosing `rows_truncated` and
@@ -465,14 +469,17 @@ setting.
 - **Paging.** `next_cursor` pages backwards. It names a history file by its first line's time
   and digest plus a byte offset, so a rotation (rename, then compression) between two calls
   neither repeats nor skips a line; a cursor whose file has left retention returns
-  `status: cursor_expired`.
+  `status: cursor_expired`. The digest covers at most the first 64 KiB of that line, so a file
+  that opens with a longer record can be paged like any other.
 - **Scrubbing.** Each line is scrubbed at read time before filtering: private-key blocks
   (scrubbed with overlap across the read region, so a key split by a page or rotation boundary,
   or one with no END marker, is redacted to the end of the result), then one precompiled
   multi-value replacer over this hive's own secret values of at least 12 characters (the
   dashboard token, the terminal `user:token` login, the terminal key, secret file contents,
   and environment values whose names contain TOKEN, KEY, SECRET, PASSWORD, CREDENTIAL or
-  PASSPHRASE) in plain, URL-encoded and base64 forms at all three alignments, then every
+  PASSPHRASE) in plain, URL-encoded, JSON-escaped and base64 forms (base64 at all three
+  alignments; JSON-escaped because the logs are JSON, so a value holding a quote, a backslash
+  or a control character is on disk only in that form), then every
   `pkg/logscrub` category including `basic-auth`. `redactions[]` counts replacements by kind;
   a line that already held redaction-marker text on disk is flagged `pre_existing_marker`.
   Every result carries the fixed `untrusted_content` marker: log text is data, never

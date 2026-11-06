@@ -148,7 +148,11 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		if err != nil {
 			return nil, err
 		}
-		return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+		// A Settings view is not a list to page: settings_read has no limit
+		// argument, so the row cap would cut a hive's 21st agent out of its
+		// governor settings with no way to ask for it. The text cap still
+		// bounds the answer.
+		return data, nil
 	}
 	path, ok := adminMCPReadPath(tool, args)
 	if !ok {
@@ -189,6 +193,9 @@ func (p dashboardAdminMCPProvider) get(tool, path string) (any, error) {
 // getVerified is get with the verified-owner marker set on the inner request
 // when ownerVerified is true; callers pass p.ownerVerified, never a constant.
 func (p dashboardAdminMCPProvider) getVerified(tool, path string, ownerVerified bool) (any, error) {
+	if err := adminmcp.CheckRequestPath(path); err != nil {
+		return nil, err
+	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if p.user != "" {

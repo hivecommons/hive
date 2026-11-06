@@ -1,9 +1,9 @@
 package taskmcp
 
 import (
-	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -118,18 +118,35 @@ func relatedReasons(scope Scope, current, candidate RelatedItem, recencyWindow t
 	return out
 }
 
+// citesIssue reports whether text refers to the scoped issue or pull request:
+// as "#N", as "owner/repo#N", or as a link to it in the scoped repository.
+//
+// What stands before the reference matters as much as what follows it.
+// "kubernetes/kubernetes#42" is issue 42 of another repository, and "abc#42"
+// is not a reference at all, so a bare "#N" counts only at the start of the
+// text or after a character that cannot end a repository name or a word.
 func citesIssue(text string, scope Scope) bool {
 	if scope.Number <= 0 || text == "" {
 		return false
 	}
-	needles := []string{fmt.Sprintf("#%d", scope.Number)}
-	if scope.Repo != "" {
-		needles = append(needles, fmt.Sprintf("%s#%d", scope.Repo, scope.Number))
+	const (
+		before = `(?:^|[^0-9a-z_./-])`
+		after  = `(?:[^0-9a-z_-]|$)`
+	)
+	number := strconv.Itoa(scope.Number)
+	patterns := []string{before + `#` + number + after}
+	if repo := strings.ToLower(strings.TrimSpace(scope.Repo)); repo != "" {
+		quoted := regexp.QuoteMeta(repo)
+		patterns = append(patterns, before+quoted+`#`+number+after)
+		if strings.Count(repo, "/") == 1 {
+			// https://host/owner/repo/issues/N, .../pull/N, and GitLab's
+			// .../-/issues/N. The repository must follow the host directly.
+			patterns = append(patterns, `://[^/\s]+/`+quoted+`(?:/-)?/(?:issues|pull|pulls)/`+number+`(?:[^0-9]|$)`)
+		}
 	}
 	lower := strings.ToLower(text)
-	for _, needle := range needles {
-		pattern := regexp.QuoteMeta(strings.ToLower(needle)) + `([^0-9A-Za-z_-]|$)`
-		if regexp.MustCompile(pattern).FindStringIndex(lower) != nil {
+	for _, pattern := range patterns {
+		if regexp.MustCompile(pattern).MatchString(lower) {
 			return true
 		}
 	}

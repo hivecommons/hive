@@ -28,7 +28,7 @@ func TestClinePodmanExecutorStagingAndFailureCleanup(t *testing.T) {
 	}
 	t.Setenv("HIVE_CLINE_CONFIG_DIR", source)
 	agent := &AgentProcess{Config: config.AgentConfig{Model: "openrouter/test"}}
-	if err := validateClineSandbox(agent, "podman", config.SandboxJobConfig{}); err != nil {
+	if err := validateClineSandbox(agent, "podman", config.SandboxJobConfig{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	launcher := &clineFileCaptureLauncher{key: key}
