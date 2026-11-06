@@ -233,7 +233,23 @@ repository (a lane scoped to other repositories with `repos:` is never chosen),
 the watcher adds `hive/workflows-lane` instead of the park label, appends a
 "Handed to `<lane>`" note and no owner-step marker, and the scheduler routes the
 issue to that lane. On `issue` the new issue is created at
-`stage/010-actionable` with the label.
+`stage/010-actionable` with the label. The hand-off is skipped (the park
+stands) when the App installation is known to lack `workflows: write`.
+
+A lane that can push workflow files itself is refused the park instead. When
+the parking lane runs at the trusted or merger tier (ISSUES_PRS_MERGE), whose
+token asks for the Workflows permission, and the App installation grants
+`workflows: write` (read at most every five minutes), the watcher parks
+nothing, adds no label, and appends a "Not parked: `<lane>`'s token can push
+`.github/workflows/`" note: the issue stays with that lane to push the change.
+If the installation lacks the permission, or cannot be read, the park stands. It
+also stands when the park quotes GitHub's own rejection of the push ("refusing to
+allow a GitHub App to create or update workflow … without `workflows`
+permission"): that is evidence, and the blocker it records is never released by
+the scheduled re-check. The quote counts as evidence only from a lane whose own
+token asks for the permission (or from a report with no `— hive:` trailer, such
+as a person pasting the error); a contributor-tier lane's quote shows only that
+its own token lacks it, so that blocker stays releasable.
 
 #### Withdrawing your own park
 

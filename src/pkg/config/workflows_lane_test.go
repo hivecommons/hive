@@ -75,3 +75,19 @@ func TestWorkflowsLaneFor(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentPushesWorkflows(t *testing.T) {
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{
+		"scanner":       {Mode: "ISSUES_PRS_MERGE", Enabled: true},
+		"scanner-2":     {Mode: "ISSUES_PRS_MERGE", Enabled: true, ReplicaOf: "scanner"},
+		"ci-maintainer": {Mode: "ISSUES_AND_PRS", Enabled: true},
+	}}}
+	for agent, want := range map[string]bool{"scanner": true, "scanner-2": true, "ci-maintainer": false, "unknown": false, "": false} {
+		if got := cfg.AgentPushesWorkflows(agent); got != want {
+			t.Errorf("AgentPushesWorkflows(%q) = %v, want %v", agent, got, want)
+		}
+	}
+	if (*Config)(nil).AgentPushesWorkflows("scanner") {
+		t.Error("nil config must answer false")
+	}
+}

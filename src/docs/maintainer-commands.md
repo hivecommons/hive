@@ -112,7 +112,10 @@ When, after the park began, a PR or issue the park text names merged or
 closed, or a PR that refers to the issue ("Refs #N", a closing keyword, "part
 of", …, a list of at most 10 references) merged, Hive posts one note
 (`<!-- hive:park-recheck -->`) listing what changed, and edits it in place as
-more moves. When such a PR closed unmerged because the hive adopted it, Hive
+more moves. When the park offers lettered options that name references, only
+those references count as what the park waits on; the rest of its text is
+evidence. projectbluefin/server#614 parked on #583, which both options merge,
+and the PRs listed only as also red (#584, #588) no longer trigger the note. When such a PR closed unmerged because the hive adopted it, Hive
 follows it to the hive's copy (the App PR whose body says `Supersedes #N`)
 and lists the copy too if it merged or closed unmerged; when a person closed
 the copy, the note quotes the first paragraph of their closing comment (at

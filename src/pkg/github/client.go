@@ -135,6 +135,11 @@ type Client struct {
 	// (SetWorkflowsLaneFunc, issue_workflows_handoff.go).
 	workflowsLaneMu sync.RWMutex
 	workflowsLane   func(agent, repo string) string
+	// workflowsSelfPush reports whether an agent's own token asks for the
+	// Workflows permission (SetWorkflowsSelfPushFunc); workflowsGrant caches
+	// the installation's answer (installationGrantsWorkflows).
+	workflowsSelfPush func(agent string) bool
+	workflowsGrant    workflowsGrantCache
 	// citedLines caches the stale-finding check (issue_cited_lines.go).
 	citedLines citedCache
 	// reporterConfirmationEnabled restores the legacy close gate for all
@@ -2081,7 +2086,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReasonFor(repo, issue.GetNumber(), issue.GetBody()))
 			setBlockedRowFacts(&row, issue.GetBody(), blockedCounts[issue.GetNumber()])
 			details = append(details, row)
 			continue

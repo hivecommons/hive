@@ -178,6 +178,9 @@ func (c *Client) recheckParkedIssue(ctx context.Context, owner, repo string, iss
 	refs := parkRefsFromTimeline(events)
 	text := c.parkText(issue, comments, start)
 	named := parkNamedRefs(text, owner+"/"+repo, number)
+	if acted := parkOptionRefs(text, owner+"/"+repo, number); len(acted) > 0 {
+		named = acted
+	}
 	lookups := 0
 	for _, key := range named {
 		if _, ok := refs[key]; ok || lookups >= parkRecheckMaxNamedLookups {
@@ -390,6 +393,31 @@ func parkNamedRefs(text, issueRepo string, number int) []string {
 		}
 	}
 	return out
+}
+
+// parkOptionRefs returns the references the park's lettered options name:
+// each option line and the lines under it, up to a blank line or the next
+// option. A park that offers options waits on what they act on; the rest of
+// its text is evidence. projectbluefin/server#614 parked on #583 (both
+// options merge it) and listed #584 and #588 among the PRs its red check
+// touched; the re-check reported those two merging as "the park reason names
+// it" while #583 was still open. nil when the park lists no options, so a
+// park without options keeps every named reference.
+func parkOptionRefs(text, issueRepo string, number int) []string {
+	var block []string
+	inOption := false
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case unparkOptionLetter(line) != "":
+			inOption = true
+			block = append(block, line)
+		case strings.TrimSpace(line) == "":
+			inOption = false
+		case inOption:
+			block = append(block, line)
+		}
+	}
+	return parkNamedRefs(strings.Join(block, "\n"), issueRepo, number)
 }
 
 func parkRefKey(repo string, n int) string {

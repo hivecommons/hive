@@ -544,9 +544,16 @@ var (
 	fencedCodeBlockPattern = regexp.MustCompile("(?s)```.*?```")
 	inlineCodeSpanPattern  = regexp.MustCompile("`[^`\n]*`")
 	closingURLPattern      = regexp.MustCompile(`https?://[^\s)]+`)
+	// htmlNumericEntityPattern is a decimal character reference; a hex one
+	// (`&#x200b;`) never reads as `#N`. Renovate writes `[#&#8203;628]` and
+	// `@&#8203;user` so GitHub links nothing; the `#8203` inside the entity
+	// is not an issue reference (projectbluefin/gutenprint-printer-app#170
+	// was filed against "#8203").
+	htmlNumericEntityPattern = regexp.MustCompile(`&#[0-9]+;`)
 )
 
 func stripClosingFalsePositiveText(text string) string {
+	text = htmlNumericEntityPattern.ReplaceAllString(text, " ")
 	text = fencedCodeBlockPattern.ReplaceAllString(text, " ")
 	text = inlineCodeSpanPattern.ReplaceAllString(text, " ")
 	text = closingURLPattern.ReplaceAllString(text, " ")
@@ -672,7 +679,7 @@ var issueRefPattern = regexp.MustCompile(`(?:([\w.-]+/[\w.-]+))?#(\d+)`)
 // It is the weak-evidence companion to ParseClaimedIssues: claimsFromPR reads
 // both and keeps the closing claim wherever the two name the same issue.
 func ParseReferencedIssues(text, defaultRepo string) []ClaimedRef {
-	return parseRefs(referenceRefPattern, text, defaultRepo)
+	return parseRefs(referenceRefPattern, htmlNumericEntityPattern.ReplaceAllString(text, " "), defaultRepo)
 }
 
 // branchIssuePattern matches the branch-naming conventions agents use to encode

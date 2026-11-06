@@ -19,6 +19,11 @@ package automerge
 //     unchanged, whoever merged) back to the commit the review approved, or
 //     to a commit no newer than the review. The approval is then "carried
 //     over a base merge", and the fence comment says so.
+// "Submitted at or after" a commit (the date fallback, for a merge head or a
+// walked ancestor) needs both the commit's date and the hive's first
+// sighting of it as the PR head to be no later than the review
+// (contentPredates): a backdated content commit under a later base merge
+// is refused, and so is a commit the hive has no sighting of.
 // A review with no submitted_at keeps the old commit_id rule.
 
 import (
@@ -96,7 +101,8 @@ func (c *Engine) walkApprovalToHead(ctx context.Context, owner, repo string, num
 	if err != nil || commit == nil {
 		return approvalReach{}, false
 	}
-	if reviewed == head && (len(commit.Parents) < 2 || !submitted.Before(commitDate(commit))) {
+	fullRepo := owner + "/" + repo
+	if reviewed == head && (len(commit.Parents) < 2 || c.contentPredates(fullRepo, number, head, commit, submitted)) {
 		// GitHub moves a review only onto a merge, so a review it reports on
 		// a non-merge head approved that head, whatever the pusher's clock
 		// wrote as its date.
@@ -119,13 +125,26 @@ func (c *Engine) walkApprovalToHead(ctx context.Context, owner, repo string, num
 		if commit, _, err = c.gh.Repositories.GetCommit(ctx, owner, repo, prev, nil); err != nil || commit == nil {
 			return approvalReach{}, false
 		}
-		if reviewed == head && !submitted.Before(commitDate(commit)) {
+		if reviewed == head && c.contentPredates(fullRepo, number, prev, commit, submitted) {
 			// GitHub moved the review off this commit onto the merges above.
 			return approvalReach{ok: true, carried: true}, true
 		}
 		cur = prev
 	}
 	return approvalReach{}, true
+}
+
+// contentPredates is the date fallback: commit sha existed when the review
+// was submitted at t. Its date is pusher-chosen, so the hive must also have
+// listed it as the PR's head by t (head_sightings.go); a head with no
+// sighting on record carries nothing by date (Doug's decision on the
+// adjudicator's backdating finding, hivecommons/hive#16817).
+func (c *Engine) contentPredates(fullRepo string, number int, sha string, commit *gh.RepositoryCommit, t time.Time) bool {
+	if t.Before(commitDate(commit)) {
+		return false
+	}
+	seen, ok := c.headSightingsOrShared().FirstSeen(fullRepo, number, sha)
+	return ok && !t.Before(seen)
 }
 
 func commitDate(commit *gh.RepositoryCommit) time.Time {
