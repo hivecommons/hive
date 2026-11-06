@@ -129,7 +129,7 @@ func (s *Server) handleRepoItemDecideDelegatedPlan(w http.ResponseWriter, r *htt
 		var err error
 		plan, err = s.planDelegatedDecision(ctx, repoFull, number, itemType, mergerRole, body)
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadGateway)
+			delegatedGatherError(w, err, time.Now())
 			return
 		}
 		s.delegatedJobs.plans.put(key, plan, time.Now())
