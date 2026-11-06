@@ -738,7 +738,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			// `resolve` a non-risk Hive engineering question is not parked,
 			// the comment records the decision and the owner-step marker is
 			// withheld so the unpark menu does not offer `/hive done`.
-			issueDecisionDowngrade = c.issueDecisionDowngradeForComment(req, body)
+			issueDecisionDowngrade = c.issueDecisionDowngradeForComment(ctx, req, body)
 			if !issueDecisionDowngrade.Active && len(req.BlockedBy) == 0 {
 				if n := c.askFoldTarget(ctx, req.Repo, req.Number, body); n > 0 {
 					req.BlockedBy, askFoldedInto = []int{n}, n
@@ -775,7 +775,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 		if err == nil && (withdraw == nil || !withdraw.posted) {
 			commentBody := issueOwnerStepBody(body, req.NeedsDecision && !issueDecisionDowngrade.Active, req.OwnerStep)
-			if issueDecisionDowngrade.Lane != "" {
+			if issueDecisionDowngrade.workflows() {
 				commentBody = appendWorkflowsHandoff(commentBody, issueDecisionDowngrade)
 			} else if issueDecisionDowngrade.Active {
 				commentBody = appendHiveDecisionTaken(commentBody, issueDecisionDowngrade.Question)
@@ -938,7 +938,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 	default: // "issue"
 		var res CreateIssueResult
-		createLabels, createBody, d := c.issueCreateLabels(req, body)
+		createLabels, createBody, d := c.issueCreateLabels(ctx, req, body)
 		if d.Active {
 			issueDecisionDowngrade = d
 		}
@@ -1107,6 +1107,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	if issueDecisionDowngrade.Lane != "" {
 		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
 			"policy", "workflows-handoff", "lane", issueDecisionDowngrade.Lane)
+	} else if issueDecisionDowngrade.SelfPush {
+		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
+			"policy", "workflows-self-push", "lane", req.Agent)
 	} else if issueDecisionDowngrade.Active {
 		c.recordWriteAudit(AuditActionAgentIssueDecisionResolved, meta, WriteTarget{Repo: req.Repo, Number: resp.Number},
 			"policy", decisionpolicy.PolicyResolve, "question", issueDecisionDowngrade.Question)
@@ -1128,16 +1131,24 @@ type issueDecisionDowngrade struct {
 	// Lane is set when the park is a workflow-only change handed to the
 	// lane that can push it (workflowsHandoff), not a decision the hive took.
 	Lane string
+	// SelfPush is set when the parking lane's own token can push the
+	// workflow change and the installation grants it (workflowsHandoff):
+	// the park is refused and the issue stays with that lane.
+	SelfPush bool
 }
+
+// workflows reports a workflow-only park the relay did not park: handed to
+// another lane, or refused because the lane can push it itself.
+func (d issueDecisionDowngrade) workflows() bool { return d.Lane != "" || d.SelfPush }
 
 // A typed owner step (e.g. a release) proposes an action only a person
 // with owner credentials can take, so it is owner-only by construction and
 // never downgraded to a hive-taken decision, whatever the policy.
-func (c *Client) issueDecisionDowngradeForCreate(req IssueRequest, body string) issueDecisionDowngrade {
+func (c *Client) issueDecisionDowngradeForCreate(ctx context.Context, req IssueRequest, body string) issueDecisionDowngrade {
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
 	}
-	if d := c.workflowsHandoff(req.Agent, req.Repo, req.Title, body); d.Active {
+	if d := c.workflowsHandoff(ctx, req.Agent, req.Repo, req.Title, body); d.Active {
 		return d
 	}
 	return c.issueDecisionDowngrade(req.Title, body)
@@ -1146,11 +1157,11 @@ func (c *Client) issueDecisionDowngradeForCreate(req IssueRequest, body string) 
 // issueDecisionDowngradeForComment classifies a `comment --needs-decision`
 // park on an existing issue. A comment always carries its own text, so the
 // classification reads the comment body rather than the issue.
-func (c *Client) issueDecisionDowngradeForComment(req IssueRequest, body string) issueDecisionDowngrade {
+func (c *Client) issueDecisionDowngradeForComment(ctx context.Context, req IssueRequest, body string) issueDecisionDowngrade {
 	if !req.NeedsDecision || req.OwnerStep != nil || !hiveIssueRequestActor(req.Agent, req.Labels) {
 		return issueDecisionDowngrade{}
 	}
-	if d := c.workflowsHandoff(req.Agent, req.Repo, "", body); d.Active {
+	if d := c.workflowsHandoff(ctx, req.Agent, req.Repo, "", body); d.Active {
 		return d
 	}
 	return c.issueDecisionDowngrade("", body)
@@ -1241,16 +1252,18 @@ func hiveDecisionDowngradeNote(question string) string {
 // the hive takes the engineering decision itself — stage/010-actionable in
 // its place and the decision recorded in the body. The labels travel in
 // the create call; the stage engine owns them from the first sweep on.
-func (c *Client) issueCreateLabels(req IssueRequest, body string) (labels []string, createBody string, d issueDecisionDowngrade) {
+func (c *Client) issueCreateLabels(ctx context.Context, req IssueRequest, body string) (labels []string, createBody string, d issueDecisionDowngrade) {
 	labels, createBody = req.Labels, body
 	if !req.NeedsDecision {
 		return labels, createBody, d
 	}
-	if d = c.issueDecisionDowngradeForCreate(req, createBody); d.Active {
+	if d = c.issueDecisionDowngradeForCreate(ctx, req, createBody); d.Active {
 		labels = removeDecisionParkLabels(labels, c.needsDecisionLabel())
 		labels = appendLabelIfMissing(labels, stagelabels.Actionable.Label())
-		if d.Lane != "" {
-			labels = appendLabelIfMissing(labels, WorkflowsLaneLabel)
+		if d.workflows() {
+			if d.Lane != "" {
+				labels = appendLabelIfMissing(labels, WorkflowsLaneLabel)
+			}
 			createBody = appendWorkflowsHandoff(createBody, d)
 		} else {
 			createBody = appendHiveDecisionTaken(createBody, d.Question)

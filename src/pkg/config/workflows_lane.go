@@ -46,6 +46,13 @@ func modePushesWorkflows(mode string) bool {
 	return false
 }
 
+// AgentPushesWorkflows reports whether agent's scoped token asks for the
+// Workflows permission (trusted/merger tier), so its own push may touch
+// .github/workflows/** when the installation grants it.
+func (c *Config) AgentPushesWorkflows(agent string) bool {
+	return c != nil && modePushesWorkflows(c.AgentEffectiveMode(agent))
+}
+
 // WorkflowsCapableLane names the enabled lane whose token can push
 // .github/workflows/** and serves repo, the first by name; replicas are
 // skipped because they share their source agent's lane. A lane scoped to
