@@ -1,0 +1,1 @@
+- Restore the writeback direct-write ratchet on `v5`: the lapsed claimed-by label removal added in #16849 is annotated as gated, so `TestDirectWriteRatchet` passes again for every PR based on `v5`

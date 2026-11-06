@@ -255,7 +255,7 @@ func removeLapsedClaimedByLabels(ctx context.Context, client *Client, in IssueSt
 	if live {
 		return 0
 	}
-	if err := client.RemoveLabelsFresh(ctx, in.Repo, in.Number, stale...); err != nil {
+	if err := client.RemoveLabelsFresh(ctx, in.Repo, in.Number, stale...); err != nil { // writeback:gated — the stage labeler it writes through consults the gate
 		if logger != nil {
 			logger.Warn("claimed-by label: removing lapsed agent label failed", "repo", in.Repo, "issue", in.Number, "labels", stale, "error", err)
 		}
