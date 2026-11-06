@@ -442,7 +442,7 @@ func inputSchema(name string) map[string]any {
 		props = advisorRecordsSchema()
 	case ToolIssuesByBand:
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
-		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys}
+		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys, "description": "A band key from bands[]. outside is the open issues the scanner kept off the agent queues; each such row's bucket says why."}
 		props["stale"] = map[string]any{"type": "boolean"}
 		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) issues before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}

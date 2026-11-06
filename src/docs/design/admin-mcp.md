@@ -339,6 +339,8 @@ the usual `limit`.
 returned in full, even when `band` or `held` filters `rows[]` down, so a caller can map
 "Confirm & close" to `band=done` without knowing the `hive/*` label names. An unknown `band`
 gets the same `{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys.
+Every key `bands[]` can carry is a valid `band`: for issues that includes `outside`, the open
+issues the scanner kept off the agent queues, which the export adds after the donut's five.
 The tool never forwards `band`, `held`, `offset`, or `limit` to the Overview endpoint itself —
 that would compute `bands[]` counts and `rows[]` over only the already-filtered subset — so it
 fetches every band and row and filters/pages `rows[]` itself, disclosing `rows_truncated` and
