@@ -15,7 +15,12 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+  # Serialise per PR but never cancel: the evidence wait below runs up to
+  # 22.5 min, and every stage-label flip re-fires this workflow. With
+  # cancel-in-progress the check could never reach a verdict on a PR the
+  # hive is actively staging (#16942). The queued run re-reads the mutable
+  # PR state after the current one finishes, so fail-closed is preserved.
+  cancel-in-progress: false
 
 jobs:
   policy:
