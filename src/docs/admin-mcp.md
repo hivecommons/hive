@@ -661,6 +661,11 @@ A confirmed write runs as you.
   request: your login when you come through a dashboard session or the hub, at
   your role on that hive. The endpoint's own permission checks apply to you, and
   the audit log and any comment the write leaves name you.
+- **Your own rights are the limit.** An operation can do no more than the same
+  button on the dashboard would let you do. For example, approving a pull
+  request or deciding an item needs write access to that repository, checked
+  against your own GitHub permission: with read access the approve is refused
+  and nothing is written. A read-only role on the hive cannot write at all.
 - **With the dashboard token** (the stdio binary, or an HTTP client sending the
   dashboard token), writes are recorded as the configured owner's login when
   `dashboard.authorized_users` names an owner, and as `owner` otherwise.
