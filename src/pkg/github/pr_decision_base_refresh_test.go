@@ -43,7 +43,8 @@ func (f *fakeBaseRefreshRepos) CompareCommits(_ context.Context, _, _, base, hea
 }
 
 func refreshCommit(sha, login string, parents ...string) *gh.RepositoryCommit {
-	c := &gh.RepositoryCommit{SHA: gh.Ptr(sha), Author: &gh.User{Login: gh.Ptr(login)}, Committer: &gh.User{Login: gh.Ptr("web-flow")}}
+	c := &gh.RepositoryCommit{SHA: gh.Ptr(sha), Author: &gh.User{Login: gh.Ptr(login)}, Committer: &gh.User{Login: gh.Ptr("web-flow")},
+		Commit: &gh.Commit{Verification: &gh.SignatureVerification{Verified: gh.Ptr(true)}}}
 	for _, p := range parents {
 		c.Parents = append(c.Parents, &gh.Commit{SHA: gh.Ptr(p)})
 	}
@@ -323,5 +324,59 @@ func TestSameChangedFilesIgnoresOrderButNotContent(t *testing.T) {
 	}
 	if !CommitByGitHubLogin(refreshCommit("x", "Kubestellar-Hive"), "kubestellar-hive[bot]") || CommitByGitHubLogin(refreshCommit("x", "mendezr"), "kubestellar-hive[bot]") {
 		t.Fatal("App attribution must match the login case-insensitively, [bot] suffix aside, and nobody else")
+	}
+}
+
+// hivecommons/hive#16860: GitHub derives a commit's author login from the
+// author email, so a merge authored as the App's noreply address resolves to
+// the App. Only a commit GitHub created and signed itself counts.
+func TestHeadIsBaseRefreshOfRequiresVerifiedGitHubCommit(t *testing.T) {
+	const oldHead, newHead, baseTip, app = "aaaa", "bbbb", "b45e", "kubestellar-hive[bot]"
+	same := []*gh.CommitFile{refreshFile("a.go", "blob1", "@@")}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*gh.RepositoryCommit)
+		want   bool
+	}{
+		{name: "verified update-branch merge", mutate: func(*gh.RepositoryCommit) {}, want: true},
+		{name: "unverified", mutate: func(c *gh.RepositoryCommit) { c.Commit.Verification.Verified = gh.Ptr(false) }},
+		{name: "no verification", mutate: func(c *gh.RepositoryCommit) { c.Commit = nil }},
+		{name: "verified but committed by someone else", mutate: func(c *gh.RepositoryCommit) { c.Committer = &gh.User{Login: gh.Ptr("mallory")} }},
+		{name: "verified, committed by the App", mutate: func(c *gh.RepositoryCommit) { c.Committer = &gh.User{Login: gh.Ptr(app)} }, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commit := refreshCommit(newHead, app, oldHead, baseTip)
+			tc.mutate(commit)
+			api := &fakeBaseRefreshRepos{
+				commits:  map[string]*gh.RepositoryCommit{newHead: commit},
+				compares: map[string]*gh.CommitsComparison{"v5..." + oldHead: refreshCompare("0ld", same...), "v5..." + newHead: refreshCompare(baseTip, same...)},
+			}
+			if got := (&BaseRefreshChecker{}).HeadIsBaseRefreshOf(context.Background(), api, "hivecommons", "hive", 1, "v5", oldHead, newHead, app); got != tc.want {
+				t.Fatalf("HeadIsBaseRefreshOf = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#16860: GitHub lists at most 300 files for a compare, so
+// two diffs at the cap may differ in files it left out; that fails closed.
+func TestHeadIsBaseRefreshOfFailsClosedAtCompareFileCap(t *testing.T) {
+	const oldHead, newHead, baseTip, app = "aaaa", "bbbb", "b45e", "kubestellar-hive[bot]"
+	for _, n := range []int{baseRefreshCompareFileCap - 1, baseRefreshCompareFileCap} {
+		files := make([]*gh.CommitFile, 0, n)
+		for i := 0; i < n; i++ {
+			files = append(files, refreshFile("f"+strconv.Itoa(i)+".go", "blob"+strconv.Itoa(i), "@@"))
+		}
+		api := &fakeBaseRefreshRepos{
+			commits:  map[string]*gh.RepositoryCommit{newHead: refreshCommit(newHead, app, oldHead, baseTip)},
+			compares: map[string]*gh.CommitsComparison{"v5..." + oldHead: refreshCompare("0ld", files...), "v5..." + newHead: refreshCompare(baseTip, files...)},
+		}
+		want := n < baseRefreshCompareFileCap
+		if got := (&BaseRefreshChecker{}).HeadIsBaseRefreshOf(context.Background(), api, "hivecommons", "hive", 1, "v5", oldHead, newHead, app); got != want {
+			t.Fatalf("%d files: HeadIsBaseRefreshOf = %v, want %v", n, got, want)
+		}
+		if _, _, err := compareAllFiles(context.Background(), api, "hivecommons", "hive", "v5", newHead); want != (err == nil) || (!want && !errors.Is(err, ErrCompareFileCap)) {
+			t.Fatalf("%d files: compareAllFiles err = %v", n, err)
+		}
 	}
 }

@@ -100,7 +100,8 @@ func TestActiveBasePreparationCurrentHeadLifecycleAndReadOnlyRestart(t *testing.
 						author = "external-author"
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"sha": "refreshed", "parents": parents,
-						"author": map[string]string{"login": author}})
+						"author": map[string]string{"login": author}, "committer": map[string]string{"login": "web-flow"},
+						"commit": map[string]any{"verification": map[string]any{"verified": true}}})
 				case strings.Contains(r.URL.Path, "/compare/"):
 					if !strings.Contains(r.URL.Path, "/compare/main...") {
 						t.Errorf("refresh proof used stale recorded base instead of destination: %s", r.URL.Path)
