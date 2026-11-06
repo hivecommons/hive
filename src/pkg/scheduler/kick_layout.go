@@ -22,7 +22,7 @@ import (
 //	5. workflow push ceiling                 static per agent mode
 //	6. formal quality capability             static per role + config
 //	7. work tracker section                  static per work-source config
-//	7b. task context MCP pointer             static per agent task_mcp config
+//	7b. task context MCP pointer             static per agent backend + task_mcp config
 //	8. <resolved policy body>                static text, then ${ISSUE_LIST}/${PR_LIST}/… where the template puts them
 //	9. REPO-SCOPED CADENCE TARGET            semi-static (repo-scoped kicks only)
 //	10. AUTHORIZED REPOS                     semi-static (include_repos)
@@ -90,7 +90,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 		func(m string) string { return s.addWorkflowPushCeiling(a.agent, m) },
 		func(m string) string { return s.addFormalQualityCapability(a.agent, m) },
 		s.addWorkTrackerSection,
-		func(m string) string { return s.addTaskMCPPointer(m, a.elideStuffed) },
+		func(m string) string { return s.addTaskMCPPointer(a.agent, m, a.elideStuffed) },
 	}
 	for i := len(staticSeams) - 1; i >= 0; i-- {
 		message = staticSeams[i](message)

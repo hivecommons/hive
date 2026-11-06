@@ -99,7 +99,7 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 		}
 	}
 	if effectiveBackend(agent) == "cline" {
-		if err := validateClineSandbox(agent, runtime, agent.Config.SandboxJob(m.sandboxConfig)); err != nil {
+		if err := validateClineSandbox(agent, runtime, agent.Config.SandboxJob(m.sandboxConfig), m.project.TaskMCPURL); err != nil {
 			return "", err
 		}
 	}

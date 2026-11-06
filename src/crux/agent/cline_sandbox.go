@@ -10,8 +10,8 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 )
 
-func validateClineSandbox(agent *AgentProcess, runtime string, job config.SandboxJobConfig) error {
-	if err := validateClineDefinition(agent); err != nil {
+func validateClineSandbox(agent *AgentProcess, runtime string, job config.SandboxJobConfig, taskMCPURL string) error {
+	if err := validateClineDefinition(agent, taskMCPURL); err != nil {
 		return err
 	}
 	if runtime != config.SandboxRuntimeJob {
