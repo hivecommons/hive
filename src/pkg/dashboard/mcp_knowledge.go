@@ -470,6 +470,11 @@ func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
+	// The route takes GET (and so HEAD) as well as POST so that this can
+	// refuse it. Left to the mux, a GET matched Start()'s "GET /" and came back
+	// 404 from the static file server, where an MCP client that probes for an
+	// event stream expects 405. The mux still answers the other verbs 405
+	// itself; a method-less pattern is not an option, it conflicts with "GET /".
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

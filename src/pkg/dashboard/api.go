@@ -398,14 +398,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/effective", s.handleKnowledgeEffective)
 	s.mux.HandleFunc("GET /api/knowledge/entry/{id}", s.handleKnowledgeEntry)
 	s.mux.HandleFunc("PUT /api/knowledge/entry/{id}/state", s.handleKnowledgeEntryState)
-	// Anonymous, owner-switched, read-only MCP surface (#10615). POST only,
-	// and there is no SSE stream. GET (and so HEAD) is registered as well and
-	// the handler answers it 405: left to the mux it matched Start()'s "GET /"
-	// and came back 404 from the static file server, where an MCP client that
-	// probes for a stream expects 405. The mux answers the remaining verbs
-	// with 405 itself. A method-less pattern would conflict with "GET /".
-	s.mux.HandleFunc("POST /mcp/knowledge", s.handlePublicKnowledgeMCP) // path == publicKnowledgeMCPPath
+	// Anonymous, owner-switched, read-only MCP surface (#10615). POST only, no SSE stream; the handler answers a GET 405.
 	s.mux.HandleFunc("GET /mcp/knowledge", s.handlePublicKnowledgeMCP)
+	s.mux.HandleFunc("POST /mcp/knowledge", s.handlePublicKnowledgeMCP) // path == publicKnowledgeMCPPath
 	s.mux.HandleFunc("GET /api/knowledge/public", s.handlePublicKnowledgeGet)
 	s.mux.HandleFunc("PUT /api/knowledge/public", s.handlePublicKnowledgePut)
 	s.mux.HandleFunc("GET /api/knowledge/health", s.handleKnowledgeHealth)
