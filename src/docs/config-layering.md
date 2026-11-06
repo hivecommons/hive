@@ -267,7 +267,7 @@ anything.
 | Zero agents **with** `removed_agents` tombstones | **valid** — a deliberate deletion (#2361) |
 | All agents paused | valid |
 | Missing `policies` / `data` / `knowledge` / `hive_id` | valid — all optional |
-| No `project.org` in the persisted overlay | rejected — truncated write (a base config with bare-name repos and no org still loads; repos resolve without an org prefix) |
+| No `project.org` | rejected — truncated write |
 | Zero agents **and** no tombstones | rejected — truncated write |
 
 The tombstone distinction matters: before it existed, deleting your last agent
