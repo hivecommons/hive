@@ -117,3 +117,33 @@ func TestDialTunnelUpstreamRefusesNonRoutableSNI(t *testing.T) {
 		t.Errorf("reason = %q, want %q", denied.reason, plainForwardReasonPrivate)
 	}
 }
+
+// TestHandleTransparentTLSRefusalCountsEstateNotLoopback pins the handler-level
+// split in handleTransparentTLS: a refused estate-bound SNI is counted against
+// the caller, a refused loopback SNI is not. Over net.Pipe attribution yields
+// "", so the counter lands under that key.
+func TestHandleTransparentTLSRefusalCountsEstateNotLoopback(t *testing.T) {
+	for _, tc := range []struct {
+		sni  string
+		want int
+	}{{"10.255.255.1", 1}, {"127.0.0.1", 0}} {
+		p := newTestProxy()
+		clientHello := buildClientHello(tc.sni)
+		clientConn, proxyConn := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			p.handleTransparentTLS(proxyConn, clientHello[:1])
+			_ = proxyConn.Close()
+		}()
+		_, _ = clientConn.Write(clientHello[1:])
+		<-done
+		_ = clientConn.Close()
+		p.mu.Lock()
+		got := p.violations[""]
+		p.mu.Unlock()
+		if got != tc.want {
+			t.Errorf("SNI %s: violations[\"\"] = %d, want %d", tc.sni, got, tc.want)
+		}
+	}
+}
