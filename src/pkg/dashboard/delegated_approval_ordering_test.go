@@ -259,3 +259,30 @@ func TestDelegatedRejectedDecisionDoesNotRecordNativeApproval(t *testing.T) {
 		t.Fatal("rejected decision recorded approval")
 	}
 }
+
+// no_merge (admin MCP's repository.item_delegate) decides as a writer even
+// for a merger: the approval is the /lgtm + /approve path, and no Approve
+// review is recorded and queued for auto-merge.
+func TestDelegatedNoMergeNeverQueuesApproval(t *testing.T) {
+	prev := repoItemDecisionChangeRequests
+	t.Cleanup(func() { repoItemDecisionChangeRequests = prev })
+	path := filepath.Join(t.TempDir(), "approvals.json")
+	repoItemDecisionChangeRequests = func() review.HumanChangeRequestStore { return review.NewHumanChangeRequests(path) }
+	mock := &repoItemDecisionMock{}
+	s := newDelegatedServer(t, mock)
+	withDecider(s, &fakeDecider{err: errors.New("use deterministic default")}, true)
+	job := decodeDelegatedJob(t, postDelegated(t, s, 8, "writer", `{"type":"pr","no_merge":true}`, map[string]string{"X-Hive-Role": "merger"}))
+	if job.Status != delegatedJobStatusDone || job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictApprove {
+		t.Fatalf("job = %+v", job)
+	}
+	if job.ApprovalRecordedAt != nil {
+		t.Fatalf("no_merge recorded a native approval for auto-merge: %+v", job)
+	}
+	if _, ok := repoItemDecisionChangeRequests().For("testorg/testrepo", 8, delegatedOrderingHead); ok {
+		t.Fatal("no_merge stored an approval")
+	}
+	all := strings.Join(mock.comments, "\n")
+	if !strings.Contains(all, "/lgtm") || !strings.Contains(all, "/approve") {
+		t.Fatalf("no_merge approval did not take the /lgtm + /approve path: %v", mock.comments)
+	}
+}

@@ -222,6 +222,8 @@ capped at 256 KiB.
 | `agent_nudge_status` | Outcome of a nudge; needs `agent` |
 | `issues_by_band` | Issues grouped by band; optional `repo`, `band`, `stale`, `held`, `offset` |
 | `prs_by_band` | Pull requests grouped by band; optional `repo`, `band`, `stale`, `held`, `offset` |
+| `stage_tracker_read` | The Activity monitor: items with stage, reason, what they wait on, decision question and options, linked pull requests and issues, blocker and hold, plus `stages[]` with a count per stage; optional `repo`, `kind`, `number`, `q` (the monitor's search box), `stage`, `needs_human`, `on_hold`, `waiting_on_you`, `view` (`summary` or `full`), `recent`, `offset` |
+| `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number` |
 | `review_queue` | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset` |
 | `governor_setup_proposal` | Proposed governor setup, each setting with a reason and the write operation and args that apply it |
 | `log_sources` | Log sources this hive can read, each available or not with a reason; `hive` is the default, plus `proxy`, `hive-output`, `litellm` and `requests` (see [design/admin-mcp.md](design/admin-mcp.md#output-and-request-log-sources)), and `starts` and `crash` (see [below](#start-records-crash-traces-and-out-of-memory-evidence)) |
@@ -406,6 +408,14 @@ Registered operations:
 - `governor.feature_settings`, `governor.thresholds`,
   `governor.threshold_scaling`
 - `repository.pause`, `repository.resume`, `repository.item_hold`
+- The Activity monitor's row actions: `repository.rescan` (Re-evaluate now),
+  `repository.item_accept_triage`, `repository.item_needs_human`,
+  `repository.item_blocker_recheck`, `repository.item_blocker_handoff`,
+  `repository.item_blocker_close_partial`, `repository.item_decision` (approve,
+  direction, close-superseded, close-wontfix, close-read, close-issue, adopt,
+  adopt-now, re-author, reroute) and `repository.item_delegate` (Let hive decide;
+  read the outcome with `delegated_decision_status`). The merge answers are not
+  available, and a delegated decision made here never queues an auto-merge.
 - `budget.update`, `budget.reset`, `budget.ignore`
 - `contributor.trust`, `contributor.agent_role`,
   `contributor.agent_role_grants`, `contributor.revoke`,
@@ -416,26 +426,26 @@ Registered operations:
 Anything not on this list is refused; the assistant must not approximate it by
 combining other operations.
 
-Every write is recorded in the audit log as the configured owner's login when
-`dashboard.authorized_users` names an owner, and as `owner` otherwise, whoever
-confirmed it. The audit log cannot tell an assistant-mediated write from a
-dashboard action.
+A confirmed write runs as you. On the HTTP endpoint that is the identity the hive
+verified on your request — your login when you come through a dashboard session
+or the hub, at your role on that hive — so the endpoint's own permission checks
+apply to you, and the audit log and any comment the write leaves name you. Only
+the caller who previewed a write can confirm it. With the dashboard token (the
+stdio binary, or an HTTP client sending `Authorization: Bearer`), writes are
+recorded as the configured owner's login when `dashboard.authorized_users` names
+an owner, and as `owner` otherwise. The audit log cannot tell an
+assistant-mediated write from a dashboard action.
 
-Confirmed writes re-authenticate with your `Authorization: Bearer` token. A
-caller admitted another way (dashboard session, hub proxy, internal header)
-can preview but not confirm, so on the HTTP endpoint writes are reported
-unavailable for that caller. Writes are likewise unavailable on a spoke that
-enforces per-user direct-route authorization.
+Writes are unavailable to a caller whose role on the hive is read-only.
 
 ## Troubleshooting
 
-- **401 on `write_confirm` after a successful preview.** The request was
-  admitted without the bearer token (session, hub proxy or internal header).
-  Connect with the dashboard token in the `Authorization` header.
+- **"confirmation was previewed by another caller".** Only the caller who ran
+  `write_preview` can confirm it. Preview the write again yourself.
 - **Write tools missing, or "writes unavailable".** Set
   `HIVE_ADMIN_MCP_ENABLE_WRITES=1` on the serving process, or read the reason
-  returned by `exclusion_catalogue`: a per-user direct-route spoke, or a caller
-  not using the bearer token.
+  returned by `exclusion_catalogue`: a read-only role on this hive, or a request
+  carrying no verified identity.
 - **`select_hive` fails.** "unreachable host": check the address and network.
   "wrong dashboard token": the roster token does not match that hive. "direct-route
   spoke refused shared token": that spoke needs per-user access and cannot be

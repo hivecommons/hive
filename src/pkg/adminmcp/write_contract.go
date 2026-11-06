@@ -33,6 +33,7 @@ var (
 	ErrWritesDisabled      = errors.New("admin MCP writes are disabled")
 	ErrConfirmationExpired = errors.New("admin MCP confirmation expired")
 	ErrConfirmationMissing = errors.New("admin MCP confirmation not found")
+	ErrConfirmationActor   = errors.New("admin MCP confirmation was previewed by another caller; preview it again yourself")
 )
 
 type WriteClient interface {
@@ -123,6 +124,7 @@ type PendingConfirmation struct {
 	Args      map[string]any `json:"args"`
 	Preview   WritePreview   `json:"preview"`
 	Hive      string         `json:"hive"`
+	Actor     string         `json:"actor,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
 	ExpiresAt time.Time      `json:"expires_at"`
 }

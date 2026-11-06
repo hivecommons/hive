@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 type dashboardAdminMCPProvider struct {
@@ -70,27 +71,27 @@ func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	adminmcp.NewHandler(provider,
 		adminmcp.WithWritesEnabled(adminMCPWritesEnabled()),
-		adminmcp.WithWritesUnavailable(s.adminMCPWritesUnavailableReason(provider.authorization)),
+		adminmcp.WithWritesUnavailable(s.adminMCPWritesUnavailableReason(provider)),
+		adminmcp.WithActor(provider.user),
 		adminmcp.WithPendingStore(adminmcp.NewFilePendingStore(adminMCPPendingPath())),
 		adminmcp.WithHiveID("dashboard"),
 	).ServeHTTP(w, r)
 }
 
 // adminMCPWritesUnavailableReason reports why a confirmed write could not
-// authenticate for this caller. ExecuteWrite re-enters authenticate carrying
-// only the caller's Authorization header (the write contract never forwards
-// identity headers), so a caller admitted by session, hub proof or the internal
-// header would preview successfully and then get 401 on confirm.
-func (s *Server) adminMCPWritesUnavailableReason(authorization string) string {
-	directRoute := s.directRouteAuthzEnabled()
-	if s.authToken == "" && !directRoute {
-		return ""
+// succeed for this caller. A confirmed write runs as the identity this hive
+// verified on the request (adminMCPWriteRequest), so it needs one, with a role
+// that may change things; a read-only caller is told so up front instead of
+// previewing a write every endpoint would refuse.
+func (s *Server) adminMCPWritesUnavailableReason(p dashboardAdminMCPProvider) string {
+	if strings.TrimSpace(p.user) == "" || strings.TrimSpace(p.role) == "" {
+		if s.authToken == "" && !s.directRouteAuthzEnabled() {
+			return ""
+		}
+		return "this request carries no identity the hive verified, so a confirmed write would have no one to run as"
 	}
-	if directRoute {
-		return "this spoke enforces per-user direct-route authorization, which refuses the shared dashboard token that admin MCP writes authenticate with"
-	}
-	if !secureCompare(strings.TrimSpace(authorization), "Bearer "+s.authToken) {
-		return "admin MCP writes re-authenticate with the dashboard token (Authorization: Bearer); this request was admitted another way (session, hub proxy or internal header), so a confirmed write would be refused with 401"
+	if !config.RoleAtLeast(p.role, config.RoleReadWrite) {
+		return "your role on this hive (" + p.role + ") is read-only, so changes are not allowed"
 	}
 	return ""
 }
@@ -118,6 +119,20 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	}
 	if adminmcp.DiagTool(tool) {
 		return p.readDiag(tool, args)
+	}
+	if tool == adminmcp.ToolStageTrackerRead {
+		data, err := p.get(tool, adminmcp.StageTrackerReadPath())
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.StageTrackerReadResult(data, args)
+	}
+	if tool == adminmcp.ToolDelegatedDecisionStatus {
+		path, err := adminmcp.DelegatedDecisionStatusPath(args)
+		if err != nil {
+			return nil, err
+		}
+		return p.get(tool, path)
 	}
 	if tool == adminmcp.ToolSettingsRead {
 		// An unknown section or a missing agent is refused with its reason.
@@ -261,10 +276,7 @@ func (p dashboardAdminMCPProvider) ExecuteWrite(_ context.Context, req adminmcp.
 	if req.Body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
-	if strings.TrimSpace(p.authorization) != "" {
-		httpReq.Header.Set("Authorization", p.authorization)
-	}
-	p.server.authenticate(p.server.roleEnforcement(p.server.securityHeaders(p.server.mux))).ServeHTTP(rec, httpReq)
+	p.adminMCPWriteRequest(httpReq).ServeHTTP(rec, httpReq)
 	status := rec.statusCode()
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		body := rec.bodyBytes()
@@ -286,6 +298,34 @@ func (p dashboardAdminMCPProvider) ExecuteWrite(_ context.Context, req adminmcp.
 		return nil, err
 	}
 	return data, nil
+}
+
+// adminMCPWriteRequest prepares a confirmed write to run as the caller and
+// returns the handler chain to serve it. With no verified identity on the
+// outer request (an open spoke, or a hand-built provider in a test) the write
+// re-enters authenticate with the caller's Authorization header, as before.
+// Otherwise it runs as the identity authenticate verified on the outer
+// /api/admin/mcp request — the same user, role and verified-owner marker the
+// read tools already carry — so a hub-proxied or session caller can write,
+// every role check sees that caller, and the write is attributed to them
+// rather than to the configured owner. authenticate is not re-entered:
+// it strips identity headers by design, and the identity here is the one it
+// already verified, never one the client asserted (inbound copies were
+// stripped before the outer request reached this handler).
+func (p dashboardAdminMCPProvider) adminMCPWriteRequest(req *http.Request) http.Handler {
+	inner := p.server.roleEnforcement(p.server.securityHeaders(p.server.mux))
+	if strings.TrimSpace(p.user) == "" || strings.TrimSpace(p.role) == "" {
+		if strings.TrimSpace(p.authorization) != "" {
+			req.Header.Set("Authorization", p.authorization)
+		}
+		return p.server.authenticate(inner)
+	}
+	req.Header.Set("X-Hive-User", p.user)
+	req.Header.Set("X-Hive-Role", p.role)
+	if p.ownerVerified && isOwnerRole(p.role) {
+		req.Header.Set(ownerRoleVerifiedHeader, "true")
+	}
+	return inner
 }
 
 type writeRecorder interface {
