@@ -74,3 +74,30 @@ func TestFullFactFromWikiLayerFollowsThePageStatus(t *testing.T) {
 		t.Fatalf("FullFact returned the deprecated page's body with state %q", got)
 	}
 }
+
+// A same-slug page in a vault of another layer must not supply the body of a
+// fact listed under a different layer.
+func TestFullFactIgnoresVaultPageOfAnotherLayer(t *testing.T) {
+	dir := t.TempDir()
+	page := "---\ntitle: Note\nlayer: project\n---\n\nProject copy.\n"
+	if err := os.WriteFile(filepath.Join(dir, "note.md"), []byte(page), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := &KnowledgeAPI{config: KnowledgeConfig{Enabled: true, Engine: "file"}, logger: apiTestLogger()}
+	if err := api.ConnectVault(dir, "vault"); err != nil {
+		t.Fatal(err)
+	}
+	if got := api.FileStores()[0].ListPages(""); len(got) != 1 || got[0].Layer != LayerProject {
+		t.Fatalf("test setup: vault lists %#v, want one project-layer fact", got)
+	}
+
+	full := api.FullFact(context.Background(), Fact{Slug: "note", Layer: LayerPersonal, Body: "snippet"})
+	if full.Body != "snippet" || full.Layer != LayerPersonal {
+		t.Fatalf("FullFact took the %s vault page's body %q under the personal layer", LayerProject, full.Body)
+	}
+
+	full = api.FullFact(context.Background(), Fact{Slug: "note", Layer: LayerProject})
+	if full.Body != "Project copy." || full.Layer != LayerProject {
+		t.Fatalf("FullFact = %q in layer %q, want the project vault page", full.Body, full.Layer)
+	}
+}

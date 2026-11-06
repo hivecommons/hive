@@ -1,0 +1,1 @@
+- knowledge: `FullFact` only takes a vault page body from a vault page of the fact's own layer, so the reported layer matches the store that supplied the body (#16926)
