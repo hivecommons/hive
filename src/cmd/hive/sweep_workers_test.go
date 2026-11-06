@@ -24,7 +24,7 @@ func TestSweepWorkersIndependentAndSingleFlight(t *testing.T) {
 	slowDone, fastDone := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(slowDone)
-		runSweepWorker(ctx, job, func() *config.Config { return cfg }, func(time.Duration) loopTicker { return slow }, now, func(*config.Config, uint64) {
+		runSweepWorker(ctx, job, 0, func() *config.Config { return cfg }, func(time.Duration) loopTicker { return slow }, now, func(*config.Config, uint64) {
 			calls.Add(1)
 			slowStarted <- struct{}{}
 			<-release
@@ -32,7 +32,7 @@ func TestSweepWorkersIndependentAndSingleFlight(t *testing.T) {
 	}()
 	go func() {
 		defer close(fastDone)
-		runSweepWorker(ctx, job, func() *config.Config { return cfg }, func(time.Duration) loopTicker { return fast }, now, func(*config.Config, uint64) { fastRan <- struct{}{} })
+		runSweepWorker(ctx, job, 0, func() *config.Config { return cfg }, func(time.Duration) loopTicker { return fast }, now, func(*config.Config, uint64) { fastRan <- struct{}{} })
 	}()
 	defer func() { cancel(); close(release); waitDone(t, slowDone); waitDone(t, fastDone) }()
 	waitSignal := func(ch <-chan struct{}) {
@@ -73,7 +73,7 @@ func TestSweepWorkerObservesReloadedInterval(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runSweepWorker(ctx, sweepJob{interval: func(c *config.Config) time.Duration { return time.Duration(c.Governor.EvalIntervalS) * time.Second }}, live.Load,
+		runSweepWorker(ctx, sweepJob{interval: func(c *config.Config) time.Duration { return time.Duration(c.Governor.EvalIntervalS) * time.Second }}, 0, live.Load,
 			func(time.Duration) loopTicker { return ticker }, now, func(*config.Config, uint64) { ran <- struct{}{} })
 	}()
 	defer func() { cancel(); waitDone(t, done) }()
@@ -163,5 +163,89 @@ func TestRunLoopStartupCadenceMeasuredFromEvalStart(t *testing.T) {
 	}
 	if cycles != 2 {
 		t.Fatalf("cycles=%d, want immediate overdue reconcile", cycles)
+	}
+}
+
+// runStaggeredSweepWorker starts one worker with firstDelay and a fake clock
+// and returns a step func that advances the clock by d and returns how many
+// passes have run so far. Each step sends two ticks: the second rendezvous
+// only succeeds once the worker has finished evaluating the first.
+func runStaggeredSweepWorker(t *testing.T, interval, firstDelay time.Duration) func(d time.Duration) int32 {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	ticker := newFakeTicker()
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	now := func() time.Time { return time.Unix(0, clock.Load()) }
+	var fired atomic.Int32
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runSweepWorker(ctx, sweepJob{interval: func(*config.Config) time.Duration { return interval }}, firstDelay,
+			func() *config.Config { return &config.Config{} }, func(time.Duration) loopTicker { return ticker }, now,
+			func(*config.Config, uint64) { fired.Add(1) })
+	}()
+	t.Cleanup(func() { cancel(); waitDone(t, done) })
+	send := func() {
+		t.Helper()
+		select {
+		case ticker.ch <- now():
+		case <-time.After(5 * time.Second):
+			t.Fatal("sweep worker stalled")
+		}
+	}
+	return func(d time.Duration) int32 {
+		t.Helper()
+		send() // the previous evaluation has finished once this lands
+		clock.Add(int64(d))
+		send()
+		send()
+		return fired.Load()
+	}
+}
+
+// A restart must not run every sweep in its first second (2026-11-06: the
+// burst spent the App's hourly quota): the first pass waits its offset, and
+// later passes keep the sweep's own interval.
+func TestSweepWorkerFirstPassWaitsForStartupOffset(t *testing.T) {
+	step := runStaggeredSweepWorker(t, 15*time.Minute, 2*time.Minute)
+	if n := step(time.Minute); n != 0 {
+		t.Fatalf("passes before the startup offset = %d, want 0", n)
+	}
+	if n := step(time.Minute); n != 1 {
+		t.Fatalf("passes once the startup offset passed = %d, want 1", n)
+	}
+	if n := step(14 * time.Minute); n != 1 {
+		t.Fatalf("passes before the sweep's interval = %d, want 1", n)
+	}
+	if n := step(time.Minute); n != 2 {
+		t.Fatalf("passes after the sweep's interval = %d, want 2", n)
+	}
+}
+
+// A short-interval sweep never waits longer than one interval for its first
+// pass, however late its offset in the spread.
+func TestSweepWorkerStartupOffsetCappedAtInterval(t *testing.T) {
+	step := runStaggeredSweepWorker(t, 30*time.Second, 4*time.Minute)
+	if n := step(20 * time.Second); n != 0 {
+		t.Fatalf("passes before one interval = %d, want 0", n)
+	}
+	if n := step(10 * time.Second); n != 1 {
+		t.Fatalf("passes after one interval = %d, want 1 (offset must not outlast the interval)", n)
+	}
+}
+
+func TestSweepFirstDelaysSpreadNonEssential(t *testing.T) {
+	jobs := []sweepJob{{class: sweepEssential}, {class: sweepUnstick}, {class: sweepOptional}, {class: sweepOptional}}
+	delays := sweepFirstDelays(jobs)
+	if delays[0] != 0 {
+		t.Fatalf("essential sweep delayed: %s", delays[0])
+	}
+	prev := time.Duration(0)
+	for i, d := range delays[1:] {
+		if d <= prev || d >= sweepStartupSpread {
+			t.Fatalf("job %d delay %s not inside (%s, %s)", i+1, d, prev, sweepStartupSpread)
+		}
+		prev = d
 	}
 }
