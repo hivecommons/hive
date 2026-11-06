@@ -16,16 +16,65 @@ Use HTTP whenever your client supports it.
 
 ## Quick start
 
-1. **Get the token.** The admin MCP uses the same dashboard token as
-   [`hivectl`](hivectl.md): `HIVE_DASHBOARD_TOKEN` or `dashboard.auth_token`.
-   See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](env-vars.md#generating-and-rotating-hive_dashboard_token).
+1. **Find out which credential your hive takes** (see [Authentication](#authentication)).
+   A hive hosted by the hub takes **your GitHub token** and you act as yourself.
+   A self-hosted hive takes its **dashboard token**, which acts as the owner.
 2. **Pick a transport** (HTTP if your client supports it) and paste the matching client config below.
 3. **Run one tool.** Ask the client to call `hive_status`. A JSON status
    summary back means you are connected.
 
+## Authentication
+
+Which credential works is decided by how the hive is deployed, not by the
+client. The endpoint accepts what the dashboard accepts:
+
+| Your hive | Credential | Header | You act as |
+|-----------|------------|--------|------------|
+| Hosted by the hub (`https://<hive>.hive.hivecommons.dev`) | Your GitHub token | `Authorization: Bearer <GitHub token>` | Yourself, at your role on that hive |
+| Self-hosted, `dashboard.auth_token` set, no `authorized_users` | The dashboard token (`HIVE_DASHBOARD_TOKEN` or `dashboard.auth_token`; see [Generating and rotating `HIVE_DASHBOARD_TOKEN`](env-vars.md#generating-and-rotating-hive_dashboard_token)) | `Authorization: Bearer <dashboard token>` | The owner (the configured owner's login, or `owner`) |
+| Self-hosted spoke with an `authorized_users` allowlist (direct-route) | Your per-user session from `hivectl --server URL login` | `Cookie: hive_session=<session>` | Yourself, at your allowlist role |
+
+**Hosted by the hub.** The hub checks the GitHub token with GitHub
+(`GET /user`, cached for five minutes) and lets you in only if your login has a
+role on that hive. It then passes your login and role to the hive, so reads,
+writes and the audit log are yours. The token only proves who you are, so give
+the MCP a **fine-grained token with no repository permissions**
+(<https://github.com/settings/personal-access-tokens/new>), not your everyday
+`gh` login, which can usually push code. Keep it in a file only you can read
+and have the client read it at connect time, so it never sits in the client's
+config. `gh auth token` also works, but sends that broader token to the hub on
+every connection.
+
+**The dashboard token is the owner credential.** Anyone holding it acts as
+the hive's owner with no personal identity, and a spoke with an allowlist
+refuses it for that reason. Use it only on a self-hosted hive you run.
+
+**Allowlist spokes** accept only a per-user session. Send the session the same
+way [`hivectl`](hivectl.md#credentials) does, as a `Cookie` header. This path is
+not yet verified with an MCP client.
+
 ### Client config: HTTP
 
-Claude Code:
+**Hosted by the hub** (Claude Code): put the server in `~/.claude.json` or a
+project `.mcp.json` with a `headersHelper`, a command Claude Code runs at
+connect time to produce the headers. Here the fine-grained token is kept in
+`~/.config/hive/github-mcp-token` (mode `0600`):
+
+```json
+{
+  "mcpServers": {
+    "hive": {
+      "type": "http",
+      "url": "https://<hive>.hive.hivecommons.dev/api/admin/mcp",
+      "headersHelper": "printf '{\"Authorization\":\"Bearer %s\"}' \"$(cat ~/.config/hive/github-mcp-token)\""
+    }
+  }
+}
+```
+
+To use your `gh` login instead, replace the `cat …` with `gh auth token`.
+
+**Self-hosted with the dashboard token** (Claude Code):
 
 ```bash
 claude mcp add --transport http hive http://127.0.0.1:3001/api/admin/mcp \
@@ -57,8 +106,24 @@ is refused.
 
 omp reads `~/.omp/agent/mcp.json` (user scope) or `.omp/mcp.json` (one
 project). It only reads a root `.mcp.json` as a fallback. Keep the token out of
-the file: use `${HIVE_DASHBOARD_TOKEN}`, or a `!command` header value that omp
-runs at connect time:
+the file: use an environment variable such as `${HIVE_DASHBOARD_TOKEN}`, or a
+`!command` header value that omp runs at connect time.
+
+A hive hosted by the hub, with your GitHub token:
+
+```json
+{
+  "mcpServers": {
+    "hive-admin": {
+      "type": "http",
+      "url": "https://<hive>.hive.hivecommons.dev/api/admin/mcp",
+      "headers": { "Authorization": "!printf 'Bearer %s' \"$(cat ~/.config/hive/github-mcp-token)\"" }
+    }
+  }
+}
+```
+
+A self-hosted hive with the dashboard token:
 
 ```json
 {
@@ -115,11 +180,13 @@ claude mcp add hive-admin \
 - Stateless JSON-RPC 2.0: one request per POST, no SSE, no session id.
 - `GET` returns 405.
 - Request bodies are capped at 64 KiB.
-- Authenticate with `Authorization: Bearer <token>`. A `?token=` query
-  parameter is rejected.
+- Authenticate as in [Authentication](#authentication): `Authorization: Bearer`
+  with your GitHub token (hosted by the hub) or the dashboard token
+  (self-hosted), or a `Cookie` session on an allowlist spoke. A `?token=`
+  query parameter is rejected.
 - Do not send `X-Hive-User`, `X-Hive-Role` or `X-Hive-Owner-Role-Verified`.
-- A spoke with an `authorized_users` allowlist refuses the shared token, so a
-  token client cannot administer it.
+  The hive strips them; your identity comes only from the credential.
+- A spoke with an `authorized_users` allowlist refuses the dashboard token.
 
 ## Stdio binary
 
@@ -431,7 +498,7 @@ verified on your request — your login when you come through a dashboard sessio
 or the hub, at your role on that hive — so the endpoint's own permission checks
 apply to you, and the audit log and any comment the write leaves name you. Only
 the caller who previewed a write can confirm it. With the dashboard token (the
-stdio binary, or an HTTP client sending `Authorization: Bearer`), writes are
+stdio binary, or an HTTP client sending the dashboard token), writes are
 recorded as the configured owner's login when `dashboard.authorized_users` names
 an owner, and as `owner` otherwise. The audit log cannot tell an
 assistant-mediated write from a dashboard action.
@@ -450,6 +517,10 @@ Writes are unavailable to a caller whose role on the hive is read-only.
   "wrong dashboard token": the roster token does not match that hive. "direct-route
   spoke refused shared token": that spoke needs per-user access and cannot be
   administered with a token.
+- **401 or 403 from a hive hosted by the hub.** The GitHub token is invalid or
+  expired, or your login has no role on that hive. Check the token with
+  `curl -sH "Authorization: Bearer <token>" https://api.github.com/user`, and
+  ask the hive's owner for access.
 - **405 on the HTTP endpoint.** You sent a GET; use POST.
 - **Confirmation expired or wrong hive.** Run `write_preview` again on the hive
   you want to change.
