@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -274,6 +274,29 @@ func failClosedStatus500(r slog.Record) bool {
 		if a.Key == "error" {
 			e := a.Value.String() + " "
 			match = strings.Contains(e, "/status") && strings.Contains(e, ": 500 ")
+			return false
+		}
+		return true
+	})
+	return match
+}
+
+// reviewRetryServerError reports whether r is the review-request watcher's
+// "review failed, will retry with backoff" warning caused by a GitHub 5xx on
+// the review POST. The retry with backoff is the designed behaviour and the
+// request is quarantined with an Error at the horizon, so a transient upstream
+// 5xx on the write is not a hive defect (hivecommons/hive#16844). 4xx and
+// non-5xx errors, and the quarantine Error, stay reportable.
+func reviewRetryServerError(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "review-request watcher: review failed, will retry with backoff" {
+		return false
+	}
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			e := a.Value.String() + " "
+			match = (strings.Contains(e, "/reviews") || strings.Contains(e, "/pulls/")) &&
+				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
 			return false
 		}
 		return true
