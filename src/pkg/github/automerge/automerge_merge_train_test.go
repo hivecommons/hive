@@ -206,6 +206,7 @@ type mergeTrainAPI struct {
 	files   map[int][]string
 	state   map[int]string
 	heads   map[int]string
+	refs    map[int]string
 	closed  map[int]bool
 	updates []int
 	gets    int
@@ -238,8 +239,12 @@ func newMergeTrainServer(t *testing.T, api *mergeTrainAPI) *httptest.Server {
 			if head == "" {
 				head = "sha" + strconv.Itoa(n)
 			}
+			ref := api.refs[n]
+			if ref == "" {
+				ref = "feat/" + strconv.Itoa(n)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": state, "mergeable_state": api.state[n],
-				"head": map[string]any{"sha": head, "ref": "feat/" + strconv.Itoa(n), "repo": map[string]any{"full_name": "acme/widget"}},
+				"head": map[string]any{"sha": head, "ref": ref, "repo": map[string]any{"full_name": "acme/widget"}},
 				"base": map[string]any{"ref": "v5", "repo": map[string]any{"full_name": "acme/widget"}}})
 		case r.Method == http.MethodPut && len(parts) == 2 && parts[1] == "update-branch":
 			api.updates = append(api.updates, n)
@@ -410,6 +415,89 @@ func TestMergeTrainAfterFrontMergeBehindAndDirty(t *testing.T) {
 	}
 	if s := got[0].String(); !strings.Contains(s, "acme/widget#22 onto v5 (behind #20, attempt 1/2, self)") {
 		t.Fatalf("String() = %q", s)
+	}
+}
+
+// TestMergeTrainLeavesDependencyBotBranchesToTheBot pins
+// projectbluefin/utah#1097 on the merge train: once the front merges, a
+// Renovate sibling — behind or dirty — gets neither update-branch nor a
+// fixer rebase request, and a dirty Renovate front falls through to the
+// lane's conflicting path without a rebase request. Ordinary siblings are
+// still updated and rebased.
+func TestMergeTrainLeavesDependencyBotBranchesToTheBot(t *testing.T) {
+	t0 := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	api := &mergeTrainAPI{
+		files: map[int][]string{40: {"a.go"}, 41: {"a.go"}, 42: {"a.go"}, 43: {"a.go"}, 44: {"a.go"}},
+		state: map[int]string{40: "clean", 41: "clean", 42: "clean", 43: "clean", 44: "clean"},
+		refs:  map[int]string{42: "renovate/actions-checkout-5.x", 43: "renovate/go-deps"},
+	}
+	srv := newMergeTrainServer(t, api)
+	defer srv.Close()
+	var mu sync.Mutex
+	var requests []RebaseRequest
+	resolver := RebaseResolverFunc(func(_ context.Context, req RebaseRequest) error {
+		mu.Lock()
+		defer mu.Unlock()
+		requests = append(requests, req)
+		return nil
+	})
+	c, logs := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, resolver)
+	prs := []*gh.PullRequest{mtPR(40, t0, ""), mtPR(41, t0.Add(time.Minute), ""), mtPR(42, t0.Add(2*time.Minute), ""), mtPR(43, t0.Add(3*time.Minute), ""), mtPR(44, t0.Add(4*time.Minute), "")}
+	mtReady(c, "self", prs...)
+	plan := c.planMergeTrains(context.Background(), "self", "acme/widget", "acme", "widget", prs, func(*gh.PullRequest) string { return "" })
+	if !plan.isFront(40) {
+		t.Fatalf("front = %v", plan.groups)
+	}
+	// The front merged: #41 (ordinary) and #42 (Renovate) are behind, #43
+	// (Renovate) and #44 (ordinary) are dirty.
+	api.mu.Lock()
+	api.state[41], api.state[42], api.state[43], api.state[44] = "behind", "behind", "dirty", "dirty"
+	api.mu.Unlock()
+	c.mergeTrainAfterFrontMerge(context.Background(), plan, 40)
+	api.mu.Lock()
+	updates := append([]int(nil), api.updates...)
+	api.mu.Unlock()
+	if !reflect.DeepEqual(updates, []int{41}) {
+		t.Fatalf("update-branch on %v, want only the ordinary #41", updates)
+	}
+	mu.Lock()
+	got := append([]RebaseRequest(nil), requests...)
+	mu.Unlock()
+	if len(got) != 1 || got[0].Number != 44 {
+		t.Fatalf("rebase requests = %+v, want only the ordinary #44", got)
+	}
+	if !strings.Contains(logs.String(), "leaving the base sync to the bot") || !strings.Contains(logs.String(), "head_ref=renovate/go-deps") {
+		t.Fatalf("missing dependency-bot skip log\n%s", logs.String())
+	}
+
+	// A dirty Renovate front still riding the train under repair (an
+	// episode opened before this guard): no rebase request, the lane's
+	// conflicting path takes it.
+	frontAPI := &mergeTrainAPI{
+		files: map[int][]string{50: {"a.go"}, 51: {"a.go"}},
+		state: map[int]string{50: "dirty", 51: "dirty"},
+		refs:  map[int]string{50: "renovate/go-deps"},
+	}
+	frontSrv := newMergeTrainServer(t, frontAPI)
+	defer frontSrv.Close()
+	fc, _ := newMergeTrainEngine(t, frontSrv.URL, MergeTrainPolicy{Enabled: true, MaxRebaseAttempts: 2}, resolver)
+	fronts := []*gh.PullRequest{mtPR(50, t0, ""), mtPR(51, t0.Add(time.Minute), "")}
+	fronts[0].Head.Ref = gh.Ptr("renovate/go-deps")
+	mtReady(fc, "self", fronts...)
+	fc.noteMergeTrainFrontMerged("acme", "widget", "v5", 49)
+	fc.bumpMergeTrainAttempts("acme", "widget", 50, 49)
+	fc.bumpMergeTrainAttempts("acme", "widget", 51, 49)
+	frontPlan := plan0(fc, fronts)
+	if !frontPlan.isFront(50) {
+		t.Fatalf("front = %+v, want #50", frontPlan.groups)
+	}
+	if reason, handled := fc.mergeTrainFront(context.Background(), frontPlan, fronts[0]); handled || reason != "" {
+		t.Fatalf("dirty Renovate front handled=%v reason=%q, want the lane's conflicting path", handled, reason)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 1 {
+		t.Fatalf("rebase requests after the Renovate front = %+v, want none added", requests)
 	}
 }
 

@@ -33,6 +33,14 @@ func mergeForwardPR(fork bool, labels ...string) *gh.PullRequest {
 	return pr
 }
 
+// renovateMergeForwardPR is a same-repo `author/human` PR on a Renovate
+// branch (Renovate run under a person's token): the head ref alone marks it.
+func renovateMergeForwardPR() *gh.PullRequest {
+	pr := mergeForwardPR(false, "author/human")
+	pr.Head.Ref = gh.Ptr("renovate/go-deps")
+	return pr
+}
+
 type mergeForwardAPI struct {
 	mu            sync.Mutex
 	mergeStatus   int
@@ -113,6 +121,7 @@ func TestMergeForwardOrConflict(t *testing.T) {
 		{name: "unknown author keeps the hold", optIn: true, pr: mergeForwardPR(false), wantReason: "conflicting"},
 		{name: "nil pr", optIn: true, wantReason: "conflicting"},
 		{name: "clean merge pushes a merge commit", optIn: true, pr: mergeForwardPR(false, "author/human"), mergeStatus: http.StatusCreated, wantReason: "check-pending", wantUpdated: true, wantMerges: 1},
+		{name: "dependency bot branch is left to the bot", optIn: true, pr: renovateMergeForwardPR(), mergeStatus: http.StatusCreated, wantReason: "conflicting"},
 		{name: "nothing to merge waits for github", optIn: true, pr: mergeForwardPR(false, "author/human"), mergeStatus: http.StatusNoContent, wantReason: "check-pending", wantMerges: 1},
 		{name: "conflict posts the files note", optIn: true, pr: mergeForwardPR(false, "author/human"), mergeStatus: http.StatusConflict, wantReason: "conflicting", wantMerges: 1, wantComment: true, wantFiles: true},
 		{name: "conflict note without files when compare fails", optIn: true, pr: mergeForwardPR(false, "author/human"), mergeStatus: http.StatusConflict, compareStatus: http.StatusInternalServerError, wantReason: "conflicting", wantMerges: 1, wantComment: true},

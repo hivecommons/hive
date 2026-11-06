@@ -198,6 +198,46 @@ func TestAdoptedRecoveryPreparationWaitDoesNotConsumeAttempt(t *testing.T) {
 	}
 }
 
+// A dependency bot's adopted branch behind a base that clears its red check
+// gets no update-branch (projectbluefin/utah#1097: Renovate stops rebasing a
+// branch once the hive committed to it); the skip is recorded so the escape
+// proceeds. An ordinary adopted head is still updated.
+func TestAdoptedRecoveryLeavesDependencyBotBranchToTheBot(t *testing.T) {
+	cases := []struct {
+		name        string
+		headRef     string
+		author      string
+		wantReason  string
+		wantUpdates int
+	}{
+		{name: "renovate head ref", headRef: "renovate/go-deps", author: "castrojo", wantReason: adoptionRecoverySkipPrefix + "dependency-bot-branch"},
+		{name: "dependency bot author", headRef: "deps/bump", author: "renovate[bot]", wantReason: adoptionRecoverySkipPrefix + "dependency-bot-branch"},
+		{name: "ordinary branch", headRef: "feature", author: "alice", wantReason: adoptionRecoveryUpdateBranch, wantUpdates: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, key, done := recoveryHarness(t)
+			defer done()
+			h.adopt.compareBehind = 15
+			h.adopt.baseChecks = map[string]string{"coverage": "success"}
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			out := h.e.recoverStaleRedAdoption(context.Background(), h.e.stageStoreOrShared(), key, stageObservation{
+				Owner: "acme", Repo: "widget", Display: "acme/widget", Number: 7,
+				BaseRef: "v5", HeadSHA: "aaa", HeadRef: tc.headRef, Author: tc.author, Lane: stageLaneContributor, Reason: recoveryReason,
+			}, rec)
+			if out.Reason != tc.wantReason || out.Attempted != (tc.wantUpdates > 0) {
+				t.Fatalf("recovery = %+v, want reason %q", out, tc.wantReason)
+			}
+			if got := len(h.adopt.branchUpdates); got != tc.wantUpdates {
+				t.Fatalf("branch updates=%v, want %d", h.adopt.branchUpdates, tc.wantUpdates)
+			}
+			if rec, _ = h.e.stageStoreOrShared().Get(key); rec.AdoptRecoveryAttempt != "aaa@base1" {
+				t.Fatalf("recovery attempt=%q, want it recorded so the escape proceeds", rec.AdoptRecoveryAttempt)
+			}
+		})
+	}
+}
+
 // The same head stays red after the re-run: one attempt per (head, base),
 // then the escalation runs; a new hive head starts over.
 func TestAdoptedStaleRedRecoveryEscalatesAfterOneAttempt(t *testing.T) {

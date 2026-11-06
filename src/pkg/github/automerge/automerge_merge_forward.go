@@ -55,13 +55,17 @@ func (c *Engine) markMergeForwardAttempted(owner, repo string, number int, headS
 // as a new App-authored, signed-off merge commit (the GitHub merges API; no
 // human commit is rewritten) and the merge waits for CI on the new head. A
 // real conflict leaves the branch untouched and posts one note naming the
-// files both sides changed. Every other case keeps the "conflicting" hold.
+// files both sides changed. Every other case — a dependency bot's branch
+// included, which the bot rebases itself — keeps the "conflicting" hold.
 // It is attempted once per head SHA.
 func (c *Engine) mergeForwardOrConflict(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int) (AutoMergeSweepEvent, string, error) {
 	if !c.mergeForwardTrustedHumanFor(owner+"/"+repo) || pr == nil || c.isForkPR(pr) {
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	if authorkind.FromLabels(labelNames(pr.Labels), c.stagePolicy().AuthorKindLabels) != authorkind.Human {
+		return AutoMergeSweepEvent{}, "conflicting", nil
+	}
+	if c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "merge-forward") {
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	headRef := strings.TrimSpace(pr.GetHead().GetRef())

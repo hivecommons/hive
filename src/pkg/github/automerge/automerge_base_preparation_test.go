@@ -218,7 +218,7 @@ func preparationEngine(url string, store *BasePreparationStore) *Engine {
 }
 
 func preparationGate(c *Engine, n int, base, head string) (AutoMergeSweepEvent, string, bool, error) {
-	return c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", n, base, head, true, "behind", false)
+	return c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", n, base, head, true, "behind", nil)
 }
 
 func TestBasePreparationStickyAcrossLanesSweepsAndRestart(t *testing.T) {

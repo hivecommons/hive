@@ -138,24 +138,14 @@ func redPRFixOwner(agent string) string {
 	return review.DefaultFixerAgent
 }
 
-// dependencyBots are forge bots whose PRs are dependency bumps, not hive fix
-// attempts. They carry the "[bot]" suffix that otherwise marks a PR as
-// agent-authored, but nothing in the hive opened them and no hive agent is
-// iterating on them, so a red one is not a fix loop to break: escalating it
-// only pages a human with "1 distinct fix attempts" about a crate bump that
-// renovate will rebase on its own. Mirrors the hub's default contribute
-// deny-authors list (config: hub.contribute_deny_authors).
-var dependencyBots = map[string]bool{
-	"renovate[bot]":    true,
-	"dependabot[bot]":  true,
-	"mergeraptor[bot]": true,
-}
-
 // isHiveAgentAuthor reports whether a PR author is one of OUR agents — the
 // configured ai_author, the App bot identity agents author as, or another
-// bot account — excluding the dependency bots above. Shared by every fix-loop
-// path (staleness clock, reaper, escalation sweep) so they classify PRs
-// identically.
+// bot account — excluding the dependency bots (github.IsDependencyBotAuthor):
+// nothing in the hive opened those and no hive agent iterates on them, so a
+// red one is not a fix loop to break — escalating it only pages a human with
+// "1 distinct fix attempts" about a crate bump the bot rebases on its own.
+// Shared by every fix-loop path (staleness clock, reaper, escalation sweep)
+// so they classify PRs identically.
 func isHiveAgentAuthor(cfg *config.Config, author string) bool {
 	if author == "" {
 		return false
@@ -166,7 +156,7 @@ func isHiveAgentAuthor(cfg *config.Config, author string) bool {
 	if eff := cfg.EffectiveAIAuthor(); eff != "" && author == eff {
 		return true
 	}
-	return strings.HasSuffix(author, "[bot]") && !dependencyBots[author]
+	return strings.HasSuffix(author, "[bot]") && !github.IsDependencyBotAuthor(author)
 }
 
 // isIndependentCIControl reports whether a PR supplies human-authored evidence
