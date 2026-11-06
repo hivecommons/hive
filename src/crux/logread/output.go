@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Output logs (hivecommons/hive#11944) keep what the processes around the hive
@@ -284,13 +285,30 @@ func (s *outputStream) Write(p []byte) (int, error) {
 		s.buf = s.buf[i+1:]
 	}
 	for len(s.buf) >= outputLineMaxBytes {
-		s.emitLocked(s.buf[:outputLineMaxBytes])
-		s.buf = s.buf[outputLineMaxBytes:]
+		cut := runeSafeCut(s.buf, outputLineMaxBytes)
+		s.emitLocked(s.buf[:cut])
+		s.buf = s.buf[cut:]
 	}
 	if len(s.buf) == 0 {
 		s.buf = nil
 	}
 	return len(p), nil
+}
+
+// runeSafeCut returns where to split b, at n or just below it, so that a
+// multi-byte character is not cut in half. A character split across two
+// records is lost: each half is stored as U+FFFD. Bytes that are not UTF-8 at
+// all are cut at n.
+func runeSafeCut(b []byte, n int) int {
+	for i := n - 1; i >= 0 && i > n-utf8.UTFMax; i-- {
+		if utf8.RuneStart(b[i]) {
+			if utf8.FullRune(b[i:n]) {
+				return n
+			}
+			return i
+		}
+	}
+	return n
 }
 
 func (s *outputStream) emitLocked(line []byte) {

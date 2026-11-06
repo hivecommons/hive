@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hivecommons/hive/crux/logscrub"
 )
@@ -849,7 +850,7 @@ func maskSensitive(b []byte) []byte {
 		case map[string]any:
 			out := map[string]any{}
 			for k, val := range x {
-				if sensitiveKey(k) && !maskExempt(k, val) {
+				if sensitiveKey(k) && !readMaskExempt(k, val) {
 					out[k] = "[masked:" + maskLabel(k) + "]"
 				} else {
 					out[k] = walk(val)
@@ -879,7 +880,111 @@ func maskSensitive(b []byte) []byte {
 
 func sensitiveKey(k string) bool {
 	k = strings.ToLower(k)
-	return strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "credential") || strings.Contains(k, "authorization")
+	return strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "credential") || authorizationKey(k)
+}
+
+// authorizationKey reports whether a lower-cased key names an Authorization
+// header or its value. The self-authorization hold (selfAuthorizationHold,
+// repoSelfAuthorizationHold, self_authorization_hold) is a merge policy, the
+// rule on whether a hive may approve its own pull requests, and not a header.
+func authorizationKey(lower string) bool {
+	if !strings.Contains(lower, "authorization") {
+		return false
+	}
+	squashed := strings.ReplaceAll(strings.ReplaceAll(lower, "_", ""), "-", "")
+	return !strings.HasSuffix(squashed, "selfauthorizationhold")
+}
+
+// readMaskExempt reports whether a value under a sensitive-looking key can be
+// shown in a read result because it cannot hold a credential. It adds to
+// maskExempt, which the pending-confirmation scrub shares and which stays as
+// strict as it was:
+//
+//   - nothing at all: null, "", {} and []. Masking those made a secret that
+//     is not set look set.
+//   - a timestamp (token_expires_at).
+//   - a token count or rate with its unit after the word (tokens_per_coin).
+//
+// A string kept this way is still scrubbed by shape like any other string.
+func readMaskExempt(k string, v any) bool {
+	if maskExempt(k, v) {
+		return true
+	}
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == "" || isTimestamp(x)
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0 || tokenRateKey(k)
+	case float64:
+		return tokenRateKey(k)
+	default:
+		return false
+	}
+}
+
+func isTimestamp(s string) bool {
+	_, err := time.Parse(time.RFC3339Nano, s)
+	return err == nil
+}
+
+// keyWords splits a JSON key into lower-case words at "_", "-", "." and
+// camelCase boundaries: "webhookSecretEnv" is webhook, secret, env.
+func keyWords(k string) []string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	var prev rune
+	for _, r := range k {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ':
+			flush()
+		case unicode.IsUpper(r) && (unicode.IsLower(prev) || unicode.IsDigit(prev)):
+			flush()
+			cur = append(cur, r)
+		default:
+			cur = append(cur, r)
+		}
+		prev = r
+	}
+	flush()
+	return words
+}
+
+// tokenRateKey reports whether k has "tokens" as a whole word with more after
+// it (tokens_per_coin, tokensIn): a count or rate like the keys tokenCountKey
+// accepts, with the unit after the word. A credential qualifier before the
+// word (access_tokens_revoked) or another sensitive word in the key rules it
+// out.
+func tokenRateKey(k string) bool {
+	lower := strings.ToLower(k)
+	for _, word := range []string{"secret", "password", "credential", "authorization"} {
+		if strings.Contains(lower, word) {
+			return false
+		}
+	}
+	words := keyWords(k)
+	for i, word := range words {
+		if word != "tokens" {
+			continue
+		}
+		stem := strings.Join(words[:i], "")
+		for _, q := range credentialTokenQualifiers {
+			if strings.HasSuffix(stem, q) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // credentialTokenQualifiers mark a plural "*tokens" key as a collection of
