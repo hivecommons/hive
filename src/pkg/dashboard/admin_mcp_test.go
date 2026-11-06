@@ -196,11 +196,11 @@ func TestAdminMCPAdvisorRecordsMatchesREST(t *testing.T) {
 }
 
 // TestDashboardAdminMCPVersionReadReturnsAPIVersion: version_read answers with
-// the same currentCommit the authenticated /api/version reports (#11220).
+// the same running commit the authenticated /api/version reports (#11220).
 func TestDashboardAdminMCPVersionReadReturnsAPIVersion(t *testing.T) {
 	s := &Server{mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"currentCommit": "1ffbbae", "branch": "v6"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"short": "1ffbbae", "branch": "v6"})
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version_read","arguments":{}}}`))
@@ -208,8 +208,38 @@ func TestDashboardAdminMCPVersionReadReturnsAPIVersion(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "1ffbbae") || !strings.Contains(rec.Body.String(), "currentCommit") {
+	if !strings.Contains(rec.Body.String(), "1ffbbae") || !strings.Contains(rec.Body.String(), "short") {
 		t.Fatalf("version_read body = %s", rec.Body.String())
+	}
+}
+
+// The version_read description told the model to read "currentCommit", a
+// field GET /api/version does not return: the running commit is in hash and
+// short. The description must name fields the real endpoint answers with.
+func TestVersionReadDescriptionNamesTheCommitFieldsTheHiveReturns(t *testing.T) {
+	s := &Server{mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+	data, err := dashboardAdminMCPProvider{server: s}.Read(context.Background(), adminmcp.ToolVersionRead, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, _ := data.(map[string]any)
+	desc := ""
+	for _, tool := range adminmcp.Tools() {
+		if tool["name"] == adminmcp.ToolVersionRead {
+			desc, _ = tool["description"].(string)
+		}
+	}
+	for _, field := range []string{"hash", "short", "branch"} {
+		if _, ok := answer[field]; !ok {
+			t.Errorf("GET /api/version no longer returns %q; update the version_read description and docs/admin-mcp.md", field)
+		}
+		if !strings.Contains(desc, field) {
+			t.Errorf("version_read description does not name %q: %s", field, desc)
+		}
+	}
+	if _, ok := answer["currentCommit"]; !ok && strings.Contains(desc, "currentCommit") {
+		t.Errorf("version_read description names currentCommit, which the hive does not return: %s", desc)
 	}
 }
 

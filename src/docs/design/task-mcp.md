@@ -2,11 +2,16 @@
 
 Hive serves the Phase 1 task MCP endpoint on the dashboard mux at `POST /api/contribute/mcp`, under the existing contributor API prefix. The transport is streamable HTTP JSON-RPC 2.0 and is read-only.
 
-Phase 1 was for hub-launched agents only. Hive injects the endpoint through agent `connections` as the `hive-task` MCP server so existing `connectionMCPFlags` launch handling can pass it to supported CLIs.
+Phase 1 was for hub-launched agents only. Hive injects the endpoint through agent `connections` as the `hive-task` MCP server so existing `connectionMCPFlags` launch handling can pass it to supported CLIs. Today the only supported CLI is Claude Code: a launch on any other backend is not given the server. Agents on an inference backend or a configured model gateway run the claude CLI, so they have it too.
 
 Scope resolution accepts `task_id`, `repo`, and `number` from the `X-Hive-Task-ID` header, tool arguments, then URL query parameters in that order. The per-launch `hive-task` URI carries those query parameters plus a per-launch `token` (see "Hub-launched scoping" below); it never carries the dashboard auth token. Dashboard lookup first checks active contributor relay connections for backward compatibility, then falls through to the agent manager's active hub-launched agents. The active-launch entry supplies the agent, repo, launch generation, and started-at timestamp; until the manager has a stable issue/bead id for a launch, Hive derives the task id deterministically as `<agent>:<repo>#<number>:<generation>`.
 
-Hub-launched kick prompts include one short pointer when the task MCP URL is configured: call `context_bundle` on `hive-task` first instead of re-reading the issue/PR and CI from scratch. Hives without a task MCP URL keep the old prompt text.
+Hub-launched kick prompts include one short pointer for the agents that have the server: call `context_bundle` on `hive-task` first instead of re-reading the issue/PR and CI from scratch. An agent gets the pointer only when both of these hold:
+
+- It launches as Claude Code (see above). The scheduler asks the agent runtime which backend the agent launches on, so an agent that provider rotation moved to another backend is judged by the backend it runs on, not the one in its config.
+- The hive can mint the launch token the endpoint requires, which needs a dashboard token (see "Hub-launched scoping"). Without one the endpoint refuses every agent call.
+
+Every other agent keeps the old prompt text: an agent on any other backend, and every agent on a hive without a dashboard token.
 
 This is the **agent-facing** MCP surface. An operator-facing admin MCP — hive-wide,
 read/write, authenticated with the dashboard token, served both as its own endpoint and as a
@@ -18,7 +23,7 @@ The tools are:
 
 - `task_context()` for the scoped assignment, labels, lease age, hold and level gates, standby tier/lane policy, and PR-template policy slots.
 - `related_work()` returns cache-backed open or recently merged issues and pull requests in the scoped repo when they cite the leased issue, overlap known changed-file metadata, or are tagged as duplicate-sweep candidates. The default recency window is `hub.task_mcp_related_work_recency_days` with the built-in default from `config.DefaultTaskMCPRelatedWorkRecencyDays`.
-- `ci_health()` returns per-check cache-backed health from the dashboard snapshot: default-branch state, open-PR failure counts, last-green SHA slots, and cache staleness. Prow/tide approval waits such as missing `lgtm` or `approve` are normalized to `pending`, not failing.
+- `ci_health()` returns per-check cache-backed health from the dashboard snapshot: default-branch state, open-PR failure counts, last-green SHA slots, and cache staleness. The checks listed are the ones required for the task's repository (its `auto_merge.repos` override when it has one, otherwise the global `auto_merge.required_checks`), plus any check failing on its open PRs. Prow/tide approval waits such as missing `lgtm` or `approve` are normalized to `pending`, not failing.
 - `context_bundle()` for backends that prefer one call. Without arguments it returns the Phase 1 trio (`task_context`, `related_work`, `ci_health`) byte-for-byte compatible with existing callers. Phase 3 adds an optional `include: [...]` argument so callers can opt in to `repo_conventions`, `dependencies`, `history`, and `knowledge` without increasing the default response cap.
 
 Prompt-injection handling is structural: issue and PR text is only returned inside a fixed-schema `data` field. Tool descriptions and other free-text metadata never interpolate served GitHub text. Answers are scoped to the active task repo, capped, paginated, and read from Hive state/caches only; request handling must not call GitHub.
@@ -38,6 +43,8 @@ Remote contributor relays can opt in with `task_mcp.remote_enabled: true`. When 
   }
 }
 ```
+
+`mcp.url` is always an address of the assigning hive itself, because the relay sends the lease bearer to it. It is `dashboard.public_url` when that is set, otherwise the `hub.dashboard_url` of a hive whose hub link is on (`hub.enabled: true`). `hub.url` names the hosted hub the hive reports to, not the hive itself, and has a default on every hive, so it is never used. A `hub.dashboard_url` left on a hive whose hub link is off is ignored as stale. A hive with no address left sends no `mcp` block and mints no lease bearer: the contributor works the task without the task MCP, and the hive logs `task_assign carries no mcp block` at info level for each such task. Set `dashboard.public_url` to an origin contributors can reach to hand the task MCP out.
 
 The relay writes that block as the standard `mcpServers` JSON shape (`hive_task`) in its contributor config directory and as `.mcp.json` in the launched agent working directory. The token is not written to the debug task file. Existing dashboard/contribute authorization still works; the lease bearer is an additional remote credential and is accepted only while the server-side lease record still matches its id, hash, task, repo, contributor identity, stage, and expiry.
 
@@ -67,7 +74,7 @@ Phase 3 keeps the same read-only, cache/state-only invariant: request handling d
 
 Phase 1 measures the token delta on `context_bundle()`, not on each individual tool. For one real lane over a week, record the assignment prompt tokens before the measured hub-launched kick-prompt pointer above and after replacing stuffed context with that pointer. Compare the median per-task prompt-token count and keep the lane, backend, model, and date range with the measurement so Phase 2 can judge whether remote-contributor wiring is worth the added lease-auth surface.
 
-The per-agent flag `agents.<name>.task_mcp.drop_stuffed_context: true` enables the replacement only when the hub supplies a task MCP URL. With the flag active, `${ISSUE_LIST}`, `${PR_LIST}`, and `${MERGE_ELIGIBLE}` keep their caps but render as `repo#N` refs only, and the pointer tells agents that `context_bundle` / `related_work` is the source of truth for titles, labels, age, annotations, and related context. Scheduler kick logs include `full_bytes` and `elided_bytes`; record the post-change week-long lane measurement in this section once one lane has run with the flag enabled.
+The per-agent flag `agents.<name>.task_mcp.drop_stuffed_context: true` enables the replacement only for an agent that gets the pointer (see above). For any other agent the flag is ignored and the lists stay complete, because that agent has no server to read the missing context from. With the flag active, `${ISSUE_LIST}`, `${PR_LIST}`, and `${MERGE_ELIGIBLE}` keep their caps but render as `repo#N` refs only, and the pointer tells agents that `context_bundle` / `related_work` is the source of truth for titles, labels, age, annotations, and related context. Scheduler kick logs include `full_bytes` and `elided_bytes`; record the post-change week-long lane measurement in this section once one lane has run with the flag enabled.
 
 ### First live measurement (2026-09-22)
 
@@ -82,3 +89,5 @@ Spoke `hive-hosted-hosted-kubestellar-console-4vkt` (kubestellar/console, 6 repo
 | Whole scanner kick / whole sec-check kick | 12168 / 10185 | 3042 / 2546 |
 
 Reading: today the pointer is **additive** (`addTaskMCPPointer` appends; `${ISSUE_LIST}`/`${PR_LIST}` still render), so on a quiet spoke the delta is negative (+54 tokens per kick, +169 per bundle call, against ≈48 tokens of stuffed lists). The stuffed lists only break even against pointer+bundle at roughly 6–9 queue lines, and only once the stuffed sections are actually dropped when a task MCP URL is set. That conditional-drop is the follow-up (#8261); the MCP path itself is verified end-to-end (tools/list 200, scoped bundle, refusal for non-matching generations, all seven tools answering).
+
+This spoke ran `copilot`. When it was measured the pointer was added to every hub kick; it is now sent only to agents that have the `hive-task` connection (see above), so a `copilot` agent's kick no longer carries those 215 bytes.

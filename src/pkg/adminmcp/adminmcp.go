@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hivecommons/hive/crux/logscrub"
 )
@@ -262,13 +263,22 @@ func (h *Handler) dispatch(r *http.Request, req rpcRequest) (any, *rpcError) {
 	switch req.Method {
 	case "initialize":
 		return map[string]any{"protocolVersion": ProtocolVersion, "serverInfo": map[string]string{"name": ServerName, "version": ServerVersion}, "capabilities": map[string]any{"tools": map[string]any{}}}, nil
-	case "notifications/initialized":
+	case "ping":
+		// MCP's liveness check: the receiver answers with an empty result.
 		return map[string]any{}, nil
 	case "tools/list":
 		return map[string]any{"tools": toolDefs(h.writesUsable(), h.WritesUnavailableReason)}, nil
 	case "tools/call":
 		return h.callTool(r.Context(), req.Params)
 	default:
+		// A notification expects no answer, and "method not found" is the
+		// wrong one: a client that sends notifications/cancelled after a
+		// tool call it gave up on would be told its message was an error.
+		// Every notification is acknowledged the way notifications/initialized
+		// always was.
+		if strings.HasPrefix(req.Method, "notifications/") {
+			return map[string]any{}, nil
+		}
 		return nil, &rpcError{Code: -32601, Message: "method not found"}
 	}
 }
@@ -339,7 +349,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 	defs := []struct{ name, desc string }{
 		{ToolHiveStatus, "Read this hive's dashboard status summary."},
 		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups. systemResources also carries the container's memory limit (memLimit, \"unlimited\" when none is set) and its out-of-memory kill count (oomKillCount); a restart resets that count, and the starts log source keeps the reading taken before the previous run ended."},
-		{ToolVersionRead, "Read the build this hive is running (currentCommit, branch, channel, commitsBehind, behind) through the existing /api/version endpoint."},
+		{ToolVersionRead, "Read the build this hive is running (hash and short for the running commit, branch, channel, commitsBehind, behind) through the existing /api/version endpoint."},
 		{ToolAgentsList, "Read the capped list of agents known to this hive."},
 		{ToolRunsList, "Read the capped list of runs known to this hive."},
 		{ToolLeasesList, "Read active run leases through the existing runs surface."},
@@ -433,7 +443,7 @@ func inputSchema(name string) map[string]any {
 		props = advisorRecordsSchema()
 	case ToolIssuesByBand:
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
-		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys}
+		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys, "description": "A band key from bands[]. outside is the open issues the scanner kept off the agent queues; each such row's bucket says why."}
 		props["stale"] = map[string]any{"type": "boolean"}
 		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) issues before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
@@ -493,6 +503,9 @@ func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, e
 	if err != nil {
 		return nil, err
 	}
+	if err := CheckRequestPath(preview.Request.Path); err != nil {
+		return nil, err
+	}
 	if err := rejectUnpersistablePreview(op.Name(), opArgs, preview); err != nil {
 		return nil, err
 	}
@@ -539,6 +552,11 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 	}
 	if preview.Request.Method != pending.Preview.Request.Method || preview.Request.Path != pending.Preview.Request.Path {
 		return nil, fmt.Errorf("write preview changed since confirmation was issued")
+	}
+	// Checked again here: a confirmation stored before this check existed
+	// must not be executed either.
+	if err := CheckRequestPath(pending.Preview.Request.Path); err != nil {
+		return nil, err
 	}
 	result, err := h.WriteClient.ExecuteWrite(ctx, pending.Preview.Request)
 	if err != nil {
@@ -840,7 +858,7 @@ func maskSensitive(b []byte) []byte {
 		case map[string]any:
 			out := map[string]any{}
 			for k, val := range x {
-				if sensitiveKey(k) && !maskExempt(k, val) {
+				if sensitiveKey(k) && !readMaskExempt(k, val) {
 					out[k] = "[masked:" + maskLabel(k) + "]"
 				} else {
 					out[k] = walk(val)
@@ -870,7 +888,111 @@ func maskSensitive(b []byte) []byte {
 
 func sensitiveKey(k string) bool {
 	k = strings.ToLower(k)
-	return strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "credential") || strings.Contains(k, "authorization")
+	return strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "credential") || authorizationKey(k)
+}
+
+// authorizationKey reports whether a lower-cased key names an Authorization
+// header or its value. The self-authorization hold (selfAuthorizationHold,
+// repoSelfAuthorizationHold, self_authorization_hold) is a merge policy, the
+// rule on whether a hive may approve its own pull requests, and not a header.
+func authorizationKey(lower string) bool {
+	if !strings.Contains(lower, "authorization") {
+		return false
+	}
+	squashed := strings.ReplaceAll(strings.ReplaceAll(lower, "_", ""), "-", "")
+	return !strings.HasSuffix(squashed, "selfauthorizationhold")
+}
+
+// readMaskExempt reports whether a value under a sensitive-looking key can be
+// shown in a read result because it cannot hold a credential. It adds to
+// maskExempt, which the pending-confirmation scrub shares and which stays as
+// strict as it was:
+//
+//   - nothing at all: null, "", {} and []. Masking those made a secret that
+//     is not set look set.
+//   - a timestamp (token_expires_at).
+//   - a token count or rate with its unit after the word (tokens_per_coin).
+//
+// A string kept this way is still scrubbed by shape like any other string.
+func readMaskExempt(k string, v any) bool {
+	if maskExempt(k, v) {
+		return true
+	}
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == "" || isTimestamp(x)
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0 || tokenRateKey(k)
+	case float64:
+		return tokenRateKey(k)
+	default:
+		return false
+	}
+}
+
+func isTimestamp(s string) bool {
+	_, err := time.Parse(time.RFC3339Nano, s)
+	return err == nil
+}
+
+// keyWords splits a JSON key into lower-case words at "_", "-", "." and
+// camelCase boundaries: "webhookSecretEnv" is webhook, secret, env.
+func keyWords(k string) []string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	var prev rune
+	for _, r := range k {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ':
+			flush()
+		case unicode.IsUpper(r) && (unicode.IsLower(prev) || unicode.IsDigit(prev)):
+			flush()
+			cur = append(cur, r)
+		default:
+			cur = append(cur, r)
+		}
+		prev = r
+	}
+	flush()
+	return words
+}
+
+// tokenRateKey reports whether k has "tokens" as a whole word with more after
+// it (tokens_per_coin, tokensIn): a count or rate like the keys tokenCountKey
+// accepts, with the unit after the word. A credential qualifier before the
+// word (access_tokens_revoked) or another sensitive word in the key rules it
+// out.
+func tokenRateKey(k string) bool {
+	lower := strings.ToLower(k)
+	for _, word := range []string{"secret", "password", "credential", "authorization"} {
+		if strings.Contains(lower, word) {
+			return false
+		}
+	}
+	words := keyWords(k)
+	for i, word := range words {
+		if word != "tokens" {
+			continue
+		}
+		stem := strings.Join(words[:i], "")
+		for _, q := range credentialTokenQualifiers {
+			if strings.HasSuffix(stem, q) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // credentialTokenQualifiers mark a plural "*tokens" key as a collection of

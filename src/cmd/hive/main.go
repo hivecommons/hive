@@ -1496,7 +1496,7 @@ func (b *boot) bootGovernor() {
 	// one (#3498). Explicit thresholds are unaffected.
 	b.gov.SetRepoCount(b.cfg.Project.RepoCount())
 	b.sched = scheduler.New(b.cfg, b.logger)
-	b.sched.SetTaskMCPURL(b.taskMCPURLForAgents())
+	b.wireSchedulerTaskMCP()
 	b.sched.SetSurgeDuration(b.gov.SurgeDuration)
 	// A kick_template that resolves nowhere used to fail silently: the kick
 	// fell through to the pack/convention template with no log line, and the

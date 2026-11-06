@@ -25,6 +25,7 @@ import {
   MAX_FILES,
   MAX_AGE_MS,
   LINE_MAX_BYTES,
+  headWithinBytes,
 } from './output_log.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,6 +99,40 @@ await test('over-long lines are split', () => {
   assert.equal(recs.length, 2);
   assert.equal(recs[0].text.length, LINE_MAX_BYTES);
   assert.equal(recs[1].text.length, 10);
+});
+
+// A line that never ends is split every LINE_MAX_BYTES. The split used to cut
+// a multi-byte character in half and lose it.
+await test('an over-long line is not split inside a character', () => {
+  for (const ch of ['é', '€', '😀']) {
+    const dir = tempDir();
+    const log = new OutputLog(dir, 'proxy');
+    // Each line arrives in two writes, the first without its newline, as a
+    // program flushing a long line through a pipe sends it.
+    for (let lead = LINE_MAX_BYTES - 4; lead <= LINE_MAX_BYTES; lead++) {
+      log.writeStream('stdout', `${'a'.repeat(lead)}${ch}${'b'.repeat(10)}`);
+      log.writeStream('stdout', ' end\n');
+    }
+    log.close();
+    const recs = records(path.join(dir, 'proxy.log'));
+    assert.equal(recs.length, 10, `${ch}: five lines, each in two records`);
+    for (let i = 0; i < recs.length; i += 2) {
+      const lead = LINE_MAX_BYTES - 4 + i / 2;
+      assert.equal(recs[i].text + recs[i + 1].text, `${'a'.repeat(lead)}${ch}${'b'.repeat(10)} end`, `${ch} after ${lead} bytes`);
+      assert.ok(Buffer.byteLength(recs[i].text, 'utf8') <= LINE_MAX_BYTES, 'a record holds at most LINE_MAX_BYTES of text');
+      assert.ok(!recs[i].text.includes('\ufffd') && !recs[i + 1].text.includes('\ufffd'), `${ch}: no replacement character`);
+    }
+  }
+});
+
+await test('headWithinBytes cuts on a character boundary', () => {
+  assert.equal(headWithinBytes('abcdef', 4), 'abcd');
+  assert.equal(headWithinBytes('abc', 10), 'abc');
+  assert.equal(headWithinBytes('abé', 3), 'ab');
+  assert.equal(headWithinBytes('abé', 4), 'abé');
+  assert.equal(headWithinBytes('a😀b', 4), 'a');
+  assert.equal(headWithinBytes('a😀b', 5), 'a😀');
+  assert.equal(headWithinBytes('', 5), '');
 });
 
 await test('rotation keeps at most 5 files and appends across opens', () => {

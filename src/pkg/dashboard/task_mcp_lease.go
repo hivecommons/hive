@@ -31,12 +31,24 @@ func (s *Server) taskMCPLeaseSecret() []byte {
 	return []byte(s.authToken)
 }
 
+// taskMCPURL is the task MCP endpoint a remote contributor is given in
+// task_assign, or "" when this hive has no public address of its own. The
+// relay sends the lease bearer there, so only an address of THIS hive
+// qualifies: dashboard.public_url, or hub.dashboard_url while the hub is
+// enabled. A disabled hub leaves a stale one behind, which is why
+// resolveSpokeDashboardURL (cmd/hive) has the same condition since #10282.
+// hub.url is the hub itself and has a default on every hive, so it is never
+// an answer, and neither is that resolver's last resort, the local port.
 func (s *Server) taskMCPURL() string {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return ""
 	}
 	cfg := s.deps.Config
-	for _, raw := range []string{cfg.Dashboard.PublicURL, cfg.Hub.DashboardURL, cfg.Hub.URL} {
+	candidates := []string{cfg.Dashboard.PublicURL}
+	if cfg.Hub.Enabled {
+		candidates = append(candidates, cfg.Hub.DashboardURL)
+	}
+	for _, raw := range candidates {
 		raw = strings.TrimRight(strings.TrimSpace(raw), "/")
 		if raw == "" {
 			continue
@@ -87,9 +99,14 @@ func (h *ContributeWSHub) mintTaskMCPForAssignment(identity string, assign *WSTa
 	if h == nil || h.server == nil || assign == nil || !h.server.taskMCPRemoteEnabled() {
 		return nil
 	}
-	endpoint := h.server.taskMCPURL()
 	secret := h.server.taskMCPLeaseSecret()
-	if endpoint == "" || len(secret) == 0 {
+	if len(secret) == 0 {
+		return nil
+	}
+	endpoint := h.server.taskMCPURL()
+	if endpoint == "" {
+		h.logger.Info("[task-mcp] task_assign carries no mcp block: this hive has no public address",
+			"task", assign.TaskID, "repo", assign.Repo, "hint", "set dashboard.public_url to an address contributors can reach")
 		return nil
 	}
 	stage := ""
