@@ -39,7 +39,19 @@ jobs:
           persist-credentials: false
       - name: Test policy behavior
         run: node --test .github/scripts/native-queue-policy.test.cjs .github/scripts/diagnose-dco-provider.test.cjs
+      - name: Skip evidence wait for cosmetic label flips
+        id: label-flip
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { isCosmeticLabelFlip } = require('./.github/scripts/native-queue-policy.cjs');
+            const cosmetic = isCosmeticLabelFlip(context);
+            core.setOutput('cosmetic', String(cosmetic));
+            if (cosmetic) {
+              core.info('Label "' + context.payload.label.name + '" is not read by the policy; skipping the evidence wait.');
+            }
       - name: Validate exact-head evidence (bounded wait for PR providers)
+        if: steps.label-flip.outputs.cosmetic != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |

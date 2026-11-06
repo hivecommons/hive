@@ -217,6 +217,15 @@ async function evaluate(args) {
   }
 }
 
+// A labeled/unlabeled event only matters when the label is one assertEligible
+// reads (BLOCKED_LABEL); every other flip cannot change the verdict.
+function isCosmeticLabelFlip({ eventName, payload }) {
+  return eventName === 'pull_request_target' &&
+    ['labeled', 'unlabeled'].includes(payload.action) &&
+    typeof payload.label?.name === 'string' &&
+    !BLOCKED_LABEL.test(payload.label.name);
+}
+
 async function evaluateOnce({ github, context }) {
   const repo = context.repo;
   if (context.eventName === 'pull_request_target') {
@@ -270,7 +279,7 @@ async function evaluateOnce({ github, context }) {
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
-  isTransientAPIError,
+  isTransientAPIError, isCosmeticLabelFlip, BLOCKED_LABEL,
   ProviderUnavailable,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,
