@@ -503,6 +503,9 @@ func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, e
 	if err != nil {
 		return nil, err
 	}
+	if err := CheckRequestPath(preview.Request.Path); err != nil {
+		return nil, err
+	}
 	if err := rejectUnpersistablePreview(op.Name(), opArgs, preview); err != nil {
 		return nil, err
 	}
@@ -549,6 +552,11 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 	}
 	if preview.Request.Method != pending.Preview.Request.Method || preview.Request.Path != pending.Preview.Request.Path {
 		return nil, fmt.Errorf("write preview changed since confirmation was issued")
+	}
+	// Checked again here: a confirmation stored before this check existed
+	// must not be executed either.
+	if err := CheckRequestPath(pending.Preview.Request.Path); err != nil {
+		return nil, err
 	}
 	result, err := h.WriteClient.ExecuteWrite(ctx, pending.Preview.Request)
 	if err != nil {
