@@ -148,6 +148,7 @@ const (
 	KeyStageRegressed = "stage-regressed"           // <!-- hive:stage-regressed -->
 	KeyHuman071Note   = "human-071-note"            // <!-- hive:human-071-note … -->
 	KeyDuplicateGuard = "create-pr-duplicate-guard" // <!-- hive:create-pr-duplicate-guard -->
+	KeyReplyOptions   = "reply-options"             // the replies that answer a PR waiting on a person
 	// KeyReviewFindingsPrefix + perspective holds a perspective's findings
 	// when the head already carries the hive review it may have, so the
 	// findings are kept without a second review submission.
