@@ -869,19 +869,19 @@ if [ "$RIG_OK" = "1" ]; then
           for _ in $(seq 1 10); do
             sleep 3
             PANE="$(tmux capture-pane -t "$TMUX_SESS" -p -S -10 2>/dev/null || true)"
-            if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
+            if grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm" <<<"$PANE"; then
               tmux send-keys -t "$TMUX_SESS" Enter 2>/dev/null || true
-            elif echo "$PANE" | grep -q "Do you trust the contents of this directory"; then
+            elif grep -q "Do you trust the contents of this directory" <<<"$PANE"; then
               tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
-            elif echo "$PANE" | grep -q "Choose the text style"; then
+            elif grep -q "Choose the text style" <<<"$PANE"; then
               tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
-            elif echo "$PANE" | grep -q "Bypass Permissions mode"; then
+            elif grep -q "Bypass Permissions mode" <<<"$PANE"; then
               # Fallback only — the settings seed suppresses this menu. Its
               # default selection is "No, exit", so a bare Enter kills the CLI.
               tmux send-keys -t "$TMUX_SESS" "2" Enter 2>/dev/null || true
-            elif echo "$PANE" | grep -qi "custom API key"; then
+            elif grep -qi "custom API key" <<<"$PANE"; then
               tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
-            elif echo "$PANE" | grep -q "bypass permissions\|❯\|›\|/ commands\|> *$"; then
+            elif grep -q "bypass permissions\|❯\|›\|/ commands\|> *$" <<<"$PANE"; then
               break
             fi
           done
