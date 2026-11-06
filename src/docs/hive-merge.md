@@ -917,13 +917,29 @@ A PR merges through this tier only when all of the following hold:
   between the push and that sweep is judged stale and must be typed again
   (fail-closed by design,
   [#14754](https://github.com/hivecommons/hive/issues/14754)). Approval on an
-  earlier head never counts: a new push re-arms the fence and the 085 note
-  reads "awaiting owner approval … re-approve after a push". When released
-  the lane logs `workflow-path fence released by owner approval login=…
-  head=…`, leaves one `<!-- hive:workflow-approval head=… by=… -->` audit
-  comment per head, and the PR goes through every other gate below like any
-  other. Merging such a PR needs the App's **Workflows: Read and write**;
-  when GitHub refuses the merge for want of it the lane marks the PR
+  earlier head does not count: a new push re-arms the fence and the 085 note
+  reads "awaiting owner approval … re-approve after a push". The one
+  exception is the hive's own base refresh — the update-branch the lane runs
+  on a BEHIND PR under a strict up-to-date rule, or another merge of the
+  base branch GitHub verified as the App's (signed, committed by `web-flow`
+  or the App). When every commit between an approved head and
+  the current head is such a merge (at most five in a row) and the PR's
+  three-dot diff against the base is file-for-file what was approved, the
+  approval carries over and the lane logs `workflow-path fence approval
+  carried over hive base refresh login=… approved_head=… head=…`. The
+  earlier approval is read from a trusted merger's standing `APPROVED`
+  review, a dashboard approval marked for that head, or the hive's own audit
+  marker for it; the approver must still be trusted. A contributor commit
+  re-arms the fence even when it leaves the workflow files alone (the
+  existing head-bound rule), as do a rebase, a base merge pushed by anyone
+  but the App, and a base merge that changed a file the PR also changes.
+  When released the lane logs `workflow-path fence released by owner
+  approval login=… head=…`, leaves one `<!-- hive:workflow-approval head=…
+  by=… -->` audit comment per head (with `from=<approved head>` when the
+  approval carried over), and the PR goes through every other gate below
+  like any other. Merging such a PR needs the App's
+  **Workflows: Read and write**; when GitHub refuses the merge for want of
+  it the lane marks the PR
   `hive:unauthorized` (step `merge-workflow-path`), stops retrying that
   head, and the approved head parks at `090-ready-for-human-merge` for a
   person's **Merge** click as before. With the toggle off, or with no
