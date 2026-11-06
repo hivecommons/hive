@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +31,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]interface{}{
 		"version":     "2.0.0",
-		"go":          "1.25",
+		"go":          strings.TrimPrefix(runtime.Version(), "go"),
 		"hash":        versionHash,
 		"short":       versionShort,
 		"branch":      upstreamBranch(),
