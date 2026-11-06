@@ -1382,7 +1382,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			soakFirstGreen, _ := c.contributorSoak.FirstGreen(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
 			noteSoak(store, key, obs.Reason, obs.HeadSHA, pass.Route, c.currentContributorLanePolicy().Soak, soakFirstGreen, now)
 			if dcoRead {
-				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned, obs.Detail.DCOUnsignedHive, obs.Detail.DCOSquashUnsafeHive)
+				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned, obs.Detail.DCOUnsignedHive, obs.Detail.DCOSquashUnsafeHive, policy.HiveAuthor != nil)
 			}
 			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)

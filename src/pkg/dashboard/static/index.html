@@ -8274,9 +8274,9 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   <!-- Light top bar (hidden by default) -->
   <header id="oc-topbar" class="oc-topbar">
     <div class="oc-topbar-left">
-      <button id="oc-drawer-toggle" class="nav-chip nav-chip--icon nav-chip--action" type="button" aria-label="Open menu"
+      <button id="oc-drawer-toggle" class="nav-chip nav-chip--action" type="button" aria-label="Open navigation"
               aria-expanded="false" aria-controls="oc-sidebar"
-              title="Menu">&#9776;</button>
+              title="Open navigation"><span class="nav-chip__icon" aria-hidden="true">&#9776;</span><span class="nav-chip__label">Navigation</span></button>
       <span id="oc-project-name" class="oc-project-title"></span>
       <span class="nav-chip-group" aria-label="Hive status">
         <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="openACMMDialog" aria-haspopup="dialog" aria-controls="acmm-overlay" title="Change the current ACMM autonomy level" aria-label="Change ACMM autonomy level"></button>
@@ -71018,7 +71018,8 @@ function burnAreaChart() {
         sidebar.classList.toggle('open', open);
         backdrop.classList.toggle('open', open);
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-        toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+        toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+        toggle.title = open ? 'Close navigation' : 'Open navigation';
       }
       function closeDrawer() { if (isOpen()) setOpen(false); }
 
