@@ -278,7 +278,9 @@ replaced by `[masked:...]`, unless it cannot hold a credential:
 So `[masked:token]` means a value is there and was withheld, and an empty
 value means nothing is set. A list or object with content under such a key is
 masked whole (for example `credentialWarnings` when there are warnings); read
-it on the dashboard.
+it on the dashboard. The one exception is a token count block, an object under
+a count key such as `tokens`: it is read like any other object, and the keys
+inside it are judged by the same rules.
 
 Meta tools:
 
