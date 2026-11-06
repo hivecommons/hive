@@ -82,7 +82,7 @@ func TestRequiresHumanReconcilesToFixedPoint(t *testing.T) {
 }
 
 func TestReconcilerSuppressesSameHeadStageReversal(t *testing.T) {
-	for _, release := range []string{"timeout", "head", "terminal"} {
+	for _, release := range []string{"timeout", "head", "terminal", "checks", "conflict", "review", "adoption", "escalation", "optional-check"} {
 		t.Run(release, func(t *testing.T) {
 			now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
 			store := stagelabels.NewStore("", nil)
@@ -96,7 +96,8 @@ func TestReconcilerSuppressesSameHeadStageReversal(t *testing.T) {
 					return Decision{Stage: stage, Reason: "review evidence", Terminal: terminal}
 				}),
 			})
-			f := Facts{Ref: Ref{Owner: "acme", Repo: "widgets", Number: 42, Kind: stagelabels.PRItem}, Open: true, PR: &PRFacts{HeadSHA: "head"}}
+			f := Facts{Ref: Ref{Owner: "acme", Repo: "widgets", Number: 42, Kind: stagelabels.PRItem}, Open: true, PR: &PRFacts{HeadSHA: "head", Pass: &PRPassFacts{AdoptionLive: true},
+				Lanes: []LaneFact{{Lane: "contributor", Reason: "initial opinion"}}}}
 			store.Observe(f.Ref.Key(), stagelabels.Fixing, "initial")
 			writer.labels[f.Ref.Key()] = []string{stagelabels.Fixing.Label()}
 			if _, err := r.Reconcile(context.Background(), f); err != nil {
@@ -108,6 +109,10 @@ func TestReconcilerSuppressesSameHeadStageReversal(t *testing.T) {
 				// ApplyStageLabels pre-observes its legacy opinion before
 				// invoking the engine; that must not defeat the write guard.
 				store.Observe(f.Ref.Key(), stage, "legacy opinion")
+				f.PR.Pass.Prior = &PriorStage{Stage: stage, Reason: "legacy opinion"}
+				f.PR.Pass.Stalled = true
+				f.PR.Lanes[0].Reason = "reversed opinion"
+				f.PR.SoakElapsed += time.Minute
 				tr, err := r.Reconcile(context.Background(), f)
 				if err != nil || !tr.Outcome.Suppressed || tr.To != stagelabels.NeedsDecision || tr.Outcome.Changed() {
 					t.Fatalf("sweep %d: %+v, %v", sweep, tr, err)
@@ -129,6 +134,19 @@ func TestReconcilerSuppressesSameHeadStageReversal(t *testing.T) {
 				f.PR.HeadSHA = "new-head"
 			case "terminal":
 				terminal = true
+			case "checks":
+				f.PR.Checks = stagelabels.CheckSummary{Known: true, Total: 1, Green: 1}
+			case "conflict":
+				f.PR.Conflicting = true
+			case "review":
+				f.PR.Review.HumanApprover = "maintainer"
+			case "adoption":
+				f.PR.Pass.AdoptionLive = false
+			case "escalation":
+				f.PR.Pass.EscalationReason = "adoption-stalled:rebase-failed-twice"
+			case "optional-check":
+				f.PR.Lanes[0].RedChecks = []string{"unit"}
+				f.PR.Lanes[0].RedChecksHead = "head"
 			}
 			tr, err := r.Reconcile(context.Background(), f)
 			if err != nil || tr.Outcome.Suppressed || writer.Writes != 2 {

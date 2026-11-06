@@ -2,6 +2,7 @@ package stageengine
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -20,7 +21,34 @@ type stageWriteTransition struct {
 	from, to stagelabels.Stage
 	head     string
 	reason   string
+	evidence string
 	at       time.Time
+}
+
+// stageWriteEvidence snapshots inputs that can legitimately change a stage on
+// the same head. Exclude previous stage/display outputs and clock-driven soak
+// progress: those are not new evidence and must not disarm an idle-flap guard.
+// Serialize a copy so later mutations of caller-owned facts cannot change the
+// evidence remembered for a successful write.
+func stageWriteEvidence(f Facts) string {
+	if f.PR == nil {
+		return ""
+	}
+	pr := *f.PR
+	pr.SoakElapsed = 0
+	pr.Lanes = append([]LaneFact(nil), pr.Lanes...)
+	for i := range pr.Lanes {
+		pr.Lanes[i].Reason = ""
+	}
+	if pr.Pass != nil {
+		pass := *pr.Pass
+		pass.Prior = nil
+		pass.Route = nil
+		pass.Stalled = false
+		pr.Pass = &pass
+	}
+	b, _ := json.Marshal(pr) // PRFacts contains only JSON-serializable values.
+	return string(b)
 }
 
 // suppressStageFlap is the final guard before observing or writing a stage.
@@ -35,7 +63,7 @@ func (r *reconciler) suppressStageFlap(f Facts, d Decision) (stageWriteTransitio
 		return stageWriteTransition{}, false
 	}
 	last := v.(stageWriteTransition)
-	if f.PR == nil || f.PR.HeadSHA == "" || f.PR.HeadSHA != last.head || r.opts.Now().Sub(last.at) >= stageFlapWindow {
+	if f.PR == nil || f.PR.HeadSHA == "" || f.PR.HeadSHA != last.head || stageWriteEvidence(f) != last.evidence || r.opts.Now().Sub(last.at) >= stageFlapWindow {
 		r.writes.Delete(key)
 		return stageWriteTransition{}, false
 	}
@@ -57,5 +85,5 @@ func (r *reconciler) rememberStageWrite(f Facts, from, to stagelabels.Stage, rea
 		r.writes.Delete(f.Ref.Key())
 		return
 	}
-	r.writes.Store(f.Ref.Key(), stageWriteTransition{from: from, to: to, head: f.PR.HeadSHA, reason: reason, at: r.opts.Now()})
+	r.writes.Store(f.Ref.Key(), stageWriteTransition{from: from, to: to, head: f.PR.HeadSHA, reason: reason, evidence: stageWriteEvidence(f), at: r.opts.Now()})
 }
