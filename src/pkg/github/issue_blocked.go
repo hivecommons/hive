@@ -74,6 +74,9 @@ var (
 	// a snapshot row that carries only the reason (RepoWorkIssue.Reason)
 	// can still name its blocker.
 	blockedFilterReasonRE = regexp.MustCompile(`^` + blockedFilterReasonPrefix + ` on ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)$`)
+	// blockedFilterIssueReasonRE is the same for the issue variant
+	// ("blocked on issue owner/repo#N").
+	blockedFilterIssueReasonRE = regexp.MustCompile(`^` + blockedFilterReasonPrefix + ` on issue ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)$`)
 )
 
 // ParseSupersededBy finds a superseding PR number in text from an adoption
@@ -154,6 +157,23 @@ func BlockedOnTarget(body, reason string) (repo string, pr int, ok bool) {
 
 // blockedFilterReasonPrefix opens the enumeration's filtered reason for a
 // blocked issue; IssueStageFor and the sweep recognise it by prefix.
+// BlockedOnIssueTarget is BlockedOnTarget for the issue variant: the
+// `issue=` marker in body, else the "blocked on issue owner/repo#N" reason.
+func BlockedOnIssueTarget(body, reason string) (repo string, issue int, ok bool) {
+	if repo, issue, ok = parseBlockedOnIssueMarker(body); ok {
+		return repo, issue, true
+	}
+	m := blockedFilterIssueReasonRE.FindStringSubmatch(strings.TrimSpace(reason))
+	if m == nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return m[1], n, true
+}
+
 const blockedFilterReasonPrefix = "blocked"
 
 // blockedOnIssueReasonWord sets an issue blocker apart from a PR one in the

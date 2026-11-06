@@ -177,6 +177,7 @@ func stageTrackerBlockedOnPR(it *StageTrackerItem, body, reason string, baseURL 
 	}
 	repo, number, ok := github.BlockedOnTarget(body, reason)
 	if !ok {
+		stageTrackerBlockedOnIssue(it, body, reason)
 		return
 	}
 	ref := &StageTrackerBlockedOnPR{Repo: repo, Number: number, URL: overviewItemURL("", repo, number, "pr", baseURL)}
@@ -197,6 +198,28 @@ func stageTrackerBlockedOnPR(it *StageTrackerItem, body, reason string, baseURL 
 	if it.Stage == 0 {
 		it.Caption = clause
 		it.Actor = "PR " + short
+		return
+	}
+	it.Caption = joinClause(it.Caption, clause)
+}
+
+// stageTrackerBlockedOnIssue is stageTrackerBlockedOnPR for an issue blocked
+// on another issue (the `issue=` marker): the blocker joins blocked_on and
+// the caption names it. Like the PR variant it never adds the modifier.
+func stageTrackerBlockedOnIssue(it *StageTrackerItem, body, reason string) {
+	repo, number, ok := github.BlockedOnIssueTarget(body, reason)
+	if !ok {
+		return
+	}
+	key := repo + "#" + strconv.Itoa(number)
+	if !slices.Contains(it.BlockedOn, key) {
+		it.BlockedOn = append(it.BlockedOn, key)
+	}
+	short := stageTrackerBlockerList(it.Repo, []string{key})
+	clause := "Blocked on issue " + short + " — lifts when it closes"
+	if it.Stage == 0 {
+		it.Caption = clause
+		it.Actor = "issue " + short
 		return
 	}
 	it.Caption = joinClause(it.Caption, clause)
