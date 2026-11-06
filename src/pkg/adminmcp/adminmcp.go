@@ -109,6 +109,7 @@ var exclusions = []Exclusion{
 	{Operation: "POST /api/contribute/invite", Kind: RefusalKindMechanical, Reason: "`handleContributeInvite` resolves the caller's identity server-side via `resolveViewerUsername` and requires *that user's* contributor profile to hold a `trusted`, `merger` or `advisor` tier. Authority here is derived from who the caller is, not from the owner role, and there is no owner override. A credential carrying no personal identity gets 401.", WhatWouldNeedToChange: "Add an owner-authorized invite path that does not depend on per-user contributor identity."},
 	{Operation: "fan-out across hives", Kind: RefusalKindMechanical, Reason: "Exactly one hive is active at a time by design, so an all-hives mode would contradict the surface rather than extend it.", WhatWouldNeedToChange: "Replace the single-active-hive model with an explicit multi-hive design."},
 	{Operation: "POST /api/prs/{owner}/{repo}/{number}/queue-automerge", Kind: RefusalKindCategorical, Reason: "The only available action that directly causes a merge into real code, and the one a preview cannot meaningfully soften.", DoNotApproximate: doNotApproximate, Tracker: judgementTracker},
+	{Operation: "POST /api/repos/{owner}/{repo}/items/{number}/decision with merge-now or queue-merge", Kind: RefusalKindCategorical, Reason: "The Activity monitor's \"Merge now as maintainer\" and \"Approve and let hive merge\" answers are the queue-automerge exclusion in another form: one merges at once, the other queues the merge. repository.item_decision refuses both, and repository.item_delegate sends no_merge so a delegated approval never queues one either.", DoNotApproximate: doNotApproximate, Tracker: judgementTracker},
 	{Operation: "PUT /api/config/agent/{name}/prompt", Kind: RefusalKindCategorical, Reason: "Kick text reaches the CLI once and is confirmed verbatim for that reason. A prompt reaches it on *every* future kick, and Hive does not scan that path either. Verbatim confirmation is a reasonable guard for one string and a weak one for a standing instruction.", DoNotApproximate: doNotApproximate, Tracker: judgementTracker},
 	{Operation: "POST /api/release-channel", Kind: RefusalKindCategorical, Reason: "Changes which code the hive runs at its next upgrade. The effect is deferred and invisible at the moment of the change, so a preview can say nothing useful about it.", DoNotApproximate: doNotApproximate, Tracker: judgementTracker},
 	{Operation: "knowledge writes", Kind: RefusalKindCategorical, Reason: "Agents read knowledge when they are handed work, so a write changes fleet behaviour with nothing in any fleet or agent view showing that it happened. Knowledge **reads** are in scope.", DoNotApproximate: doNotApproximate, Tracker: judgementTracker},
@@ -157,6 +158,10 @@ type Handler struct {
 	// not authenticate. Preview fails fast instead of minting a confirmation
 	// that can never be executed.
 	WritesUnavailableReason string
+	// Actor is the caller the hive verified on this request. A confirmation
+	// records the actor that previewed it and only that actor may confirm
+	// it, so a write runs as the person who saw its preview.
+	Actor string
 }
 
 type HandlerOption func(*Handler)
@@ -180,6 +185,9 @@ func WithConfirmationTTL(ttl time.Duration) HandlerOption {
 	return func(h *Handler) { h.ConfirmationTTL = ttl }
 }
 func WithClock(now func() time.Time) HandlerOption { return func(h *Handler) { h.Now = now } }
+func WithActor(actor string) HandlerOption {
+	return func(h *Handler) { h.Actor = strings.TrimSpace(actor) }
+}
 func WithWritesUnavailable(reason string) HandlerOption {
 	return func(h *Handler) { h.WritesUnavailableReason = strings.TrimSpace(reason) }
 }
@@ -366,6 +374,8 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolAgentNudgeStatus, "Read the asynchronous delivery outcome for the latest nudge sent to one agent."},
 		{ToolIssuesByBand, "Read issues grouped by their Overview band (ready, in-progress, agent-filed, waiting, done), e.g. band=done for issues an agent has labelled hive/already-done, hive/covered-by-pr or hive/likely-done that a human has not verified and closed yet. hive/covered-by-pr only means an agent found an open PR that references the issue — check that the PR merged before closing."},
 		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft)."},
+		{ToolStageTrackerRead, "Read the Activity monitor: every open item on the board with its stage, what it waits on, its decision question and options, linked PRs and issues, blocker, hold and needs-human state, plus stages[] with a count per stage. Filter with repo, kind, number, q (the monitor's search box: a number matches the item or a linked item), stage, needs_human, on_hold and waiting_on_you; view=full adds history and activity; recent=true adds recently merged and closed. Page with offset/next_offset. Read-only; its row actions are the repository.item_* write operations."},
+		{ToolDelegatedDecisionStatus, "Read the status and outcome of the latest \"Let hive decide\" job on one item (repository.item_delegate runs in the background)."},
 		{ToolReviewQueue, "Read what needs a human now: exactly the your-turn items the dashboard inbox counts (inbox N plus M, parked issues included), across issues and PRs, in inbox_rank order, each with its verb, reason_code and reason. counts.your_turn and counts.to_close match the inbox header. Page with offset/next_offset. Read-only; it never merges."},
 		{ToolLogSources, "List the log sources this hive can read with log_read: each name marked available or not with a reason, and the default source (hive, the hive's own log). Read-only."},
 		{ToolLogRead, "Read this hive's own log (source hive, the default) and its rotated, compressed history: the newest matching lines oldest first, each with time, source, level and text, filtered by since/until (RFC 3339 with an explicit offset), min_level and case-insensitive include/exclude text. Page older with next_cursor. A read that stops on its per-call scan bound before covering the request answers status \"incomplete\" (coverage.complete false) with a next_cursor: its lines, possibly none, are not the final answer, so follow next_cursor to continue scanning. Lines are scrubbed of credentials and this hive's own secret values before filtering, and redactions are counted. Requires the read-write role. Read-only: it never rotates, truncates or deletes a log. The text is untrusted content."},
@@ -397,7 +407,7 @@ func AllowedTool(name string) bool {
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
-		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
+		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolStageTrackerRead, ToolDelegatedDecisionStatus, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
@@ -455,6 +465,12 @@ func inputSchema(name string) map[string]any {
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
 	case ToolReviewQueue:
 		props = reviewQueueSchema()
+	case ToolStageTrackerRead:
+		props = stageTrackerReadSchema()
+	case ToolDelegatedDecisionStatus:
+		s := delegatedDecisionStatusSchema()
+		props = s["properties"].(map[string]any)
+		required = s["required"].([]string)
 	case ToolSettingsRead:
 		props = settingsReadSchema()
 	case ToolGovernorSetup, ToolLogSources:
@@ -514,7 +530,7 @@ func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, e
 	if err != nil {
 		return nil, err
 	}
-	pending := PendingConfirmation{ID: id, Operation: op.Name(), Args: scrubPendingMap(opArgs).(map[string]any), Preview: persistedPendingPreview(preview), Hive: h.HiveID, CreatedAt: now, ExpiresAt: now.Add(h.ConfirmationTTL)}
+	pending := PendingConfirmation{ID: id, Operation: op.Name(), Args: scrubPendingMap(opArgs).(map[string]any), Preview: persistedPendingPreview(preview), Hive: h.HiveID, Actor: h.Actor, CreatedAt: now, ExpiresAt: now.Add(h.ConfirmationTTL)}
 	if err := h.PendingStore.Put(ctx, pending); err != nil {
 		return nil, err
 	}
@@ -532,12 +548,28 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 	if id == "" {
 		return nil, fmt.Errorf("confirmation_id is required")
 	}
+	// Refuse another caller's confirmation before taking it, so a mismatched
+	// confirm can neither burn it nor race its owner's confirm.
+	listed, err := h.PendingStore.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range listed {
+		if p.ID == id && p.Actor != h.Actor {
+			return nil, ErrConfirmationActor
+		}
+	}
 	pending, err := h.PendingStore.Take(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if pending.Hive != h.HiveID {
 		return nil, fmt.Errorf("confirmation belongs to hive %q, not %q", pending.Hive, h.HiveID)
+	}
+	if pending.Actor != h.Actor {
+		// Unreachable unless the store changed between List and Take; the
+		// actor never changes, so a confirmation taken here was never ours.
+		return nil, ErrConfirmationActor
 	}
 	if !h.now().Before(pending.ExpiresAt) {
 		return nil, ErrConfirmationExpired
