@@ -69,7 +69,10 @@ check() {
 }
 contains() {
   local label="$1" haystack="$2" needle="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then pass "$label"
+  # A here-string, not `printf | grep -q`: under pipefail, grep -q exiting on
+  # the first match leaves printf's remaining line-buffered writes with EPIPE,
+  # and the pipeline — hence the assertion — fails on text that DID match.
+  if grep -qF -- "$needle" <<<"$haystack"; then pass "$label"
   else fail "$label" "missing: '$needle'"; fi
 }
 
@@ -98,6 +101,14 @@ MODEL_CODEX="${HIVE_SMOKE_MODEL_CODEX:-gpt-5.5}"
 source "$ROOT/config/backends.conf"
 
 echo "=== backend smoke: contributor CLI integration (A: drift, S: wire, B: live) ==="
+
+echo ""
+echo "-- A0: contains() survives a match followed by a long tail --"
+# Regression guard for the pipefail/EPIPE false negative: a needle on the first
+# line of a haystack with thousands of trailing lines let grep -q exit before
+# printf had finished writing, and the old pipeline form reported "missing".
+contains "a needle before a long tail is still found" \
+  "::warning first"$'\n'"$(seq 1 20000)" "::warning"
 
 # ── A. Static drift checks ───────────────────────────────────────────────────
 echo ""
@@ -142,13 +153,13 @@ echo ""
 echo "-- A4: Justfile contribute-check-backend derives its gate from KNOWN_BACKENDS (#13262, #13263) --"
 JUSTFILE="$ROOT/Justfile"
 CHECK_RECIPE="$(sed -n '/^contribute-check-backend backend=/,/^[a-z][a-z-]* .*:$/p' "$JUSTFILE")"
-if printf '%s\n' "$CHECK_RECIPE" | grep -q 'source .*config/backends.conf'; then
+if grep -q 'source .*config/backends.conf' <<<"$CHECK_RECIPE"; then
   pass "contribute-check-backend sources config/backends.conf"
 else
   fail "contribute-check-backend sources config/backends.conf" \
        "the recipe must read KNOWN_BACKENDS rather than hard-code the list"
 fi
-if printf '%s\n' "$CHECK_RECIPE" | grep -qE 'Supported: [a-z]+,'; then
+if grep -qE 'Supported: [a-z]+,' <<<"$CHECK_RECIPE"; then
   fail "no hard-coded supported list in contribute-check-backend" \
        "the error message must print \$KNOWN_BACKENDS"
 else
