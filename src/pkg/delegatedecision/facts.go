@@ -177,6 +177,16 @@ func (in Input) Facts() []Fact {
 	if q := strings.TrimSpace(in.Question); q != "" {
 		add("Question for a person", q, FactInfo)
 	}
+	if len(in.Options) > 0 {
+		labels := make([]string, len(in.Options))
+		for i, o := range in.Options {
+			labels[i] = o.Label
+		}
+		add("Options offered", strings.Join(labels, ", "), FactInfo)
+	}
+	if r := strings.TrimSpace(in.RecommendedOption); r != "" {
+		add("Recommended option", r, FactInfo)
+	}
 	return out
 }
 
