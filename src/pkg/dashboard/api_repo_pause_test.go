@@ -348,3 +348,13 @@ func TestBuildReposForkBadge11433(t *testing.T) {
 		t.Errorf("non-fork card carries fork fields: %+v", got)
 	}
 }
+
+func TestBuildReposEmptyOrgKeepsBareName16917(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Project.Repos = []string{"repo"}
+
+	repos := buildRepos(cfg, nil, governor.State{})
+	if got := repos[0].Full; got != "repo" {
+		t.Errorf("Full = %q, want bare %q when project.org is empty", got, "repo")
+	}
+}
