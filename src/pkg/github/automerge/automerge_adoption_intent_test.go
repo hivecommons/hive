@@ -228,3 +228,106 @@ func TestAdoptedRecordedHivePushThatRevertsPRIsRefusedOnce(t *testing.T) {
 		t.Fatalf("record after re-check = %+v", rec)
 	}
 }
+
+// utah1091Partial is the PR's diff with only the first n of its 25 triage
+// removals left (plus the 10 docs lines).
+func utah1091Partial(n int) []map[string]string {
+	full := utah1091Files(true, "")
+	triage := full[1]
+	lines := strings.Split(triage["patch"], "\n")
+	files := []map[string]string{full[0]}
+	if n > 0 {
+		files = append(files, map[string]string{"filename": triage["filename"], "status": "modified", "patch": strings.Join(lines[:n+1], "\n")})
+	}
+	return files
+}
+
+// A further hive push on top of a refused head is judged against the
+// contributor's head, not the refused one: it stays refused and the lane
+// still will not merge it.
+func TestAdoptedFixerPushOnTopOfRefusedHeadStaysRefused(t *testing.T) {
+	h, done, adopted := adoptUtah1091InPlace(t)
+	defer done()
+	key := stageKey("acme", "widget", 7)
+	h.adopt.comparePatches["a75a567"] = utah1091Files(false, "")
+	h.adopt.setCommitAuthor("a75a567", testHiveAppBotLogin)
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "a75a567", adopted...), "ci-pending")
+
+	// A lint fix on top keeps the docs-only diff.
+	h.adopt.comparePatches["ccc"] = utah1091Files(false, "")
+	h.adopt.setCommitAuthor("ccc", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "ccc", "stage/085-needs-decision", "role/contributor", "author/clanker"), "ci-pending")
+	if notes := fixerRevertsComments(h.api); len(notes) != 1 || !strings.Contains(notes[0], "leaves 10 of the 35 lines this PR changed at `aaa`") {
+		t.Fatalf("notes = %v", h.api.comments)
+	}
+	if got := h.e.adoptionIntentGate("acme", "widget", 7, "ccc"); got != stagelabels.LaneReasonAdoptionFixerReverts {
+		t.Fatalf("merge gate on the push over the refused head = %q", got)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.IntentBaseHead() != "aaa" {
+		t.Fatalf("intent baseline moved: %+v", rec)
+	}
+}
+
+// Pushes that each keep 60% of the previous head cannot erode the PR's
+// change below half: the second one is judged against the contributor's
+// head (12/35 kept) and refused.
+func TestAdoptedFixerPushChainCannotErodeChange(t *testing.T) {
+	h, done, adopted := adoptUtah1091InPlace(t)
+	defer done()
+	h.adopt.comparePatches["b1"] = utah1091Partial(11) // 21 of 35 kept (60%)
+	h.adopt.setCommitAuthor("b1", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "b1", adopted...), "check-failing:unit")
+	if len(fixerRevertsComments(h.api)) != 0 || h.e.adoptionIntentGate("acme", "widget", 7, "b1") != "" {
+		t.Fatalf("60%% kept must pass: comments=%v", h.api.comments)
+	}
+
+	h.adopt.comparePatches["b2"] = utah1091Partial(2) // 12 of b1's 21 (57%), 12 of 35 overall
+	h.adopt.setCommitAuthor("b2", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "b2", adopted...), "check-failing:unit")
+	if notes := fixerRevertsComments(h.api); len(notes) != 1 || !strings.Contains(notes[0], "leaves 12 of the 35 lines") {
+		t.Fatalf("eroding chain not refused: %v", h.api.comments)
+	}
+	if got := h.e.adoptionIntentGate("acme", "widget", 7, "b2"); got != stagelabels.LaneReasonAdoptionFixerReverts {
+		t.Fatalf("merge gate = %q", got)
+	}
+}
+
+// Stale-red recovery re-runs CI on the refused head; it must not release the
+// refusal (a rerun cannot restore the PR's change).
+func TestAdoptedFixerRevertsSurvivesStaleRedRecovery(t *testing.T) {
+	h, done, adopted := adoptUtah1091InPlace(t)
+	defer done()
+	key := stageKey("acme", "widget", 7)
+	h.adopt.comparePatches["a75a567"] = utah1091Files(false, "")
+	h.adopt.setCommitAuthor("a75a567", testHiveAppBotLogin)
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "a75a567", adopted...), recoveryReason)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptEscalatedReason != stagelabels.LaneReasonAdoptionFixerReverts {
+		t.Fatalf("not refused: %+v", rec)
+	}
+
+	// The head sits red past the dwell; base is green, so recovery re-runs.
+	h.adopt.compareBase = "base1"
+	h.adopt.baseChecks = map[string]string{"coverage": "success"}
+	h.adopt.failedRuns = []int64{41}
+	h.api.reset()
+	h.clock.advance(adoptedDwell + time.Minute)
+	h.observe(adoptPR(7, "a75a567", "stage/085-needs-decision", "role/contributor", "author/clanker"), recoveryReason)
+	if len(h.adopt.reruns) != 1 {
+		t.Fatalf("recovery did not run: reruns=%v", h.adopt.reruns)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if !rec.AdoptionEscalated("a75a567") || rec.AdoptEscalatedReason != stagelabels.LaneReasonAdoptionFixerReverts {
+		t.Fatalf("recovery released the refusal: %+v", rec)
+	}
+	if got := h.e.adoptionIntentGate("acme", "widget", 7, "a75a567"); got != stagelabels.LaneReasonAdoptionFixerReverts {
+		t.Fatalf("merge gate after recovery = %q", got)
+	}
+}

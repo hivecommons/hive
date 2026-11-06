@@ -18,16 +18,21 @@ import (
 func TestAwaitingCINoteOnAdoptedPRWaitsForIntentCheck(t *testing.T) {
 	const agentNote = "hive/awaiting-ci: CI pending — sweep will merge when green."
 	head := "a75a567"
+	pusher := "hive[bot]"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1091") {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/1091"):
 			_, _ = w.Write([]byte(`{"number":1091,"head":{"sha":"` + head + `"}}`))
-			return
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/commits/"+head):
+			_, _ = w.Write([]byte(`{"sha":"` + head + `","author":{"login":"` + pusher + `"},"committer":{"login":"` + pusher + `"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 	c := testClient(t, srv.URL)
+	c.SetAppBotLogin("hive[bot]")
 
 	store := stagelabels.Shared()
 	key := stagelabels.Key("o/utah", 1091)
@@ -38,7 +43,18 @@ func TestAwaitingCINoteOnAdoptedPRWaitsForIntentCheck(t *testing.T) {
 
 	ctx := context.Background()
 	if got := c.adoptedAwaitingCINote(ctx, "o/utah", 1091, agentNote); got != awaitingCIIntentPendingNote {
-		t.Fatalf("unchecked hive head: %q", got)
+		t.Fatalf("unchecked hive head (App-linked commit, not yet recorded): %q", got)
+	}
+	// The author pushed: that head is never intent-checked, so the note
+	// must not claim it is.
+	pusher = "thatguywob"
+	if got := c.adoptedAwaitingCINote(ctx, "o/utah", 1091, agentNote); got != agentNote {
+		t.Fatalf("author push: %q", got)
+	}
+	// A recorded hive push (bare git identity) is checked.
+	store.MarkHivePushedHead(key, head)
+	if got := c.adoptedAwaitingCINote(ctx, "o/utah", 1091, agentNote); got != awaitingCIIntentPendingNote {
+		t.Fatalf("recorded hive push: %q", got)
 	}
 	store.MarkAdoptionEscalated(key, head, stagelabels.LaneReasonAdoptionFixerReverts)
 	if got := c.adoptedAwaitingCINote(ctx, "o/utah", 1091, agentNote); got != awaitingCIIntentRefusedNote {

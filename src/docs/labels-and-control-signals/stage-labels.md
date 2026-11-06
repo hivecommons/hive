@@ -1054,16 +1054,22 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      Each hive push is first checked against the PR's own change
      (`automerge_adoption_intent.go`): the PR's diff against its base
      (three-dot, so a merge of the base is not counted) must still carry at
-     least half of the lines it changed before the push. A push that undoes
-     more is refused: the PR goes to `stage/085-needs-decision` with reason
-     `adoption-fixer-reverts-pr` and one "Fixing CI would undo this PR's
-     change" note, the contributor lane will not merge that head, and the
-     next push re-checks (projectbluefin/utah#1091: the fixer re-added the 25
-     entries the PR removed). Until the check has passed, the lane refuses
-     the head as `contributor-lane:adoption-intent-pending` and the relay
-     rewrites an agent's `hive/awaiting-ci: … sweep will merge when green`
-     note on it to say the check comes first. A diff of 300 files or more is
-     not judged. A later head keeps that ownership
+     least half of the lines the PR changed at the contributor's head the
+     adoption started from (`adopted_intent_head`; older records fall back to
+     the adopted head). Every push is judged against that head, so a push on
+     top of a refused one is refused too, and a chain of pushes cannot erode
+     the change below half. A push that undoes more is refused: the PR goes
+     to `stage/085-needs-decision` with reason `adoption-fixer-reverts-pr`
+     and one "Fixing CI would undo this PR's change" note per head, and the
+     contributor lane will not merge that head; stale-red recovery may re-run
+     its CI but never releases the refusal (projectbluefin/utah#1091: the
+     fixer re-added the 25 entries the PR removed). Until the check has
+     passed, the lane refuses the head as
+     `contributor-lane:adoption-intent-pending`, and the relay rewrites an
+     agent's `hive/awaiting-ci: … sweep will merge when green` note on a hive
+     push (recorded, or App-linked on GitHub) to say the check comes first;
+     an author's push keeps the note as written. A diff of 300 files or more
+     is not judged. A later head keeps that ownership
      only when the commit's GitHub-linked author/committer is the App bot
      (the stage store remembers SHAs that already passed that check; it is
      not a separate evidence source)

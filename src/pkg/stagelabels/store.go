@@ -86,9 +86,15 @@ type Record struct {
 	// contributor head the hive adopted, the superseding App PR's number
 	// (0 while the attempt is recorded but no PR exists) and when. One
 	// attempt per head.
-	AdoptedHead string    `json:"adopted_head,omitempty"`
-	AdoptedBy   int       `json:"adopted_by,omitempty"`
-	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
+	AdoptedHead string `json:"adopted_head,omitempty"`
+	// AdoptedIntentHead is the contributor's head an in-place adoption
+	// started from. Every hive push is judged against the PR's diff at this
+	// head, never against the previous hive head, so a refused push cannot
+	// become the baseline for the next one and a chain of small cuts cannot
+	// erode the change (IntentBaseHead).
+	AdoptedIntentHead string    `json:"adopted_intent_head,omitempty"`
+	AdoptedBy         int       `json:"adopted_by,omitempty"`
+	AdoptedAt         time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
 	// SupersededBy / SupersededAt record that the superseding App PR merged
@@ -1427,6 +1433,16 @@ func (s *Store) HasHivePushEvidence(repo string) bool {
 	return false
 }
 
+// IntentBaseHead is the head whose PR diff a hive push on an in-place
+// adoption must keep: the contributor's head at adoption, or AdoptedHead for
+// a record written before AdoptedIntentHead existed.
+func (r Record) IntentBaseHead() string {
+	if r.AdoptedIntentHead != "" {
+		return r.AdoptedIntentHead
+	}
+	return r.AdoptedHead
+}
+
 // AdoptionLive reports whether the hive currently owns this PR (stage 074):
 // an in-place adoption that was not yielded, or a superseding adoption of
 // exactly this head. Adoption is an ownership state, not a CI state — it
@@ -1590,6 +1606,7 @@ func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
+	r.AdoptedIntentHead = head
 	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	r.AdoptedHeadAt = now

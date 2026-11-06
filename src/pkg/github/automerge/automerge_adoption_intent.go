@@ -100,15 +100,20 @@ func (c *Engine) adoptedPushIntent(ctx context.Context, obs stageObservation, be
 }
 
 // checkAdoptedPushIntent runs when the hive advanced an in-place adopted PR
-// from prev.AdoptedHead to obs.HeadSHA. A push that keeps the PR's change is
-// taken as the hive's head (MarkAdoptedHead). One that undoes it is
-// escalated to 085 with LaneReasonAdoptionFixerReverts: the contributor lane
-// refuses to merge that head and the author or a maintainer is told why,
-// once; the head is taken only after the note posts, so a failed post is
-// re-checked and retried next sweep. An unreadable diff leaves the head
-// unmarked, so no merge admits it, and is re-read next sweep.
+// to obs.HeadSHA. The push is judged against the PR's diff at the
+// contributor's head the adoption started from (Record.IntentBaseHead), not
+// the previous hive head: a refused head never becomes the baseline, and a
+// chain of pushes that each keep most of the previous one cannot erode the
+// change below half. A push that keeps the PR's change is taken as the
+// hive's head (MarkAdoptedHead). One that undoes it is escalated to 085 with
+// LaneReasonAdoptionFixerReverts: the contributor lane refuses to merge that
+// head and the author or a maintainer is told why, once; the head is taken
+// only after the note posts, so a failed post is re-checked and retried next
+// sweep. An unreadable diff leaves the head unmarked, so no merge admits it,
+// and is re-read next sweep.
 func (c *Engine) checkAdoptedPushIntent(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record) (int, error) {
-	intent, err := c.adoptedPushIntent(ctx, obs, prev.AdoptedHead)
+	base := prev.IntentBaseHead()
+	intent, err := c.adoptedPushIntent(ctx, obs, base)
 	if err != nil {
 		c.warn("stage labels: adopted PR advanced by the hive; diff unreadable, intent check deferred", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "error", err)
 		return 0, nil
@@ -122,10 +127,10 @@ func (c *Engine) checkAdoptedPushIntent(ctx context.Context, store *stagelabels.
 	}
 	reason := stagelabels.LaneReasonAdoptionFixerReverts
 	store.MarkAdoptionEscalated(key, obs.HeadSHA, reason)
-	c.warn("stage labels: hive push undoes the adopted PR's own change; refusing it and escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "before", prev.AdoptedHead, "head", obs.HeadSHA, "own_lines", intent.Own, "kept_lines", intent.Kept)
+	c.warn("stage labels: hive push undoes the adopted PR's own change; refusing it and escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "intent_base", base, "head", obs.HeadSHA, "own_lines", intent.Own, "kept_lines", intent.Kept)
 	n := 0
 	if rec, _ := store.Get(key); !rec.AdoptionEscalationNoted(obs.HeadSHA, reason) {
-		n, err = c.postAdoptionEscalationNote(ctx, store, key, obs, reason, AdoptionFixerRevertsComment(obs, prev.AdoptedHead, intent), "stage labels: fixer-reverts note failed")
+		n, err = c.postAdoptionEscalationNote(ctx, store, key, obs, reason, AdoptionFixerRevertsComment(obs, base, intent), "stage labels: fixer-reverts note failed")
 		if err != nil {
 			return n, err
 		}

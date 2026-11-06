@@ -54,9 +54,12 @@ const (
 )
 
 // adoptedAwaitingCINote rewrites an awaiting-ci note on an in-place adopted
-// PR whose current head the adoption record has not taken yet (its intent
-// check is pending) or has refused. Any other body is returned unchanged; an
-// unreadable PR keeps the agent's text.
+// PR whose current head is a hive push the adoption record has not taken yet
+// (its intent check is pending) or has refused. A head the author pushed is
+// never checked, so its note is left alone. The note usually lands before
+// the stage pass records the push, so a hive push is the recorded push
+// evidence or a commit GitHub links to the hive's App. Any other body is
+// returned unchanged; an unreadable PR or commit keeps the agent's text.
 func (c *Client) adoptedAwaitingCINote(ctx context.Context, repo string, number int, body string) string {
 	if relayStatusNoteKey(body) != prstatus.KeyAgentNotePrefix+agentNoteAwaitingCI {
 		return body
@@ -76,8 +79,22 @@ func (c *Client) adoptedAwaitingCINote(ctx context.Context, repo string, number 
 		return body
 	case rec.AdoptionEscalated(head) && rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionFixerReverts:
 		return awaitingCIIntentRefusedNote
-	case head != rec.AdoptedHead && rec.YieldedHead != head:
+	case head != rec.AdoptedHead && rec.YieldedHead != head && c.hivePushedAdoptedHead(ctx, owner, name, head, rec):
 		return awaitingCIIntentPendingNote
 	}
 	return body
+}
+
+// hivePushedAdoptedHead reports whether head is the hive's own push: recorded
+// as one, or a commit whose GitHub-linked author or committer is a hive
+// account (the evidence settleInPlaceAdoption accepts).
+func (c *Client) hivePushedAdoptedHead(ctx context.Context, owner, name, head string, rec stagelabels.Record) bool {
+	if rec.HivePushedHead(head) {
+		return true
+	}
+	commit, _, err := c.client.Repositories.GetCommit(ctx, owner, name, head, nil)
+	if err != nil {
+		return false
+	}
+	return c.isHiveAccount(commit.GetAuthor()) || c.isHiveAccount(commit.GetCommitter())
 }

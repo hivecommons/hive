@@ -2316,7 +2316,10 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		// an attempt holds the escalation while CI runs on the result, and
 		// releases one already in place for the same head.
 		if recovery := c.recoverStaleRedAdoption(ctx, store, key, obs, rec); recovery.Attempted {
-			if rec.AdoptionEscalated(obs.HeadSHA) {
+			// A fixer-reverts refusal is a verdict on the head's content, not
+			// its CI: a rerun or rebase cannot restore the PR's change, so the
+			// recovery never releases it.
+			if rec.AdoptionEscalated(obs.HeadSHA) && rec.AdoptEscalatedReason != stagelabels.LaneReasonAdoptionFixerReverts {
 				store.ClearAdoptionEscalation(key)
 				c.info("stage labels: adoption escalation released for recovery; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "recovery", recovery.Reason)
 			}
