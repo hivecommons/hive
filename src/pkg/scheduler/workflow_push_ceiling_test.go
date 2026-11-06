@@ -84,3 +84,28 @@ func TestWorkflowPushCeilingSilentForUnknownAgent(t *testing.T) {
 		t.Fatalf("ceiling stated for an agent with no configured mode:\n%s", msg)
 	}
 }
+
+// projectbluefin/testsuite#1059: a merger-tier lane is told its token can
+// push workflow files; a contributor-tier lane is not.
+func TestWorkflowPushReachForMergerTier(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want bool
+	}{
+		{mode: "ISSUES_PRS_MERGE", want: true},
+		{mode: "ISSUES_AND_PRS", want: false},
+		{mode: "ISSUES_ONLY", want: false},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			s := heldPRCoordinationScheduler(t, 4, tc.mode)
+			msg := s.BuildAgentMessage("quality", nil, &github.ActionableResult{})
+			got := strings.Contains(msg, "Workflow files are in reach at this mode") && strings.Contains(msg, "do not park it as")
+			if got != tc.want {
+				t.Fatalf("mode %s: reach stated = %v, want %v:\n%s", tc.mode, got, tc.want, msg)
+			}
+			if tc.want && strings.Index(msg, "Workflow files are in reach") > strings.Index(msg, "CUSTOM POLICY BODY") {
+				t.Fatalf("the line must precede policy work selection:\n%s", msg)
+			}
+		})
+	}
+}

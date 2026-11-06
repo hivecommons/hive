@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Stage-074 adoption (hivecommons/hive#12436).
@@ -2102,12 +2103,40 @@ type adoptionEscape struct {
 // reason) first; failed is the warning logged on an error. Returns the
 // comments posted.
 func (c *Engine) postAdoptionEscalationNote(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, reason, body, failed string) (int, error) {
+	body = c.withStageMoveFact(obs, body)
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn(failed, "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "error", err)
 		return 0, err
 	}
 	store.MarkAdoptionEscalationNoted(key, obs.HeadSHA, reason)
 	return 1, nil
+}
+
+// withStageMoveFact keeps an escalation note honest about the 085 label.
+// The write-back gate keeps hive stage labels off a contributor PR nobody
+// opted in (or one older than the hive's first write), so "Moving to
+// `stage/085-needs-decision`" announced a label that never landed
+// (projectbluefin/fsdk-containers#491, projectbluefin/utah-packages#812).
+// The gate is asked without recording a refusal: the stage writer records
+// its own when it tries.
+func (c *Engine) withStageMoveFact(obs stageObservation, body string) string {
+	d := c.writebackGate().Decide(obs.Owner+"/"+obs.Repo, writebackItemForObservation(obs), writeback.KindStageLabel)
+	if d.Allowed {
+		return body
+	}
+	return suppressedStageMove(body, stagelabels.NeedsDecision.Label(), d)
+}
+
+// suppressedStageMove rewrites "Moving to `label`" for a label the gate
+// refuses: the hive would move it, says why it did not, and where the stage
+// lives instead.
+func suppressedStageMove(body, label string, d writeback.Decision) string {
+	why := d.Reason
+	if d.Detail != "" {
+		why += " — " + d.Detail
+	}
+	return strings.Replace(body, "Moving to `"+label+"`",
+		"The hive would move this to `"+label+"`, but the write-back gate keeps its labels off this PR ("+why+"), so no label changes here. The hive tracks it at `"+label+"` and lists it on the dashboard", 1)
 }
 
 // adoptionCIPending reports whether the lane saw CI still running on the

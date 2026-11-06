@@ -405,6 +405,9 @@ type Record struct {
 	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
 	// "PR in progress" while the record said 085).
 	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
+	// LabelsSuppressedReason is the write-back gate's reason for the last
+	// refusal ("needs-opt-in-label — #N carries none of …"), "" otherwise.
+	LabelsSuppressedReason string `json:"labels_suppressed_reason,omitempty"`
 	// TrainEjectedWhy / TrainEjectedHead / TrainEjectedAt record the merge
 	// train's last ejection of this PR (hivecommons/hive#15825): the head
 	// it was ejected at, why (head-moved, ci-pending, ci-red,
@@ -2722,16 +2725,20 @@ func HiveHeld(r Record, overrides map[string]time.Duration, now time.Time) bool 
 }
 
 // NoteLabelsSuppressed records whether the last stage-label write for key
-// was kept off GitHub by the write-back gate. A missing record is left
-// missing.
-func (s *Store) NoteLabelsSuppressed(key string, suppressed bool) {
+// was kept off GitHub by the write-back gate, and the gate's reason. A
+// missing record is left missing.
+func (s *Store) NoteLabelsSuppressed(key string, suppressed bool, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || r.LabelsSuppressed == suppressed {
+	if !suppressed {
+		reason = ""
+	}
+	if !ok || r.LabelsSuppressed == suppressed && r.LabelsSuppressedReason == reason {
 		return
 	}
 	r.LabelsSuppressed = suppressed
+	r.LabelsSuppressedReason = reason
 	s.items[key] = r
 	s.dirty = true
 }

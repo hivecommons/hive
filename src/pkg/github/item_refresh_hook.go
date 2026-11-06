@@ -50,6 +50,7 @@ func (c *Client) unblockIssue(ctx context.Context, repo string, number int) erro
 	if err := c.RemoveLabel(ctx, repo, number, BlockedLabel); err != nil {
 		return err
 	}
+	forgetBlockedOnSeen(repo, number)
 	// The row's since-time restarts at the lift (hivecommons/hive#15779).
 	stagelabels.Shared().NoteUnblocked(stagelabels.Key(repo, number), time.Now())
 	notifyItemRefresh(repo, number, false)

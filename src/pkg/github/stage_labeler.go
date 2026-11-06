@@ -65,6 +65,9 @@ func (s *stageLabeler) writeAllowed(owner, repo string, number int, preview stri
 		s.mu.Lock()
 		s.suppressed = true
 		s.reason = d.Reason
+		if d.Detail != "" {
+			s.reason += " — " + d.Detail
+		}
 		s.mu.Unlock()
 	}
 	return d.Allowed

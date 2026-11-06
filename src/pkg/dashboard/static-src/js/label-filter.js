@@ -100,7 +100,9 @@
       if (own.verb === 'TRIAGE') {
         after.push({ type: 'note', text: 'Adding the approved-direction label, assigning a person, or closing it acknowledges it.' });
       }
-      if (own.verb === 'ADMIT') {
+      // The issue-filter ADMIT rows name the filter's own labels in the
+      // reason; admissionLabels are reporter trust's.
+      if (own.verb === 'ADMIT' && own.reason_code === 'untrusted_reporter') {
         const labels = (ctx.admissionLabels || []).filter(Boolean);
         after.push({ type: 'note', text: labels.length ? 'Add the label ' + labels.join(' or ') + ' to admit it.' : 'Add an admission label to admit it.' });
       }

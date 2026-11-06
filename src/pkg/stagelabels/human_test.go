@@ -707,7 +707,7 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	e.Checks = CheckSummary{Total: 5, Green: 4, Red: []string{"Canary"}, Known: true}
 	e.ForkGuard = []string{"Canary"}
 	r := RouteHuman(e)
-	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or approve the run as the repository requires)"
+	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or run or approve it for head `abc1234` as the repository requires)"
 	if r.Stage != NeedsDecision || r.LaneReason != "" || !containsString(r.Reasons, want) {
 		t.Fatalf("fork-guard route = %+v", r)
 	}
@@ -874,5 +874,37 @@ func TestAlreadyLandedAuthorReason(t *testing.T) {
 	}
 	if got := AlreadyLandedAuthorReason(authorkind.Unknown); got != "already-landed:unknown" {
 		t.Fatalf("unknown = %q", got)
+	}
+}
+
+// projectbluefin/utah#1078 (2026-11-04 01:41Z): the head line said "approved
+// by @Danathar" while the actions still asked a trusted merger to approve
+// that head. With the approval recorded, the actions say it is done and
+// leave the other reasons (here the fork's update-branch refusal) to act on.
+func TestDecisionActionsDoNotReaskARecordedApproval(t *testing.T) {
+	e := readyEvidence()
+	e.Verdict = VerdictRequiresHuman
+	e.ManualMerge = true
+	e.ApprovalReleasesFence = true
+	e.Sentinel = true
+	r := RouteHuman(e)
+	r.HumanApprover = "Danathar"
+	got := DecisionActions(r)
+	if strings.Contains(got, "a trusted merger approves this head") || strings.Contains(got, "approve this head") {
+		t.Fatalf("actions re-ask a recorded approval:\n%s", got)
+	}
+	for _, want := range []string{"nothing more to approve: @Danathar approved this head (`abc1234`)", "resolve the sentinel alert"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("actions missing %q:\n%s", want, got)
+		}
+	}
+
+	// requires_human alone, approver recorded: no approval ask either.
+	rh := readyEvidence()
+	rh.Verdict = VerdictRequiresHuman
+	rr := RouteHuman(rh)
+	rr.Stage, rr.HumanApprover = NeedsDecision, "@Danathar"
+	if got := DecisionActions(rr); strings.Contains(got, "approves this head") || !strings.Contains(got, "@Danathar approved this head") {
+		t.Fatalf("requires_human actions = %q", got)
 	}
 }

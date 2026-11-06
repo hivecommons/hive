@@ -458,7 +458,8 @@ func TestOverviewExportSliceFilterMatchesChartSlice11567(t *testing.T) {
 		"?slice=waiting-elsewhere": {5, 6},
 		"?slice=ready":             {1, 7},
 		"?band=outside":            {3, 5, 8},
-		"?band=waiting":            {4},
+		// #6 and #7 wear `hold`: held is parked, not unclaimed.
+		"?band=waiting": {4, 6, 7},
 	} {
 		got := numbers(get("/api/overview/issues.json" + query))
 		if len(got) != len(want) {

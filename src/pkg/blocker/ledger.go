@@ -56,6 +56,50 @@ type Ledger struct {
 	entries map[string]Entry
 	now     func() time.Time
 	loaded  bool
+	// capabilityCheck refutes a capability report (SetCapabilityCheck).
+	capabilityCheck func(repo string, number int, k Kind) bool
+	// proofCheck confirms a quoted rejection proves the gap (SetProofCheck).
+	proofCheck func(text string) bool
+}
+
+// SetProofCheck installs the check Observe asks before it marks a quoted
+// GitHub rejection as proof (Blocker.Proven): true when the quote came from a
+// reporter whose own token asks for the permission. A contributor-tier lane
+// quoting GitHub's refusal shows only that its own token lacks `workflows`,
+// not that the App does, so its blocker stays refutable. Nil, the default,
+// trusts every quote.
+func (l *Ledger) SetProofCheck(fn func(text string) bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.proofCheck = fn
+}
+
+func (l *Ledger) proofHolds(text string) bool {
+	l.mu.Lock()
+	fn := l.proofCheck
+	l.mu.Unlock()
+	return fn == nil || fn(text)
+}
+
+// SetCapabilityCheck installs the check Observe asks before it records a
+// capability blocker: true means the hive verified it holds that capability
+// for that item (for workflows: the installation grants `workflows: write`,
+// a lane whose token asks for it serves the repo, and the item is not a fork
+// PR), so an agent's "the App cannot push workflow files" is not recorded
+// as a blocker (projectbluefin/testsuite#1059). Nil, the default, records
+// every report.
+func (l *Ledger) SetCapabilityCheck(fn func(repo string, number int, k Kind) bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.capabilityCheck = fn
+}
+
+// capabilityHeld runs the check outside the ledger lock: it may read GitHub.
+func (l *Ledger) capabilityHeld(repo string, number int, k Kind) bool {
+	l.mu.Lock()
+	fn := l.capabilityCheck
+	l.mu.Unlock()
+	return fn != nil && k.IsCapability() && fn(repo, number, k)
 }
 
 // NewLedger returns a ledger backed by path (loaded lazily; a missing or
@@ -140,6 +184,14 @@ func (l *Ledger) Observe(repo string, number int, text string, at time.Time) (En
 		}
 		return l.RecordReason(repo, number, NormalizeReason(text), at), true
 	}
+	if b.Proven && !l.proofHolds(text) {
+		b.Proven = false
+	}
+	if !b.Proven && l.capabilityHeld(repo, number, b.Kind) {
+		// The hive holds the capability the report says is missing: keep the
+		// reason for the loop guard, park nothing on it.
+		return l.RecordReason(repo, number, NormalizeReason(text), at), true
+	}
 	return l.Record(repo, number, b, NormalizeReason(text)), true
 }
 
@@ -164,6 +216,12 @@ func (l *Ledger) Record(repo string, number int, b Blocker, reason string) Entry
 	e.Repo, e.Number = repo, number
 	if e.Blocker != nil && e.Blocker.Kind == b.Kind && !e.Blocker.Since.IsZero() && e.Blocker.Since.Before(b.Since) {
 		b.Since = e.Blocker.Since
+	}
+	// Evidence outlives a later unquoted re-report of the same kind, which
+	// lands here whenever the capability check could not refute it (an
+	// unreadable installation): Proven must not drop with it.
+	if e.Blocker != nil && e.Blocker.Kind == b.Kind && e.Blocker.Proven {
+		b.Proven = true
 	}
 	e.Blocker = &b
 	e.Reason = reason
@@ -276,6 +334,46 @@ func (l *Ledger) ClearKind(k Kind) int {
 		_ = l.save()
 	}
 	return n
+}
+
+// RecheckCapabilities lifts every capability blocker that held(repo, number, kind)
+// now refutes and returns the released entries as they were. It is the
+// scheduled form of the dashboard's Re-check permissions, per item rather
+// than per kind, so a blocker on a repo no capable lane serves stays, and so
+// does one whose report quoted GitHub's rejection (Blocker.Proven). held
+// runs outside the ledger lock; a blocker that changed kind meanwhile is kept.
+func (l *Ledger) RecheckCapabilities(held func(repo string, number int, k Kind) bool) []Entry {
+	if held == nil {
+		return nil
+	}
+	var refuted []Entry
+	for _, e := range l.Blockers() {
+		if e.Blocker.Kind.IsCapability() && !e.Blocker.Proven && held(e.Repo, e.Number, e.Blocker.Kind) {
+			refuted = append(refuted, e)
+		}
+	}
+	if len(refuted) == 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var released []Entry
+	for _, was := range refuted {
+		k := Key(was.Repo, was.Number)
+		e, ok := l.entries[k]
+		if !ok || e.Blocker == nil || e.Blocker.Kind != was.Blocker.Kind || !e.Blocker.Since.Equal(was.Blocker.Since) {
+			continue
+		}
+		e.Blocker = nil
+		e.Reapplied = false
+		e.ClearedAt = l.now()
+		l.entries[k] = e
+		released = append(released, was)
+	}
+	if len(released) > 0 {
+		_ = l.save()
+	}
+	return released
 }
 
 // Blockers lists every current blocker, sorted by item key.

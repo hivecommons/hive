@@ -79,6 +79,10 @@ func buildReadInstruction(pr PullRequest) string {
 	b.WriteString("Read widely; report narrowly. Only defects this diff introduces or exposes are in scope — pre-existing problems it does not touch stay out, however tempting. Reading the surrounding code tells you whether the change is safe; it is not an invitation to review the file.\n")
 	if pr.HeadSHA != "" {
 		fmt.Fprintf(&b, "Every citation must be code you actually read at head %s — in the diff or in the files around it. If the PR has moved on since, review the current head and say which revision you read.\n", pr.HeadSHA)
+		// projectbluefin/homebrew-tap#60: a review of 95440f7 said a check
+		// "fails on this head (job 127519980309)"; that job ran on the
+		// previous head, d892290, and the new head fixed it.
+		fmt.Fprintf(&b, "CI evidence follows the same rule: a check run, job or log speaks for this head only when its head_sha is %s (`gh api repos/%s/actions/jobs/<job id> --jq .head_sha`). A run on an earlier head says nothing about this one: leave it out, or name the head it ran on.\n", pr.HeadSHA, pr.Repo)
 	}
 	// Phrased to avoid the substrings in FatalNetworkErrorPatterns:
 	// "fetch failed" in this very sentence was echoed into the reviewer pane

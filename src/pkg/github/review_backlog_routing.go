@@ -75,6 +75,9 @@ type ReviewBacklogRef struct {
 	// same file but was not folded into because it describes a different
 	// finding (#13906); 0 when there is none.
 	SameFileAs int
+	// SameFilePath is the path the two share; "" when every cited path is
+	// (CreateIssueResult.SameFilePath).
+	SameFilePath string
 }
 
 // ReviewBacklogSink is a backlog destination. The GitHub issue sink lives
@@ -148,12 +151,13 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 		}
 	}
 	return ReviewBacklogRef{
-		ID:         strconv.Itoa(res.Number),
-		Key:        fmt.Sprintf("#%d", res.Number),
-		Number:     res.Number,
-		URL:        res.URL,
-		Reused:     res.AlreadyExisted,
-		SameFileAs: res.SameFileAs,
+		ID:           strconv.Itoa(res.Number),
+		Key:          fmt.Sprintf("#%d", res.Number),
+		Number:       res.Number,
+		URL:          res.URL,
+		Reused:       res.AlreadyExisted,
+		SameFileAs:   res.SameFileAs,
+		SameFilePath: res.SameFilePath,
 	}, nil
 }
 
@@ -588,9 +592,16 @@ func (c *Client) reviewBacklogFoldedComment(req ReviewRequest, p review.Perspect
 // reviewBacklogSameFileComment cross-links a newly filed item to the open
 // issue that cites the same file but was not folded into because it is a
 // different finding (#13906). GitHub backlinks the reference on that issue.
-func reviewBacklogSameFileComment(f outputschema.Finding, sameFileAs int) string {
+// It names the path the two share: projectbluefin/utah-packages#868 said both
+// cite its own evidence file, config/factory-build-backlog.toml, which #852
+// never mentions; the shared path was docs/skills/factory-build-backlog.md.
+func reviewBacklogSameFileComment(f outputschema.Finding, sameFileAs int, sharedPath string) string {
+	shared := strings.TrimSpace(sharedPath)
+	if shared == "" {
+		shared = strings.TrimSpace(f.File)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s%d -->\n", reviewBacklogSameFileMarker, sameFileAs)
-	fmt.Fprintf(&b, "Same file as #%d: both cite `%s`, but this finding does not match that issue's symbol, line range or category, so it was filed separately instead of folded in.\n\n%s\n", sameFileAs, strings.TrimSpace(f.File), reviewBacklogFooter)
+	fmt.Fprintf(&b, "Same file as #%d: both cite `%s`, but this finding does not match that issue's symbol, line range or category, so it was filed separately instead of folded in.\n\n%s\n", sameFileAs, shared, reviewBacklogFooter)
 	return b.String()
 }

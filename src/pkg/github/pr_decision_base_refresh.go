@@ -158,6 +158,42 @@ func mergeIsBaseRefreshOf(ctx context.Context, api BaseRefreshRepos, owner, repo
 	return sameChangedFiles(oldFiles, newFiles)
 }
 
+// BaseMergeParent reports the PR-side parent of commit (the commit at
+// newHead) when it is a merge of baseRef into that parent which leaves the
+// PR's three-dot diff against baseRef unchanged, whoever made the merge:
+// the other parent is the merge-base with baseRef, and the changed files
+// match file for file. It is mergeIsBaseRefreshOf without the App-author
+// rule, for questions about content rather than about who pushed: GitHub
+// moves a person's approving review onto such a merge (projectbluefin/utah#1078:
+// a review submitted 2026-11-04 01:17Z is reported on a merge made
+// 2026-11-05 19:50Z). Lookup failures are false.
+func BaseMergeParent(ctx context.Context, api BaseRefreshRepos, owner, repo, baseRef string, commit *gh.RepositoryCommit, newHead string) (string, bool) {
+	baseRef, newHead = strings.TrimSpace(baseRef), strings.TrimSpace(newHead)
+	if api == nil || commit == nil || len(commit.Parents) != baseRefreshMergeParents || baseRef == "" || newHead == "" {
+		return "", false
+	}
+	first, second := strings.TrimSpace(commit.Parents[0].GetSHA()), strings.TrimSpace(commit.Parents[1].GetSHA())
+	newCmp, newFiles, err := compareAllFiles(ctx, api, owner, repo, baseRef, newHead)
+	if err != nil || newCmp == nil {
+		return "", false
+	}
+	prev := ""
+	switch strings.TrimSpace(newCmp.GetMergeBaseCommit().GetSHA()) {
+	case second:
+		prev = first
+	case first:
+		prev = second
+	}
+	if prev == "" || prev == newHead {
+		return "", false
+	}
+	_, oldFiles, err := compareAllFiles(ctx, api, owner, repo, baseRef, prev)
+	if err != nil || !sameChangedFiles(oldFiles, newFiles) {
+		return "", false
+	}
+	return prev, true
+}
+
 // compareAllFiles walks every page of the three-dot compare base...head.
 func compareAllFiles(ctx context.Context, api BaseRefreshRepos, owner, repo, base, head string) (*gh.CommitsComparison, []*gh.CommitFile, error) {
 	opts := &gh.ListOptions{PerPage: 100}
