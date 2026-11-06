@@ -25,6 +25,19 @@ export const LINE_MAX_BYTES = 64 * 1024;
 const PRUNE_EVERY_MS = 60 * 60 * 1000;
 const BACKUP_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})\.(\d{3})\.log(?:\.gz)?$/;
 
+// headWithinBytes returns the longest start of text that fits in maxBytes of
+// UTF-8 without cutting a character in half, as the Go writer's runeSafeCut
+// does. A character cut by the split was lost: its first half was stored as
+// U+FFFD and the rest of it was dropped.
+export function headWithinBytes(text, maxBytes) {
+  const bytes = Buffer.from(text, 'utf8');
+  let end = Math.min(maxBytes, bytes.length);
+  // A UTF-8 continuation byte is 10xxxxxx: while the byte after the cut is
+  // one, the cut is inside a character.
+  while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.subarray(0, end).toString('utf8');
+}
+
 // outputDir mirrors logread.OutputDir.
 export function outputDir(env) {
   const dir = String((env && env[OUTPUT_DIR_ENV]) || '').trim();
@@ -138,7 +151,7 @@ export class OutputLog {
       buf = buf.slice(i + 1);
     }
     while (Buffer.byteLength(buf, 'utf8') >= LINE_MAX_BYTES) {
-      const head = Buffer.from(buf, 'utf8').subarray(0, LINE_MAX_BYTES).toString('utf8');
+      const head = headWithinBytes(buf, LINE_MAX_BYTES);
       this.emit(stream, head);
       buf = buf.slice(head.length);
     }
