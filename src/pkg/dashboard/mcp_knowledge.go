@@ -632,6 +632,11 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 		if args.Type != "" {
 			scope.Types = []string{args.Type}
 		}
+		if args.Type == "general" {
+			// An untyped fact is listed as "general" (tocEntry), so asking
+			// for that type has to match the empty type as well.
+			scope.Types = append(scope.Types, "")
+		}
 		all, _ := s.publicListing(tags)
 		toc := knowledge.BuildTOC(all, scope, args.Limit)
 		// Source URLs are not part of the public projection.
