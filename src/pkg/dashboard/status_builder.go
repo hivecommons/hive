@@ -2376,7 +2376,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 	repoRows := make(map[string]string, len(cfg.Project.Repos)*2)
 	for _, repoName := range cfg.Project.Repos {
 		full := repoName
-		if !strings.Contains(repoName, "/") {
+		if cfg.Project.Org != "" && !strings.Contains(repoName, "/") {
 			full = cfg.Project.Org + "/" + repoName
 		}
 		repoRows[repoName] = repoName
@@ -2442,7 +2442,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 		// "laredo/laredo/cuga-agent" in the REPOSITORIES card and in every
 		// GitHub link built from it.
 		full := repoName
-		if !strings.Contains(repoName, "/") {
+		if cfg.Project.Org != "" && !strings.Contains(repoName, "/") {
 			full = cfg.Project.Org + "/" + repoName
 		}
 
