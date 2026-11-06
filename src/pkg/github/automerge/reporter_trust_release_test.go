@@ -31,6 +31,14 @@ func reporterTrustNoticeComment(at string) map[string]any {
 	}
 }
 
+func humanMergePathNoticeComment(login, at string) map[string]any {
+	return map[string]any{
+		"body":       hgithub.HumanMergePathComment([]string{".github/workflows/build.yml"}),
+		"user":       map[string]string{"login": login},
+		"created_at": at,
+	}
+}
+
 func holdEvent(event, actor, at string) map[string]any {
 	return map[string]any{
 		"event":      event,
@@ -85,6 +93,27 @@ func TestHoldProvenance(t *testing.T) {
 			name:     "no events readable: the notice alone attributes it",
 			comments: []map[string]any{reporterTrustNoticeComment("2026-10-20T17:14:18Z")},
 			want:     &stagelabels.HoldProvenance{By: "hive", Source: "reporter-trust", Reason: "reporter trust (issue #15017 by @Karibhou, contributor)", Issue: 15017, Reporter: "Karibhou", Association: "CONTRIBUTOR", Since: time.Date(2026, 10, 20, 17, 14, 18, 0, time.UTC)},
+			notice:   true,
+		},
+		{
+			// projectbluefin/utah#1097: the human-merge-path refusal's
+			// notice explains the hive's hold on any later head.
+			name:     "hive label plus the human-merge-path notice",
+			comments: []map[string]any{humanMergePathNoticeComment(testHiveAppBotLogin, "2026-10-19T09:00:00Z")},
+			events:   []map[string]any{holdEvent("labeled", testHiveAppBotLogin, labelAt)},
+			want:     &stagelabels.HoldProvenance{By: "hive", Source: "human-merge-path", Reason: "it changes " + stagelabels.HumanMergePathReason, Since: time.Date(2026, 10, 20, 17, 14, 14, 0, time.UTC)},
+		},
+		{
+			name:     "a human-merge-path notice someone else posted explains nothing",
+			comments: []map[string]any{humanMergePathNoticeComment("someone", "2026-10-19T09:00:00Z")},
+			events:   []map[string]any{holdEvent("labeled", testHiveAppBotLogin, labelAt)},
+			want:     &stagelabels.HoldProvenance{By: "hive", Source: "label", Since: time.Date(2026, 10, 20, 17, 14, 14, 0, time.UTC)},
+		},
+		{
+			name:     "a fresh reporter-trust notice outranks the human-merge-path notice",
+			comments: []map[string]any{humanMergePathNoticeComment(testHiveAppBotLogin, "2026-10-19T09:00:00Z"), reporterTrustNoticeComment("2026-10-20T17:14:18Z")},
+			events:   []map[string]any{holdEvent("labeled", testHiveAppBotLogin, labelAt)},
+			want:     &stagelabels.HoldProvenance{By: "hive", Source: "reporter-trust", Reason: "reporter trust (issue #15017 by @Karibhou, contributor)", Issue: 15017, Reporter: "Karibhou", Association: "CONTRIBUTOR", Since: time.Date(2026, 10, 20, 17, 14, 14, 0, time.UTC)},
 			notice:   true,
 		},
 		{name: "nothing at all"},

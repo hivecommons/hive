@@ -132,6 +132,24 @@ type Blocker struct {
 	// "loop-guard".
 	Source string    `json:"source,omitempty"`
 	Since  time.Time `json:"since,omitempty"`
+	// Proven: the report quotes GitHub's own refusal of the push
+	// (QuotesWorkflowsRejection), so it is evidence, not a claim, and no
+	// capability check refutes it.
+	Proven bool `json:"proven,omitempty"`
+}
+
+// workflowsRejectionRE is GitHub's refusal of a workflow-file push, as it
+// reads for an App, an OAuth App or a token: "refusing to allow a GitHub App
+// to create or update workflow `.github/workflows/x.yml` without `workflows`
+// permission".
+var workflowsRejectionRE = regexp.MustCompile("(?i)refusing to allow an? (GitHub App|OAuth App|Personal Access Token|integration)[^.\n]{0,40}? to (create or update|create|update) workflow")
+
+// QuotesWorkflowsRejection reports whether text quotes GitHub's own refusal
+// of a workflow-file push. A lane told its token can push workflow files
+// parks again with that error when a push still bounces; the quote is what
+// separates that from an unverified "the App cannot push workflows".
+func QuotesWorkflowsRejection(text string) bool {
+	return workflowsRejectionRE.MatchString(text)
 }
 
 const (
@@ -210,10 +228,10 @@ func Infer(prose string) (Kind, bool) {
 // sentence the kind was inferred from.
 func Detect(text string, at time.Time) (Blocker, bool) {
 	if k, ok := ParseMarker(text); ok {
-		return Blocker{Kind: k, Detail: ReasonSentence(text), Source: SourceMarker, Since: at}, true
+		return Blocker{Kind: k, Detail: ReasonSentence(text), Source: SourceMarker, Since: at, Proven: k == CapabilityWorkflowsPermission && QuotesWorkflowsRejection(text)}, true
 	}
 	if k, ok := Infer(text); ok {
-		return Blocker{Kind: k, Detail: ReasonSentence(text), Source: SourceInferred, Since: at}, true
+		return Blocker{Kind: k, Detail: ReasonSentence(text), Source: SourceInferred, Since: at, Proven: k == CapabilityWorkflowsPermission && QuotesWorkflowsRejection(text)}, true
 	}
 	return Blocker{}, false
 }

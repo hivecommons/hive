@@ -104,6 +104,9 @@ func (s *Scheduler) isHoldGatedPRAgent(agentName string) bool {
 // the same reason (kubestellar/hive#4744): a customized or remotely sourced
 // policy must not be able to omit it.
 func (s *Scheduler) addWorkflowPushCeiling(agentName, message string) string {
+	if message != "" && s.cfg.AgentPushesWorkflows(agentName) {
+		return insertAfterKickHeader(message, workflowPushReach)
+	}
 	if message == "" || s.agentEffectiveMode(agentName) != "ISSUES_AND_PRS" {
 		return message
 	}
@@ -158,6 +161,21 @@ serves the repository, the park stands and the owner applies it.
 	}
 	return insertAfterKickHeader(message, section)
 }
+
+// workflowPushReach is the other side of the ceiling: a trusted/merger-tier
+// token asks for the Workflows permission, so the lane can push
+// .github/workflows/** itself. projectbluefin/testsuite#1059: scanner, at
+// ISSUES_PRS_MERGE, parked "the hive app cannot push .github/workflows/" the
+// same day the App pushed e2e.yml; nothing in its kick said otherwise. The
+// relay refuses such a park when the installation grants the permission.
+const workflowPushReach = `## Workflow files are in reach at this mode
+
+This agent's token is minted at the trusted/merger tier, which asks for the
+Workflows permission, so it can push changes under ` + "`.github/workflows/**`" + `.
+Push a workflow fix like any other; do not park it as "the App cannot push
+workflow files". Only if GitHub rejects the push for the ` + "`workflows`" + `
+permission, park it and quote the rejection.
+`
 
 // routeWorkflowsLane sends an issue the relay handed off for a workflow-only
 // change (github.WorkflowsLaneLabel) to the lane that can push workflow files.

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -268,7 +269,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 	var updated, capped int
 	for _, report := range reports {
 		for _, finding := range report.Findings {
-			if !findingHasEvidence(finding) {
+			if !findingHasEvidence(finding) || findingNeedsNoAction(finding) {
 				continue
 			}
 			outOfScope := !review.InScopeFinding(finding)
@@ -424,7 +425,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 			if !ref.Reused && ref.SameFileAs > 0 && createErr == nil {
 				// hivecommons/hive#13906: the item exists, so a failed
 				// cross-link must not fail the pass and re-file it.
-				if err := sink.AppendToItem(ctx, req.Repo, ref, reviewBacklogSameFileComment(finding, ref.SameFileAs)); err != nil {
+				if err := sink.AppendToItem(ctx, req.Repo, ref, reviewBacklogSameFileComment(finding, ref.SameFileAs, ref.SameFilePath)); err != nil {
 					c.logger.Warn("review backlog: same-file cross-link comment failed",
 						slog.String("repo", req.Repo), slog.String("item", ref.Key),
 						slog.Int("same_file_as", ref.SameFileAs), slog.String("error", err.Error()))
@@ -575,6 +576,19 @@ func (c *Client) acceptedReviewBacklogReports(req ReviewRequest, reports []revie
 
 func findingHasEvidence(f outputschema.Finding) bool {
 	return strings.TrimSpace(f.File) != "" && f.Line > 0
+}
+
+// noActionRE is a finding saying, in its own words, that nothing is to be
+// done ("No action needed on the PR").
+var noActionRE = regexp.MustCompile(`(?i)\bno (?:further )?action (?:is )?(?:needed|required)\b`)
+
+// findingNeedsNoAction reports an info-severity finding that says nothing is
+// to be done. Filing it opens an item with no work in it:
+// projectbluefin/gutenprint-printer-app#170 ("Linked issue #8203 is a parsing
+// artifact … No action needed on the PR"). Any higher severity is filed as
+// before, whatever its wording.
+func findingNeedsNoAction(f outputschema.Finding) bool {
+	return f.Severity == outputschema.SeverityInfo && noActionRE.MatchString(f.Title+"\n"+f.Summary)
 }
 
 func reviewBacklogKey(repo string, pr int, perspective review.Perspective, f outputschema.Finding) string {

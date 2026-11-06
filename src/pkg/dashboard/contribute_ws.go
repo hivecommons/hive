@@ -4502,7 +4502,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// applied so the fleet's workflow gate does not park it until a
 			// human notices (hivecommons/hive#11775, #11776).
 			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, verdictReason); ok {
-				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason describes contributor tooling, not an external dependency",
+				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason is the contributor's own tooling or says nothing, not an external dependency",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"verdict_reason", verdictReason)

@@ -960,9 +960,24 @@ A PR merges through this tier only when all of the following hold:
   has explicitly approved the current head
   (`owner_approval_releases_workflow_fence`, default `true`,
   [#14664](https://github.com/hivecommons/hive/issues/14664)). Explicit
-  approval is a GitHub pull-request review in state `APPROVED` whose commit
-  is the current head by a login the hive's merger authorizer trusts (the
-  same bar that releases a `requires_human` verdict), or a dashboard
+  approval is a GitHub pull-request review in state `APPROVED` that approved
+  the current head's content, by a login the hive's merger authorizer trusts
+  (the same bar that releases a `requires_human` verdict). GitHub moves an
+  existing review's commit onto a later merge of the base, so the review
+  counts when GitHub reports it on a head that is not a merge, when it was
+  submitted after both the head commit's date and the hive's first listing
+  of that commit as the PR head, or when the head adds nothing but base
+  merges (by anyone) that leave the PR's diff unchanged since the commit it
+  approved (or since a commit both dated and first listed before the
+  review). The first listing of each head is kept in
+  `pr-head-sightings.json` in the stage state directory; a commit with no
+  listing on record (for example from before the upgrade) carries nothing by
+  date, so a backdated content push cannot inherit an approval. The audit
+  comment then says
+  "carried over a base merge … (PR diff unchanged)"
+  (projectbluefin/utah#1078). The same rule lets an approval on the previous
+  head answer the swarm's `requires_human` after such a merge instead of
+  asking the owner again. The other forms are a dashboard
   approval (`/hive decision approve`, which posts `/lgtm` + `/approve`
   attributed to the maintainer and bound to the head) or a trusted merger's
   own `/hive decision approve` comment posted after the hive first observed
@@ -982,7 +997,9 @@ A PR merges through this tier only when all of the following hold:
   refuses as a reviewer) clears both gates with one command; a decision
   recorded on the head after the comment stands instead. The audit comment
   says whether the approval answered the verdict or which command still
-  does
+  does. When the approval is already recorded and the PR is parked for
+  another reason, **What to do** says there is nothing more to approve
+  instead of asking for it again
   ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). When released
   the lane logs `workflow-path fence released by owner approval login=…
   head=…`, leaves one `<!-- hive:workflow-approval head=… by=… -->` audit

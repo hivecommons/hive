@@ -520,6 +520,12 @@ and exposes the editable rows.
 | Draft PRs | Pull request is open but marked draft. | GitHub draft state. | Use GitHub's **Ready for review** action. |
 | Hold-adjacent/other | Safety remainder for open items that did not match a named actionable, held, blocked, or outside classifier. | Fixed scanner fallback. | Check labels and scanner rules; add a dedicated classifier if the remainder is meaningful. |
 
+A standing meta issue (bot Dependency Dashboard, Hive Advisory Report) derives
+no stage label, in the sweep and out of cycle: a `needs-human` a triage bot puts
+on a Dependency Dashboard used to park it at `stage/045-needs-decision`
+(projectbluefin/gutenprint-printer-app#45). The stage writer takes such a 045
+off; the bot's own labels stay.
+
 The Issues and PRs panels link directly to `/api/overview/issues.csv` and
 `/api/overview/prs.csv` by default, or to the matching `.json` endpoints when
 JSON export is selected; non-empty legend rows add a `slice` query filter (the
@@ -617,13 +623,24 @@ in exactly one band, while non-winning states remain as badges on the pill:
    BLOCKED pill (drawn when `blocked` is a waiting label, not on held rows)
    shows that server text first on hover, followed by the row's other signals;
    the pill legend entry points there.
+   A held issue (any hold label, the server's `held`) is parked too, with the
+   chip `hold` when no parking label names a better one: the stage engine
+   leaves it "Open · on hold" and agents do not act on it until the hold goes
+   (projectbluefin/utah#551 sat in Unclaimed).
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
    `hive/covered-by-pr` (or `stage/040-covered-by-pr` and any later mirrored
    PR stage), and `hive/likely-done`: an agent believes the work landed;
    verify and close. An issue also labelled `hive/verified-open` (the
    agent's verdict that the referenced PR did not finish the work) is not in
    this band because of `hive/likely-done`; it falls through to its usual band.
-   Other done labels still apply.
+   Nor is an issue that is parked and whose only done label is
+   `hive/likely-done`: the park is the later, stronger word
+   (projectbluefin/common#1328, an RFC parked on `needs-decision`). Other done
+   labels still apply. When the only done evidence is `stage/040-covered-by-pr`
+   (or a later mirrored PR stage), the ✓ signal reads `covered by an open PR
+   (stage/040) — check it merged before closing`, not `already done`.
+   `hive/verified-open` and `hive/already-done` are not worn together for
+   long: the issue stage sweep keeps the later verdict and removes the other.
 
 Precedence is confirm & close → parked → claimed → needs triage → unclaimed,
 so a label that parks an issue beats an assignment and done beats all other display states.
@@ -729,6 +746,7 @@ so the reason text can change without breaking them.
 | `parked_needs_decision` | `DECIDE` |
 | `parked_needs_spec` | `SPEC` |
 | `untrusted_reporter` | `ADMIT` |
+| `decided_not_admitted`, `agent_finding_not_admitted`, `person_issue_not_admitted` | `ADMIT` |
 | `reporter_confirmation_stale` | `CLOSE` |
 | `verified_done` | `CLOSE` |
 | `agent_filed_unacknowledged` | `TRIAGE` |
@@ -762,6 +780,9 @@ means the situation cannot occur at that level.
 | Unclaimed issue filed by a person | Not yours — backlog | Not yours — backlog, or a lane will act | Not yours — a lane will act | same |
 | Issue filed by an agent, not yet acknowledged, while the self-authorization hold is active (by default below L6) | — (no agent files issues) | Yours — `TRIAGE` | Yours — `TRIAGE` | Not yours by default (agents self-authorize); Yours — `TRIAGE` when the hold is configured on |
 | Issue from an untrusted reporter awaiting an admission label | Yours — `ADMIT` | same | same | same |
+| Issue the issue filter (`project.issue_filter.require_labels`) refuses that carries `approved-direction` (a `/hive decision` or `/hive approve` applies it, not the filter's label) | Yours — `ADMIT` (`decided_not_admitted`; the reason names the labels that admit it) | same | same | same |
+| Agent-filed issue the issue filter refuses, where the TRIAGE row above does not apply (agents self-authorize, by default at L6) | — (no agent files issues) | — (TRIAGE applies) | — (TRIAGE applies) | Yours — `ADMIT` (`agent_finding_not_admitted`: admit it, or close it if it no longer applies) |
+| Person-filed issue the issue filter refuses, undecided (only the missing `require_labels` keeps it out: holds, exempt, tracking, `blocked`, parks, reporter confirmation, reporter triage and standing dashboards are decided before the filter and keep their own rows; a bot's issue stays Not yours) | Yours — `ADMIT` (`person_issue_not_admitted`: admit it so the hive works it, or close it) | same | same | same |
 | Parked: `needs-decision` / `needs-direction` / `needs-human` | Yours — `DECIDE` / `STEER` / `REVIEW` | same | same | same — no lane ever takes a parked issue |
 | Parked: `needs-spec` | Yours — `SPEC` | same | same | same |
 | Agent PR held by the level gate (decided from the hold's recorded source, not from the repository's level) | — (no agent opens PRs) | Yours — `REVIEW` | Yours — `REVIEW` | A level hold placed before the level was raised stays until released: Yours — `REVIEW`. Outreach-lane PRs keep their hold: Yours — `REVIEW` |
@@ -773,7 +794,7 @@ means the situation cannot occur at that level.
 | Same, but the PR touches files the merged PR did not | Yours — `REVIEW` (`superseded_extra_files_review`: names the extra files; keep open recommended until the extra change is reviewed) | same | same | same |
 | Hive PR with `needs-human` the adjudicator handed to a maintainer (`reviewer-handoff`) | — | — | Yours — `REVIEW` (`adjudicator_handed_off`) | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
-| PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision. Once a person has answered the `requires_human` / `reject` verdict on the current head with an instruction (`/hive decision <instruction>` or a `CHANGES_REQUESTED` review, recorded after the verdict) the row is Not yours — "@who answered Hive's review on this head …; the hive is fixing it" — until a new head or a newer verdict; a dispatch hold or the loop cap stays `REVIEW`, and a bare approval is left to the release rules above | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
+| PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision. Once a person has answered the `requires_human` / `reject` verdict on the current head with an instruction (`/hive decision <instruction>` or a `CHANGES_REQUESTED` review, recorded after the verdict) the row is Not yours — "@who answered Hive's review on this head …; the hive is fixing it" — until a new head or a newer verdict, except on a PR the hive adopted whose branch it cannot push (fork-rehome-refused on the head, a fork without maintainer edits, an adoption escalated for a workflow-file diff, or a recorded capability blocker), which stays Yours — `DECIDE` (`adopted_push_refused`, naming why); a dispatch hold or the loop cap stays `REVIEW`, and a bare approval is left to the release rules above | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |
@@ -802,7 +823,10 @@ admission → `ADMIT`; (7) awaiting reporter confirmation → Not yours until it
 has had no activity for the stale period, then `CLOSE`
 (`reporter_confirmation_stale`); (8) verified done but not closed → `CLOSE`;
 (9) agent-filed and unacknowledged where acknowledgment is required →
-`TRIAGE`; (10) for a pull request with a hold, the hold sources decide and no
+`TRIAGE`; (9b) an issue the issue filter refuses that carries
+`approved-direction` → `ADMIT` (`decided_not_admitted`), that an agent filed
+→ `ADMIT` (`agent_finding_not_admitted`), or that a person filed → `ADMIT`
+(`person_issue_not_admitted`); (10) for a pull request with a hold, the hold sources decide and no
 later row applies; for any other pull request, the PR rows of the table; (11)
 otherwise Not yours. The safety net then applies
 only to items that came out Not yours. Last, the gate rules apply to items
@@ -815,6 +839,8 @@ hand-merge rule. `hive/verified-open` (the agent found
 the work unfinished) cancels `hive/likely-done` for rules (6) and (7) and for
 the safety net, so an issue carrying both is neither awaiting the reporter nor
 verified done; `hive/already-done` and `hive/covered-by-pr` are unaffected.
+An issue does not keep both `hive/verified-open` and `hive/already-done`: the
+issue stage sweep keeps the later verdict and removes the other.
 
 **Runs and the approval desk.** Two waits live outside GitHub, so no label
 records them. An active run the Runs tab shows as `waiting_on: human` makes the
