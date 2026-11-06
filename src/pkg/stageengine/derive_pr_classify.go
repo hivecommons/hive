@@ -582,13 +582,14 @@ func RequiresHumanStage(o stageObservation, rank int) (stageVerdict, bool) {
 	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: rank, Human: true, Reason: StageVerdictReason(o.Detail)}, true
 }
 
-func PreserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
-	if !hadPrev || prev.Stage != stagelabels.Fixing || prev.Reason != stagelabels.LaneReasonChangesRequested {
-		return stageVerdict{}, false
-	}
-	if prev.ActivityHead == "" || obs.HeadSHA == "" || prev.ActivityHead != obs.HeadSHA {
-		return stageVerdict{}, false
-	}
+// PreserveNormalizedFixingStage canonicalizes a raw human opinion using the
+// current review's remediation evidence. The previous record is deliberately
+// irrelevant: requiring a prior 070 made identical evidence select 070 or 085
+// depending on which sweep last wrote the record (#16880). Keep the parameters
+// for callers sharing the legacy pass API, but never use stage history as review
+// evidence. Explicit decisions and risk escalations remain human-owned through
+// NormalizeReviewVerdict.
+func PreserveNormalizedFixingStage(_ stagelabels.Record, _ bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
 	if verdict.Stage != stagelabels.NeedsDecision || verdict.Reason != StageReasonVerdictRequiresHuman {
 		return stageVerdict{}, false
 	}
@@ -600,7 +601,7 @@ func PreserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs st
 	if raw != "requires_human" || normalized != "changes_requested" {
 		return stageVerdict{}, false
 	}
-	return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
+	return stageVerdict{Stage: FixingStage(obs), Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
 }
 
 // PreserveStageOnStaleDecisionAnswer keeps a PR parked at 085 when the only
