@@ -1096,6 +1096,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"login required detected":                                                                      ClassAgentLoginRequired,
 		"pr-request watcher: head branch is not on the remote — the agent's push did not authenticate": ClassPRRequestHeadUnpushed,
 		"ioscan classifier failed closed; text withheld":                                               ClassIOScanClassifierUnavail,
+		"watchdog: agent credential failure":                                                           ClassAgentLoginRequired,
 		"ioscan classifier failed open; text passes on unclassified":                                   ClassIOScanClassifierUnavail,
 		"ioscan fail-closed blocked kick":                                                              ClassIOScanClassifierUnavail,
 		"ioscan fail-closed blocked held-PR coordination kick":                                         ClassIOScanClassifierUnavail,
