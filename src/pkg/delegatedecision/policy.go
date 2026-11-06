@@ -200,6 +200,11 @@ type Input struct {
 	// question, when one was recorded.
 	Reasons  []string
 	Question string
+	// Options are the alternatives an issue offers its owner, read from its
+	// body or the hive's park comment; RecommendedOption is the Label of the
+	// one that text recommends, "" when it names none.
+	Options           []Option
+	RecommendedOption string
 	// Author is the PR's / issue's GitHub login, for plain-words answers.
 	Author string
 	// HiveAuthored: the hive opened the PR / filed the issue.
@@ -382,6 +387,9 @@ type Decision struct {
 	// Ladder is the contributor-PR rung the decision landed on and why
 	// the rungs above it did not apply (hivecommons/hive#15289).
 	Ladder *Ladder `json:"ladder,omitempty"`
+	// Option is the issue's option the decision goes with, when it offered
+	// several (RuleRecommendedOption).
+	Option *Option `json:"option,omitempty"`
 }
 
 // Marker is the audit stamp every delegated comment carries.
@@ -571,6 +579,11 @@ func decideIssue(in Input) Decision {
 	if in.BlockedOnPRClosed || blockedOnPRRE.MatchString(in.text()) && strings.Contains(strings.ToLower(in.text()), "unmerged") {
 		return approveIssue("review-backlog", "keep "+ref+" open: drop the relation to the closed PR, note it here and re-triage; a review-backlog item is never auto-closed when its PR closes unmerged",
 			"the PR closing unmerged leaves the work undone")
+	}
+	// Every rule below approves a direction. An issue that offers a choice
+	// is approved only as the option it recommends, never as a bare one.
+	if d, ok := competingOptionsDecision(in); ok {
+		return d
 	}
 	if hasLabel(in.Labels, labelFlaky) || flakyRE.MatchString(in.Title) || flakyRE.MatchString(firstLines(in.Body, 6)) {
 		d := approveIssue("flaky-test", "quarantine the flaky test with a retry and file a deflake task; do not block on it",
