@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 )
@@ -344,6 +345,16 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		// on. Either way no new issue is created.
 		s.handleLegacyStandaloneSelfReport(w, r, client, token, owner, repo, req)
 		return
+	}
+	if existing.Number <= 0 && req.Class != selfReportObservationClass {
+		// The fingerprint names one message; a class with several keyword
+		// phrasings files one issue per message unless the hub also joins at
+		// class level, as the spoke-direct path does (#16954, #16955).
+		similar, err := findSimilarSelfReportIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Class)
+		if err != nil && s.logger != nil {
+			s.logger.Warn("selfreport relay: class search failed; will create", "hive", req.HiveID, "class", req.Class, "error", err)
+		}
+		existing = similar
 	}
 	if existing.Number > 0 {
 		comment := fmt.Sprintf("<!-- hive:selfreport-seen hive=%s fp=%s --> Also seen on **%s** (v%s) at %s — relayed via hub.",
@@ -733,4 +744,73 @@ func postHubGitHubIssueLabels(ctx context.Context, client *http.Client, apiBase,
 		return fmt.Errorf("github add labels: %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// findSimilarSelfReportIssue is the hub's class-level join-first search,
+// mirroring the github package's: open hive/selfreport issues mentioning the
+// class, then open issues whose title/body mention one of its keywords. A
+// class without keywords (the catch-all) never joins by class alone
+// (#14256). Bounded to two searches.
+func findSimilarSelfReportIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo, class string) (feedbackIssueResult, error) {
+	class = logscrub.ScrubString(strings.TrimSpace(class))
+	spec, ok := fleetreport.Classes[class]
+	if !ok || len(spec.Keywords) == 0 {
+		return feedbackIssueResult{}, nil
+	}
+	q := fmt.Sprintf("repo:%s/%s is:issue is:open label:%s %q", owner, repo, selfReportRelayLabel, class)
+	if res, err := firstOpenSelfReportIssueMatching(ctx, client, apiBase, token, q); err != nil || res.Number > 0 {
+		return res, err
+	}
+	parts := make([]string, 0, len(spec.Keywords))
+	for _, kw := range spec.Keywords {
+		parts = append(parts, fmt.Sprintf("%q", kw))
+	}
+	q = fmt.Sprintf("repo:%s/%s is:issue is:open in:title,body %s", owner, repo, strings.Join(parts, " OR "))
+	return firstOpenSelfReportIssueMatching(ctx, client, apiBase, token, q)
+}
+
+func firstOpenSelfReportIssueMatching(ctx context.Context, client *http.Client, apiBase, token, q string) (feedbackIssueResult, error) {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_search")
+	u := strings.TrimRight(apiBase, "/") + "/search/issues?per_page=10&sort=created&order=asc&q=" + url.QueryEscape(q)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return feedbackIssueResult{}, fmt.Errorf("github search: %d", resp.StatusCode)
+	}
+	var out struct {
+		Items []struct {
+			Number      int             `json:"number"`
+			HTMLURL     string          `json:"html_url"`
+			Body        string          `json:"body"`
+			State       string          `json:"state"`
+			PullRequest json.RawMessage `json:"pull_request"`
+			Labels      []struct {
+				Name string `json:"name"`
+			} `json:"labels"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return feedbackIssueResult{}, err
+	}
+	for _, it := range out.Items {
+		if len(it.PullRequest) > 0 || it.State == "closed" {
+			continue
+		}
+		labels := make([]string, 0, len(it.Labels))
+		for _, l := range it.Labels {
+			labels = append(labels, l.Name)
+		}
+		return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body, Labels: labels}, nil
+	}
+	return feedbackIssueResult{}, nil
 }

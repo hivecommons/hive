@@ -121,7 +121,7 @@ func TestHubSelfReportIngestCreatesUnderAppIdentity(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !out.OK || out.Number != 42 || out.Joined {
 		t.Fatalf("response = %s (%v)", rec.Body.String(), err)
 	}
-	if strings.Join(*paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues" {
+	if strings.Join(*paths, ",") != "GET /search/issues,GET /search/issues,GET /search/issues,POST /repos/hivecommons/hive/issues" {
 		t.Fatalf("github calls = %v", *paths)
 	}
 	for _, req := range gh.requests {
@@ -340,7 +340,7 @@ func TestHubSelfReportIngestCreateFillsOwnersForLegacySpoke(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if strings.Join(*paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues" {
+	if strings.Join(*paths, ",") != "GET /search/issues,GET /search/issues,GET /search/issues,POST /repos/hivecommons/hive/issues" {
 		t.Fatalf("github calls = %v", *paths)
 	}
 	var payload struct {
@@ -869,7 +869,7 @@ func selfReportClosedGitHubScript(closedAt time.Time) (http.HandlerFunc, *[]stri
 		switch {
 		case r.URL.Path == "/search/issues":
 			if strings.Contains(r.URL.RawQuery, "is%3Aopen") {
-				http.Error(w, "fingerprint search must not be limited to open issues", http.StatusTeapot)
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{}})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
@@ -916,6 +916,85 @@ func TestHubSelfReportIngestRefilesAfterClosedCooldown(t *testing.T) {
 	rec := selfReportIngest(s, selfReportValidBody, s.heartbeatKeyFor("h1"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues,GET /search/issues,GET /search/issues,POST /repos/hivecommons/hive/issues" {
+		t.Fatalf("github calls = %v", *paths)
+	}
+}
+
+// selfReportClassJoinScript answers the fingerprint search with nothing and
+// the class-level searches with classHit (an open hive/selfreport issue).
+func selfReportClassJoinScript(classHit bool) (http.HandlerFunc, *[]string) {
+	var mu sync.Mutex
+	var paths []string
+	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.URL.Path == "/search/issues":
+			items := []map[string]any{}
+			if classHit && !strings.Contains(r.URL.RawQuery, "hive-fleet-fingerprint") {
+				items = append(items,
+					map[string]any{"number": 5, "html_url": "https://github.com/hivecommons/hive/pull/5", "pull_request": map[string]any{}},
+					map[string]any{"number": 7, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:other -->\n" + fleetreport.RenderAffectedBlock([]string{"other-hive"}, 1)})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 42, "html_url": "https://github.com/hivecommons/hive/issues/42"})
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusTeapot)
+		}
+	}, &paths
+}
+
+// Two keyword phrasings of one class have different fingerprints; the relay
+// must still land them on one open issue (#16954, #16955).
+func TestHubSelfReportIngestJoinsOpenIssueOfSameKeywordedClass(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportClassJoinScript(true)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"hive_id":"h1","fingerprint":"76a28c15535e297434078127","class":"ioscan_classifier_unavailable","title":"[selfreport] ioscan_classifier_unavailable: ioscan classifier failed closed; text withheld","body":"<!-- hive-fleet-fingerprint:76a28c15535e297434078127 -->\nbody","labels":["hive/selfreport"],"version":"v5.1.0"}`
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if !out.OK || !out.Joined || out.Number != 7 {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+	joined := strings.Join(*paths, ",")
+	if !strings.Contains(joined, "POST /repos/hivecommons/hive/issues/7/comments") || !strings.Contains(joined, "PATCH /repos/hivecommons/hive/issues/7") || strings.HasSuffix(joined, "POST /repos/hivecommons/hive/issues") {
+		t.Fatalf("github calls = %v", *paths)
+	}
+}
+
+// A class without keywords (the catch-all) says nothing about the defect: it
+// must not join by class alone (#14256), so the relay still creates.
+func TestHubSelfReportIngestKeywordlessClassDoesNotJoinByClass(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportClassJoinScript(true)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"hive_id":"h1","fingerprint":"abc123","class":"unclassified_error_repeated","title":"[selfreport] unclassified_error_repeated: something odd","body":"<!-- hive-fleet-fingerprint:abc123 -->\nbody","labels":["hive/selfreport"],"version":"v5.1.0"}`
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if !out.OK || out.Joined || out.Number != 42 {
+		t.Fatalf("response = %s", rec.Body.String())
 	}
 	if strings.Join(*paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues" {
 		t.Fatalf("github calls = %v", *paths)
