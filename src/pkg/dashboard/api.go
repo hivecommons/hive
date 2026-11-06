@@ -1427,7 +1427,7 @@ func (s *Server) prQueueRepoAllowed(repo string) bool {
 	}
 	for _, configured := range s.deps.Config.Project.Repos {
 		full := configured
-		if !strings.Contains(full, "/") {
+		if s.deps.Config.Project.Org != "" && !strings.Contains(full, "/") {
 			full = s.deps.Config.Project.Org + "/" + full
 		}
 		if strings.EqualFold(full, repo) {
