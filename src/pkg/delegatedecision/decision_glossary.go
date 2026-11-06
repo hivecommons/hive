@@ -126,7 +126,7 @@ var glossary = []GlossaryEntry{
 	{Slug: "workflows-handoff", Kind: GlossaryRule, Plain: "handed to the lane whose token can push workflow files",
 		Detail: "The App grants workflows: write. The issue is routed to a capable lane for the next scheduler pass."},
 	{Slug: "capability-gap", Kind: GlossaryRule, Plain: "the GitHub App lacks a permission; deciding cannot clear it",
-		Detail: "The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change."},
+		Detail: "The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change. A claim that workflow files cannot be pushed is not a gap when the hive checked that it can push them in that repository: the App installation grants `workflows: write` and an enabled lane whose token carries it serves the repository."},
 	{Slug: "review-backlog", Kind: GlossaryRule, Plain: "the PR closed without merging, so the issue stays open",
 		Detail: "The fixing PR closed unmerged; the issue stays open and is re-triaged rather than auto-closed."},
 	{Slug: "flaky-test", Kind: GlossaryRule, Plain: "a flaky test, quarantined with a retry",
