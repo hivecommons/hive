@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -99,5 +100,25 @@ func TestFullFactIgnoresVaultPageOfAnotherLayer(t *testing.T) {
 	full = api.FullFact(context.Background(), Fact{Slug: "note", Layer: LayerProject})
 	if full.Body != "Project copy." || full.Layer != LayerProject {
 		t.Fatalf("FullFact = %q in layer %q, want the project vault page", full.Body, full.Layer)
+	}
+}
+
+// A git source identifies its layer through its configuration; a page whose
+// frontmatter carries no layer must keep the configured one, as in listings.
+func TestFullFactFromGitSourceKeepsTheConfiguredLayer(t *testing.T) {
+	gs := makeReadyGitSource(t, LayerCommunity)
+	api := &KnowledgeAPI{config: KnowledgeConfig{Enabled: true}, gitSources: []*GitSource{gs}, logger: apiTestLogger()}
+
+	listed := api.SearchAllWithVaults(context.Background(), "", "", 0)
+	if len(listed) != 1 || listed[0].Layer != LayerCommunity {
+		t.Fatalf("test setup: git source lists %#v, want one community-layer fact", listed)
+	}
+
+	full := api.FullFact(context.Background(), listed[0])
+	if full.Layer != LayerCommunity {
+		t.Fatalf("FullFact reported layer %q for a page listed from the %s git source", full.Layer, LayerCommunity)
+	}
+	if !strings.Contains(full.Body, "Some guide content") {
+		t.Fatalf("FullFact body = %q, want the git source page body", full.Body)
 	}
 }
