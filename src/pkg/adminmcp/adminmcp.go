@@ -607,6 +607,13 @@ func scrubPendingValue(v any, key string) any {
 		out.Body = scrubPendingValue(out.Body, "body")
 		return out
 	case map[string]any:
+		if x == nil {
+			// Nil stays nil. A preview with no details (budget.reset,
+			// backup.create, the circuit breaker) would otherwise come back
+			// as {} and read as a changed value to
+			// pendingValueNeedsFreshConfirm, which refuses the preview.
+			return x
+		}
 		out := make(map[string]any, len(x))
 		for k, val := range x {
 			if credentialBearingKey(k) && !maskExempt(k, val) {
@@ -617,12 +624,18 @@ func scrubPendingValue(v any, key string) any {
 		}
 		return out
 	case []any:
+		if x == nil {
+			return x
+		}
 		out := make([]any, len(x))
 		for i, val := range x {
 			out[i] = scrubPendingValue(val, key)
 		}
 		return out
 	case []string:
+		if x == nil {
+			return x
+		}
 		out := make([]string, len(x))
 		for i, val := range x {
 			out[i] = scrubOutboundString(val)

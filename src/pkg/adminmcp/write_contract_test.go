@@ -154,3 +154,72 @@ func TestWritePreviewPersistsOnlyExecutableRequest(t *testing.T) {
 		}
 	}
 }
+
+// A write op whose preview carries no details was refused at write_preview
+// with "contains a confirmation value that cannot be stored": the pending
+// scrub turned its nil details into {} and the unpersistable check read that
+// as a changed value. These four ops take no arguments and report no details.
+func TestDetailLessWriteOpsPreviewAndConfirm(t *testing.T) {
+	for _, tc := range []struct{ op, method, path string }{
+		{WriteOpBudgetReset, http.MethodPost, "/api/config/governor/budget/reset"},
+		{WriteOpBackupCreate, http.MethodPost, "/api/backup"},
+		{WriteOpCircuitBreakerEngage, http.MethodPost, "/api/breaker/engage"},
+		{WriteOpCircuitBreakerRelease, http.MethodPost, "/api/breaker/release"},
+	} {
+		t.Run(tc.op, func(t *testing.T) {
+			provider := &writeProvider{}
+			h := NewHandler(provider, WithWritesEnabled(true), WithPendingStore(NewFilePendingStore(filepath.Join(t.TempDir(), "pending.json"))), WithHiveID("hive-a"))
+			previewed, err := h.PreviewWrite(context.Background(), map[string]any{"operation": tc.op, "args": map[string]any{}})
+			if err != nil {
+				t.Fatalf("write_preview refused %s: %v", tc.op, err)
+			}
+			id, _ := previewed.(map[string]any)["confirmation_id"].(string)
+			if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
+				t.Fatalf("write_confirm refused %s: %v", tc.op, err)
+			}
+			if len(provider.requests) != 1 || provider.requests[0].Method != tc.method || provider.requests[0].Path != tc.path {
+				t.Fatalf("executed %+v, want %s %s", provider.requests, tc.method, tc.path)
+			}
+		})
+	}
+}
+
+// Every registered op that takes no arguments must preview with none, so a
+// new argument-less op cannot ship refused the same way.
+func TestArgumentLessWriteOpsPreviewWithNoArgs(t *testing.T) {
+	seen := 0
+	for _, op := range DefaultWriteRegistry().Ops() {
+		props, _ := op.InputSchema()["properties"].(map[string]any)
+		if len(props) != 0 {
+			continue
+		}
+		seen++
+		h := NewHandler(&writeProvider{}, WithWritesEnabled(true), WithHiveID("hive-a"))
+		if _, err := h.PreviewWrite(context.Background(), map[string]any{"operation": op.Name(), "args": map[string]any{}}); err != nil {
+			t.Errorf("write_preview refused argument-less op %s: %v", op.Name(), err)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no argument-less write op found; the test no longer covers anything")
+	}
+}
+
+// The unpersistable check compares a value with its scrubbed copy, so the
+// scrub must not turn nil into an empty map or list.
+func TestPendingScrubKeepsNilValues(t *testing.T) {
+	for name, v := range map[string]any{
+		"nil details":      map[string]any(nil),
+		"nested nil map":   map[string]any{"config": map[string]any(nil)},
+		"nil list":         map[string]any{"items": []any(nil)},
+		"nil string list":  map[string]any{"names": []string(nil)},
+		"request, no body": WriteRequest{Method: http.MethodPost, Path: "/api/backup"},
+	} {
+		if pendingValueNeedsFreshConfirm(v) {
+			t.Errorf("%s: scrubbing changed a value that holds nothing to mask", name)
+		}
+	}
+	// A real credential-bearing value is still caught.
+	if !pendingValueNeedsFreshConfirm(map[string]any{"api_key": "abc"}) {
+		t.Error("a credential-bearing key no longer needs a fresh confirmation")
+	}
+}
