@@ -179,15 +179,16 @@ func (p dashboardTaskMCPProvider) dependencyData(snap taskMCPSnapshot) taskmcp.D
 						data.BlockedBy = appendUniqueNode(data.BlockedBy, node)
 					}
 				}
-				if b.Meta(planning.MetaPlanStatus) != "" {
-					data.SuggestedPlan = append(data.SuggestedPlan, planChildrenFor(p.server.deps.BeadStores, b.ID)...)
-				}
 			}
 			for _, depID := range b.DependsOn {
 				if currentSet[depID] {
 					data.Blocks = appendUniqueNode(data.Blocks, taskmcp.DependencyNode{ID: b.ID, Title: b.Title})
 				}
 			}
+			// Every child of a current epic is found here, in this one pass.
+			// Do not look children up from inside this callback: ReadEach
+			// holds the store's read lock and a nested ReadEach on the same
+			// store deadlocks it as soon as a writer is waiting.
 			if currentSet[b.Meta(planning.MetaParentEpic)] {
 				data.SuggestedPlan = appendUniqueNode(data.SuggestedPlan, taskmcp.DependencyNode{ID: b.ID, Title: b.Title})
 			}
@@ -197,21 +198,6 @@ func (p dashboardTaskMCPProvider) dependencyData(snap taskMCPSnapshot) taskmcp.D
 	sortNodes(data.Blocks)
 	sortNodes(data.SuggestedPlan)
 	return data
-}
-
-func planChildrenFor(stores map[string]*beads.Store, epicID string) []taskmcp.DependencyNode {
-	var out []taskmcp.DependencyNode
-	for _, store := range stores {
-		if store == nil {
-			continue
-		}
-		store.ReadEach(beads.ListFilter{}, func(b *beads.Bead) {
-			if b.Meta(planning.MetaParentEpic) == epicID {
-				out = appendUniqueNode(out, taskmcp.DependencyNode{ID: b.ID, Title: b.Title})
-			}
-		})
-	}
-	return out
 }
 
 func beadMatchesAnyRef(b *beads.Bead, refs []string) bool {

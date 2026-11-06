@@ -316,3 +316,46 @@ func TestBandReadResultRefusesNegativeOffset(t *testing.T) {
 		t.Fatalf("result = %#v, want a refusal for a negative offset", out)
 	}
 }
+
+// The issues export answers with a sixth band, "outside", in bands[] and on
+// rows. issues_by_band listed it with its count and then refused band=outside
+// as unknown, so those rows could only be read unfiltered.
+func TestIssuesByBandAcceptsTheOutsideBand(t *testing.T) {
+	response := func() map[string]any {
+		return map[string]any{
+			"kind": "issues",
+			"bands": []any{
+				map[string]any{"key": "ready", "label": "Unclaimed", "count": float64(1)},
+				map[string]any{"key": "outside", "label": "outside", "rule": "open issue the scanner kept off the agent queues", "count": float64(2)},
+			},
+			"rows": []any{
+				map[string]any{"number": float64(1), "band": "ready"},
+				map[string]any{"number": float64(2), "band": "outside", "bucket": "filtered"},
+				map[string]any{"number": float64(3), "band": "outside", "bucket": "blocked"},
+			},
+		}
+	}
+	out, err := BandReadResult(ToolIssuesByBand, response(), map[string]any{"band": "outside"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("band=outside was refused: %#v", out)
+	}
+	if rows, _ := body["rows"].([]any); len(rows) != 2 {
+		t.Fatalf("band=outside returned %d rows, want the 2 outside rows", len(rows))
+	}
+	if bands, _ := body["bands"].([]any); len(bands) != 2 {
+		t.Fatalf("bands[] was filtered: %#v", body["bands"])
+	}
+
+	// Pull requests have no such band.
+	out, err = BandReadResult(ToolPrsByBand, response(), map[string]any{"band": "outside"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal, ok := out.(RefusalData); !ok || refusal.Kind != RefusalKindInvalidArgument {
+		t.Fatalf("prs_by_band band=outside = %#v, want a refusal", out)
+	}
+}
