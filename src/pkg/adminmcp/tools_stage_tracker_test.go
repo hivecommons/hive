@@ -519,3 +519,17 @@ func TestPendingActorPersists(t *testing.T) {
 		t.Fatalf("got %+v err=%v", got, err)
 	}
 }
+
+// The rescan handler never queues a second scan: a running or just-finished
+// one answers in-progress or debounced (api_repos_rescan.go), so the preview
+// must not promise a queued rescan.
+func TestRescanPreviewDoesNotPromiseAQueuedRescan(t *testing.T) {
+	pv, err := previewOp(t, WriteOpRepositoryRescan, map[string]any{}, &boardProvider{t: t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effects := strings.Join(pv.Effects, " ")
+	if strings.Contains(effects, "the next one is queued") || !strings.Contains(effects, "no rescan is queued") || !strings.Contains(effects, "debounced") {
+		t.Fatalf("rescan preview effects = %q", effects)
+	}
+}
