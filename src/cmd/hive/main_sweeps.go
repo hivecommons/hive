@@ -2033,7 +2033,13 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	// governor.labels.stage policy as the PR one, read live.
 	client.SetIssueStageLabels(func() github.IssueStagePolicy {
 		p := stageLabelPolicyFunc(cfg)()
-		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell}
+		// The agent names scope the lapsed claimed-by sweep to this hive's
+		// own `hive/claimed-by-<agent>` labels.
+		agents := make([]string, 0, len(cfg.Agents))
+		for name := range cfg.Agents {
+			agents = append(agents, name)
+		}
+		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell, AgentNames: agents}
 	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
@@ -196,4 +197,72 @@ func healBackendClaimedByLabels(ctx context.Context, client *Client, in IssueSta
 		logger.Info("claimed-by label healed", "repo", in.Repo, "issue", in.Number, "removed", bad, "added", want)
 	}
 	return healed
+}
+
+// removeLapsedClaimedByLabels takes this hive's agent `hive/claimed-by-<agent>`
+// labels off an issue the reconciler sees that carries no live claim: no
+// live `hive:claim` marker or assignee on the forge and no live claim in the
+// hub's ledger (issueClaimFor; with no ledger installed, the forge alone).
+// The ledger's release hook removes the labels of the claims it holds, but a
+// label written without one — a `claim` request on an issue no kick listed
+// to the agent, governor.claims off, a release hook whose write failed —
+// had no other remover, so parked issues kept a lapsed agent's label for
+// good (projectbluefin/utah#10 and #855: hive/claimed-by-scanner long after
+// its claim lapsed). Every issue the cycle saw is visited, held and parked
+// ones included; nothing is kicked.
+//
+// Only labels naming one of agents are candidates: the generic human
+// label, a retired per-login label and another hive's agent label are
+// never touched. An issue still wearing an in-progress stage label is left
+// to the in-progress sweep, which owns the start mark that label stands
+// for. A claim read failure keeps the labels (fail closed). Returns how
+// many labels it removed.
+func removeLapsedClaimedByLabels(ctx context.Context, client *Client, in IssueStageInput, agents []string, now time.Time, logger *slog.Logger) int {
+	if client == nil || len(agents) == 0 || hasInProgressTrigger(in.Labels) {
+		return 0
+	}
+	var stale []string
+	for _, l := range in.Labels {
+		if !claims.IsClaimedByLabel(l) || claims.IsClaimedByHumanLabel(l) {
+			continue
+		}
+		for _, agent := range agents {
+			if suffix := claims.ClaimedBySuffix(agent, claims.KindAgent); suffix != claims.ClaimedByFallback && strings.EqualFold(l, claims.ClaimedByPrefix+suffix) {
+				stale = append(stale, l)
+				break
+			}
+		}
+	}
+	if len(stale) == 0 {
+		return 0
+	}
+	// The longer of the claim and agent TTLs: a marker is only ever clamped
+	// shorter, and a label must not come off while its claim may be live.
+	_, ttl := client.issueClaimsSetting()
+	if agentTTL := client.inProgressSetting().TTL; agentTTL > ttl {
+		ttl = agentTTL
+	}
+	owner, name := client.splitRepo(in.Repo)
+	issue := Issue{Repo: in.Repo, Number: in.Number, UpdatedAt: in.UpdatedAt, Assignees: in.Assignees}
+	_, live, err := client.issueClaimFor(ctx, owner, name, &issue, ttl, now)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("claimed-by label: claim read failed; keeping the label this cycle",
+				"repo", in.Repo, "issue", in.Number, "labels", stale, "error", err)
+		}
+		return 0
+	}
+	if live {
+		return 0
+	}
+	if err := client.RemoveLabelsFresh(ctx, in.Repo, in.Number, stale...); err != nil {
+		if logger != nil {
+			logger.Warn("claimed-by label: removing lapsed agent label failed", "repo", in.Repo, "issue", in.Number, "labels", stale, "error", err)
+		}
+		return 0
+	}
+	if logger != nil {
+		logger.Info("claimed-by label: lapsed agent label removed", "repo", in.Repo, "issue", in.Number, "labels", stale)
+	}
+	return len(stale)
 }
