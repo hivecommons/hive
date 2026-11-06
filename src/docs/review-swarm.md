@@ -366,7 +366,14 @@ tests-removed lane rule and a reporter-trust hold are the lane-side
 equivalents and park the PR the same way. The finding is recorded as
 `decision_finding` and the 085 comment and tracker popover print it as
 `the review found: …` next to the reviewer's question, so the operator is
-told WHAT was found.
+told WHAT was found. Another perspective's `changes_requested` on the same
+head does not fold that exit into the fix cycle: the aggregate stays
+`requires_human` with the finding, and the change requests wait in the
+review for the person who decides
+([projectbluefin/utah-packages#890](https://github.com/projectbluefin/utah-packages/pull/890)
+went to its author at `stage/072-returned-to-contributor` for a PR-body
+edit while the security review's App-credential question waited on a
+maintainer).
 
 Everything else the review raises — ordinary nits and findings, a duplicate,
 naming, scope, sequencing, licensing, a failing optional check, a conflict
