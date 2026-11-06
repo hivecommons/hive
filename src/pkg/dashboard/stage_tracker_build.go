@@ -391,6 +391,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			if workflowPermissionGranted && cfg != nil {
 				itemContext.WorkflowsLane = cfg.WorkflowsLaneFor(itemContext.ParkingAgent, qualifyRepo(repoName))
+				if agent, ok := cfg.Agents[itemContext.ParkingAgent]; ok && agent.Enabled && agent.ReplicaOf == "" && cfg.AgentServesRepo(itemContext.ParkingAgent, qualifyRepo(repoName)) {
+					itemContext.WorkflowsSelfPush = cfg.AgentPushesWorkflows(itemContext.ParkingAgent)
+				}
 			}
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, nil, sentinelLabel, now, itemContext)

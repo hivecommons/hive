@@ -401,3 +401,16 @@ func TestStatusPayloadCarriesCapabilities(t *testing.T) {
 		t.Fatalf("status capabilities = %s", b)
 	}
 }
+
+func TestWorkflowBlockerParkingLaneCanPush(t *testing.T) {
+	b := StageTrackerBlocker{Kind: string(blocker.CapabilityWorkflowsPermission), Capability: true, Permission: "workflows"}
+	ctx := blockerOptionsContext{WorkflowsGranted: true, WorkflowsSelfPush: true, ParkingAgent: "scanner"}
+	d := decisionForBlocker(StageTrackerItem{Blocker: &b}, false, ctx)
+	if !strings.Contains(d.Question, "scanner") || !strings.Contains(d.Question, "next sweep") || strings.Contains(d.Question, "does not ask") {
+		t.Fatalf("question = %q", d.Question)
+	}
+	opt := decisionOptionByAction(t, d, decisionActionDelegate)
+	if opt.Enabled || !strings.Contains(opt.ReasonIfDisabled, "next sweep") {
+		t.Fatalf("delegate = %+v", opt)
+	}
+}

@@ -104,12 +104,13 @@ func blockerActionLabel(action string, perm string) string {
 
 // blockerOptionsContext is what the option builder needs from the server.
 type blockerOptionsContext struct {
-	AppSettingsURL   string
-	PatchFeasible    bool
-	PatchWhy         string
-	WorkflowsLane    string
-	WorkflowsGranted bool
-	ParkingAgent     string
+	AppSettingsURL    string
+	PatchFeasible     bool
+	PatchWhy          string
+	WorkflowsLane     string
+	WorkflowsGranted  bool
+	WorkflowsSelfPush bool
+	ParkingAgent      string
 }
 
 // blockerDecisionOptions lists the available remedies for a blocked row.
@@ -156,6 +157,9 @@ func blockerDecisionOptions(b StageTrackerBlocker, held bool, ctx blockerOptions
 		why = decisionWhyBlockerCapability
 		if kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsGranted {
 			why = "No workflows-capable lane is available for this repository"
+			if ctx.WorkflowsSelfPush {
+				why = "The hive will re-check this blocker on its next sweep"
+			}
 		}
 	}
 	canDelegate := kind == blocker.CapabilityWorkflowsPermission && ctx.WorkflowsLane != "" && !held
@@ -181,6 +185,10 @@ func decisionForBlocker(it StageTrackerItem, held bool, ctx blockerOptionsContex
 		question = "Hive cannot push this change with the parking lane's token."
 		if ctx.WorkflowsGranted {
 			question = "The App has `workflows: write`; " + nonEmpty(ctx.ParkingAgent, "the parking agent") + "'s token tier does not ask for it."
+			if ctx.WorkflowsSelfPush {
+				short = "Workflow permission re-check pending"
+				question = "The App and `" + ctx.ParkingAgent + "` can push workflow files; the hive will re-check this blocker on its next sweep."
+			}
 		}
 	}
 	d.Question = question + " " + blockerQuestionTail(b, ctx)
@@ -203,6 +211,9 @@ func blockerQuestionTail(b *StageTrackerBlocker, ctx blockerOptionsContext) stri
 	if blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
 		if ctx.WorkflowsLane != "" {
 			return "Options: (a) hand to `" + ctx.WorkflowsLane + "` (its token can push workflow files) · (b) hive prepares the patch for a person to push, where it can · (c) mark partially-addressed and close · (d) keep waiting."
+		}
+		if ctx.WorkflowsSelfPush {
+			return "The next sweep re-checks this blocker; the issue still needs its parked decision answered."
 		}
 		if ctx.WorkflowsGranted {
 			return "Options: (a) hive prepares the patch for a person to push, where it can · (b) mark partially-addressed and close · (c) keep waiting."
