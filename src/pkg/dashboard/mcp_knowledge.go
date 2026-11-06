@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -562,9 +563,9 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 	switch params.Name {
 	case "knowledge_search":
 		var args struct {
-			Query string `json:"query"`
-			Type  string `json:"type"`
-			Limit int    `json:"limit"`
+			Query string      `json:"query"`
+			Type  string      `json:"type"`
+			Limit wholeNumber `json:"limit"`
 		}
 		if len(params.Arguments) > 0 {
 			if err := json.Unmarshal(params.Arguments, &args); err != nil {
@@ -578,7 +579,7 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 		if _, ok := publicKnowledgeTypes[args.Type]; !ok {
 			return toolError(fmt.Sprintf("type %q is not a public fact type", args.Type)), nil
 		}
-		limit := args.Limit
+		limit := int(args.Limit)
 		if limit <= 0 {
 			limit = publicKnowledgeDefaultLimit
 		}
@@ -606,9 +607,9 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 
 	case "knowledge_toc":
 		var args struct {
-			Type  string `json:"type"`
-			Repo  string `json:"repo"`
-			Limit int    `json:"limit"`
+			Type  string      `json:"type"`
+			Repo  string      `json:"repo"`
+			Limit wholeNumber `json:"limit"`
 		}
 		if len(params.Arguments) > 0 {
 			if err := json.Unmarshal(params.Arguments, &args); err != nil {
@@ -623,7 +624,7 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 			scope.Types = []string{args.Type}
 		}
 		all, _ := s.publicListing(tags)
-		toc := knowledge.BuildTOC(all, scope, args.Limit)
+		toc := knowledge.BuildTOC(all, scope, int(args.Limit))
 		// Source URLs are not part of the public projection.
 		for i := range toc.Entries {
 			toc.Entries[i].Source = ""
@@ -670,6 +671,29 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 	default:
 		return nil, &jsonRPCError{Code: jsonRPCInvalidParams, Message: "unknown tool: " + params.Name}
 	}
+}
+
+// wholeNumber is an integer tool argument. It also accepts the same value
+// written as a float (5.0, 1e1): the tool schemas declare limit an integer,
+// to JSON Schema 5.0 is one, and a client whose stack makes every number a
+// float sends that form. Decoding straight into an int refused it as invalid
+// arguments. A fractional, out-of-range or non-numeric value is still refused.
+type wholeNumber int
+
+// wholeNumberBound keeps the float-to-int conversion exact and in range on
+// every platform; every limit is clamped far below it.
+const wholeNumberBound = 1 << 31
+
+func (n *wholeNumber) UnmarshalJSON(b []byte) error {
+	var f float64
+	if err := json.Unmarshal(b, &f); err != nil {
+		return err
+	}
+	if f != math.Trunc(f) || math.Abs(f) >= wholeNumberBound {
+		return fmt.Errorf("%s is not a whole number", b)
+	}
+	*n = wholeNumber(f)
+	return nil
 }
 
 // publicTypeName normalises the empty type to "general" for comparisons.
