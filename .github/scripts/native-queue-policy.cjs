@@ -21,6 +21,7 @@ const BUILD_CHECKS = {
 const SHA = /^[a-f0-9]{40}$/;
 const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.*)?)$/i;
 const MAX_QUEUE_PAGES = 10;
+const POLICY_CHECK_NAME = 'native-queue-policy';
 
 const closedNoop = (pr) => `PR #${pr.number} is closed; nothing to evaluate`;
 
@@ -226,6 +227,29 @@ function isCosmeticLabelFlip({ eventName, payload }) {
     !BLOCKED_LABEL.test(payload.label.name);
 }
 
+// A cosmetic flip skips the evidence wait but must not mint a fresh passing
+// required check: replay the latest completed run of this check on the head
+// (fail closed when none or not success) and still read live PR eligibility.
+async function replayLastVerdict({ github, context, currentCheckRunId }) {
+  const repo = context.repo;
+  const event = context.payload.pull_request;
+  const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
+  if (pr.state === 'closed') return closedNoop(pr);
+  assertEligible(pr, event.head.sha, event.base.ref);
+  const runs = await github.paginate(github.rest.checks.listForRef, {
+    ...repo, ref: pr.head.sha, check_name: POLICY_CHECK_NAME, per_page: 100, filter: 'all',
+  });
+  const prior = runs
+    .filter(r => r.name === POLICY_CHECK_NAME && r.status === 'completed' &&
+      r.head_sha === pr.head.sha && r.app?.id === ACTIONS_APP_ID && r.id !== currentCheckRunId)
+    .sort((a, b) => b.id - a.id)[0];
+  if (!prior) throw new Error(`No completed ${POLICY_CHECK_NAME} run on ${pr.head.sha} to replay`);
+  if (prior.conclusion !== 'success') {
+    throw new Error(`Replaying ${POLICY_CHECK_NAME} run ${prior.id} on ${pr.head.sha}: ${prior.conclusion}`);
+  }
+  return `PR #${pr.number}: replayed ${POLICY_CHECK_NAME} run ${prior.id} (success) on ${pr.head.sha}`;
+}
+
 async function evaluateOnce({ github, context }) {
   const repo = context.repo;
   if (context.eventName === 'pull_request_target') {
@@ -279,7 +303,7 @@ async function evaluateOnce({ github, context }) {
 module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
-  isTransientAPIError, isCosmeticLabelFlip, BLOCKED_LABEL,
+  isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
   ProviderUnavailable,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,

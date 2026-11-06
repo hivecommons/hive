@@ -218,7 +218,12 @@ metadata, not a fabricated last-member PR event.
   Label, edit, or unlabel events re-trigger this workflow and serialize behind
   any in-flight run (the concurrency group is per-PR and never cancels
   in-progress); the queued run re-reads mutable PR state after the prior run
-  finishes, preserving fail-closed semantics.
+  finishes, preserving fail-closed semantics. Labels the policy never reads
+  (`size/*`, `dco-signoff`, stage labels, ...) skip the wait: the job replays
+  the latest completed `native-queue-policy` conclusion on the same head
+  (failing when it was not `success` or none exists) and still checks the
+  live PR for holds, draft and head moves. `hold`, `needs-human`,
+  `release-in-progress` and `do-not-merge*` flips get the full wait.
 - On a group it executes the event's trusted `base_sha` validator. It reads
   the live queue prefix ending at the event's exact synthetic head,
   verifies contiguous membership and the base/head commit chain, and checks

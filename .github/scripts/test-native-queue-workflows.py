@@ -80,13 +80,10 @@ class NativeQueueWorkflows(unittest.TestCase):
         # the job still concludes successfully.
         steps = workflow("native-queue-policy.yml")["jobs"]["policy"]["steps"]
         gate = next(s for s in steps
-                    if s.get("name") == "Skip evidence wait for cosmetic label flips")
+                    if s.get("name") == "Replay last verdict for cosmetic label flips")
         self.assertEqual(gate["id"], "label-flip")
         self.assertIn("isCosmeticLabelFlip", gate["with"]["script"])
-        self.assertNotIn("setFailed", gate["with"]["script"])
-        helper = (ROOT / ".github/scripts/native-queue-policy.cjs").read_text()
-        self.assertIn("['labeled', 'unlabeled'].includes(payload.action)", helper)
-        self.assertIn("!BLOCKED_LABEL.test(payload.label.name)", helper)
+        self.assertIn("replayLastVerdict", gate["with"]["script"])
         wait = next(s for s in steps if s.get("name", "").startswith("Validate exact-head evidence"))
         self.assertIn("steps.label-flip.outputs.cosmetic != 'true'", wait["if"])
         self.assertLess(steps.index(gate), steps.index(wait))

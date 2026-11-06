@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
-  isTransientAPIError,
+  isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict,
   ProviderUnavailable,
   DCO_ENUMERATION_SUMMARY_PREFIX,
   DCO_ENUMERATION_SUMMARY_FALLBACK,
@@ -386,4 +386,58 @@ test('API failure is never interpreted as an empty successful member list', asyn
   const f = fixture();
   f.github.graphql = async () => { throw new Error('403 queue read forbidden'); };
   await assert.rejects(evaluate(f), /403/);
+});
+
+test('isCosmeticLabelFlip is true only for unread labels on label events', () => {
+  const ctx = (eventName, action, label) => ({ eventName, payload: { action, ...(label && { label: { name: label } }) } });
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled', 'size/L')), true);
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'unlabeled', 'size/L')), true);
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled', 'hold')), false);
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled', 'do-not-merge/foo')), false);
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'synchronize', 'size/L')), false);
+  assert.equal(isCosmeticLabelFlip(ctx('merge_group', 'checks_requested')), false);
+  assert.equal(isCosmeticLabelFlip(ctx('pull_request_target', 'labeled')), false);
+});
+
+function replayFixture(priorRuns, labels = []) {
+  const f = fixture('pull_request_target');
+  f.state.prs[0].labels = labels;
+  const head = sha(11);
+  f.state.listed = [];
+  f.github.paginate = async (method, args) => {
+    assert.equal(method, 'checks');
+    f.state.listed.push(args);
+    return clone(priorRuns).map(r => ({
+      name: 'native-queue-policy', head_sha: head, app: { id: ACTIONS_APP_ID }, ...r,
+    }));
+  };
+  return f;
+}
+
+test('cosmetic flip replays the latest completed success on the same head', async () => {
+  const f = replayFixture([
+    { id: 5, status: 'completed', conclusion: 'failure' },
+    { id: 7, status: 'completed', conclusion: 'success' },
+    { id: 9, status: 'in_progress', conclusion: null },
+  ]);
+  assert.match(await replayLastVerdict(f), /run 7 \(success\)/);
+  assert.equal(f.state.listed[0].ref, sha(11));
+});
+
+test('cosmetic flip replays a prior failure and fails closed without a completed run', async () => {
+  await assert.rejects(replayLastVerdict(replayFixture([
+    { id: 5, status: 'completed', conclusion: 'success' },
+    { id: 7, status: 'completed', conclusion: 'failure' },
+  ])), /run 7.*failure/);
+  await assert.rejects(replayLastVerdict(replayFixture([
+    { id: 9, status: 'in_progress', conclusion: null },
+  ])), /No completed/);
+  await assert.rejects(replayLastVerdict(replayFixture([])), /No completed/);
+  const own = replayFixture([{ id: 8, status: 'completed', conclusion: 'success' }]);
+  await assert.rejects(replayLastVerdict({ ...own, currentCheckRunId: 8 }), /No completed/);
+});
+
+test('cosmetic flip still honours a live hold even after a prior success', async () => {
+  const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }], [{ name: 'hold' }]);
+  await assert.rejects(replayLastVerdict(f), /held/);
 });
