@@ -17,11 +17,11 @@ const SecretValueKind = "hive-secret-value"
 const secretValueMarker = "<redacted:" + SecretValueKind + ">"
 
 // SecretScrubber replaces this hive's own secret values in log text: each
-// value of at least MinSecretValueLen characters in its plain, URL-encoded and
-// base64 forms, the base64 forms at all three byte alignments so the value is
-// found inside a longer encoded string (an "Authorization: Basic" header
-// encoding user:value). It is one precompiled multi-value replacer, built in
-// process for one read; the values are never returned.
+// value of at least MinSecretValueLen characters in its plain, URL-encoded,
+// JSON-escaped and base64 forms, the base64 forms at all three byte alignments
+// so the value is found inside a longer encoded string (an "Authorization:
+// Basic" header encoding user:value). It is one precompiled multi-value
+// replacer, built in process for one read; the values are never returned.
 type SecretScrubber struct {
 	r *strings.Replacer
 }
