@@ -259,6 +259,27 @@ configuration and its provenance), an agent's export bundle (the `agent` and
 presentational. A test fails when the dashboard serves a new `GET /api/config`
 route that is neither a section nor one of these exclusions.
 
+### What a read masks
+
+Every read result is scrubbed in two ways. Strings are scrubbed by shape:
+GitHub tokens, JWTs, bearer tokens, private keys and similar are replaced
+wherever they appear. Values are also masked by key: a value under a key that
+contains `token`, `secret`, `password`, `credential` or `authorization` is
+replaced by `[masked:...]`, unless it cannot hold a credential:
+
+- `true` or `false`, `null`, or an empty string, list or object;
+- a timestamp (`token_expires_at`);
+- a token count or rate (`totalTokens`, `tokens_per_coin`);
+- the name of an environment variable under a key ending in `env`
+  (`token_env`, `webhookSecretEnv`), when it is written in upper case;
+- the self-authorization hold settings (`selfAuthorizationHold`,
+  `repoSelfAuthorizationHold`), which are a merge policy and not a header.
+
+So `[masked:token]` means a value is there and was withheld, and an empty
+value means nothing is set. A list or object with content under such a key is
+masked whole (for example `credentialWarnings` when there are warnings); read
+it on the dashboard.
+
 Meta tools:
 
 - `exclusion_catalogue` lists what the admin MCP will never do, and why.
