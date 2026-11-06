@@ -593,6 +593,17 @@ func (c *Client) blockedLabelActor(ctx context.Context, repo string, number int)
 	return "", false, nil
 }
 
+// BlockedLabelAppliedByHive reports whether the most recent application of
+// `blocked` to the issue was by this hive. A human-applied label, a missing
+// labeled event, or a client with no hive identity reports false.
+func (c *Client) BlockedLabelAppliedByHive(ctx context.Context, repo string, number int) (bool, error) {
+	actor, found, err := c.blockedLabelActor(ctx, repo, number)
+	if err != nil || !found {
+		return false, err
+	}
+	return c.isOwnBotLogin(actor) || c.IsHiveAuthorLogin(actor), nil
+}
+
 // parseBlockedOnReason reads "blocked on owner/repo#N" back into its parts.
 func parseBlockedOnReason(reason string) (repo string, pr int, ok bool) {
 	rest, found := strings.CutPrefix(strings.TrimSpace(reason), blockedFilterReasonPrefix+" on ")
