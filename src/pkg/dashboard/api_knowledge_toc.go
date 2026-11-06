@@ -28,6 +28,14 @@ func knowledgeTOCScope(r *http.Request) (knowledge.TOCScope, error) {
 	for _, l := range splitCSV(q.Get("layers")) {
 		scope.Layers = append(scope.Layers, knowledge.LayerType(strings.ToLower(l)))
 	}
+	// An untyped fact is listed as "general" (knowledge tocEntry), so a types
+	// list naming general has to match the empty type as well.
+	for _, t := range scope.Types {
+		if strings.EqualFold(t, "general") {
+			scope.Types = append(scope.Types, "")
+			break
+		}
+	}
 	return scope, nil
 }
 
