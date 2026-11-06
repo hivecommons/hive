@@ -1499,6 +1499,15 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if lastRun != nil {
 		*lastRun = now
 	}
+	// Capability blockers recorded before the hive could check them, or
+	// before the permission was granted, are re-checked at the same cadence
+	// (and on the first pass after start), so a false "App lacks workflows
+	// permission" clears itself (projectbluefin/testsuite#1059).
+	if released, err := ghClient.SweepWorkflowsBlockers(ctx); err != nil {
+		logger.Warn("workflows blocker re-check: labelling released items failed", "released", len(released), "error", err)
+	} else if len(released) > 0 {
+		logger.Info("workflows blocker re-check released items", "released", len(released))
+	}
 	// `/hive approve` on a PR is answered with what the merge lane will do
 	// with it (hivecommons/hive#13087); the engine here only reads policy.
 	approveOpts := automerge.Options{

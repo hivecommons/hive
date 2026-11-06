@@ -382,9 +382,9 @@ Not added when the same sweep is applying `needs-human`.
 
 **Applies to:** Issues. **Kind:** Routing.
 
-Workflow hand-off. An ISSUES_AND_PRS lane's token is minted at the `contributor` tier, which has no Workflows permission, so it cannot push a change under `.github/workflows/`. When such a lane parks a workflow-only change (`hive-open-issue issue|comment --needs-decision` whose text says it cannot push the workflow file, with no lettered options for the owner) and an enabled lane that serves the repository runs at ISSUES_PRS_MERGE (one scoped to other repositories with `repos:` is never chosen), the relay does not park the issue: it adds this label, posts the lane's exact replacement with a "Handed to `<lane>`" note, and the scheduler sends the issue to that lane rather than back to the one that filed it. With no such lane, or when the ISSUES_PRS_MERGE lane itself could not push, the park goes to the owner as before.
+Workflow hand-off. An ISSUES_AND_PRS lane's token is minted at the `contributor` tier, which has no Workflows permission, so it cannot push a change under `.github/workflows/`. When such a lane parks a workflow-only change (`hive-open-issue issue|comment --needs-decision` whose text says it cannot push the workflow file, with no lettered options for the owner) and an enabled lane that serves the repository runs at ISSUES_PRS_MERGE (one scoped to other repositories with `repos:` is never chosen), the relay does not park the issue: it adds this label, posts the lane's exact replacement with a "Handed to `<lane>`" note, and the scheduler sends the issue to that lane rather than back to the one that filed it. With no such lane, or when the App installation is known to lack `workflows: write`, the park goes to the owner as before. An ISSUES_PRS_MERGE lane's own workflow-only park is refused, with no label, when the installation grants `workflows: write`: its token can push the change. The scheduled blocker re-check also adds this label to an issue whose "App lacks workflows permission" blocker it releases.
 
-**Who applies it:** Hive (issue-request relay).
+**Who applies it:** Hive (issue-request relay, blocker re-check).
 
 **Checked by:** Scheduler kick assembly. **When:** Every kick build.
 

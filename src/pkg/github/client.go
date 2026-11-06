@@ -135,6 +135,11 @@ type Client struct {
 	// (SetWorkflowsLaneFunc, issue_workflows_handoff.go).
 	workflowsLaneMu sync.RWMutex
 	workflowsLane   func(agent, repo string) string
+	// workflowsSelfPush reports whether an agent's own token asks for the
+	// Workflows permission (SetWorkflowsSelfPushFunc); workflowsGrant caches
+	// the installation's answer (installationGrantsWorkflows).
+	workflowsSelfPush func(agent string) bool
+	workflowsGrant    workflowsGrantCache
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.
