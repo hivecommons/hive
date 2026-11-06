@@ -1,0 +1,1 @@
+- The "What hive saw" facts for a delegated decision now list the options an issue offered and the recommended option, so the competing-options verdict can be checked against its inputs.

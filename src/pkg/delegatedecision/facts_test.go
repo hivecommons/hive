@@ -78,6 +78,23 @@ func TestFactsPendingCIIsNotABlocker(t *testing.T) {
 	}
 }
 
+func TestFactsListOfferedAndRecommendedOptions(t *testing.T) {
+	in := Input{Kind: KindIssue, Number: 42, Options: []Option{{Label: "A"}, {Label: "B", Summary: "a ujust recipe"}}, RecommendedOption: "B"}
+	m := factMap(in.Facts())
+	if f := m["Options offered"]; f.Value != "A, B" || f.State != FactInfo {
+		t.Fatalf("Options offered = %+v, want A, B", f)
+	}
+	if f := m["Recommended option"]; f.Value != "B" || f.State != FactInfo {
+		t.Fatalf("Recommended option = %+v, want B", f)
+	}
+	m = factMap(Input{Kind: KindIssue, Number: 42}.Facts())
+	for _, label := range []string{"Options offered", "Recommended option"} {
+		if _, ok := m[label]; ok {
+			t.Errorf("fact %q listed with no options", label)
+		}
+	}
+}
+
 func TestFactsIssueListsNoHeadFacts(t *testing.T) {
 	in := Input{Kind: KindIssue, Number: 42, Author: "reporter", DuplicateOf: 7, Overlaps: []int{9, 11}, RepoPaused: true}
 	m := factMap(in.Facts())
