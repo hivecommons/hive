@@ -1091,3 +1091,26 @@ func TestSweepBlockedIssues(t *testing.T) {
 		t.Fatal("blocked label was not removed from issue 10")
 	}
 }
+
+func TestBlockedOnIssueTarget(t *testing.T) {
+	cases := []struct {
+		name, body, reason string
+		repo               string
+		n                  int
+		ok                 bool
+	}{
+		{"marker", "x <!-- hive:blocked-on issue=acme/api#9 -->", "blocked", "acme/api", 9, true},
+		{"reason", "", "blocked on issue acme/api#9", "acme/api", 9, true},
+		{"pr marker is not an issue", BlockedOnMarker("acme/api", 9), "blocked", "", 0, false},
+		{"pr reason is not an issue", "", "blocked on acme/api#9", "", 0, false},
+		{"bare", "", "blocked", "", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, n, ok := BlockedOnIssueTarget(tc.body, tc.reason)
+			if repo != tc.repo || n != tc.n || ok != tc.ok {
+				t.Fatalf("got %q %d %v", repo, n, ok)
+			}
+		})
+	}
+}

@@ -152,6 +152,27 @@ func BlockedOnTarget(body, reason string) (repo string, pr int, ok bool) {
 	return ParseBlockedOnReason(reason)
 }
 
+// ParseBlockedOnIssueReason returns the issue a blockedFilterReason names
+// ("blocked on issue owner/repo#N"); false for the PR form and every other
+// reason. It shares parseBlockedOnReason with the sweep so the two never
+// drift.
+func ParseBlockedOnIssueReason(reason string) (repo string, issue int, ok bool) {
+	repo, issue, isIssue, ok := parseBlockedOnReason(reason)
+	if !ok || !isIssue {
+		return "", 0, false
+	}
+	return repo, issue, true
+}
+
+// BlockedOnIssueTarget is BlockedOnTarget for the issue variant: the
+// `issue=` marker in body, else the "blocked on issue owner/repo#N" reason.
+func BlockedOnIssueTarget(body, reason string) (repo string, issue int, ok bool) {
+	if repo, issue, ok = parseBlockedOnIssueMarker(body); ok {
+		return repo, issue, true
+	}
+	return ParseBlockedOnIssueReason(reason)
+}
+
 // blockedFilterReasonPrefix opens the enumeration's filtered reason for a
 // blocked issue; IssueStageFor and the sweep recognise it by prefix.
 const blockedFilterReasonPrefix = "blocked"
