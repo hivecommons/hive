@@ -63,6 +63,18 @@ func DiagOwnerTool(tool string) bool {
 	return tool == ToolConfigEffectiveRead
 }
 
+// DiagStatusError is a diagnostic read the hive answered with a status other
+// than success or a role refusal. It keeps the status so a caller can tell a
+// 404 from the rest: the stdio binary adds its build-skew notice to a hub 404.
+type DiagStatusError struct {
+	Tool       string
+	StatusCode int
+}
+
+func (e *DiagStatusError) Error() string {
+	return fmt.Sprintf("%s: the hive answered HTTP %d", e.Tool, e.StatusCode)
+}
+
 // DiagHTTPError turns a refused diagnostic read into the same error on both
 // transports. It never carries the hive's response body: that can hold text
 // from logs or agents, which belongs only inside result data.
@@ -73,7 +85,7 @@ func DiagHTTPError(tool string, status int) error {
 		}
 		return fmt.Errorf("%w: %s needs a higher role than this caller has (HTTP %d)", ErrForbidden, tool, status)
 	}
-	return fmt.Errorf("%s: the hive answered HTTP %d", tool, status)
+	return &DiagStatusError{Tool: tool, StatusCode: status}
 }
 
 // DiagReadPath builds the GET request for a diagnostic tool from its

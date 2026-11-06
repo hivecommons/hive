@@ -259,7 +259,10 @@ func (r *roster) annotateSkew(err error) error {
 	}
 	var unsupported *unsupportedToolError
 	var api *hivectl.APIError
-	if errors.As(err, &unsupported) || (errors.As(err, &api) && api.StatusCode == http.StatusNotFound) {
+	// A diagnostic read reports its refusal without the hub's response body,
+	// so its 404 is a DiagStatusError and not an APIError.
+	var diag *adminmcp.DiagStatusError
+	if errors.As(err, &unsupported) || (errors.As(err, &api) && api.StatusCode == http.StatusNotFound) || (errors.As(err, &diag) && diag.StatusCode == http.StatusNotFound) {
 		return fmt.Errorf("%w; %s", err, notice)
 	}
 	return err
