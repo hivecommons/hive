@@ -18,6 +18,9 @@
 //   4. anonymous POST → 401 at the proxy (unchanged)
 //   5. a client-forged X-Hive-Internal never reaches the Go API
 //   6. hosted mode (no token): header absent, reads still pass through
+//   7. the task MCP and the public knowledge MCP, whose callers the Go API
+//      authenticates itself, are forwarded WITHOUT X-Hive-Internal instead of
+//      being answered 401 here; their sibling paths are still refused
 
 import { createServer, request as httpRequest } from 'http';
 import { strict as assert } from 'assert';
@@ -41,6 +44,7 @@ function startMockGoApi() {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       url: req.url,
+      authorization: req.headers['authorization'] ?? null,
       internal: req.headers['x-hive-internal'] ?? null,
       user: req.headers['x-hive-user'] ?? null,
       role: req.headers['x-hive-role'] ?? null,
@@ -94,7 +98,7 @@ function req(method, path, headers = {}) {
       (res) => {
         let body = '';
         res.on('data', (c) => { body += c; });
-        res.on('end', () => resolve({ status: res.statusCode, body }));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
       },
     );
     r.on('error', reject);
@@ -207,6 +211,94 @@ async function main() {
     assert.equal(res.status, 200);
     assert.equal(JSON.parse(res.body).internal, null);
   });
+
+  // ── MCP endpoints the Go API authenticates itself ───────────────────────
+  // Their callers do not hold the dashboard token: the task MCP verifies a
+  // per-launch token (?token=) or a lease bearer, and the public knowledge MCP
+  // is anonymous while the owner's switch is on. The mock Go API answers 200
+  // to whatever reaches it, so a 401 or 405 below was produced by the proxy.
+  const LEASE_TOKEN = 'hive_mcp_v1.test-payload.test-signature';
+
+  await check('task MCP POST with a ?token= launch token is forwarded WITHOUT X-Hive-Internal', async () => {
+    const res = await req('POST', `/api/contribute/mcp?task_id=t&repo=o%2Fr&number=7&token=${LEASE_TOKEN}`);
+    assert.equal(res.status, 200);
+    const seen = JSON.parse(res.body);
+    assert.equal(seen.internal, null);
+    // The Go handler reads the token and the task scope from the query string.
+    const forwarded = new URL(seen.url, 'http://go.test');
+    assert.equal(forwarded.pathname, '/api/contribute/mcp');
+    assert.equal(forwarded.searchParams.get('token'), LEASE_TOKEN);
+    assert.equal(forwarded.searchParams.get('repo'), 'o/r');
+  });
+
+  await check('task MCP POST with a lease bearer is forwarded WITHOUT X-Hive-Internal', async () => {
+    const res = await req('POST', '/api/contribute/mcp', { Authorization: `Bearer ${LEASE_TOKEN}` });
+    assert.equal(res.status, 200);
+    const seen = JSON.parse(res.body);
+    assert.equal(seen.internal, null);
+    // The Go handler verifies the bearer, so it must arrive untouched.
+    assert.equal(seen.authorization, `Bearer ${LEASE_TOKEN}`);
+  });
+
+  await check('the dashboard token in a task MCP ?token= never earns X-Hive-Internal', async () => {
+    // Only the Authorization header can mark a request as gateway-authenticated;
+    // the Go handler refuses a dashboard token sent in the query string itself.
+    const res = await req('POST', `/api/contribute/mcp?token=${TOKEN}`);
+    assert.equal(res.status, 200);
+    assert.equal(JSON.parse(res.body).internal, null);
+  });
+
+  for (const p of ['/api/contribute/mcpx', '/api/contribute/mcp/', '/api/contribute/mcp/extra']) {
+    await check(`anonymous POST ${p} is still 401 (exact match, not prefix)`, async () => {
+      const res = await req('POST', p);
+      assert.equal(res.status, 401);
+    });
+  }
+
+  await check('anonymous POST /mcp/knowledge is forwarded with no trust headers', async () => {
+    const res = await req('POST', '/mcp/knowledge');
+    assert.equal(res.status, 200);
+    const seen = JSON.parse(res.body);
+    assert.equal(seen.url, '/mcp/knowledge');
+    assert.equal(seen.internal, null);
+    assert.equal(seen.user, null);
+    assert.equal(seen.role, null);
+  });
+
+  await check('client-forged trust headers on POST /mcp/knowledge never reach the Go API', async () => {
+    const res = await req('POST', '/mcp/knowledge', {
+      'X-Hive-Internal': TOKEN,
+      'X-Hive-User': 'attacker',
+      'X-Hive-Role': 'owner',
+    });
+    assert.equal(res.status, 200);
+    const seen = JSON.parse(res.body);
+    assert.equal(seen.internal, null);
+    assert.equal(seen.user, null);
+    assert.equal(seen.role, null);
+  });
+
+  await check('POST /mcp/knowledge with the dashboard token still gets no X-Hive-Internal', async () => {
+    // The endpoint is public: the proxy vouches for nobody on it.
+    const res = await req('POST', '/mcp/knowledge', { Authorization: `Bearer ${TOKEN}` });
+    assert.equal(res.status, 200);
+    assert.equal(JSON.parse(res.body).internal, null);
+  });
+
+  for (const method of ['GET', 'PUT', 'DELETE']) {
+    await check(`${method} /mcp/knowledge is answered 405 with Allow: POST, not forwarded`, async () => {
+      const res = await req(method, '/mcp/knowledge');
+      assert.equal(res.status, 405);
+      assert.equal(res.headers.allow, 'POST');
+    });
+  }
+
+  for (const p of ['/mcp/knowledgex', '/mcp/knowledge/', '/mcp/knowledge/extra', '/mcp/other']) {
+    await check(`anonymous POST ${p} is still 401 (exact match, not prefix)`, async () => {
+      const res = await req('POST', p);
+      assert.equal(res.status, 401);
+    });
+  }
 
   await stopProxy(proxy);
 
