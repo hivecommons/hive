@@ -145,14 +145,14 @@ func (c *Client) parkUnansweredNoPRIssue(ctx context.Context, in IssueStageInput
 	// The note first: it carries the options the menu offers, and a retry
 	// after a failed park finds it and parks without posting it again.
 	if !noted {
-		if err := c.CreateIssueComment(ctx, in.Repo, in.Number, note); err != nil {
+		if err := c.CreateIssueComment(ctx, in.Repo, in.Number, note); err != nil { // writeback:gated
 			return false, err
 		}
 	}
 	// The park itself, as the relay's --needs-decision comment does it.
 	_, parkLabel, _ := c.partitionStageRequestLabels([]string{c.needsDecisionLabel()})
 	if !stagelabels.IsStageLabel(strings.ToLower(parkLabel)) {
-		if err := c.AddLabels(ctx, in.Repo, in.Number, []string{parkLabel}); err != nil {
+		if err := c.AddLabels(ctx, in.Repo, in.Number, []string{parkLabel}); err != nil { // writeback:gated
 			return false, err
 		}
 	}
