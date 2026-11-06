@@ -24,11 +24,31 @@ func clineTurnCommand(binary, model, effort, promptFile string) string {
 	return fmt.Sprintf("printf '\\n%s\\n'; %s; echo %s", cline.RunningMarker, strings.Join(args, " "), cline.ReadyMarker)
 }
 
-func validateClineDefinition(agent *AgentProcess) error {
+// clineHasOperatorConnections reports whether the operator declared any
+// connection for the agent. The one withTaskMCPConnection adds for the hive's
+// own task MCP endpoint (taskMCPURL) is not operator policy: only Claude Code
+// is handed it at launch, so launching Cline without it drops nothing. That
+// connection is mcp, named hive-task, at that endpoint, with nothing else
+// set; a hive-task aimed elsewhere, or carrying its own auth, env name or
+// options, is the operator's.
+func clineHasOperatorConnections(conns []config.ConnectionConfig, taskMCPURL string) bool {
+	taskMCPURL = strings.TrimSpace(taskMCPURL)
+	for _, conn := range conns {
+		injected := taskMCPURL != "" && conn.Type == "mcp" && conn.Name == "hive-task" &&
+			conn.Auth == nil && conn.EnvName == "" && len(conn.Options) == 0 &&
+			sameTaskMCPEndpoint(conn.URI, taskMCPURL)
+		if !injected {
+			return true
+		}
+	}
+	return false
+}
+
+func validateClineDefinition(agent *AgentProcess, taskMCPURL string) error {
 	if strings.TrimSpace(agent.Config.LaunchCmd) != "" {
 		return fmt.Errorf("Cline launch_cmd overrides are unsupported: use the canonical bounded cline-turn runner")
 	}
-	if agent.Config.Tools != nil || len(agent.Config.Connections) != 0 {
+	if agent.Config.Tools != nil || clineHasOperatorConnections(agent.Config.Connections, taskMCPURL) {
 		return fmt.Errorf("Cline cannot enforce Hive tools/connections configuration; refusing launch rather than dropping policy")
 	}
 	model := agent.effectiveModel()
@@ -38,8 +58,8 @@ func validateClineDefinition(agent *AgentProcess) error {
 	return config.ValidateReasoningEffort("cline", agent.Config.ReasoningEffort)
 }
 
-func validateClineLaunch(ctx context.Context, binary string, agent *AgentProcess) error {
-	if err := validateClineDefinition(agent); err != nil {
+func validateClineLaunch(ctx context.Context, binary string, agent *AgentProcess, taskMCPURL string) error {
+	if err := validateClineDefinition(agent, taskMCPURL); err != nil {
 		return err
 	}
 	if agent.UID <= 0 && os.Getenv("HIVE_CLINE_DANGEROUSLY_RUN_UNCONFINED") != "1" {
