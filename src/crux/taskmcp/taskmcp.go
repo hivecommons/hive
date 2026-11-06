@@ -335,6 +335,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, rpcErr := h.dispatch(r, req)
+	// MCP Streamable HTTP: a notification-only POST is answered with 202
+	// Accepted and no body.
+	if req.ID == nil && rpcErr == nil && strings.HasPrefix(req.Method, "notifications/") {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: result, Error: rpcErr})
 }
 

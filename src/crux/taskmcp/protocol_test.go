@@ -38,17 +38,18 @@ func TestTaskMCPAnswersPing(t *testing.T) {
 	}
 }
 
-// A notification expects no answer. The endpoint always writes one, so every
-// notification gets the empty acknowledgement notifications/initialized has
-// always had, not "method not found".
-func TestTaskMCPAcknowledgesEveryNotification(t *testing.T) {
+// A notification expects no answer: MCP Streamable HTTP has the server accept
+// a notification-only POST with 202 and no body, not a 200 JSON-RPC result.
+func TestTaskMCPAcceptsEveryNotificationWithNoBody(t *testing.T) {
 	for _, method := range []string{"notifications/initialized", "notifications/cancelled", "notifications/progress", "notifications/roots/list_changed"} {
-		resp := rpcCall(t, `{"jsonrpc":"2.0","method":"`+method+`","params":{"requestId":3,"reason":"timeout"}}`)
-		if resp["error"] != nil {
-			t.Errorf("%s answered with an error: %v", method, resp["error"])
+		rec := httptest.NewRecorder()
+		body := `{"jsonrpc":"2.0","method":"` + method + `","params":{"requestId":3,"reason":"timeout"}}`
+		NewHandler(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(body)))
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("%s status = %d, want 202", method, rec.Code)
 		}
-		if result, ok := resp["result"].(map[string]any); !ok || len(result) != 0 {
-			t.Errorf("%s result = %#v, want an empty object", method, resp["result"])
+		if rec.Body.Len() != 0 {
+			t.Errorf("%s body = %q, want empty", method, rec.Body.String())
 		}
 	}
 }
