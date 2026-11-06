@@ -161,8 +161,26 @@ func (s *Server) publicKnowledgeTags() []string {
 	return tags
 }
 
-func publicKnowledgeURL(r *http.Request) string {
-	if r == nil || r.Host == "" {
+// publicKnowledgeURL is the address the owner copies from Settings to hand
+// to readers: dashboard.public_url when the operator set one, else the
+// X-Forwarded-Host or Host the request arrived with. A loopback host is used
+// only when the browser itself was on it (publicKnowledgeBrowserOnHost): the
+// Node proxy forwards with changeOrigin and no forwarded host, so a browser
+// that came through it arrives with the Go API's own 127.0.0.1 address as
+// Host. When the real address is unknown the URL is empty and the page shows
+// the path alone.
+func publicKnowledgeURL(publicURL string, r *http.Request) string {
+	if v := strings.TrimSpace(publicURL); v != "" {
+		return strings.TrimRight(v, "/") + publicKnowledgeMCPPath
+	}
+	if r == nil {
+		return ""
+	}
+	host := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" || (publicKnowledgeLoopbackHost(host) && !publicKnowledgeBrowserOnHost(r, host)) {
 		return ""
 	}
 	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
@@ -176,7 +194,7 @@ func publicKnowledgeURL(r *http.Request) string {
 			scheme = "http"
 		}
 	}
-	return (&url.URL{Scheme: scheme, Host: r.Host, Path: publicKnowledgeMCPPath}).String()
+	return (&url.URL{Scheme: scheme, Host: host, Path: publicKnowledgeMCPPath}).String()
 }
 
 func (s *Server) publicKnowledgeSettingResponse(r *http.Request) publicKnowledgeSettingResponse {
@@ -184,12 +202,16 @@ func (s *Server) publicKnowledgeSettingResponse(r *http.Request) publicKnowledge
 	if tags == nil {
 		tags = []string{}
 	}
+	publicURL := ""
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		publicURL = s.deps.Config.Dashboard.PublicURL
+	}
 	return publicKnowledgeSettingResponse{
 		Enabled:  enabled,
 		Tags:     tags,
 		Source:   source,
 		Endpoint: publicKnowledgeMCPPath,
-		URL:      publicKnowledgeURL(r),
+		URL:      publicKnowledgeURL(publicURL, r),
 	}
 }
 
