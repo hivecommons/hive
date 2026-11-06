@@ -81,10 +81,10 @@ func (fleetAutonomyLevelOp) Preview(_ context.Context, args map[string]any) (Wri
 
 func (planProposeOp) Name() string { return WriteOpPlanPropose }
 func (planProposeOp) Description() string {
-	return "Propose a draft plan through POST /api/plan/from-issue."
+	return "Propose a draft plan through POST /api/plan/from-issue. Give a title, or name an issue the hive already tracks by url or by repo and number."
 }
 func (planProposeOp) InputSchema() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{"repo": stringSchema(), "number": map[string]any{"type": "integer"}, "url": stringSchema(), "title": stringSchema(), "body": stringSchema()}, "required": []string{}, "additionalProperties": false}
+	return map[string]any{"type": "object", "properties": map[string]any{"repo": stringSchema(), "number": map[string]any{"type": "integer", "minimum": 1}, "url": stringSchema(), "title": stringSchema(), "body": stringSchema()}, "required": []string{}, "additionalProperties": false}
 }
 func (planProposeOp) Preview(_ context.Context, args map[string]any) (WritePreview, error) {
 	body := map[string]any{}
@@ -93,17 +93,31 @@ func (planProposeOp) Preview(_ context.Context, args map[string]any) (WritePrevi
 			body[key] = v
 		}
 	}
-	if n, ok, err := optionalIntArg(args, "number"); err != nil {
+	number, hasNumber, err := optionalIntArg(args, "number")
+	if err != nil {
 		return WritePreview{}, err
-	} else if ok {
-		body["number"] = n
 	}
-	if body["title"] == nil && (body["repo"] == nil || body["number"] == nil) {
-		return WritePreview{}, fmt.Errorf("plan proposal requires title or resolvable repo and number")
+	if hasNumber {
+		if number <= 0 {
+			return WritePreview{}, fmt.Errorf("number must be a positive integer")
+		}
+		body["number"] = number
 	}
-	target := strings.TrimSpace(fmt.Sprint(body["title"]))
-	if target == "" {
-		target = fmt.Sprintf("%s#%v", body["repo"], body["number"])
+	title, _ := body["title"].(string)
+	repo, _ := body["repo"].(string)
+	issueURL, _ := body["url"].(string)
+	// An untitled proposal is resolved by the endpoint from the issues the
+	// hive already tracks, by url or by repo and number.
+	if title == "" && issueURL == "" && (repo == "" || !hasNumber) {
+		return WritePreview{}, fmt.Errorf("plan proposal requires a title, an issue url, or a repo and number")
+	}
+	target := title
+	switch {
+	case target != "":
+	case repo != "" && hasNumber:
+		target = fmt.Sprintf("%s#%d", repo, number)
+	default:
+		target = issueURL
 	}
 	return WritePreview{Operation: WriteOpPlanPropose, Summary: "Propose draft plan for " + target, Target: target, Request: WriteRequest{Method: http.MethodPost, Path: "/api/plan/from-issue", Body: body}, Effects: []string{"Mint or reuse a draft epic for the issue.", "May queue or kick the architect to decompose the draft.", "Does not release child work until a plan is approved."}, WideningDisclosure: "No direct authority widening: proposal creates draft planning state only. Hive may refuse below ACMM L5 or on critical ioscan findings.", ConfirmationMessage: "Confirm proposing a draft plan for " + target + ".", Details: body}, nil
 }
