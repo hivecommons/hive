@@ -101,6 +101,9 @@ type IssueStageResult struct {
 	Items    int
 	Writes   int
 	Comments int
+	// NoPRParked counts stalled 010 issues the hive had answered without a
+	// PR, parked for the owner (issue_no_pr_park.go).
+	NoPRParked int
 	// PRBodiesEdited counts Hive-authored PR bodies amended with a closing
 	// trailer so GitHub can show the issue↔PR link for default-branch work.
 	PRBodiesEdited int
@@ -489,6 +492,20 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			want = stagelabels.Desired{Stage: stage}
 			if !covered && !awaitingChildren {
 				want.Stalled = stagelabels.Stalled(rec, policy.Dwell, now)
+			}
+			// The hive answered a stalled 010 issue without a PR and left it
+			// there: park it for the owner (issue_no_pr_park.go). Parked, it
+			// skips the 010 write below, which would undo the park.
+			if stage == stagelabels.Actionable && want.Stalled && !covered && noPRParkCandidate(in) {
+				parked, err := client.parkUnansweredNoPRIssue(ctx, in, rec, now)
+				if err != nil && logger != nil {
+					logger.Warn("issue stage labels: parking an issue the hive answered without a PR failed", "repo", in.Repo, "issue", in.Number, "error", err)
+				}
+				if parked {
+					res.NoPRParked++
+					res.Writes++
+					continue
+				}
 			}
 			// A claimed / covered issue still wearing the reporter-trust
 			// awaiting label is stale (015 is not a gate): the engine's

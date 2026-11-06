@@ -509,6 +509,9 @@ type Client struct {
 	// prReplyOptions tracks the PRs whose status comment carries the "Your
 	// move" section (pr_reply_options.go).
 	prReplyOptions prReplyOptions
+	// noPRParkChecks paces the issue stage sweep's look at stalled 010
+	// issues the hive may have answered without a PR (issue_no_pr_park.go).
+	noPRParkChecks noPRParkChecks
 	// mergePolicyGate is the merge-request relay's lane-policy gate (see
 	// MergeRequestPolicyGate). nil installs no gate: the relay then applies
 	// only its own authz, label and CI checks, as before the gate existed.
