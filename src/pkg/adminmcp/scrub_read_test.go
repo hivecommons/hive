@@ -6,19 +6,12 @@ import (
 )
 
 // A read masked every value under a key containing token, secret, password,
-// credential or authorization. settings_read then hid the name of the
-// environment variable that supplies a secret (which the tool promises to
-// show), a numeric token rate, token timestamps, a whole merge-policy block,
-// and showed "[masked:token]" for a secret that is not set at all.
+// credential or authorization. settings_read then hid a numeric token rate,
+// token timestamps and a whole merge-policy block, and showed "[masked:token]"
+// for a secret that is not set at all.
 func TestScrubShowsValuesThatCannotBeASecret(t *testing.T) {
 	hold := map[string]any{"org/repo": map[string]any{"enabled": true, "source": "config"}}
 	for key, value := range map[string]any{
-		// the name of the environment variable, not its value
-		"token_env":        "GITLAB_TOKEN",
-		"gitlabTokenEnv":   "GITLAB_TOKEN",
-		"webhookSecretEnv": "HIVE_WEBHOOK_SECRET",
-		"password_env_var": "SMTP_PASSWORD",
-		"apiTokenEnvName":  "X_API_TOKEN_2",
 		// counts and rates
 		"tokens_per_coin":    float64(1000),
 		"tokensIn":           float64(5),
@@ -58,12 +51,10 @@ func TestScrubStillMasksWhatCouldBeASecret(t *testing.T) {
 		"proxy authorization":           {"proxy_authorization", "opaque"},
 		"authorization hold, no self":   {"authorizationHold", "opaque"},
 		"hold key that names a token":   {"self_authorization_hold_token", "opaque"},
+		"env key, variable name":        {"token_env", "GITLAB_TOKEN"},
+		"env key, camel case":           {"webhookSecretEnv", "HIVE_WEBHOOK_SECRET"},
 		"env key, lower-case value":     {"token_env", "a3f1c9d2e4b5"},
-		"env key, value with a dash":    {"tokenEnv", "sk-live-abc"},
-		"env key, value with a space":   {"token_env", "MY TOKEN"},
-		"env key, leading digit":        {"token_env", "9ABC"},
 		"env-shaped value, not env key": {"api_token", "GITLAB_TOKEN"},
-		"env as the whole key":          {"secretenv", "GITLAB_TOKEN"},
 		"credential count":              {"access_tokens_per_user", float64(5)},
 		"refresh token map":             {"refresh_tokens_by_user", map[string]any{"a": "b"}},
 		"tokens with secret":            {"tokens_secret", map[string]any{"a": "b"}},

@@ -270,10 +270,11 @@ replaced by `[masked:...]`, unless it cannot hold a credential:
 - `true` or `false`, `null`, or an empty string, list or object;
 - a timestamp (`token_expires_at`);
 - a token count or rate (`totalTokens`, `tokens_per_coin`);
-- the name of an environment variable under a key ending in `env`
-  (`token_env`, `webhookSecretEnv`), when it is written in upper case;
 - the self-authorization hold settings (`selfAuthorizationHold`,
   `repoSelfAuthorizationHold`), which are a merge policy and not a header.
+
+The name of an environment variable under a key such as `token_env` is a
+string like any other there, so it is masked too when it is set.
 
 So `[masked:token]` means a value is there and was withheld, and an empty
 value means nothing is set. A list or object with content under such a key is

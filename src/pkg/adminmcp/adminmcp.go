@@ -882,9 +882,6 @@ func authorizationKey(lower string) bool {
 //     is not set look set.
 //   - a timestamp (token_expires_at).
 //   - a token count or rate with its unit after the word (tokens_per_coin).
-//   - the name of an environment variable under a key ending in "env"
-//     (token_env, webhookSecretEnv). Settings name the variable that supplies
-//     a secret and never return the secret.
 //
 // A string kept this way is still scrubbed by shape like any other string.
 func readMaskExempt(k string, v any) bool {
@@ -895,7 +892,7 @@ func readMaskExempt(k string, v any) bool {
 	case nil:
 		return true
 	case string:
-		return x == "" || isTimestamp(x) || (envNameKey(k) && envNameShaped(x))
+		return x == "" || isTimestamp(x)
 	case []any:
 		return len(x) == 0
 	case map[string]any:
@@ -966,42 +963,6 @@ func tokenRateKey(k string) bool {
 		return true
 	}
 	return false
-}
-
-// envNameKey reports whether k names an environment variable: its last word
-// is "env", or its last two are "env var" or "env name".
-func envNameKey(k string) bool {
-	words := keyWords(k)
-	n := len(words)
-	switch {
-	case n >= 2 && words[n-1] == "env":
-		return true
-	case n >= 3 && words[n-2] == "env" && (words[n-1] == "var" || words[n-1] == "name"):
-		return true
-	default:
-		return false
-	}
-}
-
-// envNameShaped reports whether s is written as environment variable names
-// are: upper-case letters, digits and underscores. A value pasted into such a
-// field by mistake rarely has that shape, and stays masked when it does not.
-func envNameShaped(s string) bool {
-	if s == "" || len(s) > 128 {
-		return false
-	}
-	for i, r := range s {
-		switch {
-		case r >= 'A' && r <= 'Z', r == '_':
-		case r >= '0' && r <= '9':
-			if i == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 // credentialTokenQualifiers mark a plural "*tokens" key as a collection of
