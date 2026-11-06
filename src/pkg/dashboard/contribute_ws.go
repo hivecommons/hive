@@ -1213,6 +1213,10 @@ type ContributeWSHub struct {
 	// GHClient. gateParkRekicks records the one re-kick each issue gets.
 	gateParkReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
 	gateParkRekicks  gateParkRekicks
+	// needsDecisionParkPoster is the seam for posting the question a
+	// needs-decision park was left without (contribute_needs_decision_park.go);
+	// nil means use GHClient.
+	needsDecisionParkPoster func(ctx context.Context, repo string, number int, since time.Time, body string) error
 	// verdictBlockerRecorder is the seam for recording the blocker a blocked
 	// verdict names (contribute_verdict_blocker.go); nil means use GHClient.
 	// verdictBlockersRecorded dedupes re-delivered verdicts per task.
@@ -4498,7 +4502,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// applied so the fleet's workflow gate does not park it until a
 			// human notices (hivecommons/hive#11775, #11776).
 			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, verdictReason); ok {
-				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason describes contributor tooling, not an external dependency",
+				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason is the contributor's own tooling or says nothing, not an external dependency",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"verdict_reason", verdictReason)
@@ -4531,6 +4535,13 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					verdict = downgraded
 					go h.releaseGateParkedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
 				}
+			}
+			// A needs-decision verdict that stands parks the issue at 045 with
+			// the relay's label alone; the hub posts the question when the
+			// agent left none (contribute_needs_decision_park.go).
+			if verdict == completionVerdictNeedsDecision && completedTask != nil {
+				taskCopy := *completedTask
+				go h.postNeedsDecisionPark(&taskCopy, msg.TaskID, s.contributor.profile.GitHubUsername, verdictReason, taskAssignedAt)
 			}
 			if completedTask != nil {
 				// #2393 item 7 + #2565: the full week-long cooldown is applied

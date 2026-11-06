@@ -101,7 +101,9 @@ One reserved label refuses the whole request — nothing in it is applied — so
 batch can never partially land. When the only refused part is removing
 `hive/likely-done` or `hive/covered-by-pr` alongside an add of
 `hive/verified-open`, the refusal tells the agent to resend the add on its own,
-because the hive removes those labels itself. `hive/verified-open`, the one
+because the hive removes those labels itself. The same holds for
+`hive/already-done`: when the add of `hive/verified-open` lands, the relay
+removes `hive/already-done` and `hive/likely-done` from the issue. `hive/verified-open`, the one
 `hive/` label an agent may add, is created on the repository first when it does
 not exist. The refusal is a policy denial like any other:
 `.denied`, a result file naming the labels, and an audit entry. A lane

@@ -442,6 +442,9 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			legacyCarriers[in.Repo]++
 		}
 		res.ClaimedByHealed += healBackendClaimedByLabels(ctx, client, in, logger)
+		if reconcileDoneVerdictLabels(ctx, client, in, logger) {
+			res.Writes++
+		}
 		// A decomposed parent is waiting on its children, not on itself
 		// (hivecommons/hive#12857): all closed → close it; any open → it
 		// keeps its stage but is never marked stalled.

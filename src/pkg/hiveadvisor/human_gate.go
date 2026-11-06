@@ -62,6 +62,7 @@ var gateReasons = map[string]gateReason{
 	"decided_not_admitted":          {"decided by a maintainer but kept off the agent queues by the issue filter", "add the admission label to the decided issues in %s"},
 	"agent_finding_not_admitted":    {"agent findings the issue filter keeps off the agent queues", "admit or close the agent findings in %s"},
 	"person_issue_not_admitted":     {"filed by people and kept off the agent queues by the issue filter", "admit or close the people's issues in %s"},
+	"cited_lines_gone":              {"agent findings whose cited lines are gone from main", "close the agent findings main no longer matches in %s"},
 	"pr_gate_label":                 {"held by a gate label", "act on the gate labels or remove them"},
 	"hand_merge_required":           {"that only a person can merge", "merge the reviewed PRs by hand in %s"},
 	"review_decision_required":      {"waiting for an approving review that branch protection requires", "approve PRs in %s"},

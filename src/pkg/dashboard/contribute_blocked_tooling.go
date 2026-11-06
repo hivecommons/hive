@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
@@ -64,25 +65,68 @@ func isBlockedVerdictToolingFailure(reason string) bool {
 	return blockedVerdictToolingFailurePattern.MatchString(reason)
 }
 
-// reclassifyToolingBlockedVerdict demotes a blocked verdict whose reason is a
-// contributor-side tooling failure to idle. The second return reports whether
-// it did so; every other verdict passes through unchanged.
+// reasonlessBlockedReleaseMarker tags the release comment for a blocked
+// verdict that gave no reason at all.
+const reasonlessBlockedReleaseMarker = "<!-- hive:blocked-released kind=no-reason -->"
+
+// blockedVerdictFooterLineRE matches the lines a relay appends to every
+// comment (`---`, the 🐝 Hive Agent footer): they say nothing about what
+// the issue waits on.
+var blockedVerdictCommentRE = regexp.MustCompile(`(?s)<!--.*?-->`)
+
+var blockedVerdictFooterLineRE = regexp.MustCompile(`(?i)^\s*(?:-{3,}|.*🐝.*|.*\*\*hive agent\*\*.*)\s*$`)
+
+// isBlockedVerdictReasonless reports whether a blocked verdict's reason says
+// nothing: empty, or only HTML comments, footer lines and punctuation.
+// projectbluefin/utah#1002 was labelled `blocked` 30 seconds after a relay
+// comment that was the footer alone; nothing could say what it waited on.
+func isBlockedVerdictReasonless(reason string) bool {
+	reason = blockedVerdictCommentRE.ReplaceAllString(reason, " ")
+	for _, line := range strings.Split(reason, "\n") {
+		if blockedVerdictFooterLineRE.MatchString(line) {
+			continue
+		}
+		for _, r := range line {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// reclassifyToolingBlockedVerdict demotes to idle a blocked verdict whose
+// reason is a contributor-side tooling failure, or that gives no reason at
+// all. The second return reports whether it did so; every other verdict
+// passes through unchanged.
 func reclassifyToolingBlockedVerdict(verdict, reason string) (string, bool) {
-	if verdict != completionVerdictBlocked || !isBlockedVerdictToolingFailure(reason) {
+	if verdict != completionVerdictBlocked || (!isBlockedVerdictToolingFailure(reason) && !isBlockedVerdictReasonless(reason)) {
 		return verdict, false
 	}
 	return completionVerdictIdle, true
+}
+
+// blockedReleaseMarker is the release comment's marker for reason.
+func blockedReleaseMarker(reason string) string {
+	if isBlockedVerdictReasonless(reason) {
+		return reasonlessBlockedReleaseMarker
+	}
+	return toolingBlockedReleaseMarker
 }
 
 // toolingBlockedReleaseComment is the one comment the hub leaves when it lifts
 // a tooling-failure `blocked` label. The marker makes the post idempotent.
 func toolingBlockedReleaseComment(reporter, reason string) string {
 	reporter = strings.TrimSpace(reporter)
-	reason = sanitizeReportedReason(reason)
 	who := "a contributor's agent"
 	if reporter != "" {
 		who = "@" + reporter + "'s agent"
 	}
+	if isBlockedVerdictReasonless(reason) {
+		return fmt.Sprintf("%s\nHive: %s reported this issue blocked but gave no reason, so nothing names what it would wait on. The `%s` label it applied has been removed and the issue stays actionable for other contributors.",
+			reasonlessBlockedReleaseMarker, who, blockedWorkflowLabel)
+	}
+	reason = sanitizeReportedReason(reason)
 	body := fmt.Sprintf("%s\nHive: %s reported this issue blocked, but the reason describes the contributor's own tooling rather than an external dependency, so the `%s` label it applied has been removed and the issue stays actionable for other contributors. Reported reason: %s",
 		toolingBlockedReleaseMarker, who, blockedWorkflowLabel, reason)
 	if reason == "" {
@@ -124,7 +168,7 @@ func (h *ContributeWSHub) releaseToolingBlockedLabel(ctx context.Context, repo s
 	if err := client.RemoveLabel(ctx, repo, number, blockedWorkflowLabel); err != nil {
 		return err
 	}
-	posted, err := client.IssueCommentsContain(ctx, repo, number, toolingBlockedReleaseMarker)
+	posted, err := client.IssueCommentsContain(ctx, repo, number, blockedReleaseMarker(reason))
 	if err != nil {
 		return err
 	}

@@ -241,11 +241,11 @@ func TestIssueOwnerStepNeverDowngradedByDecisionPolicy(t *testing.T) {
 	c.SetAgentIssueDecisionPolicy("resolve")
 	step := testReleaseStep()
 	req := IssueRequest{Repo: "o/r", Title: "Release needed", Body: "Cut the release.", Agent: "scanner", NeedsDecision: true, OwnerStep: step}
-	if d := c.issueDecisionDowngradeForCreate(req, req.Body); d.Active {
+	if d := c.issueDecisionDowngradeForCreate(context.Background(), req, req.Body); d.Active {
 		t.Fatalf("create with owner step must park under resolve: %+v", d)
 	}
 	req.Kind, req.Number = "comment", 5
-	if d := c.issueDecisionDowngradeForComment(req, req.Body); d.Active {
+	if d := c.issueDecisionDowngradeForComment(context.Background(), req, req.Body); d.Active {
 		t.Fatalf("comment with owner step must park under resolve: %+v", d)
 	}
 	// Without the owner step the same request is a plain engineering
@@ -254,7 +254,7 @@ func TestIssueOwnerStepNeverDowngradedByDecisionPolicy(t *testing.T) {
 	// classifier fails closed and an unclassified park stays a human decision.
 	req.OwnerStep = nil
 	req.Body = "Should the release notes live top-level or under docs/? Option A or option B."
-	if d := c.issueDecisionDowngradeForComment(req, req.Body); !d.Active {
+	if d := c.issueDecisionDowngradeForComment(context.Background(), req, req.Body); !d.Active {
 		t.Fatal("plain engineering question must still be downgraded under resolve")
 	}
 }

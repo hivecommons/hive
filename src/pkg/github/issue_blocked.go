@@ -38,10 +38,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/gfi"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // BlockedLabel is the workflow label that parks an issue on an unmerged PR
@@ -313,7 +315,10 @@ type BlockedIssueResult struct {
 	// SoakTriaged counts ops-tracking issues that got soak evidence.
 	SoakTriaged int
 	Retargeted  int
-	Errors      int
+	// AskedHuman counts marker-less hive-applied blocks turned into a
+	// needs-human ask (blockedMarkerlessAsk).
+	AskedHuman int
+	Errors     int
 }
 
 // blockedIssueTarget is one blocked issue the sweep looks at.
@@ -445,6 +450,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 			scanned = err == nil
 			if scan.ok {
 				prRepo, prNumber, ok = scan.prRepo, scan.pr, scan.ok
+				noteBlockedOnSeen(t.repo, t.number, scan.prRepo, scan.pr)
 			}
 			if !ok && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
 				if t.opsTracking && isRecheckSoakRepo(t.repo) {
@@ -466,6 +472,10 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 			// the issue still must not advertise itself.
 			if scanned && t.recheckAfter.IsZero() && !t.opsTracking {
 				if liftBlockedMarkerless(ctx, c, t, &res, logger) {
+					continue
+				}
+				if askHumanBlockedMarkerless(ctx, c, t, &res, logger) {
+					stripBlockedHelpWanted(ctx, c, t, &res, logger)
 					continue
 				}
 			}
@@ -619,6 +629,108 @@ func liftBlockedMarkerless(ctx context.Context, client *Client, t blockedIssueTa
 // "re-triaging", never "actionable again": an issue project.issue_filter
 // refuses stays out of the agent queue.
 const blockedMarkerlessNote = blockedUnblockedMarker + "\nUnblocked: the `blocked` label was applied by the hive without a blocked-on marker, so nothing could lift it; re-triaging."
+
+// askHumanBlockedMarkerless turns a `blocked` the hive applied with nothing
+// naming what the issue waits on into a needs-human ask. A contributor
+// relay's blocked verdict is applied with a hub-minted task token (so the
+// label's actor is the App bot) and carries no marker when the verdict named
+// no issue or PR (#15023 records one when it does). Lifting such a block put
+// the issue back in the queue and the next relay re-blocked it, daily
+// (projectbluefin/utah#771: 19 label events in 11 days); leaving it made the
+// issue invisible, "labelled blocked — the label records no reason" in no
+// inbox (projectbluefin/testsuite#908, projectbluefin/utah#1002, blocked 30s
+// after a footer-only relay comment). needs-human keeps every agent off it
+// and puts it in the maintainer inbox with the question. Only a hive-applied
+// label with no open native "blocked by" link is converted; a person's
+// marker-less block is theirs. Reports whether the issue was converted.
+func askHumanBlockedMarkerless(ctx context.Context, client *Client, t blockedIssueTarget, res *BlockedIssueResult, logger *slog.Logger) bool {
+	if t.reviewBacklog || t.openBlockedBy > 0 {
+		return false
+	}
+	actor, found, err := client.blockedLabelActor(ctx, t.repo, t.number)
+	if err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: timeline lookup failed; marker-less block left alone", "repo", t.repo, "issue", t.number, "error", err)
+		return false
+	}
+	if !found || (!client.isOwnBotLogin(actor) && !client.IsHiveAuthorLogin(actor)) {
+		return false
+	}
+	item, err := client.WritebackItemForNumber(ctx, t.repo, t.number)
+	if err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: item lookup failed; marker-less block left alone", "repo", t.repo, "issue", t.number, "error", err)
+		return false
+	}
+	owner, name := client.splitRepo(t.repo)
+	if d := client.WritebackAllowed(owner+"/"+name, item, writeback.KindGateComment, blockedMarkerlessAskNote); !d.Allowed {
+		// The burst hold lets a couple of asks per repo through per sweep,
+		// and a failed write's retry is a duplicate for same_item_ttl; both
+		// clear on a later sweep. Say so rather than fall through silently.
+		logger.Info("blocked sweep: needs-human ask held by writeback gate", "repo", t.repo, "issue", t.number, "reason", d.Reason, "detail", d.Detail)
+		return false
+	}
+	if !issueHasLabel(t.labels, issueNeedsHumanLabel) {
+		if err := client.AddLabels(ctx, t.repo, t.number, []string{issueNeedsHumanLabel}); err != nil { // writeback:gated
+			res.Errors++
+			logger.Warn("blocked sweep: needs-human not added; marker-less block left alone", "repo", t.repo, "issue", t.number, "error", err)
+			return false
+		}
+	}
+	if err := client.unblockIssue(ctx, t.repo, t.number); err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
+		return false
+	}
+	client.postUnblockedNote(ctx, t.repo, t.number, blockedMarkerlessAskNote, logger)
+	res.AskedHuman++
+	logger.Info("blocked sweep: marker-less hive-applied block turned into a needs-human ask", "repo", t.repo, "issue", t.number, "actor", actor)
+	return true
+}
+
+// blockedMarkerlessAskNote is the note posted when a marker-less block
+// becomes a needs-human ask. It says what was missing and the two ways out.
+const blockedMarkerlessAskNote = blockedUnblockedMarker + "\n" +
+	"Needs a maintainer: a contributor's agent reported this issue blocked but named no issue or pull request it waits on, so the `blocked` label could never be lifted and the issue showed in no inbox. " +
+	"Hive replaced `blocked` with `needs-human`. Either name the dependency (a GitHub \"blocked by\" link, or re-add `blocked` with a `<!-- hive:blocked-on pr=owner/repo#N -->` comment; Hive lifts it when that closes) or remove `needs-human` to put the issue back in the queue."
+
+// blockedOnSeen remembers the blocker the sweep read from an issue's newest
+// blocked-on comment marker. The enumeration reads only the issue body, so a
+// marker the hive or a maintainer left in a comment (projectbluefin/finpilot#624,
+// #390) was invisible to the row's reason and the band.
+var blockedOnSeen = struct {
+	sync.Mutex
+	m map[string]string
+}{m: map[string]string{}}
+
+func blockedOnSeenKey(repo string, number int) string {
+	return strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number)
+}
+
+func noteBlockedOnSeen(repo string, number int, prRepo string, pr int) {
+	blockedOnSeen.Lock()
+	defer blockedOnSeen.Unlock()
+	blockedOnSeen.m[blockedOnSeenKey(repo, number)] = prRepo + "#" + strconv.Itoa(pr)
+}
+
+func forgetBlockedOnSeen(repo string, number int) {
+	blockedOnSeen.Lock()
+	defer blockedOnSeen.Unlock()
+	delete(blockedOnSeen.m, blockedOnSeenKey(repo, number))
+}
+
+// blockedFilterReasonFor is blockedFilterReason with the blocker the sweep
+// last read from the issue's comments preferred over the body's marker, the
+// same precedence the sweep lifts by.
+func blockedFilterReasonFor(repo string, number int, body string) string {
+	blockedOnSeen.Lock()
+	seen := blockedOnSeen.m[blockedOnSeenKey(repo, number)]
+	blockedOnSeen.Unlock()
+	if seen != "" {
+		return blockedFilterReasonPrefix + " on " + seen
+	}
+	return blockedFilterReason(body)
+}
 
 // blockedPRSettledNote is the note posted when the PR a blocked issue
 // waited on (pr, "owner/repo#N") has merged or closed.

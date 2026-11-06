@@ -85,7 +85,10 @@ process.stdout.write(JSON.stringify({
   prBands: prRows.map(r => ({ number: r.number, band: r.band, stale: r.stale, held: r.held, signals: r.signals })),
   issueCSV: overviewCsv(issueRows, overviewCsvColumns('issues')),
   prCSV: overviewCsv(prRows, overviewCsvColumns('prs')),
-  cells: [overviewCsvCell('-5'), overviewCsvCell('-@risk'), overviewCsvCell(['=a', 'b'])]
+  cells: [overviewCsvCell('-5'), overviewCsvCell('-@risk'), overviewCsvCell(['=a', 'b'])],
+  // A row with no precomputed info takes overviewIssueCsvRow's fallback,
+  // which must classify a held issue as held too.
+  fallbackHeldBand: overviewIssueCsvRow({ issue: { number: 20, title: 'held, no info', labels: ['hold'], assignees: [] }, held: true }).band
 }));
 `)
 	out, err := exec.Command(node, "-e", script.String()).CombinedOutput()
@@ -98,6 +101,9 @@ process.stdout.write(JSON.stringify({
 		IssueCSV   string           `json:"issueCSV"`
 		PRCSV      string           `json:"prCSV"`
 		Cells      []string         `json:"cells"`
+		// FallbackHeldBand is overviewIssueCsvRow's band for a held issue
+		// passed without precomputed info.
+		FallbackHeldBand string `json:"fallbackHeldBand"`
 	}
 	if err := json.Unmarshal(out, &js); err != nil {
 		t.Fatalf("decode node output: %v", err)
@@ -117,6 +123,9 @@ process.stdout.write(JSON.stringify({
 	}
 	if prCSV != js.PRCSV {
 		t.Fatalf("PR CSV diverged from browser\nGo:\n%s\nJS:\n%s", prCSV, js.PRCSV)
+	}
+	if want := issueBandSpec("waiting", config.DashboardIssueBandsConfig{}).Label; js.FallbackHeldBand != want {
+		t.Fatalf("oracle fallback band for a held issue = %q, want %q (Go's IssueBand)", js.FallbackHeldBand, want)
 	}
 	if got := []string{overviewCSVCell("-5"), overviewCSVCell("-@risk"), overviewCSVCell([]any{"=a", "b"})}; strings.Join(got, "|") != strings.Join(js.Cells, "|") {
 		t.Fatalf("cell encoding = %#v, want %#v", got, js.Cells)

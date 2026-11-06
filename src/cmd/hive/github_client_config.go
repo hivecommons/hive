@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/attention"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
@@ -157,6 +158,14 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// to the lane that can, instead of the owner (issue_workflows_handoff.go).
 	// Live predicate over the shared config, like the scope funcs above.
 	client.SetWorkflowsLaneFunc(b.cfg.WorkflowsLaneFor)
+	// A lane whose own token asks for the Workflows permission is refused a
+	// workflow-only park when the installation grants it, and the blocker
+	// ledger records "App lacks workflows" only when the hive cannot push
+	// them (projectbluefin/testsuite#1059). The ledger is process-wide, so a
+	// rebuilt client re-installs its check.
+	client.SetWorkflowsSelfPushFunc(b.cfg.AgentPushesWorkflows)
+	itemblocker.Shared().SetCapabilityCheck(client.CapabilityAvailable)
+	itemblocker.Shared().SetProofCheck(client.WorkflowsRejectionProves)
 	client.SetReporterConfirmationEnabledFunc(func() bool {
 		return b.cfg.Issues.ReporterConfirmationEnabled()
 	})
