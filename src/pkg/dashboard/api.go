@@ -562,6 +562,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// and the sentinel findings held internally, written or not.
 	s.mux.HandleFunc("GET /api/writeback/suppressed", s.handleWritebackSuppressed)
 	s.mux.HandleFunc("GET /api/sentinel", s.handleSentinel)
+	// Issues close-on-merge closed on a PR that left them open
+	// (api_close_on_merge_audit.go): a read-only list to reopen by hand.
+	s.mux.HandleFunc("GET /api/close-on-merge/wrong-closes", s.handleCloseOnMergeWrongCloses)
 	// Merge-hotspot advisor (api_hotspots.go): files repeatedly touched by
 	// concurrent PRs and the modularize issues filed for them.
 	s.mux.HandleFunc("GET /api/hotspots", s.handleHotspots)

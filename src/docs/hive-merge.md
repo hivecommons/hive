@@ -1161,6 +1161,21 @@ refuses tracking issues and honours the reporter-confirmation gate) and is
 counted by the direct-write ratchet, so no other code path can grow a close
 of its own.
 
+A merged PR closes an issue only when it does not leave the issue open. The
+close path reads the same decision the issue's coverage comment states ("the
+PR body says this is partial/non-closing work … Hive will not add a closing
+keyword"): no closing keyword for the issue, and a `Refs #N` / `Part of #N`
+reference or wording such as "#N stays open". Such a PR labels the issue
+`hive/partially-addressed` and leaves it open. An issue that carries
+`hive/verified-open` or `hive/partially-addressed` is closed only by a PR
+whose own text closes it, never by a branch name, claim or comment link
+alone. Every sweep compares references as `owner/repo`, whatever name the
+repository is configured under: the backfill sweep passed the short name and
+closed projectbluefin/utah-packages#490 on a `Refs #490` PR.
+`GET /api/close-on-merge/wrong-closes?days=N` (owner only; at most 500 closed
+issues per scan, cached for 10 minutes) lists the issues closed that way for
+maintainers to reopen; the hive reopens nothing itself.
+
 The tracker shows the consequence honestly. A follow-up or duplicate PR whose
 body names an issue an *earlier* PR already delivered — `Refs #15422` on
 #15425 after #15426 merged, `extending #15058` on #15431 after #15068 merged —

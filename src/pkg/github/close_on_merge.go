@@ -579,6 +579,35 @@ func closeOnMergePRRefsIssue(pr *gh.PullRequest, prRepo, issueRepo string, issue
 	return false
 }
 
+// prLeavesIssueOpen is the closing-keyword decision the issue's coverage
+// comment states ("partial/non-closing work … Hive will not add a closing
+// keyword", EnsureIssueStagePRLink): the PR text names no closing keyword for
+// the issue, and either references it (`Refs #N`, `Part of #N`) or says in
+// words that it stays open. The close path reads the same decision, so a PR
+// the hive called non-closing never closes the issue when it merges.
+func prLeavesIssueOpen(text, prRepo, issueRepo string, issue int) bool {
+	if issue <= 0 {
+		return false
+	}
+	if _, closing := FindClosingKeywordReference(text, prRepo, issueRepo, issue); closing {
+		return false
+	}
+	for _, ref := range ParseReferencedIssues(text, prRepo) {
+		if ref.Issue == issue && strings.EqualFold(ref.Repo, issueRepo) {
+			return true
+		}
+	}
+	return strings.EqualFold(prRepo, issueRepo) && issueStaysOpenPhrase(stripClosingFalsePositiveText(text), issue)
+}
+
+// closeOnMergeIssueMarkedOpen reports whether the issue carries a label that
+// says work remains: hive/verified-open (an agent re-checked it and found it
+// still open) or hive/partially-addressed (an earlier merge covered only part).
+func closeOnMergeIssueMarkedOpen(issue *gh.Issue) bool {
+	labels := issueLabelNames(issue.Labels)
+	return labelPresent(labels, VerifiedOpenLabel) || labelPresent(labels, PartiallyAddressedLabel)
+}
+
 // closeOnMergeIssueNotFound reports whether reading the referenced issue
 // failed because GitHub does not know it (404), as opposed to a transient
 // API error worth retrying on the next sweep.
@@ -597,6 +626,15 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		prRepo = pr.GetBase().GetRepo().GetFullName()
 	}
 	res := CloseOnMergeResult{Repo: issueRepo, Issue: issueNumber}
+	// The backfill sweep and webhooks pass the configured repo name, which
+	// may be short ("utah-packages"); references parse as owner/repo, so
+	// every reference check compares against refRepo. Comparing the short
+	// name made `Refs #490` look like no reference at all, and the guard
+	// below closed projectbluefin/utah-packages#490 on a Refs-only PR.
+	refRepo := issueRepo
+	if owner, name := c.splitRepo(issueRepo); owner != "" && name != "" {
+		refRepo = owner + "/" + name
+	}
 	if pr != nil {
 		res.PR = pr.GetNumber()
 		res.MergeCommit = pr.GetMergeCommitSHA()
@@ -621,11 +659,11 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			return res
 		}
 	}
-	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) {
+	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, refRepo, issueNumber) {
 		res.Action, res.Reason = CloseOnMergeSkipped, "no_closing_or_claim_metadata"
 		return res
 	}
-	if claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) && closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issueNumber) {
+	if claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, refRepo, issueNumber) && closeOnMergePRRefsIssue(pr, prRepo, refRepo, issueNumber) {
 		res.WrongRefs = true
 		if opts.Logger != nil {
 			// This is PR metadata, not a failed runtime operation. WARN would
@@ -710,7 +748,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		return res
 	}
 	if c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue) {
-		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partial() {
+		if cov := c.closeOnMergeCoverage(ctx, prRepo, refRepo, issueNumber, pr, issue, opts); cov.partial() {
 			c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
 			res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
 			return res
@@ -738,9 +776,20 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeAwaiting, "needs_confirmation_or_human"
 		return res
 	}
-	if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partialForDirectClose(closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issueNumber)) {
+	cov := c.closeOnMergeCoverage(ctx, prRepo, refRepo, issueNumber, pr, issue, opts)
+	if cov.partialForDirectClose(prLeavesIssueOpen(pr.GetTitle()+"\n"+pr.GetBody(), prRepo, refRepo, issueNumber)) {
 		c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
 		res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
+		return res
+	}
+	if !cov.Closing && closeOnMergeIssueMarkedOpen(issue) {
+		// An agent re-verified the issue as still open, or an earlier merge
+		// left part of it: only a PR whose own text closes the issue may
+		// close it. A branch name, claim or comment link is not enough.
+		res.Action, res.Reason = CloseOnMergeSkipped, "issue_marked_open"
+		if opts.Logger != nil {
+			opts.Logger.Info("close-on-merge: issue is marked open and the PR does not close it; leaving it open", "repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber())
+		}
 		return res
 	}
 	// The issue-stage lane may already have said "Fixed by #N" for this
