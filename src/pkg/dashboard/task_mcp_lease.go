@@ -83,6 +83,22 @@ func (h *ContributeWSHub) allowTaskMCPCall(leaseID string, now time.Time) bool {
 	return true
 }
 
+// taskMCPLeaseTokenMaxTTL is the hard cap on a remote contributor's task MCP
+// lease token, measured from assignment. It is deliberately NOT the task lease
+// window: the lease is renewed on every accepted task_progress (renewLease)
+// while the token is minted once and never re-sent, so a token that expired
+// with the first window cut a healthy task off from its task MCP at minute 30.
+// Whether the token is accepted before the cap is decided by the server-side
+// lease record alone (authenticateTaskMCPLease), so the token never outlives
+// its lease; the cap only bounds how long one minted token can be presented at
+// all, however long the lease is kept alive. The value is the launch-token
+// default; the launch-token TTL setting configures hub launches only.
+const taskMCPLeaseTokenMaxTTL = config.DefaultTaskMCPLaunchTokenTTL
+
+// mintTaskMCPForAssignment mints the lease token for one assignment and binds
+// it, by id and hash, to the lease recorded for that task. expiresAt is the
+// token's own hard cap - assignment plus taskMCPLeaseTokenMaxTTL - not the end
+// of the lease window.
 func (h *ContributeWSHub) mintTaskMCPForAssignment(identity string, assign *WSTaskAssign, expiresAt time.Time, contributor string) *WSTaskMCP {
 	if h == nil || h.server == nil || assign == nil || !h.server.taskMCPRemoteEnabled() {
 		return nil
@@ -117,6 +133,12 @@ func (h *ContributeWSHub) mintTaskMCPForAssignment(identity string, assign *WSTa
 	return &WSTaskMCP{URL: endpoint, Token: token, ExpiresAt: expiresAt.UTC().Format(time.RFC3339)}
 }
 
+// authenticateTaskMCPLease accepts a remote contributor's lease token only
+// while the server-side lease it was minted for still backs it: a record for
+// the token's {identity, task} exists, has not expired, and still carries this
+// token's id and hash (plus repo, number and stage). The token's own expiry is
+// only the hard cap, so these checks are what revokes it - on release, lease
+// expiry, a lease recorded again, or a newer token minted for the same lease.
 func (s *Server) authenticateTaskMCPLease(r *http.Request) (*http.Request, bool) {
 	if !s.taskMCPRemoteEnabled() {
 		return r, false
