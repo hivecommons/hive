@@ -1,0 +1,1 @@
+- Stabilize inception question categories and IDs for list labels containing multiple category keywords by preferring the longest match and breaking ties lexicographically ([#16882](https://github.com/hivecommons/hive/issues/16882)).

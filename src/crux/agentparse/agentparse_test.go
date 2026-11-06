@@ -180,6 +180,46 @@ func TestParseNumberedList(t *testing.T) {
 	}
 }
 
+func TestParseNumberedListCategoryPrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		label    string
+		keywords []string
+		want     string
+	}{
+		{"storage constraints", "Storage constraints", []string{"storage", "constraints"}, "constraints"},
+		{"deployment constraints", "Deployment constraints", []string{"deployment", "constraints"}, "constraints"},
+		{"equal length tie", "Language features", []string{"language", "features"}, "features"},
+		{"nested keywords", "Storage constraints", []string{"storage", "storage constraints"}, "storage constraints"},
+		{"unmatched keyword", "Storage constraints", []string{"storage", "unmatched longer keyword"}, "storage"},
+		{"no categories", "Timeline", nil, "general"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Rebuild the map in both insertion orders and parse repeatedly to
+			// expose any dependence on Go's randomized map iteration order.
+			for run := 0; run < 100; run++ {
+				categories := make(map[string]bool, len(tt.keywords))
+				for i := range tt.keywords {
+					if run%2 != 0 {
+						i = len(tt.keywords) - 1 - i
+					}
+					categories[tt.keywords[i]] = true
+				}
+				lines := []string{
+					"1. **" + tt.label + "** — What is needed?",
+					"- " + tt.label + ": What is needed?",
+				}
+				want := []Item{{Category: tt.want, Title: "What is needed?"}}
+				if got := ParseNumberedList(lines, categories, "general"); !reflect.DeepEqual(got, want) {
+					t.Fatalf("run %d: ParseNumberedList() = %+v, want %+v", run, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestNumberedListRe(t *testing.T) {
 	re := NumberedListRe()
 	if re == nil {
