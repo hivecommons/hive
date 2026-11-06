@@ -18,9 +18,12 @@ import (
 // it names none. Fewer than two options reads as none.
 func (c *Client) IssueDecisionOptions(issueBody string, issueAuthor *gh.User, comments []*gh.IssueComment) (options []delegatedecision.Option, recommended string) {
 	m := c.unparkMenuFor(issueBody, issueAuthor, comments)
+	// Options read from the body of an issue a non-hive account filed are
+	// reporter-authored; the delegated decision names them by label only.
+	bodyUntrusted := !c.isHiveAccount(issueAuthor)
 	if len(m.options) >= 2 {
 		for _, l := range m.options {
-			options = append(options, delegatedecision.Option{Label: l, Summary: m.optionText[l]})
+			options = append(options, delegatedecision.Option{Label: l, Summary: m.optionText[l], Untrusted: bodyUntrusted && m.optionsFromBody})
 		}
 		return options, m.recommended
 	}
@@ -28,9 +31,9 @@ func (c *Client) IssueDecisionOptions(issueBody string, issueAuthor *gh.User, co
 	// wins, as for letters. The hive's own notices, replies and the
 	// delegate's verdicts are not park text; a withdrawn ask takes its
 	// options with it.
-	source := ""
+	source, fromBody := "", false
 	if numberedDecisionOptions(issueBody) != nil {
-		source = issueBody
+		source, fromBody = issueBody, true
 	}
 	for _, cm := range comments {
 		if cm == nil || !c.isHiveAccount(cm.GetUser()) {
@@ -39,18 +42,23 @@ func (c *Client) IssueDecisionOptions(issueBody string, issueAuthor *gh.User, co
 		body := cm.GetBody()
 		switch {
 		case strings.Contains(body, parkWithdrawnMarkerPrefix):
-			source = ""
+			source, fromBody = "", false
 		case strings.Contains(body, unparkNoticeMarker), strings.Contains(body, unparkReplyMarkerPrefix),
 			strings.Contains(body, unparkAcceptedMarker), strings.Contains(body, parkRecheckMarker),
 			delegatedecision.IsDelegatedComment(body):
 		case numberedDecisionOptions(body) != nil:
-			source = body
+			source, fromBody = body, false
 		}
 	}
 	if source == "" {
 		return nil, ""
 	}
 	options = numberedDecisionOptions(source)
+	if fromBody && bodyUntrusted {
+		for i := range options {
+			options[i].Untrusted = true
+		}
+	}
 	return options, numberedRecommendedOption(source, options)
 }
 

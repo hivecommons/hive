@@ -27,12 +27,16 @@ const (
 type Option struct {
 	Label   string `json:"label"`
 	Summary string `json:"summary,omitempty"`
+	// Untrusted marks an option read from an issue body a non-hive account
+	// wrote: its summary is reporter prose and is never quoted into the
+	// owner-attributed decision, which names the option by label alone.
+	Untrusted bool `json:"untrusted,omitempty"`
 }
 
 // Name is the option as a decision names it: "option 2: A ujust recipe".
 func (o Option) Name() string {
 	name := "option " + o.Label
-	if s := strings.TrimSpace(o.Summary); s != "" {
+	if s := strings.TrimSpace(o.Summary); s != "" && !o.Untrusted {
 		name += ": " + s
 	}
 	return name

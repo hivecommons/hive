@@ -133,3 +133,55 @@ func TestIssueDecisionOptions(t *testing.T) {
 		t.Errorf("a withdrawn ask kept its options: %+v", opts)
 	}
 }
+
+func TestIssueDecisionOptionsMarkReporterBodyUntrusted(t *testing.T) {
+	c := menuTestClient()
+	person := &gh.User{Login: gh.Ptr("someone")}
+	hive := &gh.User{Login: gh.Ptr("hive[bot]")}
+
+	for _, body := range []string{dakotaStyleOptions, utah920Body} {
+		opts, _ := c.IssueDecisionOptions(body, person, nil)
+		if len(opts) < 2 {
+			t.Fatalf("no options read from %q", body)
+		}
+		for _, o := range opts {
+			if !o.Untrusted {
+				t.Errorf("reporter body option %+v not marked untrusted", o)
+			}
+			if name := o.Name(); name != "option "+o.Label {
+				t.Errorf("Name() = %q, want the label alone", name)
+			}
+		}
+		opts, _ = c.IssueDecisionOptions(body, hive, nil)
+		for _, o := range opts {
+			if o.Untrusted {
+				t.Errorf("hive-authored option %+v marked untrusted", o)
+			}
+		}
+	}
+
+	// A hive comment's options are the hive's own text, whoever filed the
+	// issue — numbered or lettered, and whether or not the comment was read
+	// with its html_url (provenance is not inferred from optionSource).
+	for _, park := range []string{utah920Park, dakotaStyleOptions} {
+		opts, _ := c.IssueDecisionOptions("Ship the debugging tools.", person, []*gh.IssueComment{ghComment("hive[bot]", park)})
+		if len(opts) < 2 {
+			t.Fatalf("no options read from hive comment %q", park)
+		}
+		for _, o := range opts {
+			if o.Untrusted {
+				t.Errorf("hive comment option %+v marked untrusted", o)
+			}
+			if o.Summary == "" {
+				t.Errorf("hive comment option %+v lost its summary", o)
+			}
+		}
+	}
+
+	// A hive comment's lettered options replace the reporter's body options
+	// and are trusted.
+	opts, _ := c.IssueDecisionOptions(dakotaStyleOptions, person, []*gh.IssueComment{ghComment("hive[bot]", "- **A.** hive a\n- **B.** hive b\n")})
+	if len(opts) != 2 || opts[0].Summary != "hive a" || opts[0].Untrusted || opts[1].Untrusted {
+		t.Errorf("hive comment did not replace reporter body options as trusted: %+v", opts)
+	}
+}
