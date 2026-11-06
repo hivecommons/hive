@@ -277,9 +277,11 @@ Three of task-mcp's disciplines apply unchanged, and for the same reasons:
 - **Hard caps.** Item counts and text sizes are bounded and truncation is disclosed, in the
   spirit of `MaxPageSize = 20` and `MaxTextBytes = 16 KiB`.
   The admin surface caps each result at `MaxTextBytes = 256 KiB` on both transports. An
-  oversized result is truncated, never turned into an error: the longest top-level lists are
-  shortened first (`<field>_truncated: true`), and a result that still does not fit becomes a
-  bounded `text_preview`; either way `_admin_mcp.truncated` is `true` with the original size.
+  oversized result is truncated, never turned into an error: the top-level list with the most
+  encoded bytes is halved first, then the next largest, until the result fits
+  (`<field>_truncated: true`; a long list of small entries is left whole when cutting it would
+  not help), and a result that still does not fit becomes a bounded `text_preview`; either way
+  `_admin_mcp.truncated` is `true` with the original size.
 
 To them the admin surface adds one the read-only sibling never needed: **no write happens on
 a single call.** Each write is previewed — reporting exactly what would change, on which
