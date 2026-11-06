@@ -12,7 +12,7 @@ func TestBasePreparationProvenanceForEveryAdmittingLane(t *testing.T) {
 		t.Run(lane, func(t *testing.T) {
 			api, srv := newPreparationAPI(t)
 			c := preparationEngine(srv.URL, NewBasePreparationStore(""))
-			if ev, _, _, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 1, "main", "head1", true, "behind", false, lane); err != nil || !ev.BranchUpdated {
+			if ev, _, _, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 1, "main", "head1", true, "behind", nil, lane); err != nil || !ev.BranchUpdated {
 				t.Fatalf("admission: %+v %v", ev, err)
 			}
 			for _, other := range []string{stageLaneSelf, stageLaneTrusted, stageLaneContributor} {
@@ -40,7 +40,7 @@ func TestBasePreparationPushBeforeRefreshYieldsUnstartedOwner(t *testing.T) {
 	}
 	api.prs[1].Head.SHA = gh.Ptr("author-push")
 	api.pending["author-push"] = true
-	_, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 1, "head1", currentBaseUpdateReason, false)
+	_, reason, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 1, "head1", currentBaseUpdateReason, nil)
 	if err != nil || reason != basePreparationPrefix+"snapshot-changed" {
 		t.Fatalf("stale refresh snapshot: %q %v", reason, err)
 	}

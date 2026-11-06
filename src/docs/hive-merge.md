@@ -652,6 +652,21 @@ holds a behind head until the update lands. On current-base-gated repositories
 the separate preparation owner above refreshes the next admitted head, rather
 than refreshing every waiting sibling when a front merges.
 
+**Dependency-bot branches are the bot's to rebase.** A PR whose head ref is
+`renovate/*` or whose author is `renovate[bot]`, `dependabot[bot]` or
+`mergeraptor[bot]` never gets a hive commit merging its base: no lane
+update-branch, no current-base refresh, no merge-forward, no merge-train
+update or rebase request, no trusted-author fixer rebase, no adopted-PR
+recovery update and no `hive-merge --update-branch`. Renovate stops rebasing
+a branch for good once another identity has committed to it
+([projectbluefin/utah#1097](https://github.com/projectbluefin/utah/pull/1097)).
+A behind bot branch holds as `behind` (logged once per head as `leaving the
+base sync to the bot`) until the bot rebases it — Renovate does so on its own
+when the repository requires up-to-date branches, and resolves conflicts on
+its own. On a repository gated only by `require_current_base_default` (no
+GitHub up-to-date rule, so no bot rebase is coming) such a head merges as
+tested, like a head the App may not write.
+
 The train's order is **readiness first**. Each pass the lane sorts the
 members by what it last saw of their heads: a head at the merge gate —
 green, approved, soaking or waiting on a sweep — leads; a head the lane has
@@ -1154,7 +1169,8 @@ the head when it is behind (GitHub update-branch, which works on a fork the
 maintainers may edit) or re-runs the failed workflow jobs when it is current,
 at most once per (head, base tip) and three times per adoption, logged as
 `adopted PR recovery` with `reason=update-branch`, `rerun-failed-jobs` or
-`skipped:<why>`; an escalation already in place for that head is released
+`skipped:<why>` (`skipped:dependency-bot-branch` for a behind `renovate/*` or
+dependency-bot branch, which is never updated); an escalation already in place for that head is released
 (hivecommons/hive#14500). An adoption with nothing the hive can
 push past the dwell — after that recovery was tried and the head is still
 red — goes to `stage/085-needs-decision` as
@@ -1435,7 +1451,9 @@ lookup fails), the script prints an error naming the token-cache path and
 When set, the watcher syncs the PR branch with its base before attempting the
 merge (resolves the common "behind main" case). A failure to update the
 branch is not fatal — the merge attempt still proceeds and surfaces the real
-blocker.
+blocker. A dependency bot's branch (`renovate/*` head ref, or a Renovate,
+Dependabot or Mergeraptor author) is never updated: the watcher logs the skip
+and goes straight to the merge attempt, leaving the rebase to the bot.
 
 ## It is asynchronous, by design
 
