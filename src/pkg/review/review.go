@@ -545,7 +545,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		// like a changes_requested; only an exhausted fix cycle hands the
 		// head to a person (the stage engine's hard-stops cover the
 		// sentinel, holds, red CI and conflicts).
-		if finding, backed := securityFindingAcross(reports, sensitivePaths); backed {
+		if finding, backed := securityFindingAcross(effectiveReports, sensitivePaths); backed {
 			agg.DecisionFinding = finding
 		}
 		if opts.FixAttempts >= maxFix {
@@ -568,7 +568,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 
 	if decisionRequested {
-		if finding, backed := securityFindingAcross(reports, sensitivePaths); !backed && contributorHandsFree(agg, opts) {
+		if finding, backed := securityFindingAcross(effectiveReports, sensitivePaths); !backed && contributorHandsFree(agg, opts) {
 			// Owner rule (hivecommons/hive#15640): no human decision while
 			// a contributor's PR is in CI/Review unless the review found
 			// something fishy or insecure. A question with no security
@@ -633,7 +633,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			// projectbluefin/utah-packages#890 went back to its author at
 			// 072 for a PR-body edit while the security review's question
 			// about a new App credential waited on a maintainer.
-			if finding, backed := securityFindingAcross(reports, sensitivePaths); backed {
+			if finding, backed := securityFindingAcross(effectiveReports, sensitivePaths); backed {
 				agg.DecisionFinding = finding
 				agg.Verdict = VerdictRequiresHuman
 				agg.RequiresHuman = true
@@ -650,7 +650,7 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		if seenVerdicts[VerdictRequiresHuman] && contributorHandsFree(agg, opts) {
 			// Same rule for a bare requires_human on a contributor's PR
 			// (hivecommons/hive#15640): only a security finding parks it.
-			if finding, backed := securityFindingAcross(reports, sensitivePaths); backed {
+			if finding, backed := securityFindingAcross(effectiveReports, sensitivePaths); backed {
 				agg.DecisionFinding = finding
 			} else {
 				return contributorHandsFreeAggregate(agg, opts, hasChanges || reportsHaveInScopeFinding(reports), maxFix, agg.HumanSummaries)
