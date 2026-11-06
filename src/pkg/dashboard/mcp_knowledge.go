@@ -470,6 +470,11 @@ func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, publicKnowledgeMaxBodyBytes+1))
 	if err != nil || len(body) > publicKnowledgeMaxBodyBytes {
 		writeJSONRPC(w, http.StatusRequestEntityTooLarge, jsonRPCResponse{JSONRPC: "2.0", ID: nullID, Error: &jsonRPCError{Code: jsonRPCInvalidRequest, Message: "request body too large"}})
