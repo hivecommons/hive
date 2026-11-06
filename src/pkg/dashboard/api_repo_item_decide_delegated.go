@@ -727,6 +727,8 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 				}
 			}
 		}
+	} else {
+		in.Options, in.RecommendedOption = client.IssueDecisionOptions(in.Body, issue.GetUser(), delegatedIssueComments(ctx, api, owner, repoName, number))
 	}
 	sentinel := s.sentinelLabel()
 	for _, l := range in.Labels {
@@ -818,6 +820,30 @@ func (s *Server) delegatedSentinelReason(repoFull string, number int, head, rowR
 	default:
 		return reason + " — " + text
 	}
+}
+
+// delegatedIssueCommentPages caps how much of a long thread is read for the
+// park's options: the newest hive comment that lists them wins.
+const delegatedIssueCommentPages = 5
+
+// delegatedIssueComments reads an issue's comments, oldest first, for the
+// options its park offers. A read error is not fatal: the options are then
+// read from the body alone.
+func delegatedIssueComments(ctx context.Context, api *gh.Client, owner, repoName string, number int) []*gh.IssueComment {
+	var out []*gh.IssueComment
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: delegatedDecisionGatherLimit}}
+	for page := 0; page < delegatedIssueCommentPages; page++ {
+		comments, resp, err := api.Issues.ListComments(ctx, owner, repoName, number, opts)
+		if err != nil {
+			return out
+		}
+		out = append(out, comments...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return out
 }
 
 // delegatedHeadCIState is what the head's checks say: green (every

@@ -904,6 +904,8 @@ func (k *KnowledgeAPI) VaultFact(slug string) (*Fact, error) {
 
 // FullFact resolves a previously listed/searched fact to its full body when the
 // backing store supports exact reads. List/search APIs may return snippets.
+// The slug can exist in more than one store, so the lifecycle fields of the
+// result are those of the page that was read, not of the listing.
 func (k *KnowledgeAPI) FullFact(ctx context.Context, fact Fact) Fact {
 	if strings.TrimSpace(fact.Slug) == "" {
 		return fact
@@ -940,6 +942,8 @@ func (k *KnowledgeAPI) FullFact(ctx context.Context, fact Fact) Fact {
 			fact.Confidence = page.Confidence
 			fact.Status = page.Status
 			fact.Tags = page.Tags
+			// A wiki page has no lifecycle fields: its state follows its status.
+			fact.State, fact.Supersedes, fact.SupersededBy = "", "", ""
 			return fact
 		}
 	}
@@ -957,6 +961,9 @@ func mergeFullFact(dst *Fact, src *Fact) {
 	dst.Status = src.Status
 	dst.Tags = src.Tags
 	dst.Related = src.Related
+	dst.State = src.State
+	dst.Supersedes = src.Supersedes
+	dst.SupersededBy = src.SupersededBy
 }
 
 // Layers returns the configured layer types for the frontend.

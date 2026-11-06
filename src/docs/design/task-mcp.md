@@ -64,12 +64,21 @@ Phase 3 keeps the same read-only, cache/state-only invariant: request handling d
 
 | Tool | Scope | Data schema | Notes |
 | --- | --- | --- | --- |
-| `repo_conventions(repo)` | Active task repo only | `{repo, source, conventions:[{slug, layer, source, data:{title, body}}]}` | Reads per-repo knowledge-store facts of kind `conventions`. Missing data returns `source: "none"` and an empty list. Defaults may be derived at knowledge-index time from cached `AGENTS.md` and `.github/CODEOWNERS`; human-authored knowledge facts override derived entries. This deliberately does **not** read `hive.yaml`, because multiple spokes can serve one repository while `hive.yaml` is per-spoke. |
+| `repo_conventions(repo)` | Active task repo only | `{repo, source, conventions:[{slug, layer, source, data:{title, body}}]}` | Reads per-repo knowledge-store facts of kind `conventions`, chosen by type or tag rather than by their text; see [Knowledge matching and bodies](#knowledge-matching-and-bodies). Missing data returns `source: "none"` and an empty list. Defaults may be derived at knowledge-index time from cached `AGENTS.md` and `.github/CODEOWNERS`; human-authored knowledge facts override derived entries. This deliberately does **not** read `hive.yaml`, because multiple spokes can serve one repository while `hive.yaml` is per-spoke. |
 | `dependencies(task_id)` | Active task bead/issue only | `{task_id, blocked_by:[{id,title}], blocks:[{id,title}], suggested_plan:[{id,title}]}` | Reads bead `depends_on` edges plus the approved/draft plan children carried in bead metadata. Results are capped by `hub.task_mcp_dependencies_limit` / `config.DefaultTaskMCPDependenciesLimit`. |
 | `history(repo, path?, number?)` | Active task repo only | `{items:[{kind, repo, number, state, url, updated_at, merged_at, reasons, files, data:{title, body}}]}` | Returns recent merged PRs or closed issues from existing dashboard caches when they touch the same files or cite the issue thread. It uses the related-work recency window and is capped by `hub.task_mcp_history_limit` / `config.DefaultTaskMCPHistoryLimit`. |
-| `knowledge(query)` | Active task repo only | `{items:[{repo, slug, layer, confidence, tags, data:{title, body}}]}` | Performs read-only knowledge-store search and filters results to the leased task repo. Upstream lease narrowing supplies the repo set; this tool only consumes the snapshot scope. Results are capped by `hub.task_mcp_knowledge_limit` / `config.DefaultTaskMCPKnowledgeLimit`. |
+| `knowledge(query)` | Active task repo only | `{items:[{repo, slug, layer, confidence, tags, data:{title, body}}]}` | Performs read-only knowledge-store search and filters results to the leased task repo; see [Knowledge matching and bodies](#knowledge-matching-and-bodies). Upstream lease narrowing supplies the repo set; this tool only consumes the snapshot scope. Results are capped by `hub.task_mcp_knowledge_limit` / `config.DefaultTaskMCPKnowledgeLimit`. |
 
 `context_bundle({include:[...]})` accepts any tool names from the table. Omitting `include` preserves the Phase 1 trio; specifying it requests exactly those bundle slots.
+
+### Knowledge matching and bodies
+
+`knowledge` and `repo_conventions` serve a fact only when it is approved and tagged `repo:<owner/name>` for exactly the task's repository. That rule runs before the result limit.
+
+- **Query.** With a `query`, the knowledge store's own search decides what is relevant: its hits for the repository are results, so a query can be several words and can match text anywhere in a page. A fact whose title, first 200 characters or tags contain the query text itself is a result too, and those come first: the store scores a page as a whole and caps its hits per store, so it can miss a long page that says a word once. Without a `query` the tool lists the repository's facts.
+- **Conventions.** `repo_conventions` picks a fact by its type (`conventions`) or by a `kind:conventions` or `conventions` tag, never by the words in it, and its limit counts convention facts only.
+- **Bodies.** Both tools return the complete body of a fact, read by slug, instead of the 200-character snippet a listing carries. `knowledge` cuts a body longer than `taskmcp.MaxTextBytes` (16 KiB) on a character boundary and ends it with `[... truncated by hive: knowledge body is N bytes, cap is 16384 ...]`.
+- **Same slug in two stores.** A slug can exist in more than one knowledge store, so the page read for the body must pass the same rules as the listed fact: approved, this repository and, for `repo_conventions`, still a convention. When it does not, the listed fact is served with the snippet instead.
 
 
 ## Token-delta measurement

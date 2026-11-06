@@ -552,6 +552,16 @@
     .ham-plan-details .ham-plan-label { margin-top: var(--sp-4); }
     .ham-plan-finding { color: var(--status-error); white-space: pre-line; }
     .ham-plan-ruled-out { padding-left: 1.4em; }
+    /* What hive saw: one fact per line, marked by its effect on the item. */
+    .ham-plan-saw { list-style: none; margin: var(--sp-1) 0 0; padding: 0; }
+    .ham-plan-fact + .ham-plan-fact { margin-top: var(--sp-1); }
+    .ham-plan-fact-mark { display: inline-block; width: 1.2em; text-align: center; font-weight: var(--fw-semibold); }
+    .ham-plan-fact[data-state="ok"] .ham-plan-fact-mark { color: var(--status-ok); }
+    .ham-plan-fact[data-state="blocks"] .ham-plan-fact-mark { color: var(--status-error); }
+    .ham-plan-fact-label { color: var(--text); font-weight: var(--fw-semibold); margin-right: var(--sp-2); }
+    .ham-plan-rule .ham-plan-label { margin-right: var(--sp-2); }
+    .ham-plan-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .ham-plan-rationale { color: var(--muted); }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
     /* The preview opens as a skeleton while the plan is gathered
        (hivecommons/hive 15773): placeholder lines breathe gently, and stand

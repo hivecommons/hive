@@ -1564,7 +1564,15 @@ func unparkOptionSummary(line string) string {
 	default:
 		rest = unparkPlainOptionAt(line)
 	}
-	rest = rest[1:]
+	return unparkCleanOptionSummary(rest[1:])
+}
+
+// unparkCleanOptionSummary turns the text after an option's marker into its
+// one-line summary: separators and a closing bold marker trimmed, HTML
+// comments removed and @mentions defanged (the text is untrusted and is
+// quoted in hive-authored comments), whitespace collapsed, cut to
+// unparkOptionSummaryMax runes.
+func unparkCleanOptionSummary(rest string) string {
 	rest = strings.TrimLeftFunc(rest, func(r rune) bool { return strings.ContainsRune(" \t*.:)—–-", r) })
 	rest = strings.TrimSpace(rest)
 	rest = strings.TrimSpace(strings.TrimSuffix(rest, "**"))

@@ -1639,8 +1639,11 @@
     }
     // Pure: one view model for every decision the preview can show — a
     // PR or an issue; direction, adopt, close, approve, recommend-only.
-    //   { title, subject, finding, decisions: [{ ref, sentence, why, next[] }],
+    //   { title, subject, finding, decisions: [{ ref, sentence, why, next[], saw[], rule, rationale }],
     //     ruledOut[], rails, mergeable, mergeWhy, mergeAction, mergeLabel, danger }
+    // saw is the plan's "What hive saw" facts ({label, value, state}); rule
+    // and rationale are the rule that decided and its whole reason. All three
+    // sit under Details, so the visible budget is unchanged.
     function stageTrackerDelegatePlanView(plans, sentinel) {
       plans = plans || [];
       // One item: "repo#N · title"; a batch names each item on its own
@@ -1655,8 +1658,16 @@
         sentence: stageTrackerPlanSentence(pl),
         why: pl.why ? String(pl.why).trim() : '',
         next: (pl.consequences || []).slice(0, STAGE_TRACKER_PLAN_NEXT_MAX).map(String),
+        saw: (pl.saw || []).filter(f => f && f.label).map(f => ({ label: String(f.label), value: String(f.value || ''), state: f.state === 'ok' || f.state === 'blocks' ? f.state : 'info' })),
+        rule: pl.rule_plain ? String(pl.rule_plain).trim() : '',
+        rationale: pl.rationale ? String(pl.rationale).trim() : '',
       }));
-      const ruledOut = [].concat(...plans.map(pl => (pl.ladder && pl.ladder.ruled_out) || []));
+      // Each ruled-out option with the fact that ruled it out ("Approve as
+      // it is — CI not green"); the ladder's raw "rung: reason" when the
+      // plan predates why_not.
+      const ruledOut = [].concat(...plans.map(pl => (pl.why_not && pl.why_not.length)
+        ? pl.why_not.map(w => w.because ? w.option + ' — ' + w.because : w.option)
+        : ((pl.ladder && pl.ladder.ruled_out) || [])));
       const mergeable = stageTrackerDelegatePlanMergeable(plans);
       return {
         title: STAGE_TRACKER_PLAN_TITLE,
@@ -1688,8 +1699,23 @@
           + (d.next.length ? '<div class="ham-plan-label">Then</div><ol class="ham-plan-next">' + d.next.map(n => '<li>' + esc(n) + '</li>').join('') + '</ol>' : '')
           + '</div>';
       }).join('');
+      // What hive saw: every fact the rules read, marked ✓ (does not hold it
+      // back), ✗ (holds it back) or • (steers the decision); then the rule
+      // that decided and its whole reason.
+      const marks = { ok: ['✓', 'fine'], blocks: ['✗', 'holds it back'], info: ['•', ''] };
+      const saw = view.decisions.map(d => {
+        if (!d.saw.length && !d.rule && !d.rationale) return '';
+        const multi = view.decisions.length > 1;
+        return '<div class="ham-plan-saw-block">'
+          + '<div class="ham-plan-label">What hive saw' + (multi ? ' · ' + esc(d.ref) : '') + '</div>'
+          + (d.saw.length ? '<ul class="ham-plan-saw">' + d.saw.map(f => '<li class="ham-plan-fact" data-state="' + f.state + '"><span class="ham-plan-fact-mark" aria-hidden="true">' + marks[f.state][0] + '</span> <span class="ham-plan-fact-label">' + esc(f.label) + '</span> ' + esc(f.value) + (marks[f.state][1] ? '<span class="ham-plan-sr"> (' + marks[f.state][1] + ')</span>' : '') + '</li>').join('') + '</ul>' : '')
+          + (d.rule ? '<p class="ham-plan-rule"><span class="ham-plan-label">Rule</span> ' + esc(d.rule) + '</p>' : '')
+          + (d.rationale ? '<p class="ham-plan-rationale">' + esc(d.rationale) + '</p>' : '')
+          + '</div>';
+      }).filter(Boolean);
       const details = []
         .concat(view.finding ? ['<p class="ham-plan-finding">' + esc(view.finding) + '</p>'] : [])
+        .concat(saw)
         .concat(view.ruledOut.length ? ['<div class="ham-plan-label">Why not the others</div><ul class="ham-plan-ruled-out">' + view.ruledOut.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul>'] : [])
         .concat(['<p class="ham-plan-rails">' + esc(view.rails) + '</p>']);
       return '<div id="hive-dialog-title" class="hive-dialog-title">' + esc(view.title) + '</div>'

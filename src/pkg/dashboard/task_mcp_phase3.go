@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hivecommons/hive/crux/taskmcp"
 	"github.com/hivecommons/hive/pkg/beads"
@@ -59,15 +60,11 @@ func (p dashboardTaskMCPProvider) Knowledge(ctx context.Context, scope taskmcp.S
 }
 
 func (p dashboardTaskMCPProvider) repoConventionItems(ctx context.Context, repo string) ([]taskmcp.RepoConvention, string) {
-	facts := p.scopedKnowledgeFacts(ctx, repo, "conventions", p.knowledgeLimit())
+	// A convention is known by its type or kind tag, not by its wording.
+	facts := p.scopedKnowledgeFacts(ctx, repo, "conventions", p.knowledgeLimit(), isRepoConventionFact)
 	var human, derived []taskmcp.RepoConvention
 	for _, fact := range facts {
-		if !isRepoConventionFact(fact, repo) {
-			continue
-		}
-		if p.server != nil && p.server.deps != nil && p.server.deps.Knowledge != nil {
-			fact = p.server.deps.Knowledge.FullFact(ctx, fact)
-		}
+		fact = p.fullKnowledgeFact(ctx, fact, repo, isRepoConventionFact)
 		item := taskmcp.RepoConvention{
 			Slug:   fact.Slug,
 			Layer:  string(fact.Layer),
@@ -91,19 +88,20 @@ func (p dashboardTaskMCPProvider) repoConventionItems(ctx context.Context, repo 
 }
 
 func (p dashboardTaskMCPProvider) knowledgeItems(ctx context.Context, repo, query string, limit int) []taskmcp.KnowledgeItem {
-	facts := p.scopedKnowledgeFacts(ctx, repo, query, limit)
+	facts := p.scopedKnowledgeFacts(ctx, repo, query, limit, nil)
 	items := make([]taskmcp.KnowledgeItem, 0, len(facts))
 	for _, fact := range facts {
 		if !factForRepo(fact, repo) {
 			continue
 		}
+		fact = p.fullKnowledgeFact(ctx, fact, repo, nil)
 		items = append(items, taskmcp.KnowledgeItem{
 			Repo:       repo,
 			Slug:       fact.Slug,
 			Layer:      string(fact.Layer),
 			Confidence: fact.Confidence,
 			Tags:       append([]string(nil), fact.Tags...),
-			Data:       taskmcp.ServedText{Title: fact.Title, Body: fact.Body},
+			Data:       taskmcp.ServedText{Title: fact.Title, Body: capKnowledgeBody(fact.Body)},
 		})
 	}
 	if len(items) > limit {
@@ -112,12 +110,22 @@ func (p dashboardTaskMCPProvider) knowledgeItems(ctx context.Context, repo, quer
 	return items
 }
 
-func (p dashboardTaskMCPProvider) scopedKnowledgeFacts(ctx context.Context, repo, query string, limit int) []knowledge.Fact {
+// scopedKnowledgeFacts returns the facts a task may be served: approved and
+// tagged for exactly this repo, each layer/slug once, at most limit. Every
+// rule runs before the limit.
+//
+// With keep set, keep picks among those facts. Otherwise the query does. The
+// knowledge store's own search decides what is relevant, so its hits are kept
+// as they are. A listed fact is also kept when its title, snippet or tags
+// contain the query text: that search scores a page as a whole and caps its
+// hits per store, so it can miss such a fact.
+func (p dashboardTaskMCPProvider) scopedKnowledgeFacts(ctx context.Context, repo, query string, limit int, keep func(knowledge.Fact, string) bool) []knowledge.Fact {
 	if p.server == nil || p.server.deps == nil || p.server.deps.Knowledge == nil {
 		return nil
 	}
 	query = strings.TrimSpace(query)
 	facts := p.server.deps.Knowledge.SearchAllWithVaults(ctx, "", "", 0)
+	listed := len(facts)
 	if query != "" {
 		searchLimit := limit * 5
 		if searchLimit < 100 {
@@ -127,10 +135,16 @@ func (p dashboardTaskMCPProvider) scopedKnowledgeFacts(ctx context.Context, repo
 	}
 	out := make([]knowledge.Fact, 0, len(facts))
 	seen := map[string]bool{}
-	for _, fact := range facts {
+	for i, fact := range facts {
 		key := string(fact.Layer) + "/" + fact.Slug
-		// Task MCP serves agents: approved knowledge only (#14546).
-		if fact.EffectiveState() != knowledge.StateApproved || !factForRepo(fact, repo) || !factMatchesQuery(fact, query) {
+		if !knowledgeFactInScope(fact, repo) {
+			continue
+		}
+		if keep != nil {
+			if !keep(fact, repo) {
+				continue
+			}
+		} else if i < listed && !factMatchesQuery(fact, query) {
 			continue
 		}
 		if seen[key] {
@@ -143,6 +157,21 @@ func (p dashboardTaskMCPProvider) scopedKnowledgeFacts(ctx context.Context, repo
 		}
 	}
 	return out
+}
+
+// fullKnowledgeFact re-reads a listed fact by slug for its complete body. A
+// slug can exist in more than one store, so the page read back is used only
+// when it passes every rule the listed fact passed. Otherwise the listed fact
+// is served as it is, with the snippet the store listed.
+func (p dashboardTaskMCPProvider) fullKnowledgeFact(ctx context.Context, fact knowledge.Fact, repo string, keep func(knowledge.Fact, string) bool) knowledge.Fact {
+	if p.server == nil || p.server.deps == nil || p.server.deps.Knowledge == nil {
+		return fact
+	}
+	full := p.server.deps.Knowledge.FullFact(ctx, fact)
+	if !knowledgeFactInScope(full, repo) || (keep != nil && !keep(full, repo)) {
+		return fact
+	}
+	return full
 }
 
 func (p dashboardTaskMCPProvider) dependencyData(snap taskMCPSnapshot) taskmcp.DependenciesData {
@@ -268,6 +297,27 @@ func (p dashboardTaskMCPProvider) dependenciesLimit() int {
 		return cfg.Hub.TaskMCPDependenciesLimitOrDefault()
 	}
 	return config.DefaultTaskMCPDependenciesLimit
+}
+
+// knowledgeFactInScope is the scope rule for every fact the task MCP serves:
+// approved knowledge only (#14546), tagged for exactly this repo.
+func knowledgeFactInScope(f knowledge.Fact, repo string) bool {
+	return f.EffectiveState() == knowledge.StateApproved && factForRepo(f, repo)
+}
+
+// capKnowledgeBody keeps one served knowledge body within taskmcp.MaxTextBytes.
+// A longer body is cut on a rune boundary and ends with a marker naming its
+// full size, so an agent never takes part of a page for all of it.
+func capKnowledgeBody(body string) string {
+	if len(body) <= taskmcp.MaxTextBytes {
+		return body
+	}
+	marker := fmt.Sprintf("\n\n[... truncated by hive: knowledge body is %d bytes, cap is %d ...]", len(body), taskmcp.MaxTextBytes)
+	cut := taskmcp.MaxTextBytes - len(marker)
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+	return body[:cut] + marker
 }
 
 func factForRepo(f knowledge.Fact, repo string) bool {

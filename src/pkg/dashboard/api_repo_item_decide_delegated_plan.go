@@ -69,6 +69,14 @@ type delegatedDecisionPlan struct {
 	// then says so and the primary button re-runs it.
 	Prior *time.Time `json:"prior,omitempty"`
 	Notes []string   `json:"notes,omitempty"`
+	// Saw is every fact the decision rules read, for the dialog's "What
+	// hive saw"; RulePlain and Rationale are the rule that decided and its
+	// whole reason; WhyNot is the ladder's ruled-out options with the fact
+	// that ruled each out. All four sit under Details.
+	Saw       []delegatedecision.Fact   `json:"saw,omitempty"`
+	RulePlain string                    `json:"rule_plain,omitempty"`
+	Rationale string                    `json:"rationale,omitempty"`
+	WhyNot    []delegatedecision.WhyNot `json:"why_not,omitempty"`
 }
 
 // delegatedPlanAlternativeLabel is the preview's merge button: the
@@ -230,7 +238,7 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	if err != nil {
 		return nil, err
 	}
-	plan := &delegatedDecisionPlan{Repo: repoFull, Number: number, Type: itemType, Title: strings.TrimSpace(in.Title)}
+	plan := &delegatedDecisionPlan{Repo: repoFull, Number: number, Type: itemType, Title: strings.TrimSpace(in.Title), Saw: in.Facts()}
 	if in.Kind == delegatedecision.KindIssue {
 		if b := s.delegatedBlocker(ctx, repoFull, number, s.delegatedCommentTexts(ctx, repoFull, number)); b != nil && blocker.Kind(b.Kind) == blocker.CapabilityWorkflowsPermission {
 			held := len(holdLabels(in.Labels, s.delegateHiveID())) > 0
@@ -274,7 +282,8 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	}
 	plan.Summary, plan.Consequences = delegatedPlanWording(in, d)
 	plan.Why = delegatedPlanWhy(in, d)
-	plan.Ladder = d.Ladder
+	plan.RulePlain, plan.Rationale = delegatedPlanRule(in, d, plan.Why)
+	plan.Ladder, plan.WhyNot = d.Ladder, d.Ladder.WhyNot()
 	plan.MergeableAsIs = delegatedPlanMergeableAsIs(in, d)
 	if plan.Alternatives == nil {
 		plan.Alternatives = delegatedPlanAlternatives(in, d, mergerRole)
@@ -327,6 +336,12 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 				"Hive opens its copy of " + ref + ", lets it soak, and merges it.",
 				ref + " is closed as superseded; the author keeps the credit.",
 			}
+	case d.Verdict == delegatedecision.VerdictApprove && in.Kind == delegatedecision.KindIssue && d.Option != nil:
+		// The issue offered a choice: the plan names the option, so
+		// approving never leaves the pick to the claiming agent
+		// (projectbluefin/utah#920).
+		return "Go with " + strings.TrimSuffix(d.Option.Name(), ".") + " — the option " + ref + " recommends — and let the hive build it.",
+			[]string{"Hive records option " + d.Option.Label + " as the decision and removes the needs-decision hold.", "An agent claims " + ref + " on the next cycle and builds option " + d.Option.Label + "."}
 	case d.Verdict == delegatedecision.VerdictApprove && in.Kind == delegatedecision.KindIssue:
 		// An issue has no commit to approve and nothing to merge
 		// (hivecommons/hive#15754): approval is the direction, and an
@@ -357,6 +372,13 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 	case d.Verdict == delegatedecision.VerdictDirection:
 		return "Send " + ref + " back to its author with one instruction: " + delegatedPlanInstruction(in, d) + ".",
 			[]string{"Hive posts that instruction on " + ref + ".", "The author pushes a fix; the row updates when it lands."}
+	case d.Verdict == delegatedecision.VerdictRefused && d.Rule == delegatedecision.RuleCompetingOptions:
+		labels := make([]string, 0, len(in.Options))
+		for _, o := range in.Options {
+			labels = append(labels, o.Label)
+		}
+		return fmt.Sprintf("Leave the choice to you: %s asks a person to choose between %d options (%s) and recommends none.", ref, len(in.Options), strings.Join(labels, ", ")),
+			[]string{"Nothing changes; " + ref + " stays waiting for you.", "Use Give direction to name the option the hive should build."}
 	case d.Verdict == delegatedecision.VerdictRefused:
 		return "Do nothing: " + delegatedPlanPlain(d.Rationale) + ".", []string{"Nothing changes; " + ref + " stays waiting for you."}
 	case d.Verdict == delegatedecision.VerdictOwnerOnly:
