@@ -506,6 +506,9 @@ type Client struct {
 	// it. nil hold disables the gate. Set by SetMergeReviewVerdictGate.
 	mergeReviewVerdictHold  ReviewVerdictHoldFunc
 	mergeReviewHoldReleaser func(login string) bool
+	// noPRParkChecks paces the issue stage sweep's look at stalled 010
+	// issues the hive may have answered without a PR (issue_no_pr_park.go).
+	noPRParkChecks noPRParkChecks
 	// mergePolicyGate is the merge-request relay's lane-policy gate (see
 	// MergeRequestPolicyGate). nil installs no gate: the relay then applies
 	// only its own authz, label and CI checks, as before the gate existed.

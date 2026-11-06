@@ -622,6 +622,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).createIssue` | `attention` |  |
 | `github.(*Client).handleOneIssueRequest` | `attention` |  |
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
+| `github.(*Client).parkUnansweredNoPRIssue` | `attention` | the park note on a stalled 010 issue the hive answered without a PR |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
 | `github.(*Client).remindAttention` | `attention` | attention-pilot reminder: at most one per unresolved episode per `reminder_interval`; write-back gate consulted first |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
