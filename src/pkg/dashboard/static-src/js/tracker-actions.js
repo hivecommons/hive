@@ -1776,13 +1776,28 @@
     const STAGE_TRACKER_PLAN_PREFETCH_MS = 30000;
     const _stageTrackerPlanPrefetch = new Map();
     function stageTrackerPlanRequestKey(req) { return req.url + '/plan ' + JSON.stringify(req.body); }
+    // Pure: why a plan failed, in the server's words. A 429 is GitHub's
+    // rate limit and says when to retry: the server's message names the
+    // time, else Retry-After does. 502/503 on a hosted hive are the
+    // Ingress's own "hive unavailable" page, which may not be JSON.
+    function stageTrackerDelegatePlanErrorText(status, data, retryAfter, nowMs) {
+      const msg = data && typeof data.error === 'string' ? data.error.trim() : '';
+      if (status === 429 && !/\d\d:\d\dZ/.test(msg)) {
+        const secs = Number(retryAfter);
+        const at = secs > 0 ? nowMs + secs * 1000 : Date.parse(retryAfter || '');
+        const when = at > 0 ? '; retry after ' + new Date(Math.ceil(at / 60000) * 60000).toISOString().slice(11, 16) + 'Z' : '; retry in a minute';
+        return (msg || 'GitHub rate limit reached') + when;
+      }
+      if (msg) return msg;
+      return status === 502 || status === 503 ? 'hive unavailable' : 'HTTP ' + status;
+    }
     async function stageTrackerPostDelegatePlan(item, req, prefetch) {
       try {
         const headers = { 'Content-Type': 'application/json' };
         if (prefetch) headers['X-Hive-Prefetch'] = '1';
         const r = await fetch(req.url + '/plan', { method: 'POST', headers, body: JSON.stringify(req.body) });
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) return { ref: stageTrackerRefOf(item), number: item.number, error: data.error || ('HTTP ' + r.status) };
+        if (!r.ok) return { ref: stageTrackerRefOf(item), number: item.number, error: stageTrackerDelegatePlanErrorText(r.status, data, r.headers && r.headers.get ? r.headers.get('Retry-After') : '', Date.now()) };
         return Object.assign({ ref: stageTrackerRefOf(item) + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : '') }, data);
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }

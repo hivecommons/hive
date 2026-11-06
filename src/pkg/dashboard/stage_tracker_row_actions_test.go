@@ -887,6 +887,7 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_PLAN_PREFETCH_MS"),
 		jsConstLine(t, html, "_stageTrackerPlanPrefetch"),
 		jsFunc(t, html, "stageTrackerPlanRequestKey"),
+		jsFunc(t, html, "stageTrackerDelegatePlanErrorText"),
 		jsFunc(t, html, "stageTrackerPostDelegatePlan"),
 		jsFunc(t, html, "stageTrackerPrefetchDelegatePlan"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),

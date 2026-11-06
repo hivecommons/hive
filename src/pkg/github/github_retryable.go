@@ -17,6 +17,18 @@ import (
 // outside the package.
 func IsRetryableError(err error) bool { return isRetryableGitHubError(err) }
 
+// RateLimitRetryDelay reports whether err is GitHub refusing for quota (a
+// primary or secondary rate limit, or a bare 429) and how long until the
+// refusal lifts by GitHub's own reset time or Retry-After; the delay is 0
+// when GitHub named neither.
+func RateLimitRetryDelay(err error, now time.Time) (time.Duration, bool) {
+	var ghErr *gh.ErrorResponse
+	if !isRateLimitErr(err) && (!errors.As(err, &ghErr) || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusTooManyRequests) {
+		return 0, false
+	}
+	return retryableGitHubDelay(err, now, 0, 0, time.Hour), true
+}
+
 // isRetryableGitHubError reports whether err is a transient GitHub/API
 // transport failure where a guarded mutation should be retried instead of
 // proceeding with incomplete preflight information.

@@ -677,7 +677,7 @@ The item leaves 085/045 and proceeds without the owner. The action is audited as
 
 #### How it runs
 
-1. The preview opens at once as a skeleton: the title, the item, **Asking the hive…** and placeholder lines (still under *prefers-reduced-motion*). **Cancel** works straight away; **Let hive do that** stays disabled until the plan lands and fills the dialog. Until then the row's *Let hive decide* button and its caption read **Asking the hive…** too, and a second click (button, ⋯ entry or popover) opens nothing. If the plan fails, the dialog says so inline with **Retry** — no toast, no browser alert.
+1. The preview opens at once as a skeleton: the title, the item, **Asking the hive…** and placeholder lines (still under *prefers-reduced-motion*). **Cancel** works straight away; **Let hive do that** stays disabled until the plan lands and fills the dialog. Until then the row's *Let hive decide* button and its caption read **Asking the hive…** too, and a second click (button, ⋯ entry or popover) opens nothing. If the plan fails, the dialog says so inline with **Retry** — no toast, no browser alert — and gives the hive's reason: while GitHub rate-limits the hive it reads *Could not preview owner/repo#N (GitHub API rate limit for this hive is exhausted; resets at 17:32Z)*, so wait until then before retrying. *hive unavailable* means the hive itself did not answer (it is restarting or unreachable).
 2. Read the one-time explanation and confirmation. **Don't ask again for this action** is optional; reset it in ⚙ → **Confirmations**.
 3. The row reads **Hive deciding…** while the job runs.
 4. Read the persistent result toast. It says what was decided and what happens next; it stays until the target row changes state.
