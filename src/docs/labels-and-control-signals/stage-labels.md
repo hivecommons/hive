@@ -270,9 +270,27 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 | filtered by `project.issue_filter.require_labels` (reason `Project issue filter`) | no stage — the filter is the admission gate, and the issue stays out of the actionable queue, governor counts and kick prompts until a required label lands. An out-of-cycle fact that reports the issue actionable (`/hive approve`, a claim release, a covering PR closed) is checked against the filter too, so it writes no 010/015 for the sweep to strip. An accepted `/hive approve` / `/hive decision` still takes `stage/045-needs-decision` off such an issue: the decision ends the park whether or not the filter admits the issue. The un-park reply reports a stage label as removed only when a re-read after the stage engine ran no longer finds it, and says the issue is still outside the agent queue and names the required label(s) that would admit it. The blocked sweep's unblocked notes say "re-triaging", never "actionable again" |
 | **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
 
-Labels come from the issue list payload the cycle already fetched — no
-per-issue GETs — and are written only when the planned set differs from the
-current one. While an open PR covers the issue (040), `stage/stalled` belongs
+**An issue the hive answered without a PR.** An agent that answers an issue
+with no pull request ("no code change can fix this; the owner decides") is
+told to park it with `hive-open-issue comment … --needs-decision`. If it posts
+a plain comment instead, the issue would sit at `010-actionable` while the
+agent never returns to it (hivecommons/hive#16947). The sweep parks it for the owner.
+This happens once the issue is `stage/stalled` at 010, and only when all of these hold:
+
+- nothing claims or covers it, it is not held, and it delegates no work;
+- the newest comment on it is the hive's own agent speaking, after the issue
+  reached 010. The hive's bookkeeping comments (status card, menus, notes) do
+  not count, and a person's later comment leaves it alone.
+
+The sweep posts a note linking that answer, with `Option A: close it` and
+`Option B: keep it open` with instructions. It then parks the issue the way
+the relay parks a `--needs-decision` comment, so it moves to
+`stage/045-needs-decision`, appears on Your Turn and gets the "What to reply"
+menu. The comments of such an issue are read at most once an hour.
+
+Labels come from the issue list payload the cycle already fetched, with no
+per-issue GETs (except the comment read below for a stalled 010 issue), and
+are written only when the planned set differs from the current one. While an open PR covers the issue (040), `stage/stalled` belongs
 to the PR and is not written on the issue; for the issue's *own* stages
 (010–030) the dwell is still measured from stage entry, because the list
 payload carries no comment count or activity timestamp the hive did not

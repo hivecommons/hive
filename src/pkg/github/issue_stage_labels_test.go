@@ -59,6 +59,10 @@ type issueStageServer struct {
 	prPatches map[int]string
 	// commentBodies keeps every comment body posted per issue.
 	commentBodies map[int][]string
+	// commentObjs, when set for an issue, is what GET /issues/N/comments
+	// answers (author, time and URL included), followed by the bodies
+	// posted since.
+	commentObjs map[int][]map[string]any
 	// closeFails makes PATCH state=closed answer 502 for the issue so a
 	// close that fails after its comment landed can be replayed.
 	closeFails map[int]bool
@@ -198,9 +202,10 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/comments"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
-			out := []map[string]string{}
+			out := []map[string]any{}
+			out = append(out, s.commentObjs[n]...)
 			for _, body := range s.commentBodies[n] {
-				out = append(out, map[string]string{"body": body})
+				out = append(out, map[string]any{"body": body})
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/sub_issues"):
