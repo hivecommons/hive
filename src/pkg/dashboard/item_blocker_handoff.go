@@ -16,7 +16,7 @@ import (
 // workflowsHandoffState validates the current fleet and installation, rather
 // than relying on the potentially stale tracker snapshot.
 func (s *Server) workflowsHandoffState(ctx context.Context, repo string, labels []string) (string, bool) {
-	if s.deps == nil {
+	if s.deps == nil || s.deps.GHAppAuth == nil {
 		return "", false
 	}
 	lane := ""

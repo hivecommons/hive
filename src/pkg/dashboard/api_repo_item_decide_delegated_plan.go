@@ -237,7 +237,7 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 			if !held {
 				if lane, _ := s.workflowsHandoffState(ctx, repoFull, in.Labels); lane != "" {
 					plan.Would = string(delegatedecision.VerdictDirection)
-					plan.Rule = "blocker:workflows-handoff"
+					plan.Rule = "workflows-handoff"
 					plan.Summary = "Hand the workflow change to `" + lane + "`."
 					plan.Why = "That lane can push workflow files in this repository."
 					plan.Consequences = []string{"Record the decision and unpark the issue.", "Route it to `" + lane + "` on the next scheduler pass."}

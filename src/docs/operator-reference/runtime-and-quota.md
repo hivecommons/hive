@@ -569,8 +569,8 @@ owner to accept the new permission request in the App settings page the
 dashboard links to (`githubAppInstallURL`). The hive re-checks on its own on
 the next stage pass; *Re-check permissions* on a blocked row
 (`POST /api/repos/{owner}/{repo}/items/{number}/blocker/recheck`) probes the
-installation now and releases every item blocked on that permission when it is
-there. `GET /api/status` carries the same picture as
+installation now. A granted non-workflows permission releases its blocked items;
+workflows blockers require a separate hand-off to a capable lane. `GET /api/status` carries the same picture as
 `capabilities: {missing: ["workflows"], blocked_items: N, by_permission: {workflows: N}}`.
 
 #### Onboarding errors point to the Getting Started guide

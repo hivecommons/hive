@@ -19,6 +19,7 @@ func setupWorkflowsHandoff(t *testing.T) (*Server, *repoItemDecisionMock) {
 	l.Observe("testorg/testrepo", 7, scannerWorkflowsReport, time.Now().Add(-time.Hour))
 	mock := &repoItemDecisionMock{issueLabels: []string{"agent/sec-check", "needs-decision", "stage/045-needs-decision"}}
 	s := newDelegatedServer(t, mock)
+	s.deps.GHAppAuth = &ghpkg.AppAuth{}
 	s.deps.Config.Agents = map[string]config.AgentConfig{
 		"sec-check": {Role: "sec-check", Mode: "ISSUES_AND_PRS", Enabled: true},
 		"scanner":   {Role: "scanner", Mode: "ISSUES_PRS_MERGE", Enabled: true},
@@ -61,7 +62,7 @@ func TestWorkflowsHandoffRequiresPermissionAndWriter(t *testing.T) {
 func TestDelegatedWorkflowsHandoffAndPreview(t *testing.T) {
 	s, mock := setupWorkflowsHandoff(t)
 	plan, err := s.planDelegatedDecision(context.Background(), "testorg/testrepo", 7, "issue", false, delegatedDecisionRequest{})
-	if err != nil || plan.Rule != "blocker:workflows-handoff" || !strings.Contains(plan.Summary, "scanner") {
+	if err != nil || plan.Rule != "workflows-handoff" || !strings.Contains(plan.Summary, "scanner") {
 		t.Fatalf("plan=%+v err=%v", plan, err)
 	}
 	if len(mock.added) != 0 || len(mock.comments) != 0 {
@@ -117,5 +118,14 @@ func TestDelegatedWorkflowsGrantedWithoutLane(t *testing.T) {
 	}
 	if len(mock.added) != 0 || len(mock.comments) != 0 {
 		t.Fatal("unexpected writes")
+	}
+}
+
+func TestWorkflowsHandoffWithoutAppAuth(t *testing.T) {
+	s, _ := setupWorkflowsHandoff(t)
+	s.deps.GHAppAuth = nil
+	lane, granted := s.workflowsHandoffState(context.Background(), "testorg/testrepo", []string{"agent/sec-check"})
+	if lane != "" || granted {
+		t.Fatalf("without app auth: lane=%q granted=%v", lane, granted)
 	}
 }

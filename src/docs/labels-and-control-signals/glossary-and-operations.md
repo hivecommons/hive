@@ -13,6 +13,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | Token | Plain words | Detail |
 |---|---|---|
 | `already-fixed` | the issue was already fixed by a merged PR; closed as superseded | The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it. |
+| `workflows-handoff` | handed to the lane whose token can push workflow files | The App grants `workflows: write`; the issue is routed to a capable lane on the next scheduler pass. |
 | `capability-gap` | the GitHub App lacks a permission; deciding cannot clear it | The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change. A claim that workflow files cannot be pushed is not a gap when the hive checked that it can push them in that repository: the App installation grants `workflows: write` and an enabled lane whose token carries it serves the repository. |
 | `ci-ratchet` | a CI hygiene gate, landed as a ratchet | A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked. |
 | `contributor-offline` | the author hasn't been reachable since the nudge | The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author. |
@@ -101,7 +102,7 @@ A `/hive decision …` comment the hive itself wrote as the owner's delegate (it
 
 | Kind | Meaning | Clears when |
 |---|---|---|
-| `capability:workflows-permission` | the App token cannot push `.github/workflows/*` (no `workflows: write`) | the permission is granted and re-checked |
+| `capability:workflows-permission` | the App token cannot push `.github/workflows/*` (no `workflows: write`) | a capable lane accepts a hand-off after the App grant is verified |
 | `capability:repo-write` | the App has no `contents: write` on the repo | the permission is granted and re-checked |
 | `capability:branch-protection` | a protection rule the App cannot satisfy or bypass | a person changes the rule |
 | `capability:secret` | a secret or token only the owner holds | a person sets it |
@@ -115,11 +116,12 @@ Where it comes from:
 
 What it changes:
 
-- The issue stays 045 with the reason `blocked: App lacks workflows permission`; the tracker pill reads **Blocked · App lacks workflows permission** and its popover says in plain words what the hive cannot do and lists the ways out (grant the permission, re-check, prepare the patch for a person where an identity exists, mark partially addressed and close, keep waiting).
-- **"Let hive decide" returns `no-effect`** (reason `blocker`) instead of applying `approved-direction`; it is shown disabled with that sentence, not greyed silently.
+- The issue stays 045 while blocked. The tracker describes whether the App needs a grant or the workflow needs a capable lane, and offers the applicable ways out.
+- When the App grants `workflows: write` and a capable lane serves the repository, the card offers a hand-off and **Let hive decide** can take it. Without a capable lane, the permission options remain available.
+- For other blockers, **"Let hive decide" returns `no-effect`** (reason `blocker`) instead of applying `approved-direction`; it is shown disabled with that sentence, not greyed silently.
 - **Loop guard**: a delegated un-park records the reason it cleared. If the same reason is re-applied afterwards, the item is parked with a blocker (`human-only:re-asked` when no capability is named) and "Let hive decide" stays disabled on it until the reason changes.
 - **Label consistency**: `stage/045-needs-decision` and `approved-direction` cannot coexist. `needs-human` is always the newer signal next to `approved-direction` (the un-park removes `needs-human` when it applies the ack), so the stage pass keeps 045 and clears `approved-direction` — a person or sweep that re-parked after a delegated decision is never silently un-parked again.
-- `/api/status.capabilities` lists the missing permissions and the count of items blocked on them; ⚙ → Security shows the same line with a link to the App settings page. **Re-check permissions** on a row probes the installation and clears the blocker when the permission is there.
+- `/api/status.capabilities` lists the missing permissions and the count of items blocked on them; ⚙ → Security shows the same line with a link to the App settings page. **Re-check permissions** on a row probes the installation; workflows blockers require the separate hand-off even when the permission is granted.
 
 ## How labels reach agents
 

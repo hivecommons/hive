@@ -525,7 +525,7 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 				bctx.WorkflowsLane, bctx.WorkflowsGranted = s.workflowsHandoffState(ctx, repoFull, in.Labels)
 				if lane := bctx.WorkflowsLane; !held && lane != "" {
 					text := "Hand the workflow change to `" + lane + "`, whose token can push workflow files."
-					d := delegatedecision.Decision{Verdict: delegatedecision.VerdictDirection, Rule: "blocker:workflows-handoff", Text: text, Rationale: text}
+					d := delegatedecision.Decision{Verdict: delegatedecision.VerdictDirection, Rule: "workflows-handoff", Text: text, Rationale: text}
 					res, err := s.executeWorkflowsHandoff(ctx, repoFull, number, user, lane, in.Labels, true)
 					action := auditRepoItemDecisionDelegated
 					if err != nil {
