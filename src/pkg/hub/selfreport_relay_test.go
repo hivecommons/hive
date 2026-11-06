@@ -133,7 +133,7 @@ func TestHubSelfReportIngestCreatesUnderAppIdentity(t *testing.T) {
 		Labels []string `json:"labels"`
 		Body   string   `json:"body"`
 	}
-	_ = json.Unmarshal(gh.bodies[1], &payload)
+	_ = json.Unmarshal(gh.bodies[len(gh.bodies)-1], &payload)
 	if !strings.Contains(strings.Join(payload.Labels, ","), selfReportRelayLabel) || !strings.Contains(payload.Body, "hive-fleet-fingerprint:abc123") {
 		t.Fatalf("issue payload = %+v", payload)
 	}
@@ -346,7 +346,7 @@ func TestHubSelfReportIngestCreateFillsOwnersForLegacySpoke(t *testing.T) {
 	var payload struct {
 		Body string `json:"body"`
 	}
-	_ = json.Unmarshal(gh.bodies[1], &payload)
+	_ = json.Unmarshal(gh.bodies[len(gh.bodies)-1], &payload)
 	if !strings.Contains(payload.Body, "**Affected hives (1):**\n- h1 — owner(s): @dana — seen 1, last ") || !strings.Contains(payload.Body, "seen_count: 1") {
 		t.Fatalf("created body = %q", payload.Body)
 	}
@@ -652,7 +652,7 @@ func TestHubSelfReportIngestNamesHiveAndLinksSpoke(t *testing.T) {
 			var payload struct {
 				Body string `json:"body"`
 			}
-			_ = json.Unmarshal(gh.bodies[1], &payload)
+			_ = json.Unmarshal(gh.bodies[len(gh.bodies)-1], &payload)
 			if !strings.Contains(payload.Body, tc.wantLine) || !strings.Contains(payload.Body, tc.wantRows) {
 				t.Fatalf("created body = %q\nwant line %q\nwant rows %q", payload.Body, tc.wantLine, tc.wantRows)
 			}
