@@ -157,11 +157,24 @@ func firstLine(fh *os.File, data []byte, base int64) []byte {
 
 const maxHeadBytes = 64 * 1024
 
+// headOf returns the part of a file's first line that identifies the file:
+// the line itself, or its first maxHeadBytes when it is longer. The cap must
+// be the same whichever way the head is read. A page is cut from a loaded
+// region that can hold the whole first line, while a cursor is looked up by
+// reading only maxHeadBytes from the start of each file. When the two
+// disagreed, a first line longer than maxHeadBytes gave a digest no lookup
+// could ever reproduce, and every cursor into that file came back expired.
+// Data with no newline that is shorter than maxHeadBytes is a line still
+// being written and has no identity yet.
 func headOf(data []byte) []byte {
-	if i := indexNewline(data); i >= 0 {
-		return data[:i]
+	i := indexNewline(data)
+	if i < 0 && len(data) < maxHeadBytes {
+		return nil
 	}
-	return nil
+	if i < 0 || i > maxHeadBytes {
+		i = maxHeadBytes
+	}
+	return data[:i]
 }
 
 func indexNewline(b []byte) int {

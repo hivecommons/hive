@@ -470,6 +470,16 @@ func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
+	// The route takes GET (and so HEAD) as well as POST so that this can
+	// refuse it. Left to the mux, a GET matched Start()'s "GET /" and came back
+	// 404 from the static file server, where an MCP client that probes for an
+	// event stream expects 405. The mux still answers the other verbs 405
+	// itself; a method-less pattern is not an option, it conflicts with "GET /".
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, publicKnowledgeMaxBodyBytes+1))
 	if err != nil || len(body) > publicKnowledgeMaxBodyBytes {
 		writeJSONRPC(w, http.StatusRequestEntityTooLarge, jsonRPCResponse{JSONRPC: "2.0", ID: nullID, Error: &jsonRPCError{Code: jsonRPCInvalidRequest, Message: "request body too large"}})
@@ -621,6 +631,11 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 		scope := knowledge.TOCScope{Repos: splitCSV(args.Repo)}
 		if args.Type != "" {
 			scope.Types = []string{args.Type}
+		}
+		if args.Type == "general" {
+			// An untyped fact is listed as "general" (tocEntry), so asking
+			// for that type has to match the empty type as well.
+			scope.Types = append(scope.Types, "")
 		}
 		all, _ := s.publicListing(tags)
 		toc := knowledge.BuildTOC(all, scope, args.Limit)

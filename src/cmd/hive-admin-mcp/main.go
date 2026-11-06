@@ -259,7 +259,10 @@ func (r *roster) annotateSkew(err error) error {
 	}
 	var unsupported *unsupportedToolError
 	var api *hivectl.APIError
-	if errors.As(err, &unsupported) || (errors.As(err, &api) && api.StatusCode == http.StatusNotFound) {
+	// A diagnostic read reports its refusal without the hub's response body,
+	// so its 404 is a DiagStatusError and not an APIError.
+	var diag *adminmcp.DiagStatusError
+	if errors.As(err, &unsupported) || (errors.As(err, &api) && api.StatusCode == http.StatusNotFound) || (errors.As(err, &diag) && diag.StatusCode == http.StatusNotFound) {
 		return fmt.Errorf("%w; %s", err, notice)
 	}
 	return err
@@ -365,6 +368,10 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	data, err := getPath(ctx, client, path)
 	if err != nil {
 		return nil, err
+	}
+	if tool == adminmcp.ToolSettingsRead {
+		// A Settings view is not a list to page; see the dashboard provider.
+		return data, nil
 	}
 	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
 		return adminmcp.BandReadResult(tool, data, args)

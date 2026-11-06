@@ -58,23 +58,23 @@ func TestClineSandboxJobPolicyAndCredentialPreflight(t *testing.T) {
 	t.Setenv("HIVE_CLINE_CONFIG_DIR", "")
 	agent := &AgentProcess{Config: config.AgentConfig{Model: "openrouter/test"}}
 	job := config.SandboxJobConfig{EnvFromSecrets: []string{"dedicated-cline-provider"}}
-	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, job); err != nil {
+	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, job, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateClineSandbox(agent, config.SandboxRuntimePodman, job); err == nil || !strings.Contains(err.Error(), "Podman") {
+	if err := validateClineSandbox(agent, config.SandboxRuntimePodman, job, ""); err == nil || !strings.Contains(err.Error(), "Podman") {
 		t.Fatal("Podman accepted provider credentials", err)
 	}
-	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, config.SandboxJobConfig{EnvFromSecrets: []string{" "}}); err == nil ||
+	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, config.SandboxJobConfig{EnvFromSecrets: []string{" "}}, ""); err == nil ||
 		!strings.Contains(err.Error(), "env_from_secrets") {
 		t.Fatal("missing explicit Secret reference accepted", err)
 	}
 	agent.Config.Tools = &config.ToolsConfig{Preset: "read-only"}
-	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, job); err == nil {
+	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, job, ""); err == nil {
 		t.Fatal("Job dropped tool restrictions")
 	}
 	agent.Config.Tools = nil
 	agent.Config.Connections = []config.ConnectionConfig{{Type: "mcp", URI: "https://must-not-use.invalid"}}
-	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, job); err == nil {
+	if err := validateClineSandbox(agent, config.SandboxRuntimeJob, job, ""); err == nil {
 		t.Fatal("Job dropped connections policy")
 	}
 }

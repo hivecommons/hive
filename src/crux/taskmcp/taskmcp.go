@@ -335,6 +335,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, rpcErr := h.dispatch(r, req)
+	// MCP Streamable HTTP: a notification-only POST is answered with 202
+	// Accepted and no body.
+	if req.ID == nil && rpcErr == nil && strings.HasPrefix(req.Method, "notifications/") {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: result, Error: rpcErr})
 }
 
@@ -342,13 +348,22 @@ func (h *Handler) dispatch(r *http.Request, req rpcRequest) (any, *rpcError) {
 	switch req.Method {
 	case "initialize":
 		return map[string]any{"protocolVersion": ProtocolVersion, "serverInfo": map[string]string{"name": ServerName, "version": ServerVersion}, "capabilities": map[string]any{"tools": map[string]any{}}}, nil
-	case "notifications/initialized":
+	case "ping":
+		// MCP's liveness check: the receiver answers with an empty result.
 		return map[string]any{}, nil
 	case "tools/list":
 		return map[string]any{"tools": tools()}, nil
 	case "tools/call":
 		return h.callTool(r, req.Params)
 	default:
+		// A notification expects no answer, and "method not found" is the
+		// wrong one: an agent's client that sends notifications/cancelled
+		// after a tool call it gave up on would be told its message was an
+		// error. Every notification is acknowledged the way
+		// notifications/initialized always was.
+		if strings.HasPrefix(req.Method, "notifications/") {
+			return map[string]any{}, nil
+		}
 		return nil, &rpcError{Code: -32601, Message: "method not found"}
 	}
 }

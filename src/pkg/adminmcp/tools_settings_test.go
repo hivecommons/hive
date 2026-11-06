@@ -1,6 +1,7 @@
 package adminmcp
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -56,5 +57,20 @@ func TestSettingsReadSchemaListsSections(t *testing.T) {
 	}
 	if !strings.Contains(settingsReadDescription(), "agent_prompt") {
 		t.Fatal("description does not list the sections")
+	}
+}
+
+// The operator guide lists the settings_read sections by name. A section
+// added to the tool and not to the guide (triggers was one) is one an
+// operator reading the guide never learns to ask for.
+func TestOperatorGuideListsEverySettingsSection(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/admin-mcp.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range SettingsSections() {
+		if !strings.Contains(string(doc), "`"+section.Name+"`") {
+			t.Errorf("docs/admin-mcp.md does not list the settings_read section %q", section.Name)
+		}
 	}
 }
