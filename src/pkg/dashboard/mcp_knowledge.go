@@ -677,22 +677,24 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 // written as a float (5.0, 1e1): the tool schemas declare limit an integer,
 // to JSON Schema 5.0 is one, and a client whose stack makes every number a
 // float sends that form. Decoding straight into an int refused it as invalid
-// arguments. A fractional, out-of-range or non-numeric value is still refused.
+// arguments. A fractional or non-numeric value is still refused, and so is
+// one outside the 64-bit integer range, which an int never took either.
 type wholeNumber int
 
-// wholeNumberBound keeps the float-to-int conversion exact and in range on
-// every platform; every limit is clamped far below it.
-const wholeNumberBound = 1 << 31
+// wholeNumberMax is what a larger whole value is stored as. Every limit is
+// clamped far below it, so the value keeps its meaning and the conversion
+// from float64 stays exact and in range on every platform.
+const wholeNumberMax = 1 << 30
 
 func (n *wholeNumber) UnmarshalJSON(b []byte) error {
 	var f float64
 	if err := json.Unmarshal(b, &f); err != nil {
 		return err
 	}
-	if f != math.Trunc(f) || math.Abs(f) >= wholeNumberBound {
+	if f != math.Trunc(f) || math.Abs(f) >= 1<<63 {
 		return fmt.Errorf("%s is not a whole number", b)
 	}
-	*n = wholeNumber(f)
+	*n = wholeNumber(math.Max(-wholeNumberMax, math.Min(wholeNumberMax, f)))
 	return nil
 }
 

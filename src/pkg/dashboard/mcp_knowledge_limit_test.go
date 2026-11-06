@@ -53,13 +53,41 @@ func TestPublicKnowledgeToolsAcceptAWholeFloatLimit(t *testing.T) {
 	}
 }
 
+// A whole number far above the maximum was accepted and clamped when limit was
+// an int, and still is, whichever way it is written. A negative one still
+// means the default.
+func TestPublicKnowledgeToolsStillClampAHugeLimit(t *testing.T) {
+	t.Setenv(publicKnowledgeEnabledEnv, "1")
+	s := publicKnowledgeServer(t)
+
+	for _, limit := range []string{"10000000000", "1e10", "4611686018427387904", "-10000000000"} {
+		for _, call := range []struct{ tool, args string }{
+			{"knowledge_search", `{"query":"caching","limit":` + limit + `}`},
+			{"knowledge_toc", `{"limit":` + limit + `}`},
+		} {
+			status, rpcErr, text := publicKnowledgeToolCall(t, s, call.tool, call.args)
+			if rpcErr != nil {
+				t.Errorf("%s limit %s: HTTP %d, refused with %q", call.tool, limit, status, rpcErr.Message)
+				continue
+			}
+			var got struct {
+				Count    int `json:"count"`
+				Returned int `json:"returned"`
+			}
+			if err := json.Unmarshal([]byte(text), &got); err != nil || got.Count+got.Returned == 0 {
+				t.Errorf("%s limit %s: no entries (err %v), want the facts under the clamped limit: %s", call.tool, limit, err, text)
+			}
+		}
+	}
+}
+
 // A limit that is not a whole number is still refused, as are the other
 // malformed forms.
 func TestPublicKnowledgeToolsStillRefuseAMalformedLimit(t *testing.T) {
 	t.Setenv(publicKnowledgeEnabledEnv, "1")
 	s := publicKnowledgeServer(t)
 
-	for _, limit := range []string{"1.5", `"1"`, "true", "[1]", "1e99", "-1e99"} {
+	for _, limit := range []string{"1.5", `"1"`, "true", "[1]", "1e99", "-1e99", "9223372036854775808"} {
 		for _, call := range []struct{ tool, args string }{
 			{"knowledge_search", `{"query":"caching","limit":` + limit + `}`},
 			{"knowledge_toc", `{"limit":` + limit + `}`},
