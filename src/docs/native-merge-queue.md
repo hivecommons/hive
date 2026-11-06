@@ -215,6 +215,10 @@ metadata, not a fabricated last-member PR event.
 - On `pull_request_target`, it executes only the trusted base's validator
   and waits up to 22.5 minutes for the five existing policy checks on that
   exact PR head. No candidate code is executed; tokens are read-only.
+  Label, edit, or unlabel events re-trigger this workflow and serialize behind
+  any in-flight run (the concurrency group is per-PR and never cancels
+  in-progress); the queued run re-reads mutable PR state after the prior run
+  finishes, preserving fail-closed semantics.
 - On a group it executes the event's trusted `base_sha` validator. It reads
   the live queue prefix ending at the event's exact synthetic head,
   verifies contiguous membership and the base/head commit chain, and checks

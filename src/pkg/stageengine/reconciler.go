@@ -55,7 +55,8 @@ type reconciler struct {
 	opts Options
 	mode atomic.Pointer[Mode]
 
-	locks sync.Map // Ref.Key() → *sync.Mutex
+	locks  sync.Map // Ref.Key() → *sync.Mutex
+	writes sync.Map // Ref.Key() → stageWriteTransition; protected by the per-Ref lock
 
 	mu        sync.Mutex
 	anomalies map[string]bool // key+from→to already logged
@@ -149,6 +150,14 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 	key := f.Ref.Key()
 	prev, _ := r.opts.Store.Get(key)
 	tr.From, tr.To, tr.Reason = prev.Stage, d.Stage, d.Reason
+	if last, suppressed := r.suppressStageFlap(f, d); suppressed {
+		tr.From, tr.To, tr.Reason = last.to, last.to, last.reason
+		// Legacy sweep callers may already have observed their opinion.
+		// Restore the last written stage rather than retaining that reversal.
+		r.opts.Store.ObserveProgress(key, last.to, last.reason, false)
+		tr.Outcome.Suppressed = true
+		return tr, nil
+	}
 	if a := Anomaly(f.Ref.Kind, tr.From, tr.To); a != "" {
 		tr.Anomaly = a
 		r.recordAnomaly(f.Ref, tr.From, tr.To, d.Reason, a)
@@ -158,6 +167,13 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 
 	out, err := r.opts.Writer.Apply(ctx, f.Ref, f.Labels, d.Desired())
 	tr.Outcome = out
+	if err == nil && !out.Suppressed {
+		// Use the writer's fresh-read removal, not Store: legacy callers
+		// can pre-observe a different opinion before entering Reconcile.
+		if from := stagelabels.Current(out.Removed); from != stagelabels.None && from != out.Stage {
+			r.rememberStageWrite(f, from, out.Stage, d.Reason)
+		}
+	}
 	if err == nil {
 		// The gate's refusal is a fact about the record: readers that
 		// compare the record with the item's labels must know the labels

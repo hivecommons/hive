@@ -333,7 +333,7 @@ func TestPreserveNormalizedFixingStageBlocksRawHumanFlap(t *testing.T) {
 		Reason:       stagelabels.LaneReasonChangesRequested,
 		ActivityHead: "bbb5676",
 	}
-	obs := stageObservation{HeadSHA: "bbb5676", Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."}}}}
+	obs := stageObservation{Lane: stageLaneSelf, HeadSHA: "bbb5676", Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."}}}}
 	rawHuman := stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: stageReasonVerdictRequiresHuman, Human: true}
 
 	got, ok := preserveNormalizedFixingStage(prev, true, obs, rawHuman)
