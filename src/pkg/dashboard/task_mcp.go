@@ -370,6 +370,12 @@ func (p dashboardTaskMCPProvider) relatedWorkSnapshot(scope taskmcp.Scope) (task
 		if !strings.EqualFold(repo.Full, scope.Repo) && !strings.EqualFold(repo.Name, scope.Repo) {
 			continue
 		}
+		// A standby or fix-queue task is scoped the way its item spells the
+		// repository, which can be the bare name. The items below are given
+		// the row's full name, so the scope takes it too.
+		if repo.Full != "" {
+			scope.Repo = repo.Full
+		}
 		for _, raw := range repo.ActionableIssues {
 			item, ok := relatedItemFromRaw("issue", repo, raw)
 			if !ok {
@@ -405,7 +411,7 @@ func (p dashboardTaskMCPProvider) relatedWorkSnapshot(scope taskmcp.Scope) (task
 
 // relatedItemFromRaw reads one issue or pull request of row. The enumerator
 // stamps each item with its repository as project.repos spells it, which on
-// most hives is the bare name ("console"), while a task is always scoped to
+// most hives is the bare name ("console"), while an issue task is scoped to
 // owner/repo. An item that carries the row's own name is therefore given the
 // row's full name, or it would never match the task's repository. An item
 // that names some other repository keeps that name and stays out of scope.
