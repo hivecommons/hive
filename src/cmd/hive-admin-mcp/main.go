@@ -366,6 +366,10 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	if err != nil {
 		return nil, err
 	}
+	if tool == adminmcp.ToolSettingsRead {
+		// A Settings view is not a list to page; see the dashboard provider.
+		return data, nil
+	}
 	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
 		return adminmcp.BandReadResult(tool, data, args)
 	}

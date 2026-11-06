@@ -234,7 +234,9 @@ section name, never a path. Each section is the endpoint that Settings tab
 reads, so the answer matches the page for the same caller: most sections need a
 verified owner, as the tabs do. Secret values are never returned. Settings name
 the environment variable, file or header that supplies a secret, and the answer
-is scrubbed like every other read.
+is scrubbed like every other read. `settings_read` takes no `limit`: a section
+is returned whole, however many agents or entries it lists, bounded only by the
+256 KiB text cap.
 
 - Global settings: `governor` (the default: modes, thresholds, labels, repos,
   budget, notifications, health, sensing, logging, security, features, hub,
