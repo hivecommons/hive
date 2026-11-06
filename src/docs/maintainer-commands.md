@@ -158,6 +158,22 @@ approve` reply on a parked PR gets one reply (deduplicated per comment)
 saying exactly that; a reply from someone who is not a trusted merger is
 ignored in silence, like every other ineligible command.
 
+**Your move.** A PR that waits on a person also says how to answer it. While a
+PR at `stage/085-needs-decision` or `stage/070-fixing` waits on you (parked
+for a decision, or held by the swarm's verdict with no trusted merger's
+release yet), the hive status comment at the top of the PR carries a *Your
+move* section listing the replies that answer it:
+
+- `/hive approve` when the swarm's verdict holds it;
+- `/hive decision approve <why>` when it is parked for a decision;
+- `/hive decision <what to change>` on a hive-authored PR, or a GitHub
+  **Request changes** review on any other.
+
+It also names the GitHub **Approve** review that does the same. The section is
+edited in place, so it notifies nobody. It goes away once the wait ends: on the
+next pass after the release, when the PR moves to another stage, or when it
+closes.
+
 The verdict release does not touch labels, so a `needs-human` label still
 blocks the PR on every lane. On a **hive-authored** PR parked at
 `stage/085-needs-decision`, a trusted merger's `/hive approve` also lifts a
