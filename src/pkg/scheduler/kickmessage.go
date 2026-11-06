@@ -682,7 +682,7 @@ func (s *Scheduler) reposSection() string {
 }
 
 func (s *Scheduler) dropStuffedContext(agentName string) bool {
-	if !s.hasTaskMCPURL() {
+	if !s.taskMCPConnected(agentName) {
 		return false
 	}
 	if agentCfg, ok := s.cfg.Agents[agentName]; ok {
@@ -694,8 +694,48 @@ func (s *Scheduler) dropStuffedContext(agentName string) bool {
 	return false
 }
 
-func (s *Scheduler) addTaskMCPPointer(message string, elideStuffed bool) string {
-	if message == "" || !s.hasTaskMCPURL() {
+// taskMCPConnected reports whether agentName's CLI is really launched with the
+// `hive-task` MCP server, which the kick pointer asserts and the elided work
+// lists depend on. The hive must have an endpoint agents can use
+// (SetTaskMCPURL), and the agent must launch as Claude Code: that is the only
+// CLI the launcher builds an MCP configuration for (connectionMCPFlags in
+// crux/agent), and an inference backend or a configured gateway name launches
+// as "claude" too (launchInTmux). An agent on any other backend has no MCP
+// server, so its kick must neither point at one nor drop the lists it replaces.
+func (s *Scheduler) taskMCPConnected(agentName string) bool {
+	if !s.hasTaskMCPURL() {
+		return false
+	}
+	backend := s.launchBackend(agentName)
+	if backend == "" {
+		return false
+	}
+	return backend == "claude" || config.IsInferenceBackend(backend) || s.cfg.Governor.ResolveGateway(backend) != nil
+}
+
+// launchBackend is the backend agentName launches on: the runtime's answer
+// when a lookup is attached and knows the agent, else the configured backend
+// with the same replica fallback as dropStuffedContext.
+func (s *Scheduler) launchBackend(agentName string) string {
+	s.mu.RLock()
+	lookup := s.agentBackend
+	s.mu.RUnlock()
+	if lookup != nil {
+		if backend, ok := lookup(agentName); ok {
+			return backend
+		}
+	}
+	if agentCfg, ok := s.cfg.Agents[agentName]; ok {
+		return agentCfg.Backend
+	}
+	if agentCfg, ok := s.cfg.Agents[s.cfg.BaseAgentName(agentName)]; ok {
+		return agentCfg.Backend
+	}
+	return ""
+}
+
+func (s *Scheduler) addTaskMCPPointer(agentName, message string, elideStuffed bool) string {
+	if message == "" || !s.taskMCPConnected(agentName) {
 		return message
 	}
 	section := "## Task context MCP\n\nThe `hive-task` MCP server is connected for this launch. Call `context_bundle` first for the assigned task, related work, and CI summary instead of re-reading the issue/PR and CI from scratch.\n\n"

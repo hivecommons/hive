@@ -26,6 +26,9 @@ func (p dashboardAdminMCPProvider) readDiag(tool string, args map[string]any) (a
 	if err != nil {
 		return nil, err
 	}
+	if err := adminmcp.CheckRequestPath(path); err != nil {
+		return nil, err
+	}
 	owner := adminmcp.DiagOwnerTool(tool)
 	if owner && !p.ownerVerified {
 		return nil, adminmcp.ErrOwnerUnverified

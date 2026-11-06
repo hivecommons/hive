@@ -34,7 +34,9 @@ All parameters are optional, comma-separated allow-lists:
 - `layers` — e.g. `project,org`.
 - `repos` — an entry tagged `repo:<name>` is hidden unless the name is listed;
   entries without a repo tag are org-wide and always pass.
-- `types`, `tags` — fact type, and any-match tag filters.
+- `types`, `tags` — fact type, and any-match tag filters. A fact with no type
+  of its own is listed as `general`, and `types=general` matches it. (An
+  agent scope's `types` below still compares the type as stored.)
 - `include_states` — operator opt-in for `draft`, `deprecated`, `superseded` or
   `all`.
 

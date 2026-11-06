@@ -178,6 +178,9 @@ func (p dashboardAdminMCPProvider) get(tool, path string) (any, error) {
 // getVerified is get with the verified-owner marker set on the inner request
 // when ownerVerified is true; callers pass p.ownerVerified, never a constant.
 func (p dashboardAdminMCPProvider) getVerified(tool, path string, ownerVerified bool) (any, error) {
+	if err := adminmcp.CheckRequestPath(path); err != nil {
+		return nil, err
+	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if p.user != "" {
