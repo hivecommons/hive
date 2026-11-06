@@ -749,6 +749,7 @@ so the reason text can change without breaking them.
 | `decided_not_admitted`, `agent_finding_not_admitted`, `person_issue_not_admitted` | `ADMIT` |
 | `reporter_confirmation_stale` | `CLOSE` |
 | `verified_done` | `CLOSE` |
+| `cited_lines_gone` | `CLOSE` |
 | `agent_filed_unacknowledged` | `TRIAGE` |
 | `level_gate_hold`, `outreach_hold`, `policy_hold`, `hold_source_unknown` | `REVIEW` |
 | `hive_pr_needs_human` (L3–L4) | `REVIEW` |
@@ -797,6 +798,7 @@ means the situation cannot occur at that level.
 | PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision. Once a person has answered the `requires_human` / `reject` verdict on the current head with an instruction (`/hive decision <instruction>` or a `CHANGES_REQUESTED` review, recorded after the verdict) the row is Not yours — "@who answered Hive's review on this head …; the hive is fixing it" — until a new head or a newer verdict, except on a PR the hive adopted whose branch it cannot push (fork-rehome-refused on the head, a fork without maintainer edits, an adoption escalated for a workflow-file diff, or a recorded capability blocker), which stays Yours — `DECIDE` (`adopted_push_refused`, naming why); a dispatch hold or the loop cap stays `REVIEW`, and a bare approval is left to the release rules above | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
+| Agent finding the issue filter refuses whose every cited permalink (`…/blob/<sha>/<path>#L<n>`, same repository) is gone from the default branch: none of the cited lines of 16 to 400 characters is still a line of the file. A file the default branch no longer has is not enough (a rename or move keeps the lines), nor is a citation with no such line or a path the pinned commit lacks. The enumeration checks it for up to 3 findings per repository per pass and trusts a result for 6 hours; the evidence lines read at a pinned SHA are kept (never the file), and a citation that settles as unknown costs no further reads | Yours — `CLOSE` (`cited_lines_gone`, naming the citation: close it, or admit it if the finding still holds) | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |
 | Issue parked on a decision (`needs_decision`) that an open or held PR authored by this hive's App closes (GitHub closing reference) | Not yours — "Waits on hive PR #N, which closes it"; the park label stays, so the ask comes back if the PR closes unmerged. A closing PR by anyone else leaves it `DECIDE` | same | same | same |
 | `blocked` with an open GitHub blocked-by link | Not yours — waiting on the linked item | same | same | same |
@@ -822,6 +824,8 @@ open hive-authored PR closes is Not yours; (6) untrusted reporter awaiting
 admission → `ADMIT`; (7) awaiting reporter confirmation → Not yours until it
 has had no activity for the stale period, then `CLOSE`
 (`reporter_confirmation_stale`); (8) verified done but not closed → `CLOSE`;
+(8b) an agent finding whose cited lines are gone from the default branch →
+`CLOSE` (`cited_lines_gone`);
 (9) agent-filed and unacknowledged where acknowledgment is required →
 `TRIAGE`; (9b) an issue the issue filter refuses that carries
 `approved-direction` → `ADMIT` (`decided_not_admitted`), that an agent filed
